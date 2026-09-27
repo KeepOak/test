@@ -2,7 +2,8 @@
    The engine reads the sentence (POST /api/schedules/propose {text}): what to do, when it repeats, and when it first
    runs. Every change on the card is read again by the engine ({edit}), so the first run and the cron line are always
    the engine's. Nothing is saved until "Confirm the schedule", which is the ordinary POST /api/schedules. "Who does it"
-   picks one of the first five Trunks, as the prototype draws (pressed again, nobody: the owner's own schedule); then Confirm makes it that Trunk's routine
+   is the assistant itself (the owner's own schedule, pressed at first) or one of the first five Trunks, as the prototype
+   draws (a Trunk pressed again goes back to the assistant); a Trunk makes Confirm that Trunk's routine
    (POST /api/trunks/<id>/routines), the same schedule run as the Trunk, which the engine refuses in words while Trunk
    routines are switched off. */
 
@@ -55,8 +56,11 @@ const everySoOften = (p) => !p.days && !!p.proposal.schedule.intervalMs;
 const ready = (p) => everySoOften(p) || (!!p.days && !!p.time);
 
 const seg = (k, v, label, pressed) => `<button type="button" data-act="ppset17d" data-k="${k}" data-v="${v}" aria-pressed="${pressed}">${label}</button>`;
+/* Who does it: the assistant itself (the owner's own schedule, by the assistant's own name) first, then the first five
+   Trunks (dogfood D15: the assistant was not offered, as if only a Trunk could do a routine). */
 function whoField() {
-  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
+  const self = E.state?.identity?.name ? seg("trunk", "", esc(E.state.identity.name), !P.trunk) : "";
+  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${self}${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
 }
 
 /* The card under the box, while a proposal is open. */
@@ -72,7 +76,7 @@ export function propCard() {
     <label class="fld"><span>${t("window.places.schedule-card.it-does")}</span><input class="inp" id="pp-what17d" value="${esc(p.what)}"></label>
     <div class="fld"><span>${t("window.places.schedule-card.repeats")}</span><span class="seg" role="group" aria-label="${t("window.places.schedule-card.repeats")}">${repeats}</span></div>${on}
     <div class="pp-g17d"><label class="fld ${need ? "need17d" : ""}"><span>${t("window.places.schedule-card.at")}${need ? ` · ${t("window.places.schedule-card.it-didnt-say-when")}` : ""}</span><input class="inp" type="time" id="pp-time17d" value="${esc(p.time ?? "")}"></label>${whoField()}</div>
-    <p class="pp-first17d" id="pp-first17d">${first}${p.proposal.time === "guessed" ? ` · ${t("window.places.schedule-card.branch-guessed-part-of-this-check")}` : ""}</p>${cron}
+    <p class="pp-first17d" id="pp-first17d">${first}${p.proposal.time === "guessed" ? ` · ${t("window.places.schedule-card.branch-guessed-part-of-this-check")}` : ""}</p>${cron}${p.proposal.reach ? `<p class="pp-first17d">${t("autonomy.orders.authority")}: ${esc(p.proposal.reach)}</p>` : ""}
     <div class="acts"><button class="btn ghost sm" type="button" data-act="ppno17d">${t("first-run-steps.restore-no")}</button><button class="btn pri sm" type="button" data-act="ppok17d" ${ready(p) ? "" : "disabled"}>${t("window.places.schedule-card.confirm-the-schedule")}</button></div>
     <p class="hint" data-css="margin:0">${t("window.places.schedule-card.it-runs-only-after-you-confirm")}</p></div>`;
 }
@@ -117,7 +121,10 @@ async function confirm() {
   const s = p.proposal.schedule, when = Object.fromEntries(["dailyAt", "weekdays", "monthDay", "intervalMs"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
   try {
     const fresh = (await api("schedules/propose", { edit: { prompt: p.what.trim() || s.prompt, ...when }, timezone: s.timezone })).proposal;
+    // Dogfood: edited words can need a different reach; the card shows the new one and waits for a second Confirm.
+    const reachMoved = fresh.reach !== p.proposal.reach || String(fresh.schedule.permissions) !== String(p.proposal.schedule.permissions);
     p.proposal = fresh;
+    if (reachMoved) { renderNow(); return; }
     if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh));
     else await api("schedules", fresh.schedule);
   } catch (error) { toast(error.message); return; } finally { sending = false; }
@@ -135,7 +142,7 @@ export function initScheduleCard() {
   on("ppset17d", (el) => {
     if (!P) return;
     const k = el.dataset.k;
-    if (k === "trunk") { keepWhat(); P.trunk = P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
+    if (k === "trunk") { keepWhat(); P.trunk = !el.dataset.v || P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
     P[k] = k === "day" ? +el.dataset.v : el.dataset.v;
     if (k === "days" && el.dataset.v === "weekly" && P.day == null) P.day = 5;
     reread();

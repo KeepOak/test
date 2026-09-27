@@ -101,7 +101,7 @@ test("from the keyboard: the menu key on a Trunk's row lists the others, each a 
   assert.deepEqual(errors, []);
 });
 
-test("the toggle in a room: Everyone answers, Only who I tag, Work together, each saved in the engine and answered that way", async (t) => {
+test("the toggle in a room: Everyone answers, Only the lead (by name), Work together, each saved in the engine and answered that way", async (t) => {
   const { app, page, call, errors, kim, lee } = await fixture(t);
   const room = (await call("/api/trunks/rooms", { name: "Pair", members: [kim.id, lee.id] })).room;
   await page.locator(`#side .list [data-act="chat"][data-id="${room.sessionId}"]`).waitFor({ timeout: 15000 });
@@ -109,14 +109,15 @@ test("the toggle in a room: Everyone answers, Only who I tag, Work together, eac
   await opened(page, room.sessionId);
   const seg = page.locator(".talk-tr .seg");
   await seg.waitFor({ state: "visible" });
-  assert.deepEqual(await seg.locator("button").allInnerTexts(), ["Everyone answers", "Only who I tag", "Work together"]);
+  // qa-fixes-3 (Q041): the middle one names the Trunk that answers an untagged message. Mutation: draw t(k) → red.
+  assert.deepEqual(await seg.locator("button").allInnerTexts(), ["Everyone answers", "Only Kim", "Work together"]);
   assert.equal(await seg.locator('[aria-pressed="true"]').innerText(), "Everyone answers");
   // Everyone answers: talking freely, both answer.
   await send(page, "hello both");
   await app.trunks.rooms.settled(room.id);
   let events = (await call(`/api/trunks/rooms/${room.id}`)).events;
   assert.equal(events.filter((e) => e.kind === "member").length, 2);
-  // Only who I tag: talking freely, one answers.
+  // Only the lead: talking freely, the lead alone answers.
   await seg.locator('[data-v="tag"]').click();
   await page.waitForFunction(() => document.querySelector('.talk-tr [aria-pressed="true"]')?.dataset.v === "tag", null, { timeout: 15000 });
   assert.equal((await rooms(call))[0].rule, "tag", "saved in the engine");

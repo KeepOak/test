@@ -8,7 +8,7 @@ import { _electron } from 'playwright';
 import { saveConversationExport, saveMemoryExport, saveMemoryLinesExport } from '../dist/desktop/conversation-export.js';
 import { exportedMemoryLines } from '../dist/memory-export.js';
 import { createBranch } from '../dist/index.js';
-import { connected, desktopOptions, onboarded, send, taskDone } from './fixtures/desktop-options.mjs';
+import { connected, desktopOptions, offScreen, onboarded, send, taskDone } from './fixtures/desktop-options.mjs';
 
 const archive = { format: 'branch-agent-conversation', version: 1, exportedAt: '2026-09-15T00:00:00.000Z',
   messages: [{ role: 'user', content: 'Export fixture' }, { role: 'assistant', content: 'Saved response' }] };
@@ -103,11 +103,12 @@ test('the engine\'s own JSON Lines export passes the desktop check unchanged', a
    guarded IPC, the refused other window and the blanket download blocker are checked first, from the page; then each
    export is pressed in the window and must reach the guarded IPC, since a <a download> is dropped by the blocker. */
 async function launchWithDialog(name) {
-  const { home, options } = await desktopOptions(), path = join(home, name);
+  const { home, options } = await desktopOptions({ hidden: true }), path = join(home, name);
   const electron = await _electron.launch(options);
   // Each click waits for the window to take it; a loaded build machine has spent over ten seconds on one click.
   const page = await electron.firstWindow(); page.setDefaultTimeout(60000);
   await onboarded(page);
+  await offScreen(electron, "opened");
   await electron.evaluate(({ dialog }, path) => {
     globalThis.fixtureExportDialogs = [];
     dialog.showSaveDialog = async (_window, options) => {

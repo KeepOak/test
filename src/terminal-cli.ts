@@ -13,7 +13,7 @@ import { choosePreset, historyLines, presetLines } from "./terminal-commands.js"
 import { PLACE_ROWS, connectionRows, skillRows, type Row } from "./terminal-place-data.js";
 import { TERMINAL_ALIASES, TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
 import { MODEL_TABS, SETTINGS_PAGES, allHomes, homeOf, parseRoute, placeById, type Route } from "./terminal-places.js";
-import { settingsRows } from "./terminal-settings.js";
+import { knowCopysCommit, settingsRows } from "./terminal-settings.js";
 import {
   LOOK_LANGUAGES, loadThemeCatalogue, lookLanguage, readLook, saveLook, saveLookMode, terminalSwitches, type Look, type LookLanguage, type LookMode,
 } from "./terminal-theme.js";
@@ -84,6 +84,7 @@ async function rowsOf(app: Branch, words: Words, route: Route): Promise<Row[]> {
   if ("settings" in route) {
     const look = readLook(app.store, app.runtime.owner);
     const table = await loadThemeCatalogue();
+    await knowCopysCommit();
     const mode = modeOf(app.store.get("settings", app.runtime.owner, "preferences")?.data ?? {});
     const themeName = table.THEMES.find((theme) => theme[0] === look.theme)?.[1] ?? look.theme;
     return settingsRows(app, words, route.settings, route.sub, { look, mode, themeName, switches: terminalSwitches(app.store, app.runtime.owner) });
@@ -301,7 +302,7 @@ export async function runTerminalCommand(app: Branch, command: string, args: str
   if (command === "channels") return printRows(io, await PLACE_ROWS["customize:channels"]!(app, words), words);
   if (command === "mcp") return printRows(io, await connectionRows(app, words), words);
   if (command === "tools") return toolsCommand(app, io);
-  if (command === "projects") return printRows(io, app.store.projects.list(owner).map((project) => ({ title: `${project.id === app.store.projects.active(owner).id ? "* " : "  "}${project.name}`, detail: project.id })), words);
+  if (command === "projects") return printRows(io, app.store.projects.list(owner).map((project) => ({ title: `${project.id === app.store.projects.chosen(owner).id ? "* " : "  "}${project.name}`, detail: project.id })), words);
   if (command === "lockdown") return lockdownCommand(app, args, io);
   if (command === "permissions") return args[0] ? io.write(choosePreset(app.runtime, args.join(" "), (name) => confirmWords(words, name))) : presetLines(app.runtime).forEach((line) => io.write(line));
   if (command === "usage") return usageCommand(app, io);

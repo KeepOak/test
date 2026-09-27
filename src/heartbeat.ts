@@ -29,17 +29,20 @@ const zone = z.string().min(1).max(64).refine((name) => {
 const hostZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 /**
- * The owner's three-way switch for each quiet-jobs feature, all off until they choose. "when-needed"
- * means the feature never runs on a timer of its own but is there the moment something calls for it.
+ * The owner's three-way switch for each quiet-jobs feature. "when-needed" means the feature never runs
+ * on a timer of its own but is there the moment something calls for it. Checking in and script gates
+ * are off until the owner chooses; holding back news-free results ships "when needed" (the owner's
+ * rule, 2026-09-27: it only sends less, never more; none of (a)–(f)).
  */
-const mode = z.enum(["off", "on", "when-needed"]).default("off");
+const modes = z.enum(["off", "on", "when-needed"]);
+const mode = modes.default("off");
 export const QuietSwitchesSchema = z.object({
   /** on: check in every few minutes; when-needed: only when woken or asked; off: never. */
   checkIn: mode,
   /** on: a job's script runs before every turn; when-needed: repeating jobs only; off: gated jobs are held. */
   scriptGates: mode,
   /** on: checks send news only; when-needed: only checks that repeat more than daily; off: every result is sent. */
-  notifyGate: mode,
+  notifyGate: modes.default("when-needed"),
 }).strict();
 export type QuietSwitches = z.infer<typeof QuietSwitchesSchema>;
 export type QuietMode = QuietSwitches["checkIn"];

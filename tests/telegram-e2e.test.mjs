@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,6 +16,8 @@ import { z } from "zod";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy, TelegramAdapter } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { loadIntegrations } from "../dist/integrations/bootstrap.js";
+import { saveChatLiveSwitches } from "../dist/channels/chat-live-settings.js";
 
 /** BotFather's shape: digits, a colon, 30 to 64 letters. Made up; it opens nothing anywhere. */
 const token = `123456:TEST-fake-token-${"a".repeat(20)}`;
@@ -89,6 +91,7 @@ async function fakeBotApi(t) {
     press: (data, botId = "123456") => push(botId, { callback_query: { id: `press-${Date.now()}`, data, from: owner, message: { message_id: 77, chat: dm } } }),
     drop: () => { state.down = true; for (const socket of sockets) socket.destroy(); },
     restore: () => { state.down = false; },
+    renumber: (botId, next) => { botFor(botId).next = next; }, // Telegram's fresh numbering after a quiet week
     hold: (skip = 0) => {
       let release;
       const open = new Promise((resolve) => { release = resolve; });
@@ -127,6 +130,9 @@ test("Telegram end to end: paste, check, pair, talk, approve by button, split, r
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   app.web.policy.configure({ allowPrivateAddresses: true }); // the stand-in lives on this computer
   app.channels.mergeWindowMs = 0;
+  // The chat extras ship when needed (the ship-on rule): steering would fold a message into the task already working.
+  // This is about each message answered once, in order, so the owner switches them off.
+  saveChatLiveSwitches(app.store, app.runtime.owner, { liveStatus: "off", steering: "off", splitting: "off" });
   const call = async (path, body) => {
     const response = await fetch(`${server.url}/api/${path}`, { method: body ? "POST" : "GET",
       headers: { authorization: `Bearer ${server.token}`, origin: server.url, ...(body ? { "content-type": "application/json" } : {}) },
@@ -329,4 +335,104 @@ test("a Telegram channel from the settings file is never replaced by the card's 
   assert.match(await app.neverBreak.telegram.connect(), /from the settings file/);
   assert.equal(app.channels.adapter("telegram"), fromFile, "the settings file's bot is still the one read");
   assert.equal(bot.state.calls.filter((c) => c.botId === "123456").length, 0, "the card's bot never asked Telegram");
+});
+
+test("a read position is kept per bot: one saved by another bot, or before bots were named, is never used", async () => {
+  const { channelPosition } = await import("../dist/never-break/channel-position.js");
+  const saved = new Map();
+  const store = { get: (_table, owner, id) => saved.get(`${owner}/${id}`), save: (_table, owner, id, data) => { saved.set(`${owner}/${id}`, { data }); } };
+  channelPosition(store, "telegram", "local", "111").save(42);
+  assert.equal(saved.get("local/channel-position:telegram").data.reader, "111", "saved with the bot it belongs to");
+  assert.equal(channelPosition(store, "telegram", "local", "111").load(), 42);
+  assert.equal(channelPosition(store, "telegram", "local", "222").load(), 0, "another bot starts from Telegram's earliest unconfirmed update");
+  assert.ok(Math.abs(channelPosition(store, "telegram", "local", "111").savedAt() - Date.now()) < 60_000, "when it was saved");
+  assert.equal(channelPosition(store, "telegram", "local", "222").savedAt(), undefined, "another bot's is not its own");
+  saved.set("local/channel-position:telegram", { data: { offset: 42 } });
+  assert.equal(channelPosition(store, "telegram", "local", "111").load(), 0, "a position saved before bots were named is not trusted");
+  assert.equal(channelPosition(store, "telegram", "local").load(), 42, "a position with no reader named reads as before");
+});
+
+test("the card's bot never starts from a position another bot left, so its first message is answered", async (t) => {
+  const bot = await fakeBotApi(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-telegram-e2e-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model(), telegramApiBase: bot.base });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.web.policy.configure({ allowPrivateAddresses: true }); // the stand-in lives on this computer
+  const owner = app.runtime.owner;
+  // Left by another bot (a settings-file bot, or a token replaced since), far past this bot's first update.
+  app.store.save("settings", owner, "channel-position:telegram", { offset: 5000, reader: "654321" });
+  await app.neverBreak.telegram.save({ token, mode: "on" });
+  bot.say("hello"); // this bot's update 1, waiting at Telegram
+  assert.equal(await app.neverBreak.telegram.connect(), null);
+  await until(() => bot.state.sent.some((sent) => sent.botId === "123456" && /code \d{6}/.test(sent.text)), "the first message answered");
+  const polls = bot.state.calls.filter((c) => c.method === "getUpdates" && c.botId === "123456");
+  assert.equal(polls[0].body.offset, 0, "asked from the earliest unconfirmed update, not the other bot's position");
+  await until(() => app.store.get("settings", owner, "channel-position:telegram")?.data.reader === "123456", "its own position saved, named for it");
+});
+
+test("a settings-file bot never starts from a position the card's bot left under the same name", async (t) => {
+  const bot = await fakeBotApi(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-telegram-e2e-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model() });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.web.policy.configure({ allowPrivateAddresses: true }); // the stand-in lives on this computer
+  app.store.save("settings", "local", "channel-position:telegram", { offset: 5000, reader: "123456" }); // the card's bot's
+  const configPath = join(root, "integrations.json");
+  await writeFile(configPath, JSON.stringify({ channels: [{ type: "telegram", tokenEnv: "E2E_BOT_TOKEN", apiBase: bot.base }] }));
+  bot.say("hello", "654321");
+  const loaded = await loadIntegrations(app.registry, configPath, { E2E_BOT_TOKEN: replacement }, app.secretsFor, app.channelHost);
+  t.after(() => loaded.close());
+  await until(() => bot.state.sent.some((sent) => sent.botId === "654321"), "the settings-file bot answered its first message");
+  assert.equal(bot.state.calls.find((c) => c.method === "getUpdates" && c.botId === "654321").body.offset, 0);
+});
+
+test("after a quiet spell Telegram may number the next update below the saved position; it is read, not lost", async (t) => {
+  const bot = await fakeBotApi(t);
+  const saved = [];
+  const received = [];
+  const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1, renumberAfterMs: 400,
+    position: { load: () => 0, save: (offset) => saved.push(offset) } });
+  const polls = () => bot.state.calls.filter((c) => c.method === "getUpdates");
+  bot.renumber("123456", 500);
+  await adapter.start(async (message) => { received.push(message.text); });
+  t.after(() => adapter.stop());
+  bot.say("before the quiet spell");
+  await until(() => saved.at(-1) === 501, "read up to 501");
+  const quiet = polls().length;
+  await until(() => polls().slice(quiet).some((c) => c.body.offset === 0), "quiet for a while: asked without its position");
+  bot.renumber("123456", 7); // the next update is numbered afresh, below 501
+  bot.say("after the quiet spell");
+  await until(() => received.includes("after the quiet spell"), "the renumbered message read");
+  await until(() => saved.at(-1) === 8, "the position saved in the new numbering");
+  await until(() => polls().some((c) => c.body.offset === 8), "and asked from there");
+  assert.deepEqual(received, ["before the quiet spell", "after the quiet spell"]);
+});
+
+test("a position saved over a day ago: an update Telegram numbered below it while Branch was closed is read", async (t) => {
+  const bot = await fakeBotApi(t);
+  const saved = [];
+  const received = [];
+  bot.renumber("123456", 7);
+  bot.say("sent while Branch was closed");
+  const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1,
+    position: { load: () => 501, savedAt: () => Date.now() - 2 * 24 * 60 * 60 * 1000, save: (offset) => saved.push(offset) } });
+  await adapter.start(async (message) => { received.push(message.text); });
+  t.after(() => adapter.stop());
+  await until(() => received.length === 1 && saved.at(-1) === 8, "read, and the position saved in the new numbering");
+  assert.deepEqual(received, ["sent while Branch was closed"]);
+});
+
+test("a position saved just now: an answered update Telegram was not yet told about is not answered again", async (t) => {
+  const bot = await fakeBotApi(t);
+  const received = [];
+  bot.renumber("123456", 5);
+  bot.say("answered just before the restart");
+  bot.say("new since");
+  const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1,
+    position: { load: () => 6, savedAt: () => Date.now(), save: () => undefined } });
+  await adapter.start(async (message) => { received.push(message.text); });
+  t.after(() => adapter.stop());
+  await until(() => received.includes("new since"), "the new message read");
+  assert.deepEqual(received, ["new since"]);
+  assert.ok(bot.state.calls.filter((c) => c.method === "getUpdates").every((c) => c.body.offset === 6 || c.body.offset === 7));
 });

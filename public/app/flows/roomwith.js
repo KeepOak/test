@@ -4,7 +4,9 @@
      {name, members: [a, b]} and opens it. The keyboard's way: the menu key (or Shift+F10) on a Trunk's row lists the other
      Trunks, each "Open a room with <name>", which does the same (in the side list, inside that row's own menu).
    - In a room, by the message box, one toggle for who answers: "Everyone answers" (the engine's rule "mention": talking
-     freely every Trunk answers, a tag addresses that Trunk), "Only who I tag" ("tag") and "Work together" ("together"),
+     freely every Trunk answers once, a tag addresses that Trunk), "Only <the lead>" ("tag": untagged, only the room's lead
+     answers, the first Trunk seated that is not paused, as src/trunks/rooms.ts lead() picks it; a tag still goes to
+     exactly who is tagged) and "Work together" ("together"),
      saved through POST /api/trunks/rooms/<id> {rule} and read back from GET /api/trunks (rooms[].rule). "Everyone, every
      time" ("all": a tag narrows nothing) and "A lead Trunk decides" ("lead"), both chosen in Room rules, press none.
    Only the owner makes or changes a room (src/trunks/api.ts requireOwner; refused to household people and short-lived
@@ -22,6 +24,9 @@ import { t } from "../../i18n.js";
 
 const TALK = [["mention", "window.rooms.talk.everyone"], ["tag", "window.flows.trunk.rule-tag"], ["together", "window.flows.trunk.rule-together"]];
 const trunkById = (id) => E.trunks.find((tr) => tr.id === id);
+/* The room's lead, as the engine picks it (src/trunks/rooms.ts lead()): the first Trunk seated that is not paused. */
+const leadOf = (r) => (r.members ?? []).map(trunkById).find((tr) => tr && !tr.paused);
+const talkWords = (r, v, key) => { const lead = v === "tag" ? leadOf(r) : null; return lead ? t("window.rooms.talk.only", { name: lead.name }) : t(key); };
 const trunkEl = (target) => (target instanceof Element ? target.closest("[data-trunk]") : null);
 
 /* ---------- a room with both ---------- */
@@ -116,7 +121,7 @@ function talkRow(sessionId) {
   const r = ownerHere() ? E.rooms.find((x) => x.sessionId === sessionId) : null;
   if (!r) return "";
   const now = pressedOf(r.rule);
-  return `<div class="talk-tr"><span class="seg" role="group" aria-label="${t("rooms.who.choose")}">${TALK.map(([v, k]) => `<button type="button" data-act="room-talk" data-v="${v}" data-id="${esc(r.id)}" aria-pressed="${now === v}">${t(k)}</button>`).join("")}</span></div>`;
+  return `<div class="talk-tr"><span class="seg" role="group" aria-label="${t("rooms.who.choose")}">${TALK.map(([v, k]) => `<button type="button" data-act="room-talk" data-v="${v}" data-id="${esc(r.id)}" aria-pressed="${now === v}">${esc(talkWords(r, v, k))}</button>`).join("")}</span></div>`;
 }
 async function setTalk(el) {
   const r = E.rooms.find((x) => x.id === el.dataset.id), v = el.dataset.v, words = TALK.find(([k]) => k === v);
@@ -124,7 +129,7 @@ async function setTalk(el) {
   try {
     await api(`trunks/rooms/${encodeURIComponent(r.id)}`, { rule: v });
     await Promise.all([refresh(), roomsChanged()]);
-    toast(t("window.flows.trunk.rule-in-room", { rule: t(words[1]), room: r.name }));
+    toast(t("window.flows.trunk.rule-in-room", { rule: talkWords(r, v, words[1]), room: r.name }));
   } catch (error) { toast(error.message); }
 }
 

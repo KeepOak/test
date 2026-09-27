@@ -33,6 +33,10 @@ async function fixture(t) {
   service.deps.now = () => clock;
   Object.defineProperty(service, "now", { value: () => clock });
   delete service.deps.policy; // the stand-in fetch below is the whole network
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); these tests start from off and turn it
+  // on where they need it, so the owner switches it off first.
+  const { setMode } = await import("../dist/accounts/manage.js");
+  setMode(service, { mode: "off" });
   return { app, service, owner: app.runtime.owner, root, tick: (ms) => { clock += ms; } };
 }
 
@@ -65,6 +69,7 @@ const events = (app, run, kind) => app.store.events(run.id).filter((event) => ev
 
 test("A1 with the switch off nothing changes: the connection is registered exactly as given", async (t) => {
   const fx = await fixture(t);
+  await turnOn(fx.service, "off"); // it ships on; the owner switched it off
   const { provider } = apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   assert.equal(fx.app.runtime.models.presets.get(POOL).provider, provider);
   const run = await fx.app.runtime.run({ prompt: "hello" });
@@ -180,6 +185,7 @@ test("A5 a key that reached its monthly cap is passed over", async (t) => {
 test("A6 /account switches one conversation by hand, and lists on every surface that has it", async (t) => {
   const fx = await fixture(t);
   const { app, owner, service } = fx;
+  await turnOn(service, "off"); // it ships on; the owner switched it off
   apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   saveCommandSettings(app.store, owner, { mode: "on" });
   const host = { runtime: app.runtime, requireOwner: () => undefined };
@@ -273,6 +279,7 @@ test("A8 ChatGPT tokens live in the locker per account and never reach the list;
 test("A9 the routes: reads for any key, changes for the owner only, and no key in any answer", async (t) => {
   const fx = await fixture(t);
   const { app, owner, service } = fx;
+  await turnOn(service, "off"); // it ships on; the owner switched it off
   apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   const server = await startServer(app, { dataDir: join(fx.root, "data"), port: 0 });
   t.after(() => server.close());
@@ -343,12 +350,15 @@ test("A10 people sharing the computer use only keys the owner shared, and never 
   assert.equal(calls.first, 0, "the owner's unshared first key is never used for them");
 });
 
-test("A11 a damaged or missing list reads as switched off", async (t) => {
+test("A11 a damaged list reads as switched off; a missing one reads as it ships; the owner's off stays off", async (t) => {
   const fx = await fixture(t);
   fx.app.store.save("settings", fx.owner, "accounts", { mode: "sideways" });
   assert.equal(fx.service.settings().mode, "off");
-  saveAccountsSettings(fx.app.store, fx.owner, AccountsSettingsSchema.parse({}));
-  assert.equal(fx.service.on(), false);
+  fx.app.store.delete("settings", fx.owner, "accounts");
+  assert.equal(fx.service.settings().mode, "when-needed", "nothing saved: on, as it ships (the owner's decision, 2026-09-27)");
+  await turnOn(fx.service, "off");
+  saveAccountsSettings(fx.app.store, fx.owner, { ...fx.service.settings(), pools: [] });
+  assert.equal(fx.service.on(), false, "the owner's own off survives a later save of the list");
 });
 
 /* ---------- integrator (adversarial) checks ---------- */

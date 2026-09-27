@@ -306,7 +306,7 @@ async function updateSetup(t) {
   const fetch = async (url) => url.endsWith("/releases/latest") ? Response.json(release)
     : url.endsWith(".sha256") ? new Response(`${digest}  x\n`) : new Response(archive);
   const events = [];
-  const deps = {
+  const deps = { lastReleaseWithoutProvenance: "2.0.0",
     fetch, scratchDir: join(root, "scratch"), running: async () => null,
     extract: async (_file, into) => { await fakeApp(into, "linux", "2.0.0"); },
     backup: async () => { events.push("backup"); },

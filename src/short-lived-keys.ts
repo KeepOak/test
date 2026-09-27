@@ -40,7 +40,7 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   post(new RegExp(`^/ap/v1/agent/tasks/${id}/(steps|artifacts)$`), "an Agent Protocol step or file"),
   { method: "*", pattern: /^\/mcp$/, why: "tool calls from another AI tool; only the tools the owner shared" },
   // Steering, stopping and answering a task that is already going.
-  post(new RegExp(`^/api/runs/${id}/(cancel|resume|steer|plan|replay)$`), "stops, resumes, steers or replays a task"),
+  post(new RegExp(`^/api/runs/${id}/(cancel|pause|resume|steer|plan|replay)$`), "stops, pauses, resumes, steers or replays a task"),
   post(new RegExp(`^/api/sessions/${id}/(followups|goal|model)$`), "the next message, the goal or the model of one conversation"),
   post("/api/models/switch", "the model of one conversation"),
   post("/api/policy/approve", "answers a question a task asked"),

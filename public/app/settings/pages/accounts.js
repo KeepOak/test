@@ -1,13 +1,13 @@
 /* Settings › Accounts: the engine's accounts in the order it uses them (GET /api/accounts), moving one up, the account
    menu (flows/account.js) and, at Advanced, selecting several and acting on all of them. Never shows a key. */
-import { level } from "../../core/state.js";
+import { level, E } from "../../core/state.js";
 import { esc, renderNow } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
-import { A, allAccounts, loadAccounts, ownerOnly } from "../../flows/account.js";
+import { A, allAccounts, loadAccounts, ownerOnly, poolById } from "../../flows/account.js";
 import { accounts17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setting up's "Two more things": email and calendar, a backup
@@ -27,6 +27,14 @@ function row(a, i, list) {
     + `<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" ${ids} data-css="width:28px;height:28px">${ic("more", "s")}</button></div>`;
 }
 
+/* A model on this computer answers like an account and needs no sign-in (GET /api/state models.presets, local): listed
+   after the accounts with "On this computer", without Move up or the account menu, which are an account's. */
+const localPresets = () => (E.state?.models?.presets ?? []).filter((p) => p.local);
+const localRow = (p) => `<div class="prow">${logo(p.provider, p.name, 32)}<span class="grow"><b>${esc(p.name)}</b><small>${t("glance.local")}</small></span></div>`;
+/* Whether an account can answer now: a sign-in only while it is signed in (GET /api/accounts pools[].signedIn); a key or a
+   program's account is counted as the engine lists it. */
+const answers = (a) => poolById(a.pool)?.signedIn?.[a.id] !== false;
+
 function bulkBar() {
   if (!picked) return "";
   const n = picked.length, off = n ? ownerOnly() : "disabled";
@@ -38,16 +46,22 @@ export function draw() {
   const lev = level();
   if (lev < 1) picked = null;
   let html = `<h1>${t("settings.page.accounts")}</h1><p class="lede">${t("window.settings.accounts.your-model-accounts-the-order-branch")}</p>`;
-  if (A.view) html += `<div class="status"><span class="sdot ${list.length ? "" : "bad"}"></span><div><b>${list.length} ${t("window.settings.accounts.accounts-signed-in")}</b><p>${t("window.settings.accounts.branch-never-sees-your-passwords-each")}</p></div></div>`;
+  /* Q070 follow-up: the count is what can answer now: signed-in sign-ins, keys and programs' accounts, and each model on
+     this computer; a signed-out sign-in is listed but not counted. */
+  const count = list.filter(answers).length + localPresets().length;
+  if (A.view) html += `<div class="status"><span class="sdot ${count ? "" : "bad"}"></span><div><b>${count} ${t("window.settings.accounts.accounts-signed-in")}</b><p>${t("window.settings.accounts.branch-never-sees-your-passwords-each")}</p></div></div>`;
   /* Every change here is the owner's (the engine refuses a household person), so on a household profile they are greyed. */
   const mine = ownerOnly();
   const sel = lev >= 1 ? `<button type="button" class="link15 acsel15" data-act="acsel15" ${mine}>${picked ? t("first-run-steps.done") : t("window.settings.accounts.select-several")}</button>` : "";
-  html += `<div class="sec"><h2${lev >= 1 ? ' class="h2row15"' : ""}>${t("window.settings.accounts.order-branch-uses-them-in-sel", { sel })}</h2>${bulkBar()}<div class="rows">${list.map(row).join("")}</div>`;
+  html += `<div class="sec"><h2${lev >= 1 ? ' class="h2row15"' : ""}>${t("window.settings.accounts.order-branch-uses-them-in-sel", { sel })}</h2>${bulkBar()}<div class="rows">${list.map(row).join("")}${localPresets().map(localRow).join("")}</div>`;
   html += `<div class="acts acadd-bf3" data-css="margin-top:12px"><button class="btn pri" type="button" data-act="addacct" ${mine}>${ic("plus", "s")}${t("window.settings.accounts.add-an-account")}</button>`;
   html += (A.view?.pools ?? []).map((p) => `<button class="btn" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${mine}>${t("window.settings.accounts.another-value-account", { value: esc(p.name ?? p.pool) })}</button>`).join("");
   html += `</div></div>`;
+  /* When one runs out: both stay greyed with the engine's reason (window.why.ac-next, ac-fall). The design's line under
+     "Move to the next account" ("only between accounts you own…") is left out: the engine does the opposite for sign-ins
+     (it never moves work between the owner's own plans, only to an account kept separate; src/accounts/pool.ts rotationSet). */
   html += `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${t("window.settings.accounts.move-to-the-next-account-in")}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${t("window.settings.accounts.move-to-the-next-account-in")}" data-sw="set"><small>${t("window.settings.accounts.only-between-accounts-you-own-and")}</small></div>`
+    + `<div class="ctl"><b>${t("window.settings.accounts.move-to-the-next-account-in")}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${t("window.settings.accounts.move-to-the-next-account-in")}" data-sw="set"><small></small></div>`
     + `<div class="ctl"><b>${t("window.settings.accounts.fall-back-to-this-computer")}</b><input class="sw" type="checkbox" id="ac-fall" aria-label="${t("window.settings.accounts.fall-back-to-this-computer")}" data-sw="set"><small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
   html += `<div class="sec"><h2>keepoak.com</h2><div class="ko-card"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.settings.accounts.your-keepoak-com-account")}</b><small>${t("window.settings.accounts.have-a-keepoak-computer-or-a")}</small></span><span class="pill idle" title="${t("window.settings.accounts.branch-does-not-link-to-keepoak")}">${t("window.settings.accounts.proposal")}</span></div>`
     + `<ul class="may6"><li>${ic("check", "s")}${t("window.settings.accounts.your-keepoak-computer-joins-the-computer")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-theme-saved-colours-and-season")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-team-workspace-members-shared-trunks")}</li><li>${ic("check", "s")}${t("window.settings.accounts.conversations-memory-and-keys-stay-on")}</li></ul>`

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Store } from "../store.js";
 import { FeatureModeSchema, type FeatureMode } from "../feature-switches.js";
+import { shippedUnlessChosen, unsetRecord } from "../ship-on.js";
 
 /**
  * Several accounts per connection (GAPS row 40, the owner's request of 2026-09-17).
@@ -54,9 +55,10 @@ export const PoolSchema = z.object({
   strategy: z.enum(strategies).default("priority"),
   /**
    * Sign-in accounts only: let Branch share work between accounts and move on when one reaches its
-   * plan limit. Off unless the owner turns it on after reading the terms line (docs/configuration.md).
+   * plan limit. long-work: ships on (it spends nothing: the work moves to a plan the owner already has), and
+   * `rotationSet` still keeps it to accounts marked "kept separate", never between the owner's own plans.
    */
-  autoSwitch: z.boolean().default(false),
+  autoSwitch: z.boolean().default(true),
   /** The account new work uses, when no conversation picked one. Null means the first in the list. */
   defaultAccount: accountId.nullable().default(null),
   accounts: z.array(AccountSchema).max(maxAccounts).default([]),
@@ -66,7 +68,13 @@ export type Pool = z.infer<typeof PoolSchema>;
 /** The version of the sharing rule the saved list was last brought up to (see `applyPoolingRule`). */
 export const poolingRuleVersion = 1;
 export const AccountsSettingsSchema = z.object({
-  mode: FeatureModeSchema.default("off"),
+  /**
+   * Ships on (owner decision 2026-09-27, the ship-on rule): several accounts per connection spends nothing by itself,
+   * sends nothing and deletes nothing. It uses only accounts the owner added, and moving work between sign-ins stays
+   * limited by `rotationSet` (kept-separate accounts, never the owner's own plans). "when-needed" is the ship-on
+   * position of a three-way switch; the engine reads anything but "off" as on (`AccountsService.on`).
+   */
+  mode: FeatureModeSchema.default("when-needed"),
   pools: z.array(PoolSchema).max(64).default([]),
   poolingRule: z.number().int().min(0).max(1000).default(0),
   /** Connections whose sharing was stopped by the rule, until the owner has read why. */
@@ -113,8 +121,19 @@ export function savedAccountsSettings(store: Reader, owner: string): AccountsSet
  * A list never saved starts under the current sharing rule, so one made from now on is never
  * mistaken for an old one that shared work between the owner's own plans (mac7/account-pooling).
  */
+/**
+ * The owner's decision (2026-09-27): several accounts per connection ships on. It only lists the owner's own sign-ins
+ * and keys, and sharing work between the owner's own plans stays off (`applyPoolingRule`); none of (a)–(f). The record
+ * also holds the lists, so an "off" beside them may be the old default (src/ship-on.ts); a damaged record reads off.
+ */
+export const accountsShipsAs: FeatureMode = "when-needed";
 export function accountsSettings(store: Reader, owner: string): AccountsSettings {
-  return savedAccountsSettings(store, owner) ?? AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion });
+  if (unsetRecord(store.get("settings", owner, settingKey)?.data))
+    return AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion, mode: accountsShipsAs });
+  const saved = savedAccountsSettings(store, owner);
+  // A damaged record reads off (fail closed), whatever the schema's default.
+  return saved ? shippedUnlessChosen(store, owner, settingKey, saved, { mode: accountsShipsAs })
+    : AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion, mode: "off" });
 }
 export function saveAccountsSettings(store: Store, owner: string, value: AccountsSettings): AccountsSettings {
   const parsed = AccountsSettingsSchema.parse(value);

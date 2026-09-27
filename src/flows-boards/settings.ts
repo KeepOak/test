@@ -4,8 +4,8 @@ import { unsetRecord } from "../ship-on.js";
 
 /**
  * Bucket R17-H: flows and boards. Each part has the owner's three-way switch — off, when needed, on —
- * kept in a settings record of its own. What each ships as is `boardShipsOn` (the owner's ship-on rule,
- * src/ship-on.ts); a saved record that cannot be read is off.
+ * kept in a settings record of its own. What each ships as is `boardShipsOn` below; a saved record that
+ * cannot be read is off.
  *
  *   off          the part refuses in one plain sentence, and its tools are not in the catalog at all
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -27,12 +27,16 @@ const RecordSchema = z.object({ mode: BoardModeSchema.default("off") }).strict()
 export const boardKey = (part: BoardPart): string => `flowboards-${part}`;
 
 /**
- * The owner's rule (ships on, 2026-09-26): each of these only rearranges, checks or shows the owner's own work on this
- * computer, and anything that would run asks first under its own rules; none of (a)–(f). Install requests too
- * (2026-09-27): nothing installs itself and only the owner answers; the one lookup sends a public package name to the
- * public malware list, which is a safety check, not sending anything of the owner's to anyone.
+ * What each part is while nothing has been saved for it. The owner's rule (ships on, 2026-09-26): each of these only
+ * rearranges, checks or shows the owner's own work on this computer, and anything that would run asks first under its
+ * own rules; none of (a)–(f). Install requests too (2026-09-27): nothing installs itself and only the owner answers; the
+ * one lookup sends a public package name to the public malware list. A saved record that is damaged still reads as off.
  */
-export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = Object.fromEntries(boardParts.map((part) => [part, "when-needed"]));
+export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = {
+  ...Object.fromEntries(boardParts.map((part) => [part, "when-needed"])),
+  // Kept off by the owner's rule (f), safety: the shared board stays off until its tools declare what they touch.
+  kanban: "off",
+};
 
 /** What each part is, in the owner's words, for the cards and for a refusal. */
 export const boardLabels: Record<BoardPart, string> = {

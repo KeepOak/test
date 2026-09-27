@@ -68,3 +68,13 @@ export function newAppHold(store: Pick<Store, "get">, owner: string, tool: strin
   if (!appAskSettings(store, owner).on) return null;
   return appsUsed(store, owner, trunk).includes(appName(app)) ? null : { reason: newAppHoldReason, onceOnly: true };
 }
+
+/**
+ * Dogfood D4: a program this Trunk has already opened stands in for the owner's yes to using the screen for that open,
+ * so the screen's first-use question (src/screen-guard.ts) does not ask again for it.
+ */
+export function openedBefore(store: Pick<Store, "get">, owner: string, tool: string, args: unknown, trunk: string | undefined): boolean {
+  if (tool !== "desktop.open") return false;
+  const app = (args as { app?: unknown } | null)?.app;
+  return typeof app === "string" && !!appName(app) && appsUsed(store, owner, trunk).includes(appName(app));
+}

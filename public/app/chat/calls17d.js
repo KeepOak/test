@@ -14,17 +14,17 @@ import { t } from "../../i18n.js";
 /** The + menu's two items, after the rest. */
 export const plus17d = () => "<hr>" + mi("call17d", "call17d", t("window.p17d.phone-call"), t("comfort.choice.off")) + mi("meet17d", "meet17d", t("window.p17d.join-meeting"), t("comfort.choice.off"));
 
-const sw = (v, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" data-sw="cmsw17d" data-v="${v}" aria-label="${esc(title)}"><small>${esc(sub)}</small></div>`;
+const sw = (v, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" data-sw="cmsw17d" data-v="${v}" data-why="cmsw17d-${v}" aria-label="${esc(title)}"><small>${esc(sub)}</small></div>`;
 const k = (name) => t(`window.p17d.${name}`);
 
 /** Settings › Voice, at Advanced. */
 export function calls17d() {
   const rows = sw("call", k("phone-calls"), k("phone-calls-hint"))
     + `<div class="ctl"><b>${esc(k("calling-from"))}</b><span class="right"><button class="btn sm" type="button" data-act="call17d">${esc(t("window.places.automations17.set-one-up"))}</button></span><small>${esc(k("calling-from-hint"))}</small></div>`
-    + ctlSeg(k("who-may-call"), k("who-may-call-hint"), [t("window.flows.chw.approved"), k("anyone-i-name")], null)
-    + ctlSeg(k("recording"), k("recording-hint"), [k("only-if-agree"), t("window.flows.trunk.never")], null)
+    + ctlSeg(k("who-may-call"), k("who-may-call-hint"), [t("window.flows.chw.approved"), k("anyone-i-name")], null, "f15-who-it-may-call")
+    + ctlSeg(k("recording"), k("recording-hint"), [k("only-if-agree"), t("window.flows.trunk.never")], null, "f15-recording")
     + sw("meet", t("window.places.automations.meeting-notes"), k("meeting-notes-hint"))
-    + ctlSeg(k("join-from-calendar"), k("join-from-calendar-hint"), [k("only-when-ask"), k("meetings-invited")], null)
-    + ctlSeg(k("send-notes"), k("send-notes-hint"), [k("to-me"), k("to-everyone")], null);
+    + ctlSeg(k("join-from-calendar"), k("join-from-calendar-hint"), [k("only-when-ask"), k("meetings-invited")], null, "f15-join-from-your-calendar")
+    + ctlSeg(k("send-notes"), k("send-notes-hint"), [k("to-me"), k("to-everyone")], null, "f15-send-notes-afterwards");
   return `<div class="sec x15-sec"><h2>${esc(k("calls-meetings"))}</h2><p class="hint">${esc(k("calls-meetings-hint"))}</p>${rows}</div>`;
 }

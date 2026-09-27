@@ -46,10 +46,9 @@ async function fixture(t, provider = scripted()) {
 test("every part ships as the owner's rule says, its tools are left out while off, and the three-way switch loads or hides them", async (t) => {
   const { app } = await fixture(t);
   // The owner's rule (ships on, 2026-09-26): the coding parts ship "when needed", read-first ships on (Q250, a stricter
-  // guard), fewer-rounds is not part of this sweep; a damaged record reads as off; what "off" does is tested by switching
-  // every part off.
-  // Worktrees ship when needed: one is made only when the owner forks a conversation (src/coding/settings.ts).
-  const ships = { "read-first": "on", "fewer-rounds": "off" };
+  // guard), fewer-rounds ships "when needed" too (2026-09-27); a damaged record reads as off; what "off" does is tested by
+  // switching every part off.
+  const ships = { "read-first": "on", worktrees: "off" }; // worktrees: heavy disk
   for (const part of codingParts) assert.equal(app.coding.modes()[part], ships[part] ?? "when-needed", `${part} on a fresh install`);
   assert.equal(codingMode({ get: () => ({ data: { mode: "sideways" } }) }, "local", "notebooks"), "off", "a damaged record reads as off");
   for (const part of codingParts) app.coding.setMode(part, "off");

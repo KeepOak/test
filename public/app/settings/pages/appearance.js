@@ -70,8 +70,8 @@ function backgroundSection() {
   const scenes = sceneCards("scene-set", (v) => choice === "painted" && W.scene === v);
   const season = choice === "painted" ? segAct(t("look.seasonRow"), t("window.settings.appearance.spring-greens-autumn-copper-winter-snow"), [["auto", t("window.settings.appearance.by-the-date")], ["spring", t("look.season.spring")], ["autumn", t("look.season.autumn")], ["winter", t("look.season.winter")]], W.season, "season") : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.background")}</h2>${segAct(t("window.settings.appearance.behind-the-glass"), t("window.settings.appearance.the-grove-and-the-oak-wear"), kinds, choice, "bgset")}${season}${choice === "own" ? ownRows() : ""}<div class="fld"><span>${t("window.settings.appearance.painted-scenes")}</span><div class="scenes12">${scenes}</div></div>
-    <div class="ctl"><b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" disabled><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small></div>
-    <div class="ctl"><b>${t("window.settings.appearance.see-through-panels")}</b><span class="right"><input class="range" type="range" id="see" min="0" max="60" step="5" value="${prefs().seeThrough ?? 30}" aria-label="${t("window.settings.appearance.see-through-panels")}" disabled><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${prefs().seeThrough ?? 30}%</span></span><small>${t("window.settings.appearance.panels-blur-whats-behind-them")}</small></div>
+    <div class="ctl"><b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small></div>
+    <div class="ctl"><b>${t("window.settings.appearance.see-through-panels")}</b><span class="right"><input class="range" type="range" id="see" min="0" max="60" step="5" value="${prefs().seeThrough ?? ""}" aria-label="${t("window.settings.appearance.see-through-panels")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${prefs().seeThrough ?? ""}%</span></span><small>${t("window.settings.appearance.panels-blur-whats-behind-them")}</small></div>
     <div class="ctl"><b>${t("agent-files.preview")}</b><span class="right"><button class="btn sm" type="button" data-act="bg-peek" ${on ? "" : "disabled"}>${ic("eye", "s")}${t("window.settings.appearance.see-it-clearly")}</button></span><small>${t("settingsGrown.look.clear")}</small></div></div>`;
 }
 
@@ -97,7 +97,7 @@ function shownSection() {
   const hidden = prefs().hidden ?? [];
   const rows = HIDES.map(([id, k, l]) => `<div class="ctl"><b>${say(l)}</b><input class="sw" type="checkbox" id="${id}" ${hidden.includes(k) ? "" : "checked"} aria-label="${say(l)}" data-sw="hide" data-k="${k}"><small>${k === "statusbar" ? t("window.settings.appearance.lockdowns-banner-and-stop-while-a") : t("window.settings.appearance.right-click-it-anywhere-to-hide")}</small></div>`).join("");
   return `<div class="sec"><h2>${t("window.settings.appearance.whats-shown")}</h2>${rows}
-    <div class="ctl"><b>${t("window.settings.appearance.keep-things-still")}</b><input class="sw" type="checkbox" id="a-still" aria-label="${t("window.settings.appearance.keep-things-still")}" data-sw="still"><small>${t("window.settings.appearance.stops-the-pet-walking-the-working")}</small></div>
+    <div class="ctl"><b>${t("window.settings.appearance.keep-things-still")}</b><input class="sw" type="checkbox" id="a-still" ${prefs().reduceMotion ? "checked" : ""} aria-label="${t("window.settings.appearance.keep-things-still")}" data-sw="still"><small>${t("window.settings.appearance.stops-the-pet-walking-the-working")}</small></div>
     <div class="ctl"><b>${t("window.settings.appearance.scenery-behind-the-list")}</b><input class="sw" type="checkbox" id="a-scenery" aria-label="${t("window.settings.appearance.scenery-behind-the-list")}" data-sw="scenery"><small>${t("window.settings.appearance.a-small-pixel-oak-at-the")}</small></div></div>
   ${languageSection()}`;
 }
@@ -133,6 +133,8 @@ async function savePrefsAndDraw(change) {
   await refresh().catch((error) => toast(error.message));
   renderNow();
 }
+/* See-through panels: the engine's preference seeThrough, laid on the window as --see (app.css .app.has-bg panels). */
+const applySee = (v) => document.getElementById("app")?.style.setProperty("--see", `${v}%`);
 async function setBackground(on) { await saveDelight({ background: { on } }); drawBackground(); renderNow(); }
 
 /* A chosen file is checked against the prototype's kinds and limits, kept, and shown behind the glass. */
@@ -186,10 +188,24 @@ export function init() {
     if (tr.id === "ag-show") { saveUi({ show: tr.checked }); toast(tr.checked ? t("window.settings.appearance.the-agent-is-back-beside-the") : t("window.settings.appearance.hidden")); return; }
     if (tr.id === "pet-name") { saveDelight({ pets: { name: tr.value } }).then(() => renderNow()); return; }
     if (tr.id === "lang") { pickLanguage(tr.value); return; }
+    /* Keep things still: the engine's preference reduceMotion (POST /api/preferences), which the pet and the painted
+       scene read (core/pets.js calmPets, shell/scene.js calm). */
+    if (tr.id === "a-still") { savePrefsAndDraw({ reduceMotion: tr.checked }); return; }
+    /* How much the theme covers the background: the engine's background.scrim (POST /api/delight/settings keeps the
+       rest), which drawBackground lays on the layer. */
+    if (tr.id === "scrim6") { saveDelight({ background: { scrim: Number(tr.value) } }).then(() => { drawBackground(); renderNow(); }); return; }
+    if (tr.id === "see") { applySee(Number(tr.value)); savePrefsAndDraw({ seeThrough: Number(tr.value) }); return; }
     const row = HIDES.find(([id]) => id === tr.id);
     if (!row) return;
     const k = row[1], hidden = (prefs().hidden ?? []).filter((x) => x !== k);
     savePrefsAndDraw({ hidden: tr.checked ? hidden : [...hidden, k] });
+  });
+  /* While a slider moves, its figure and the look follow it, as the prototype's do; letting go saves it (above). */
+  document.addEventListener("input", (e) => {
+    const tr = e.target;
+    if (tr.id !== "scrim6" && tr.id !== "see") return;
+    if (tr.nextElementSibling) tr.nextElementSibling.textContent = `${tr.value}%`;
+    if (tr.id === "see") applySee(tr.value); else document.getElementById("bgLayer")?.style.setProperty("--scrim", tr.value / 100);
   });
   /* "See it clearly" lasts until a click anywhere or Escape. */
   document.addEventListener("pointerdown", (e) => { const app = document.getElementById("app"); if (app.classList.contains("peek")) { app.classList.remove("peek"); e.preventDefault(); e.stopPropagation(); } }, true);
@@ -199,6 +215,7 @@ export function init() {
 
 export async function load() {
   await loadDelight();
+  applySee(prefs().seeThrough ?? "");
   renderNow();
 }
 
@@ -213,6 +230,7 @@ export const live = {
   "petwhere15": true,
   "ag-size": true,
   "sw:ag-show": true,
+  "sw:a-still": true,
   "bgfit": true,
   "bg-remove": true,
   "bg-remove-yes": true,
@@ -225,4 +243,6 @@ export const live = {
   "sw:h-projects": true,
   "sw:h-notes": true,
   "sw:h-statusbar": true,
+  "sw:scrim6": true,
+  "sw:see": true,
 };

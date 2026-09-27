@@ -12,6 +12,7 @@ import { switchedToolTiers } from "../dist/feature-switches.js";
 import { faceFor, pictureAddress, settleAvatar } from "../dist/trunks/avatar.js";
 import { keyPlan } from "../dist/trunks/accounts.js";
 import { saveAccountsSettings, sessionChoice } from "../dist/accounts/settings.js";
+import { markChosen } from "../dist/ship-on.js";
 import { saveRetentionSettings } from "../dist/retention.js";
 import { saveOrchestrationSettings } from "../dist/orchestration.js";
 import { slug } from "../dist/trunks/record.js";
@@ -190,7 +191,11 @@ test("keys: copied from the owner by default, a sign-in picked like a key, and a
   assert.match(picked.notes.join(" "), /OpenAI: your accounts are not copied.*does not answer/);
   const { app } = await fixture(t);
   on(app);
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); the owner switches it off here.
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] });
+  markChosen(app.store, app.runtime.owner, "accounts", ["mode"]);
   const ed = app.trunks.create({ name: "Ed" });
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "off" }); // it ships on; the owner switched it off
   const keys = app.trunks.keys(ed.id);
   assert.equal(keys.connected, false);
   assert.match(keys.note, /uses your own keys/);
@@ -333,4 +338,17 @@ test("the window's routes and /trunk: create, roster, talk, switch, and a short-
   for (const path of ["/api/trunks", "/api/trunks/switch", `/api/trunks/${id}`, `/api/trunks/${id}/avatar`, `/api/trunks/rooms/${id}/answer`])
     assert.match(offLimitsToShortLivedKeys("POST", path), /short-lived key/);
   assert.equal((await ask(`/api/trunks/${id}/remove`, {})).body.removed, true);
+});
+
+// qa-fixes-3 (Q062): an introduction is words only. With the tool list on offer a small local model answered it with a
+// tool call, which Ollama dropped whole, and the intro came out empty.
+// Mutation: take `permissions: []` out of Trunks.introduce → the intro request carries tools, red.
+test("a new Trunk introduces itself in words, with no tools on offer", async (t) => {
+  const { app, provider } = await fixture(t);
+  on(app);
+  app.trunks.create({ name: "Researcher" });
+  await app.trunks.introduced();
+  const intro = provider.requests.find((r) => /Introduce yourself/.test(r.messages.at(-1)?.content ?? ""));
+  assert.ok(intro, "the introduction was asked");
+  assert.equal(intro.tools?.length ?? 0, 0);
 });

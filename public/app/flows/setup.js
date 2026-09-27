@@ -17,7 +17,7 @@ import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { t, language, LANGUAGES } from "../../i18n.js";
 import { canSpeak, chooseLanguage } from "../shell/language.js";
-import { localPicker, freshPick, initLocalPick } from "./localpick.js";
+import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { media17 } from "../core/art17.js"; // Branch's idle loop, or its still when motion is reduced (prototype anim11)
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 
@@ -337,6 +337,8 @@ async function finish() {
 
 async function test() {
   const o = S.ob;
+  /* Q072: while the picker above shows the hello it just said, Say hello says it again there, so setup shows one time. */
+  if (await helloAgain()) { o.test = null; if (S.ob === o) draw(); return; }
   o.test = "wait";
   draw();
   o.test = await api("models/test", {}).catch((error) => ({ ok: false, error: error.message }));
