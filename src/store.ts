@@ -325,6 +325,17 @@ export class Store {
     }
     return removed;
   }
+  /**
+   * privacy (Settings › Your data, Delete everything): removes one of this person's conversations for good, wherever it
+   * is (Recent, Archived or Recently Deleted), exactly as "Delete now" does, with what goes with it. Work still going
+   * refuses it.
+   */
+  deleteConversationForGood(owner: string, sessionId: string): void {
+    if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
+    if (this.conversations.busy([sessionId, ...this.conversationCompanions(sessionId)]))
+      throw new Error("A task is still working. Stop it or wait for it, then try again.");
+    this.purgeForGood(sessionId);
+  }
   private purgeForGood(sessionId: string): void {
     const companions = [...this.conversationCompanions(sessionId)], runIds = this.runIdsOf([sessionId, ...companions]);
     const residue = findResidue(this.db, runIds);

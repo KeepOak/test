@@ -207,6 +207,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { handlesYourDataPath, yourDataApi } from "./your-data.js";
 import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
@@ -4083,6 +4084,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const answer = await securityCheckApi(app.security, request.method ?? "GET", path, () => readBody(request), remote.status().enabled);
           if (answer !== undefined) { send(response, 200, answer); return; }
         }
+        // privacy: Settings › Your data (src/your-data.ts), which needs the phone door, the paired phones and where Branch listens.
+        if (handlesYourDataPath(path)) {
+          const answer = await yourDataApi(app, request, response, path, { phoneDoor: () => remote.status().enabled,
+            beyondThisComputer: () => listen.beyond === true, phones: () => gateway.devices() });
+          if (answer !== undefined) send(response, 200, answer);
+          return;
+        }
         send(response, 200, await api(app, request, path, options.dataDir, listen));
       } finally {
         place?.();
@@ -4923,6 +4931,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // mac5/key-sweep: a few reads hand back a secret or everybody's data (src/short-lived-keys.ts).
   // mac7/diagnostics: the activity log and problem reports are the owner's alone, reading included.
   // A person's attached files are the owner's alone, like everything else kept beside the database.
+  // privacy: Settings › Your data is the app window's alone, reading included: the summary names the owner's webhooks,
+  // phones and folder, and an export's progress and file hand back everything kept, the full backup among it.
+  if (handlesYourDataPath(path))
+    return "A short-lived key cannot read, export or delete everything kept here. Do that in the app window.";
   if (path.startsWith("/api/attachments/"))
     return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
   if (path.startsWith("/api/diagnostics/"))
