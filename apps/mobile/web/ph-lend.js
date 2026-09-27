@@ -78,12 +78,12 @@ export async function startLending(heard = () => undefined) {
   if (L.starting || !plugin?.lendStart) return;
   // Started before (and perhaps stopped since by "Stop lending", or paired again): begin afresh from what the phone
   // keeps now, its pairing and its own refusals.
-  if (L.stop) {
-    const stop = L.stop;
-    L.stop = null;
-    await stop();
-  }
-  L.starting = serveLending(environment(), plugin, (state) => { L.state = state; L.heard(state); });
+  const before = L.stop;
+  L.stop = null;
+  L.starting = (async () => {
+    await before?.();
+    return serveLending(environment(), plugin, (state) => { L.state = state; L.heard(state); });
+  })();
   try {
     L.stop = await L.starting;
   } catch (error) {
