@@ -185,11 +185,22 @@ export function petHTML(where) {
   const button = `role="button" tabindex="0" aria-label="${label}" data-act="pat"`;
   const body = pet.pixel ? pixelCanvas(pet.kind, `id="pet-cv" ${button}`)
     : `<span class="pet17" ${button}>${media17(pet.still, pet.sprout ? sproutLoop(mood) : pet.walk, pet.sprout ? "pet-vid11" : "pet-vid11 pet12")}</span>`;
-  const box = `<div class="petbox ${P.dir < 0 ? "flip" : ""} ${mood === "sleep" ? "zz11" : ""} ${Date.now() < P.hopUntil ? "hop11" : ""}" data-hide="pet" data-kind="${esc(pet.kind)}" ${where === "side" ? `data-css="left:${8 + P.x}px"` : ""}><span class="pet-say" id="pet-say" ${speaking ? "" : "hidden"}>${esc(P.say)}</span>${body}</div>`;
+  /* Where it has walked to, which way it faces and what it is doing are put on the drawn box by placePet() and
+     applyMood(), not written into the markup, so a step does not make the sidebar's markup differ (it is drawn again only
+     when that changes, core/dom.js). */
+  const box = `<div class="petbox" data-hide="pet" data-kind="${esc(pet.kind)}"><span class="pet-say" id="pet-say" ${speaking ? "" : "hidden"}>${esc(P.say)}</span>${body}</div>`;
   return where === "side" ? `<div class="keeper">${box}</div>` : box;
+}
+/* It walks by transform, which moves it without laying the window out again; walking by `left` laid out the page on
+   every frame of every step (about 2.5 s a minute with a long conversation open). */
+function placePet(box) {
+  box.classList.toggle("flip", P.dir < 0);
+  box.style.transform = W.petWhere === "side" ? `translateX(${P.x}px)` : "";
 }
 export function drawPet() {
   syncWalker();
+  const box = $(".petbox");
+  if (box) placePet(box);
   document.body.classList.toggle("pet-status15", petShown() && W.petWhere === "status");
   applyMood();
   paintPixels();
@@ -264,6 +275,5 @@ function walk() {
   P.x += P.dir * 6;
   if (P.x + 8 > max) P.dir = -1;
   if (P.x < 0) { P.x = 0; P.dir = 1; }
-  if (W.petWhere === "side") box.style.left = 8 + P.x + "px";
-  box.classList.toggle("flip", P.dir < 0);
+  placePet(box);
 }

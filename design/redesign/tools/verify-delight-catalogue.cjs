@@ -157,7 +157,7 @@ const shot = (page, name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
 const petbox = (page) => page.locator(".petbox");
 /* Where the pet stands along the list, sampled over a second: more than one place means it walks (a turn at the edge
    can bring it back to where it was, so one before-and-after pair is not enough). */
-const places = (page) => petbox(page).evaluate(async (b) => { const seen = new Set(); for (let i = 0; i < 7; i++) { seen.add(b.style.left); await new Promise((r) => setTimeout(r, 170)); } return seen.size; });
+const places = (page) => petbox(page).evaluate(async (b) => { const seen = new Set(); for (let i = 0; i < 7; i++) { seen.add(b.style.transform); await new Promise((r) => setTimeout(r, 170)); } return seen.size; });
 const kindNow = async () => (await api("delight")).settings.pets;
 
 async function setupAndEmpty(page, still) {
@@ -425,9 +425,9 @@ async function reduced(browser, onboarded) {
   }
   await page.locator('.pet-c12[data-v="owl"]').click();
   await wait(700);
-  const left0 = await petbox(page).evaluate((b) => b.style.left);
+  const left0 = await petbox(page).evaluate((b) => b.style.transform);
   const px = await pixels(page.locator(".petbox canvas#pet-cv"), 6), card = await pixels(page.locator('.pet-c12[data-v="owl"] canvas'), 4);
-  check("reduced motion: a pixel pet is drawn and holds still (one frame, not walking), in the gallery too", px?.opaque > 20 && px.frames === 1 && card?.opaque > 20 && card.frames === 1 && left0 === await petbox(page).evaluate((b) => b.style.left), `${JSON.stringify(px)} ${JSON.stringify(card)}`);
+  check("reduced motion: a pixel pet is drawn and holds still (one frame, not walking), in the gallery too", px?.opaque > 20 && px.frames === 1 && card?.opaque > 20 && card.frames === 1 && left0 === await petbox(page).evaluate((b) => b.style.transform), `${JSON.stringify(px)} ${JSON.stringify(card)}`);
   await page.locator('.pet-c12[data-v="goatkid"]').hover();
   await wait(700);
   check("reduced motion: hovering a pet plays nothing", (await page.locator(".pets12 video").count()) === 0);
