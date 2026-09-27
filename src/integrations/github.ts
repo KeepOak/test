@@ -3,7 +3,7 @@ import { scrubSecrets } from "../locker.js";
 import type { NetworkPolicy } from "../network-policy.js";
 import type { TrackerIssue } from "./issue-context.js";
 import { readGitHubChecks, type GitHubChecks } from "./github-checks.js";
-import { mergeEvidence, normalMerge, type MergeEvidence, type MergePin } from "./github-merge.js";
+import { mergeEvidence, normalMerge, markReadyForReview, type MergeEvidence, type MergePin } from "./github-merge.js";
 
 /**
  * A small, direct connection to GitHub for the few things people actually ask for: make me a
@@ -122,6 +122,24 @@ export class GitHubAccess {
     repositoryPath.parse(repo);
     if (!Number.isSafeInteger(number) || number < 1) throw new Error("Use the pull request's positive number.");
     return mergeEvidence((method, path, body) => this.request(method, path, body), (input) => this.checks(input), repo, number);
+  }
+  /** Verify protection/checks while the task's PR is still a draft; no model verdict is accepted. */
+  async draftReview(repo: string, number: number): Promise<MergeEvidence> {
+    repositoryPath.parse(repo);
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error("Use the pull request's positive number.");
+    return mergeEvidence((method, path, body) => this.request(method, path, body), (input) => this.checks(input), repo, number, true);
+  }
+  private graphqlUrl(): string {
+    const base = new URL(this.config.apiBase);
+    if (base.protocol !== "https:" || base.search || base.hash) throw new Error("GitHub GraphQL endpoint is not an approved HTTPS address.");
+    if (base.hostname === "api.github.com" && ["", "/"].includes(base.pathname)) base.pathname = "/graphql";
+    else if (base.pathname.replace(/\/$/, "") === "/api/v3") base.pathname = "/api/graphql";
+    else throw new Error("This GitHub address has no verified ready-for-review API. Review the draft on GitHub.");
+    return base.href;
+  }
+  /** Only the validated Full Access self-development controller calls this after an independent helper review. */
+  async readyReviewed(pin: MergePin, beforeSend: () => void): Promise<void> {
+    return markReadyForReview((method, path, body) => this.request(method, path, body, beforeSend), pin, this.graphqlUrl());
   }
   /** Only the separate owner review controller calls this; it is never a model tool. */
   async mergeReviewed(pin: MergePin, beforeSend: () => void): Promise<{ merged: true; sha: string }> {
