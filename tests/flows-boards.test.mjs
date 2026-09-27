@@ -51,9 +51,9 @@ const chatRun = (app) => {
 };
 const callAs = (app, runId, name, args) => app.registry.execute(name, args, app.runtime.context({ runId }));
 
-test("every part but install requests ships when needed; switched off, no tools, and each refuses in one sentence", async (t) => {
+test("every part, install requests included, ships when needed; switched off, no tools, and each refuses in one sentence", async (t) => {
   const { app } = await fixture(t);
-  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), part === "install-requests" ? "off" : "when-needed", part);
+  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), "when-needed", part);
   assert.ok(app.registry.names().includes("board.cards"), "a part that ships when needed has its tools in the index");
   for (const part of boardParts) app.flowsBoards.setMode(part, { mode: "off" });
   const names = new Set(app.registry.names());

@@ -43,7 +43,12 @@ test("the engine's readiness carries the owner's update-by-itself choice, read f
   // A Dev choice saved before Beta became the source build is Beta.
   assert.deepEqual(first, { channel: "beta", busyTasks: 0, autoUpdate: "install" });
   assert.equal(changedMind(first, { channel: "beta", automatic: true }), null);
-  app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "off", releaseChannel: "dev" });
+  // The owner turns it off through the window's own save, so the off is recorded as their choice (src/ship-on.ts).
+  const off = await fetch(`${loopback}/api/comfort`, {
+    method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ card: "notify", values: { autoUpdate: "off" } }),
+  });
+  assert.equal(off.status, 200);
   const later = await updateReadiness(loopback, server.token);
   assert.match(changedMind(later, { channel: "beta", automatic: true }) ?? "", /turned off/);
 });
