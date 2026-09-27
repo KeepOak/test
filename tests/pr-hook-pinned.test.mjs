@@ -112,7 +112,7 @@ function hookDeps(app, owner, hooks = {}) {
 }
 const committed = (args) => args[0] === "--literal-pathspecs" && args[1] === "commit";
 const ask = (name) => ({ name, title: "Add the new control", summary: "Why merge this: the new control is needed.",
-  paths: ["src/ui/new.ts"], signal: AbortSignal.timeout(60_000) });
+  paths: ["src/ui/new.ts"], base: "redesign/window", signal: AbortSignal.timeout(60_000) });
 
 test("from Branch's own source, the pull request sends the checked commit plus one new commit, and the new branch tracks what was sent",
   { skip: posixOnly }, async (t) => {
@@ -129,7 +129,7 @@ test("from Branch's own source, the pull request sends the checked commit plus o
     assert.equal(others.some((commit) => d.pushed[0].history.includes(commit)), false);
     assert.deepEqual([plain(worktree, "config", "branch.branch/pinned.remote"), plain(worktree, "config", "branch.branch/pinned.merge")],
       ["origin", "refs/heads/branch/pinned"], "the new branch tracks the branch it was sent to, as before");
-    assert.deepEqual(d.opened.map((each) => [each.name, each.args.head, each.args.base]), [["github.open_pull_request", "branch/pinned", "main"]]);
+    assert.deepEqual(d.opened.map((each) => [each.name, each.args.head, each.args.base]), [["github.open_pull_request", "branch/pinned", "redesign/window"]]);
   });
 
 test("from Branch's own source, the new branch starts at the commit the contract checked, wherever HEAD has been moved since",

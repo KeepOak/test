@@ -84,6 +84,13 @@ export interface PosixHandOverPlan {
   archive?: string;
   /** Linux: whose sandbox helper counts as set up by an administrator (root, 0); tests hand in their own. */
   sandboxOwner?: number;
+  /**
+   * selfdev (Beta): the file the new version writes once its engine is up (`startedMarker`). With it, the new
+   * version counts as up only when that file appears within `startedSeconds` and it is still running then;
+   * otherwise the previous version is put back, whatever the never-break switch says.
+   */
+  started?: string;
+  startedSeconds?: number;
 }
 
 /** Quotes one word for sh; nothing inside single quotes is interpreted. */
@@ -140,8 +147,11 @@ export function posixHandOverScript(plan: PosixHandOverPlan): string {
     'if ! mv "$INCOMING" "$TARGET"; then log "new version could not be moved in; restoring previous"; mv "$PREVIOUS" "$TARGET"; exit 1; fi',
     'carry_person "$PREVIOUS" "$TARGET"',
     'if [ "$2" = stay ]; then exit 0; fi',
+    ...(plan.started ? [`rm -f ${shellQuote(plan.started)}`] : []),
     'log "starting new version"', posixLaunch(plan, true), "STARTED=$!", `sleep ${plan.settleSeconds ?? 20}`,
-    `if kill -0 "$STARTED" 2>/dev/null; then log "new version is running"; rm -rf "$STAGED"${plan.archive ? ` ${q(plan.archive)}` : ""}; exit 0; fi`,
+    ...(plan.started ? [`WAITED=0; while [ ! -e ${shellQuote(plan.started)} ] && [ "$WAITED" -lt ${plan.startedSeconds ?? 90} ]; do sleep 1; WAITED=$((WAITED+1)); done`,
+      `if [ ! -e ${shellQuote(plan.started)} ]; then log "new version did not say it was up"; kill "$STARTED" 2>/dev/null; sleep 2; fi`] : []),
+    `if ${plan.started ? `[ -e ${shellQuote(plan.started)} ] && ` : ""}kill -0 "$STARTED" 2>/dev/null; then log "new version is running"; rm -rf "$STAGED"${plan.archive ? ` ${q(plan.archive)}` : ""}; exit 0; fi`,
     // mac7/real-update: the previous version is moved back whole, not copied, so what an administrator
     // set up in it (Linux's sandbox helper, owned by root) still works; the new one is kept aside.
     'log "new version did not start; restoring previous"', "carry_person \"$TARGET\" \"$PREVIOUS\"",

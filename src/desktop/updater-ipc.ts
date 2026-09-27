@@ -11,6 +11,8 @@ import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
 
+/** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
+export const updateScratchDir = (): string => join(app.getPath("temp"), "branch-agent-update");
 export const updateSource = {
   /* Tried first; the Updater falls back to the other name of the pair on a 404 (src/desktop/repo-pair.ts). */
   repo: primaryRepo,
@@ -96,7 +98,7 @@ export function registerUpdaterIpc(
     installDir,
     packaged: app.isPackaged,
     packageType: packageTypeOf(process.platform, installDir, (path) => readFileSync(path, "utf8")),
-    scratchDir: join(app.getPath("temp"), "branch-agent-update"),
+    scratchDir: updateScratchDir(),
     // Beta channel: which change this copy was built from, and Branch's own clone of its source to build the next one.
     currentCommit: hooks?.currentCommit ?? null,
     ...(hooks ? { backup: hooks.backup } : {}),

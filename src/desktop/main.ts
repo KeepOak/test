@@ -23,8 +23,8 @@ import { minimizedFlag, startsMinimized } from "../install/autostart.js";
 import { macLoginItem } from "./login-item.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
-import { registerUpdaterIpc, type UpdateHooks } from "./updater-ipc.js";
-import { UpdateDeferredError } from "./updater.js";
+import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
+import { markStarted, UpdateDeferredError } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
 import { FileTokenVault } from "../chatgpt-auth.js";
 import { safeStorage } from "electron";
@@ -395,6 +395,8 @@ async function start(): Promise<void> {
     await engine?.stop();
     throw error;
   });
+  // selfdev: the engine and the window are up; a Beta update waiting to see this keeps the new version (updater.ts).
+  void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
 }
 
 /**

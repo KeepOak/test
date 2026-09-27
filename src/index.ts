@@ -216,6 +216,7 @@ import { isReadOnlyPermission } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
+import { computerGhOpener } from "./integrations/gh-pull-request.js"; // selfdev
 import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integration review
 import { OpenApiTools, registerOpenApiTools } from "./openapi-tools.js";
 import { redactLeaksIn } from "./leak-guard.js";
@@ -756,6 +757,8 @@ export async function createBranch(options: {
     },
     // Integration review: Branch's saved work and keys never leave in a pull request.
     guard: (path) => protectedTarget({ tool: "files.read", readOnly: true, args: { path }, target: path, workspace: files.base }, runtime.protectedAreas),
+    // selfdev: with no saved GitHub connection, a change to Branch itself opens with this computer's own `gh` sign-in.
+    openWithComputerGh: computerGhOpener(),
   };
   const stopOfferingPullRequests = offerPullRequestFromChanges(pullRequestDeps);
   const stopPullRequests = watchFinishedTasks(pullRequestDeps, (work) => {
