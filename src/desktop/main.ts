@@ -367,15 +367,19 @@ async function start(): Promise<void> {
       currentCommit: commit,
     });
   const url = await startEngine(base, settings, { dataDir, workspace });
-  await createWindow(url, () => engine?.token ?? "", settings, {
+  // The key goes only to an engine answering at the window's address: while the engine starts again its port is free,
+  // and another program could take it, so nothing (the window's requests or main's own) carries the key there then.
+  const reachable = () => engine?.servingAt === url;
+  const key = () => (reachable() ? engine?.token ?? "" : "");
+  await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
-    backup: () => requestUpdateBackup(url, engine?.token ?? ""),
+    backup: () => requestUpdateBackup(url, key()),
     // mac3/never-break: the new version is tried on a copy of this data before it is used.
-    canary: desktopCanary(dataDir, () => engineSnapshot(url, engine?.token ?? "")),
+    canary: desktopCanary(dataDir, () => engineSnapshot(url, key())),
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: commit,
-  }, () => engine?.servingAt === url).catch(async (error: unknown) => {
+  }, reachable).catch(async (error: unknown) => {
     await engine?.stop();
     throw error;
   });
