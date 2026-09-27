@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -264,4 +264,30 @@ test("files sent side by side share one person's room, so they cannot fill the d
   // Another person's room is their own.
   const theirs = await store.stage("profile:other", { name: "theirs.bin", mediaType: "application/octet-stream" }, slow(), limits);
   assert.equal(theirs.bytes, 4 * 1024 * 1024);
+});
+
+test("a document's words are read in a worker that is ended at its time limit, never on the engine's own thread", async (t) => {
+  const { wordsOf, readForModel } = await import("../dist/attachment-reading.js");
+  const root = await mkdtemp(join(tmpdir(), "branch-worker-"));
+  t.after(() => discardTemp(root));
+  const path = join(root, "report");
+  await writeFile(path, pdf());
+  const file = { ref: { id: "a".repeat(16), kind: "document", mediaType: "application/pdf", name: "report.pdf", bytes: pdf().length }, path };
+  assert.match((await wordsOf(file)).text, /Quarterly figures rose/, "the worker hands back the words");
+  // A read still going at its limit is ended, and says so: the engine kept running while it waited.
+  await assert.rejects(wordsOf(file, { limitMs: 1 }), /took longer to read than the time allowed/);
+  const stopped = new AbortController();
+  const reading = wordsOf(file, { signal: stopped.signal });
+  stopped.abort();
+  await assert.rejects(reading, /stopped/, "a stopped task ends its read");
+  // The words of every file on a message stay within one budget, whatever kind they are.
+  const many = Array.from({ length: 12 }, (_, at) => ({ ...file, ref: { ...file.ref, id: String(at).padStart(16, "0") } }));
+  const heard = async () => ({ pictures: [], transcript: "said ".repeat(5000), notes: [] });
+  const sounds = Array.from({ length: 6 }, (_, at) => ({ path, ref: { id: String(at + 20).padStart(16, "0"), kind: "sound", mediaType: "audio/wav", name: `v${at}.wav`, bytes: 1 } }));
+  const long = join(root, "long.txt");
+  await writeFile(long, "word ".repeat(20000));
+  const texts = Array.from({ length: 12 }, (_, at) => ({ path: long, ref: { id: String(at + 40).padStart(16, "0"), kind: "document", mediaType: "text/plain", name: `t${at}.txt`, bytes: 100000 } }));
+  const read = await readForModel([...sounds, ...texts, ...many.slice(0, 1)], { understand: heard, whyNotUnderstood: "" });
+  const lifted = [...read.read.matchAll(/What is said in it:\n((?:said )*)|Its words:\n((?:word )*)/g)].reduce((sum, m) => sum + (m[1] ?? m[2] ?? "").length, 0);
+  assert.ok(lifted <= 12000, `everything lifted out of the files stays within the budget (${lifted} characters)`);
 });

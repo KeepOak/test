@@ -25,7 +25,7 @@ export function registerAttachmentTools(registry: Pick<ToolRegistry, "register">
       const sessionId = store.run(context.runId)?.sessionId;
       if (!sessionId) throw new Error("This task has no conversation, so it has no attached files.");
       const found = await attachments.locate(sessionId, input.id, { temporary: store.sessionTemporary(sessionId) });
-      const { text, notes } = await wordsOf({ ref: found.ref, path: found.path });
+      const { text, notes } = await wordsOf({ ref: found.ref, path: found.path }, { signal: context.signal });
       const part = text.slice(input.from, input.from + readPageChars);
       const next = input.from + part.length;
       return { name: found.ref.name, from: input.from, to: next, of: text.length, words: part,

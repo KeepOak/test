@@ -1,7 +1,8 @@
 import { open, readFile, stat } from "node:fs/promises";
+import { Worker } from "node:worker_threads";
 import { maximumImageBytes, maximumImagesPerTurn, type AttachmentRef, type ImagePart } from "./contracts.js";
-import { readDocument, readerByteLimit } from "./document-readers.js";
-import { knownExtension } from "./document-text.js";
+import { readDocument, readerByteLimit, readerTimeLimitMs } from "./document-readers.js";
+import { documentType, knownExtension } from "./document-text.js";
 import { sizeWords, typeFor } from "./attachments.js";
 
 /**
@@ -57,19 +58,59 @@ async function looksLikeWords(path: string): Promise<boolean> {
   } finally { await handle.close(); }
 }
 
-/** The words of one kept file, read by the document readers or as plain text; throws a sentence when it cannot. */
-export async function wordsOf(file: KeptFile): Promise<{ text: string; notes: string[] }> {
+/** How long one document read may run in its worker before it is ended: the readers' own limit, and a little more. */
+export const readWorkerMs = readerTimeLimitMs + 5000;
+const tookTooLong = "it took longer to read than the time allowed";
+/** The kinds read in one straight pass over the words, with nothing to walk: not worth a worker. */
+const plainKinds = new Set(["txt", "md", "csv", "json"]);
+
+/**
+ * One document read in a worker thread (src/document-read-worker.ts), so a slow or shaped file never holds up the
+ * engine, which runs in the window's own process. The worker is ended at `limitMs`, when the task is stopped, or
+ * when it runs out of its memory; each of those is a plain sentence, never a half-read.
+ */
+export function readInWorker(path: string, name: string, options: { limitMs?: number; signal?: AbortSignal } = {}):
+  Promise<{ text: string; notes: string[] }> {
+  const { signal, limitMs = readWorkerMs } = options;
+  if (signal?.aborted) return Promise.reject(new Error("the task was stopped before it was read"));
+  const worker = new Worker(new URL("./document-read-worker.js", import.meta.url), {
+    workerData: { path, name }, execArgv: [], stdout: true, stderr: true,
+    resourceLimits: { maxOldGenerationSizeMb: 512, maxYoungGenerationSizeMb: 64, stackSizeMb: 4 },
+  });
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (error: Error | null, words?: { text: string; notes: string[] }) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", stop);
+      void worker.terminate();
+      if (error) reject(error); else resolve(words!);
+    };
+    const stop = () => finish(new Error("the task was stopped while it was being read"));
+    const timer = setTimeout(() => finish(new Error(tookTooLong)), limitMs);
+    signal?.addEventListener("abort", stop, { once: true });
+    worker.once("message", (answer: { ok: boolean; text?: string; notes?: string[]; error?: string }) =>
+      finish(answer.ok ? null : new Error(answer.error ?? "it could not be read"), { text: answer.text ?? "", notes: answer.notes ?? [] }));
+    worker.once("error", (error) => finish(new Error(/memory/i.test(error.message) ? "it needed more memory to read than is allowed" : error.message.slice(0, 200))));
+    worker.once("exit", () => finish(new Error("it could not be read")));
+  });
+}
+
+/** The words of one kept file, read by the document readers (in a worker) or as plain text; throws a sentence when it cannot. */
+export async function wordsOf(file: KeptFile, options: { signal?: AbortSignal; limitMs?: number } = {}): Promise<{ text: string; notes: string[] }> {
   const { size } = await stat(file.path);
   if (size > readerByteLimit) throw new Error(`it is ${sizeWords(size)}, and Branch reads the words of files up to ${sizeWords(readerByteLimit)}`);
   const type = typeFor(file.ref.mediaType, file.ref.name);
-  const bytes = await readFile(file.path);
   if (knownExtension(file.ref.name) || type === "application/pdf" || type.includes("officedocument")) {
     const name = knownExtension(file.ref.name) ? file.ref.name : `${file.ref.name}.${type === "application/pdf" ? "pdf" : "txt"}`;
-    const document = readDocument(bytes, name);
+    // Plain words (text, Markdown, a table, JSON) are one straight pass; every other reader walks a structure, in a worker.
+    if (!plainKinds.has(documentType(name))) return readInWorker(file.path, name, options);
+    const document = readDocument(await readFile(file.path), name);
     return { text: document.text, notes: document.limits };
   }
   if (!(await looksLikeWords(file.path))) throw new Error("it is not a kind of file Branch can read the words of");
-  return { text: bytes.toString("utf8"), notes: [] };
+  return { text: (await readFile(file.path)).toString("utf8"), notes: [] };
 }
 
 const heading = (file: KeptFile): string => `--- ${file.ref.name} (${file.ref.kind}, ${sizeWords(file.ref.bytes)}, id ${file.ref.id}) ---`;
@@ -79,11 +120,14 @@ export async function readForModel(files: readonly KeptFile[], parts: ReadingPar
   const out: string[] = [];
   const pictures: ImagePart[] = [];
   const pictureNames: string[] = [];
-  const wordy = files.filter((file) => file.ref.kind === "document" || file.ref.kind === "file").length;
-  let budget = readBudgetChars;
+  const wordy = (file: KeptFile) => file.ref.kind !== "picture";
+  let budget = readBudgetChars, left = files.filter(wordy).length;
   for (const file of files) {
     out.push(heading(file));
-    const said = await readOne(file, parts, { pictures, pictureNames, share: Math.max(1500, Math.floor(budget / Math.max(1, wordy))) });
+    // An even share of what is left, and never more than is left: once it is spent, the rest is read with the tool.
+    const share = Math.min(budget, Math.max(1500, Math.floor(budget / Math.max(1, left))));
+    if (wordy(file)) left -= 1;
+    const said = await readOne(file, parts, { pictures, pictureNames, share });
     budget = Math.max(0, budget - said.used);
     out.push(said.words);
   }
@@ -96,9 +140,9 @@ async function readOne(file: KeptFile, parts: ReadingParts, got: Collected): Pro
   const { kind, mediaType } = file.ref;
   if (kind === "picture" && parts.shown?.has(file.ref.id)) return { words: "A picture. It is shown to you with this message.", used: 0 };
   if (kind === "picture") return { words: await asPicture(file, got), used: 0 };
-  if (kind === "sound" || kind === "video") return { words: await asMedia(file, parts, got), used: 0 };
+  if (kind === "sound" || kind === "video") return asMedia(file, parts, got);
   try {
-    const { text, notes } = await wordsOf(file);
+    const { text, notes } = await wordsOf(file, parts.signal ? { signal: parts.signal } : {});
     const clipped = text.length > got.share ? text.slice(0, got.share) : text;
     const rest = text.length > clipped.length
       ? `\n(The first ${clipped.length} of ${text.length} characters. Read the rest with ${readToolName} and id ${file.ref.id}.)` : "";
@@ -121,18 +165,20 @@ async function asPicture(file: KeptFile, got: Collected): Promise<string> {
   return "A picture. Whether it is shown to you is said at the end of this message.";
 }
 
-async function asMedia(file: KeptFile, parts: ReadingParts, got: Collected): Promise<string> {
+async function asMedia(file: KeptFile, parts: ReadingParts, got: Collected): Promise<{ words: string; used: number }> {
   const what = file.ref.kind === "video" ? "video" : "sound";
-  if (!parts.understand) return `A ${what} file, kept in this conversation but not ${what === "video" ? "watched or listened to" : "listened to"}: ${parts.whyNotUnderstood} Nothing of what is in it is known.`;
+  if (!parts.understand) return { words: `A ${what} file, kept in this conversation but not ${what === "video" ? "watched or listened to" : "listened to"}: ${parts.whyNotUnderstood} Nothing of what is in it is known.`, used: 0 };
   try {
     const heard = await parts.understand(file.path, typeFor(file.ref.mediaType, file.ref.name), parts.signal);
     const room = Math.max(0, maximumImagesPerTurn - got.pictures.length);
     const stills = heard.pictures.slice(0, room);
     for (const still of stills) { got.pictures.push(still); got.pictureNames.push(`${file.ref.name} (${still.name ?? "still"})`); }
-    const transcript = heard.transcript.trim() ? `What is said in it:\n${heard.transcript.slice(0, got.share)}` : "No speech was written out of it.";
+    const said = heard.transcript.trim() ? heard.transcript.slice(0, got.share) : "";
+    const cut = said.length < heard.transcript.length ? `\n(The first ${said.length} of ${heard.transcript.length} characters of what is said.)` : "";
+    const transcript = heard.transcript.trim() ? `What is said in it:\n${said}${cut}` : "No speech was written out of it.";
     const stillsSaid = what === "video" ? ` ${stills.length ? `${stills.length} still pictures taken from it go with this message.` : "No still pictures could be taken from it."}` : "";
-    return `A ${what} file.${stillsSaid} ${transcript}${heard.notes.length ? `\n(${heard.notes.join(" ")})` : ""}`;
+    return { words: `A ${what} file.${stillsSaid} ${transcript}${heard.notes.length ? `\n(${heard.notes.join(" ")})` : ""}`, used: said.length };
   } catch (error) {
-    return `A ${what} file, kept in this conversation but not understood: ${(error as Error).message} Nothing of what is in it is known.`;
+    return { words: `A ${what} file, kept in this conversation but not understood: ${(error as Error).message} Nothing of what is in it is known.`, used: 0 };
   }
 }
