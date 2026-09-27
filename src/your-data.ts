@@ -35,6 +35,7 @@ export interface DoorFacts { phoneDoor: () => boolean; beyondThisComputer: () =>
 export const handlesYourDataPath = (path: string): boolean => path === "/api/your-data" || path.startsWith("/api/your-data/");
 export const deletePhrase = "delete everything";
 const maximumExportBytes = 512 * 1024 * 1024;
+const maximumExportsAtOnce = 2;
 /** A person's facts that are not in use now; exported beside memory.json. */
 const pastMemoryTables = ["memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints"] as const;
 const memoryTables = ["memory", "memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints", "memory_terms",
@@ -332,6 +333,9 @@ function startExport(app: Branch, doors: DoorFacts): Job {
   // One at a time for each person: another is refused while theirs is being made; a finished one makes way for the new.
   if ([...jobs.values()].some((job) => job.scope === scope && !job.zip && !job.error))
     throw new HttpError(409, "An export is already being made. Wait for it to finish, then try again.");
+  // And no more than two at once across everybody: each is built in memory, up to 512 MB.
+  if ([...jobs.values()].filter((job) => !job.zip && !job.error).length >= maximumExportsAtOnce)
+    throw new HttpError(409, "Two exports are already being made on this computer. Wait for one to finish, then try again.");
   for (const [id, job] of jobs) if (job.scope === scope) jobs.delete(id);
   const parts: Part[] = [
     () => [{ name: "README.txt", data: Buffer.from(readme(owner), "utf8") }],

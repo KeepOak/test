@@ -425,3 +425,29 @@ test("export (follow-up): one at a time for each person, and an outside service'
   }
   assert.match(broken.error ?? "", /could not be asked what it keeps, so nothing was saved/, "an export never quietly leaves them out");
 });
+
+test("export (for good): no more than two exports are made at once across everybody", async (t) => {
+  const { app, call, asOwner, asSam } = await served(t);
+  const service = await outsideService(t);
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  const kim = app.store.profiles.create({ name: "Kim", pin: "1357" });
+  app.runtime.roles.save(kim.id, { role: "adult" });
+  const asKim = () => app.store.profiles.switch({ profileId: kim.id, pin: "1357" });
+  for (const scope of [app.runtime.owner, `profile:${kim.id}`]) app.memory.backend.configure(scope, { mode: "outside", url: service.url });
+  asSam();
+  app.memory.backend.configure(app.store.profiles.scope(), { mode: "outside", url: service.url });
+  asOwner();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  service.refuse = (method, parts) => (method === "GET" && parts.length === 2 ? held.then(() => null) : null);
+  assert.equal((await call("POST", "/api/your-data/export", {})).status, 200, "the owner's");
+  asSam();
+  assert.equal((await call("POST", "/api/your-data/export", {})).status, 200, "Sam's");
+  asKim();
+  const third = await call("POST", "/api/your-data/export", {});
+  assert.equal(third.status, 409, "a third waits");
+  assert.match(third.body.error, /Two exports are already being made/);
+  release();
+  service.refuse = null;
+  asOwner();
+});
