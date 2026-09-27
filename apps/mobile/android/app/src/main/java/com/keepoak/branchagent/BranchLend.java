@@ -6,12 +6,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import com.keepoak.branchagent.BranchLendGeneration.Pending;
 
 /**
  * PH-03: lending this phone to Branch, while the phone app's own page is open. This side holds the
@@ -36,21 +35,26 @@ final class BranchLend {
     interface Page {
         /** Whether the phone app's own page is the one showing (never the owner's Branch). */
         boolean showing();
-        void state(boolean connected, List<String> enabled);
+        boolean foreground();
+        void state(long generation, boolean connected, List<String> enabled);
         void invoke(JSONObject ask);
     }
 
     private final BranchNode node;
     private final Page page;
-    private final Object lock = new Object();
+    private final BranchLendGeneration lock = new BranchLendGeneration();
     /** The page asked for lending and has not stopped it; a pause keeps it, so coming back dials again. */
     private volatile boolean desired;
     private volatile BranchSocket socket;
-    private Thread thread;
-    private volatile List<String> enabled = Collections.emptyList();
-    /** Asks passed to the page and not yet answered, by id, with their deadline. */
-    private final Map<String, Long> waiting = Collections.synchronizedMap(new LinkedHashMap<>());
-    private final Set<String> seen = Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> seen = new HashSet<>();
+
+    void deliver(long generation, Runnable event) { lock.deliver(generation, event); }
+
+    private void clearRequests() {
+        lock.enabled = Collections.emptyList();
+        lock.waiting.clear();
+        seen.clear();
+    }
 
     BranchLend(BranchNode node, Page page) {
         this.node = node;
@@ -88,31 +92,30 @@ final class BranchLend {
 
     /** The page asks for lending while it is open: dials now, and again whenever the app comes back to the screen. */
     void start() {
-        desired = true;
+        synchronized (lock) { desired = true; }
         connect();
     }
 
     /** The page no longer wants it (or the phone stops lending): the socket closes and stays closed. */
     void stop() {
-        desired = false;
-        disconnect();
+        disconnect(true);
     }
 
     /** The app left the screen: the socket closes, and Branch says this phone is not connected. */
     void pause() {
-        disconnect();
+        disconnect(false);
     }
 
     /** The app is back on the screen: dials again if the page still wants lending. */
     void resume() {
-        if (desired) connect();
+        connect();
     }
 
     private void connect() {
         synchronized (lock) {
-            if (thread != null || node.lendTarget() == null) return;
-            thread = new Thread(this::run, "branch-lend");
-            thread.start();
+            if (!desired || lock.thread != null || node.lendTarget() == null) return;
+            lock.thread = new Thread(this::run, "branch-lend");
+            lock.thread.start();
         }
     }
 
@@ -120,25 +123,29 @@ final class BranchLend {
      * Ends the current connection at once. The thread that held it is no longer the current one, so
      * whatever it finishes afterwards (an open, a frame, its clean-up) changes nothing a newer one holds.
      */
-    private void disconnect() {
+    private void disconnect(boolean stop) {
+        // Close before taking the state monitor: a pending media write must not hold up pause.
+        BranchSocket writing = socket;
+        if (writing != null) writing.close();
         Thread was;
         BranchSocket open;
+        long generation;
         synchronized (lock) {
-            was = thread;
+            if (stop) desired = false;
+            was = lock.thread;
             open = socket;
-            thread = null;
+            lock.thread = null;
             socket = null;
-            enabled = Collections.emptyList();
-            waiting.clear();
+            generation = lock.invalidate(this::clearRequests);
         }
         if (open != null) open.close();
         if (was != null) was.interrupt();
-        page.state(false, Collections.emptyList());
+        page.state(generation, false, Collections.emptyList());
     }
 
     private boolean current() {
         synchronized (lock) {
-            return thread == Thread.currentThread();
+            return lock.thread == Thread.currentThread();
         }
     }
 
@@ -163,7 +170,7 @@ final class BranchLend {
             }
         }
         synchronized (lock) {
-            if (thread == Thread.currentThread()) thread = null;
+            if (lock.thread == Thread.currentThread()) lock.thread = null;
         }
     }
 
@@ -171,7 +178,7 @@ final class BranchLend {
     private boolean session(String hub, String deviceId) throws Exception {
         BranchSocket open = BranchSocket.open(hub, deviceId);
         synchronized (lock) {
-            if (thread != Thread.currentThread()) {
+            if (lock.attach(Thread.currentThread(), open, this::clearRequests) < 0) {
                 open.close(); // stopped while it was dialling: this connection belongs to nobody
                 return false;
             }
@@ -191,17 +198,15 @@ final class BranchLend {
             return proven;
         } finally {
             open.close();
-            boolean mine;
+            long generation;
             synchronized (lock) {
-                mine = socket == open;
-                if (mine) socket = null;
+                generation = lock.end(Thread.currentThread(), open, () -> {
+                    socket = null;
+                    clearRequests();
+                });
             }
             // Only the connection still current says it ended; one that was replaced or stopped already did.
-            if (mine) {
-                enabled = Collections.emptyList();
-                waiting.clear();
-                page.state(false, Collections.emptyList());
-            }
+            if (generation >= 0) page.state(generation, false, Collections.emptyList());
         }
     }
 
@@ -212,45 +217,54 @@ final class BranchLend {
         if (type.equals("challenge")) {
             String nonce = message.optString("nonce", "");
             if (helloText(deviceId, nonce) == null) throw new SecurityException("refused");
+            synchronized (lock) {
+                if (!lock.current(Thread.currentThread(), open)) return false;
+            }
             open.sendText(new JSONObject().put("type", "hello").put("version", PROTOCOL).put("deviceId", deviceId)
                 .put("platform", "android").put("offers", new JSONArray(offers(never))).put("signature", node.helloSignature(nonce)).toString());
             return false;
         }
         if (type.equals("welcome") || type.equals("enabled")) {
-            enabled = enabledOf(BranchNode.list(message.optJSONArray("enabled")), never);
-            page.state(true, enabled);
-            return true;
+            List<String> switched = enabledOf(BranchNode.list(message.optJSONArray("enabled")), never);
+            return lock.enable(Thread.currentThread(), open, switched, () -> page.state(lock.generation, true, switched));
         }
-        if (type.equals("invoke")) onInvoke(open, message, never);
+        if (type.equals("invoke")) onInvoke(open, message);
         else if (type.equals("bye") && message.optString("reason", "").contains("taken off")) {
             // The owner took this phone off the list on the computer: it forgets the pairing, as phone-node.js does.
-            desired = false;
-            synchronized (lock) {
-                if (thread == Thread.currentThread()) thread = null;
-            }
-            node.forget();
+            lock.apply(Thread.currentThread(), open, () -> {
+                desired = false;
+                lock.thread = null;
+                socket = null;
+                long generation = lock.invalidate(this::clearRequests);
+                node.forget();
+                page.state(generation, false, Collections.emptyList());
+            });
         }
         return false;
     }
 
-    private void onInvoke(BranchSocket open, JSONObject ask, List<String> never) throws Exception {
+    private void onInvoke(BranchSocket open, JSONObject ask) throws Exception {
         String id = ask.optString("id", "");
-        if (!id.matches("^[a-f0-9]{32}$") || !seen.add(id)) return;
-        if (seen.size() > 500) seen.clear();
+        if (!id.matches("^[a-f0-9]{32}$")) return;
         String capability = ask.optString("capability", "");
         Object deadline = ask.opt("deadline");
-        String why = refusal(capability, deadline, System.currentTimeMillis(), never, enabled, page.showing());
+        boolean showing = page.showing();
+        String why;
+        long generation;
+        synchronized (lock) {
+            if (!lock.current(Thread.currentThread(), open) || !seen.add(id)) return;
+            if (seen.size() > 500) seen.clear();
+            why = refusal(capability, deadline, System.currentTimeMillis(), node.never(), lock.enabled, showing && page.foreground());
+            generation = lock.generation;
+            if (why == null) lock.waiting.put(id, new Pending(((Number) deadline).longValue(), generation, capability));
+        }
         if (why != null) {
             open.sendText(new JSONObject().put("type", "result").put("id", id).put("ok", false).put("error", why).toString());
             return;
         }
-        synchronized (lock) {
-            if (socket != open || thread != Thread.currentThread()) return;
-            waiting.put(id, ((Number) deadline).longValue());
-        }
         JSONObject args = ask.optJSONObject("args");
         page.invoke(new JSONObject().put("id", id).put("capability", capability).put("args", args == null ? new JSONObject() : args)
-            .put("deadline", ((Number) deadline).longValue()));
+            .put("deadline", ((Number) deadline).longValue()).put("generation", generation));
     }
 
     /**
@@ -259,38 +273,57 @@ final class BranchLend {
      */
     void answer(JSONObject from) throws Exception {
         String id = from.optString("id", "");
-        Long deadline;
+        Pending pending;
         BranchSocket open;
         synchronized (lock) {
-            deadline = waiting.remove(id);
+            pending = lock.waiting.get(id);
             open = socket;
+            if (pending == null || pending.generation != from.optLong("generation", -1))
+                throw new IllegalStateException("That request is not waiting.");
         }
-        if (deadline == null || open == null) throw new IllegalStateException("That request is not waiting.");
-        if (deadline < System.currentTimeMillis() || !page.showing()) throw new IllegalStateException("Lending stopped or the request expired.");
-        boolean ok = from.optBoolean("ok", false);
-        JSONObject result = new JSONObject().put("type", "result").put("id", id).put("ok", ok);
-        byte[] bytes = null;
-        if (!ok) {
-            String error = from.optString("error", "");
-            result.put("error", error.isEmpty() ? "The phone could not do it." : error.substring(0, Math.min(2000, error.length())));
-        } else {
-            if (from.has("value")) result.put("value", from.get("value"));
-            JSONObject media = from.optJSONObject("media");
-            if (media != null) {
-                String mime = media.optString("mime", ""), name = media.optString("name", "");
-                bytes = Base64.decode(media.optString("data", ""), Base64.DEFAULT);
-                if (!mime.matches("^(image|audio)/[a-z0-9.+-]{1,60}$") || bytes.length > MEDIA_LIMIT || name.length() > 120)
-                    throw new IllegalArgumentException("The picture or sound was larger than Branch accepts.");
-                JSONObject meta = new JSONObject().put("mime", mime).put("bytes", bytes.length);
-                if (!name.isEmpty()) meta.put("name", name);
-                result.put("media", meta);
-            }
-        }
-        open.sendText(result.toString());
-        if (bytes == null) return;
+        if (open == null || pending.deadline < System.currentTimeMillis() || !page.showing())
+            throw new IllegalStateException("Lending stopped or the request expired.");
+        Answer answer = makeAnswer(from, id);
+        byte[] framed = frameMedia(id, answer.bytes);
+        // Authorization occurs after acquiring the writer, without holding the state gate during I/O.
+        // A later disconnect closes this captured transport, never a replacement connection.
+        open.sendAnswer(answer.result.toString(), framed,
+            () -> lock.authorize(id, pending, open, System.currentTimeMillis(), page::foreground, node::never));
+    }
+
+    private static byte[] frameMedia(String id, byte[] bytes) {
+        if (bytes == null) return null;
         byte[] framed = new byte[32 + bytes.length];
         System.arraycopy(id.getBytes(StandardCharsets.US_ASCII), 0, framed, 0, 32);
         System.arraycopy(bytes, 0, framed, 32, bytes.length);
-        open.send(0x2, framed);
+        return framed;
+    }
+
+    private static final class Answer {
+        final JSONObject result;
+        byte[] bytes;
+        Answer(JSONObject result) { this.result = result; }
+    }
+
+    private static Answer makeAnswer(JSONObject from, String id) throws Exception {
+        boolean ok = from.optBoolean("ok", false);
+        Answer answer = new Answer(new JSONObject().put("type", "result").put("id", id).put("ok", ok));
+        if (!ok) {
+            String error = from.optString("error", "");
+            answer.result.put("error", error.isEmpty() ? "The phone could not do it." : error.substring(0, Math.min(2000, error.length())));
+        } else {
+            if (from.has("value")) answer.result.put("value", from.get("value"));
+            JSONObject media = from.optJSONObject("media");
+            if (media != null) {
+                String mime = media.optString("mime", ""), name = media.optString("name", "");
+                answer.bytes = Base64.decode(media.optString("data", ""), Base64.DEFAULT);
+                if (!mime.matches("^(image|audio)/[a-z0-9.+-]{1,60}$") || answer.bytes.length > MEDIA_LIMIT || name.length() > 120)
+                    throw new IllegalArgumentException("The picture or sound was larger than Branch accepts.");
+                JSONObject meta = new JSONObject().put("mime", mime).put("bytes", answer.bytes.length);
+                if (!name.isEmpty()) meta.put("name", name);
+                answer.result.put("media", meta);
+            }
+        }
+        return answer;
     }
 }

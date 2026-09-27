@@ -154,7 +154,7 @@ test("the native sides dial only the paired Branch, sign only the hello, and off
   assert.match(socket, /getDefaultHostnameVerifier\(\)\.verify\(bare, secure\.getSession\(\)\)/);
   assert.match(swift, /willPerformHTTPRedirection[\s\S]{0,200}completionHandler\(nil\)/);
   // Every ask is checked natively before the page sees it, and Branch's page never sees one.
-  assert.match(java, /String why = refusal\(capability, deadline, System\.currentTimeMillis\(\), never, enabled, page\.showing\(\)\);/);
+  assert.match(java, /why = refusal\(capability, deadline, System\.currentTimeMillis\(\), node\.never\(\), lock\.enabled, showing && page\.foreground\(\)\);/);
   assert.match(swift, /if let why = Self\.refusal\(capability, deadline: ask\["deadline"\], now: now, never: never, enabled: enabled, showing: showing\(\)\)/);
   assert.match(plugin, /public void openBranch\(PluginCall call\) \{\n\s+lend\.stop\(\);/);
   assert.match(swift, /lend\.stop\(\) \/\/ PH-03: Branch's page never sees an ask/);
@@ -165,5 +165,5 @@ test("the native sides dial only the paired Branch, sign only the hello, and off
   assert.match(plugin, /boolean ownPage = foreground && BranchRefusals\.sameOrigin/);
   assert.match(plugin, /private boolean appPageShowing\(\) \{\n\s+if \(!foreground\) return false;/);
   assert.match(swift, /didEnterBackgroundNotification[\s\S]{0,120}lend\.pause\(\)[\s\S]{0,200}willEnterForegroundNotification[\s\S]{0,120}lend\.resume\(\)/);
-  assert.match(java, /if \(thread != Thread\.currentThread\(\)\) \{\n\s+open\.close\(\);/);
+  assert.match(java, /if \(lock\.attach\(Thread\.currentThread\(\), open, this::clearRequests\) < 0\) \{\n\s+open\.close\(\);/);
 });

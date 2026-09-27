@@ -86,3 +86,34 @@ test("Stop lending forgets locally and navigates before a failed remote revoke",
     { deviceForget: async () => { calls.push("forget"); } }, () => calls.push("navigate"));
   assert.deepEqual(calls, ["forget", "navigate", "revoke", "offline reported"]);
 });
+
+test("old queued native events cannot capture or undo a replacement connection state", async (t) => {
+  const f = fixture(), stop = await serveLending(f.env, f.bridge);
+  t.after(stop);
+  f.events.lendState({ generation: 4, connected: true, enabled: ["camera"] });
+  f.events.lendState({ generation: 6, connected: true, enabled: ["camera"] });
+  f.events.lendState({ generation: 4, connected: false, enabled: [] });
+  const obsolete = f.events.lendInvoke({ id: "a".repeat(32), generation: 4, capability: "camera", deadline: Date.now() + 10_000 });
+  await tick();
+  assert.equal(f.streams.length, 0);
+  await obsolete;
+  const pending = f.events.lendInvoke({ id: "b".repeat(32), generation: 6, capability: "camera", deadline: Date.now() + 10_000 });
+  await tick(); f.finish(); await pending;
+  assert.equal(f.streams.length, 1);
+  assert.equal(f.answers[0].ok, true);
+  assert.equal(f.answers[0].generation, 6);
+});
+
+test("a replacement generation cancels capture even when the same capability stays enabled", async (t) => {
+  const f = fixture(), stop = await serveLending(f.env, f.bridge);
+  t.after(stop);
+  f.events.lendState({ generation: 1, connected: true, enabled: ["listen"] });
+  const pending = f.events.lendInvoke({ id: "a".repeat(32), generation: 1, capability: "listen", deadline: Date.now() + 10_000 });
+  await tick();
+  f.events.lendState({ generation: 3, connected: true, enabled: ["listen"] });
+  await tick();
+  assert.ok(f.streams[0].stopped > 0);
+  await pending;
+  f.finish(); await tick();
+  assert.equal(f.answers.length, 0);
+});

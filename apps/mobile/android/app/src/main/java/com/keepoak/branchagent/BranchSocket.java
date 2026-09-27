@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLPeerUnverifiedException;
@@ -222,6 +223,13 @@ final class BranchSocket {
 
     void sendText(String text) throws IOException {
         send(0x1, text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** A result queued behind another writer is authorized only when it can actually start writing. */
+    synchronized void sendAnswer(String text, byte[] media, BooleanSupplier authorize) throws IOException {
+        if (!authorize.getAsBoolean()) throw new IllegalStateException("Lending stopped or the request expired.");
+        sendText(text);
+        if (media != null) send(0x2, media);
     }
 
     void close() {

@@ -203,11 +203,16 @@ export async function serveLending(env, bridge, onState = () => undefined) {
   const status = await bridge.deviceStatus();
   const never = readNever(status?.never), lent = { never, offers: offersLess(never, env.offers ?? APP_OFFERS[env.platform] ?? []), enabled: new Set(), seen: new Set() };
   const active = new Map();
-  let stopped = false;
+  let stopped = false, generation;
   const cancel = () => { for (const request of active.values()) request.controller.abort(); env.stopOutput?.(); };
   const hidden = env.onHidden?.(() => { lent.enabled.clear(); cancel(); });
   const handles = [
     await bridge.addListener("lendState", (state) => {
+      if (Number.isSafeInteger(state?.generation)) {
+        if (generation !== undefined && state.generation < generation) return;
+        if (generation !== state.generation) cancel();
+        generation = state.generation;
+      } else if (generation !== undefined) return;
       lent.enabled = new Set(state?.connected && !stopped ? (state.enabled ?? []).filter((c) => lent.offers.includes(c)) : []);
       if (!state?.connected || !lent.enabled.has("speak")) env.stopOutput?.();
       for (const request of active.values()) if (!lent.enabled.has(request.capability)) request.controller.abort();
@@ -215,10 +220,12 @@ export async function serveLending(env, bridge, onState = () => undefined) {
     }),
     await bridge.addListener("lendInvoke", async (frame) => {
       if (stopped || !hexOk(frame?.id, 32) || lent.seen.has(frame.id)) return;
+      if (generation !== undefined && frame.generation !== generation) return;
+      const tag = generation === undefined ? {} : { generation };
       if (active.size) {
         lent.seen.add(frame.id);
         if (lent.seen.size > 500) lent.seen.delete(lent.seen.values().next().value);
-        await bridge.lendResult({ type: "result", id: frame.id, ok: false, error: "This phone is already answering a request." }).catch(() => undefined);
+        await bridge.lendResult({ type: "result", ...tag, id: frame.id, ok: false, error: "This phone is already answering a request." }).catch(() => undefined);
         return;
       }
       const controller = new AbortController(), request = { controller, capability: frame.capability };
@@ -226,9 +233,9 @@ export async function serveLending(env, bridge, onState = () => undefined) {
       const timer = setTimeout(() => controller.abort(), Math.max(0, Math.min(2_147_483_647, frame.deadline - env.now())));
       try {
         const answer = await answerInvoke({ ...env, signal: controller.signal }, lent, frame);
-        if (!answer || stopped || controller.signal.aborted) return;
+        if (!answer || stopped || controller.signal.aborted || (tag.generation !== undefined && tag.generation !== generation)) return;
         const { result, bytes } = answer;
-        await bridge.lendResult({ ...result, ...(bytes ? { media: { ...result.media, data: b64Large(bytes) } } : {}) });
+        await bridge.lendResult({ ...result, ...tag, ...(bytes ? { media: { ...result.media, data: b64Large(bytes) } } : {}) });
       } catch { /* The native connection may already have discarded this request. */ }
       finally { clearTimeout(timer); active.delete(frame.id); }
     }),

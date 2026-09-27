@@ -45,17 +45,25 @@ public class BranchPhonePlugin extends Plugin {
             }
 
             @Override
-            public void state(boolean connected, java.util.List<String> enabled) {
+            public boolean foreground() { return foreground; }
+
+            @Override
+            public void state(long generation, boolean connected, java.util.List<String> enabled) {
                 JSObject out = new JSObject();
+                out.put("generation", generation);
                 out.put("connected", connected);
                 out.put("enabled", new org.json.JSONArray(enabled));
-                notifyListeners("lendState", out);
+                getActivity().runOnUiThread(() -> lend.deliver(generation, () -> notifyListeners("lendState", out)));
             }
 
             @Override
             public void invoke(JSONObject ask) {
                 try {
-                    notifyListeners("lendInvoke", JSObject.fromJSONObject(ask));
+                    JSObject out = JSObject.fromJSONObject(ask);
+                    long generation = ask.optLong("generation", -1);
+                    getActivity().runOnUiThread(() -> lend.deliver(generation, () -> {
+                        if (foreground) notifyListeners("lendInvoke", out);
+                    }));
                 } catch (org.json.JSONException ignored) {
                     // made from a JSONObject just above; it always converts
                 }
