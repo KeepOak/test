@@ -1,8 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import type { Duplex } from "node:stream";
-import { clearRunning, writeRunning } from "../install/running.js";
+import { clearRunning, sessionTokenFileName, writeRunning } from "../install/running.js";
+import { answerHeader, answerProof, askHeader, isSessionKey, markFor, newBoot, proofPath, sessionKey } from "../engine-proof.js";
 import { contractsMeet, gatewayContract, WorkerReadySchema, type WorkerReady } from "./contract.js";
 import { loadGatewayConfig, promoteGood, restoreGood, sameAsGood, type GatewayConfig } from "./gateway-config.js";
 import { clearCrashes, markExited, markRunning, recordCrash } from "./gateway-state.js";
@@ -56,6 +59,8 @@ export class Gateway {
   private watch: UpdateWatch | null = null;
   private watchTimer: NodeJS.Timeout | null = null;
   private readonly waiters = new Set<(port: number | null) => void>();
+  /** This gateway's process, for the desktop window's proof, session key and marks (src/engine-proof.ts). */
+  private readonly boot = newBoot();
   /** The address of a worker that refused a connection, so it is not tried again before it is replaced. */
   private deadPort: number | null = null;
   /** Connections carried through as upgrades, closed when the gateway stops. */
@@ -233,16 +238,52 @@ export class Gateway {
     return request.headers.host === own && (!origin || origin === `http://${own}`);
   }
   private forwardedHeaders(request: IncomingMessage, port: number): Record<string, string | string[] | undefined> {
-    const headers = { ...request.headers, host: `127.0.0.1:${port}` };
+    const headers: Record<string, string | string[] | undefined> = { ...request.headers, host: `127.0.0.1:${port}` };
     if (headers.origin) headers.origin = `http://127.0.0.1:${port}`;
+    // The desktop window's session key is for this gateway's process: the worker is handed the window key it stands for.
+    const key = this.windowKey();
+    const supplied = /^Bearer (\S+)$/.exec(String(headers.authorization ?? ""))?.[1] ?? "";
+    if (key && isSessionKey(supplied, key, this.boot)) headers.authorization = `Bearer ${key}`;
+    delete headers[askHeader]; // marked here, where the window's port is, not by the worker
     return headers;
+  }
+
+  /** The window's key, read where it is used: removing a phone that was handed it makes a new one. */
+  private windowKey(): string | null {
+    try {
+      const key = readFileSync(join(this.options.dataDir, sessionTokenFileName), "utf8").trim();
+      return /^[a-f0-9]{64}$/.test(key) ? key : null;
+    } catch { return null; }
+  }
+
+  /** The mark the desktop window asked for on this request's answer, made for this gateway's process and port. */
+  private markOf(request: IncomingMessage): string | null {
+    const key = this.windowKey();
+    if (!key) return null;
+    return markFor(request.headers[askHeader], sessionKey(key, this.boot), { port: request.socket?.localPort, address: request.socket?.localAddress }, this.boot);
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (!this.hostOk(request)) return plain(response, 403, "Host rejected");
     const path = (request.url ?? "/").split("?")[0];
     if (request.method === "GET" && path === "/gateway/health") return json(response, 200, this.health());
+    // The gateway holds the window's address, so it is what proves itself there (src/engine-proof.ts), as the engine does.
+    if (request.method === "GET" && path === proofPath) return this.proof(request, response);
     await this.forward(request, response, path ?? "/", true);
+  }
+
+  /** The proof, and with `hold` the connection kept open after it, so the window learns the moment the gateway stops. */
+  private proof(request: IncomingMessage, response: ServerResponse): void {
+    const key = this.windowKey();
+    const search = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
+    const answer = key ? answerProof(search, key, { port: request.socket?.localPort, address: request.socket?.localAddress }, this.boot) : null;
+    if (!answer) return plain(response, 404, "Not found");
+    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+    response.write(`${JSON.stringify(answer)}\n`);
+    if (search.get("hold") !== "1") { response.end(); return; }
+    const alive = setInterval(() => response.write("\n"), 20000);
+    alive.unref();
+    response.once("close", () => clearInterval(alive));
   }
 
   /**
@@ -253,9 +294,13 @@ export class Gateway {
     const port = await this.waitForWorker(this.config.holdSeconds * 1000);
     if (port === null) return json(response, 503, { error: "Branch is starting its engine again. Try again in a moment." });
     const closing = request.method === "POST" && path === "/api/deployment/close";
+    const mark = this.markOf(request);
     const upstream = httpRequest({ host: "127.0.0.1", port, method: request.method, path: request.url,
       headers: this.forwardedHeaders(request, port) }, (reply) => {
-      response.writeHead(reply.statusCode ?? 502, reply.headers);
+      const headers = { ...reply.headers };
+      delete headers[answerHeader];
+      if (mark) headers[answerHeader] = mark;
+      response.writeHead(reply.statusCode ?? 502, headers);
       reply.pipe(response);
       if (closing && (reply.statusCode ?? 500) < 300) reply.once("end", () => { void this.stop(); });
     });
@@ -276,12 +321,14 @@ export class Gateway {
     if (!this.hostOk(request)) return void socket.destroy();
     const port = await this.waitForWorker(this.config.holdSeconds * 1000);
     if (port === null) return void socket.destroy();
+    const mark = this.markOf(request);
     const upstream = connect(port, "127.0.0.1", () => {
       const lines = Object.entries(this.forwardedHeaders(request, port))
         .flatMap(([name, value]) => (Array.isArray(value) ? value : value === undefined ? [] : [value]).map((one) => `${name}: ${one}`));
       upstream.write(`${request.method} ${request.url} HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`);
       if (head.length) upstream.write(head);
-      upstream.pipe(socket);
+      if (mark) markHandshake(upstream, socket, mark);
+      else upstream.pipe(socket);
       socket.pipe(upstream);
     });
     this.tunnels.add(socket);
@@ -318,6 +365,24 @@ export class Gateway {
     child.kill("SIGKILL");
     await within(5_000);
   }
+}
+
+/**
+ * The worker's answer to a socket's opening, passed on with the gateway's mark added to its headers (the window's
+ * mark is made here, where its port is), then everything after it as it comes.
+ */
+function markHandshake(upstream: Duplex, socket: Duplex, mark: string): void {
+  let head = Buffer.alloc(0);
+  const onData = (chunk: Buffer): void => {
+    head = Buffer.concat([head, chunk]);
+    const end = head.indexOf("\r\n\r\n");
+    if (end < 0) { if (head.length > 16384) socket.destroy(); return; }
+    upstream.off("data", onData);
+    const lines = head.subarray(0, end).toString("latin1").split("\r\n").filter((line) => !line.toLowerCase().startsWith(`${answerHeader}:`));
+    socket.write(Buffer.concat([Buffer.from(`${[...lines, `${answerHeader}: ${mark}`].join("\r\n")}\r\n\r\n`, "latin1"), head.subarray(end + 4)]));
+    upstream.pipe(socket);
+  };
+  upstream.on("data", onData);
 }
 
 const hasBody = (request: IncomingMessage): boolean =>

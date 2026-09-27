@@ -12,6 +12,7 @@ import {
   type NativeImage,
 } from "electron";
 import { existsSync } from "node:fs";
+import { constants, setPriority } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
@@ -69,6 +70,13 @@ import { EngineHost } from "./engine-host.js";
 import { BannerNoticeSchema, type EngineConfig } from "./engine-link.js";
 import { z } from "zod";
 import { builtFrom } from "./build-identity.js";
+// The window's key goes only to an engine that proved it is the engine (src/engine-proof.ts, src/desktop/engine-gate.ts).
+import { askHeader, proveOnce, sessionKey } from "../engine-proof.js";
+import { AnswerCheck } from "./answer-check.js";
+import { EngineGate, type EngineAccess } from "./engine-gate.js";
+import { RequestHold } from "./request-hold.js";
+import { readRunning, type Attachment } from "../install/running.js";
+import { moveOldEngine } from "../install/old-engine.js";
 
 const BannerOpenSchema = z.object({ bannerId: z.number().int().positive(), notice: BannerNoticeSchema.optional() }).strict();
 
@@ -85,6 +93,10 @@ let engine: EngineHost | undefined;
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
+/** Whether the app's own engine has proved itself at the window's address (src/desktop/engine-gate.ts). */
+let engineGate: EngineGate | undefined;
+/** Test builds only: an unpackaged copy started with BRANCH_TEST_ENGINE_HOOKS=1 lets a test see the engine and its gate. */
+const testHooksOn = (): boolean => !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1";
 
 /** Branch's mascot: the whole of it for the window, its face for the small tray (scripts/make-icons.mjs). */
 function markPath(small = false): string {
@@ -125,14 +137,17 @@ function trayIcon(): NativeImage {
 function protectWindow(
   win: BrowserWindow,
   origin: string,
-  /** The window's key as it is now: removing a phone that was handed it replaces it. */
+  /**
+   * The key the window signs with: the session key for the proved engine's process, made from the window's key as it
+   * is now (removing a phone that was handed it replaces it). It throws while the engine has not proved itself.
+   */
   key: () => string,
   mic: TalkLiveMic,
   /**
-   * Whether the engine is answering at the window's address right now. While the app's own engine is starting again,
-   * its port is free and another program could take it, so nothing is sent there (above all not the key) until then.
+   * Whether the engine at the window's address has proved it is the engine. While an engine starts again its port is
+   * free and another program could take it, so every request there is held (and none carries the key) until then.
    */
-  reachable: () => boolean,
+  access: EngineAccess,
 ): void {
   const session = win.webContents.session;
   // attach-anything: a file the page itself hands over (a file somebody attached, saved from the conversation) is let
@@ -148,23 +163,43 @@ function protectWindow(
     if (new URL(target).origin !== origin) event.preventDefault();
   });
   // A task's socket (ws://) is at the window's own address too, so it is let through and signed like /api/ requests.
+  const hold = new RequestHold(access);
+  // The moment the engine is gone, every request already on its way there is ended too: one that was signed while the
+  // engine was there could otherwise wait for a connection, or be sent again, and reach whatever takes the port next.
+  access.onLost(() => { void session.closeAllConnections().catch((error: Error) => console.error("Connections:", error.message)); });
   session.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: !sameAppOrigin(details.url, origin) || !reachable() });
+    if (!sameAppOrigin(details.url, origin)) { callback({ cancel: true }); return; }
+    hold.when((go) => callback({ cancel: !go }));
   });
   // Remembered once: a request can still arrive after the window is gone, and a destroyed
   // window throws on any property access ("Object has been destroyed").
   const contentsId = win.webContents.id;
+  const answers = new AnswerCheck(Number(new URL(origin).port));
   session.webRequest.onBeforeSendHeaders((details, callback) => {
-    const signed =
-      details.webContentsId === contentsId &&
-      sameAppOrigin(details.url, origin) && reachable() &&
-      new URL(details.url).pathname.startsWith("/api/");
-    callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, key()) : { ...details.requestHeaders } });
+    if (!sameAppOrigin(details.url, origin)) { callback({ cancel: true }); return; }
+    // The engine may have stopped between the request being let go and its headers: then it is refused, never sent.
+    const boot = access.boot();
+    let signing: string;
+    try { signing = key(); } catch { callback({ cancel: true }); return; }
+    if (!boot) { callback({ cancel: true }); return; }
+    const signed = details.webContentsId === contentsId && new URL(details.url).pathname.startsWith("/api/");
+    const headers = signed ? signedHeaders(details.requestHeaders, signing) : { ...details.requestHeaders };
+    headers[askHeader] = answers.ask(details.id, signing, boot);
+    callback({ requestHeaders: headers });
   });
+  // Only the engine's own answers reach the page: one without its mark (from whatever took the port) is refused here.
+  session.webRequest.onHeadersReceived((details, callback) => {
+    if (!sameAppOrigin(details.url, origin)) { callback({ cancel: true }); return; }
+    const holds = answers.holds(details.id, details.responseHeaders);
+    if (!holds) console.error(`Refused an answer at the engine's address that the engine did not mark: ${new URL(details.url).pathname}`);
+    callback(holds ? {} : { cancel: true });
+  });
+  session.webRequest.onCompleted((details) => answers.forget(details.id));
+  session.webRequest.onErrorOccurred((details) => answers.forget(details.id));
 }
 
 async function createWindow(
-  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean = () => true,
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, access: EngineAccess,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -210,7 +245,17 @@ async function createWindow(
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
   const mic = new TalkLiveMic(url, window.webContents.id);
-  protectWindow(window, url, key, mic, reachable);
+  protectWindow(window, url, key, mic, access);
+  // A page that went away while the engine was not there (its load was held too long) is opened again once it is back.
+  const shown = window;
+  let wasLost = false;
+  access.onLost(() => { wasLost = true; });
+  access.onReady(() => {
+    if (!wasLost) return; // the first proof: the window's own first load is on its way
+    wasLost = false;
+    if (!shown.isDestroyed() && new URL(shown.webContents.getURL() || "about:blank").origin !== url)
+      void shown.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message));
+  });
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
   // attach-anything: the clipboard's files go to the page only just after a paste the person made here: the keys,
@@ -361,8 +406,9 @@ async function start(): Promise<void> {
   const settings = await loadDesktopSettings(join(base, "model-settings.json"));
   const { dataDir, workspace } = await folders(base);
   startCrashReporter(dataDir);
-  // An engine already working in the background is joined rather than started a second time.
-  const running = await attachToRunning(dataDir);
+  // An engine already working in the background is joined rather than started a second time; one from a version
+  // before the engine's proof is moved to this version first.
+  const running = await joinBackground(dataDir) ?? await upgradeBackground(dataDir, workspace);
   // Joining an engine means that engine owns the saved work and holds the program files open, so the
   // safety copy is asked of it and it is closed before an update swaps anything.
   joinedBackground = Boolean(running);
@@ -370,27 +416,31 @@ async function start(): Promise<void> {
   const runningKey = running ? windowKeyReader(dataDir, running.token) : null;
   // Beta channel: which change this copy was built from, found once here (git is asked without waiting on it).
   const commit = await builtFrom(app.getAppPath(), app.isPackaged);
-  if (running && runningKey)
-    return createWindow(running.url, runningKey, settings, {
-      backup: () => requestUpdateBackup(running.url, runningKey()),
+  if (running && runningKey) {
+    const gate = joinedGate(dataDir, running.url, runningKey);
+    const key = gatedKey(gate, runningKey);
+    return createWindow(running.url, key, settings, {
+      backup: async () => requestUpdateBackup(running.url, key()),
       stopDaemon: async () => {
         const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true });
         if (report.pid !== null && !report.stopped) throw new UpdateDeferredError(report.message);
         return report.pid;
       },
-      canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
+      canary: desktopCanary(dataDir, async () => engineSnapshot(running.url, key())), // mac3/never-break
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
       currentCommit: commit,
-    });
+    }, gate);
+  }
   const url = await startEngine(base, settings, { dataDir, workspace });
-  // The key, and anything main sends, go only to an engine answering at the window's address: while the engine starts
-  // again, main's own requests are refused before anything is sent (the window's are held in protectWindow).
-  const reachable = () => engine?.servingAt === url;
-  const key = () => {
-    if (!engine || !reachable()) throw new Error("Branch is starting its engine again. Try again in a moment.");
-    return engine.token;
-  };
+  // The key, and anything main sends, go only to the app's own engine serving at the window's address that has proved
+  // itself there: while the engine starts again, main's own requests are refused before anything is sent.
+  const gate = new EngineGate({ origin: url, key: () => engine?.token ?? "", also: () => engine?.servingAt === url,
+    log: (line) => console.error(line) });
+  engineGate = gate;
+  gate.start();
+  if (testHooksOn()) (globalThis as { branchEngineGateForTests?: EngineGate }).branchEngineGateForTests = gate;
+  const key = gatedKey(gate, () => engine?.token ?? "");
   await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
     backup: async () => requestUpdateBackup(url, key()),
@@ -399,7 +449,7 @@ async function start(): Promise<void> {
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: commit,
-  }, reachable).catch(async (error: unknown) => {
+  }, gate).catch(async (error: unknown) => {
     await engine?.stop();
     throw error;
   });
@@ -420,22 +470,33 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     decrypt: (value) => safeStorage.decryptString(value),
   });
   const loginItem = app.isPackaged && process.platform === "darwin" ? macLoginItem(app) : null;
-  const config: EngineConfig = {
+  // Read at every start of the engine, so a model connection saved in Settings since then is the one it uses.
+  const config = (): EngineConfig => ({
     ...where, providerEnv: desktopProviderEnv(settings), version: app.getVersion(),
     executable: app.isPackaged ? process.execPath : null,
     installRoot: installedAppRoot(app.isPackaged, process.platform, process.execPath),
     packaged: app.isPackaged, loginItem: loginItem ? loginItem.read() : null,
     appPid: process.pid,
-    testHooks: !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1",
-  };
+    testHooks: testHooksOn(),
+  });
   const banners = new Map<number, { close(): void }>();
   const showBanner = electronBannerWindow({
     create: (options) => new BrowserWindow(options),
     workArea: () => screen.getPrimaryDisplay().workArea,
   });
   const host = new EngineHost({
-    fork: () => utilityProcess.fork(fileURLToPath(new URL("./engine-process.js", import.meta.url)), [],
-      { serviceName: "Branch Agent engine", stdio: "inherit" }),
+    fork: () => {
+      const child = utilityProcess.fork(fileURLToPath(new URL("./engine-process.js", import.meta.url)), [],
+        { serviceName: "Branch Agent engine", stdio: "inherit" });
+      // A notch below normal, so when the computer is busy the window, the tray and the owner's other apps are
+      // served first and the engine's work waits a moment instead. (Profiled: the packaged app's rare 100 ms stalls
+      // were the whole window process going unscheduled on a busy computer, not work of its own on its thread.)
+      child.once("spawn", () => {
+        try { if (child.pid) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); }
+        catch (error) { console.error("Engine priority:", (error as Error).message); }
+      });
+      return child;
+    },
     config,
     handlers: {
       "vault-read": () => chatgpt.read(),
@@ -455,16 +516,15 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
       // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below).
       quit: () => { quitReason = "command"; app.quit(); },
     },
-    onGone: (code) => console.error(`The engine stopped (code ${code}); starting it again.`),
+    onGone: (code) => { engineGate?.lost(); console.error(`The engine stopped (code ${code}); starting it again.`); },
     onBack: (url) => {
       // The engine's own stop is written into its record of failures, as a window's or helper's is.
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
       // Back at another address (its port was taken meanwhile): the window's page belongs to the old one, so the
       // whole app starts again, which opens the window at the new address.
-      if (url !== host.url) { app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) }); quitReason = "restart"; app.quit(); return; }
-      // A page that went away meanwhile (its reload was held back while the engine was down) is opened again.
-      if (window && !window.isDestroyed() && new URL(window.webContents.getURL() || "about:blank").origin !== url)
-        void window.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message));
+      if (url !== host.url) { relaunchApp(); return; }
+      // Back at the same address: it proves itself there again, and the window's held requests go on.
+      engineGate?.nudge();
     },
     log: (line) => console.error(line),
   });
@@ -475,8 +535,70 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     .catch(() => (host.running ? host.lastRunning : 0));
   stop = () => host.stop(7000);
   watchDesktopCrashes(host);
-  if (config.testHooks) (globalThis as { branchEngineForTests?: EngineHost }).branchEngineForTests = host;
+  if (testHooksOn()) (globalThis as { branchEngineForTests?: EngineHost }).branchEngineForTests = host;
   return host.start();
+}
+
+/** The background engine, when one is running here and proves itself (src/engine-proof.ts). */
+function joinBackground(dataDir: string): Promise<Attachment | null> {
+  return attachToRunning(dataDir, {
+    prove: async (address, key) => { const boot = await proveOnce(address, key); return boot ? sessionKey(key, boot) : null; },
+  });
+}
+
+/**
+ * A background engine from a version before the engine's proof cannot prove itself, so it is closed and started again
+ * as this version, and the window joins the fresh one: nothing for the owner to do, and nothing shown as an error. The
+ * window's key goes to the old engine only once this computer says the process holding its port is the one its own
+ * note names (src/install/old-engine.ts). Anything else (no such engine, or one that is not safe to close) leaves it,
+ * and the app starts its own engine as it would with none running.
+ */
+function upgradeBackground(dataDir: string, workspace: string): Promise<Attachment | null> {
+  return moveOldEngine({
+    dataDir, fresh: { executable: process.execPath, script: fileURLToPath(new URL("../cli.js", import.meta.url)), workspace },
+    proves: async (url, key) => (await proveOnce(url, key)) !== null, join: () => joinBackground(dataDir), log: (line) => console.log(line),
+  });
+}
+
+/** The whole app starts again, opening its window even after a quiet start. */
+function relaunchApp(): void {
+  app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
+  quitReason = "restart";
+  app.quit();
+}
+
+/**
+ * The key the window and main's own requests are signed with: the session key for the proved engine's process
+ * (src/engine-proof.ts), never the window's key itself. Refused, before anything is sent, while the engine has not proved
+ * itself.
+ */
+function gatedKey(access: EngineAccess, key: () => string): () => string {
+  return () => {
+    const boot = access.boot();
+    if (!boot) throw new Error("Branch is starting its engine again. Try again in a moment.");
+    return sessionKey(key(), boot);
+  };
+}
+
+/**
+ * The background engine the window joined: it proves itself before the key goes to it, and again after every stop.
+ * Back at another address (its port was taken while it restarted), the app starts again to join it there.
+ */
+function joinedGate(dataDir: string, url: string, key: () => string): EngineGate {
+  const gate = new EngineGate({ origin: url, key, log: (line) => console.error(line) });
+  gate.start();
+  if (testHooksOn()) (globalThis as { branchEngineGateForTests?: EngineGate }).branchEngineGateForTests = gate;
+  let looking = false;
+  const moved = setInterval(() => {
+    if (gate.ready() || looking) return;
+    looking = true;
+    void readRunning(dataDir)
+      .then(async (note) => { if (note && note.url !== url && (await proveOnce(note.url, key()))) relaunchApp(); })
+      .catch(() => undefined)
+      .finally(() => { looking = false; });
+  }, 2000);
+  moved.unref();
+  return gate;
 }
 
 /**

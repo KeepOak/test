@@ -20,6 +20,9 @@ import { runningTaskCount } from "./quit-guard.js";
 import type { BannerNotice, BannerWindow, BannerWindowFactory } from "../integrations/desktop-banner.js";
 import type { LoginItem, LoginItemState } from "../install/autostart.js";
 import { Link, ToEngineSchema, type EngineConfig } from "./engine-link.js";
+import { keepRunningThroughErrors } from "./engine-errors.js";
+import { newChallenge, proofPath } from "../engine-proof.js";
+type Branch = Awaited<ReturnType<typeof createBranch>>;
 
 interface Port {
   on(event: "message", listener: (event: { data: unknown }) => void): unknown;
@@ -32,6 +35,57 @@ const post = (message: unknown): void => parent.postMessage(message);
 const link = new Link(post);
 /** Events from main, by name (a Stop notice closing). */
 const listeners = new Map<string, (args: unknown) => void>();
+
+/** Whether the engine can still do its work; nothing can before it has started. */
+let healthy: () => Promise<boolean> = async () => false;
+/** Closes the engine's server, integrations and database; nothing to close before it has started. */
+let closeEngine: () => Promise<void> = async () => undefined;
+// A failure nobody caught is written down and the engine carries on; only one that leaves it unable to work ends it,
+// and main then starts a fresh engine, where interrupted tasks are offered again or carry on (src/never-break/resume.ts).
+keepRunningThroughErrors(process, {
+  healthy: () => healthy(),
+  log: (line) => { console.error(line); diagnose("engine", "error", line); },
+  end: (why) => {
+    const line = `The engine cannot carry on (${why}); a fresh one is started.`;
+    console.error(line);
+    diagnose("engine", "error", line);
+    // Closed first where it still can be (its port is let go of for the fresh engine), but never waited on for long.
+    const late = new Promise<void>((resolve) => { setTimeout(resolve, 3000).unref(); });
+    void Promise.race([closeEngine().catch(() => undefined), late]).finally(() => process.exit(1));
+  },
+});
+
+/** The engine answers from its database and its server, as the window would reach it. */
+function healthOf(branch: Branch, url: string): () => Promise<boolean> {
+  return async () => {
+    try { branch.store.sqlite.prepare("SELECT 1").get(); } catch { return false; }
+    try {
+      const answer = await fetch(`${url}${proofPath}?challenge=${newChallenge()}`, { signal: AbortSignal.timeout(5000) });
+      await answer.text();
+      return answer.ok;
+    } catch { return false; }
+  };
+}
+
+/** Test builds only (main sets `testHooks` for an unpackaged copy started to be tested): ways to make trouble on purpose. */
+function testTrouble(branch: Branch): void {
+  link.handle("test-block", (args) => {
+    const until = Date.now() + Math.min(Number((args as { ms?: unknown })?.ms) || 0, 30000);
+    while (Date.now() < until) { /* deliberately blocking, for the test that proves the window stays responsive */ }
+    return true;
+  });
+  link.handle("test-throw", (args) => {
+    const kind = (args as { kind?: unknown })?.kind;
+    if (kind === "rejection") void Promise.reject(new Error("A failure made on purpose by a test"));
+    else setTimeout(() => { throw new Error("A failure made on purpose by a test"); }, 0);
+    return true;
+  });
+  link.handle("test-break", () => {
+    branch.store.sqlite.close();
+    setTimeout(() => { throw new Error("A failure made on purpose by a test, after closing the database"); }, 0);
+    return true;
+  });
+}
 
 /** The ChatGPT sign-in, kept in main's file with the device's key store, which only main can use. */
 const vault: TokenVault = {
@@ -100,6 +154,7 @@ async function start(config: EngineConfig): Promise<void> {
       try { await integrationClose?.(); } finally { await branch.close(); }
     }
   })());
+  closeEngine = stop;
   link.handle("stop", async () => { await stop(); setTimeout(() => process.exit(0), 20).unref(); return true; });
   link.handle("running-count", () => runningTaskCount(branch.store));
   // A window or helper of the app died: written into the same record of failures the engine keeps.
@@ -111,11 +166,7 @@ async function start(config: EngineConfig): Promise<void> {
     recordDesktopCrash(branch.store.spans, branch.runtime.owner, (value) => branch.runtime.hideSecrets(value), { where, message });
     return true;
   });
-  if (config.testHooks) link.handle("test-block", (args) => {
-    const until = Date.now() + Math.min(Number((args as { ms?: unknown })?.ms) || 0, 30000);
-    while (Date.now() < until) { /* deliberately blocking, for the test that proves the window stays responsive */ }
-    return true;
-  });
+  if (config.testHooks) testTrouble(branch);
   try {
     const integrations = await loadIntegrations(branch.registry, process.env.BRANCH_INTEGRATIONS, process.env, branch.secretsFor, branch.channelHost);
     integrationClose = integrations.close;
@@ -133,6 +184,7 @@ async function start(config: EngineConfig): Promise<void> {
     });
     rememberPort(portFile, server.url);
     serverClose = server.close;
+    healthy = healthOf(branch, server.url);
     post({ kind: "ready", url: server.url, token: server.token });
     // Main keeps the last count of working tasks, so a Quit still asks while the engine is too busy to answer at once.
     let told = -1;

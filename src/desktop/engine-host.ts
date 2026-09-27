@@ -17,7 +17,11 @@ export interface EngineChild {
 
 export interface EngineHostOptions {
   fork: () => EngineChild;
-  config: EngineConfig;
+  /**
+   * What the engine is started with, read again at every start: a model connection saved since the last start is used
+   * when the engine starts again.
+   */
+  config: EngineConfig | (() => EngineConfig);
   /** What the engine may ask of main, by name. */
   handlers: Record<string, (args: unknown) => unknown>;
   /** The engine stopped by itself; it is being started again. */
@@ -117,7 +121,8 @@ export class EngineHost {
         if (!wasReady) { reject(new Error(`The engine stopped while starting (code ${code}).`)); return; }
         if (running === this.current && !this.stopping) this.restart(code);
       });
-      child.postMessage({ kind: "start", config: this.options.config });
+      const config = typeof this.options.config === "function" ? this.options.config() : this.options.config;
+      child.postMessage({ kind: "start", config });
     });
   }
 

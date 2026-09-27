@@ -1,5 +1,6 @@
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,6 +147,51 @@ export async function backToConversation(page) {
 export async function send(page, text) {
   await page.locator("#prompt").fill(text, { timeout: STARTUP_MS });
   await page.locator("#send").click();
+}
+
+/**
+ * A program that takes the engine's port while the engine is starting again. It records what it hears and answers
+ * everything as if it were the engine, without anything only the engine could sign.
+ */
+export async function squatterOn(port) {
+  const heard = [];
+  const server = createServer((request, response) => {
+    heard.push({ url: request.url, key: /^Bearer (\S+)$/.exec(request.headers.authorization ?? "")?.[1] ?? null, ask: request.headers["x-branch-ask"] ?? null });
+    response.writeHead(200, { "content-type": "application/json" }).end(`${JSON.stringify({ proof: "f".repeat(64), boot: "f".repeat(32) })}\n`);
+  });
+  await new Promise((done, fail) => { server.once("error", fail); server.listen(port, "127.0.0.1", done); });
+  let closed = false;
+  const close = () => { if (closed) return Promise.resolve(); closed = true; server.closeAllConnections(); return new Promise((done) => server.close(done)); };
+  return { heard, close };
+}
+
+/** Main's own lines (what it writes out and its errors), kept from the launch on, so a test can read what main said. */
+export function mainLines(electron) {
+  const lines = [];
+  for (const stream of [electron.process().stdout, electron.process().stderr])
+    stream?.on("data", (chunk) => lines.push(...String(chunk).split(/\r?\n/)));
+  return lines;
+}
+
+/**
+ * Whatever the program on the port heard is no use to it: it was asked to prove itself with no key; any other request
+ * (one already on its way when the engine stopped) carried a session key the engine now running refuses, never the
+ * window's key, and asked for the engine's mark, so main refused its answer before the page could read it.
+ */
+export async function heardNothingOfUse(heard, { windowKey, origin, refused }) {
+  const proof = /^\/api\/engine-proof\?challenge=[a-f0-9]{64}&hold=1$/;
+  assert.ok(heard.every((each) => each.key !== windowKey), "the window's key never reached the program on the port");
+  for (const each of heard.filter((one) => proof.test(one.url))) assert.equal(each.key, null, "asked to prove itself with no key");
+  const others = heard.filter((one) => !proof.test(one.url));
+  for (const each of others) {
+    assert.match(each.ask ?? "", /^[a-f0-9]{32}$/, `${each.url} asked for the engine's mark`);
+    const path = new URL(each.url, origin).pathname;
+    assert.ok(refused().some((line) => line.includes(`did not mark: ${path}`)), `main refused the program's answer to ${path}`);
+  }
+  // Each key it heard, asked once (wrong keys asked again and again would only be made to wait).
+  for (const key of new Set(others.map((each) => each.key).filter(Boolean)))
+    assert.equal((await fetch(`${origin}/api/state`, { headers: { authorization: `Bearer ${key}` } })).status, 401, "a key it heard is refused by the engine now running");
+  return others.length;
 }
 
 /** A hidden launch's windows are none of them on the screen (`when` names the step, for the message). */
