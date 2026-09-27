@@ -70,8 +70,8 @@ async function firstOpen(page) {
   const deployment = await api("deployment");
   const note = await page.locator(".dlg-b").innerText();
   await page.screenshot({ path: join(tmpdir(), "verify-setup-another-computer-dialog.png") });
-  check("only here: what is missing, and the next step", !deployment.remote.enabled && note.includes("only answers on this computer itself") && (await page.locator('.dlg [data-act="pair-door"]').count()) === 1
-    && !(await page.locator('.dlg [data-act="pair-door"]').evaluate((el) => el.classList.contains("soon"))),
+  check("only here: what is missing, and the next step", !deployment.remote.enabled && note.includes("only answers on this computer itself") && (await page.locator('.dlg #pair-door').count()) === 1
+    && !(await page.locator('.dlg #pair-door').evaluate((el) => el.classList.contains("soon"))),
     "GET /api/deployment: remote off, so the dialog says the link only answers here and offers Open it to Tailscale (live)");
 }
 

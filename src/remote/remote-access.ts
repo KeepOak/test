@@ -28,10 +28,29 @@ export function assertPrivateAddress(address: string): void {
     throw new Error("Branch only listens on a private Tailscale address, never on every network address.");
 }
 
+/**
+ * Closes one door and forgets it; a door already closed counts as closed. Connections still open through it are cut
+ * too, so nothing keeps talking through a closed door and switching off never waits on a phone.
+ */
+function closeDoor(server: Server, opened: Set<Server>): Promise<void> {
+  opened.delete(server);
+  const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+  server.closeAllConnections();
+  return closed;
+}
+
 export class RemoteAccess {
   private listener: Server | null = null;
   private tailnet: TailnetAddress | null = null;
   private origin: string | null = null;
+  /** Every door this opened and has not closed yet, so switching off or closing Branch closes all of them. */
+  private readonly opened = new Set<Server>();
+  /** The one enable waiting on Tailscale or on listen; a second switch-on while it waits shares it. */
+  private pending: Promise<RemoteStatus> | null = null;
+  /** Moves on at every switch-off, so an enable that was waiting when the owner switched off never opens. */
+  private generation = 0;
+  /** Set when Branch closes: nothing opens this door again, and a switch-on answers with the door still off. */
+  private shut = false;
   readonly pairing: Pairing;
   /** mac7/nodes: what the paired door does with a WebSocket upgrade; set by the server, refused while unset. */
   upgrade: ((request: IncomingMessage, socket: Duplex) => void) | null = null;
@@ -61,10 +80,21 @@ export class RemoteAccess {
         : "Reaching Branch from your phone is off. Nothing outside this computer can see it.",
     };
   }
-  /** Opens the extra door on the Tailscale address only, then makes the first invitation. */
-  async enable(handler: RequestListener, port = 0): Promise<RemoteStatus> {
-    if (this.listener) return this.status();
+  /**
+   * Opens the extra door on the Tailscale address only, then makes the first invitation. Two switch-ons at once share
+   * one opening, and a switch-off (or Branch closing) while it waits on Tailscale or on listen wins: the door stays shut.
+   */
+  enable(handler: RequestListener, port = 0): Promise<RemoteStatus> {
+    if (this.shut || this.listener) return Promise.resolve(this.status());
+    if (this.pending) return this.pending;
+    const pending = this.open(handler, port, this.generation)
+      .finally(() => { if (this.pending === pending) this.pending = null; });
+    this.pending = pending;
+    return pending;
+  }
+  private async open(handler: RequestListener, port: number, generation: number): Promise<RemoteStatus> {
     const tailnet = await this.probe();
+    if (generation !== this.generation) return this.status();
     this.tailnet = tailnet;
     if (!tailnet.address) throw new Error(tailnet.message);
     assertPrivateAddress(tailnet.address);
@@ -75,23 +105,40 @@ export class RemoteAccess {
       else socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     });
     // ---- end mac7/nodes ----
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(port, tailnet.address!, () => { server.off("error", reject); resolve(); });
-    });
+    this.opened.add(server);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, tailnet.address!, () => { server.off("error", reject); resolve(); });
+      });
+    } catch (error) {
+      this.opened.delete(server);
+      throw error;
+    }
+    if (generation !== this.generation) {
+      await closeDoor(server, this.opened);
+      return this.status();
+    }
     server.requestTimeout = 150000;
     server.headersTimeout = 10000;
     this.listener = server;
     this.origin = `http://${tailnet.hostname ?? tailnet.address}:${this.port()}`;
     return this.status();
   }
+  /** Closes the door, every one this opened, and any enable still waiting. Always allowed, Lockdown or not. */
   async disable(): Promise<RemoteStatus> {
-    const server = this.listener;
+    this.generation++;
+    this.pending = null;
     this.listener = null;
     this.origin = null;
     this.pairing.cancel();
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await Promise.all([...this.opened].map((server) => closeDoor(server, this.opened)));
     return this.status();
+  }
+  /** Branch is closing: the door is closed and never opens again in this run. */
+  async close(): Promise<void> {
+    this.shut = true;
+    await this.disable();
   }
   /** A fresh invitation: the link for the barcode, and the number to read out. */
   invite(): RemoteInvitation {
