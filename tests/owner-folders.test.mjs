@@ -278,3 +278,12 @@ test("a move out to ~/Pictures or into another of the person's folders is refuse
   assert.match(results[1].error, /within one folder.*from ~\/Downloads\/a\.pdf to ~\/Downloads\/Documents\/a\.pdf/);
   assert.ok(existsSync(join(downloads, "a.pdf")) && existsSync(join(downloads, "b.jpg")));
 });
+
+test("the folder question names the call that asked, so after a yes the task is told that call did not run", async (t) => {
+  // Mutation: throw the question without its call id in Runtime.askApproval → attention.needed has no callId, red.
+  const { app } = await fixture(t, [call("files.list", { path: "~/Downloads" }), say("ok")]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  const asked = events(app, first, "policy.ask")[0];
+  assert.ok(asked.id);
+  assert.equal(events(app, first, "attention.needed")[0].callId, asked.id);
+});

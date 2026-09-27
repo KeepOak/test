@@ -4041,7 +4041,12 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(context.runId, "policy.ask", { name: about.tool, id: callId, label, target, remember,
       question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...jobs, ...noStanding, ...noAlways,
       ...(about.kind ? { kind: about.kind } : {}) });
-    throw new NeedsInputError(question);
+    // QA (first task): a question a tool asked from inside (the owner's folders, a recipe's step) names its call too, so
+    // after a yes the task is told that call did not run (continueNote). qwen3:14b otherwise saw only "side effects may
+    // have occurred" and asked the person whether to start.
+    const asked = new NeedsInputError(question);
+    if (callId) asked.callId = callId;
+    throw asked;
   }
   /**
    * A question nobody answered in time, once the conversation had as many waiting as it may have.
