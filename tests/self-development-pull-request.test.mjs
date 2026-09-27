@@ -58,7 +58,8 @@ async function branchWith(t, permissions, options = {}) {
   // By default the model asks for the pull request itself; `edit` makes it only change a file, for the hook to send.
   const call = options.edit ? { id: "edit", name: "files.write", arguments: JSON.stringify({ path: "src/ui/button.ts", content: "export const gone = true;\n" }) }
     : { id: "pr", name: "github.pull_request_from_changes", arguments: JSON.stringify({
-      name: "self-remove-button", title: "Remove the button", summary: "Why merge this: the button is unused.", paths: ["src/ui/button.ts"] }) };
+      name: "self-remove-button", title: "Remove the button", summary: "Why merge this: the button is unused.", paths: ["src/ui/button.ts"],
+      base: options.base ?? "redesign/window" }) };
   const provider = { name: "scripted", async complete() {
     return calls++ === 0 ? { content: "", toolCalls: [call] } : { content: "Done.", toolCalls: [] };
   } };
@@ -81,7 +82,17 @@ async function branchWith(t, permissions, options = {}) {
   new ContractBook(app.store.sqlite).create(owner, { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms: {
     allowedPaths: ["src/ui/**"], permissions, expectedTests: ["tests/ui.test.mjs"], definitionOfDone: "The button is gone",
     sideEffects: ["a draft pull request"], rollbackPlan: "Close the pull request and delete branch/self-remove-button" } });
-  const run = await app.runtime.run({ prompt: "Open the pull request" });
+  let run = await app.runtime.run({ prompt: "Open the pull request" });
+  // selfdev: a pull request from Branch's own source is put to the owner every time, whatever the rules say.
+  const question = run.status === "needs_input" ? app.runtime.approvals.questionFor(run.sessionId) : null;
+  if (question) {
+    assert.equal(question.tool, "github.pull_request_from_changes");
+    assert.equal(question.remember, "never", "the yes to sending Branch's own source is never kept");
+    assert.equal((await readFile(gitLog, "utf8")).split("\n").filter((line) => /^(switch|push)/.test(line)).length, 0, "nothing is sent before the yes");
+    app.runtime.approve(run.sessionId, "allow", "never");
+    calls = 0;
+    run = await app.runtime.run({ prompt: "Open the pull request", sessionId: run.sessionId });
+  }
   const failed = app.store.events(run.id).filter((event) => event.kind === "tool.failed").map((event) => event.data.error);
   return { app, owner, run, opened, failed, git: async () => (await readFile(gitLog, "utf8")).split("\n").filter(Boolean) };
 }
@@ -142,12 +153,22 @@ test("the hook's push needs the pull request step in the contract, even when no 
   assert.deepEqual(opened, []);
 });
 
-test("with the step listed and every change inside the contract, the hook sends the work", posixOnly, async (t) => {
-  const { app, run, opened } = await branchWith(t,
+test("selfdev: with the step listed and every change inside the contract, the hook still never sends Branch's own source by itself", posixOnly, async (t) => {
+  const { app, run, opened, git: log } = await branchWith(t,
     ["files.write", "github.pull_request_from_changes", "github.open_pull_request"], { mode: "on", edit: true });
   const outcome = await hookOutcome(app, run.id);
-  assert.equal(outcome.kind, "pull_request.opened", JSON.stringify(outcome.data));
-  assert.equal(opened.length, 1);
+  assert.equal(outcome.kind, "pull_request.failed", JSON.stringify(outcome.data));
+  assert.match(outcome.data.reason, /sent only when you say yes to that step, never by itself/);
+  assert.deepEqual((await log()).filter((line) => /^(switch|push|--literal-pathspecs)/.test(line)), [], "nothing was made, committed or pushed");
+  assert.equal(opened.length, 0);
+});
+
+test("selfdev: a pull request from Branch's own source goes only to the line Beta builds", posixOnly, async (t) => {
+  const { opened, failed, git: log } = await branchWith(t,
+    ["files.write", "github.pull_request_from_changes", "github.open_pull_request"], { base: "mac/cross-platform" });
+  assert.match(failed.join("\n"), /proposed only to redesign\/window/);
+  assert.deepEqual((await log()).filter((line) => /^(switch|push|--literal-pathspecs)/.test(line)), []);
+  assert.deepEqual(opened, []);
 });
 
 test("a pull request is never made from a folder below the worktree's root (a repository could be planted there)",

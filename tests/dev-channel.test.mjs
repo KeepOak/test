@@ -97,7 +97,7 @@ const extract = async (archive, into) => {
 const noNetwork = async (url) => { throw new Error(`the Dev channel must not call ${url}`); };
 const updater = (where, tools, extra = {}) => new Updater({ repo, currentVersion: "0.19.3-beta.3", channel: "beta", installDir: where.installDir,
   executableName: exe, assetName, scratchDir: where.scratchDir, platform: "win32", fetch: noNetwork, extract,
-  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, ...extra });
+  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, canary: async () => {}, ...extra });
 const building = (calls) => calls.filter((call) => !call.endsWith("--version") && !call.startsWith("git ls-remote"));
 
 test("Dev says plainly when git or Node is missing, and looks nothing up", async (t) => {
@@ -199,8 +199,8 @@ test("Dev reads and builds Branch's current name even when the Update button nam
 });
 
 test("installing a Dev build clones afresh in the updater's own folder, proves it goes forward, builds, and hands over", async (t) => {
-  const where = await folders(t), tools = fakeTools(where), checked = [];
-  const dev = updater(where, tools, { canary: async (_dir, version) => { checked.push(version); } });
+  const where = await folders(t), tools = fakeTools(where), checked = [], how = [];
+  const dev = updater(where, tools, { canary: async (_dir, version, asked) => { checked.push(version); how.push(asked); } });
   await dev.check();
   const { script, stagedDir } = await dev.install();
   assert.deepEqual(building(tools.calls), [
@@ -209,6 +209,7 @@ test("installing a Dev build clones afresh in the updater's own folder, proves i
     "npm ci --no-audit --no-fund", `git show -s --format=%ct ${NEW}`, "npm run package:desktop -- --release",
   ]);
   assert.deepEqual(checked, [BUILT], "the new version's check expects the version the source was built as, not the running one");
+  assert.deepEqual(how, [{ required: true }], "selfdev: a Beta build is always tried on a copy of the work, whatever the never-break switch says");
   assert.equal(dev.status.release.latestVersion, BUILT, "the update's record and the next start expect the built version");
   assert.equal(await readFile(join(where.scratchDir, assetName), "utf8"), BUILT, "the download sits where a downloaded one would");
   assert.equal(await exists(where.sourceDir), false, "the source is gone once the download is out of it");

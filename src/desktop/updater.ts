@@ -51,7 +51,8 @@ export interface UpdaterOptions {
    * mac3/never-break: tries the unpacked version on a copy of the owner's data before anything is
    * swapped. Throws a plain sentence when the new version did not pass; the update then stops.
    */
-  canary?: (stagedDir: string, version: string) => Promise<void>;
+  /** `required`: the check runs whatever the never-break switch says (Beta: a build no release has published). */
+  canary?: (stagedDir: string, version: string, how?: { required: boolean }) => Promise<void>;
   /** mac7/real-update: how long the download may go without a byte before it counts as dropped (60 s). */
   stallMs?: number;
   /** Windows: the registry key the update's recovery script is registered under (HKCU RunOnce); tests hand in their own. */
@@ -248,6 +249,9 @@ export class Updater {
     // the data folder (the `backup` the window hands in); checked first, so nothing is built for nothing.
     if (this.channel === "beta" && !this.options.backup)
       throw new Error("The Beta channel keeps a copy of your data folder before every update, and this copy of Branch cannot make one, so nothing was installed.");
+    // selfdev: and a Beta build must start and pass its own check on a copy of the work before it replaces anything.
+    if (this.channel === "beta" && !this.options.canary)
+      throw new Error("The Beta channel tries every build on a copy of your work before using it, and this copy of Branch cannot, so nothing was installed.");
     if (this.busy) throw new Error("An update is already in progress.");
     // CBQ-001: claimed here, before anything is awaited. Looking the release up is a network round
     // trip, and `busy` used to be set only after it, so two requests arriving during that trip both
@@ -340,7 +344,7 @@ export class Updater {
   private async tryCanary(stagedDir: string, version: string): Promise<void> {
     if (!this.options.canary) return;
     this.set("verifying", "Trying the new version on a copy of your work before using it…", null, this.status.release);
-    try { await this.options.canary(stagedDir, version); }
+    try { await this.options.canary(stagedDir, version, { required: this.channel === "beta" }); }
     catch (error) {
       const why = (error instanceof Error ? error.message : String(error)).replace(/\.?$/, ".");
       throw new Error(`The new version did not pass its check, so nothing was changed. ${why}`);

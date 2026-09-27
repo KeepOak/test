@@ -11,11 +11,16 @@ import type { Projects } from "./projects.js";
 import type { ToolRegistry } from "./registry.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
-import { ContractTermsSchema, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { ContractTermsSchema, selfDevelopmentLine, selfDevelopmentLockdownRefusal, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { lockdownActive } from "./lockdown.js";
 
 export const branchRepository = "stabrea/Branch-Agent";
 const nameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/, "Use lowercase letters, digits and dashes");
-const baseSchema = z.string().regex(/^[A-Za-z0-9._/-]{1,100}$/).refine((value) => !value.includes("..") && !value.endsWith(".lock"));
+/**
+ * A change to Branch itself starts from, and is proposed back to, one line only: the line Beta builds
+ * (src/desktop/dev-build.ts `betaLine`). Nothing reaches the running app except as a merged change there.
+ */
+const baseSchema = z.string().refine((value) => value === selfDevelopmentLine, `A change to Branch itself starts from ${selfDevelopmentLine}, the line Beta builds, and is proposed back to it.`);
 const repositorySchema = z.string().url().default(`https://github.com/${branchRepository}.git`);
 
 export interface SelfDevelopmentDeps {
@@ -84,9 +89,10 @@ function projectInstructions(name: string, base: string): string {
     "Every change is held to the contract written when this worktree was prepared: only its allowed paths, only its listed tools.",
     `A refused call means the contract does not cover it; ask the owner and use ${widenToolName} rather than working around it.`,
     `Commands run only through shell.execute, with cwd set to a folder under branch-agent-source/.branch-worktrees/self-${name} that the contract's allowed paths cover whole, behind the OS sandbox; its writes stay in that folder.`,
-    "Run the relevant focused tests and npm run build, then inspect git.diff before offering the result.",
+    "Run node scripts/review.mjs with the focused test files for the change, then inspect git.diff before offering the result.",
     `When the owner asks for a pull request, use github.pull_request_from_changes with name ${name}, targetRepository ${branchRepository}, and base ${base}.`,
-    "The pull-request summary must include a Why merge this section. Open a draft; never merge it or change a shared branch yourself.",
+    "The pull-request summary must include a Why merge this section in plain words, and the test evidence: each command run and its pass and fail counts.",
+    "Open a draft; never merge it, never send to a shared line, and never change a repository's settings or branch protection. The owner reviews and merges; Beta builds it after that.",
   ].join(" ");
 }
 
@@ -156,7 +162,7 @@ const toolName = "branch.prepare_source_change";
  * change Branch (src/self-development-requests.ts), so both hold the same fields and limits.
  */
 export const PrepareSourceChangeSchema = z.object({
-  name: nameSchema, repository: repositorySchema, base: baseSchema.default("mac/cross-platform"), contract: ContractTermsSchema,
+  name: nameSchema, repository: repositorySchema, base: baseSchema.default(selfDevelopmentLine), contract: ContractTermsSchema,
 }).strict();
 const contractDescription = "contract: the terms this change is held to, written down before anything changes: allowedPaths (globs inside the worktree, such as src/ui/** or tests/button.test.mjs), permissions (every tool name that may change something, such as files.write, git.commit, github.pull_request_from_changes), expectedTests, definitionOfDone, sideEffects and rollbackPlan.";
 
@@ -175,6 +181,7 @@ function ownerOnly(context: ToolContext, store: Store): void {
   if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk || context.trunkKeys
     || (origin && (origin.source !== "owner" || origin.shortLivedKey || origin.keyIds.length > 0 || origin.personProfileId || origin.lentTo)))
     throw new Error("Only the owner in the Branch app can prepare Branch Agent source changes.");
+  if (lockdownActive(store, context.owner)) throw new Error(selfDevelopmentLockdownRefusal);
 }
 
 function registerSelfDevelopment(deps: SelfDevelopmentDeps): void {

@@ -11,7 +11,7 @@ import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import type { WorkspaceFiles } from "./files.js";
 import { WalkRules } from "./walk-rules.js"; // mac7/walk-rules
-import { pushRefusal } from "./self-development-contract.js"; // Q12
+import { pushRefusal, selfDevelopmentLine } from "./self-development-contract.js"; // Q12
 
 // The branch a pull request asks to join, for the saved setting and the tool alike. A tool's pattern
 // is sent to the model, and the ChatGPT endpoint refuses the whole request when one holds a lookahead
@@ -89,6 +89,8 @@ interface PullRequestInput {
   auditRunId?: string | undefined;
   targetRepository?: string | undefined;
   base?: string | undefined;
+  /** selfdev: the hook sending a finished task's work by itself, with nobody asked (`watchFinishedTasks`). */
+  byItself?: boolean | undefined;
 }
 
 const protectedName = /^(main|master|develop|development|trunk|production|prod|staging|gh-pages)$|^release(s)?(\/|$)|^hotfix(es)?(\/|$)/i;
@@ -167,6 +169,10 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   const { refusal: heldBack, walked } = await pushRefusal({ store: deps.store, owner: deps.owner, workspace: deps.files.root, git: deps.git,
     folder: cwd, runId: input.runId ?? input.auditRunId, signal: input.signal });
   if (heldBack) throw new Error(heldBack);
+  // A change to Branch itself goes out only as the owner's own step, asked about (`sourceSendHold`), never by the
+  // hook when a task finishes, and only as a proposal to the line Beta builds.
+  if (walked && input.byItself) throw new Error("A change to Branch itself is sent only when you say yes to that step, never by itself when a task finishes.");
+  if (walked && where.base !== selfDevelopmentLine) throw new Error(`A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds, so nothing was sent.`);
   // In Branch's own source the new line starts at the commit the contract walked, wherever HEAD is by now.
   await gitText(deps, cwd, ["switch", "--create", head, ...(walked ? [walked] : [])], input.signal);
   // Names are taken literally (a "*" is a file called "*"), and only the named files are committed,
@@ -286,7 +292,7 @@ export function watchFinishedTasks(deps: PullRequestDeps, track: (work: () => Pr
     const prompt = run?.prompt ?? "";
     const title = `Branch: ${prompt.split("\n")[0]!.trim().slice(0, 150) || "changes from a task"}`;
     const summary = `${prompt.trim().slice(0, 4000)}\n\nOpened by Branch when task ${runId.slice(0, 8)} finished.`;
-    track(() => pullRequestFromChanges(deps, { name: `task-${runId.slice(0, 8)}`, title, summary, paths, auditRunId: runId, signal: AbortSignal.timeout(300000) })
+    track(() => pullRequestFromChanges(deps, { name: `task-${runId.slice(0, 8)}`, title, summary, paths, auditRunId: runId, byItself: true, signal: AbortSignal.timeout(300000) })
       .then((opened) => note(deps, runId, "pull_request.opened", { repository: opened.repository, branch: opened.branch, base: opened.base, files: opened.files.length }))
       .catch((error: unknown) => note(deps, runId, "pull_request.failed", { reason: error instanceof Error ? error.message.slice(0, 500) : "unknown" })));
   });

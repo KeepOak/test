@@ -5,7 +5,8 @@ import { audit, auditSources, type AuditSource } from "./audit.js";
 import type { CommandContext } from "./channels/chat-commands.js";
 import { errorText } from "./contracts.js";
 import { startedWithShortLivedKey } from "./key-context.js";
-import { prepareToolName, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { prepareToolName, selfDevelopmentLockdownRefusal, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { lockdownActive } from "./lockdown.js";
 import { PrepareSourceChangeSchema, prepareBranchSourceChange, type SelfDevelopmentDeps } from "./self-development.js";
 import { boundedDiff, nothingPreparedYet, type BoundedDiff } from "./self-development-diff.js";
 import { HttpError } from "./server-http.js";
@@ -121,6 +122,7 @@ export class SourceChangeRequests {
    */
   async approve(id: string, input: unknown, signal: AbortSignal = AbortSignal.timeout(prepareTimeoutMs)): Promise<{ request: SourceChangeRequest; prepared: Record<string, unknown> }> {
     this.ownerHere(answering);
+    if (lockdownActive(this.deps.store, this.deps.owner)) throw new Error(`${selfDevelopmentLockdownRefusal} The request is still waiting.`);
     const ask = PrepareSourceChangeSchema.parse(input);
     if (!this.deps.registry.names().includes(prepareToolName))
       throw new Error("Sending Git work to a remote is switched off, so Branch's own source cannot be prepared. The request is still waiting.");

@@ -193,7 +193,7 @@ test("the owner sees the exact words, and a yes writes the contract through Cont
   assert.equal(more.length, 0);
   assert.equal(written.sourceSha, sha);
   // The worktree is made at exactly the contract's commit, once the contract is written.
-  assert.deepEqual(await f.prepared(), ["fetch origin mac/cross-platform",
+  assert.deepEqual(await f.prepared(), ["fetch origin redesign/window",
     `worktree add -b branch/self-remove-export .branch-worktrees/self-remove-export ${sha}`]);
   const answered = f.app.store.audit.list(f.owner, { limit: 100 })
     .find((entry) => entry.subject.startsWith(`request ${request.id}`) && entry.outcome === "approved");

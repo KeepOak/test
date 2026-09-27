@@ -93,7 +93,7 @@ export class BranchShell {
     const result = await this.spawn({ executable, args: input.args, cwd, injected, netless, job,
       timeoutMs: input.timeoutMs ?? limitMs, signal, passed: tuned.env,
       // wave mac3 (os-sandbox): a command pointed at the dead address gets no network behind the wall either.
-      wall: confined ? confinedWall(context.osSandbox, netless)
+      wall: confined ? confinedWall(context.osSandbox)
         : context.osSandbox && netless ? { ...context.osSandbox, network: 'none' as const } : context.osSandbox,
       // Q12: a command held to one folder gets that folder as the only place in the workspace it may write.
       workspace: confined ?? context.workspace, confined: !!confined });
@@ -222,10 +222,13 @@ export async function sweepNewGitFolders(folder: string, before: ReadonlySet<str
  * Q12: the OS sandbox for a command held to one folder. It never gets a standing or one-time yes
  * to write anywhere else, so a blocked write is reported, never offered as a question.
  */
-function confinedWall(wall: WallContext | undefined, netless: boolean): WallContext {
+export function confinedWall(wall: WallContext | undefined): WallContext {
   const base: WallContext = wall ?? { network: 'none', keySites: {}, unreadable: [], readOnly: [],
     answer: () => undefined, granted: () => [], spend: () => undefined };
-  return { ...base, ...(netless ? { network: 'none' as const } : {}), granted: (kind) => (kind === 'sandbox.write' ? [] : base.granted(kind)),
+  // selfdev: a held command gets no network at all, whatever the owner's wall allows elsewhere, so nothing it runs
+  // (gh, git, a script) can reach GitHub with this computer's sign-in: sending from Branch's own source is only the
+  // owner-asked push and pull request steps.
+  return { ...base, network: 'none' as const, granted: (kind) => (kind === 'sandbox.write' ? [] : base.granted(kind)),
     answer: (kind, target) => (kind === 'sandbox.write' ? 'deny' : base.answer(kind, target)) };
 }
 

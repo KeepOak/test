@@ -11,6 +11,8 @@ import { cwdOf } from "./never-break/protected.js";
 import { isReadOnlyPermission } from "./policy.js";
 import { isCommandTool } from "./policy-resources.js";
 import { wallReport } from "./sandbox-backends.js";
+import { lockdownActive } from "./lockdown.js";
+import { betaLine } from "./desktop/dev-build.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -29,6 +31,11 @@ export const sourceFolder = "branch-agent-source";
 export const prepareToolName = "branch.prepare_source_change";
 export const widenToolName = "branch.widen_source_contract";
 export const widenReason = "Branch asks you every time before it widens what it may change in its own source";
+/** The one line a change to Branch itself starts from and is proposed back to: the line Beta builds after a merge. */
+export const selfDevelopmentLine = betaLine;
+export const selfDevelopmentLockdownRefusal = "Lockdown is on, so Branch does not work on its own source: nothing is prepared, changed, widened or sent. Turn Lockdown off in Settings to allow this again.";
+/** The only line of work a change to Branch itself is sent on: a fresh `branch/…` line, never a shared one. */
+const sentLine = /^refs\/heads\/branch\/[A-Za-z0-9._-]{1,60}$/;
 const worktreePattern = /^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/;
 const shaPattern = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
@@ -410,6 +417,7 @@ function heldTerms(deps: ContractGuardDeps, name: string, args: unknown, context
   }
   if (!insideSource(scope) && !paths.some((one) => insideSource(one.path))) return null;
   const worktree = worktreeOf(insideSource(scope) ? scope : paths.find((one) => insideSource(one.path))!.path);
+  if (lockdownActive(deps.store, deps.owner)) refuse(deps, context, name, worktree, selfDevelopmentLockdownRefusal);
   if (!worktree) refuse(deps, context, name, "", "The protected Branch Agent source checkout is never changed directly; work in a self-development worktree.");
   let contract: SelfDevelopmentContract | null;
   try { contract = deps.book.current(deps.owner, worktree); } catch (error) { refuse(deps, context, name, worktree, (error as Error).message); }
@@ -471,6 +479,8 @@ export function contractGuard(deps: ContractGuardDeps): (name: string, args: unk
     if (startsProgram(deps, name, args) && sourceCheckedOut(deps.workspace)) return confineCommand(deps, name, args, context);
     const held = heldTerms(deps, name, args, context);
     if (!held || !remotePermissions.has(held.permission)) return;
+    const pinned = sendPinned(name, args);
+    if (pinned) refuse(deps, context, name, held.contract.worktreePath, pinned);
     // git.push and publishing send the branch they name (or the one checked out); that ref is the one walked.
     const pushes = name === "git.push" || name === "github.publish_repo";
     const named = (args as { branch?: unknown } | null)?.branch;
@@ -480,12 +490,43 @@ export function contractGuard(deps: ContractGuardDeps): (name: string, args: unk
     // Q109: resolved once, to the branch HEAD points at when none is named and then to one commit, which is what is
     // walked and exactly what the push sends, so nothing that moves the branch meanwhile changes what goes out.
     const ref = sends ? branchRef(sends) : pushes ? await checkedOut(deps, held.contract, context.signal) : "HEAD";
+    if (pushes && !sentLine.test(ref))
+      refuse(deps, context, name, held.contract.worktreePath, `${ref.replace(/^refs\/heads\//, "")} is not a branch/… line of work, so nothing is sent: a change to Branch itself never goes to a shared line.`);
     const commit = await commitOf(deps, held.contract, context.signal, ref);
     if (!commit) refuse(deps, context, name, held.contract.worktreePath, `${ref === "HEAD" ? "This worktree" : ref} is not a commit here, so nothing is sent.`);
     const broken = await remoteBroken(deps, held.contract, context.signal, commit, ref);
     if (broken) refuse(deps, context, name, held.contract.worktreePath, broken);
     if (pushes) return { sendsCommit: commit, ...(ref.startsWith("refs/") ? { sendsRef: ref } : {}) };
   };
+}
+
+/**
+ * What a sending step from Branch's own source may never do, whatever its contract lists: make a
+ * repository of it, or open anything but a draft pull request from a `branch/…` line into the line
+ * Beta builds. Nothing here merges; the owner reviews and merges. A sentence refuses; null lets it go.
+ */
+function sendPinned(name: string, args: unknown): string | null {
+  if (name === "github.publish_repo") return "Branch's own source is never published as a repository of its own.";
+  if (name !== "github.open_pull_request") return null;
+  const input = (args ?? {}) as { base?: unknown; head?: unknown; draft?: unknown };
+  if (input.base !== selfDevelopmentLine) return `A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds.`;
+  if (input.draft !== true) return "A change to Branch itself is opened only as a draft pull request, for the owner to review.";
+  const head = String(input.head ?? "").replace(/^[A-Za-z0-9-]{1,39}:/, "");
+  return sentLine.test(`refs/heads/${head}`) ? null : `${head || "That line"} is not a branch/… line of work, so no pull request is opened from it.`;
+}
+
+/**
+ * Asked before a push or a pull request from Branch's own source, every time and whatever the rules
+ * say, so nothing of Branch's own leaves this computer without the owner's yes to that very step.
+ */
+export const sourceSendReason = "Branch asks you every time before it sends a change to its own source to GitHub";
+const heldSends = new Set(["git.push", "github.pull_request_from_changes"]);
+export function sourceSendHold(input: { workspace: string; scope: string; tool: string; args: unknown }): { reason: string; onceOnly: true } | null {
+  if (!heldSends.has(input.tool)) return null;
+  const named = (input.args as { folder?: unknown } | null)?.folder;
+  const scope = workspacePath(input.workspace, "", input.scope || ".") ?? "";
+  const folder = typeof named === "string" && named ? workspacePath(input.workspace, scope, named) : scope;
+  return (folder !== null && insideSource(folder)) || insideSource(scope) ? { reason: sourceSendReason, onceOnly: true } : null;
 }
 
 /**
@@ -520,6 +561,7 @@ export async function pushRefusal(input: {
   if (where === null || !insideSource(where)) return { refusal: null, walked: null };
   const worktree = worktreeOf(where), context = { runId: input.runId ?? "" };
   try {
+    if (lockdownActive(input.store, input.owner)) refuse(input, context, pullRequestTool, worktree, selfDevelopmentLockdownRefusal);
     if (!worktree) refuse(input, context, pullRequestTool, "", "The protected Branch Agent source checkout is never sent directly; work in a self-development worktree.");
     if (where !== worktree)
       refuse(input, context, pullRequestTool, worktree, `Git runs in Branch's own source only at a self-development worktree's root, never in ${where}, so nothing is sent from it.`);
