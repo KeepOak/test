@@ -25,15 +25,25 @@ export async function ownerPageInput(page: Page, input: OwnerInput, check: () =>
   const size = page.viewportSize();
   if (!size) throw new Error('This page has no supported input viewport.');
   const at = (x: number, y: number) => ({ x: Math.min(size.width - 1, x * size.width), y: Math.min(size.height - 1, y * size.height) });
-  check();
+  const url = page.url(), liveCheck = (): void => {
+    check();
+    if (page.url() !== url) throw new Error('The page changed while the pointer was moving.');
+  };
+  liveCheck();
   if (input.kind === 'click' || input.kind === 'move' || input.kind === 'drag') {
     const from = at(input.x, input.y);
-    await page.mouse.move(from.x, from.y); check();
+    await page.mouse.move(from.x, from.y); liveCheck();
     if (input.kind === 'click') await page.mouse.click(from.x, from.y, { button: input.button, clickCount: input.count });
     if (input.kind === 'drag') {
       const to = at(input.toX, input.toY);
-      try { await page.mouse.down(); check(); await page.mouse.move(to.x, to.y, { steps: 8 }); }
-      finally { await page.mouse.up().catch(() => undefined); }
+      try {
+        await page.mouse.down(); liveCheck();
+        await page.mouse.move(to.x, to.y, { steps: 8 }); liveCheck();
+        await page.mouse.up();
+      } catch (error) {
+        await page.close({ runBeforeUnload: false }).catch(() => undefined);
+        throw error;
+      }
     }
   } else if (input.kind === 'wheel') await page.mouse.wheel(input.dx, input.dy);
   else if (input.kind === 'text') await page.keyboard.insertText(input.text);
