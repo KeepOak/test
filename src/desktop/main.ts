@@ -41,7 +41,6 @@ import { screen } from "electron";
 // mac3/never-break: trying a new version on a copy of the data before an update.
 import { stagedEngine, updateCanary } from "../never-break/canary.js";
 import { runStagedSmoke, smokeReportPath } from "./beta-smoke.js";
-import { smokeMode } from "./beta-smoke-window.js";
 import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
@@ -643,6 +642,7 @@ async function joinBackground(dataDir: string): Promise<Attachment | null> {
  * and the app starts its own engine as it would with none running.
  */
 function upgradeBackground(dataDir: string, workspace: string): Promise<Attachment | null> {
+  // moveOldEngine starts the fresh engine with ELECTRON_RUN_AS_NODE=1 (src/install/old-engine.ts), never a second window.
   return moveOldEngine({
     dataDir, fresh: { executable: process.execPath, script: fileURLToPath(new URL("../cli.js", import.meta.url)), workspace },
     proves: async (url, key) => (await proveOnce(url, key)) !== null, join: () => joinBackground(dataDir), log: (line) => console.log(line),
@@ -665,6 +665,7 @@ function relaunchApp(hidden = false): void {
  */
 async function brokerOrOwnEngine(base: string, dataDir: string, workspace: string): Promise<Attachment | null> {
   try {
+    // Deliberately Electron itself, not as Node: gateway-launch.ts removes ELECTRON_RUN_AS_NODE and passes its own flag.
     return await launchDesktopGateway({ executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
       base, dataDir, workspace, join: () => joinBackground(dataDir) });
   } catch (error) {
@@ -826,28 +827,6 @@ function desktopProviderEnv(settings: DesktopSettings): Record<string, string> |
   }
 }
 
-/** The broker's lock is separate from its windows; closing or updating a shell leaves this owner running. */
-function startDetachedGateway(): void {
-  const base = app.getPath("userData");
-  app.setPath("userData", join(base, "gateway-desktop"));
-  if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
-  let gateway: Awaited<ReturnType<typeof runDesktopGateway>> = null, ending = false;
-  app.on("window-all-closed", () => undefined);
-  app.on("before-quit", (event) => {
-    if (ending) return;
-    event.preventDefault(); ending = true;
-    void gateway?.stop().finally(() => app.exit(0));
-    if (!gateway) app.exit(0);
-  });
-  void app.whenReady().then(async () => {
-    const where = await folders(base);
-    gateway = await runDesktopGateway({ base, ...where, appRoot: liveAppRoot(),
-      providerEnv: async () => desktopProviderEnv(await loadDesktopSettings(join(base, "model-settings.json"))) });
-    if (testHooksOn()) (globalThis as { branchGatewayForTests?: unknown }).branchGatewayForTests = gateway;
-    if (!gateway) app.exit(0);
-  }).catch((error: Error) => { console.error("Background engine:", error.message); app.exit(1); });
-}
-
 app.setName("Branch Agent");
 // mac7/win-icon: before any window, so the taskbar files every window under Branch's own ID (the
 // one its shortcuts carry) instead of guessing from the program file, which is Electron's.
@@ -863,7 +842,11 @@ else if (process.argv.includes(refreshShortcutsFlag)) {
   // It never takes the single-instance lock, so the version that started it keeps running.
   const report = smokeReportPath(process.argv)!;
   app.on("window-all-closed", () => undefined);
-  void app.whenReady().then(() => smokeMode(report, app.getVersion())).then((code) => app.exit(code), () => app.exit(1));
+  // Loaded only in this separate launch: the engine it brings is never among the running window's own modules, so a
+  // live update still tells engine changes from shell ones (src/hot-update/classify.ts).
+  const trial = new URL("./beta-smoke-window.js", import.meta.url).href;
+  void app.whenReady().then(async () => (await import(trial) as typeof import("./beta-smoke-window.js")).smokeMode(report, app.getVersion()))
+    .then((code) => app.exit(code), () => app.exit(1));
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
@@ -900,4 +883,26 @@ else {
       console.error("Branch Agent could not start:", error.message);
       app.quit();
     });
+}
+
+/** The broker's lock is separate from its windows; closing or updating a shell leaves this owner running. */
+function startDetachedGateway(): void {
+  const base = app.getPath("userData");
+  app.setPath("userData", join(base, "gateway-desktop"));
+  if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
+  let gateway: Awaited<ReturnType<typeof runDesktopGateway>> = null, ending = false;
+  app.on("window-all-closed", () => undefined);
+  app.on("before-quit", (event) => {
+    if (ending) return;
+    event.preventDefault(); ending = true;
+    void gateway?.stop().finally(() => app.exit(0));
+    if (!gateway) app.exit(0);
+  });
+  void app.whenReady().then(async () => {
+    const where = await folders(base);
+    gateway = await runDesktopGateway({ base, ...where, appRoot: liveAppRoot(),
+      providerEnv: async () => desktopProviderEnv(await loadDesktopSettings(join(base, "model-settings.json"))) });
+    if (testHooksOn()) (globalThis as { branchGatewayForTests?: unknown }).branchGatewayForTests = gateway;
+    if (!gateway) app.exit(0);
+  }).catch((error: Error) => { console.error("Background engine:", error.message); app.exit(1); });
 }

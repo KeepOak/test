@@ -73,13 +73,15 @@ test("only stylesheets: swapped in place", () => {
   assert.equal(stylesOnly([]), false);
 });
 
-test("the real build: main's own imports are shell, the runtime is engine, the gateway is gateway", async () => {
+test("the real build: main's own imports (the retained gateway too) are shell, the runtime is engine", async () => {
   const real = await readCompiled(process.cwd());
   const at = (path) => real.get(path) ?? null;
   const place = (path) => classify({ changed: [path], read: at }).tier;
   assert.equal(place("src/desktop/main.ts"), "shell");
   assert.equal(place("src/runtime.ts"), "engine");
-  assert.equal(place("src/never-break/gateway.ts"), "gateway");
+  // The desktop's retained broker runs the gateway inside main's own process (src/desktop/gateway-runtime.ts), and a
+  // live update does not replace its loaded modules, so a gateway change there waits for a whole new version.
+  assert.equal(place("src/never-break/gateway.ts"), "shell");
   assert.equal(place("src/desktop/engine-process.ts"), "engine");
   assert.equal(place("public/app/chat/chat.js"), "window");
 });
