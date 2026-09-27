@@ -168,7 +168,7 @@ test("ending the engine waits until it has gone, but never longer than asked", a
 
 const engineEntry = fileURLToPath(new URL("./fixtures/engine-in-node.mjs", import.meta.url));
 
-async function realEngine(t, testHooks) {
+async function realEngine(t, overrides = {}, answers = {}) {
   const home = await mkdtemp(join(tmpdir(), "branch-engine-host-"));
   const child = fork(engineEntry, [], {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
@@ -178,7 +178,8 @@ async function realEngine(t, testHooks) {
   const messages = new EventEmitter();
   child.on("message", (message) => messages.emit(message.kind, message));
   // What main answers: no ChatGPT sign-in is saved; nothing else is asked of it here.
-  messages.on("call", (call) => child.send(call.method === "vault-read" ? { kind: "reply", id: call.id, ok: true, value: null }
+  const offered = { "vault-read": () => null, ...answers };
+  messages.on("call", (call) => child.send(call.method in offered ? { kind: "reply", id: call.id, ok: true, value: offered[call.method](call.args) }
     : { kind: "reply", id: call.id, ok: false, error: `Unknown request "${call.method}"` }));
   t.after(async () => {
     if (child.exitCode === null) { child.kill(); await once(child, "exit"); }
@@ -191,14 +192,14 @@ async function realEngine(t, testHooks) {
     for (;;) { const [reply] = await once(messages, "reply"); if (reply.id === mine) return reply; }
   };
   const ready = once(messages, "ready");
-  child.send({ kind: "start", config: config({ dataDir: join(home, "state"), workspace: join(home, "work"), appPid: process.pid, testHooks }) });
+  child.send({ kind: "start", config: config({ dataDir: join(home, "state"), workspace: join(home, "work"), appPid: process.pid, ...overrides }) });
   const [hello] = await ready;
   assert.equal(FromEngineSchema.safeParse(hello).success, true);
   return { child, hello, ask, messages };
 }
 
 test("the engine process starts, answers with its signed key, and has no test hook unless main asks for one", { timeout: 120000 }, async (t) => {
-  const { child, hello, ask } = await realEngine(t, false);
+  const { child, hello, ask } = await realEngine(t);
   const state = await fetch(`${hello.url}/api/state`, { headers: { authorization: `Bearer ${hello.token}` } });
   assert.equal(state.status, 200);
   assert.equal((await fetch(`${hello.url}/api/state`)).status, 401, "not without the key");
@@ -210,7 +211,7 @@ test("the engine process starts, answers with its signed key, and has no test ho
 });
 
 test("with the test hook main asked for, a blocked engine really is blocked", { timeout: 120000 }, async (t) => {
-  const { hello, ask } = await realEngine(t, true);
+  const { hello, ask } = await realEngine(t, { testHooks: true });
   const began = Date.now();
   const blocked = ask("test-block", { ms: 1500 });
   const state = await fetch(`${hello.url}/api/state`, { headers: { authorization: `Bearer ${hello.token}` } });
@@ -234,4 +235,18 @@ test("an engine back at another address is not taken for the window's own", asyn
   assert.equal(host.url, "http://127.0.0.1:4000", "the window's address");
   assert.equal(host.servingAt, "http://127.0.0.1:4001", "is not where the engine answers now, so main starts the app again");
   await host.end(1000);
+});
+
+test("a Mac login item change reports what main made of it, not a guess", { timeout: 120000 }, async (t) => {
+  const asked = [];
+  const { hello } = await realEngine(t, { executable: join(tmpdir(), "Branch Agent"), loginItem: { enabled: false, needsApproval: false } },
+    { "login-item-set": (args) => { asked.push(args); return { enabled: true, needsApproval: true }; } });
+  const response = await fetch(`${hello.url}/api/deployment/autostart`, { method: "POST",
+    headers: { authorization: `Bearer ${hello.token}`, "content-type": "application/json" }, body: JSON.stringify({ enabled: true }) });
+  const view = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(view));
+  assert.deepEqual(asked, [{ enabled: true }]);
+  assert.equal(view.enabled, true);
+  assert.equal(view.needsApproval, true, "the approval the Mac asks for is said at once");
+  assert.ok(view.settingsLink, "with the way to System Settings");
 });

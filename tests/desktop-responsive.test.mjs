@@ -84,6 +84,8 @@ test("the window stays responsive while the engine is busy, and the engine comes
     const squatter = createServer((request, response) => { heard.push(`${request.url} ${request.headers.authorization ?? ""}`); response.end("{}"); });
     await new Promise((resolve, reject) => { squatter.once("error", reject); squatter.listen(Number(new URL(origin).port), "127.0.0.1", resolve); });
     const meanwhile = await page.evaluate(() => fetch("/api/state").then((response) => `answered ${response.status}`, (error) => `refused: ${error.message}`));
+    // Main's own requests too (here the quick-ask keys, read again at the page's asking) are refused before they are sent.
+    await page.evaluate(() => window.branchDesktop.quickAskKeysChanged());
     await new Promise((resolve) => squatter.close(resolve));
     assert.match(meanwhile, /^refused/, "nothing reaches the engine's address while it is down");
     assert.deepEqual(heard, [], "a program on the free port hears nothing from the window");

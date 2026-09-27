@@ -61,15 +61,15 @@ function remoteBanner(): BannerWindowFactory {
   };
 }
 
-/** The Mac login item, as main last read it; a change is made by main and read back. */
+/** The Mac login item, as main last read it; a change is made by main, and its answer is what the change reports. */
 function remoteLoginItem(first: LoginItemState): LoginItem {
   let known = first;
   return {
     read: () => known,
-    set: (enabled) => {
-      known = { ...known, enabled };
-      void link.call<LoginItemState>("login-item-set", { enabled })
-        .then((state) => { known = state; }, () => undefined);
+    set: async (enabled) => {
+      const state = await link.call<LoginItemState>("login-item-set", { enabled }, 15000);
+      if (typeof state?.enabled !== "boolean" || typeof state?.needsApproval !== "boolean") throw new Error("The login item did not say how it is set.");
+      known = { enabled: state.enabled, needsApproval: state.needsApproval };
       return known;
     },
   };

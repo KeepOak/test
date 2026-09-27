@@ -226,14 +226,14 @@ async function createWindow(
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: () => updateReadiness(url, key()) });
+    { ...update, readiness: async () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   registerRestartIpc(ipcMain, window, url, () => {
     app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
     quitReason = "restart";
     app.quit();
   });
-  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: () => quickAskKeys(url, key()),
+  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: async () => quickAskKeys(url, key()),
     log: (line) => console.error(line) });
   // Redesign phase 1 (integration review): Windows ending the session never waits for the quit question.
   window.on("query-session-end", () => { quitReason = "system"; });
@@ -367,15 +367,18 @@ async function start(): Promise<void> {
       currentCommit: commit,
     });
   const url = await startEngine(base, settings, { dataDir, workspace });
-  // The key goes only to an engine answering at the window's address: while the engine starts again its port is free,
-  // and another program could take it, so nothing (the window's requests or main's own) carries the key there then.
+  // The key, and anything main sends, go only to an engine answering at the window's address: while the engine starts
+  // again, main's own requests are refused before anything is sent (the window's are held in protectWindow).
   const reachable = () => engine?.servingAt === url;
-  const key = () => (reachable() ? engine?.token ?? "" : "");
+  const key = () => {
+    if (!engine || !reachable()) throw new Error("Branch is starting its engine again. Try again in a moment.");
+    return engine.token;
+  };
   await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
-    backup: () => requestUpdateBackup(url, key()),
+    backup: async () => requestUpdateBackup(url, key()),
     // mac3/never-break: the new version is tried on a copy of this data before it is used.
-    canary: desktopCanary(dataDir, () => engineSnapshot(url, key())),
+    canary: desktopCanary(dataDir, async () => engineSnapshot(url, key())),
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: commit,
