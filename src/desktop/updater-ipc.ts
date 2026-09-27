@@ -10,6 +10,7 @@ import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
+import { watchForOwner } from "./quiet-build.js";
 
 /** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
 export const updateScratchDir = (): string => join(app.getPath("temp"), "branch-agent-update");
@@ -39,7 +40,7 @@ const settingsPages = openableSettingsPages(process.platform);
  */
 export interface UpdateHooks {
   /** Authenticated current channel and full task count from the local or joined engine. */
-  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
+  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "workingTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
   stopDaemon?: () => Promise<number | null>;
   /** mac3/never-break: the new version's check on a copy of the data (see src/never-break/canary.ts). */
@@ -67,7 +68,7 @@ export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250
   let last = 0, lastKey = "", waiting: NodeJS.Timeout | null = null, latest: UpdateStatus | null = null;
   const flush = () => { waiting = null; if (latest) { last = now(); send(latest); latest = null; } };
   return (status) => {
-    const key = JSON.stringify([status.phase, status.stages?.map((stage) => stage.state), status.target?.version ?? null, status.failure]);
+    const key = JSON.stringify([status.phase, status.stages?.map((stage) => stage.state), status.target?.version ?? null, status.failure, status.paused]);
     latest = status;
     if (key !== lastKey || now() - last >= everyMs) {
       lastKey = key;
@@ -158,13 +159,21 @@ export function registerUpdaterIpc(
       if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
       started = { channel: readiness.channel, automatic: automatic === true };
       await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
+      // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
+      const stopWatching = watchForOwner(window, updater, async () => {
+        const state = await hooks.readiness!();
+        // Dogfood F1 while it builds or waits: a changed channel, or update by itself switched off, calls it off now.
+        const why = changedMind(state, started);
+        if (why) updater.callOff(why);
+        return state.workingTasks ?? state.busyTasks;
+      });
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
       const installed = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
         diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
-      });
+      }).finally(stopWatching);
       // hot-update: applied live; nothing to hand over, nothing restarts.
       if ("live" in installed) {
         diagnose("updater", "info", "Updated live", { fields: { tier: installed.live.tier, ms: String(installed.live.ms), to: installed.live.version } });

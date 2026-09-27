@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -8,8 +8,10 @@ import { z } from "zod";
 import { posixHandOverScript, windowsKeep, windowsKeepOut } from "./hand-over.js";
 import { checksumAssetName, type PackageType } from "./release-assets.js";
 import type { LiveOutcome } from "../hot-update/live-build.js";
-import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevStage, type DevStanding, type Run } from "./dev-build.js";
+import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevBuildPlan, type DevBuilt, type DevStage, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
+import { runHostedBuild, type HostedBuild } from "./build-client.js";
+import type { PauseReason } from "./quiet-build.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
 import { primaryRepo, fallbackRepo, isTrustedRepo } from "./repo-pair.js";
 
@@ -81,6 +83,8 @@ export interface UpdaterOptions {
 }
 /** hot-update: how the updater builds and applies a change live (supplied by main, src/desktop/hot-apply.ts). */
 export interface LiveHooks {
+  pause?: (paused: boolean) => void;
+  stop?: () => void;
   build: (release: ReleaseInfo, hooks: { onStage: (stage: DevStage, state: "running" | "skipped") => void; onVersion: (version: string) => void }) => Promise<LiveOutcome>;
   /** Checks the live build again, tries it (engine: on a copy of the work), and puts it to use; answers what ran. */
   apply: (outcome: Exclude<LiveOutcome, { tier: "shell" | "none" }>, hooks: { onStage: (stage: StageId) => void }) => Promise<LiveApplied>;
@@ -163,6 +167,11 @@ export interface UpdateStatus {
   automatic: boolean;
   /** hot-update: the last change applied live: which part, how long it took from the start of the update, and when. */
   live?: { tier: LiveApplied["tier"]; ms: number; at: string } | null;
+  /**
+   * The install under way is waiting because the owner is typing or a task is working (quiet-build.ts pauseReason):
+   * the program running now is suspended when it may be, and the next step does not start. Null while it goes on.
+   */
+  paused: PauseReason | null;
 }
 export type ProvenanceOutcome = "checked" | "not-checked" | "none";
 /**
@@ -248,6 +257,11 @@ export class Updater {
   private stages: UpdateStage[] | null = null;
   private target: UpdateTarget | null = null;
   private automatic = false;
+  private paused: PauseReason | null = null;
+  private resumed: (() => void)[] = [];
+  private hosted: HostedBuild | null = null;
+  /** Why the install under way was called off while it built or waited (the owner changed their mind), or null. */
+  private calledOff: string | null = null;
   constructor(private readonly options: UpdaterOptions) {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
@@ -325,6 +339,7 @@ export class Updater {
     this.busy = true;
     this.stoppedBackground = false;
     this.automatic = options.automatic === true;
+    this.calledOff = null;
     this.provenance = null;
     let release: ReleaseInfo | null | undefined;
     try {
@@ -376,9 +391,12 @@ export class Updater {
       }
       this.stage("checking");
       await validateStagedPackage(stagedDir, expectedVersion, this.platform);
+      await this.untilUnpaused();
       await this.tryCanary(stagedDir, expectedVersion); // mac3/never-break; a Beta build reports the version it was built as
+      await this.untilUnpaused();
       this.stage("copying");
       await this.safetyCopy();
+      await this.untilUnpaused();
       // Only once nothing is working: a task that started during the build defers the install, and the swap never began.
       await this.options.beforeStop?.();
       this.stage("swapping");
@@ -411,7 +429,14 @@ export class Updater {
         onStage: (stage, state) => { this.stage(stage, state); if (state === "running") this.set("downloading", liveWords[stage], null, release); },
         onVersion: (version) => { this.target = { version, commit: release.commit ?? null }; },
       });
+      await this.untilUnpaused();
     } catch (error) {
+      const refusal = this.calledOff ? new UpdateDeferredError(this.calledOff) : error;
+      if (refusal instanceof UpdateDeferredError) {
+        this.stages = this.target = null;
+        this.set("available", refusal.message, null, release);
+        throw refusal;
+      }
       this.keptAfter(error instanceof Error ? error.message : String(error), release, error);
       throw error;
     }
@@ -458,6 +483,41 @@ export class Updater {
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
   release(): void { this.busy = false; }
+  /**
+   * The owner is typing, or a task is working (null: neither). An install under way waits for them: the build's own
+   * process holds what it runs, and the next step (the check, the safety copy, the swap) does not start until this is null.
+   */
+  setPaused(reason: PauseReason | null): void {
+    if (reason === this.paused) return;
+    this.paused = reason;
+    this.hosted?.pause(reason !== null);
+    this.options.live?.pause?.(reason !== null);
+    if (!reason) for (const wake of this.resumed.splice(0)) wake();
+    if (this.stages) {
+      this.status = { ...this.status, paused: reason, updatedAt: new Date().toISOString() };
+      this.options.onChange?.(this.status);
+    }
+  }
+  /**
+   * Resolves once the install may take its next step; throws a wait (the install is given back, nothing was swapped)
+   * when it was called off meanwhile.
+   */
+  async untilUnpaused(): Promise<void> {
+    if (this.paused && !this.calledOff) await new Promise<void>((resolve) => this.resumed.push(resolve));
+    if (this.calledOff) throw new UpdateDeferredError(this.calledOff);
+  }
+  /**
+   * The owner changed their mind while this install built or waited (another channel, update by itself switched off):
+   * the build stops, a wait for the owner ends, and the install is given back as a wait. A task that works for hours
+   * must not keep the updater claimed with no way out.
+   */
+  callOff(why: string): void {
+    if (!this.busy || this.calledOff) return;
+    this.calledOff = why;
+    this.hosted?.stop();
+    this.options.live?.stop?.();
+    for (const wake of this.resumed.splice(0)) wake();
+  }
   /** Q55: whether the install under way closed the background engine, so a failure can say so. */
   get backgroundStopped(): boolean { return this.stoppedBackground; }
   /**
@@ -489,7 +549,7 @@ export class Updater {
     if (!stages || !next || next.state === state) return;
     for (const stage of stages) if (stage.state === "running" && stage !== next) Object.assign(stage, { state: "done", endedAt: at });
     Object.assign(next, state === "running" ? { state, startedAt: at, endedAt: null } : { state, startedAt: at, endedAt: at });
-    this.status = { ...this.status, stages: stages.map((stage) => ({ ...stage })), target: this.target ? { ...this.target } : null, automatic: this.automatic, updatedAt: at };
+    this.status = { ...this.status, stages: stages.map((stage) => ({ ...stage })), target: this.target ? { ...this.target } : null, automatic: this.automatic, paused: this.paused, updatedAt: at };
     this.options.onChange?.(this.status);
   }
   /** mac3/never-break: the new version must pass its own check on a copy of the data first. */
@@ -626,7 +686,7 @@ export class Updater {
     const log = join(buildDir, "build.log");
     await rm(log, { force: true });
     await writeFile(log, `Beta build of ${release.commit} from ${this.installed.version}, started ${new Date().toISOString()}\n\n`);
-    const built = await buildDev(this.options.devRun ?? realRun(this.platform, log), {
+    const plan: DevBuildPlan = {
       repo: this.devRepo(), buildDir, commit: release.commit, running: this.installed.commit, assetName: this.options.assetName!,
       platform: this.platform, otherLineConfirmed: release.otherLine === true,
       onStage: (stage, state) => {
@@ -637,7 +697,10 @@ export class Updater {
         this.target = { version, commit: release.commit ?? null };
         this.set("downloading", this.status.message, null, this.status.release ? { ...this.status.release, latestVersion: version } : null);
       },
-    });
+    };
+    // The real build runs in a low-priority process of its own (build-host.ts), so neither this process nor the
+    // computer is kept busy by it; a runner handed in (tests) runs here.
+    const built = await (this.options.devRun ? buildDev(this.options.devRun, plan) : this.hostedBuild(plan, log));
     // Without the change the running version was built from, its version is the only way to see going back.
     if (!this.installed.commit && compareVersions(built.version, this.installed.version) < 0)
       throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
@@ -661,6 +724,16 @@ export class Updater {
     const archive = join(this.options.scratchDir, this.options.assetName!);
     await rename(built.archive, archive).catch(async () => { await cp(built.archive, archive); await rm(built.archive, { force: true }); });
     return { version: built.version, archive };
+  }
+  private async hostedBuild(plan: DevBuildPlan, log: string): Promise<DevBuilt> {
+    const hosted = runHostedBuild(plan, { log });
+    this.hosted = hosted;
+    if (this.paused) hosted.pause(true);
+    // The log says how the build was lowered (or that the helper could not run, and only its priority class was).
+    void hosted.lowered.then((words) => appendFile(log, `Build priority: ${words}\n\n`)).catch(() => undefined);
+    try { return await hosted.done; }
+    catch (error) { throw this.calledOff ? new UpdateDeferredError(this.calledOff) : error; }
+    finally { this.hosted = null; }
   }
   /**
    * Q37: for minutes after a release is published, GitHub's release list (and its tag look-up) can still show no
@@ -867,7 +940,7 @@ export class Updater {
   private fresh(phase: UpdatePhase, message: string): UpdateStatus {
     return { phase, message, installed: this.installed, outcome: null, progress: null, release: null, bytes: null, updatedAt: new Date().toISOString(),
       stages: this.stages?.map((stage) => ({ ...stage })) ?? null, target: this.target ? { ...this.target } : null, failure: null,
-      automatic: this.stages ? this.automatic : false };
+      automatic: this.stages ? this.automatic : false, paused: this.stages ? this.paused : null };
   }
   /** Marks the hand-over as running once the script has been launched; the app is about to close and restart. */
   applying(): UpdateStatus {

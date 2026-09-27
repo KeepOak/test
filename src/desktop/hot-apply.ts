@@ -1,8 +1,9 @@
 import { join } from "node:path";
-import { buildLive, type LiveOutcome } from "../hot-update/live-build.js";
+import type { LiveOutcome } from "../hot-update/live-build.js";
+import { runHostedLiveBuild, type HostedBuild } from "./build-client.js";
+import { proveOnce } from "../engine-proof.js";
 import { checkedInUse, pruneLive, readLiveState, writeLiveState, type InUse, type LiveState } from "../hot-update/live-folder.js";
 import { isCanaryCopy, runCanary } from "../never-break/canary.js";
-import type { Run } from "./dev-build.js";
 import type { EngineChild, EngineHost, HandOverOutcome } from "./engine-host.js";
 import type { LiveApplied, LiveHooks, ReleaseInfo } from "./updater.js";
 import { windowPlan, type WindowUpdate } from "./live-window-ipc.js";
@@ -26,7 +27,6 @@ export interface HotApplyOptions {
   buildDir: string;
   /** The change main was packaged from (null: not recorded, and every change goes the packaged way). */
   packaged: string | null;
-  run: () => Run;
   host: () => EngineHost | undefined;
   /** Starts an engine process from a live build's engine-process.js. */
   forkLive: (engineFile: string) => EngineChild;
@@ -63,16 +63,21 @@ export const runningChange = (state: LiveState, packaged: string | null): string
 
 export function liveHooks(options: HotApplyOptions): LiveHooks {
   let state: LiveState | null = null;
+  let hosted: HostedBuild<LiveOutcome> | null = null, paused = false;
   const current = async () => (state ??= await readLiveState(options.appRoot));
   return {
+    pause: (next) => { paused = next; hosted?.pause(next); },
+    stop: () => hosted?.stop(),
     build: async (release: ReleaseInfo, hooks) => {
       const now = await current();
       if (!release.commit) throw new Error("The Beta build is not set up on this computer, so nothing was changed.");
-      return buildLive(options.run(), {
+      hosted = runHostedLiveBuild({
         repo: options.repo, buildDir: options.buildDir, commit: release.commit, running: runningChange(now, options.packaged),
         packaged: options.packaged, engineAt: now.engine?.commit ?? options.packaged, windowAt: runningChange(now, options.packaged),
         appRoot: options.appRoot, onStage: hooks.onStage, onVersion: hooks.onVersion,
-      });
+      }, { log: join(options.buildDir, "live-build.log") });
+      if (paused) hosted.pause(true);
+      try { return await hosted.done; } finally { hosted = null; }
     },
     apply: async (outcome, hooks) => {
       const now = await current();
@@ -122,9 +127,7 @@ async function applyEngine(options: HotApplyOptions, outcome: Exclude<LiveOutcom
     // The new engine serves the window files of its own build, checked, from memory (src/hot-update/window-files.ts).
     config: { appRoot: options.appRoot, liveWindow: inUse },
     check: async (url) => {
-      const answer = await fetch(`${url}/api/engine-proof?challenge=${"0".repeat(64)}`, { signal: AbortSignal.timeout(10_000) });
-      await answer.text();
-      if (!answer.ok) throw new Error(`the new engine answered ${answer.status}`);
+      if (!(await proveOnce(url, host.token, 10_000))) throw new Error("the new engine did not prove its identity");
     },
   });
   if (!handed.ok) throw new Error(`The new engine did not start properly, so the engine that was running before was started again and nothing was changed (${handed.why}).`);

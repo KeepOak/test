@@ -71,7 +71,6 @@ import { EngineHost } from "./engine-host.js";
 import { liveAtStart, liveHooks, runningChange } from "./hot-apply.js";
 import { registerLiveWindowIpc, type Cover, type WindowUpdate } from "./live-window-ipc.js";
 import type { InUse } from "../hot-update/live-folder.js";
-import { realRun } from "./dev-build.js";
 import { fallbackRepo } from "./repo-pair.js";
 import { BannerNoticeSchema, type EngineConfig } from "./engine-link.js";
 import { z } from "zod";
@@ -486,7 +485,7 @@ async function start(): Promise<void> {
   const client = new EngineClient({ origin: url, access: gate, windowKey: () => engine?.token ?? "" });
   // hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts).
   const hot = liveHooks({ appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
-    run: () => realRun(process.platform, join(betaBuildDir(dataDir), "live-build.log")), host: () => engine, forkLive: forkEngine,
+    host: () => engine, forkLive: forkEngine,
     snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
     tellWindow: (update) => tellWindow(update), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
     log: (line) => console.error(line) });

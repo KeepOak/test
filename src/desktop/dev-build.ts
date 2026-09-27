@@ -1,8 +1,10 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, chmod, lstat, mkdir, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { removeTree } from "./remove-tree.js";
+import { setPriority } from "node:os";
+import { activeDeadline, quietPriority, type BuildGate } from "./quiet-build.js";
 import { join, relative, sep } from "node:path";
 
 /**
@@ -19,8 +21,16 @@ import { join, relative, sep } from "node:path";
 /** The line of work Beta builds. Named here only, and never chosen by anyone, so it can move to main later. */
 export const betaLine = "redesign/window";
 
+export interface RunOptions {
+  cwd?: string; timeoutMs: number; env?: Record<string, string>;
+  /**
+   * The program only computes and writes files (compiling, packaging), so a paused build may suspend it in place.
+   * Anything that holds a network connection (git fetch, npm ci) is left to finish, and the next program waits.
+   */
+  pausable?: boolean;
+}
 export interface Run {
-  (file: string, args: string[], options: { cwd?: string; timeoutMs: number; env?: Record<string, string> }): Promise<string>;
+  (file: string, args: string[], options: RunOptions): Promise<string>;
 }
 /** The build's own stages, in order; the updater shows each with its time. "installing" is skipped when nothing changed. */
 export type DevStage = "fetching" | "installing" | "building";
@@ -47,27 +57,61 @@ export function keyLine(output: string): string | null {
   return line ? line.slice(0, 300) : null;
 }
 
-/** The real runner: hidden, no prompts, npm through the command shell Windows needs for `npm.cmd`; output to `log`. */
-export function realRun(platform: NodeJS.Platform = process.platform, log?: string): Run {
+/**
+ * The real runner: hidden, no prompts, npm through the command shell Windows needs for `npm.cmd`; output to `log`.
+ * With a gate (the build's own process, build-host.ts), each program waits while the build is paused, a pausable one
+ * is suspended in place, its time limit counts only the time it ran, and one that runs out is ended with everything it
+ * started (npm's own children too).
+ */
+export function realRun(platform: NodeJS.Platform = process.platform, log?: string, gate?: BuildGate): Run {
   const env = buildEnv(process.env, platform);
-  return (file, args, options) => new Promise((resolve, reject) => {
+  return async (file, args, options) => {
+    await gate?.ready();
     const [program, programArgs] = platform === "win32" && file === "npm"
       ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe"), ["/d", "/s", "/c", "npm", ...args]]
       : [file, args];
     const started = Date.now();
-    execFile(program, programArgs, { cwd: options.cwd, env: options.env ? { ...env, ...options.env } : env, windowsHide: true, timeout: options.timeoutMs, maxBuffer: 64 << 20 },
-      (error, stdout, stderr) => {
-        const output = `${String(stdout)}\n${String(stderr)}`;
-        const written = log
-          ? appendFile(log, `$ ${file} ${args.join(" ")}  (${Math.round((Date.now() - started) / 1000)} s${error ? ", failed" : ""})\n${output.trim()}\n\n`).catch(() => undefined)
-          : Promise.resolve();
-        void written.then(() => {
-          if (!error) return resolve(String(stdout));
-          const lastLine = String(stderr).trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
-          reject(new RunError(`${file} ${args[0] ?? ""} did not finish${error.killed ? " in time" : ""}${lastLine ? `: ${lastLine.slice(0, 300)}` : "."}`,
-            keyLine(output)));
-        });
-      });
+    const { code, stdout, stderr, timedOut, failed } = await runProgram(program, programArgs, {
+      cwd: options.cwd, env: options.env ? { ...env, ...options.env } : env, timeoutMs: options.timeoutMs,
+      pausable: options.pausable === true, group: platform !== "win32" && gate !== undefined }, gate);
+    const output = `${stdout}\n${stderr}`, error = failed || code !== 0;
+    if (log) await appendFile(log, `$ ${file} ${args.join(" ")}  (${Math.round((Date.now() - started) / 1000)} s${error ? ", failed" : ""})\n${output.trim()}\n\n`).catch(() => undefined);
+    if (!error) return stdout;
+    const lastLine = ((timedOut ? null : failed) ?? stderr).trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
+    throw new RunError(`${file} ${args[0] ?? ""} did not finish${timedOut ? " in time" : ""}${lastLine ? `: ${lastLine.slice(0, 300)}` : "."}`, keyLine(output));
+  };
+}
+
+interface Finished { code: number | null; stdout: string; stderr: string; timedOut: boolean; failed: string | null }
+const outputLimit = 64 << 20;
+/** One program, hidden; its output kept up to 64 MB. `group`: in a process group of its own, so it is held and ended whole. */
+function runProgram(program: string, args: string[], options: { cwd: string | undefined; env: NodeJS.ProcessEnv; timeoutMs: number; pausable: boolean; group: boolean },
+  gate?: BuildGate): Promise<Finished> {
+  return new Promise((resolve) => {
+    const out: Buffer[] = [], err: Buffer[] = [];
+    let size = 0, timedOut = false, failed: string | null = null;
+    const child = spawn(program, args, { cwd: options.cwd, env: options.env, windowsHide: true, detached: options.group, stdio: ["ignore", "pipe", "pipe"] });
+    const pid = child.pid;
+    // Everything it started first (npm's own children too), through the gate, while it is still there to be followed.
+    const end = () => { void (pid !== undefined && gate ? gate.end(pid) : Promise.resolve()).then(() => child.kill()); };
+    const keep = (into: Buffer[]) => (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > outputLimit) { failed ??= "its output was larger than 64 MB"; end(); return; }
+      into.push(chunk);
+    };
+    child.stdout!.on("data", keep(out));
+    child.stderr!.on("data", keep(err));
+    if (pid !== undefined) gate?.started(pid, options.pausable);
+    // Outside the build's own process (the updater's quick looks at GitHub), each program is lowered as it starts.
+    if (pid !== undefined && !gate) try { setPriority(pid, quietPriority); } catch { /* it has already ended */ }
+    const stop = activeDeadline(options.timeoutMs, () => (pid !== undefined && gate ? gate.heldMs(pid) : 0), () => { timedOut = true; end(); });
+    const done = (code: number | null, why: string | null) => {
+      stop();
+      if (pid !== undefined) gate?.ended(pid);
+      resolve({ code, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString(), timedOut, failed: failed ?? why ?? (timedOut ? "it ran out of time" : null) });
+    };
+    child.once("error", (error) => done(null, error.message));
+    child.once("close", (code, signal) => done(code, code === null && !timedOut && !failed ? `it was ended by ${signal ?? "the system"}` : null));
   });
 }
 
@@ -360,18 +404,18 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   const sources = (await listFiles(join(source, "src"))).filter((name) => /\.c?ts$/.test(name) && !/\.d\.c?ts$/.test(name));
   for (const stale of staleOutputs(await listFiles(join(source, "dist")), sources)) await rm(join(source, "dist", stale), { force: true });
   // Windows: the app folder is what the update swaps in, so the zip and its checksum are left out.
-  const release = platform === "win32" ? [] : ["--release"], env = ownTemp(buildDir), timeoutMs = minutes(30);
+  const release = platform === "win32" ? [] : ["--release"], env = quietEnv(buildDir), timeoutMs = minutes(30), pausable = true;
   const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
   if (manifest?.scripts?.["package:desktop"] === packageSteps) {
     // The same three steps the commit's own `npm run package:desktop` runs, with the version stamped after compiling.
-    await run("npm", ["run", "build"], { cwd: source, timeoutMs, env });
+    await run("npm", ["run", "build"], { cwd: source, timeoutMs, env, pausable });
     await stampDevVersion(source, committedAt, commit);
-    await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env });
-    await run("node", ["scripts/package-desktop.mjs", ...release], { cwd: source, timeoutMs, env });
+    await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env, pausable });
+    await run("node", ["scripts/package-desktop.mjs", ...release], { cwd: source, timeoutMs, env, pausable });
   } else {
     // A commit that packages differently is built its own way, whole.
     await stampDevVersion(source, committedAt, commit);
-    await run("npm", ["run", "package:desktop", ...(release.length ? ["--", ...release] : [])], { cwd: source, timeoutMs, env });
+    await run("npm", ["run", "package:desktop", ...(release.length ? ["--", ...release] : [])], { cwd: source, timeoutMs, env, pausable });
   }
   // The built app must say which change it is, or the next check could not tell it is current and could not see
   // going back from it (a change older than the Dev channel itself has no such record).
@@ -407,16 +451,21 @@ async function packages(run: Run, plan: Pick<DevBuildPlan, "buildDir" | "onStage
   if (!needed) { plan.onStage("installing", "skipped"); return true; }
   plan.onStage("installing", "running");
   await rm(recordPath, { force: true });
-  await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: source, timeoutMs: minutes(30), env: ownTemp(plan.buildDir) });
+  await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: source, timeoutMs: minutes(30), env: quietEnv(plan.buildDir) });
   await recordPackages(plan.buildDir, source, now);
   return false;
 }
 
-/** The build's own temporary folder, for every program that writes temporary files (npm, the packager). */
-export const ownTemp = (buildDir: string): Record<string, string> => {
+/**
+ * The build's own temporary folder, for every program that writes temporary files (npm, the packager), and fewer
+ * things at once: Node's file and hashing threads down to two (from four) and npm's downloads to four at a time (from
+ * fifteen), so the build takes one or two cores and a trickle of the disk rather than all of both.
+ */
+export const quietEnv = (buildDir: string): Record<string, string> => {
   const tmp = join(buildDir, "tmp");
-  return { TEMP: tmp, TMP: tmp, TMPDIR: tmp };
+  return { TEMP: tmp, TMP: tmp, TMPDIR: tmp, UV_THREADPOOL_SIZE: "2", npm_config_maxsockets: "4" };
 };
+export const ownTemp = quietEnv;
 
 async function toolVersions(run: Run): Promise<{ node: string; npm: string }> {
   const [node, npm] = await Promise.all([run("node", ["--version"], { timeoutMs: 20_000 }), run("npm", ["--version"], { timeoutMs: 20_000 })]);

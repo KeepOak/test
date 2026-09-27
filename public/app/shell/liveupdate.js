@@ -9,6 +9,9 @@
    - The engine is being handed over: the window stays quiet while its requests wait and its streams reconnect. */
 
 import { S } from "../core/state.js";
+import { api } from "../core/api.js";
+import { sendingPrompt } from "../chat/chat.js";
+import { toast } from "../core/ui.js";
 import { $, renderNow } from "../core/dom.js";
 import { goingAway } from "../core/api.js";
 
@@ -20,7 +23,10 @@ export function initLive() {
   bridge()?.onWindowUpdated?.((update) => {
     if (update?.engine === true) { goingAway(true); return; }
     if (typeof update?.commit !== "string" || !/^[0-9a-f]{40}$/.test(update.commit)) return;
-    if (update.reload) { keepOpen(); void bridge()?.reloadLive?.(); return; }
+    if (update.reload) {
+      void keepOpen().then(() => bridge()?.reloadLive?.()).catch((error) => toast(error.message));
+      return;
+    }
     swapStyles(Array.isArray(update.styles) ? update.styles : [], update.commit);
   });
 }
@@ -41,11 +47,20 @@ function swapStyles(names, commit) {
 }
 
 /* What is open, kept for the page that replaces this one (this tab only, for a minute). */
-function keepOpen() {
+async function keepOpen() {
+  let chat = S.chat;
+  const pending = sendingPrompt();
+  if (!chat && pending) {
+    const state = await api("state");
+    const task = (state.runs ?? []).filter((run) => run.prompt === pending && ["running", "queued", "waiting", "needs_input"].includes(run.status))
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!task?.sessionId) throw new Error("The task's conversation could not be confirmed, so the window update is waiting.");
+    chat = task.sessionId;
+  }
   const box = $("#prompt"), scroll = $("#scroll");
-  if (box) S.drafts[S.chat ?? "new"] = box.value;
+  if (box) S.drafts[chat ?? "new"] = box.value;
   const kept = {
-    at: Date.now(), view: S.view, chat: S.chat, tabs: S.tabs, setPage: S.setPage, drafts: S.drafts,
+    at: Date.now(), view: S.view, chat, tabs: S.tabs, setPage: S.setPage, drafts: S.drafts,
     caret: box ? { start: box.selectionStart, end: box.selectionEnd, focused: document.activeElement === box } : null,
     scroll: scroll ? { top: scroll.scrollTop, atEnd: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40 } : null,
   };

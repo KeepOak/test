@@ -75,7 +75,7 @@ export async function buildLive(run: Run, plan: LivePlan): Promise<LiveOutcome> 
   plan.onStage("installing", reused ? "skipped" : "running");
   const env = ownTemp(plan.buildDir), timeoutMs = minutes(30);
   plan.onStage("building", "running");
-  if (compiles) await run("npm", ["run", "build"], { cwd: source, timeoutMs, env });
+  if (compiles) await run("npm", ["run", "build"], { cwd: source, timeoutMs, env, pausable: true });
   else await run("node", ["scripts/copy-fonts.mjs"], { cwd: source, timeoutMs, env });
   const compiled = compiles ? await readCompiled(source) : new Map<string, string>();
   const read = (path: string) => compiled.get(path) ?? null;

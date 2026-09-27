@@ -14,6 +14,7 @@ import { _electron } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { connected, desktopOptions, mainLines, offScreen, onboarded, send } from "./fixtures/desktop-options.mjs";
 import { scriptedModel } from "./fixtures/hot-model.mjs";
+import { closeOwnedDesktop } from "./fixtures/desktop-close.mjs";
 import { stageLive } from "../dist/hot-update/live-folder.js";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -42,14 +43,26 @@ const apply = (electron, outcome) => electron.evaluate(async (_electron, outcome
 async function launch(t, model) {
   const scratch = await mkdtemp(join(root, ".hot-test-"));
   t.after(() => discardTemp(scratch));
-  const { options } = await desktopOptions({ hidden: true }); // never on the screen
+  const { options, home } = await desktopOptions({ hidden: true }); // never on the screen
   if (process.env.BRANCH_TEST_ELECTRON) options.executablePath = process.env.BRANCH_TEST_ELECTRON;
   Object.assign(options.env, { BRANCH_TEST_ENGINE_HOOKS: "1", BRANCH_TEST_LIVE_ROOT: join(scratch, "app"),
     BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: model.endpoint, BRANCH_MODEL: "m", BRANCH_API_KEY: "test-key" });
   const electron = await _electron.launch(options);
+  const child = electron.process();
+  console.log("isolated desktop", JSON.stringify({ pid: child.pid, home, launchedAt: new Date().toISOString() }));
   const lines = mainLines(electron);
-  t.after(() => electron.close());
+  t.after(async () => {
+    await offScreen(electron, "before owned cleanup");
+    await closeOwnedDesktop(electron, home);
+    assert.notEqual(child.exitCode, null, "the owned shell exited");
+  });
   const page = await electron.firstWindow();
+  await page.addInitScript(() => {
+    const observe = () => new MutationObserver(() => {
+      if (document.getElementById("offline18")) sessionStorage.setItem("hot-test-offline", "yes");
+    }).observe(document.body, { childList: true, subtree: true });
+    if (document.body) observe(); else document.addEventListener("DOMContentLoaded", observe, { once: true });
+  });
   await onboarded(page).catch((error) => { throw new Error([error.message, ...lines.filter(Boolean).slice(-30)].join("\n")); });
   // Whether the window ever said it lost its engine (the offline notice), from now on.
   await page.evaluate(() => {
@@ -144,4 +157,28 @@ test("a newer engine that fails is rolled back, and the window keeps working wit
   await mkdir(join(appRoot, "live"), { recursive: true });
   const state = await readFile(join(appRoot, "live", "current.json"), "utf8").then(JSON.parse, () => null);
   assert.equal(state?.engine ?? null, null, "the failed engine was never written down as in use");
+});
+
+test("a window module update during a task keeps its draft and receives one completed answer", { timeout: 240000 }, async (t) => {
+  const model = await scriptedModel(t, [{ text: "The reply after a live reload.", held: true }]);
+  const { electron, page, scratch, appRoot } = await launch(t, model);
+  await send(page, "Keep working through the window update");
+  await model.until(1);
+  const conversation = await page.evaluate(async () => { const state = await (await fetch("/api/state")).json(); return state.runs.find((run) => run.prompt === "Keep working through the window update").sessionId; });
+  await page.locator("#prompt").fill("a draft while the task works");
+  const update = await outcomeFor(appRoot, await source(scratch, "while-working", {
+    "public/app/main.js": (text) => `${text}\ndocument.documentElement.dataset.liveProbe = "working";\n`,
+  }), "e".repeat(40), "window", [{ path: "public/app/main.js", part: "window" }]);
+  const result = await apply(electron, update);
+  assert.equal(result.ok, true, result.error);
+  await page.waitForFunction(() => document.documentElement.dataset.liveProbe === "working", undefined, { timeout: 30000 });
+  await page.waitForFunction(() => document.getElementById("prompt")?.value === "a draft while the task works", undefined, { timeout: 30000 });
+  assert.equal(await page.evaluate(async () => (await import("/app/core/state.js")).S.chat), conversation);
+  model.release(0);
+  await page.locator("#scroll").getByText("The reply after a live reload.", { exact: true }).waitFor({ timeout: 60000 });
+  assert.equal(await page.locator("#scroll").getByText("The reply after a live reload.", { exact: true }).count(), 1);
+  assert.equal(model.asked.length, 1, "reload does not repeat the model request");
+  assert.equal(await page.locator("#prompt").inputValue(), "a draft while the task works");
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("hot-test-offline")), null);
+  await offScreen(electron, "after the window updated during a task");
 });
