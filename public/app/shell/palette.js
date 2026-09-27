@@ -16,7 +16,7 @@ import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { allOf } from "../chat/putaway.js";
 
-const P = { el: null, sel: 0, items: [], archived: [] };
+const P = { el: null, sel: 0, items: [], archived: [], opened: 0, asked: -1 };
 const go = (label, sub, icon, fn) => ({ label, sub, icon, fn });
 const ACTIONS = [["Switch light or dark", "", "moon", "theme-flip"], ["Focus mode", "Ctrl .", "eye", "focus"], ["Keyboard shortcuts", "?", "keyboard", "shortcuts"],
   ["Replay the first run", "", "spark", "firstrun"], ["Browse skins", "", "sun", "skins"], ["Take the tour", "", "spark", "tour"]];
@@ -34,7 +34,7 @@ function convo(s) {
   const sub = room ? t("window.settings.advanced.room") : face.kind === "main" ? t("window.chat.plus.assistant") : String(face.description ?? "").split(/\r?\n/)[0].slice(0, 60);
   return go(ownName(id) || s.opening || s.title || "", sub, room ? "room" : "chat", () => openConversation(id));
 }
-/* An archived conversation is found too, marked Archived (GET /api/sessions/put-away?kind=archived, read when Ctrl K opens). */
+/* An archived conversation is found too, marked Archived (GET /api/sessions/put-away?kind=archived, read once typing starts). */
 const archivedConvo = (row) => go(ownName(row.sessionId) || row.title || row.opening || "", t("window.chat.putaway.archived"), "folder", () => openConversation(row.sessionId));
 /* "Turn Lockdown on" only while it is off: turning it off loosens, which stays with its own banner (chat/approvals.js). */
 const lockdownOn = () => (document.getElementById("app")?.classList.contains("locked") ? [] : [go(t("dashboard.controls.lockdownOn"), "", "lock", () => setLockdown(true))]);
@@ -80,13 +80,21 @@ export function openPalette() {
   app().appendChild(P.el);
   paint("");
   $("#pal-in").focus();
-  loadArchived();
 }
-async function loadArchived() {
-  try { P.archived = E.putAway?.archived ? await allOf("archived") : []; } catch (error) { P.archived = []; toast(error.message); }
-  if (P.el && $("#pal-in")?.value.trim()) paint($("#pal-in").value);
+/* Archived conversations are read once per opening, when the first words are typed, and only for whoever is at the
+   window then: an answer for an earlier opening, or for another profile, is dropped. */
+function loadArchived() {
+  if (P.asked === P.opened) return;
+  const opened = (P.asked = P.opened), who = E.profiles?.active?.id ?? null;
+  if (!E.putAway?.archived) return;
+  allOf("archived").then((rows) => {
+    if (opened !== P.opened || who !== (E.profiles?.active?.id ?? null)) return;
+    P.archived = rows;
+    if ($("#pal-in")?.value.trim()) paint($("#pal-in").value);
+  }, (error) => { if (opened === P.opened) toast(error.message); });
 }
-export function closePalette() { P.el?.remove(); P.el = null; }
+/* Closing forgets what the last opening read, so the next one never shows it. */
+export function closePalette() { P.el?.remove(); P.el = null; P.opened++; P.archived = []; }
 
 function pick(n) {
   const item = P.items[n];
@@ -98,7 +106,7 @@ export function initPalette() {
   markLive(["palette", "pal", "sw:pal-in"]);
   on("palette", () => openPalette());
   on("pal", (el) => pick(+el.dataset.i));
-  document.addEventListener("input", (e) => { if (e.target.id === "pal-in") { P.sel = 0; paint(e.target.value); } });
+  document.addEventListener("input", (e) => { if (e.target.id === "pal-in") { P.sel = 0; paint(e.target.value); if (e.target.value.trim()) loadArchived(); } });
   document.addEventListener("keydown", (e) => {
     if (pressed(e, "palette")) { e.preventDefault(); openPalette(); return; }
     if (!P.el) return;
