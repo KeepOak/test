@@ -9548,7 +9548,6 @@
   "window.why.f15-pick-the-model-per-task": "Choose both first under Defaults: Quick and cheap jobs, and Planning and hard problems.",
   "window.why.f15-mix-models-on-hard-questions": "Needs a mixture of models chosen first, and the window has no way to pick one yet. Off: it doubles the cost.",
   "window.why.m-effort-none": "The model in use doesn't take a thinking effort.",
-  "window.why.f15-slow-down-near-a-rate-limit": "Branch doesn't spread requests out ahead of a limit; when a service says it's busy, it waits as long as the service asks, then retries or tries the next key.",
   "window.why.f15-send-each-message-to-the-right-trunk": "Branch doesn't pick a Trunk with a decision model; in a room, its Room rules decide who answers.",
   "window.why.f15-sort-the-inbox-by-urgency": "Branch doesn't sort the Inbox by urgency; decision models answer only the Try it box below.",
   "window.why.f15-filter-long-lists-before-a-trunk-reads-t": "Branch doesn't filter what a Trunk reads with a decision model; decision models answer only the Try it box below.",

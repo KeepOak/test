@@ -48,7 +48,8 @@ const events = (app, runId, kind) => app.store.events(runId).filter((e) => e.kin
 const filler = (n) => `Turn ${n}: ` + "photo renaming details ".repeat(70);
 
 test("every card that sends or spends ships off, and a fresh install sends and registers nothing extra", async (t) => {
-  // The ship-on rule: the service's own token count and the per-round chart only read what came back, so they ship on.
+  // The ship-on rule: the service's own token count and the per-round chart only read what came back, so they ship on;
+  // pacing (Slow down near a rate limit) only waits, so it ships on too.
   const values = allSavings({ get: () => undefined }, owner);
   assert.deepEqual(values, {
     phases: { planModel: null, sideTier: "same" },
@@ -58,6 +59,7 @@ test("every card that sends or spends ships off, and a fresh install sends and r
     roundChart: { mode: "on" },
     keepAlive: { mode: "off", everyMinutes: 4, maxPings: 3, spendCapDollars: 0.05 },
     mixtures: { mixtures: [] },
+    pacing: { mode: "on" },
   });
   const main = scripted("anthropic");
   const { app } = await fixture(t, [preset("main", main, "claude-sonnet-4-5")]);
