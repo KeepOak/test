@@ -46,6 +46,7 @@ interface BudDeps {
 /** Budding preserves the original request and climbs only after a cheaper rung failed. */
 export class Budding {
   private inFlight: Promise<void> | null = null;
+  private readonly connectorApprovals = new Map<string, Promise<Bud>>();
   private readonly stopping = new AbortController();
   constructor(private readonly deps: BudDeps) {
     deps.store.sqlite.exec("CREATE TABLE IF NOT EXISTS seasons_buds(id TEXT PRIMARY KEY,owner TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL)");
@@ -115,6 +116,14 @@ export class Budding {
   /** The item is approved by the owner; command servers still use the ordinary exact launch approval. */
   async approveConnector(id: string, connectorId: string): Promise<Bud> {
     this.ownerOnly();
+    const previous = this.connectorApprovals.get(id);
+    const work = (previous ? previous.catch(() => undefined) : Promise.resolve())
+      .then(() => this.approveConnectorNow(id, connectorId));
+    this.connectorApprovals.set(id, work);
+    return work.finally(() => { if (this.connectorApprovals.get(id) === work) this.connectorApprovals.delete(id); });
+  }
+  private async approveConnectorNow(id: string, connectorId: string): Promise<Bud> {
+    this.ownerOnly();
     const bud = this.get(id);
     if (bud.stage !== "connector-review" || !bud.connectors.some((c) => c.id === connectorId)) throw new Error("That connector is not waiting for approval");
     if (bud.serverId) {
@@ -129,6 +138,7 @@ export class Budding {
     const added = await this.deps.servers.add({ name: connector.name, server, catalogue: connector.id });
     const serverId = added.server.id;
     const saved = this.save({ ...bud, serverId, approvedConnectorId: connectorId, error: null });
+    this.ownerOnly();
     await this.deps.servers.start(serverId);
     return saved;
   }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { createBranch } from "../dist/index.js";
 import { Budding, gapMarker } from "../dist/seasons/budding.js";
 import { setLockdown } from "../dist/lockdown.js";
@@ -55,6 +56,54 @@ test("a failed composition offers matching connectors without installing; approv
   await assert.rejects(budding.build(build(bud.id), context), /cheaper rungs/);
   const declined = budding.declineConnector(bud.id);
   assert.equal(declined.stage, "sandbox-ready");
+});
+
+test("simultaneous exact connector approvals create only one persisted server and keep unrelated buds independent", async (t) => {
+  const { app, budding, context, deps } = await fixture(t, { gap: true });
+  const bud = await budding.start("Search Linear issues", "linear", context);
+  assert.ok(bud.connectors.some((one) => one.id === "linear"));
+  const other = { ...bud, id: randomUUID() };
+  app.store.sqlite.prepare("INSERT INTO seasons_buds VALUES(?,?,?,?)").run(other.id, "local", JSON.stringify(other), other.updatedAt);
+  let release, entered, adds = 0;
+  const held = new Promise((resolve) => { release = resolve; });
+  const began = new Promise((resolve) => { entered = resolve; });
+  const starts = [];
+  deps.servers.add = async () => { const id = `server-${++adds}`; if (adds === 1) { entered(); await held; } return { server: { id } }; };
+  deps.servers.start = async (id) => { starts.push(id); return {}; };
+  const one = budding.approveConnector(bud.id, "linear"), two = budding.approveConnector(bud.id, "linear");
+  await began;
+  const independent = await budding.approveConnector(other.id, "linear");
+  assert.equal(independent.serverId, "server-2", "another bud is not blocked behind this approval");
+  release();
+  const results = await Promise.all([one, two]);
+  assert.deepEqual(results.map((one) => one.serverId), ["server-1", "server-1"]);
+  assert.equal(budding.get(bud.id).serverId, "server-1");
+  assert.equal(adds, 2, "one server per distinct approved bud, none orphaned");
+  assert.ok(starts.every((id) => ["server-1", "server-2"].includes(id)));
+});
+
+test("a queued connector approval rechecks owner authorization and failed starts retry the already-persisted server", async (t) => {
+  const { app, budding, context, deps } = await fixture(t, { gap: true });
+  const bud = await budding.start("Search Linear issues", "linear", context);
+  let release, entered, adds = 0;
+  const held = new Promise((resolve) => { release = resolve; });
+  const began = new Promise((resolve) => { entered = resolve; });
+  deps.servers.add = async () => { adds++; entered(); await held; return { server: { id: "retained-server" } }; };
+  let starts = 0;
+  deps.servers.start = async () => { starts++; return {}; };
+  const one = budding.approveConnector(bud.id, "linear"), two = budding.approveConnector(bud.id, "linear");
+  const settled = Promise.allSettled([one, two]);
+  await began;
+  setLockdown(app.store, "local", { on: true });
+  release();
+  assert.ok((await settled).every((one) => one.status === "rejected"));
+  assert.equal(adds, 1);
+  assert.equal(starts, 0);
+  assert.equal(budding.get(bud.id).serverId, "retained-server");
+  setLockdown(app.store, "local", { on: false });
+  assert.equal((await budding.approveConnector(bud.id, "linear")).serverId, "retained-server");
+  assert.equal(adds, 1);
+  assert.equal(starts, 1);
 });
 
 test("held tools register only after successful fixtures and finish the original request", async (t) => {
