@@ -40,6 +40,7 @@ import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
+import { initWhatCan } from "../flows/whatcan.js"; // the "What can Branch do" gallery
 
 const WIDE = matchMedia("(min-width: 761px)");
 const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
@@ -232,6 +233,7 @@ export function initShell() {
   initUnread();
   initQuick();
   initResize();
+  initWhatCan(); // flows/whatcan.js: the "What can Branch do" gallery (Overview, this Guide menu, an empty conversation)
   markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with", "pin-id", "rename-id"]);
   // With no id (Settings' back button before any conversation is open) it just goes back to the conversation view.
   // area places: "new" is a new Trunk (flows/trunk.js).
@@ -244,7 +246,7 @@ export function initShell() {
   on("theme-flip", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   /* setup-resume: Onboarding picks setup up where it was left (flows/setup.js), with the engine's count of steps done; the
      last row is the "Show tips and pop-ups" switch (flows/guides.js). */
-  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
+  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("whatcan", "spark", t("window.what.title")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
   on("focus", () => toggleFocus());
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });

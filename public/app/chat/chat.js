@@ -229,7 +229,7 @@ const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
     .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
+  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 /* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */
