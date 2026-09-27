@@ -150,6 +150,8 @@ export class Trunks {
     if (this.mode("trunks") !== "off") registerTrunkPropose(this.deps.registry, () => this.require("trunks"));
   }
 
+  /** Reads which conversations belong to a Trunk from the database again (after a rolled-back delete, src/your-data.ts). */
+  reload(): void { this.refresh(); }
   /** Which conversations belong to a Trunk; asked on every task, so it is kept in memory. */
   private refresh(): void {
     const owned = new Map<string, Owned>();

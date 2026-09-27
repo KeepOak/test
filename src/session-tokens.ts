@@ -163,10 +163,12 @@ export class SessionTokens {
   }
 }
 
+/** What a read key is told when it asks for anything but a look. */
+export const readKeyRefusal = "That key may only look at things. Make one with --scope run to start a task.";
 /** What each scope may not do, in one sentence the holder of the key can act on. */
 export function scopeRefusal(scope: TokenScope, use: TokenUse): string | null {
   if (scope === "read" && use.method !== "GET")
-    return 'That key may only look at things. Make one with --scope run to start a task.';
+    return readKeyRefusal;
   if (scope === "run") return null;
   return use.executes ? "That key may only look at things, and this would make Branch do something." : null;
 }

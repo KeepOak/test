@@ -45,7 +45,7 @@ test("temporary conversations stay out of history, the library, branches and lon
   assert.ok(listed.includes(saved.sessionId));
   assert.ok(!listed.includes(temp.sessionId), "temporary conversation is not listed");
   assert.throws(() => app.store.exportSession("local", temp.sessionId), /Temporary conversations cannot be exported/);
-  assert.throws(() => app.store.duplicateSession("local", temp.sessionId), /Temporary conversations cannot be exported/);
+  await assert.rejects(app.store.duplicateSession("local", temp.sessionId), /Temporary conversations cannot be exported/);
   const firstUser = app.store.sessionView("local", temp.sessionId);
   assert.equal(firstUser.temporary, true);
   assert.throws(() => app.store.branchSession("local", { sessionId: temp.sessionId, messageId: firstUser.messages[0].messageId }), /cannot be branched/);
