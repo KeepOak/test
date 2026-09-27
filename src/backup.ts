@@ -427,7 +427,7 @@ export function setupTrunks(db: DatabaseSync): SetupTrunk[] | null {
   if (count("memory") > 0 || count("installed_skills") > 0 || wiki > 0) return null;
   const sessions = (db.prepare("SELECT id FROM sessions").all() as { id: string }[]).map((row) => row.id);
   const trunks = trunkChats(db);
-  if (sessions.some((id) => !trunks.has(id) || !onlyIntroduction(db, id))) return null;
+  if (sessions.some((id) => !trunks.has(id) || !onlyIntroduction(db, id, trunks.get(id)!))) return null;
   return sessions.flatMap((id) => trunks.get(id) ?? []);
 }
 
@@ -491,6 +491,7 @@ function removeSetupTrunks(db: DatabaseSync, trunks: readonly SetupTrunk[]): voi
     if (trunkRow(`trunk:${trunk.chat}`) && trunkRow(`trunk:${trunk.id}`))
       db.prepare("DELETE FROM settings WHERE instr(id, ?) > 0 OR instr(id, ?) > 0").run(trunk.chat, `trunk:${trunk.id}`);
     db.prepare("DELETE FROM governance WHERE owner=? AND id=?").run(trunk.owner, `trunk:${trunk.id}`);
+    db.prepare("DELETE FROM governance WHERE owner=? AND id=?").run(trunk.owner, `trunk-files:${trunk.id}`);
   }
 }
 
@@ -500,13 +501,19 @@ function removeSetupTrunks(db: DatabaseSync, trunks: readonly SetupTrunk[]): voi
  * "Opened") and that ask, its one message from the "user" side is the ask marked as the engine's (src/trunks/intro.ts),
  * and the answers used no tool. A message the person wrote, a tool call, or a second ask means the person has been here.
  */
-function onlyIntroduction(db: DatabaseSync, sessionId: string): boolean {
-  const tasks = db.prepare("SELECT id, prompt, output FROM tasks WHERE session_id=?").all(sessionId) as { id: string; prompt: string; output: string }[];
+function onlyIntroduction(db: DatabaseSync, sessionId: string, setup: readonly SetupTrunk[]): boolean {
+  const tasks = db.prepare("SELECT id, owner, prompt, output, status FROM tasks WHERE session_id=?").all(sessionId) as {
+    id: string; owner: string; prompt: string; output: string; status: string
+  }[];
   const engines = (task: { prompt: string; output: string }) => task.prompt === introPrompt || (task.prompt.startsWith("Trunk: ") && task.output === "Opened");
   if (!tasks.every(engines)) return false;
   if (markedByThePerson(db, sessionId, tasks.map((task) => task.id))) return false;
+  const messages = db.prepare("SELECT body FROM messages WHERE session_id=?").all(sessionId) as { body: string }[];
+  // The default is created quietly, with no model introduction. Only its exact engine opening counts as setup.
+  if (!messages.length) return tasks.length === 1 && tasks[0]!.status === "completed" && tasks[0]!.output === "Opened"
+    && setup.some((trunk) => tasks[0]!.owner === trunk.owner && tasks[0]!.prompt === `Trunk: ${trunk.name}`);
   let asks = 0;
-  for (const row of db.prepare("SELECT body FROM messages WHERE session_id=?").all(sessionId) as { body: string }[]) {
+  for (const row of messages) {
     let message: { role?: unknown; content?: unknown; system?: unknown; toolCalls?: unknown };
     try { message = JSON.parse(row.body) as typeof message; } catch { return false; }
     if (message.role === "user" && message.system === introSystem && message.content === introPrompt) asks++;

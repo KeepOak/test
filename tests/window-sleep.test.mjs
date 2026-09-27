@@ -158,13 +158,16 @@ test("only the open conversation's Trunk stays awake while you use the window; h
 
 test("input wakes the window and the open conversation's face at once, gently", async (t) => {
   const { page, errors, trunks } = await fixture(t);
+  const defaultId = await page.evaluate(async () => (await import("/app/core/state.js")).defaultTrunk()?.id);
+  assert.ok(defaultId, "the empty chat belongs to the owner's default Trunk");
+  assert.equal(await page.locator(".hero11 [data-rk]").getAttribute("data-rk"), `t:${defaultId}`);
   await page.clock.fastForward(10 * MIN + 5000);
   await waitFor(page, () => document.documentElement.classList.contains("still18"));
   await page.mouse.move(700, 400);
   await waitFor(page, () => !document.documentElement.classList.contains("doze18"));
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains("wake18")), true, "the window plays its wake");
   assert.equal(await page.locator("#side .petbox.zz11").count(), 0, "the pet wakes");
-  assert.match(await page.locator(".hero11 video").getAttribute("src"), /anim-idle/, "Branch, whose conversation is open, wakes");
+  assert.match(await page.locator(".hero11 video").getAttribute("src"), /\/idle[./]/, "the visible default Trunk wakes with the empty chat");
   assert.ok(await playing(page) > 0, "loops play again");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a Trunk whose conversation is not open sleeps on");
   assert.deepEqual(errors, []);
