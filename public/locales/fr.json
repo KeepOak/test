@@ -9522,7 +9522,7 @@
   "window.why.f15-send-each-message-to-the-right-trunk": "Branch ne choisit pas un Trunk avec un modèle de décision ; dans un salon, ses règles du salon décident qui répond.",
   "window.why.f15-sort-the-inbox-by-urgency": "Branch ne trie pas la boîte de réception par urgence ; les modèles de décision ne répondent qu’à l’encadré L’essayer ci-dessous.",
   "window.why.f15-filter-long-lists-before-a-trunk-reads-t": "Branch ne filtre pas ce que lit un Trunk avec un modèle de décision ; les modèles de décision ne répondent qu’à l’encadré L’essayer ci-dessous.",
-  "window.why.ac-next": "Les clés d’API passent toujours d’elles-mêmes à la clé suivante ; ce bouton concerne les comptes avec connexion, et aucun n’est configuré.",
+  "window.why.ac-next": "Les clés d’API passent déjà d’elles-mêmes à la clé suivante ; une connexion par compte ne déplace jamais votre travail entre vos propres abonnements d’un même service, car les fournisseurs le considèrent comme un abus.",
   "window.why.ac-fall": "Aucun modèle ne tourne encore sur cet ordinateur. Installez-en d’abord un sous Sur cet ordinateur.",
   "window.why.ko-start": "Les comptes keepoak.com ne sont pas encore ouverts, il n’y a donc rien à connecter.",
   "window.why.f15-listening": "Réglez-les un par un : la touche pour parler et le mot d’éveil ont chacun leur propre ligne ci-dessous.",

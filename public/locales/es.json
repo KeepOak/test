@@ -9521,7 +9521,7 @@
   "window.why.f15-send-each-message-to-the-right-trunk": "Branch no elige un Trunk con un modelo de decisión; en una sala, sus reglas de la sala deciden quién responde.",
   "window.why.f15-sort-the-inbox-by-urgency": "Branch no ordena la bandeja de entrada por urgencia; los modelos de decisión solo responden al cuadro Probarlo de abajo.",
   "window.why.f15-filter-long-lists-before-a-trunk-reads-t": "Branch no filtra con un modelo de decisión lo que lee un Trunk; los modelos de decisión solo responden al cuadro Probarlo de abajo.",
-  "window.why.ac-next": "Las claves de API siempre pasan solas a la siguiente clave; este interruptor es para cuentas con inicio de sesión, y no hay ninguna configurada.",
+  "window.why.ac-next": "Las claves de API ya pasan solas a la siguiente clave; un inicio de sesión nunca mueve tu trabajo entre tus propios planes de un mismo servicio, porque los proveedores lo consideran abuso.",
   "window.why.ac-fall": "Aún no hay ningún modelo en este equipo. Configura uno primero en En este equipo.",
   "window.why.ko-start": "Las cuentas de keepoak.com aún no están abiertas, así que no hay nada que conectar.",
   "window.why.f15-listening": "Configúralos uno a uno: la tecla para hablar y la palabra de activación tienen cada una su propia fila abajo.",

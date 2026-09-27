@@ -66,26 +66,20 @@ export function draw() {
 /* When one runs out, both the engine's own settings. The design's line under "Move to the next account" ("only between
    accounts you own…") is left out: the engine does the opposite for sign-ins (it never moves work between the owner's
    own plans, only to an account kept separate; src/accounts/pool.ts rotationSet).
-   Move to the next account: API keys always move to the next key by themselves, so the switch is the sign-in
-   connections' own choice (GET /api/accounts pools[].autoSwitch; POST /api/accounts/pool { pool, autoSwitch } for each).
-   With no sign-in connection it has nothing to change: greyed with that reason (window.why.ac-next).
+   Move to the next account stays greyed with the engine's reason (window.why.ac-next, #460): API keys already move on by
+   themselves, and a sign-in never moves work between the owner's own plans.
    Fall back to this computer: the models on this computer in the fallback order (GET /api/state models.fallbackOrder;
    POST /api/models { fallbackOrder }); an account out of credit or at its plan limit then carries on there (src/runtime.ts
    fallBack). With no model on this computer: greyed with that reason (window.why.ac-fall). It ships off: a local model
    works this computer hard. */
-const signInPools = () => (A.view?.pools ?? []).filter((p) => p.kind !== "api-key");
 const localIds = () => (E.state?.models?.presets ?? []).filter((p) => p.local).map((p) => p.id);
 const fallOn = () => (E.state?.models?.fallbackOrder ?? []).some((id) => localIds().includes(id));
 function whenOneRunsOut() {
   const box = (id, label, on, why) => `<input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${ownerOnly()} ${on ? "checked" : ""} aria-label="${label}">`;
-  const pools = signInPools(), next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
+  const next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
   return `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, pools.length > 0 && pools.every((p) => p.autoSwitch), pools.length ? "" : "ac-next")}<small></small></div>`
+    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, false, "ac-next")}<small></small></div>`
     + `<div class="ctl"><b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
-}
-async function setNext(on) {
-  try { for (const p of signInPools()) await api("accounts/pool", { pool: p.pool, autoSwitch: on }); } catch (error) { toast(error.message); }
-  await loadAccounts();
 }
 async function setFall(on) {
   const kept = (E.state?.models?.fallbackOrder ?? []).filter((id) => !localIds().includes(id));
@@ -134,14 +128,13 @@ export function init() {
   on("acsel15", () => { picked = picked ? null : []; renderNow(); });
   on("acbulk15", (el) => bulk(el.dataset.v));
   document.addEventListener("change", (e) => {
-    if (e.target.id === "ac-next") return void setNext(e.target.checked);
     if (e.target.id === "ac-fall") return void setFall(e.target.checked);
     const k = e.target.dataset?.acc15;
     if (k == null || !picked) return;
     picked = e.target.checked ? [...new Set([...picked, k])] : picked.filter((x) => x !== k);
     renderNow();
   });
-  markLive(["acct-up", "acsel15", "acbulk15", "sw:acc15", "sw:ac-next", "sw:ac-fall"]);
+  markLive(["acct-up", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall"]);
 }
 
-export const live = { "acct-up": true, "acsel15": true, "acbulk15": true, "sw:ac-next": true, "sw:ac-fall": true };
+export const live = { "acct-up": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true };
