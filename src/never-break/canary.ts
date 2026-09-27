@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { constants, setPriority } from "node:os";
 import { copyFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -100,6 +101,9 @@ export async function runCanary(input: CanaryInput): Promise<CanaryResult> {
 function started(engine: { executable: string; script: string }, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string> {
   return new Promise((resolve) => {
     const child = spawn(engine.executable, [engine.script, "start"], { env, stdio: "ignore", windowsHide: true });
+    // The new version's check runs below normal priority, as the build does (src/desktop/quiet-build.ts), so the
+    // owner's own programs come first; when it cannot be lowered it still runs.
+    if (child.pid !== undefined) try { setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* it has already ended */ }
     const timer = setTimeout(() => { child.kill("SIGKILL"); resolve("it took too long and was stopped"); }, timeoutMs);
     child.once("error", (error) => { clearTimeout(timer); resolve(`it could not be started: ${error.message}`); });
     child.once("exit", (code, signal) => { clearTimeout(timer); resolve(signal ? `it was ended by ${signal}` : `it exited with code ${code}`); });

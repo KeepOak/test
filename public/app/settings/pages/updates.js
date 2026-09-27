@@ -13,7 +13,7 @@ import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { channelSection, initChannel, loadChannel, channelStatus } from "../updates-channel.js";
 import { holdingTasks, lastLook, waitingLine } from "../../shell/autoupdate.js";
-import { clock, failDetail, failedWords, installing, keptWords, stageWords, targetWords, updateNow } from "../../shell/updating.js";
+import { clock, failDetail, failedWords, gentleWords, installing, keptWords, stageWords, targetWords, updateNow } from "../../shell/updating.js";
 
 let comfortData = null;
 /* What removing Branch would take away and keep, as the engine surveys it (POST /api/remove-branch/plan, which only
@@ -137,9 +137,9 @@ function statusCard(autoUpdate) {
   const s = updateNow() ?? channelStatus(), problem = lastLook.problem, waiting = waitingLine(), look = lastLook.plan;
   if (!s && !problem && !look) return "";
   if (installing(s)) {
-    const running = s.stages.find((stage) => stage.state === "running");
+    const running = s.stages.find((stage) => stage.state === "running"), why = gentleWords(s);
     return card(`${esc(stageWords(running))}… <time data-upd-since="${esc(running.startedAt)}">${clock(Date.now() - Date.parse(running.startedAt))}</time>`,
-      esc(targetWords(s)), { busy: true, button: btn("upd18-open", t("window.updates.card.show-progress"), false) });
+      esc(targetWords(s)), { busy: true, extra: why ? `<p>${esc(why)}</p>` : "", button: btn("upd18-open", t("window.updates.card.show-progress"), false) });
   }
   if (s?.phase === "error" || problem?.message) {
     const again = s?.release?.available ? btn("u-now", t("window.updates.card.try-again")) : btn("u-check", t("window.settings.updates.check-now"), false);

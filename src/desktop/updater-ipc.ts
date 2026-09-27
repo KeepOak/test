@@ -10,6 +10,7 @@ import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
+import { pauseReason } from "./quiet-build.js";
 
 export const updateSource = {
   /* Tried first; the Updater falls back to the other name of the pair on a 404 (src/desktop/repo-pair.ts). */
@@ -37,7 +38,7 @@ const settingsPages = openableSettingsPages(process.platform);
  */
 export interface UpdateHooks {
   /** Authenticated current channel and full task count from the local or joined engine. */
-  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
+  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "workingTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
   stopDaemon?: () => Promise<number | null>;
   /** mac3/never-break: the new version's check on a copy of the data (see src/never-break/canary.ts). */
@@ -63,7 +64,7 @@ export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250
   let last = 0, lastKey = "", waiting: NodeJS.Timeout | null = null, latest: UpdateStatus | null = null;
   const flush = () => { waiting = null; if (latest) { last = now(); send(latest); latest = null; } };
   return (status) => {
-    const key = JSON.stringify([status.phase, status.stages?.map((stage) => stage.state), status.target?.version ?? null, status.failure]);
+    const key = JSON.stringify([status.phase, status.stages?.map((stage) => stage.state), status.target?.version ?? null, status.failure, status.paused]);
     latest = status;
     if (key !== lastKey || now() - last >= everyMs) {
       lastKey = key;
@@ -73,6 +74,35 @@ export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250
   };
 }
 
+
+/**
+ * While an install is under way it waits for the owner (quiet-build.ts pauseReason): a key pressed in this window
+ * counts as typing for a few seconds, and the engine is asked every few seconds how many tasks are at work. Only
+ * keys are looked at (never what they are), and only here in the app; the page is not asked anything.
+ */
+export function watchForOwner(window: BrowserWindow, updater: Pick<Updater, "setPaused">,
+  workingTasks: () => Promise<number>, everyMs = 1_000, tasksEveryMs = 5_000): () => void {
+  let lastKeyAt: number | null = null, working = 0, lookedAt = 0, looking = false;
+  const heard = (_event: unknown, input: { type: string }) => { if (input.type === "keyDown") lastKeyAt = Date.now(); };
+  window.webContents.on("before-input-event", heard);
+  const look = () => {
+    const now = Date.now();
+    if (!looking && now - lookedAt >= tasksEveryMs) {
+      looking = true;
+      lookedAt = now;
+      // A look that fails keeps the last count: the gate before the swap asks again and waits itself.
+      void workingTasks().then((count) => { working = count; }, () => undefined).finally(() => { looking = false; });
+    }
+    updater.setPaused(pauseReason({ now, lastKeyAt, workingTasks: working }));
+  };
+  look();
+  const timer = setInterval(look, everyMs);
+  return () => {
+    clearInterval(timer);
+    if (!window.isDestroyed()) window.webContents.off("before-input-event", heard);
+    updater.setPaused(null);
+  };
+}
 
 export function registerUpdaterIpc(
   window: BrowserWindow, origin: string, version: string, requestQuit: () => void,
@@ -152,13 +182,18 @@ export function registerUpdaterIpc(
       if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
       started = { channel: readiness.channel, automatic: automatic === true };
       await ensureIdle();
+      // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
+      const stopWatching = watchForOwner(window, updater, async () => {
+        const state = await hooks.readiness!();
+        return state.workingTasks ?? state.busyTasks;
+      });
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
       const { script, stagedDir } = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
         diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
-      });
+      }).finally(stopWatching);
       try {
         // mac7/safe-rollback: recorded here, marked as landed by the next start (`settleActivation`),
         // because this process quits into the hand-over and never sees how it went.

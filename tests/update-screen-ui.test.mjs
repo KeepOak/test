@@ -267,3 +267,29 @@ test("up to date says so, with Check now; the switch says how often it really lo
   assert.match(stable.html, /window.settings.updates.checks-every-day/, "Stable looks once a day");
   assert.match(beta.html, /<details class="adv upd18-more" id="u-more"><summary>window.updates.card.more<\/summary>.*<channel\/>.*<\/details>/s, "the channel and the rest sit under More");
 });
+
+/* ---------- quiet background builds (the owner: "everything is slow and my computer is crying") ---------- */
+
+test("while it waits for the owner, the status bar keeps the step's real time and says why it waits", async () => {
+  const s = await screen(building({ automatic: true, paused: "typing" }));
+  assert.match(s.run("statusItem()"), /window.updates.bar\[step=window.updates.stage.building\] <time data-upd-since="[^"]+">[\d:]+<\/time> · window.updates.paused.typing<\/button>/);
+  const renders = s.renders.length;
+  s.hear(building({ automatic: true, paused: "task" }));
+  assert.ok(s.renders.length > renders, "a pause starting or ending redraws the status bar at once");
+  assert.match(s.run("statusItem()"), /· window.updates.paused.task</);
+  s.hear(building({ automatic: true, paused: null }));
+  assert.doesNotMatch(s.run("statusItem()"), /paused/, "going on again, it says nothing more");
+});
+
+test("the card says plainly why a build takes longer: it is gentle, or it waits for the owner", async () => {
+  const gentle = await settings({ status: building() });
+  assert.match(gentle.html, /<p>window.updates.card.gentle<\/p>/, "low priority, in plain words");
+  const typing = await settings({ status: building({ paused: "typing" }) });
+  assert.match(typing.html, /<p>window.updates.card.paused-typing<\/p>/);
+  assert.doesNotMatch(typing.html, /card.gentle/, "one reason at a time");
+  const task = await settings({ status: building({ paused: "task" }) });
+  assert.match(task.html, /<p>window.updates.card.paused-task<\/p>/);
+  const swapping = building();
+  swapping.stages = swapping.stages.map((one) => ({ ...one, state: one.id === "swapping" ? "running" : one.id === "restarting" ? "waiting" : "done" }));
+  assert.doesNotMatch((await settings({ status: swapping })).html, /card.gentle|card.paused/, "the swap is not slowed, so nothing says it is");
+});

@@ -37,7 +37,16 @@ export const inBackground = (s = status) => installing(s) && s.automatic === tru
 export function statusItem() {
   if (!inBackground()) return "";
   const running = status.stages.find((stage) => stage.state === "running");
-  return `<button class="sb upd18-sb" type="button" data-act="upd18-bg" data-tip="${esc(targetWords())}"><i class="lit10"></i>${esc(t("window.updates.bar", { step: stageWords(running) }))} ${stageTime(running)}</button>`;
+  const paused = status.paused ? ` · ${esc(t(`window.updates.paused.${status.paused}`))}` : "";
+  return `<button class="sb upd18-sb" type="button" data-act="upd18-bg" data-tip="${esc(targetWords())}"><i class="lit10"></i>${esc(t("window.updates.bar", { step: stageWords(running) }))} ${stageTime(running)}${paused}</button>`;
+}
+/* Why an install under way is slower than it could be, in plain words: it is paused for the owner (typing, a task at
+   work), or it builds at low priority so the computer stays quick (src/desktop/quiet-build.ts). Nothing once it swaps. */
+export function gentleWords(s = status) {
+  if (!installing(s)) return "";
+  if (s.paused === "typing" || s.paused === "task") return t(`window.updates.card.paused-${s.paused}`);
+  const running = s.stages.find((stage) => stage.state === "running");
+  return ["swapping", "restarting"].includes(running?.id) ? "" : t("window.updates.card.gentle");
 }
 
 /* m:ss, or h:mm:ss past an hour. */
@@ -165,7 +174,7 @@ function heard(next) {
   status = next;
   if (!installing(was) && installing(next)) folded = pulledUp = false; // a new install starts as its kind does
   drawScreen();
-  const changed = (s) => JSON.stringify([s?.phase, s?.stages?.map((stage) => stage.state), s?.target, s?.failure, s?.automatic]);
+  const changed = (s) => JSON.stringify([s?.phase, s?.stages?.map((stage) => stage.state), s?.target, s?.failure, s?.automatic, s?.paused]);
   if (changed(was) !== changed(next)) render();
 }
 
