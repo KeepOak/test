@@ -49,16 +49,28 @@ async function fixture(t) {
 }
 
 /* What the browser moves on a face: the face's own animation and transform (Sway), and its rendered body's (Breathe),
-   sampled twice apart, plus whether its canvas plays what the Trunk is doing. */
+   plus whether its canvas plays what the Trunk is doing. It is read until both have moved, or until the face's own
+   animations have run for half the slowest motion's period (Breathe, 3.2 s); a face with none is read for that long.
+   The animations' own clock is used, not the wall's: under load an animation can wait many frames to start, and two
+   readings a fixed time apart then read the same. */
 const motionOf = (page, selector) => page.evaluate(async (sel) => {
   const el = document.querySelector(sel);
   if (!el) return null;
   const body = () => el.querySelector(".pbl-cv") ?? el.querySelector(".pbl-f");
   const read = () => ({ face: getComputedStyle(el).transform, body: getComputedStyle(body()).transform });
-  const a = read();
-  await new Promise((r) => setTimeout(r, 700));
-  const b = read();
-  return { face: getComputedStyle(el).animationName, body: getComputedStyle(body()).animationName, faceMoves: a.face !== b.face, bodyMoves: a.body !== b.body, canvas: !!el.querySelector(".pbl-cv"), cls: el.className };
+  const animations = () => [el, body()].flatMap((node) => node.getAnimations());
+  const clock = () => Math.max(0, ...animations().map((animation) => Number(animation.currentTime) || 0));
+  const a = read(), wall = performance.now(), started = clock();
+  let faceMoves = false, bodyMoves = false;
+  while (!(faceMoves && bodyMoves)) {
+    await new Promise((r) => setTimeout(r, 20));
+    const b = read();
+    faceMoves ||= a.face !== b.face;
+    bodyMoves ||= a.body !== b.body;
+    const ran = animations().length ? clock() - started : performance.now() - wall;
+    if (ran >= 1600 || performance.now() - wall > 15000) break;
+  }
+  return { face: getComputedStyle(el).animationName, body: getComputedStyle(body()).animationName, faceMoves, bodyMoves, canvas: !!el.querySelector(".pbl-cv"), cls: el.className };
 }, selector);
 const side = (trunk) => `#side .av.pbl[data-pbl-id="${trunk.id}"]`;
 const faceCount = (page) => page.evaluate(() => document.querySelectorAll("#side .av.pbl").length);

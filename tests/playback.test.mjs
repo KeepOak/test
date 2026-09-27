@@ -46,7 +46,7 @@ async function openWorkspace(t, page, server) {
   await signIn(page, server);
   return errors;
 }
-const chip = (page) => page.locator("#attached .file");
+const chip = (page) => page.locator("#attached .att");
 /** The player card beside the user message at `index` (the card is the .u.umedia15 drawn right after that message). */
 const playersAfter = (page) => page.evaluate(() => [...document.querySelectorAll("#conversation > *, #conversation .u")]
   .filter((node) => node.matches(".u")).map((node) => ({ media: node.classList.contains("umedia15"), text: node.textContent,
@@ -73,7 +73,8 @@ test("an attached sound file gets a playable chip on the message box, and it can
   // Redesign: replaced by the new window (prototype.html's composer chip is the file's name and size, not a player; the
   // file plays once it is sent, below).
 
-  await chip(page).first().click();
+  await page.locator("#attached .att-x").first().click(); // its own x (public/app/chat/attach.js, data-act="unattach")
+  await chip(page).first().waitFor({ state: "detached" });
   assert.equal(await chip(page).count(), 0, "the chip can be taken off again, same as a picture chip");
   assert.deepEqual(errors, []);
 });
@@ -148,9 +149,9 @@ test("a message that carried a picture and a sound keeps its player after the co
   await chip(page).filter({ hasText: "dot.png" }).waitFor();
   await attachSound(page);
 
-  // The server saves these words with "[attached picture: dot.png]" after them (src/runtime.ts picturesNote).
+  // The server saves these words with "[attached files: dot.png (picture), …]" after them (src/runtime.ts attachmentsNote).
   await sendAndAwaitRedraw(page, "a picture and a note", 1);
-  assert.match(await page.locator("#conversation .u[data-i15]:not(.umedia15)").first().innerText(), /attached picture/, "this is the redrawn, saved message");
+  assert.match(await page.locator("#conversation .u[data-i15]:not(.umedia15)").first().innerText(), /attached files: dot\.png/, "this is the redrawn, saved message");
   assert.equal(await page.locator("#conversation .media15.audio").count(), 1, "the redrawn message still carries its player");
   assert.deepEqual(errors, []);
 });
