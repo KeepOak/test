@@ -550,8 +550,10 @@ test("the prototype's keys and commands: Tab walks the places, a bare /lockdown 
   await tui.command("/find hartwell");
   await settle();
   assert.notEqual(tui.overlay?.kind, "picker", "searching every conversation is the owner's: a household profile is refused");
-  assert.ok(tui.conversation.transcript.slice(before).every((line) => !/hartwell/i.test(line.text) || /\/find/.test(line.text)),
-    "nothing found is printed for a household profile");
+  assert.ok(tui.conversation.transcript.slice(before).some((line) => /\/find belongs to the owner/.test(line.text)),
+    "a household profile is told /find is the owner's");
+  assert.ok(tui.conversation.transcript.slice(before).every((line) => !/Say what to find|Nothing matches/.test(line.text)),
+    "the search never ran for a household profile");
   const { findWords } = await import("../dist/terminal-redesign-commands.js");
   const quiet = [];
   assert.throws(() => findWords({ runtime: app.runtime, words: loadWords("en"), say: (kind, text) => quiet.push(text) }, "hartwell"),

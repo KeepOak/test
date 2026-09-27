@@ -115,7 +115,7 @@ test("a command that asks the model counts as a task started, like /api/run", as
    src/channels/chat-commands.ts, and the window's app.js + goal.js. */
 const OLD_TERMINAL = {
   help: ["?"], model: ["models"], think: ["reasoning"], preset: ["permissions"], memory: [], skills: [], plan: [], verify: [],
-  "dry-run": [], temporary: ["incognito"], attach: ["image"], history: [], export: ["save"], new: ["clear", "reset"],
+  "dry-run": ["practice"], temporary: ["incognito"], attach: ["image"], history: [], export: ["save"], new: ["clear", "reset"],
   sessions: ["resume"], go: ["open"], inbox: [], automations: ["cron"], library: [], customize: ["tools"], settings: ["config"],
   theme: ["skin"], default: [], switch: [], pane: ["details"], lockdown: ["pause"], keys: [], exit: ["quit"],
 };

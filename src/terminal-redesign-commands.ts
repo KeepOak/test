@@ -9,9 +9,9 @@ import type { Words } from "./terminal-words.js";
 
 /**
  * The commands the redesign's terminal added (design/redesign/prototype.html termRun): /find, /channels
- * and the half of /usage that says what each account has left. Each reads what the window reads, for the person
- * using Branch here: /find searches only their own conversations, and the chat apps and the account limits are the
- * owner's alone, as they are in the window.
+ * and the half of /usage that says what each account has left. Each reads what the window reads, and each is
+ * the owner's alone, as in the window: /find searches every conversation (as the window's search does), the chat apps
+ * and the account limits.
  */
 export interface Said { say(kind: "note" | "warn" | "ok" | "bad" | "step", text: string): void }
 export interface RedesignContext extends Said {
