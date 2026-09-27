@@ -4,6 +4,7 @@ import type { Runtime } from "../runtime.js";
 import type { LearningMore } from "./index.js";
 import { journey } from "./journey.js";
 import { LearningOffError, LearningPartSchema, learningLabels, learningParts } from "./settings.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * The web side of R17-F: the owner's routes under /api/learning-more/. They sit behind the same key
@@ -112,7 +113,7 @@ export async function learningMoreApi(deps: LearningMoreHttpDeps, path: string):
     if (error instanceof LearningMoreHttpError) throw error;
     const status = error instanceof LearningOffError ? 409 : error instanceof ZodError ? 400
       : /not found|no longer saved|there is no/i.test(errorText(error)) ? 404 : 400;
-    const message = error instanceof ZodError ? (error.issues[0]?.message ?? "The request was not in the expected shape") : errorText(error);
+    const message = error instanceof ZodError ? validationText(error) : errorText(error);
     throw new LearningMoreHttpError(status, deps.runtime.hideSecrets(message));
   }
 }

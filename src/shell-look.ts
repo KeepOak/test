@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validationText } from "./request-errors.js";
 import { optionalFields } from "./feature-switches.js"; // Q65
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
@@ -57,7 +58,7 @@ export async function shellLookApi(store: Store, owner: string, method: string, 
     return saveShellLook(store, owner, await readBody());
   } catch (error) {
     if (error instanceof ShellLookError) throw error;
-    if (error instanceof z.ZodError) throw new ShellLookError(400, error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "));
+    if (error instanceof z.ZodError) throw new ShellLookError(400, validationText(error));
     throw error;
   }
 }

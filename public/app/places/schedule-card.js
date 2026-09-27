@@ -35,6 +35,15 @@ function whenWords(p) {
     weekly: p.day == null ? "" : t("window.places.schedule-card.every-day-of-the-week", { day: dayName(p.day, "long") }), daily: t("window.places.schedule-card.every-day") }[p.days];
   return t("window.places.schedule-card.when-at-time", { when: head, time: hm(p.time) });
 }
+/* A saved schedule (the engine's own fields: dailyAt, weekdays, monthDay) in the card's words: "Every day at 8:00 AM",
+   "Weekdays at 7:30 AM", "Mondays at 9:00 AM". Null for what the card has no words for (every so often, another day of the
+   month, several single days), which the list names by its next run instead. */
+export function repeatWords(data) {
+  if (typeof data?.dailyAt !== "string") return null;
+  const p = fromProposal({ schedule: data, time: "said" });
+  if (!p.days || (p.days === "monthly" && data.monthDay !== 1)) return null;
+  return whenWords(p);
+}
 function firstRun(iso) {
   const d = new Date(iso), today = new Date(); today.setHours(0, 0, 0, 0);
   const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - today) / 86_400_000);

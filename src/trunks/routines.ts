@@ -109,7 +109,7 @@ export class TrunkRoutines {
    * `held`: a repeating routine then waits for its next turn instead of failing this one. So is a refusal
    * because its Trunk is paused (eng-trunk-controls).
    */
-  route(scheduleId: string, switchedOn = true, paused: (trunk: Trunk) => string | null = () => null): { options: { trunkId: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null {
+  route(scheduleId: string, switchedOn = true, paused: (trunk: Trunk) => string | null = () => null): { options: { trunkId: string; title: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null {
     const link = this.links()[scheduleId];
     if (!link) return null;
     const trunk = this.records.find(link.trunkId);
@@ -118,7 +118,8 @@ export class TrunkRoutines {
     // eng-trunk-controls: a paused Trunk's routine is held the same way, and says why on its badge.
     const held = paused(trunk);
     if (held) return { refuse: held, held: true };
-    return { options: { trunkId: trunk.id }, finished: (run) => this.report(trunk.chatSessionId, `Routine "${link.name}": ${run.status === "completed" ? run.output : `it did not finish (${run.status}). ${run.output}`}`) };
+    // Listed by the routine's own name, never by the `[Trunk @handle]` words its schedule starts with.
+    return { options: { trunkId: trunk.id, title: link.name }, finished: (run) => this.report(trunk.chatSessionId, `Routine "${link.name}": ${run.status === "completed" ? run.output : `it did not finish (${run.status}). ${run.output}`}`) };
   }
   private report(sessionId: string, text: string): void {
     const content = text.slice(0, 8000);
