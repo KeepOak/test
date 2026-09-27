@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join, isAbsolute, resolve, dirname, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { runAsNode } from "../child-env.js";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js";
 import { strippedEnvironment, ProgramLimitError, type AccountHome } from "./cli-agent.js";
@@ -31,7 +32,8 @@ async function invocation(root: string, options: Readonly<ClaudeSubscriptionOpti
     writeFile(join(root, "settings.json"), boundedNativeJson({ disableAllHooks: true, env: { CLAUDE_CODE_EXTRA_BODY: boundedNativeJson(body) } }), { mode: 0o600 }),
   ]);
   const mcp = { mcpServers: { branch: { command: process.execPath,
-    args: [fileURLToPath(new URL("./claude-subscription-inert.cjs", import.meta.url)), join(root, "tools.json")] } } };
+    args: [fileURLToPath(new URL("./claude-subscription-inert.cjs", import.meta.url)), join(root, "tools.json")],
+    env: runAsNode(process.execPath) } } };
   const args = ["-p", "--model", options.model ?? "sonnet", "--input-format", "stream-json", "--output-format", "stream-json",
     "--verbose", "--include-partial-messages", "--tools", "", "--system-prompt-file", join(root, "system.md"), "--settings", join(root, "settings.json"),
     "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--max-turns", "1", "--permission-mode", "dontAsk",
