@@ -78,10 +78,11 @@ export function draw() {
   if (!kinds.includes(category)) category = "All";
   const shown = category === "All" ? list : list.filter((a) => a.kind === category);
   html += `<p class="lede">${t("window.settings.achievements.private-to-you-never-nagging-earned", { earned: esc(view.earned), total: esc(view.total) })}</p>`;
+  // The quiet switch stays at the top, where it is while they are off, rather than below all 505 (the lead's call).
+  html += settingsSec();
   html += `<div class="ach-sum">${tierChips(list)}</div>`;
   html += `<div class="tabs" role="tablist" data-css="margin-top:6px">${kinds.map((k) => `<button class="tab" role="tab" type="button" aria-selected="${category === k}" data-act="achcat" data-v="${esc(k)}">${esc(k === "All" ? t("look.filter.all") : say(k))}</button>`).join("")}</div>`;
   html += `<div class="achs">${shown.map(card).join("")}</div>`;
-  html += settingsSec();
   return html;
 }
 
