@@ -165,10 +165,11 @@ export async function squatterOn(port) {
   return { heard, close };
 }
 
-/** Main's own lines (its stderr), kept from the launch on, so a test can read what main refused. */
+/** Main's own lines (what it writes out and its errors), kept from the launch on, so a test can read what main said. */
 export function mainLines(electron) {
   const lines = [];
-  electron.process().stderr?.on("data", (chunk) => lines.push(...String(chunk).split(/\r?\n/)));
+  for (const stream of [electron.process().stdout, electron.process().stderr])
+    stream?.on("data", (chunk) => lines.push(...String(chunk).split(/\r?\n/)));
   return lines;
 }
 

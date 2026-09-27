@@ -75,7 +75,8 @@ import { askHeader, proveOnce, sessionKey } from "../engine-proof.js";
 import { AnswerCheck } from "./answer-check.js";
 import { EngineGate, type EngineAccess } from "./engine-gate.js";
 import { RequestHold } from "./request-hold.js";
-import { readRunning } from "../install/running.js";
+import { readRunning, type Attachment } from "../install/running.js";
+import { moveOldEngine } from "../install/old-engine.js";
 
 const BannerOpenSchema = z.object({ bannerId: z.number().int().positive(), notice: BannerNoticeSchema.optional() }).strict();
 
@@ -395,10 +396,9 @@ async function start(): Promise<void> {
   const settings = await loadDesktopSettings(join(base, "model-settings.json"));
   const { dataDir, workspace } = await folders(base);
   startCrashReporter(dataDir);
-  // An engine already working in the background is joined rather than started a second time.
-  const running = await attachToRunning(dataDir, {
-    prove: async (address, key) => { const boot = await proveOnce(address, key); return boot ? sessionKey(key, boot) : null; },
-  });
+  // An engine already working in the background is joined rather than started a second time; one from a version
+  // before the engine's proof is moved to this version first.
+  const running = await joinBackground(dataDir) ?? await upgradeBackground(dataDir, workspace);
   // Joining an engine means that engine owns the saved work and holds the program files open, so the
   // safety copy is asked of it and it is closed before an update swaps anything.
   joinedBackground = Boolean(running);
@@ -525,6 +525,27 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
   watchDesktopCrashes(host);
   if (testHooksOn()) (globalThis as { branchEngineForTests?: EngineHost }).branchEngineForTests = host;
   return host.start();
+}
+
+/** The background engine, when one is running here and proves itself (src/engine-proof.ts). */
+function joinBackground(dataDir: string): Promise<Attachment | null> {
+  return attachToRunning(dataDir, {
+    prove: async (address, key) => { const boot = await proveOnce(address, key); return boot ? sessionKey(key, boot) : null; },
+  });
+}
+
+/**
+ * A background engine from a version before the engine's proof cannot prove itself, so it is closed and started again
+ * as this version, and the window joins the fresh one: nothing for the owner to do, and nothing shown as an error. The
+ * window's key goes to the old engine only once this computer says the process holding its port is the one its own
+ * note names (src/install/old-engine.ts). Anything else (no such engine, or one that is not safe to close) leaves it,
+ * and the app starts its own engine as it would with none running.
+ */
+function upgradeBackground(dataDir: string, workspace: string): Promise<Attachment | null> {
+  return moveOldEngine({
+    dataDir, fresh: { executable: process.execPath, script: fileURLToPath(new URL("../cli.js", import.meta.url)), workspace },
+    proves: async (url, key) => (await proveOnce(url, key)) !== null, join: () => joinBackground(dataDir), log: (line) => console.log(line),
+  });
 }
 
 /** The whole app starts again, opening its window even after a quiet start. */
