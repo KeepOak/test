@@ -252,10 +252,11 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   await page.locator("#prompt").press("Enter");
   await until(async () => app.store.messages(room.sessionId).some((m) => m.content === "Where shall we go?"));
   await app.trunks.rooms.settled(room.id);
-  const reply = page.locator("#main .b").filter({ hasText: "I can do it. @you which day?" }).first();
+  // The call to the owner is taken out of what is shown ("@you which day?" reads "Which day?", src/trunks withoutOwnerCall).
+  const reply = page.locator("#main .b").filter({ hasText: "I can do it. Which day?" }).first();
   await reply.waitFor({ timeout: 30000 });
   assert.equal(await reply.locator(".from").innerText(), "Ada", "the reply is signed with who wrote it");
-  assert.equal(await reply.locator(".txt").innerText(), "I can do it. @you which day?", "without its @handle prefix");
+  assert.equal(await reply.locator(".txt").innerText(), "I can do it. Which day?", "without its @handle prefix");
   assert.equal(await wide(page), false, "no sideways scrolling with a room open");
   // Redesign: the prototype has no "Reply to @ada" button on a room's reply and no Inbox card "Rooms that need you"; a
   // conversation waiting for you is marked in its own row (rowHtml: p.attn, statusLine "Waiting for you"), checked below.

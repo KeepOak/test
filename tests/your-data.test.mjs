@@ -361,7 +361,7 @@ test("export (follow-up): the owner's own settings, schedules and workflows, not
   const sam = app.store.profiles.scope() === owner ? null : app.store.profiles.scope();
   assert.equal(sam, null, "the fixture ends at the owner");
   app.store.save("settings", owner, "zq-owner-setting", { note: "zq-owner-setting-value", headers: { "x-zq-auth": secretValue }, apiToken: `${secretValue}-2`,
-    secret: "secret://default/ZQ_TOKEN", text: "sk-ant-api03-zqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzq" });
+    secret: "secret://default/ZQ_TOKEN", text: "sk-ant-api03-zqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzq" }); // not-a-real-secret
   app.store.save("settings", owner, "people-signin", { zq: "zq-sign-in-setting" });
   app.store.save("schedules", owner, "zq-schedule", { prompt: "zq-owner-schedule" });
   app.store.save("workflows", owner, "zq-workflow", { name: "zq-owner-workflow" });

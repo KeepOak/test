@@ -13,7 +13,10 @@ import { readFile } from "node:fs/promises";
 
 test("the live row comes after the conversation in the page, as it is shown", async () => {
   const chat = await readFile(new URL("../public/app/chat/chat.js", import.meta.url), "utf8");
-  const draw = /export function draw\(\) \{[\s\S]*?\n\}/.exec(chat)?.[0] ?? "";
+  const whole = /export function draw\(\) \{[\s\S]*?\n\}/.exec(chat)?.[0] ?? "";
+  // Pass 18a/18b: a helper's or room member's conversation returns early, view only; the page as the owner sees it is
+  // the last return.
+  const draw = whole.slice(whole.lastIndexOf("\n  return "));
   const at = (text, marker) => { const index = text.indexOf(marker); assert.ok(index >= 0, marker); return index; };
   assert.ok(at(draw, "emptyChat()") < at(draw, 'id="conversation"'), "control: the greeting, or the conversation");
   assert.ok(at(draw, 'id="conversation"') < at(draw, "composer()"), "the conversation, then the message box");
