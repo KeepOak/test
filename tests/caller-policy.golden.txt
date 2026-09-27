@@ -10582,3 +10582,13 @@ applock GET /api/workspace-editor/save | here=423/a8f863
 applock POST /api/workspace-editor/save | here=423/a8f863
 applock GET /api/workspace-editor/settings | here=423/a8f863
 applock POST /api/workspace-editor/settings | here=423/a8f863
+owner GET /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
+owner+lockdown GET /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
+household GET /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
+household+lockdown GET /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
+applock GET /api/model-savings/companies | here=423/a8f863
+applock POST /api/model-savings/companies | here=423/a8f863
