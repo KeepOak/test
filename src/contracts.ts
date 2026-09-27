@@ -501,6 +501,8 @@ export const RunInputSchema = z
     mode: z.enum(["ask", "plan", "auto", "full"]).optional(),
     /** Dogfood B26: how hard a conversation this message starts thinks (its own level, kept with it; src/models.ts). */
     reasoning: z.enum(["low", "medium", "high"]).optional(),
+    /** Dogfood D14: the project a conversation this message starts is filed under (a project's id); absent, the active one. */
+    project: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "Project ids use lowercase letters, digits and dashes").optional(),
   })
   .strict();
 /** The same message without its pictures, for storing and for measuring how full the context is. */

@@ -188,7 +188,7 @@ test("a download that drops halfway, or goes quiet, says so in plain words and l
   };
   for (const [name, body] of Object.entries(cases)) {
     const scratchDir = join(root, name);
-    const updater = new Updater({ repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "app"), executableName: appEntryName("linux"),
+    const updater = new Updater({ lastReleaseWithoutProvenance: "2.0.0", repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "app"), executableName: appEntryName("linux"),
       assetName: asset, scratchDir, fetch: release(asset, body), platform: "linux", stallMs: 200, extract: async () => undefined });
     await assert.rejects(updater.install());
     assert.equal(updater.status.phase, "error");
@@ -224,7 +224,7 @@ async function windowsInstall(root) {
       assets: [{ name: "app.zip", browser_download_url: "https://example.invalid/app.zip", size: 3 },
         { name: "app.zip.sha256", browser_download_url: "https://example.invalid/app.sha256", size: 64 }] })
     : String(url).endsWith("app.zip") ? new Response(bytes) : new Response(`${digest}  app.zip\n`);
-  const updater = new Updater({ repo: "x/y", currentVersion: "1.0.0", installDir: install, executableName: testExe,
+  const updater = new Updater({ lastReleaseWithoutProvenance: "2.0.0", repo: "x/y", currentVersion: "1.0.0", installDir: install, executableName: testExe,
     assetName: "app.zip", scratchDir: join(root, "scratch"), fetch, platform: "win32", runOnceKey: testRunOnce,
     extract: async (_archive, into) => write(join(into, "Branch Agent-win32-x64"), "new") });
   const { script } = await updater.install();
