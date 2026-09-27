@@ -4,6 +4,7 @@
    engine's test hook exists only in an unpackaged copy started with BRANCH_TEST_ENGINE_HOOKS=1. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { _electron } from "playwright";
 import { connected, desktopOptions } from "./fixtures/desktop-options.mjs";
 
@@ -67,6 +68,19 @@ test("the window stays responsive while the engine is busy, and the engine comes
 
     // The engine stops by itself: it is started again at the same address, with the window signed in as before.
     await electron.evaluate((_electron, pid) => { process.kill(pid); }, firstPid);
+    // While it is down its port is free, and another program could take it: the window sends it nothing, above all not
+    // its key, until the engine answers there again.
+    for (const gone = Date.now() + 10000; await electron.evaluate(() => globalThis.branchEngineForTests.running);) {
+      if (Date.now() > gone) throw new Error("main did not notice the engine stopped");
+      await page.waitForTimeout(20);
+    }
+    const heard = [];
+    const squatter = createServer((request, response) => { heard.push(`${request.url} ${request.headers.authorization ?? ""}`); response.end("{}"); });
+    await new Promise((resolve, reject) => { squatter.once("error", reject); squatter.listen(Number(new URL(origin).port), "127.0.0.1", resolve); });
+    const meanwhile = await page.evaluate(() => fetch("/api/state").then((response) => `answered ${response.status}`, (error) => `refused: ${error.message}`));
+    await new Promise((resolve) => squatter.close(resolve));
+    assert.match(meanwhile, /^refused/, "nothing reaches the engine's address while it is down");
+    assert.deepEqual(heard, [], "a program on the free port hears nothing from the window");
     const back = Date.now() + 60000;
     for (;;) {
       const now = await electron.evaluate(() => ({ running: globalThis.branchEngineForTests.running, pid: globalThis.branchEngineForTests.pid }));

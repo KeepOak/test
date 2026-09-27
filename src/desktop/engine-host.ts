@@ -29,7 +29,7 @@ export interface EngineHostOptions {
   log?: (line: string) => void;
 }
 
-interface Running { child: EngineChild; link: Link; ready: boolean; exited: Promise<number> }
+interface Running { child: EngineChild; link: Link; ready: boolean; url: string; exited: Promise<number> }
 
 export class EngineHost {
   private current: Running | null = null;
@@ -47,6 +47,8 @@ export class EngineHost {
   get pid(): number | undefined { return this.current?.child.pid; }
   /** True while the engine's process is up and has said it is ready. */
   get running(): boolean { return Boolean(this.current?.ready); }
+  /** The address the engine is answering at right now; null while it is starting or stopped. */
+  get servingAt(): string | null { return this.current?.ready ? this.current.url : null; }
 
   /** Starts the engine and resolves with its address once it answers. */
   async start(): Promise<string> {
@@ -96,7 +98,7 @@ export class EngineHost {
     const link = new Link((message) => child.postMessage(message));
     for (const [method, handler] of Object.entries(this.options.handlers)) link.handle(method, handler);
     let resolveExit!: (code: number) => void;
-    const running: Running = { child, link, ready: false, exited: new Promise((resolve) => { resolveExit = resolve; }) };
+    const running: Running = { child, link, ready: false, url: "", exited: new Promise((resolve) => { resolveExit = resolve; }) };
     this.current = running;
     return new Promise<string>((resolve, reject) => {
       const late = setTimeout(() => { reject(new Error("The engine did not start in time.")); child.kill(); }, this.options.startMs ?? 180000);
@@ -122,6 +124,7 @@ export class EngineHost {
   private heard(running: Running, message: FromEngine, ready: (url: string) => void, failed: (why: string) => void): void {
     if (message.kind === "ready") {
       running.ready = true;
+      running.url = message.url;
       this.key = message.token;
       ready(message.url);
     } else if (message.kind === "key") this.key = message.token;

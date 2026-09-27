@@ -131,11 +131,13 @@ test("an engine that stops by itself is started again; one main stopped is not",
   children[0].emit("exit", 3);
   assert.deepEqual(gone, [3]);
   assert.equal(host.running, false);
+  assert.equal(host.servingAt, null, "while it is down, the window's address is not the engine's (nothing is sent there)");
   const [second] = await again;
   assert.deepEqual(second.posted, [{ kind: "start", config: config() }], "the same settings again");
   second.say({ kind: "ready", url: "http://127.0.0.1:4000", token: OTHER_KEY });
   while (!back.length) await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(back, ["http://127.0.0.1:4000"]);
+  assert.equal(host.servingAt, "http://127.0.0.1:4000");
   assert.equal(host.token, OTHER_KEY);
   // Stopped by main: asked to stop, it closes, and nothing starts again.
   const asked = nextPost(second);
@@ -216,4 +218,20 @@ test("with the test hook main asked for, a blocked engine really is blocked", { 
   assert.equal(state.status, 200);
   assert.equal((await blocked).ok, true);
   assert.ok(waited >= 1300, `the engine answered only after the block (${waited} ms)`);
+});
+
+test("an engine back at another address is not taken for the window's own", async () => {
+  const back = [];
+  const { host, children, forked } = hostWith({ onBack: (url) => back.push(url) });
+  const started = host.start();
+  children[0].say({ kind: "ready", url: "http://127.0.0.1:4000", token: KEY });
+  await started;
+  const again = once(forked, "child");
+  children[0].emit("exit", 1);
+  const [second] = await again;
+  second.say({ kind: "ready", url: "http://127.0.0.1:4001", token: KEY });
+  while (!back.length) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(host.url, "http://127.0.0.1:4000", "the window's address");
+  assert.equal(host.servingAt, "http://127.0.0.1:4001", "is not where the engine answers now, so main starts the app again");
+  await host.end(1000);
 });

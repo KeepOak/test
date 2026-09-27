@@ -121,6 +121,11 @@ function protectWindow(
   /** The window's key as it is now: removing a phone that was handed it replaces it. */
   key: () => string,
   mic: TalkLiveMic,
+  /**
+   * Whether the engine is answering at the window's address right now. While the app's own engine is starting again,
+   * its port is free and another program could take it, so nothing is sent there (above all not the key) until then.
+   */
+  reachable: () => boolean,
 ): void {
   const session = win.webContents.session;
   session.on("will-download", (event) => event.preventDefault());
@@ -135,7 +140,7 @@ function protectWindow(
   });
   // A task's socket (ws://) is at the window's own address too, so it is let through and signed like /api/ requests.
   session.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: !sameAppOrigin(details.url, origin) });
+    callback({ cancel: !sameAppOrigin(details.url, origin) || !reachable() });
   });
   // Remembered once: a request can still arrive after the window is gone, and a destroyed
   // window throws on any property access ("Object has been destroyed").
@@ -143,14 +148,14 @@ function protectWindow(
   session.webRequest.onBeforeSendHeaders((details, callback) => {
     const signed =
       details.webContentsId === contentsId &&
-      sameAppOrigin(details.url, origin) &&
+      sameAppOrigin(details.url, origin) && reachable() &&
       new URL(details.url).pathname.startsWith("/api/");
     callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, key()) : { ...details.requestHeaders } });
   });
 }
 
 async function createWindow(
-  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks,
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean = () => true,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -194,7 +199,7 @@ async function createWindow(
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
   const mic = new TalkLiveMic(url, window.webContents.id);
-  protectWindow(window, url, key, mic);
+  protectWindow(window, url, key, mic, reachable);
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template));
@@ -350,7 +355,7 @@ async function start(): Promise<void> {
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: commit,
-  }).catch(async (error: unknown) => {
+  }, () => engine?.servingAt === url).catch(async (error: unknown) => {
     await engine?.stop();
     throw error;
   });
@@ -410,7 +415,10 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
       // Back at another address (its port was taken meanwhile): the window's page belongs to the old one, so the
       // whole app starts again, which opens the window at the new address.
-      if (url !== host.url) { app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) }); quitReason = "restart"; app.quit(); }
+      if (url !== host.url) { app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) }); quitReason = "restart"; app.quit(); return; }
+      // A page that went away meanwhile (its reload was held back while the engine was down) is opened again.
+      if (window && !window.isDestroyed() && new URL(window.webContents.getURL() || "about:blank").origin !== url)
+        void window.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message));
     },
     log: (line) => console.error(line),
   });
