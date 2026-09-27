@@ -187,6 +187,7 @@ export function scrubDatabase(path: string, scope: string): { sessions: string[]
     db.exec("PRAGMA secure_delete=ON");
     db.exec("BEGIN");
     try {
+      db.exec("PRAGMA defer_foreign_keys=ON"); // tables are emptied in any order; the links are checked at the commit
       const S = JSON.stringify(sessions), R = JSON.stringify(runs);
       for (const name of tables) {
         const has2 = columns(name);

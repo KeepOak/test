@@ -29,7 +29,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateRawSync, crc32 } from "node:zlib";
@@ -42,6 +42,8 @@ import { buildZip, zipName } from "../dist/zip-write.js";
 import { saveTraceExportSettings } from "../dist/tracing-export.js";
 import { folderFor } from "../dist/attachments.js";
 import { audit } from "../dist/audit.js";
+import { resumeUnfinishedDeletes } from "../dist/your-data.js";
+import { writeUpdateBackup } from "../dist/install/update-backup.js";
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
 
@@ -457,4 +459,165 @@ test("export (for good): no more than two exports are made at once across everyb
   release();
   service.refuse = null;
   asOwner();
+});
+
+/* ---------- for good: one transaction, a journal that carries on, and nothing left behind ---------- */
+const auditDeletes = (app) => app.store.audit.list(app.runtime.owner, { action: "history.pruned" }).length;
+const journalRows = (app) => {
+  const exists = app.store.sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='your_data_deletes'").get();
+  return exists ? Number(app.store.sqlite.prepare("SELECT count(*) AS n FROM your_data_deletes").get().n) : 0;
+};
+
+test("delete (for good): a failure part way leaves everything as it was, and a retry deletes it all", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner, service = await outsideService(t);
+  await app.runtime.run({ prompt: "zqowner-second please" });
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  app.memory.backend.configure(owner, { mode: "outside", url: service.url });
+  service.add(owner, "zq-kept-outside");
+  const sessions = app.store.sqlite.prepare("SELECT id FROM sessions WHERE owner=? ORDER BY created_at").all(owner).map((row) => row.id);
+  assert.ok(sessions.length >= 2, "two conversations");
+  const folder = join(app.store.folder, "attachments", folderFor(sessions[0]));
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "zq-kept.txt"), "zq");
+  const [firstRun] = app.store.sqlite.prepare("SELECT id FROM tasks WHERE session_id=?").all(sessions[0]);
+  const kept = join(app.store.folder, "artifacts", firstRun.id);
+  mkdirSync(kept, { recursive: true });
+  writeFileSync(join(kept, "zq-task-file.txt"), "zq");
+  const before = { conversations: sessions.length, audits: auditDeletes(app) };
+  const hook = app.store.beforeConversationPurge;
+  let calls = 0;
+  app.store.beforeConversationPurge = (id) => { if (++calls === 2) throw new Error("zq disk gave out"); hook(id); };
+  const failed = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(failed.status, 500, JSON.stringify(failed.body));
+  assert.match(failed.body.error, /nothing was deleted \(zq disk gave out\)\. Try again\./);
+  assert.equal(app.store.sqlite.prepare("SELECT count(*) AS n FROM sessions WHERE owner=?").get(owner).n, before.conversations, "every conversation is still there");
+  assert.equal(app.store.sqlite.prepare("SELECT count(*) AS n FROM memory WHERE owner=?").get(owner).n, 1, "and the fact");
+  assert.ok(existsSync(join(folder, "zq-kept.txt")), "and the first conversation's file");
+  assert.ok(existsSync(join(kept, "zq-task-file.txt")), "and its task's file");
+  assert.deepEqual(marks(app, owner), [], "no fact was marked forgotten");
+  assert.equal(journalRows(app), 0, "no journal");
+  assert.equal(auditDeletes(app), before.audits, "and no record of a delete that did not happen");
+  assert.equal(service.facts.size, 1, "nothing was sent to the service");
+  app.store.beforeConversationPurge = hook;
+  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(app.store.sqlite.prepare("SELECT count(*) AS n FROM sessions WHERE owner=? AND id IN (SELECT value FROM json_each(?))").get(owner, JSON.stringify(sessions)).n, 0);
+  assert.ok(!existsSync(folder), "the file went with it");
+  assert.ok(!existsSync(kept), "and the task's file");
+  assert.equal(service.facts.size, 0);
+  assert.equal((await call("GET", "/api/your-data")).body.unfinished, null);
+});
+
+/** A Branch that can be closed and opened again on the same folder. */
+async function reopenable(t) {
+  const root = await mkdtemp(join(tmpdir(), "branch-your-data-restart-"));
+  const dataDir = join(root, "data");
+  let open = null;
+  const start = async () => {
+    const app = await createBranch({ workspace: join(root, "workspace"), dataDir, provider: writer });
+    app.web.policy.configure({ allowPrivateAddresses: true });
+    const server = await startServer(app, { dataDir, port: 0 });
+    const call = async (method, path, body) => {
+      const response = await fetch(server.url + path, { method, headers: { authorization: `Bearer ${server.token}`, origin: server.url,
+        ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: response.status, body: await response.json().catch(() => ({})) };
+    };
+    open = { app, server, call };
+    return open;
+  };
+  const stop = async () => { if (!open) return; const { app, server } = open; open = null; await server.close(); await app.close(); };
+  t.after(async () => { await stop(); await discardTemp(root); });
+  return { start, stop };
+}
+async function until(check, what) {
+  for (let i = 0; i < 250; i++) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 20)); }
+  assert.fail(`${what} did not happen`);
+}
+
+test("delete (for good): what the service would not delete is journaled; Lockdown holds it; the next start finishes it", async (t) => {
+  const service = await outsideService(t);
+  const branch = await reopenable(t);
+  let { app, call } = await branch.start();
+  const owner = app.runtime.owner;
+  app.memory.backend.configure(owner, { mode: "outside", url: service.url });
+  service.add(owner, "zq-one");
+  service.add(owner, "zq-two");
+  service.refuse = (method) => (method === "DELETE" ? [503, { error: "down" }] : null);
+  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(done.body.notRemoved, 2);
+  assert.match(done.body.problem, /2 facts could not be deleted from the outside memory service/);
+  assert.equal(service.facts.size, 2);
+  service.refuse = null;
+  assert.equal((await call("POST", "/api/lockdown", { on: true })).status, 200);
+  await resumeUnfinishedDeletes(app);
+  assert.equal(service.facts.size, 2, "nothing is sent under Lockdown");
+  assert.match((await call("GET", "/api/your-data")).body.unfinished, /Lockdown is on, so the facts on the outside memory service are deleted once it is off/);
+  assert.equal((await call("POST", "/api/lockdown", { on: false })).status, 200);
+  await branch.stop();
+  ({ app, call } = await branch.start());
+  await until(() => service.facts.size === 0, "the deletes after the start");
+  await until(async () => (await call("GET", "/api/your-data")).body.unfinished === null, "the journal finishing");
+});
+
+test("delete (for good): a journaled delete is never sent to a different service", async (t) => {
+  const first = await outsideService(t), second = await outsideService(t);
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner;
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  app.memory.backend.configure(owner, { mode: "outside", url: first.url });
+  first.add(owner, "zq-one");
+  first.refuse = (method) => (method === "DELETE" ? [503, { error: "down" }] : null);
+  assert.equal((await call("POST", "/api/your-data/delete", { confirm: "delete everything" })).status, 200);
+  app.memory.backend.configure(owner, { mode: "outside", url: second.url });
+  second.add(owner, "zq-one");
+  first.refuse = null;
+  await resumeUnfinishedDeletes(app);
+  assert.equal(second.facts.size, 1, "the other service is sent nothing");
+  assert.equal(first.facts.size, 1);
+  assert.match((await call("GET", "/api/your-data")).body.unfinished, /outside memory service was changed/);
+  app.memory.backend.configure(owner, { mode: "outside", url: first.url });
+  await resumeUnfinishedDeletes(app);
+  assert.equal(first.facts.size, 0, "switching back finishes it");
+});
+
+/** Every file under a folder, as raw bytes joined, so text in a database page or a side file is found too. */
+function rawUnder(folder) {
+  return readdirSync(folder, { recursive: true }).map((name) => join(folder, String(name)))
+    .filter((path) => { try { return statSync(path).isFile(); } catch { return false; } })
+    .map((path) => readFileSync(path).toString("latin1")).join("\n");
+}
+
+test("delete (for good): nothing of what was deleted is left in the data folder or any update safety copy", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner, dataDir = app.store.folder, copies = join(dataDir, "update-backups");
+  app.memoryHistory.configure(owner, { mode: "on" });
+  await app.memoryHistory.record(owner);
+  app.store.save("settings", owner, "zq-owner-setting", { note: "zq-owner-setting-kept" });
+  const [session] = app.store.sqlite.prepare("SELECT id FROM sessions WHERE owner=?").all(owner);
+  mkdirSync(join(dataDir, "attachments", folderFor(session.id)), { recursive: true });
+  writeFileSync(join(dataDir, "attachments", folderFor(session.id), "zq.txt"), "zqowner-prompt in a file");
+  await writeUpdateBackup(dataDir, app.store.backup(app.version), app.version);
+  mkdirSync(copies, { recursive: true });
+  app.store.sqlite.exec(`VACUUM INTO '${join(copies, "before-format-7.sqlite").replace(/'/g, "''")}'`);
+  for (const name of ["data-2026-09-27T01-02-03-004Z-v1.0.0", "replaced-2026-09-27T01-02-03-004Z"]) {
+    const folder = join(copies, name);
+    mkdirSync(join(folder, "attachments", folderFor(session.id)), { recursive: true });
+    app.store.sqlite.exec(`VACUUM INTO '${join(folder, "branch.sqlite").replace(/'/g, "''")}'`);
+    writeFileSync(join(folder, "attachments", folderFor(session.id), "zq.txt"), "zqowner-prompt in a copied file");
+    mkdirSync(join(folder, "memory-history"), { recursive: true });
+    writeFileSync(join(folder, "memory-history", "facts.md"), "- zqowner-fact");
+  }
+  assert.match(rawUnder(copies), /zqowner-prompt/, "the copies held it");
+  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(done.body.problem, undefined, JSON.stringify(done.body));
+  const everything = rawUnder(dataDir);
+  for (const marker of ["zqowner-prompt", "zqowner-fact"]) assert.ok(!everything.includes(marker), `${marker} is gone from every file`);
+  assert.ok(done.body.removed.some((line) => /^4 update safety copies, made again without them\.$/.test(line)), JSON.stringify(done.body.removed));
+  const copy = rawUnder(copies);
+  assert.match(copy, /zqsam-prompt/, "Sam's conversation stays in the copies");
+  assert.match(copy, /zq-owner-setting-kept/, "and the owner's settings");
+  assert.equal(readdirSync(copies).length, 4, "every copy keeps its name");
 });
