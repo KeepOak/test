@@ -115,3 +115,21 @@ test('Stop from banner, paired chat or local owner revokes immediately; other ch
   const third = await started(w, 'signed-3'); w.sessions.stopFromWindow(); await assert.rejects(w.sessions.frame(third.key), ScreenRefusal);
   assert.equal(w.counts().closes, 3);
 });
+test('launch freshness is checked after PIN and again after desktop startup', async (t) => {
+  const w = world(t), original = w.ports.verify;
+  let checks = 0, rejectAt = 2;
+  w.ports.verify = (...args) => { if (++checks === rejectAt) throw new ScreenRefusal('expired launch'); return original(...args); };
+  const request = w.sessions.request(chat);
+  await assert.rejects(w.sessions.start(request.id, 'signed-1', '1234'), /expired launch/);
+  assert.equal(w.counts().opens, 0);
+  checks = 0; rejectAt = 3;
+  await assert.rejects(w.sessions.start(request.id, 'signed-2', '1234'), /expired launch/);
+  assert.equal(w.counts().opens, 1); assert.equal(w.counts().closes, 1);
+});
+test('failed desktop cleanup blocks another session rather than reusing a stale notice', async (t) => {
+  const w = world(t), original = w.ports.open;
+  w.ports.open = async (...args) => { const desktop = await original(...args); desktop.close = async () => { throw new Error('cleanup failed'); }; return desktop; };
+  const first = await started(w); w.sessions.stop(first.key);
+  await assert.rejects(started(w, 'signed-2'), /cleanup failed/);
+  assert.equal(w.counts().opens, 1);
+});
