@@ -6,7 +6,7 @@ import {
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
 import type { OAuthConnections } from "../oauth.js";
-import { type SignInsHost, SignInRefused, checkProgram, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
+import { type SignInsHost, SignInRefused, checkProgram, pasteSignInCode, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
 import { lockdownActive } from "../lockdown.js";
 import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 
@@ -45,6 +45,7 @@ const changes: Record<string, Change> = {
 
 const signIns: Record<string, (host: SignInsHost, body: unknown) => Promise<unknown>> = {
   "/api/accounts/sign-ins/check": (host, body) => checkProgram(host, body),
+  "/api/accounts/sign-ins/code": pasteSignInCode,
   "/api/accounts/sign-ins/gemini": startGeminiSignIn,
   "/api/accounts/sign-ins/start": (host, body) => startProgramSignIn(host, body),
   "/api/accounts/sign-ins/stop": stopProgramSignIn,

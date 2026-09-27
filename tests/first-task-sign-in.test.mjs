@@ -159,7 +159,7 @@ test("Claude Code: one click starts its own sign-in, is reused when signed in, a
   const status = async () => ({ code: signedIn ? 0 : 1, missing: false });
   const started = [];
   let finish = null, killed = 0;
-  const launch = (row, args, env, done) => { started.push([row.command, ...args]); finish = done; return () => { killed++; done(null, false); }; };
+  const launch = (row, args, env, done) => { started.push([row.command, ...args]); finish = done; return { stop: () => { killed++; done(null, false); }, send: null }; };
   // Signed in already: nothing is started.
   signedIn = true;
   assert.equal((await startProgramSignIn({ service }, { id: "claude-code" }, status, launch)).signedIn, true);
@@ -268,7 +268,7 @@ test("the sign-in, and only the sign-in, can reach the desktop and the chosen br
   const statusEnvs = [];
   const status = async (_row, _args, env) => { statusEnvs.push(env); return { code: 1, missing: false }; };
   let loginEnv = null;
-  const launch = (_row, _args, env) => { loginEnv = env; return () => undefined; };
+  const launch = (_row, _args, env) => { loginEnv = env; return { stop: () => undefined, send: null }; };
   await startProgramSignIn({ service }, { id: "claude-code", account: "0a1b2c3d" }, status, launch);
   t.after(() => stopProgramSignIn({ service }, { id: "claude-code", account: "0a1b2c3d" }));
   assert.ok(loginEnv, "the sign-in was started");
@@ -304,7 +304,7 @@ async function withClaude(t) {
   process.env.PATH = root;
   const status = async () => ({ code: 1, missing: false });
   const launched = { count: 0, killed: 0 };
-  const launch = (_row, _args, _env, done) => { launched.count++; return () => { launched.killed++; done(null, false); }; };
+  const launch = (_row, _args, _env, done) => { launched.count++; return { stop: () => { launched.killed++; done(null, false); }, send: null }; };
   return { app, root, close, service: accountsServiceFor(app.runtime.models), status, launch, launched };
 }
 
@@ -361,7 +361,7 @@ test("the sign-in program is given no input: a program that waits on it ends at 
   let kill = () => undefined;
   const ended = await new Promise((resolve) => {
     const guard = setTimeout(() => { kill(); resolve("still waiting on its input"); }, 15_000);
-    kill = startLogin({ id: "claude-code", name: "Claude Code", command: "claude" }, ["auth", "login"], env, (code, missing) => { clearTimeout(guard); resolve({ code, missing }); });
+    kill = startLogin({ id: "claude-code", name: "Claude Code", command: "claude" }, ["auth", "login"], env, (code, missing) => { clearTimeout(guard); resolve({ code, missing }); }).stop;
   });
   assert.deepEqual(ended, { code: 7, missing: false });
 });
