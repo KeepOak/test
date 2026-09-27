@@ -1,4 +1,5 @@
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
+import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
 import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
@@ -730,6 +731,8 @@ export async function createBranch(options: {
   });
   // ---- Wave mac5 (local models) hook: off by default; see src/local-kit.ts. ----
   await startLocalModels({ store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir });
+  // Dogfood follow-up: a model's context window, read from what its service publishes, before the first request.
+  runtime.modelInfo = (preset) => readModelWindow(preset, web.policy);
   // ---- end wave mac5 hook ----
   // Pictures, speech and what a video's headers say. Every one of these refuses in plain words
   // when the connected model has no such service, and keeps what it makes beside the database.
