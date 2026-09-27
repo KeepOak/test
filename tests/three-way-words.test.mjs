@@ -50,8 +50,9 @@ test("DG-017 every three-way reads Off · When needed · On in that order, savin
       await page.settled();
       seen.push(...(await read(page)).map((one) => ({ page: id, ...one })));
     }
-    // Today: the browser sandbox (Computer & browser) and the gateway; a new one on any page is read too.
-    for (const home of ["computer", "gateway"]) assert.ok(seen.some((one) => one.page === home), `${language}: the three-way on ${home} was found`);
+    // Today: the browser sandbox (Computer & browser); a new one on any page is read too. Gateway is one on/off switch
+    // now (tests/grown-up-controls.test.mjs), and Team › Signing in's three-way is read in tests/three-way-segments.test.mjs.
+    for (const home of ["computer"]) assert.ok(seen.some((one) => one.page === home), `${language}: the three-way on ${home} was found`);
     const wrong = seen.filter((one) => one.words.join(" · ") !== WORDS[language].join(" · ") || one.values.join(" ") !== "off when-needed on");
     assert.deepEqual(wrong, [], `${language}: ${wrong.length} of ${seen.length} switches read otherwise`);
   }
