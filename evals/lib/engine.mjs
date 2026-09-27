@@ -14,7 +14,11 @@ const clockShift = fileURLToPath(new URL("./clock-shift.mjs", import.meta.url));
  * Starts the engine and waits for its token. `clockOffsetMs` moves the engine's clock forward (the simulated clock):
  * a preload shifts Date for that process only, so "three days later" is real to everything the engine does.
  */
-export async function startEngine({ root, port, env = {}, clockOffsetMs = 0, timeoutMs = 60_000 }) {
+/* Every engine still running, so a run can stop them all before it exits (none is ever left behind on the PC). */
+const live = new Set();
+export function stopAllEngines() { for (const child of live) child.kill(); }
+
+export async function startEngine({ root, port, env = {}, clockOffsetMs = 0, timeoutMs = 85_000 }) {
   const dataDir = join(root, "data"), workspace = join(root, "workspace");
   await mkdir(dataDir, { recursive: true });
   await mkdir(workspace, { recursive: true });
@@ -27,9 +31,12 @@ export async function startEngine({ root, port, env = {}, clockOffsetMs = 0, tim
       EVAL_CLOCK_OFFSET_MS: String(clockOffsetMs) },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });
+  live.add(child);
+  child.once("exit", () => live.delete(child));
   let output = "";
   const found = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`engine did not start in ${timeoutMs} ms:\n${output.slice(-2000)}`)), timeoutMs);
+    // An engine that did not come up is stopped here: left running, it kept the whole run (and the nightly) waiting on it.
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`engine did not start in ${timeoutMs} ms:\n${output.slice(-2000)}`)); }, timeoutMs);
     const read = (chunk) => {
       output += chunk.toString("utf8");
       const token = /Local session token \(paste into browser\): ([A-Za-z0-9_-]+)/.exec(output);

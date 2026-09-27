@@ -4,7 +4,9 @@
  * evals/judge-rubric.md; a judge that will not answer JSON makes the task "fail" with its raw words kept, never a
  * silent pass.
  */
-const ollamaBase = process.env.EVAL_OLLAMA_URL ?? "http://127.0.0.1:11434";
+// The judge stays on this computer's Ollama even when the model under test is elsewhere (EVAL_OLLAMA_URL), so every
+// model in a night is graded by the same judge; EVAL_JUDGE_URL moves it.
+const ollamaBase = process.env.EVAL_JUDGE_URL ?? "http://127.0.0.1:11434";
 const judgeModel = process.env.EVAL_JUDGE_MODEL ?? "qwen2.5:7b";
 
 const SYSTEM = `You are a strict grader for an AI-assistant eval. You are given a RUBRIC and the assistant's OUTPUT.
