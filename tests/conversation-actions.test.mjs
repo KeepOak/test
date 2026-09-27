@@ -430,3 +430,17 @@ test("a backup made after Delete now holds nothing of it; an older backup put ba
   assert.equal(factsNamed(db, "jasper only here"), 0, "its fact is not brought back");
   assert.doesNotMatch(String(db.prepare("SELECT group_concat(memories) AS all_ FROM memory_checkpoints").get().all_), /jasper only here/);
 });
+
+test("Delete now names a fact kept only in the memory archive, learned only there, and takes it out of the archive", async (t) => {
+  const { app, call } = await served(t);
+  const db = app.store.sqlite;
+  const { sessionId: a, runId } = seed(app.store, "the beryl plan");
+  const at = new Date().toISOString();
+  db.prepare("INSERT INTO memory_archive(id,owner,data,created_at,updated_at,revision,archived_at) VALUES(?,?,?,?,?,?,?)")
+    .run("fact-beryl", "local", JSON.stringify({ text: "beryl archived only", source: "a task", sourceRunId: runId }), at, at, 1, at);
+  await call("POST", `/api/sessions/${a}/delete`, {});
+  const preview = (await call("GET", `/api/sessions/${a}/delete-now`)).body;
+  assert.deepEqual(preview.facts, ["beryl archived only"], "the question names the archived copy too");
+  assert.equal((await call("POST", `/api/sessions/${a}/delete-now`, {})).status, 200);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM memory_archive WHERE data LIKE '%beryl%'").get().n, 0, "gone from the archive");
+});
