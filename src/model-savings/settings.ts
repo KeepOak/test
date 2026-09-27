@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { forgetChosen, markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
 import type { Store } from "../store.js";
 
 /**
@@ -101,11 +102,20 @@ export const savingsCardNames = Object.keys(savingsCards) as SavingsCard[];
 const keyOf = (card: SavingsCard): string => `model-savings-${card}`;
 type Reader = Pick<Store, "get">;
 
+/**
+ * The owner's rule (ships on, 2026-09-26): counting the tokens a service reports and the per-round chart only read what
+ * already came back; none of (a)–(f). The rest stay off: a classifier call per task, cache pings and mixtures spend on
+ * their own (a), and OpenRouter's routing and the plan model are the owner's pick of where to send work.
+ */
+const savingsShipOn: Partial<Record<SavingsCard, Record<string, unknown>>> = { reportedTokens: { mode: "on" }, roundChart: { mode: "on" } };
+
 /** One card, with today's behaviour for anything never saved or saved wrongly. */
 export function readSavings<K extends SavingsCard>(store: Reader, owner: string, card: K): SavingsValues[K] {
   const schema = savingsCards[card] as unknown as z.ZodType<SavingsValues[K]>;
   const saved = schema.safeParse(store.get("settings", owner, keyOf(card))?.data ?? {});
-  return saved.success ? saved.data : schema.parse({});
+  if (!saved.success) return schema.parse({});
+  const ships = savingsShipOn[card];
+  return ships ? shippedUnlessChosen(store, owner, keyOf(card), saved.data as Record<string, unknown>, ships) as SavingsValues[K] : saved.data;
 }
 
 /** Saves one card; fields left out keep what was there. */
@@ -113,6 +123,7 @@ export function saveSavings<K extends SavingsCard>(store: Store, owner: string, 
   const schema = savingsCards[card] as unknown as z.ZodType<SavingsValues[K]>;
   const next = schema.parse({ ...readSavings(store, owner, card), ...(input && typeof input === "object" ? input : {}) });
   store.save("settings", owner, keyOf(card), next as Record<string, unknown>);
+  markChosen(store, owner, keyOf(card), sentKeys(input));
   return next;
 }
 
@@ -122,4 +133,5 @@ export function allSavings(store: Reader, owner: string): SavingsValues {
 
 export function resetSavings(store: Store, owner: string, card: SavingsCard): void {
   store.save("settings", owner, keyOf(card), {});
+  forgetChosen(store, owner, keyOf(card));
 }

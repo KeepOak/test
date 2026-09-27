@@ -127,9 +127,14 @@ async function withLanguageServer(t) {
   return made;
 }
 
-test("language servers are off until the owner switches them on", async (t) => {
+test("language servers ship on but start nothing the owner has not added; switched off, they refuse", async (t) => {
   const { app, workspace } = await fixture(t);
   await put(workspace, "src/a.ts", "export const total = 1;\n");
+  await assert.rejects(
+    app.runtime.executeTool("code.hover", { path: "src/a.ts", line: 1, character: 14 }),
+    /No language server is set up/,
+  );
+  await saveLanguageServerSettings(app.store, "local", { enabled: false });
   await assert.rejects(
     app.runtime.executeTool("code.hover", { path: "src/a.ts", line: 1, character: 14 }),
     /switched off/,
@@ -219,9 +224,14 @@ async function withDebugAdapter(t) {
   return made;
 }
 
-test("debugging is off until the owner switches it on", async (t) => {
+test("debugging ships on but runs no debugger the owner has not added; switched off, it refuses", async (t) => {
   const { app, workspace } = await fixture(t);
   await put(workspace, "run.js", "console.log(1);\n");
+  await assert.rejects(
+    app.runtime.executeTool("debug.start", { adapter: "fake", program: "run.js" }),
+    /not one of the debuggers the owner set up/,
+  );
+  await saveDebugSettings(app.store, "local", { enabled: false });
   await assert.rejects(
     app.runtime.executeTool("debug.start", { adapter: "fake", program: "run.js" }),
     /switched off/,

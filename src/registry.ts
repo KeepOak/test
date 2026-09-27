@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { describesScreen } from "./screen-guard.js"; // dogfood follow-up
 import type {
   ToolContext,
   ToolDefinition,
@@ -42,6 +43,13 @@ export const targetlessTools: Readonly<Record<string, string>> = {
   "notebook.read": "`from` and `to` are cell numbers. The notebook itself is `path`, which the rules read as they do for files.read.",
   "project.board": "`project` is a project's name. The project's folder is judged when something opens it.",
   "answer.page": "`sources[].url` are the addresses an answer cites, written into the page for a person to read; nothing is fetched.",
+  "board.cards": "`project` is a project's name. The project's folder is judged when something opens it.",
+  "board.card_add": "`project` is a project's name; a card is only written on the board, and is worked on when the owner starts it.",
+  "board.card_handoff": "`to` names who holds the card (the owner, the assistant or a specialist); nothing is sent to anyone.",
+  "addon.draft": "Drafting only saves a draft. `hosts` are the addresses the add-on would ask to reach, judged when it runs.",
+  "addon.search": "`source` is the label of an add-on's search source; each source's own tool is judged on its own when it runs.",
+  "install.request": "`server.url` is the address in a request put to the owner; asking fetches nothing and installs nothing.",
+  "sources.sync": "`source` is the name of one of the owner's own sources, set up by the owner; the permission itself is judged.",
 };
 /**
  * Q76: a target a kept rule would read as a pattern, so a standing yes on it would cover far more than
@@ -134,6 +142,17 @@ export class ToolRegistry {
         };
         return options.diet === false ? described : slimTool(described);
       });
+  }
+  /**
+   * Dogfood follow-up: whether a tool reaches the owner's own screen by what it declares or, for a tool from outside,
+   * by what it says about itself (src/screen-guard.ts `describesScreen`). The product's own screen tools are desktop.*.
+   */
+  declaresScreen(name: string): boolean {
+    const tool = this.tools.get(name);
+    if (!tool) return false;
+    if (tool.screen === true) return true;
+    if (!tool.external && !tool.source) return false;
+    return describesScreen({ name, description: tool.description, inputSchema: tool.inputSchema, category: tool.group });
   }
   /** Whether a tool came from outside, so its description is read as untrusted text. */
   isExternal(name: string): boolean {

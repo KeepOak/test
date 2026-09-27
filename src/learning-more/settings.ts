@@ -1,9 +1,11 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { unsetRecord } from "../ship-on.js";
 
 /**
  * R17-F (wave mac7): "Learning, deeper". Nine parts, each with the owner's three-way switch — off,
- * when needed, on — kept in a settings record of its own, and every one ships off.
+ * when needed, on — kept in a settings record of its own. What each ships as is `learningShipsOn` below (the
+ * owner's ship-on rule, src/ship-on.ts); a saved record that cannot be read is off.
  *
  *   off          the part refuses in one plain sentence, and its tools are not offered
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -21,6 +23,20 @@ export const LearningPartSchema = z.enum(learningParts);
 const ModeSchema = z.enum(["off", "when-needed", "on"]);
 export type LearningMode = z.infer<typeof ModeSchema>;
 const RecordSchema = z.object({ mode: ModeSchema.default("off") }).strict();
+
+/** What each part is while the owner never set it. */
+export const learningShipsOn: Partial<Record<LearningPart, LearningMode>> = {
+  // The owner's rule (ships on, 2026-09-26): each of these keeps or reads the owner's own memory and skills on this
+  // computer, and a lesson is tried only once the owner approves it; none of (a)–(f).
+  // Expired facts are set aside, never deleted; session lessons also need the owner's yes per assistant.
+  blocks: "when-needed", curator: "when-needed", journey: "when-needed", lessons: "when-needed",
+  "session-lessons": "when-needed", readback: "when-needed", expiry: "when-needed",
+  // The owner's rule (2026-09-27): finding conversations by meaning asks the owner's own connected provider (or a model on
+  // this computer) for embeddings only when a search is made, the same route memory search already uses; key-like values
+  // are hidden first. Talking to what the owner connected is not sending out, so none of (a)–(f).
+  "meaning-search": "when-needed",
+  // Kept off, by the owner's rule: providers keep memories on an outside service the owner has not connected (b).
+};
 
 /** The switch's record. A part's own settings use a different key (ending in "-settings" or naming what they hold). */
 export const learningKey = (part: LearningPart): string => `learning-more-${part}`;
@@ -52,14 +68,16 @@ export const learningTools: Record<LearningPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its record, why it is loaded, and its tools. */
-export const learningToolFeatures: readonly (readonly [string, string, readonly string[]])[] = learningParts
+export const learningToolFeatures: readonly (readonly [string, string, readonly string[], LearningMode])[] = learningParts
   .filter((part) => learningTools[part].length > 0)
-  .map((part) => [learningKey(part), `${learningLabels[part].charAt(0).toLowerCase()}${learningLabels[part].slice(1)} is switched on`, learningTools[part]] as const);
+  .map((part) => [learningKey(part), `${learningLabels[part].charAt(0).toLowerCase()}${learningLabels[part].slice(1)} is switched on`, learningTools[part], learningShipsOn[part] ?? "off"] as const);
 
 type Reader = Pick<Store, "get">;
 
 export function learningMode(store: Reader, owner: string, part: LearningPart): LearningMode {
-  const saved = RecordSchema.safeParse(store.get("settings", owner, learningKey(part))?.data ?? {});
+  const found = store.get("settings", owner, learningKey(part));
+  if (unsetRecord(found?.data)) return learningShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found?.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { FeatureModeSchema, modeOf, optionalFields, settleSwitch, type FeatureMode } from "./feature-switches.js";
 import type { Store } from "./store.js";
+import { unsetRecord } from "./ship-on.js";
 import type { RateLimitReading } from "./rate-limit-headers.js";
 
 /**
@@ -80,9 +81,11 @@ export const noLimitReported = "No limit reported.";
 
 /**
  * Only the asking is behind a switch. Reading a header on an answer Branch already received costs
- * nothing and asks nobody anything, so it is always on; asking OpenRouter its key's allowance on a
- * timer is a request Branch makes without being told to, so it ships off.
+ * nothing and asks nobody anything, so it is always on. Asking OpenRouter its key's allowance on a
+ * timer ships "when needed" too (the owner's rule, 2026-09-27): it reads the owner's own connection's
+ * usage from its documented, free endpoint and sends nothing of the owner's out, so it is none of (a)–(f).
  */
+export const usageLimitsShipsAs: FeatureMode = "when-needed";
 export const UsageLimitsSettingsSchema = z.object({
   mode: FeatureModeSchema.default("off"),
   enabled: z.boolean().default(false),
@@ -91,7 +94,10 @@ export type UsageLimitsSettings = z.infer<typeof UsageLimitsSettingsSchema>;
 const settingsKey = "usage-limits";
 
 export function usageLimitsSettings(store: Pick<Store, "get">, owner: string): UsageLimitsSettings {
-  const saved = UsageLimitsSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data);
+  const data = store.get("settings", owner, settingsKey)?.data;
+  // Nothing saved reads as it ships; this record holds only its switch, so a saved "off" was the owner's (src/ship-on.ts).
+  if (unsetRecord(data)) return { mode: usageLimitsShipsAs, enabled: true };
+  const saved = UsageLimitsSettingsSchema.safeParse(data);
   const value = saved.success ? saved.data : UsageLimitsSettingsSchema.parse({});
   const mode: FeatureMode = modeOf(value);
   return { ...value, mode, enabled: mode !== "off" };
