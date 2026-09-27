@@ -26,11 +26,13 @@ const dm = { id: 42, type: "private" };
 /**
  * The stand-in Bot API. getUpdates forgets every update below the offset it is asked with, as Telegram
  * does, and holds a poll open briefly when nothing is waiting. `drop()` cuts every open connection and
- * refuses new ones until `restore()`; `cutNextDelivery` loses one answer that carried updates.
+ * refuses new ones until `restore()`; `cutNextDelivery` loses one answer that carried updates. `hold(skip)`
+ * keeps every getMe after the next `skip` waiting until the function it returns is called.
  */
 async function fakeBotApi(t) {
   const bots = new Map(); // bot id -> { queue, next }
-  const state = { calls: [], sent: [], edits: [], answered: [], tooLong: 0, down: false, cutNextDelivery: false, slowGetMe: 0, slowEveryGetMe: 0, getMeCount: 0 };
+  const state = { calls: [], sent: [], edits: [], answered: [], tooLong: 0, down: false, cutNextDelivery: false, getMeCount: 0, refused: 0 };
+  let gate = null;
   const sockets = new Set();
   const wake = new Set();
   const botFor = (id) => { if (!bots.has(id)) bots.set(id, { queue: [], next: 1 }); return bots.get(id); };
@@ -45,8 +47,7 @@ async function fakeBotApi(t) {
     const refuse = (code, description) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: false, error_code: code, description })); };
     if (method === "getMe") {
       state.getMeCount += 1;
-      if (state.slowGetMe && state.getMeCount > 1) await delay(state.slowGetMe);
-      if (state.slowEveryGetMe) await delay(state.slowEveryGetMe);
+      if (gate && state.getMeCount > gate.after) await gate.open;
       return reply({ id: Number(botId), is_bot: true, first_name: "Branch", username: `E2E${botId}Bot` });
     }
     if (method === "getUpdates") {
@@ -69,7 +70,7 @@ async function fakeBotApi(t) {
     refuse(404, "Not Found");
   });
   server.on("connection", (socket) => {
-    if (state.down) { socket.destroy(); return; }
+    if (state.down) { state.refused += 1; socket.destroy(); return; }
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
   });
@@ -88,6 +89,12 @@ async function fakeBotApi(t) {
     press: (data, botId = "123456") => push(botId, { callback_query: { id: `press-${Date.now()}`, data, from: owner, message: { message_id: 77, chat: dm } } }),
     drop: () => { state.down = true; for (const socket of sockets) socket.destroy(); },
     restore: () => { state.down = false; },
+    hold: (skip = 0) => {
+      let release;
+      const open = new Promise((resolve) => { release = resolve; });
+      gate = { after: state.getMeCount + skip, open };
+      return () => { gate = null; release(); };
+    },
   };
 }
 
@@ -129,18 +136,17 @@ test("Telegram end to end: paste, check, pair, talk, approve by button, split, r
   };
   const texts = () => bot.state.sent.map((sent) => sent.text);
 
-  // 1. Paste and check. Connecting asks Telegram again; the save no longer waits on that second answer.
+  // 1. Paste and check. Connecting asks Telegram again; the save does not wait on that second answer, which is
+  // held here until the save has answered.
   assert.equal((await call("channel-setup", { mode: "on" })).status, 200);
-  bot.state.slowGetMe = 1500;
-  const started = Date.now();
-  const checked = await call("channel-setup/telegram/check", { values: { TELEGRAM_BOT_TOKEN: token }, enable: "on" });
-  const took = Date.now() - started;
+  const release = bot.hold(1);
+  const checked = await Promise.race([call("channel-setup/telegram/check", { values: { TELEGRAM_BOT_TOKEN: token }, enable: "on" }),
+    delay(10_000, null, { ref: false }).then(() => assert.fail("the save waited for the bot to connect as well"))]);
+  release();
   assert.equal(checked.status, 200, checked.text);
   assert.equal(checked.json.botName, "E2E123456Bot");
   assert.equal(checked.json.connectNote, null);
   assert.ok(!checked.text.includes(token.split(":")[1]), "the token is never sent back");
-  assert.ok(took < 1500, `the save answered after the check alone, not after connecting too (${took} ms)`);
-  bot.state.slowGetMe = 0;
   await until(async () => (await call("channels")).json.channels.some((c) => c.kind === "telegram" && c.botName === "E2E123456Bot"), "the bot connected");
   const card = (await call("never-break/telegram")).json;
   assert.deepEqual([card.tokenSaved, card.connected, card.botName], [true, true, "E2E123456Bot"]);
@@ -190,17 +196,17 @@ test("Telegram end to end: paste, check, pair, talk, approve by button, split, r
   const askedBefore = provider.requests.length;
   bot.drop();
   bot.say("first while down");
-  bot.say("second while down");
-  await delay(600);
+  const last = bot.say("second while down");
   bot.state.cutNextDelivery = true; // and the first answer after it is lost on the way back
   bot.restore();
   await until(() => texts().includes("Echo: second while down"), "both answered after the drop", 20_000);
-  await delay(500);
+  const polls = (botId) => bot.state.calls.filter((c) => c.method === "getUpdates" && c.botId === botId);
+  await until(() => polls("123456").some((c) => c.body.offset > last.update_id), "both acknowledged to Telegram");
   assert.equal(bot.state.cutNextDelivery, false, "an answer carrying updates really was lost on the way");
   const answered = texts().filter((text) => /while down$/.test(text));
   assert.deepEqual(answered, ["Echo: first while down", "Echo: second while down"], "nothing lost or repeated");
   assert.equal(provider.requests.length - askedBefore, 2);
-  const offsets = bot.state.calls.filter((c) => c.method === "getUpdates" && c.botId === "123456").map((c) => c.body.offset);
+  const offsets = polls("123456").map((c) => c.body.offset);
   assert.deepEqual(offsets, [...offsets].sort((a, b) => a - b), "the read position never went back");
 
   // 7. A new token for a different bot replaces the first, and the new bot's messages are read from its start.
@@ -212,7 +218,8 @@ test("Telegram end to end: paste, check, pair, talk, approve by button, split, r
   const oldPolls = bot.state.calls.filter((c) => c.botId === "123456").length;
   bot.say("hello new bot", "654321");
   await until(() => bot.state.sent.some((sent) => sent.botId === "654321"), "the new bot answered");
-  await delay(400);
+  const newPolls = polls("654321").length;
+  await until(() => polls("654321").length >= newPolls + 2, "the new bot asked twice more");
   assert.ok(bot.state.calls.filter((c) => c.botId === "123456").length <= oldPolls + 1, "the old bot is no longer read");
   const again = await call("channel-setup/telegram/check", { values: { TELEGRAM_BOT_TOKEN: replacement }, enable: "on" });
   assert.match(again.json.connectNote, /already connected/);
@@ -237,13 +244,14 @@ test("the card's bot starts while Telegram cannot be reached, and connects once 
   bot.drop();
   const plain = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1 });
   await assert.rejects(plain.start(async () => undefined), "a settings-file channel still stops its start");
+  const refusedBefore = bot.state.refused;
   const received = [];
   const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1, keepTrying: true });
   await adapter.start(async (message) => { received.push(message.text); });
   t.after(() => adapter.stop());
   assert.equal(adapter.botName(), null);
   bot.say("are you there");
-  await delay(300);
+  await until(() => bot.state.refused >= refusedBefore + 2, "its name and its first poll both failed");
   bot.restore();
   await until(() => received.length === 1, "the message after Telegram came back");
   assert.deepEqual(received, ["are you there"]);
@@ -277,20 +285,48 @@ test("the wizard: an answer to a check the owner went back from does not wipe th
   await next(); // Create -> Paste
   const field = page.locator('[data-chf="TELEGRAM_BOT_TOKEN"]');
   await field.fill(token);
-  bot.state.slowEveryGetMe = 1500; // Telegram is slow to answer the check
-  const answered = page.waitForResponse((r) => r.url().includes("/api/channel-setup/telegram/check"));
+  const release = bot.hold(); // Telegram is slow to answer the check
+  const isCheck = (r) => r.url().includes("/api/channel-setup/telegram/check");
+  const answered = page.waitForEvent("requestfinished", isCheck);
   await next(); // Paste -> Check, asked and waiting
   await page.locator('.dlg [data-act="chw-back"]').click(); // the owner goes back to paste another token
   await field.fill(replacement);
-  assert.equal((await answered).status(), 200);
-  await delay(300);
+  release();
+  assert.equal((await (await answered).response()).status(), 200);
+  // The page has read the answer and run what follows it before the field is looked at.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))));
   assert.equal(await field.inputValue(), replacement, "the late answer was drawn over the token being typed");
   assert.match(await page.locator(".chw-steps12 .now").textContent(), /Paste/);
-  bot.state.slowEveryGetMe = 0;
-  const second = page.waitForResponse((r) => r.url().includes("/api/channel-setup/telegram/check"));
+  const second = page.waitForResponse(isCheck);
   await next(); // Paste -> Check with the new token
   assert.equal((await second).status(), 200);
   await page.locator(".dlg .chw-ok12").waitFor();
   assert.match(await page.locator(".dlg .chw-body12").textContent(), /E2E654321Bot/, "the answer to the check still on screen is drawn");
   assert.deepEqual(errors, []);
+});
+
+test("a bot whose token Telegram refused stops at once, without waiting out the pause before it asks again", async (t) => {
+  const bot = await fakeBotApi(t);
+  const refusing = async (url, init) => /\/getUpdates$/.test(url)
+    ? { status: 401, json: async () => ({ ok: false, error_code: 401, description: "Unauthorized" }) }
+    : fetch(url, init);
+  const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, fetch: refusing, pollTimeoutSeconds: 1, refusedRetryMs: 60_000 });
+  await adapter.start(async () => undefined);
+  t.after(() => adapter.stop());
+  await until(() => adapter.health().state === "needs attention", "the refusal seen, and the pause begun");
+  const stopped = await Promise.race([adapter.stop().then(() => true), delay(5_000, false, { ref: false })]);
+  assert.equal(stopped, true, "stop() waited out the minute before the next attempt");
+});
+
+test("a Telegram channel from the settings file is never replaced by the card's bot", async (t) => {
+  const bot = await fakeBotApi(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-telegram-e2e-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model(), telegramApiBase: bot.base });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const fromFile = new TelegramAdapter({ id: "telegram", token: replacement, apiBase: bot.base, pollTimeoutSeconds: 1 });
+  await app.channels.attach(fromFile, { activation: "always", pairing: true, allowlist: [] });
+  await app.neverBreak.telegram.save({ token, mode: "on" });
+  assert.match(await app.neverBreak.telegram.connect(), /from the settings file/);
+  assert.equal(app.channels.adapter("telegram"), fromFile, "the settings file's bot is still the one read");
+  assert.equal(bot.state.calls.filter((c) => c.botId === "123456").length, 0, "the card's bot never asked Telegram");
 });
