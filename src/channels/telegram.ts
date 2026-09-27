@@ -143,6 +143,12 @@ export class TelegramAdapter implements ChannelAdapter {
     this.stopping.abort();
     await this.loop?.catch(() => undefined);
   }
+  async setCommands(commands: { command: string; description: string }[]): Promise<void> {
+    const rows = commands.slice(0, 100).map(one => ({ command: one.command, description: one.description.slice(0, 256) }));
+    // Separate scopes avoid replacing command menus configured for particular chats by the owner.
+    for (const type of ["all_private_chats", "all_group_chats"])
+      await this.call("setMyCommands", { commands: rows, scope: { type } }, false, true);
+  }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
       ...telegramTarget(chatId), text, ...formatted(format),
@@ -153,16 +159,21 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   /** Sends a spoken reply as a Telegram voice note. Telegram wants the file as a form upload. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    if (audio.byteLength > this.maxFileBytes) throw new Error("That spoken reply is larger than Telegram's 50 MB limit.");
+    const type = mediaType.split(";")[0]!.toLowerCase();
+    // Local speech may produce WAV; send the playable file without claiming it is an Opus voice bubble.
+    if (!["audio/ogg", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a"].includes(type))
+      return this.sendFile(chatId, { name: type.includes("wav") ? "reply.wav" : "reply.audio", mediaType, bytes: audio }, replyToMessageId);
     const form = new FormData();
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
-    const extension = mediaType.includes("mpeg") ? "mp3" : mediaType.includes("wav") ? "wav" : "ogg";
-    form.append("audio", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
-    if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/sendAudio`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const extension = ["audio/mpeg", "audio/mp3"].includes(type) ? "mp3" : ["audio/mp4", "audio/x-m4a"].includes(type) ? "m4a" : "ogg";
+    form.append("voice", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
+    if (replyToMessageId && /^\d+$/.test(replyToMessageId)) form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+    const response = await this.fetch(`${this.base}/sendVoice`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw new Error(`Telegram sendAudio failed: ${parsed.description ?? response.status}`);
+    if (!parsed.ok) throw new Error(`Telegram sendVoice failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
     return message.success ? String(message.data.message_id) : undefined;
   }

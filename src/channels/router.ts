@@ -23,7 +23,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
   saveChatPermissionSettings, type ChatPermissionSettings } from "./chat-permissions.js";
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
-import { chatCommandSpec, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
+import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
 import { lockedDown } from "../lockdown.js";
 import { commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
@@ -106,6 +106,8 @@ export interface ChannelAdapter {
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
+  /** The service's command menu, using the same names and descriptions as the shared catalog. */
+  setCommands?(commands: { command: string; description: string }[]): Promise<void>;
   /**
    * Sends a question with buttons to press, on the channels that have them. Absent means this
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
@@ -390,6 +392,7 @@ export class ChannelRouter {
       throw error;
     }
     if (!this.pump) { this.pump = setInterval(() => void this.flush(), this.pumpMs); this.pump.unref(); }
+    void this.refreshCommandMenus();
     await this.flush();
   }
   /** The connected channel with this id, for routes that must hand a request to one. */
@@ -443,7 +446,24 @@ export class ChannelRouter {
   }
   /** Changes the chat extras' switches (chat-live-settings.ts); the ones not named stay as they are. */
   setSwitches(input: unknown): ChatLiveSwitches {
-    return saveChatLiveSwitches(this.store, this.runtime.owner, input);
+    const switches = saveChatLiveSwitches(this.store, this.runtime.owner, input);
+    void this.refreshCommandMenus();
+    return switches;
+  }
+  private menuChain: Promise<void> = Promise.resolve();
+  refreshCommandMenus(): Promise<void> {
+    return this.menuChain = this.menuChain.then(async () => {
+      const commands = [{ command: "new", description: "Start a fresh thread and keep earlier conversations" },
+        { command: "trunk", description: "Which Trunk answers here" },
+        ...(this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
+          .map(one => ({ command: one.name, description: one.description })))];
+      const unique = [...new Map(commands.filter(one => /^[a-z0-9_]{1,32}$/.test(one.command))
+        .map(one => [one.command, one])).values()].slice(0, 100);
+      await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
+        try { await adapter.setCommands?.(unique); }
+        catch { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}.`); }
+      }));
+    });
   }
   setOwnerCommandSettings(input: unknown) {
     return saveOwnerCommands(this.store, this.runtime.owner, input);
@@ -547,11 +567,11 @@ export class ChannelRouter {
    */
   private async voiceReply(message: InboundMessage, text: string): Promise<void> {
     const adapter = this.adapters.get(message.channel)?.adapter;
-    if (!adapter?.sendVoice) return;
-    const checked = await this.outboundGuard(text);
+    if (!adapter?.sendVoice || !this.liveOn() || !this.senderAllowed(message.channel, message.senderId)) return;
+    const checked = await this.outboundGuard(this.hideLeaks(text));
     if (checked.blocked) return;
     const spoken = await this.speakReply(checked.text);
-    if (!spoken) return;
+    if (!spoken || !this.liveOn() || !this.senderAllowed(message.channel, message.senderId)) return;
     await adapter.sendVoice(message.chatId, spoken.bytes, spoken.mediaType, message.messageId);
   }
   /** The conversation this chat is carrying on, when there is one. */

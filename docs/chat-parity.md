@@ -133,7 +133,7 @@ proved against stand-in adapters and providers; real account connections remain 
 ### Voice notes in (transcribed) and out (spoken replies)
 | | H in / out | O in / out | B today |
 |---|---|---|---|
-| TG | ✅ / ✅ voice bubble | ✅ / ? | ✅ in; ◐ out: `sendAudio` (an audio file, not a voice bubble) |
+| TG | ✅ / ✅ voice bubble | ✅ / ? | ✅ in/out: `sendVoice` for Opus OGG, MP3, M4A; WAV sent as a file |
 | DC | ✅ / ✅ (voice channels) | ✅ / ✅ | ✅ in; — out |
 | SL | ✅ / ? | ? | — |
 | WA | ✅ / ✅ | ✅ / ◐ calls, experimental | ✅ in; — out |
@@ -143,6 +143,10 @@ proved against stand-in adapters and providers; real account connections remain 
 | EM, SMS | — | — | — |
 
 ### Photos, files and documents, in and out
+Telegram's voice upload follows the [Bot API](https://core.telegram.org/bots/api#sendvoice); unsupported speech
+formats are delivered as files. Stand-in tests prove upload fields, topic/reply targeting, size rejection, secret
+scrubbing and a lock that starts during speech generation. Actual Telegram playback remains an account check.
+
 | | H | O | B today (in / out) |
 |---|---|---|---|
 | TG | ✅ | ✅ | ✅ / ✅ `sendDocument` (photos go out as documents) |
@@ -180,7 +184,7 @@ proved against stand-in adapters and providers; real account connections remain 
 ### Slash commands and menus
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ◐ typed commands only (switch ships off); no `setMyCommands` menu |
+| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ✅ `setMyCommands` private/group menus follow the catalog and switches; intrinsic `/new` and `/trunk` remain listed |
 | DC | ✅ native slash commands | ✅ | ◐ typed only |
 | SL | ✅ native slash commands, `!cmd` in threads | ✅ | ◐ typed only |
 | Others | ✅ typed | ✅ typed | ◐ typed (switch ships off) |
