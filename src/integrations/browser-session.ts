@@ -548,13 +548,14 @@ export class BrowserSession {
   }
   /** The page of one tab, so what it shows can be scrubbed of what its own boxes hold. */
   tabPage(index: number): Page | undefined { return this.pages[index]; }
-  async openTab(signal?: AbortSignal): Promise<number> {
+  async openTab(signal?: AbortSignal, completed?: (index: number) => void): Promise<number> {
     return this.ordered(signal, async () => {
       if (this.pages.length >= 5) throw new Error('This task already has five tabs open, which is the limit');
       await (this.opening ??= this.open());
       signal?.throwIfAborted();
       await this.newPage();
       this.active = this.pages.length - 1;
+      completed?.(this.active);
       return this.active;
     });
   }
@@ -564,7 +565,7 @@ export class BrowserSession {
       return (this.active = index);
     });
   }
-  async closeTab(index: number, signal?: AbortSignal): Promise<void> {
+  async closeTab(index: number, signal?: AbortSignal, completed?: () => void): Promise<void> {
     return this.ordered(signal, async () => {
       const page = this.pages[index];
       if (!page) throw new Error(`There is no tab ${index} open`);
@@ -572,6 +573,7 @@ export class BrowserSession {
       this.pages.splice(index, 1);
       await page.close().catch(() => undefined);
       this.active = index < this.active ? this.active - 1 : Math.min(this.active, this.pages.length - 1);
+      completed?.();
     });
   }
   /** Cookies and site storage as they are now, for saving back into a named sign-in. */
