@@ -117,10 +117,10 @@ test("(d) a question with no fingerprint: with nothing shown a y shows it; with 
   // With one waiting and nothing shown: should re-show.
   await app.channels.handle(message("y", "m1"));
   assert.deepEqual(app.runtime.waitingApprovals(sessionId).map((q) => q.tool), ["files.read"]);
-  // Add a second approval.
+  // Add a second approval (with its own fingerprint: two questions that both name nothing are one question to the list).
   app.runtime.approvals.ask({ runId: "run-room2", sessionId, tool: "network.site", target: "example.com",
     label: "network.site example.com", question: "May it open example.com?", source: "owner", remember: "session",
-    askedAt: new Date().toISOString() });
+    askedAt: new Date().toISOString(), fingerprint: "f" + "9".repeat(31) });
   // With multiple waiting and no fingerprint: should refuse.
   const sentBefore = (app.sent || []).length;
   await app.channels.handle(message("y", "m2"));
