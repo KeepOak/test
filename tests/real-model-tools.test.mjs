@@ -13,7 +13,7 @@ import {
 } from "../dist/index.js";
 import { OllamaProvider } from "../dist/providers/ollama.js";
 import { LocalRuntimes } from "../dist/local-runtimes.js";
-import { announcedEnding, unofferedEnding } from "../dist/runtime.js";
+import { announcedEnding, unofferedEnding, textCallEnding, writesToolCallAsText } from "../dist/runtime.js";
 
 // ---------------------------------------------------------------- wire names
 
@@ -245,6 +245,41 @@ test("asked once, a model that then does the step finishes as done", async (t) =
   const branch = await app(t, provider);
   const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
   assert.equal(run.status, "completed");
+});
+
+// ---------------------------------------------------------------- a tool call written out as text (qa-fixes-4)
+
+const textCall = '{"name": "memory.search", "arguments": {"query": "Roman Empire", "limit": 1}}';
+test("a tool call written out as text is kept nowhere a person reads; asked once, the real call then works", async (t) => {
+  // Mutation: drop the writesToolCallAsText check in the runtime → the JSON is the task's answer, red.
+  const { requests, provider } = standIn([{ content: textCall }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, "It says eggs.");
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes('"arguments"')), "in no message");
+  assert.match(requests[1].messages.at(-1).content, /tool call written out as text/);
+  assert.match(requests[1].messages.at(-1).content, /files\.read/);
+  assert.equal(events(branch, run, "model.text_call").length, 1);
+});
+
+test("a model that keeps writing tool calls out as text ends failed in plain words", async (t) => {
+  // Mutation: let the second text call through (no textCallEnding) → the fenced JSON is the answer, red.
+  const { provider } = standIn([{ content: "```json\n" + textCall + "\n```" }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "find a fact about Rome", permissions: ["files.read"] });
+  assert.equal(run.status, "failed");
+  assert.equal(run.output, textCallEnding);
+  assert.equal(events(branch, run, "model.text_call").length, 2);
+});
+
+test("only a whole reply shaped like a call is one", () => {
+  for (const text of [textCall, `[${textCall}]`, '<tool_call>{"name":"files.read","arguments":{}}</tool_call>',
+    '{"tool_calls":[{"type":"function","function":{"name":"files.read","arguments":"{}"}}]}', '{"name":"files.read","parameters":{"path":"a"}}'])
+    assert.ok(writesToolCallAsText(text), text);
+  for (const text of ["Here is the call: " + textCall, '{"name":"Rome","founded":-753}', '{"name":"x"}', "[]", "{}", "The answer is 42.",
+    '{"kind":"task","when":"a task","what":"x","name":"y","words":"z"}'])
+    assert.ok(!writesToolCallAsText(text), text);
 });
 
 test("offers of help and plain answers are not promises", () => {

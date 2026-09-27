@@ -61,7 +61,7 @@ import { assistantIdentity, identityInstructions } from "./identity.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
-import { supportsImages, unofferedMark } from "./providers.js";
+import { supportsImages, unofferedMark, unnamedModels } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
@@ -270,7 +270,35 @@ export function announcesNextStep(text: string): boolean {
 }
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
 const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
-export const announcedNudge = "You said what you would do next, but your reply had no tool call, so nothing happened. "
+/**
+ * qa-fixes-4: a reply that is nothing but a tool call written out as text (a small local model's `{"name": …,
+ * "arguments": …}`, a `<tool_call>` block, a `tool_calls` list) is neither an answer nor a call: it is never run and
+ * never kept where a person would read it. Only a whole reply of that shape counts, so an answer about JSON is left alone.
+ */
+export function writesToolCallAsText(text: string): boolean {
+  const said = String(text ?? "").trim();
+  if (/^<tool_call>[\s\S]*<\/tool_call>$/i.test(said)) return true;
+  let value: unknown;
+  try { value = JSON.parse(/^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(said)?.[1] ?? said); } catch { return false; }
+  const calls = Array.isArray(value) ? value : [value];
+  return calls.length > 0 && calls.every(isCallShape);
+}
+const callKeys = new Set(["name", "arguments", "parameters", "id", "type", "function", "tool_calls"]);
+function isCallShape(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!Object.keys(record).every((key) => callKeys.has(key))) return false;
+  if (Array.isArray(record.tool_calls)) return record.tool_calls.length > 0 && record.tool_calls.every(isCallShape);
+  if (record.function && typeof record.function === "object") return isCallShape(record.function);
+  const args = record.arguments ?? record.parameters;
+  return typeof record.name === "string" && record.name.length > 0 && (typeof args === "object" || typeof args === "string");
+}
+export const textCallNudge = (offered: readonly string[]): string =>
+  "Your last reply was a tool call written out as text, so nothing was run and nobody was shown it. "
+  + (offered.length ? `Make the call itself, not a description of it. ${callableNames(offered)}` : "No tools are offered for this reply: answer in words.");
+export const textCallEnding = "The model wrote out a tool call as text instead of making it, so nothing was done. "
+  + "Ask again, or try a larger model.";
+export const announcedNudge ="You said what you would do next, but your reply had no tool call, so nothing happened. "
   + "Call the tool for that step now, or, if the task is finished, give your final answer.";
 export const announcedEnding = "The model said what it would do next and then stopped without doing it, so nothing more was done. "
   + "Ask again, or try a larger model.";
@@ -324,7 +352,7 @@ export function attachmentsNote(attachments?: AttachmentRef[]): string {
  * by what it is; "configured" and "demo" stand in where no model was named (src/providers.ts `defaultPreset`).
  */
 const namesNoModel = (preset: Pick<ModelPreset, "model"> & { provider?: { name: string } }): boolean =>
-  ["configured", "demo"].includes(preset.model) || preset.provider?.name === mixtureProviderName
+  unnamedModels.has(preset.model) || preset.provider?.name === mixtureProviderName
   || /^(cli-agent|app-server|retired):/.test(preset.provider?.name ?? "");
 /** Dogfood B18: the first system message, with the line that says which model and connection are answering. */
 export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset, "name" | "model"> & { provider?: { name: string } }): Message[] {
@@ -1805,6 +1833,7 @@ ${run.output.slice(0, 6000)}`;
     let droppedNudged = false; // Q066: an empty reply that spent tokens, most likely a call the model service dropped
     let unofferedRounds = 0; // Q066: rounds in a row whose every call named a tool that was not offered
     let announcedNudged = false; // Q067: a reply that said what it would do next and then stopped
+    let textCallNudged = false; // qa-fixes-4: a reply that was a tool call written out as text
     let knownTools = this.registry.version;
     // ── bucket-15: the owner's filters are asked about the connection that answers. The preview is held
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
@@ -1887,6 +1916,15 @@ ${run.output.slice(0, 6000)}`;
         // Only calls to tools that were not offered: any words are kept, and the model is told and asked again.
         if (completion.content.trim()) this.add(run, messages, ids, { role: "assistant", content: completion.content });
         this.add(run, messages, ids, unofferedNote);
+        continue;
+      }
+      // qa-fixes-4: a tool call written out as text is not kept in the conversation (a room would post it as a Trunk's
+      // words). The model is asked once to make the call; a second one ends the task in plain words.
+      if (!runnable.length && writesToolCallAsText(withoutThinking(spoken))) {
+        this.store.event(run.id, "model.text_call", { round: round + 1, nudged: textCallNudged });
+        if (textCallNudged) throw new Error(textCallEnding);
+        textCallNudged = true;
+        this.add(run, messages, ids, { role: "user", from: "branch", content: textCallNudge([...offered]) });
         continue;
       }
       const assistant: Message = {
