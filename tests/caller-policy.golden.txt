@@ -1072,6 +1072,14 @@ owner GET /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok perso
 owner POST /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/garden/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/garden/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/garden/prune | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/garden/prune | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/garden/reroot | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/garden/reroot | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/garden/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/garden/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3178,6 +3186,14 @@ owner+lockdown GET /api/learning-more/switch | here=ok remote=ok phone=ok legacy
 owner+lockdown POST /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/garden/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/garden/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/garden/prune | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/garden/prune | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/garden/reroot | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/garden/reroot | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/garden/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/garden/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5284,6 +5300,14 @@ household GET /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read
 household POST /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/seasons | here=ok remote=ok read=ok run=ok
 household POST /api/seasons | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/garden/pin | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/garden/pin | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/garden/prune | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/garden/prune | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/garden/reroot | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/garden/reroot | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/garden/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/garden/undo | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/seasons/morning | here=ok remote=ok read=ok run=ok
 household POST /api/seasons/morning | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/seasons/morning/seen | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7390,6 +7414,14 @@ household+lockdown GET /api/learning-more/switch | here=400/f6e21c remote=400/f6
 household+lockdown POST /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/seasons | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/seasons | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/garden/pin | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/garden/pin | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/garden/prune | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/garden/prune | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/garden/reroot | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/garden/reroot | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/garden/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/garden/undo | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/seasons/morning | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/seasons/morning | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/seasons/morning/seen | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9496,6 +9528,14 @@ applock GET /api/learning-more/switch | here=423/a8f863
 applock POST /api/learning-more/switch | here=423/a8f863
 applock GET /api/seasons | here=423/a8f863
 applock POST /api/seasons | here=423/a8f863
+applock GET /api/seasons/garden/pin | here=423/a8f863
+applock POST /api/seasons/garden/pin | here=423/a8f863
+applock GET /api/seasons/garden/prune | here=423/a8f863
+applock POST /api/seasons/garden/prune | here=423/a8f863
+applock GET /api/seasons/garden/reroot | here=423/a8f863
+applock POST /api/seasons/garden/reroot | here=423/a8f863
+applock GET /api/seasons/garden/undo | here=423/a8f863
+applock POST /api/seasons/garden/undo | here=423/a8f863
 applock GET /api/seasons/morning | here=423/a8f863
 applock POST /api/seasons/morning | here=423/a8f863
 applock GET /api/seasons/morning/seen | here=423/a8f863
