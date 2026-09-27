@@ -36,7 +36,7 @@ import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, room
 import { planBlock, loadPlan, failedLine, failedRow } from "./runview.js";
 import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
 import { initWork, pausedCard } from "../places/inboxwork.js"; // long-work: Pause, Resume and Stop, here and in the Inbox
-import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
+import { stageCard, computerCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser; batch A: the computer's
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
 import { initMore } from "./more.js";
@@ -197,7 +197,7 @@ function thread() {
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
   if (viewingHelper()) return marks.start + T.out.join("");
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + computerCard(C.messages) + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
