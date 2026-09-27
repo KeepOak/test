@@ -373,7 +373,7 @@ test("a Beta build never follows a link or a file planted where its folder, chec
 test("the build folder's own git settings are replaced before every build, so none of them can run anything", async (t) => {
   const where = await folders(t);
   await updater(where, fakeTools(where)).install();
-  await writeFile(join(where.sourceDir, ".git", "config"), "[core]\n\tfsmonitor = calc.exe\n[filter \"x\"]\n\tsmudge = calc.exe\n");
+  await writeFile(join(where.sourceDir, ".git", "config"), "[core]\n\tfsmonitor = planted\n[filter \"x\"]\n\tsmudge = planted\n");
   const again = fakeTools(where);
   await updater(where, again).install();
   assert.equal(await readFile(join(where.sourceDir, ".git", "config"), "utf8"), buildGitConfig);
