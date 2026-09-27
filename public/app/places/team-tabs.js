@@ -26,6 +26,7 @@ import { markLive } from "../core/features.js";
 import { ctl, ctlSeg } from "../settings/parts.js";
 import { limitRow } from "../settings/pages/usage.js";
 import { t, language } from "../../i18n.js";
+import { av } from "../core/ui.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 const D = { card: null, links: [], teams: [], tasks: {}, audit: [], glance: null, projects: [] };
@@ -177,28 +178,48 @@ const WHY = { "handoff.offered": "task.blocked.handoff", "reconciliation.require
 const STATE = { working: ["work", "task.working"], "waiting-owner": ["warn6", "task.owner"], "waiting-service": ["warn6", "task.service"], blocked: ["warn6", "task.blocked"], finished: ["done", "task.finished"], queued: ["idle", "task.queued"] };
 const stateWords = (s) => t(WHY[s?.why] ?? STATE[s?.state]?.[1] ?? "task.queued");
 const MEMBER = { working: ["work", "task.working"], "waiting-owner": ["warn6", "window.places.team.waiting"], "waiting-service": ["warn6", "window.places.team.waiting"], blocked: ["warn6", "window.places.team.waiting"], finished: ["done", "task.finished"] };
-function memberRow(m, team) {
-  const [cls, key] = m.task ? MEMBER[m.task.state] ?? ["idle", "window.places.team.not-yet"] : ["idle", "window.places.team.not-yet"];
-  const seat = (team.members ?? []).find((x) => x.role === m.role);
-  const label = [specName(seat?.specialistId), m.role].filter(Boolean).join(" · ") || t("teamTasks.member.unnamed");
-  return `<div class="prow"><span class="ico-tile">${ic("bolt", "s")}</span><span class="grow"><b>${esc(label)}</b>${m.task?.reason ? `<small>${esc(m.task.reason)}</small>` : ""}</span><span class="pill ${cls}"><i></i>${t(key)}</span></div>`;
+/* Pass 18b, the team run board: every team (GET /api/teams) as a card with its name, purpose and member faces with
+   their roles; its newest task (GET /api/teams/<id>/tasks) opens into rounds, one per batch the engine really started
+   (each member's `batch`), with one lane per member: its face, its role and its state in Q51's words. The card opens
+   while that task works or has a handoff open, and the header folds it (window state). A handoff offered to a person is
+   drawn with Accept and Reject held (data-held="security"): who may take over a team task is reviewed separately
+   (POST /api/teams/<id>/handoffs/<id>/accept|reject). With no team yet, the tab is a welcome. */
+const OPEN = new Map();
+const opened = (team, task) => OPEN.get(team.id) ?? (task?.task?.state === "working" || !!task?.handoff);
+function roundOf(task) {
+  const now = task?.members?.filter((m) => m.task?.state === "working" && m.batch != null).map((m) => m.batch + 1) ?? [];
+  return now.length ? Math.max(...now) : null;
 }
-function handoffLine(task) {
-  if (!task.handoff && !task.blocker) return "";
-  const offered = task.handoff ? t("teamTasks.handoff", { who: party(task.handoff.to), time: when(task.handoff.since), reason: task.handoff.reason }) : "";
-  const stops = task.blocker ? t("window.places.team.what-stops-it", { text: task.blocker }) : "";
-  return `<div class="handoff">${ic("branch", "s")}<span><b>${esc(offered || stops)}</b>${offered && stops ? `<small>${esc(stops)}</small>` : ""}</span></div>`;
+function statePill(task) {
+  const cls = STATE[task.task?.state]?.[0] ?? "idle", round = roundOf(task);
+  const words = round && task.task?.state === "working" ? t("window.p18.working-round", { n: round }) : stateWords(task.task);
+  return `<span class="pill ${cls}"><i></i>${esc(words)}</span>`;
+}
+function lane(m, team) {
+  const [, key] = m.task ? MEMBER[m.task.state] ?? ["idle", "window.places.team.not-yet"] : ["idle", "window.places.team.not-yet"];
+  const seat = (team.members ?? []).find((x) => x.role === m.role);
+  const name = specName(seat?.specialistId) || m.role || t("teamTasks.member.unnamed");
+  const wait = m.task && MEMBER[m.task.state]?.[0] === "warn6", done = m.task?.state === "finished";
+  const line = [t(key), m.task?.reason].filter(Boolean).join(" · ");
+  return `<div class="card18a${wait ? " wait18" : done ? " done18" : ""}"><div class="ch18a">${av({ name }, 36)}<span class="grow"><b>${esc(name)}</b><span class="live18${wait ? " you18" : ""}">${esc(line)}</span></span>${m.role && m.role !== name ? `<span class="chip18">${esc(m.role)}</span>` : ""}</div></div>`;
+}
+function board(team, task) {
+  const batches = [...new Set(task.members.map((m) => m.batch))].sort((a, b) => (a ?? 99) - (b ?? 99));
+  const rounds = batches.map((b) => `<div class="round18b"><small>${b == null ? "" : esc(t("window.p18.round", { n: b + 1 }))}</small><div class="lanes">${task.members.filter((m) => m.batch === b).map((m) => lane(m, team)).join("")}</div></div>`).join("");
+  const h = task.handoff;
+  const hand = h ? `<div class="hand18b">${ic("branch", "s")}<span class="grow"><b>${esc(t("window.p18.open-handoff", { from: party(task.heldBy ?? task.askedBy), to: party(h.to) }))}</b><small>${esc(h.reason ?? "")}</small></span><button class="btn sm held18" type="button" data-act="hoaccept18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.accept")}</button><button class="btn ghost sm held18" type="button" data-act="horeject18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.reject")}</button></div>` : "";
+  const stops = task.blocker ? `<p class="hint">${esc(t("window.places.team.what-stops-it", { text: task.blocker }))}</p>` : "";
+  return `<div class="board18b">${rounds}${hand}${stops}<p class="hint" data-css="margin:0">${t("window.places.team.this-card-only-looks")}</p></div>`;
 }
 function teamCard(team, task) {
-  const cls = STATE[task.task?.state]?.[0] ?? "idle";
-  const who = [t("teamTasks.asked-by", { who: party(task.askedBy) }), task.heldBy ? t("teamTasks.held-by", { who: party(task.heldBy) }) : ""].filter(Boolean).join(" · ");
-  return `<div class="tile"><div class="th"><b>${esc(team.name)}</b><span class="pill ${cls} ml"><i></i>${esc(stateWords(task.task))}</span></div><p>${esc(who)}</p>
-    <div class="rows">${task.members.map((m) => memberRow(m, team)).join("")}</div>${handoffLine(task)}
-    <p class="hint" data-css="margin:8px 0 0">${t("window.places.team.this-card-only-looks")}</p></div>`;
+  const open = task && opened(team, task);
+  const roles = (team.members ?? []).map((m) => { const name = specName(m.specialistId); return `<span>${av({ name: name || m.role }, 26)}${esc([name, m.role].filter(Boolean).join(" · "))}</span>`; }).join("");
+  return `<section class="team18b"><button class="th18" type="button" data-act="tboard18b" data-id="${esc(team.id)}" aria-expanded="${!!open}"${task ? "" : " disabled"}><span class="grow"><b>${esc(team.name)}</b>${team.purpose ? `<small>${esc(team.purpose)}</small>` : ""}</span>${task ? statePill(task) : ""}${task ? `<span class="chev18">${ic(open ? "chev" : "down", "s")}</span>` : ""}</button>
+    <div class="roles18b">${roles}</div>${open ? board(team, task) : ""}</section>`;
 }
 function teamsTab() {
   if (!D.teams.length) return READ.has("agents") ? empty18("team:agents") : "";
-  return `<div class="rows">${D.teams.map((team) => (D.tasks[team.id]?.[0] ? teamCard(team, D.tasks[team.id][0]) : "")).join("")}</div>`;
+  return D.teams.map((team) => teamCard(team, D.tasks[team.id]?.[0] ?? null)).join("");
 }
 
 /* ---------- Activity ---------- */
@@ -269,8 +290,9 @@ export async function readTab(tab) {
 }
 
 export function initTeamTabs(reload) {
-  markLive(["tgrp-new", "tgrp-edit", "tgrp-pick", "tgrp-save", "tgrp-rm", "sw:tgrp-name", "sw:tgrp-spend", "tsh-manage", "tsh-rel", "tsh-stop"]);
+  markLive(["tboard18b", "tgrp-new", "tgrp-edit", "tgrp-pick", "tgrp-save", "tgrp-rm", "sw:tgrp-name", "sw:tgrp-spend", "tsh-manage", "tsh-rel", "tsh-stop"]);
   on("tgrp-new", () => openGroup(null));
+  on("tboard18b", (el) => { const team = D.teams.find((x) => x.id === el.dataset.id); if (!team) return; OPEN.set(team.id, !opened(team, D.tasks[team.id]?.[0])); renderNow(); });
   on("tgrp-edit", (el) => openGroup(el.dataset.id));
   on("tgrp-pick", (el) => pick(el));
   on("tgrp-save", () => saveGroup(reload));
