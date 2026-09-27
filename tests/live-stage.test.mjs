@@ -2,13 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { chromium } from "playwright";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
-import { ToolRegistry, Budget, createBranch } from "../dist/index.js";
+import { ToolRegistry, Budget, createBranch, RunArtifacts } from "../dist/index.js";
 import { liveStage } from "../dist/live-stage.js";
 
 /**
@@ -87,6 +87,11 @@ const framed = {
   late.addEventListener("load", () => { document.title = "Frames ready"; });
   document.body.append(late);
 }, 300));</script></body>`,
+  "/all": (other) => `<!doctype html><title>All frames</title><body bgcolor="#1f9d55">
+<input type="password" value="correct-horse-battery-staple" size="24"> <input type="text" autocomplete="one-time-code" value="424242" size="8">
+<iframe src="/inner" width="420" height="80" frameborder="0" scrolling="no"></iframe>
+<iframe src="${other}/inner" width="420" height="80" frameborder="0" scrolling="no"></iframe>
+<iframe src="${other}/nest" width="460" height="120" frameborder="0" scrolling="no"></iframe></body>`,
   "/nest": (_, self) => `<!doctype html><title>Nest</title><body bgcolor="#1f9d55"><iframe src="${self.replace("localhost", "127.0.0.1")}/inner" width="420" height="80" frameborder="0" scrolling="no"></iframe></body>`,
   "/inner": () => `<!doctype html><title>Inner</title><body bgcolor="#1f9d55"><input type="password" value="correct-horse-battery-staple" size="24">
 <input type="text" autocomplete="section-a one-time-code" value="424242" size="8"><input type="text" autocomplete="new-password" value="new-horse" size="10"></body>`,
@@ -106,8 +111,8 @@ async function framedSite() {
   return { origin: `http://127.0.0.1:${port}`, other: `http://localhost:${port}`, close: () => new Promise((done) => server.close(done)) };
 }
 
-/** How many pixels of a JPEG are near white, and how many are the pages' green. */
-async function tally(jpeg) {
+/** How many pixels of a picture (a JPEG unless said) are near white, and how many are the pages' green. */
+async function tally(jpeg, type = "image/jpeg") {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
@@ -122,7 +127,7 @@ async function tally(jpeg) {
         if (d[i + 1] > 120 && d[i] < 90) green++;
       }
       return { white, green };
-    }, `data:image/jpeg;base64,${jpeg.toString("base64")}`);
+    }, `data:${type};base64,${jpeg.toString("base64")}`);
   } finally { await browser.close(); }
 }
 
@@ -273,4 +278,60 @@ test("only the conversation's newest task is watched: an older one left waiting 
   assert.equal(view.runId, newer.id);
   assert.equal(view.browser, null, "the older task's window is not shown as the newer task's");
   assert.deepEqual(watched, [newer.id], "only the newest task's window is asked for");
+});
+
+/** The model's own picture (browser.screenshot) of a window, as its PNG bytes and the task context it was taken in. */
+async function shotHarness(t, origins, runId) {
+  const root = await mkdtemp(join(tmpdir(), "branch-shot-"));
+  const browser = new BranchBrowser({ allowedOrigins: origins });
+  browser.artifacts = new RunArtifacts(join(root, "artifacts"));
+  t.after(async () => { await browser.close(); await discardTemp(root); });
+  const registry = new ToolRegistry();
+  registerBrowser(registry, browser);
+  const context = { owner: "local", workspace: ".", runId, signal: AbortSignal.timeout(60000),
+    budget: new Budget(), permissions: new Set(["browser.read"]), depth: 0 };
+  const shoot = async (options = {}) => readFile((await registry.execute("browser.screenshot", options, context)).path);
+  return { browser, registry, context, shoot };
+}
+
+test("browser.screenshot covers a password and a code in the page and in every frame: same site, another site, nested", async (t) => {
+  const site = await framedSite();
+  t.after(() => site.close());
+  const { registry, context, shoot } = await shotHarness(t, [site.origin, site.other], "shot-frames");
+  await registry.execute("browser.navigate", { url: `${site.origin}/all` }, context);
+  await registry.execute("browser.wait", { selector: "iframe", networkIdle: true }, context);
+  for (const options of [{}, { fullPage: true }, { selector: "body" }]) {
+    const png = await shoot(options);
+    assert.deepEqual([...png.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], "the picture is a PNG");
+    const { white, green } = await tally(png, "image/png");
+    assert.ok(green > 100000, `${JSON.stringify(options)}: the page and its frames are there: ${green} green pixels`);
+    assert.equal(white, 0, `${JSON.stringify(options)}: no secret box in any frame is left uncovered`);
+  }
+  // A saved page is drawn by the browser itself, where nothing can be covered: never made with a secret in it.
+  await assert.rejects(registry.execute("browser.pdf", {}, context), /holds a password or a sign-in code/);
+});
+
+test("browser.screenshot covers a box a saved sign-in typed a code into, whatever kind of box it is", async (t) => {
+  const server = createServer((request, response) => {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" });
+    response.end(codePage);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise((done) => server.close(done)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const { browser, registry, context, shoot } = await shotHarness(t, [origin], "shot-code");
+  await registry.execute("browser.navigate", { url: `${origin}/` }, context);
+  assert.ok((await tally(await shoot(), "image/png")).white > 0, "the boxes are white while nothing was typed");
+  assert.ok((await registry.execute("browser.pdf", {}, context)).bytes > 0, "a page with nothing secret in it is saved");
+  await browser.signInPage().type(context, "code", "Code", "424242");
+  await browser.signInPage().type(context, "code", undefined, "424242");
+  for (const options of [{}, { fullPage: true }, { selector: "body" }]) {
+    const { white, green } = await tally(await shoot(options), "image/png");
+    assert.ok(green > 10000, `${JSON.stringify(options)}: the page is there: ${green} green pixels`); // the body is one line high
+    assert.equal(white, 0, `${JSON.stringify(options)}: no box a code was typed into is left uncovered`);
+  }
+  await assert.rejects(registry.execute("browser.pdf", {}, context), /holds a password or a sign-in code/);
+  // A recording's pictures cannot be covered either, so none starts while the code is still in its box.
+  await assert.rejects(browser.startRecording(context), /cannot start yet/);
 });

@@ -237,6 +237,29 @@ final class BranchNode {
      * owner answers on the computer. Each ask is signed, which is how Branch knows it is this phone.
      */
     String pair(Context context, String origin, String offer, String code, String name, List<String> never) throws Exception {
+        return answerInvitation(context, origin, offer, code, name, never)[0];
+    }
+
+    /**
+     * B6: the window's "Pair a phone" square. Answered and let in as {@link #pair} is, then the phone's session is
+     * collected once, signed with this phone's key over "branch-phone-session-v1" and the request id
+     * (src/devices/book.ts). Answers { token, deviceId, deviceKey }, the same session a /pair invitation hands over.
+     */
+    JSONObject pairPhone(Context context, String origin, String offer, String code, String name) throws Exception {
+        JSONObject kept = load();
+        List<String> never = kept == null ? new ArrayList<>() : list(kept.optJSONArray("never"));
+        String requestId = answerInvitation(context, origin, offer, code, name, never)[1];
+        JSONObject record = load();
+        if (record == null) throw new IllegalStateException(BranchWords.word(context, "phone.device.failed", "That did not work."));
+        JSONObject session = post(context, origin + "/api/devices/pair/session", new JSONObject().put("requestId", requestId)
+            .put("signature", sign(record, "branch-phone-session-v1\n" + requestId)));
+        if (session.optString("token", "").isEmpty())
+            throw new IllegalStateException(BranchWords.word(context, "phone.device.failed", "That did not work."));
+        return session;
+    }
+
+    /** Answers { deviceId, requestId } once the owner lets this phone in. */
+    private String[] answerInvitation(Context context, String origin, String offer, String code, String name, List<String> never) throws Exception {
         if (!origin.equals(BranchRules.checkOrigin(origin)) || !offer.matches("^[a-f0-9]{32}$") || !code.matches("^[0-9]{6}$"))
             throw new SecurityException("refused");
         JSONObject record = load();
@@ -260,7 +283,7 @@ final class BranchNode {
                 record.put("hub", origin).put("nodeId", answer.getString("deviceId")).put("never", new JSONArray(kept))
                     .put("pairedAt", BranchClock.now());
                 save(record);
-                return answer.getString("deviceId");
+                return new String[] {answer.getString("deviceId"), requestId};
             }
             if (status.equals("refused"))
                 throw new IllegalStateException(BranchWords.word(context, "phone.node.refused", "The owner refused this phone."));

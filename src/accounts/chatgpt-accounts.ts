@@ -79,3 +79,9 @@ export function remainingFrom(headers: Headers): number | null {
   if (!headers.has("x-codex-primary-used-percent") || !Number.isFinite(used)) return null;
   return Math.max(0, Math.min(100, 100 - used));
 }
+/** When that plan window refills (`x-codex-primary-reset-at`, Unix seconds), as an ISO instant, or null. */
+export function resetFrom(headers: Headers): string | null {
+  const seconds = Number(headers.get("x-codex-primary-reset-at"));
+  if (!headers.has("x-codex-primary-reset-at") || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(seconds * 1000).toISOString();
+}

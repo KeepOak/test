@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { ContractBook } from "../dist/self-development-contract.js";
-import { HandOff, claudeAllowedCommands, handOffReason, programCall, readClaude, readCodex, repoOwnSettings } from "../dist/coding/hand-off.js";
+import { HandOff, claudeAllowedCommands, handOffReason, linksOut, programCall, readClaude, readCodex, repoOwnSettings } from "../dist/coding/hand-off.js";
 import { addPolicyRule } from "../dist/policy.js";
 
 /**
@@ -368,6 +368,40 @@ test("a job that makes a link out of its folder and writes through it ends as le
   assert.equal(existsSync(join(f.workspace, "site", "escape")), false, "the link is removed");
   assert.equal(existsSync(join(outside, "pwned.txt")), true, "what it points at is left alone for the owner to look at");
   assert.deepEqual(result.changed, [], "nothing from the run is kept as done");
+});
+
+test("a link out of the folder made inside its .git is caught and removed too (Q241)", async (t) => {
+  const f = await fixture(t);
+  await repository(join(f.workspace, "site"));
+  const outside = join(f.root, "outside");
+  await mkdir(outside, { recursive: true });
+  const result = await f.handOff(async (call, onLine) => {
+    await symlink(outside, join(call.cwd, ".git", "refs", "escape"), process.platform === "win32" ? "junction" : "dir");
+    claudeLines("Done.").forEach(onLine);
+    return { code: 0, lines: claudeLines("Done."), stderr: "", timedOut: false, missing: false };
+  }).run({ program: "claude-code", folder: "site", task: "Anything.", minutes: 5 }, context(f.app));
+  assert.equal(result.status, "left its folder");
+  assert.match(result.summary, /made a link out of the folder \(\.git[\\/]refs[\\/]escape -> /);
+  assert.equal(existsSync(join(f.workspace, "site", ".git", "refs", "escape")), false, "the link is removed");
+  assert.ok(existsSync(outside), "what it points at is left alone");
+});
+
+test("object stores, a submodule's too, are looked at one level deep; the rest of .git, submodules included, in full (Q243)", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-links-in-git-"));
+  t.after(() => discardTemp(root));
+  const folder = join(root, "site"), outside = join(root, "outside");
+  const kind = process.platform === "win32" ? "junction" : "dir";
+  for (const dir of [outside, join(folder, ".git", "objects", "ab"), join(folder, ".git", "modules", "sub", "objects", "cd"), join(folder, ".git", "modules", "sub", "refs")])
+    await mkdir(dir, { recursive: true });
+  await symlink(outside, join(folder, ".git", "objects", "ab", "deep"), kind);
+  await symlink(outside, join(folder, ".git", "modules", "sub", "objects", "cd", "deep"), kind);
+  await symlink(outside, join(folder, ".git", "modules", "sub", "objects", "top"), kind);
+  await symlink(outside, join(folder, ".git", "modules", "sub", "refs", "escape"), kind);
+  // Mac mini's re-check: .github is working tree, not .git, so a store-shaped path there is walked in full.
+  await mkdir(join(folder, ".github", "modules", "x", "objects", "deep"), { recursive: true });
+  await symlink(outside, join(folder, ".github", "modules", "x", "objects", "deep", "escape"), kind);
+  const found = [...linksOut(folder).links].map((link) => link.split(" -> ")[0].replaceAll("\\", "/")).sort();
+  assert.deepEqual(found, [".git/modules/sub/objects/top", ".git/modules/sub/refs/escape", ".github/modules/x/objects/deep/escape"]);
 });
 
 test("a job that writes next to its folder ends as left its folder, naming what it wrote", async (t) => {

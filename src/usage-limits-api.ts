@@ -58,6 +58,7 @@ function accountsFor(app: LimitsApp, connection: string): LimitsAccount[] {
     account: account.id, label: account.label ?? account.id, inUse: account.id === preferred,
     /* Straight from the reading. `smartOrder()`'s stand-in for an unknown never comes near here. */
     remaining: remainingShown(service.stateOf(found.pool, account.id)),
+    resetAt: service.stateOf(found.pool, account.id)?.resetAt ?? null,
     signIn: found.kind !== "api-key",
   }));
 }
@@ -112,7 +113,7 @@ const runningTasks = (app: LimitsApp) => app.store.runs(app.runtime.owner).filte
 export function usageGlance(app: LimitsApp, now = Date.now()): UsageGlance {
   if (!ownerHere(app.store)) return { available: false };
   return glanceFrom(limitsNow(app), usageGlanceSettings(app.store, app.runtime.owner), runningTasks(app).length, now,
-    monthSpend(app.store, app.runtime.owner, now));
+    monthSpend(app.store, app.runtime.owner, now), app.runtime.models.settings(app.runtime.owner).activePreset);
 }
 /** The same month the Usage screen adds up: the ledger's UTC days of this calendar month. */
 function monthSpend(store: Store, owner: string, now: number): GlanceMonth {

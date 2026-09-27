@@ -4,22 +4,32 @@
  * has to answer the same keys. Anything without a translation falls back to English, so a partly
  * translated file never leaves a blank on the screen.
  *
- * Markup carries its words in `data-t` (text) and `data-t-label`, `data-t-placeholder`,
- * `data-t-title`, `data-t-aria-description` (attributes), so applying a language is one pass over the page.
+ * The words come from two files per language, merged: the window's own (public/locales, copied into the
+ * app at build time, so a word the window already has is the same word here) and the phone's own
+ * (web/phone-locales, the words only the phone apps say). The language is the one the owner's Branch
+ * uses (GET /api/look "language"), or this phone's own language while that says "auto" or nothing is paired.
  */
-const STORAGE = "branch-language";
 export const LANGUAGES = [
-  { id: "en", label: "English", draft: false },
-  { id: "fr", label: "Français (machine draft)", draft: true },
+  { id: "en", label: "English" },
+  { id: "fr", label: "Français" },
+  { id: "es", label: "Español" },
+  { id: "de", label: "Deutsch" },
 ];
 let dictionary = {};
 let english = {};
 let current = "en";
 
-async function load(language) {
-  const response = await fetch(`/locales/${language}.json`, { cache: "no-store" });
-  if (!response.ok) throw new Error(`No words on file for ${language}`);
+async function file(path) {
+  const response = await fetch(path, { cache: "no-store" });
+  if (!response.ok) throw new Error(`No words on file at ${path}`);
   return response.json();
+}
+/** The window's words and the phone's own for one language, the phone's winning where both have a key. */
+async function load(language) {
+  const [window, own] = await Promise.all([file(`/locales/${language}.json`).catch(() => ({})), file(`/phone-locales/${language}.json`).catch(() => ({}))]);
+  const words = { ...window, ...own };
+  if (!Object.keys(words).length) throw new Error(`No words on file for ${language}`);
+  return words;
 }
 /** The word for a key, with {name} places filled in. Missing keys fall back to English, then the key. */
 export function t(key, values) {
@@ -29,36 +39,25 @@ export function t(key, values) {
     : raw;
 }
 export const language = () => current;
-let byEnglish = new Map();
-/**
- * mac7/residuals: English words the locale files hold, in the chosen language; null in English or when no
- * key has exactly those words. For text that arrives in English (Settings search's index of every setting).
- */
-export function fromEnglish(words) {
-  if (current === "en" || !words) return null;
-  if (!byEnglish.size) for (const [key, value] of Object.entries(english)) if (typeof value === "string" && !byEnglish.has(value)) byEnglish.set(value, key);
-  const key = byEnglish.get(words);
-  return key && typeof dictionary[key] === "string" ? dictionary[key] : null;
-}
+export const speaks = (code) => LANGUAGES.some((l) => l.id === code);
+/** This phone's own language, when it is one the app speaks. */
+export const phoneLanguage = () => {
+  const own = String(globalThis.navigator?.language ?? "en").slice(0, 2).toLowerCase();
+  return speaks(own) ? own : "en";
+};
 /** Dates and numbers follow the chosen language, never a hand-rolled format. */
 export const formatNumber = (value, options) => new Intl.NumberFormat(current, options).format(value);
 export const formatDate = (value, options = { dateStyle: "medium", timeStyle: "short" }) => {
   const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat(current, options).format(date);
+  return Number.isNaN(date.getTime()) ? String(value ?? "") : new Intl.DateTimeFormat(current, options).format(date);
 };
-/**
- * Writes every marked string on the page (or inside one node) in the language now chosen. Words that
- * already read right are left alone: writing the same words again still counts as a change to the
- * page, and every part of the window that watches for changes (Settings putting its cards in order,
- * among others) would wake and do its work again for nothing.
- */
+/** Writes every marked string on the page (or inside one node) in the language now chosen. */
 export function applyLanguage(root = document) {
   for (const node of root.querySelectorAll("[data-t]")) {
     const words = t(node.dataset.t);
     if (node.textContent !== words) node.textContent = words;
   }
-  // mac7/r17-g integration review: descriptions read aloud (aria-description) follow the language too.
-  const attributes = { tLabel: "aria-label", tPlaceholder: "placeholder", tTitle: "title", tAriaDescription: "aria-description" };
+  const attributes = { tLabel: "aria-label", tPlaceholder: "placeholder", tTitle: "title" };
   for (const [dataKey, attribute] of Object.entries(attributes))
     for (const node of root.querySelectorAll(`[data-${dataKey.replace(/([A-Z])/g, "-$1").toLowerCase()}]`)) {
       const words = t(node.dataset[dataKey]);
@@ -66,38 +65,25 @@ export function applyLanguage(root = document) {
     }
   document.documentElement.lang = current;
 }
-/** Switches language, remembers the choice, and redraws the page's words. */
-/**
- * The language whose words are on the page now, or null when none has been put there yet.
- *
- * Choosing the language already in force used to rewrite the page and announce a change anyway.
- * applyLanguage itself is careful — it leaves text that already says the right thing alone — but the
- * announcement is answered by listeners that throw whole cards away and build them again, so a change
- * to nothing cost 2504 mutations and took the keyboard, an open explanation and a half-filled field
- * with it. Nothing to do now means nothing done and nobody told.
- */
 let applied = null;
+/** Switches language and redraws the marked words; the screens draw again on the "branch-language" event. */
 export async function setLanguage(next) {
-  const chosen = LANGUAGES.some((l) => l.id === next) ? next : "en";
+  const chosen = speaks(next) ? next : "en";
   if (applied === chosen) return chosen;
   dictionary = chosen === "en" ? english : await load(chosen).catch(() => ({}));
   current = chosen;
-  try { localStorage.setItem(STORAGE, chosen); } catch { /* a private window simply forgets */ }
-  /* A language whose words never arrived is not applied, so asking for it again tries again rather
-     than sitting silently on an empty dictionary. */
+  /* A language whose words never arrived is not applied, so asking for it again tries again. */
   applied = chosen === "en" || Object.keys(dictionary).length > 0 ? chosen : null;
   applyLanguage();
   document.dispatchEvent(new CustomEvent("branch-language", { detail: { language: chosen } }));
   return chosen;
 }
-/** Loads English once, then whatever language was last chosen. */
+/** Loads English once, then the phone's own language until the paired Branch says which one it uses. */
 export async function initLanguage() {
   english = await load("en").catch(() => ({}));
   dictionary = english;
-  /* Starting up applies from scratch: the page may be showing whatever the HTML shipped with, so the
-     "already in force" guard above must not skip the first pass. */
   applied = null;
-  let saved = "en";
-  try { saved = localStorage.getItem(STORAGE) || "en"; } catch { /* default to English */ }
-  return setLanguage(saved);
+  return setLanguage(phoneLanguage());
 }
+/** The language the owner's Branch uses ("auto" follows this phone). */
+export const followLook = (look) => setLanguage(speaks(look?.language) ? look.language : phoneLanguage());
