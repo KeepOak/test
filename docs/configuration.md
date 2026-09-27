@@ -3056,7 +3056,9 @@ which counts as look-only, so a check-in answers without asking even under "Ask 
 sends its text to `deliverTo` (a chat) or to the activity list. If the tool is not used, a reply of
 exactly `NOTHING_NEW` counts as quiet, and any other reply is sent as the news.
 With `secondOpinion` on, one short extra question decides whether the news is worth interrupting you;
-if that question cannot be asked or read, the news is sent. Each check-in is recorded (quiet, notified,
+if that question cannot be asked or read, the news is sent. With `quietWeekends` on (off by default),
+Saturdays and Sundays in `timezone` pass without a check-in; a stuck Trunk is still said from its own task.
+Each check-in is recorded (quiet, notified,
 held back, failed) in the setting `heartbeat-state`. News from a check-in is announced to webhooks
 listening for `heartbeat.notify` (`runId`, `via`, `delivered`; the words themselves are not sent). A
 short-lived key may read `/api/heartbeat` but not change, switch or start the check-in.
