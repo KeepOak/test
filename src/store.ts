@@ -139,6 +139,12 @@ export class Store {
     // Wave 8: which project a task was done under, so the figures can be counted per project.
     if (!this.db.prepare("PRAGMA table_info(tasks)").all().some((row) => row.name === "project"))
       this.db.exec("ALTER TABLE tasks ADD COLUMN project TEXT NOT NULL DEFAULT 'default'");
+    // Parity B1: when each message was written, for the conversation's day stamps and "Sent at". Rows from before this
+    // have none; every insert (a reply, a branch, an import) is stamped by the trigger unless it carries its own time.
+    if (!this.db.prepare("PRAGMA table_info(messages)").all().some((row) => row.name === "created_at"))
+      this.db.exec("ALTER TABLE messages ADD COLUMN created_at TEXT");
+    this.db.exec(`CREATE TRIGGER IF NOT EXISTS message_time_insert AFTER INSERT ON messages WHEN new.created_at IS NULL BEGIN
+        UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.labels = new Labels(this.db);
@@ -502,10 +508,10 @@ export class Store {
       for (const listener of this.runFinishedListeners) try { listener(id, status); } catch { /* never fails a finish */ }
     return this.run(id)!;
   }
-  message(sessionId: string, message: Message, sourceId?: number): number {
+  message(sessionId: string, message: Message, sourceId?: number, createdAt?: string | null): number {
     const result = this.db
-      .prepare("INSERT INTO messages(session_id,body,source_id) VALUES(?,?,?)")
-      .run(sessionId, JSON.stringify(message), sourceId ?? null);
+      .prepare("INSERT INTO messages(session_id,body,source_id,created_at) VALUES(?,?,?,?)")
+      .run(sessionId, JSON.stringify(message), sourceId ?? null, createdAt ?? null);
     return Number(result.lastInsertRowid);
   }
   /**
@@ -552,14 +558,16 @@ export class Store {
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
   reconcileMessages(sessionId: string, reason: string): number {
-    const rows = this.db.prepare("SELECT body,source_id FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
+    const rows = this.db.prepare("SELECT body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
+    // A repaired transcript keeps when each message was first written.
+    const times = new Map([...sources.keys()].map((message, i) => [message, rows[i]!.created_at == null ? null : String(rows[i]!.created_at)]));
     const repaired = reconcileTranscript([...sources.keys()], reason);
     if (!repaired.added) return 0;
     this.db.exec("BEGIN");
     try {
       this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId);
-      for (const message of repaired.messages) this.message(sessionId, message, sources.get(message));
+      for (const message of repaired.messages) this.message(sessionId, message, sources.get(message), times.get(message));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

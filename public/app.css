@@ -3860,3 +3860,7 @@ p.ic-t,div.ic-t{display:flex}
 .thread>.pass10{align-self:center}
 .a2a-l{position:relative}
 .a2a-l:hover>.msg-acts{opacity:1;pointer-events:auto}
+
+/* area: parity B1 (chat and composer) */
+/* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
+@media (max-width:560px){.msg-acts .ts15{display:none}}
