@@ -77,7 +77,7 @@ const DECIDES = { allow: ["ok", "Allowed"], ask: ["warn", "Asks"], deny: ["no", 
 function ruleDlg() {
   const r = P.result;
   const res = r ? `<div class="res-line-b17">${DECIDES[r.decision] ? pill17(DECIDES[r.decision][0], say(DECIDES[r.decision][1])) : pill17("idle", r.decision)}<span><b>${esc(r.because)}</b><small></small></span></div>` : "";
-  openDlg({ title: t("window.settings.p17-permissions.test-a-rule"), body: `<p class="lead-b17">${t("window.settings.p17-permissions.nothing-runs-branch-only-says-what")}</p><div class="test-b17"><input class="inp" id="rule-in-b17" value="${esc(P.ruleQ ?? "")}" aria-label="${t("window.settings.p17-permissions.command-file-or-site")}"><button class="btn pri sm" type="button" data-act="rulerunb17">${t("window.settings.p17-permissions.test")}</button></div><div class="chips-b17">${[t("window.settings.p17-permissions.git-status")].map((t) => `<button type="button" class="chip-b17" data-act="rulepickb17" data-v="${esc(t)}">${esc(t)}</button>`).join("")}</div>${res}`,
+  openDlg({ title: t("window.settings.p17-permissions.test-a-rule"), body: `<p class="lead-b17">${t("window.settings.p17-permissions.nothing-runs-branch-only-says-what")}</p><div class="test-b17"><input class="inp" id="rule-in-b17" value="${esc(P.ruleQ ?? "")}" aria-label="${t("window.settings.p17-permissions.command-file-or-site")}"><button class="btn pri sm" type="button" data-act="rulerunb17" ${(P.ruleQ ?? "").trim() ? "" : "disabled"}>${t("window.settings.p17-permissions.test")}</button></div><div class="chips-b17">${[t("window.settings.p17-permissions.git-status")].map((t) => `<button type="button" class="chip-b17" data-act="rulepickb17" data-v="${esc(t)}">${esc(t)}</button>`).join("")}</div>${res}`,
     foot: `<button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 const toolFor = (q) => (/^https?:\/\//i.test(q) ? "web.fetch" : /\s/.test(q) ? "shell.session.run" : "files.write");
@@ -232,6 +232,12 @@ export function init17() {
   on("estopcodeb17", () => { const code = ($("#estop-code-b17")?.value ?? "").trim(); if (code) resume(code, true); });
   on("ruletestb17", () => { P.result = null; ruleDlg(); });
   on("rulerunb17", () => runRule());
+  /* Audit (batch D): "Test" does nothing on an empty box, so it waits, disabled, until something is typed. */
+  document.addEventListener("input", (e) => {
+    if (e.target?.id !== "rule-in-b17") return;
+    const test = document.querySelector('[data-act="rulerunb17"]');
+    if (test) test.disabled = !e.target.value.trim();
+  });
   on("rulepickb17", (el) => { const box = $("#rule-in-b17"); if (box) box.value = el.dataset.v; runRule(); });
   on("fwb17", () => openFw());
   on("fwtestb17", () => testFw());

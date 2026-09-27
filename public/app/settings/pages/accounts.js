@@ -1,6 +1,6 @@
 /* Settings › Accounts: the engine's accounts in the order it uses them (GET /api/accounts), moving one up, the account
    menu (flows/account.js) and, at Advanced, selecting several and acting on all of them. Never shows a key. */
-import { level, E } from "../../core/state.js";
+import { level, E, refresh } from "../../core/state.js";
 import { esc, renderNow } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -56,16 +56,41 @@ export function draw() {
   html += `<div class="acts acadd-bf3" data-css="margin-top:12px"><button class="btn pri" type="button" data-act="addacct" ${mine}>${ic("plus", "s")}${t("window.settings.accounts.add-an-account")}</button>`;
   html += (A.view?.pools ?? []).map((p) => `<button class="btn" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${mine}>${t("window.settings.accounts.another-value-account", { value: esc(p.name ?? p.pool) })}</button>`).join("");
   html += `</div></div>`;
-  /* When one runs out: both stay greyed with the engine's reason (window.why.ac-next, ac-fall). The design's line under
-     "Move to the next account" ("only between accounts you own…") is left out: the engine does the opposite for sign-ins
-     (it never moves work between the owner's own plans, only to an account kept separate; src/accounts/pool.ts rotationSet). */
-  html += `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${t("window.settings.accounts.move-to-the-next-account-in")}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${t("window.settings.accounts.move-to-the-next-account-in")}" data-sw="set"><small></small></div>`
-    + `<div class="ctl"><b>${t("window.settings.accounts.fall-back-to-this-computer")}</b><input class="sw" type="checkbox" id="ac-fall" aria-label="${t("window.settings.accounts.fall-back-to-this-computer")}" data-sw="set"><small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
+  html += whenOneRunsOut();
   html += `<div class="sec"><h2>keepoak.com</h2><div class="ko-card"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.settings.accounts.your-keepoak-com-account")}</b><small>${t("window.settings.accounts.have-a-keepoak-computer-or-a")}</small></span><span class="pill idle" title="${t("window.settings.accounts.branch-does-not-link-to-keepoak")}">${t("window.settings.accounts.proposal")}</span></div>`
     + `<ul class="may6"><li>${ic("check", "s")}${t("window.settings.accounts.your-keepoak-computer-joins-the-computer")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-theme-saved-colours-and-season")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-team-workspace-members-shared-trunks")}</li><li>${ic("check", "s")}${t("window.settings.accounts.conversations-memory-and-keys-stay-on")}</li></ul>`
     + `<div class="acts"><button class="btn pri" type="button" data-act="ko-start">${t("window.settings.accounts.connect-your-keepoak-com-account")}</button></div></div>`;
   return html + accounts17(lev);
+}
+
+/* When one runs out, both the engine's own settings. The design's line under "Move to the next account" ("only between
+   accounts you own…") is left out: the engine does the opposite for sign-ins (it never moves work between the owner's
+   own plans, only to an account kept separate; src/accounts/pool.ts rotationSet).
+   Move to the next account: API keys always move to the next key by themselves, so the switch is the sign-in
+   connections' own choice (GET /api/accounts pools[].autoSwitch; POST /api/accounts/pool { pool, autoSwitch } for each).
+   With no sign-in connection it has nothing to change: greyed with that reason (window.why.ac-next).
+   Fall back to this computer: the models on this computer in the fallback order (GET /api/state models.fallbackOrder;
+   POST /api/models { fallbackOrder }); an account out of credit or at its plan limit then carries on there (src/runtime.ts
+   fallBack). With no model on this computer: greyed with that reason (window.why.ac-fall). It ships off: a local model
+   works this computer hard. */
+const signInPools = () => (A.view?.pools ?? []).filter((p) => p.kind !== "api-key");
+const localIds = () => (E.state?.models?.presets ?? []).filter((p) => p.local).map((p) => p.id);
+const fallOn = () => (E.state?.models?.fallbackOrder ?? []).some((id) => localIds().includes(id));
+function whenOneRunsOut() {
+  const box = (id, label, on, why) => `<input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${ownerOnly()} ${on ? "checked" : ""} aria-label="${label}">`;
+  const pools = signInPools(), next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
+  return `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
+    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, pools.length > 0 && pools.every((p) => p.autoSwitch), pools.length ? "" : "ac-next")}<small></small></div>`
+    + `<div class="ctl"><b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
+}
+async function setNext(on) {
+  try { for (const p of signInPools()) await api("accounts/pool", { pool: p.pool, autoSwitch: on }); } catch (error) { toast(error.message); }
+  await loadAccounts();
+}
+async function setFall(on) {
+  const kept = (E.state?.models?.fallbackOrder ?? []).filter((id) => !localIds().includes(id));
+  try { await api("models", { fallbackOrder: on ? [...kept, ...localIds()] : kept }); await refresh(); } catch (error) { toast(error.message); }
+  renderNow();
 }
 
 async function moveUp(el) {
@@ -109,12 +134,14 @@ export function init() {
   on("acsel15", () => { picked = picked ? null : []; renderNow(); });
   on("acbulk15", (el) => bulk(el.dataset.v));
   document.addEventListener("change", (e) => {
+    if (e.target.id === "ac-next") return void setNext(e.target.checked);
+    if (e.target.id === "ac-fall") return void setFall(e.target.checked);
     const k = e.target.dataset?.acc15;
     if (k == null || !picked) return;
     picked = e.target.checked ? [...new Set([...picked, k])] : picked.filter((x) => x !== k);
     renderNow();
   });
-  markLive(["acct-up", "acsel15", "acbulk15", "sw:acc15"]);
+  markLive(["acct-up", "acsel15", "acbulk15", "sw:acc15", "sw:ac-next", "sw:ac-fall"]);
 }
 
-export const live = { "acct-up": true, "acsel15": true, "acbulk15": true };
+export const live = { "acct-up": true, "acsel15": true, "acbulk15": true, "sw:ac-next": true, "sw:ac-fall": true };

@@ -102,13 +102,16 @@ function addComputer(tab) {
 }
 
 const KINDS = [["sandbox", "shield", "window.flows.comp.sandbox", "window.flows.comp.sandbox-hint"], ["pair", "monitor", "window.flows.comp.pair", "window.flows.comp.pair-hint"], ["cloud", "cloud17d", "window.flows.comp.cloud", "window.flows.comp.cloud-hint"], ["remote", "key", "window.flows.comp.remote", "window.flows.comp.remote-hint"]];
-/* Only pairing is real here; the other kinds are drawn greyed, one by one. */
-const OFF = () => ` disabled aria-disabled="true" data-tip="${t("window.flows.coming-soon")}"`;
+/* Only pairing is real here; each other kind is drawn greyed with its own reason (window.why.<key>): no private computer
+   can be made on this PC, a cloud computer needs keepoak.com, and adding a computer over SSH (the engine's /api/remotes)
+   gives Trunks another machine, which waits for a separate safety review. Their action has no handler, so core/features.js
+   greys them and shows the reason. */
+const WHY = { sandbox: "comp-sandbox", cloud: "cloudnew17d", remote: "comp-remote" };
 
 function addKind() {
   closePop();
   openDlg({ title: t("window.flows.comp.add"),
-    body: `<div class="provs">${KINDS.map(([v, i, n, s]) => `<button class="prov${v === "pair" ? "" : " soon"}" type="button" data-act="comp-add-go" data-v="${v}"${v === "pair" ? "" : OFF()}><span class="ico-tile">${ic(i, "s")}</span><b>${t(n)}</b><small>${t(s)}</small></button>`).join("")}</div>`,
+    body: `<div class="provs">${KINDS.map(([v, i, n, s]) => `<button class="prov" type="button" data-act="${v === "pair" ? "comp-add-go" : "comp-kind"}" data-v="${v}"${v === "pair" ? "" : ` data-why="${WHY[v]}"`}><span class="ico-tile">${ic(i, "s")}</span><b>${t(n)}</b><small>${t(s)}</small></button>`).join("")}</div>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>` });
 }
 
