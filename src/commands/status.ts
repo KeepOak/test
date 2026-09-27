@@ -3,7 +3,7 @@ import { lockdownState } from "../lockdown.js";
 import { policyPresets, readPolicy } from "../policy.js";
 import type { Call } from "./handlers.js";
 import { mayAnswerHere } from "../household-approvals.js";
-import { atWindow, householdHere, runsHere } from "./household.js"; // Q259
+import { followsProfile, householdHere, runsHere } from "./household.js"; // Q259
 
 /** `/status` and `/whoami`, in words, for any surface. */
 
@@ -30,7 +30,7 @@ function stepLine(call: Call, run: Run): string {
 function countedHere(call: Call): { working: Run[]; waiting: number } {
   const { store, owner, approvals } = call.host.runtime;
   const working = runsHere(store, owner, call.surface).filter((run) => run.status === "running");
-  const waiting = approvals.waiting().filter((asked) => !atWindow(call.surface) || mayAnswerHere(store, asked)).length;
+  const waiting = approvals.waiting().filter((asked) => !followsProfile(call.surface) || mayAnswerHere(store, asked)).length;
   return { working, waiting };
 }
 
