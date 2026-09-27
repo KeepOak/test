@@ -81,6 +81,7 @@ test("Ollama: readable names both ways, and two calls streamed apart never share
   assert.deepEqual(sent.tools.map((tool) => tool.function.name), ["files.read", "files.list"]);
   assert.deepEqual(done.toolCalls.map((call) => call.name), ["files.read", "files.list"]);
   assert.notEqual(done.toolCalls[0].id, done.toolCalls[1].id);
+  assert.deepEqual(done.usage, { input: 5, output: 9 }, "a streamed reply still says what it spent, which the dropped-call check reads");
 });
 
 // ---------------------------------------------------------------- the runtime, through a stand-in Ollama
@@ -128,13 +129,39 @@ test("a call to a real tool the model was not offered is answered, never run, ne
   assert.ok(!journaled.includes("desktop.danger"), "and is never journaled, so a restart cannot run it");
   assert.ok(!events(branch, run, "tool.started").some((event) => event.name === "desktop.danger"));
   assert.deepEqual(events(branch, run, "tool.unoffered").map((event) => event.name), ["desktop.danger"]);
-  const answer = requests[1].messages.find((message) => message.role === "tool");
+  const answer = requests[1].messages.at(-1);
+  assert.equal(answer.role, "user", "a note from Branch, not a result for a call that never ran");
   assert.match(answer.content, /not one of the tools offered to you right now/);
   assert.match(answer.content, /files\.read/);
   assert.ok(!answer.content.includes("Does something"), "it never says what the unoffered tool is");
+  const kept = branch.store.messages(run.sessionId).flatMap((message) => message.toolCalls ?? []).map((call) => call.name);
+  assert.ok(!kept.includes("desktop.danger"), "the conversation keeps no call that never ran, so nothing can replay it");
   assert.deepEqual(journaled, ["files.read"]);
   assert.equal(run.status, "completed");
   assert.equal(run.output, "list.txt holds eggs.");
+});
+
+test("in a reply mixing an offered call and an unoffered one, only the offered call runs, is journaled and is kept", async (t) => {
+  const { requests, provider } = standIn([
+    { calls: [["files.read", { path: "list.txt" }], ["desktop.danger", {}]] },
+    { content: "list.txt holds eggs." },
+  ]);
+  const branch = await app(t, provider);
+  let ran = false;
+  branch.registry.register({ name: "desktop.danger", group: "desktop", description: "Does something nobody offered.", permission: "files.read",
+    parameters: z.object({}).strict(), execute: async () => { ran = true; return { ok: true }; } });
+  const journaled = [];
+  const intend = branch.runtime.journal.intend.bind(branch.runtime.journal);
+  branch.runtime.journal.intend = (input) => { journaled.push(...input.calls.map((entry) => entry.call.name)); return intend(input); };
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
+  assert.equal(ran, false);
+  assert.deepEqual(journaled, ["files.read"]);
+  const kept = branch.store.messages(run.sessionId).flatMap((message) => message.toolCalls ?? []).map((call) => call.name);
+  assert.deepEqual(kept, ["files.read"]);
+  const after = requests[1].messages;
+  assert.equal(after.at(-2).role, "tool", "the offered call's result");
+  assert.match(after.at(-1).content, /"desktop\.danger" is not one of the tools offered/);
+  assert.equal(run.status, "completed");
 });
 
 test("a model that keeps calling tools it was not offered ends failed in plain words", async (t) => {
@@ -195,6 +222,15 @@ test("a reply that promises its next step and stops is asked once, then ends fai
   assert.equal(run.status, "failed");
   assert.equal(run.output, announcedEnding);
   assert.equal(events(branch, run, "model.announced_only").length, 2);
+});
+
+test("an answer to \"how would you…\" and a dry run may say what comes first", async (t) => {
+  const { provider } = standIn([{ content: "I'll start by reading list.txt, then add the line." }]);
+  const branch = await app(t, provider);
+  const asked = await branch.runtime.run({ prompt: "How would you add milk to list.txt", permissions: ["files.read"] });
+  assert.equal(asked.status, "completed");
+  const dry = await branch.runtime.run({ prompt: "add milk to list.txt", permissions: ["files.read"], dryRun: true });
+  assert.notEqual(dry.status, "failed", dry.output);
 });
 
 test("asked once, a model that then does the step finishes as done", async (t) => {

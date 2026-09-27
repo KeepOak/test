@@ -244,9 +244,12 @@ const callableNames = (offered: readonly string[]): string =>
   + `must be loaded with ${toolDescribeName} before it can be called.`;
 export const droppedCallNudge = (offered: readonly string[]): string =>
   `Your last reply came back empty. A tool call that names a tool you were not offered is dropped. ${callableNames(offered)}`;
-/** Q066: the answer to a call naming a tool that was not offered. It never says whether such a tool exists. */
-export const unofferedAnswer = (name: string, offered: readonly string[]): string =>
-  `"${name.slice(0, 80)}" is not one of the tools offered to you right now, so nothing was run. ${callableNames(offered)}`;
+/** Q066: the note after calls naming tools that were not offered. It never says whether such a tool exists. */
+export const unofferedAnswer = (names: readonly string[], offered: readonly string[]): string =>
+  `${names.map((name) => `"${name.slice(0, 80)}"`).join(", ")} ${names.length === 1 ? "is not one of the tools" : "are not tools"} `
+  + `offered to you right now, so nothing was run for ${names.length === 1 ? "it" : "them"}. ${callableNames(offered)}`;
+/** Q067: a request for an explanation or advice, whose answer may rightly say what would be done first. */
+export const asksHowItWouldBeDone = (prompt: string): boolean => /^\s*(how|what|why|which|when|where|should|would)\b/i.test(String(prompt ?? ""));
 export const unofferedEnding = "The model kept asking for tools it was not offered, so nothing was done. "
   + "Ask again, or try a larger model.";
 /**
@@ -1751,16 +1754,28 @@ ${run.output.slice(0, 6000)}`;
         continue;
       }
       if (completion.toolCalls.length) usedTools = true;
-      // Q066: a call the provider marked names no offered tool. It never runs: it is not journaled (a restart would run
-      // it), weighed or grouped, and the conversation keeps it under the name the model wrote.
-      const marked = (call: ToolCall): boolean => call.name.startsWith(unofferedMark);
-      const runnable = completion.toolCalls.filter((call) => !marked(call));
-      const said = completion.toolCalls.map((call) => marked(call) ? { ...call, name: call.name.slice(unofferedMark.length) || "?" } : call);
-      const unoffered = said.filter((_call, at) => marked(completion.toolCalls[at]!));
+      // Q066: a call the provider marked names no offered tool. It never runs, and nothing of it is kept as a call: not
+      // journaled (a restart would run it), not weighed or grouped, and not in the conversation, where a later reader
+      // could take it for a step. A note from Branch tells the model which names it can call.
+      const runnable = completion.toolCalls.filter((call) => !call.name.startsWith(unofferedMark));
+      const unoffered = completion.toolCalls.filter((call) => call.name.startsWith(unofferedMark))
+        .map((call) => call.name.slice(unofferedMark.length) || "?");
+      const unofferedNote: Message | null = unoffered.length ? { role: "user", from: "branch", content: unofferedAnswer(unoffered, [...offered]) } : null;
+      if (unoffered.length) {
+        unofferedRounds = runnable.length ? 0 : unofferedRounds + 1;
+        for (const name of unoffered) this.store.event(run.id, "tool.unoffered", { round: round + 1, name: name.slice(0, 80) });
+        if (unofferedRounds >= 2) throw new Error(unofferedEnding);
+      } else if (runnable.length) unofferedRounds = 0;
+      if (unofferedNote && !runnable.length) {
+        // Only calls to tools that were not offered: any words are kept, and the model is told and asked again.
+        if (completion.content.trim()) this.add(run, messages, ids, { role: "assistant", content: completion.content });
+        this.add(run, messages, ids, unofferedNote);
+        continue;
+      }
       const assistant: Message = {
         role: "assistant",
         content: completion.content,
-        ...(said.length ? { toolCalls: said } : {}),
+        ...(runnable.length ? { toolCalls: runnable } : {}),
       };
       // mac7/r17-g: the progress judge looks before the calls are written down or kept, so a stop leaves
       // no call without its result; the stuck answer's words are still kept.
@@ -1772,10 +1787,12 @@ ${run.output.slice(0, 6000)}`;
         calls: runnable.map((call) => ({ call, permission: this.registry.permissionOf(call.name) })) });
       messages.push(assistant); ids.push(null);
       this.store.message(run.sessionId, assistant);
-      if (!completion.toolCalls.length) {
+      if (!runnable.length) {
         // Q067: "Let me start by reading list.txt." with no call is not an answer. Asked once to do it; a second such
-        // reply ends the task as failed in plain words, so it is never shown as done.
-        if (offered.size && announcesNextStep(withoutThinking(spoken))) {
+        // reply ends the task as failed in plain words, so it is never shown as done. Not while a plan's steps run (a
+        // step's answer may say what comes next), in a dry run, or when the person asked how something would be done.
+        if (offered.size && conductor.lastStep() && !context.dryRun && !asksHowItWouldBeDone(run.prompt)
+          && announcesNextStep(withoutThinking(spoken))) {
           this.store.event(run.id, "model.announced_only", { round: round + 1, nudged: announcedNudged });
           if (announcedNudged) throw new Error(announcedEnding);
           announcedNudged = true;
@@ -1788,14 +1805,6 @@ ${run.output.slice(0, 6000)}`;
         this.add(run, messages, ids, next);
         continue;
       }
-      unofferedRounds = runnable.length ? 0 : unofferedRounds + 1;
-      for (const call of unoffered) {
-        this.store.event(run.id, "tool.unoffered", { round: round + 1, id: call.id, name: call.name.slice(0, 80) });
-        const message: Message = { role: "tool", toolCallId: call.id, content: JSON.stringify({ ok: false, error: unofferedAnswer(call.name, [...offered]) }) };
-        messages.push(message); ids.push(null);
-        this.store.message(run.sessionId, message);
-      }
-      if (unofferedRounds >= 2) throw new Error(unofferedEnding);
       // mac7/speed: with "fewer rounds" on, calls in this reply that only look at things and are
       // about different things go at the same time; everything else runs alone, in its own place.
       // Results are written down in the order the model asked for them either way.
@@ -1825,6 +1834,7 @@ ${run.output.slice(0, 6000)}`;
           await this.showPicture(run, messages, ids, result, route);
         }
       }
+      if (unofferedNote) this.add(run, messages, ids, unofferedNote);
       this.orchestration.milestone(run, round + 1);
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
