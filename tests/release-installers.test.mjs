@@ -15,6 +15,10 @@ test("the Windows setup file is per-user and hands every step to the app's own i
   const script = installers.innoScript({ version: "0.20.0", appFolder: "C:\\b\\release\\Branch Agent-win32-x64",
     outputDir: "C:\\b\\release", icon: "C:\\b\\public\\assets\\branch.ico" });
   assert.match(script, /^PrivilegesRequired=lowest$/m, "no administrator");
+  // The setup file is its own program: its name, description and icon are Branch's, never a default.
+  for (const line of ["AppName=Branch Agent", "VersionInfoCompanyName=Branch Agent", "VersionInfoProductName=Branch Agent",
+    "VersionInfoDescription=Branch Agent Setup", "SetupIconFile=C:\\b\\public\\assets\\branch.ico"])
+    assert.ok(script.split("\n").includes(line), line);
   assert.match(script, /^Uninstallable=no$/m, "the Apps entry and uninstaller are the app installer's own");
   assert.match(script, /^CreateAppDir=no$/m);
   assert.match(script, /^OutputBaseFilename=Branch-Agent-Setup-windows-x64$/m);
@@ -91,6 +95,26 @@ test("a .deb or AppImage copy is never replaced by the in-app updater, and says 
   assert.match(deb.status.message, /newest \.deb/);
   assert.match(new Updater({ ...base, packageType: "appimage" }).status.message, /newest AppImage/);
   assert.notEqual(new Updater({ ...base, packageType: null }).status.phase, "unsupported");
+});
+
+test("only a signed Windows release keeps the program file named Branch Agent; an unsigned one keeps Electron's known file", async () => {
+  const { keepsStockExecutable, packagerOptions } = await import("../scripts/package-desktop.mjs");
+  assert.equal(keepsStockExecutable({}), true, "unsigned builds keep the stock executable Smart App Control knows");
+  for (const value of ["", "false", "TRUE", "1"]) assert.equal(keepsStockExecutable({ BRANCH_WINDOWS_SIGNING: value }), true, value);
+  assert.equal(keepsStockExecutable({ BRANCH_WINDOWS_SIGNING: "true" }), false);
+  assert.deepEqual(packagerOptions("win32", "x64").win32metadata, { CompanyName: "Branch Agent", FileDescription: "Branch Agent", ProductName: "Branch Agent" });
+  const names = workflow.jobs.build.steps.map((entry) => entry.name ?? "");
+  const at = (name) => { const index = names.indexOf(name); assert.ok(index >= 0, name); return index; };
+  assert.equal(step("build", "Build the download").env.BRANCH_WINDOWS_SIGNING, "${{ env.HAS_WINDOWS_SIGNING }}");
+  assert.ok(at("Refuse a half-finished Windows signing setup") < at("Build the download"));
+  assert.ok(at("Build the download") < at("Sign the program file"));
+  assert.ok(at("Put the signed program file in place and make the download again") < at("Build the installers"),
+    "the zip and the setup file are made from the signed program file");
+  const place = step("build", "Put the signed program file in place and make the download again").run;
+  assert.match(place, /-ne 'Valid'[\s\S]*exit 1/);
+  assert.match(place, /VersionInfo\.FileDescription[\s\S]*-ne 'Branch Agent'/);
+  assert.match(place, /node scripts\/package-desktop\.mjs --release --zip-only/);
+  assert.equal(step("build", "Sign the program file").if, "runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'");
 });
 
 test("the release signs the Windows setup file only through SignPath, and says plainly when it could not", () => {

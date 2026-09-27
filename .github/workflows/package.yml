@@ -273,6 +273,12 @@ jobs:
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+      - name: Refuse a half-finished Windows signing setup
+        if: runner.os == 'Windows' && env.HAS_ANY_WINDOWS_SIGNING == 'true' && env.HAS_WINDOWS_SIGNING != 'true'
+        shell: bash
+        run: |
+          echo "::error::Windows signing needs both the SIGNPATH_API_TOKEN secret and the SIGNPATH_ORGANIZATION_ID variable (docs/desktop.md)."
+          exit 1
       - name: Build the download
         shell: bash
         env:
@@ -281,10 +287,46 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           MAC_SIGNING_SHA1: ${{ secrets.MAC_SIGNING_SHA1 }}
           MAC_SIGNING_REQUIRED: ${{ env.MAC_SIGNING_REQUIRED }}
+          # Signed next, so it keeps Branch Agent's own name and icon (scripts/package-desktop.mjs keepsStockExecutable).
+          BRANCH_WINDOWS_SIGNING: ${{ env.HAS_WINDOWS_SIGNING }}
         run: |
           if [ -f "$RUNNER_TEMP/notary-key.p8" ]; then export APPLE_API_KEY_PATH="$RUNNER_TEMP/notary-key.p8"; fi
           npm run package:desktop -- --release
           if [ "$RUNNER_OS" = "macOS" ]; then node scripts/package-desktop.mjs --release --arch x64; fi
+      # With signing, the program file itself is signed before it is zipped or put in the setup file,
+      # so every Windows download carries the signed, correctly named Branch Agent.exe.
+      - name: Hand the program file to SignPath
+        id: unsigned-app
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-app
+          path: release/Branch Agent-win32-x64/Branch Agent.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the program file
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'Branch-Agent' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: release/signed-app
+      - name: Put the signed program file in place and make the download again
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $signed = 'release/signed-app/Branch Agent.exe'
+          $status = (Get-AuthenticodeSignature -LiteralPath $signed).Status
+          if ($status -ne 'Valid') { Write-Output "::error::The signed program file's signature is $status."; exit 1 }
+          $name = (Get-Item -LiteralPath $signed).VersionInfo.FileDescription
+          if ($name -ne 'Branch Agent') { Write-Output "::error::The program file calls itself '$name', not Branch Agent."; exit 1 }
+          Move-Item -Force -LiteralPath $signed -Destination 'release/Branch Agent-win32-x64/Branch Agent.exe'
+          node scripts/package-desktop.mjs --release --zip-only
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Build the installers
         shell: bash
         run: |
@@ -293,12 +335,6 @@ jobs:
           fi
           node scripts/package-installers.mjs
           if [ "$RUNNER_OS" = "macOS" ]; then node scripts/package-installers.mjs --arch x64; fi
-      - name: Refuse a half-finished Windows signing setup
-        if: runner.os == 'Windows' && env.HAS_ANY_WINDOWS_SIGNING == 'true' && env.HAS_WINDOWS_SIGNING != 'true'
-        shell: bash
-        run: |
-          echo "::error::Windows signing needs both the SIGNPATH_API_TOKEN secret and the SIGNPATH_ORGANIZATION_ID variable (docs/desktop.md)."
-          exit 1
       - name: Hand the setup file to SignPath
         id: unsigned-setup
         if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'

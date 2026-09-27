@@ -42,6 +42,7 @@ test("Windows packaging options are the long-standing set", () => {
   const { ignore, ...rest } = packagerOptions("win32", "x64");
   assert.deepEqual(rest, {
     dir: ".", out: "release", name: "Branch Agent", executableName: "Branch Agent",
+    win32metadata: { CompanyName: "Branch Agent", FileDescription: "Branch Agent", ProductName: "Branch Agent" },
     icon: "public/assets/branch.ico", appCategoryType: "public.app-category.productivity",
     platform: "win32", arch: "x64", asar: false, overwrite: true, prune: true,
   });
@@ -79,6 +80,7 @@ test("Linux options name the program without a space", () => {
 test("the arch can be chosen, so one Mac makes both downloads", () => {
   assert.deepEqual(parseArgs([], "arm64"), { release: false, arch: "arm64" });
   assert.deepEqual(parseArgs(["--release", "--arch", "x64"], "arm64"), { release: true, arch: "x64" });
+  assert.deepEqual(parseArgs(["--release", "--zip-only"], "x64"), { release: true, arch: "x64", zipOnly: true });
   assert.throws(() => parseArgs(["--arch"], "arm64"), /needs a value/);
   assert.equal(needsAssetName("win32", false), false, "a Windows app folder is still built on any arch");
   assert.equal(needsAssetName("win32", true), true);

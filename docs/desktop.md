@@ -99,7 +99,7 @@ A rehearsal tag, `v0.0.0-rehearsal.<n>`, runs the whole path and publishes a pre
 
 ## Signing the Windows setup file for free
 
-Without signing, the release goes out unsigned: the build says so in its summary, and the release notes tell people how to get past SmartScreen's "Windows protected your PC". The workflow signs the setup file as soon as these are set, and refuses a half-finished setup:
+Without signing, the release goes out unsigned: the build says so in its summary, and the release notes tell people how to get past SmartScreen's "Windows protected your PC". The workflow signs as soon as these are set, and refuses a half-finished setup. Signed, the program file keeps its own name and icon (Windows then says "Branch Agent", not "Electron", in its dialogs and Task Manager) and is signed before it is zipped or put in the setup file; the setup file is then signed too. Unsigned, the program file stays the stock Electron one, as described below. The settings:
 
 - Repository secret `SIGNPATH_API_TOKEN`: the API token of a SignPath CI user.
 - Repository variable `SIGNPATH_ORGANIZATION_ID`.
