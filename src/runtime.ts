@@ -361,8 +361,8 @@ function isCallShape(value: unknown, isTool: (name: string) => boolean): boolean
  * tag) until the round has been read: passed on whole if it was an answer, dropped if it was a call. Words that begin
  * any other way stream as they always did.
  */
-function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((text: string) => void) | undefined; settle(pass: boolean): void } {
-  if (!emit) return { emit: undefined, settle: () => undefined };
+function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((text: string) => void) | undefined; settle(pass: boolean): void; broke(): void } {
+  if (!emit) return { emit: undefined, settle: () => undefined, broke: () => undefined };
   let held = "", mode: "undecided" | "hold" | "pass" = "undecided";
   return {
     emit: (text) => {
@@ -379,6 +379,9 @@ function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((tex
       if (mode === "pass") { const out = held; held = ""; emit(out); }
     },
     settle: (pass) => { if (pass && held) emit(held); held = ""; mode = "pass"; },
+    // The round broke off: a first word still waiting was only words, and goes on as it always did; anything held
+    // because it began like a call is dropped.
+    broke: () => { if (mode === "undecided" && held) emit(held); held = ""; mode = "pass"; },
   };
 }
 export const textCallNudge = (offered: readonly string[]): string =>
@@ -2080,7 +2083,8 @@ ${run.output.slice(0, 6000)}`;
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
       const gate = callTextGate(preview); // qa-fixes-4
-      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, gate.emit);
+      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, gate.emit)
+        .catch((error: unknown) => { gate.broke(); throw error; });
       const filterModels = [this.provider.name, ...namesOf(route.candidates[route.index])];
       // A think-then-act specialist writes one line of reasoning first. The transcript keeps it, so
       // the model can see its own trail; the owner reads it in the events; the answer never has it.
