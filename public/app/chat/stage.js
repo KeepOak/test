@@ -47,7 +47,7 @@ import { markLive, greyOut } from "../core/features.js";
 import { work, loadWork } from "./terminal.js";
 import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
-import { liveOf, watchLive } from "./stage-live.js";
+import { liveOf, liveError, liveLoading, refreshLive, watchLive } from "./stage-live.js";
 import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, setDriving } from "./stage-screen.js";
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
@@ -56,6 +56,7 @@ const G = { kind: null, pip: null, dock: true, grid: false, browsed: null, asked
 const SHOT = new Map(); // picture path → its bytes as a blob: address ("" while loading or after the engine refused it)
 const CARD = { pic: "", deskFor: undefined, resumes: null }; // the card's picture, the conversation the desktop was read for, and the task its Carry on resumes
 const STOPPABLE = new Set(["running", "needs_input", "interrupted"]);
+let browsing = null; // transient address outcome, scoped to this conversation
 
 /* Whoever the conversation is: its Trunk, its room, or the assistant (Branch's own); the words the view is named with. */
 const name = () => ownName(S.chat) || E.state?.identity?.name || "";
@@ -124,7 +125,11 @@ function shotUrl(path) {
 function liveWindow(view, src = "") {
   const tabs = view.tabs.map((tab) => `<span class="${tab.active ? "on7" : ""}">${esc(tab.title || tab.url)}</span>`).join("");
   const bar = view.url ? `<div class="dk-url">${ic("lock", "s")}${esc(view.url)}</div>` : "";
-  return `<div class="desk7 brfull7 live7"><div class="dk-win br7"><div class="dk-tabs">${tabs}</div>${bar}<img class="shot7 live7-img"${src ? ` src="${esc(src)}"` : ""} alt="${esc(view.title)}"></div></div>`;
+  const unavailable = view.preview === "borrowed" || view.preview === "unavailable" || !view.frame;
+  const words = view.preview === "borrowed" ? "borrowed-preview" : "preview-unavailable";
+  const notice = unavailable ? `<div class="browser-status7" role="status"><b>${t("window.chat.stage.preview-unavailable-title")}</b><small>${t("window.chat.stage." + words)}</small></div>` : "";
+  const image = view.frame ? `<img class="shot7 live7-img"${src ? ` src="${esc(src)}"` : ""} alt="${esc(view.title)}">` : "";
+  return `<div class="desk7 brfull7 live7"><div class="dk-win br7"><div class="dk-tabs">${tabs}</div>${bar}${notice}${image}</div></div>`;
 }
 /* The screen: the live frame, else the picture as it was taken; "" when there is nothing to show. */
 /* This computer's live screen, the frame painted in by paintFrames (a new frame never redraws the view), the Trunk's
@@ -169,7 +174,7 @@ function placeCursor() {
 }
 function screen(kind) {
   const view = kind === "browser" ? live()?.browser : null;
-  if (view?.frame) return liveWindow(view);
+  if (view) return liveWindow(view);
   if (kind === "computer" && onThis() && screenFrame()) return liveScreen();
   const url = shotUrl(picturePath(kind));
   if (!url) return "";
@@ -182,11 +187,21 @@ function screen(kind) {
 /* Nothing to show: the prototype's own words, sized to them, in the window's colours; "hasn't opened a page" only while
    no task of this conversation has opened one. */
 function emptyHTML(kind, small) {
+  if (kind === "browser" && browserNotice()) return browserNotice();
+  if (kind === "browser" && liveLoading(S.chat)) return `<div class="st7-empty" role="status">${ic("globe")}<b>${t("window.chat.stage.loading-preview")}</b></div>`;
   const opened = (work(S.chat)?.browser?.entries ?? []).length > 0;
   // This computer's screen refused by the engine (its switch, a password window, Lockdown): the engine's own words.
   const refused = kind === "computer" && onThis() && screenRefusal() ? `<small>${esc(screenRefusal())}</small>` : "";
   const line = refused || (kind === "browser" && !opened ? `<small>${t("window.chat.stage.no-page", { name: esc(name()) })}</small>` : "");
   return `<div class="st7-empty${small ? " mini7" : ""}" role="status">${ic(kind === "browser" ? "globe" : "monitor")}<b>${t("window.chat.stage.nothing-open")}</b>${line}</div>`;
+}
+
+function browserNotice() {
+  const state = browsing?.sid === S.chat ? browsing : null;
+  const reason = state?.reason || liveError(S.chat);
+  if (!reason && !state?.loading) return "";
+  const title = state?.loading ? "opening-page" : state?.reason ? "opening-failed" : "refresh-failed";
+  return `<div class="browser-status7" role="status"><b>${t("window.chat.stage." + title)}</b>${reason ? `<small>${esc(reason)}</small>` : ""}</div>`;
 }
 
 /* Who holds the shared Linux desktop, as the engine last said: "agent", "user" or "none". */
@@ -273,7 +288,7 @@ function stageHTML(kind) {
   const liveNow = kind === "browser" && live()?.browser?.live && working();
   const body = scr ? `<div class="st7-screen"><div class="st7-scale">${scr}</div>${caption(steps)}</div>` : emptyHTML(kind);
   const wrap = many && G.grid ? gridHTML(many, steps) : `<div class="st7-wrap">${body}</div>`;
-  return `${top(kind, steps)}${many ? compTabs(many, steps) : ""}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
+  return `${top(kind, steps)}${kind === "browser" && scr ? browserNotice() : ""}${many ? compTabs(many, steps) : ""}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
     ${steps.length ? `<div class="st7-steps">${chips}<button type="button" class="st7-chip live7" data-act="stage-step" data-v="live">${liveNow ? `<i></i>${t("dashboard.live")}` : t("dashboard.area.now")}</button></div>` : ""}`;
 }
 
@@ -407,6 +422,7 @@ function region(id, cls, show, html) {
 
 export function drawStage() {
   const here = S.view === "chat" && !!S.chat;
+  if (browsing && (browsing.sid !== S.chat || !here || (!G.kind && !G.pip))) browsing = null;
   if (G.pip && G.pip.chat !== S.chat) G.pip = null;
   if (!here) G.kind = null;
   // The owner's browser window goes with the view that opened it: closed, or another conversation.
@@ -481,20 +497,25 @@ async function hold(path, done) {
 /* The address field (the owner's alone): disabled, with the engine's reason, while a task works or waits here. */
 function addressField() {
   if (E.profiles?.isOwner === false) return "";
-  const busy = !!goingRun(), words = t("window.chat.stage.address");
+  const busy = !!goingRun() || (browsing?.sid === S.chat && browsing.loading), words = t("window.chat.stage.address");
   return `<form class="st7-addr" data-form="browse"><input id="st-addr" class="inp" autocomplete="off" spellcheck="false" placeholder="${words}" aria-label="${words}"${busy ? ` disabled data-tip="${t("window.chat.stage.address-busy")}"` : ""}><button type="submit" class="icon-btn" aria-label="${t("window.chat.stage.go")}"${busy ? " disabled" : ""}>${ic("up", "s")}</button></form>`;
 }
 /* What the owner typed opens in Branch's browser for this conversation, through the engine's gate; a question the gate
    asks is put to the owner, and only Allow once sends it again, confirmed. */
 async function browseTo(address, confirm = false) {
   const sid = S.chat;
+  if (browsing?.sid === sid && browsing.loading) return;
+  browsing = { sid, loading: true, reason: "" };
+  drawStage();
   let outcome;
-  try { outcome = await api("panels/browse", { sessionId: sid, address, confirm }); } catch (error) { toast(error.message); return; }
+  try { outcome = await api("panels/browse", { sessionId: sid, address, confirm }); }
+  catch (error) { if (S.chat === sid) { browsing = { sid, reason: error.message }; drawStage(); } return; }
+  if (S.chat !== sid || !G.kind && !G.pip) return;
+  browsing = null;
   G.browsed = sid;
-  if (outcome.status === "asked") return askBrowse(outcome.question, address);
-  if (outcome.status === "refused") toast(outcome.reason);
-  else if (outcome.status === "failed") toast(outcome.error);
-  else { const box = $("#st-addr"); if (box) box.value = ""; }
+  if (outcome.status === "asked") { drawStage(); return askBrowse(outcome.question, address); }
+  if (outcome.status === "refused" || outcome.status === "failed") browsing = { sid, reason: outcome.reason || outcome.error };
+  else { const box = $("#st-addr"); if (box) box.value = ""; refreshLive(sid); }
   drawStage();
 }
 function askBrowse(question, address) {
