@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
-import { settingsCatalogue, shipOnInitials, specFor } from "../dist/settings-kit/catalogue.js";
+import { settingsCatalogue, specFor } from "../dist/settings-kit/catalogue.js";
 import { applyChanges, changesFor, currentValue } from "../dist/settings-kit/changes.js";
 import { settingsKitWriters } from "../dist/settings-kit/writers.js";
 import { startServer } from "../dist/server.js";
@@ -209,9 +209,8 @@ test("a kit write of one field cannot bring back another field or mode the app w
     for (const field of others) {
       const ignored = readPath(unreadable(spec), field.field);
       assert.notDeepEqual(inForce(reader, store, owner, field), ignored, `${spec.key}.${field.field}: the ignored value does not come back`);
-      // The ship-on rule (src/ship-on.ts): once the record reads, a flipped field the owner never set reads as it ships.
-      const ships = shipOnInitials[spec.key]?.[field.field];
-      if (ships !== undefined) { assert.deepEqual(inForce(reader, store, owner, field), ships, `${spec.key}.${field.field}: reads as it ships`); continue; }
+      // The ship-on rule (src/ship-on.ts savedFields): a field shown off over an unreadable record is written down off and
+      // stays off, even one that ships on: the change list never showed it moving.
       assert.deepEqual(inForce(reader, store, owner, field), before[field.field], `${spec.key}.${field.field}: an ignored value stays ignored`);
       assert.deepEqual(readPath(raw, field.field) ?? field.initial, before[field.field], `${spec.key}.${field.field}: the saved record agrees with the app`);
     }
