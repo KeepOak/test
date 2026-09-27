@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { errorText, type ToolContext } from "../contracts.js";
-import { refuseSignInForTrunk } from "../accounts/context.js";
+import { refuseAnyTrunk } from "../accounts/context.js";
 import { primaryAccount, savedAccountsSettings } from "../accounts/settings.js";
 import { accountHomeVariables, strippedEnvironment } from "../providers/cli-agent.js";
 import type { ToolRegistry } from "../registry.js";
@@ -406,7 +406,7 @@ export class HandOff {
   }
 
   async run(input: HandOffInput, context: ToolContext): Promise<HandOffResult> {
-    refuseSignInForTrunk();
+    refuseAnyTrunk(); // trunks-use-subscriptions: a Trunk may answer through a sign-in, but never hands jobs over
     this.deps.store.profiles.requireOwner("Handing a job to your Claude Code or Codex");
     if (context.agent) throw new Error("Handing a job to the owner's Claude Code or Codex is the owner's own; a specialist cannot.");
     const folder = this.folderOf(input.folder), account = input.account ?? primaryAccount;
