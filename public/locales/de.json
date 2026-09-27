@@ -9591,5 +9591,13 @@
   "window.chat.live.show-all": "Alle {count} zeigen",
   "window.chat.live.worked": "{time} gearbeitet · {count} Schritte",
   "window.chat.live.worked-one": "{time} gearbeitet · 1 Schritt",
-  "window.chat.live.working": "Arbeitet"
+  "window.chat.live.working": "Arbeitet",
+  "window.what.title": "Was Branch kann",
+  "window.what.lede": "Alles hier wird so aus diesem Branch gelesen, wie er gerade ist. Ausprobieren öffnet ein neues Gespräch mit den Worten im Eingabefeld, ohne sie zu senden.",
+  "window.what.try": "Ausprobieren",
+  "window.what.prompts": "Prompts",
+  "window.what.ask-tool": "Nutze das Werkzeug {name}. Es sagt: {line}",
+  "window.what.ask-skill": "Nutze den Skill {name}. Er sagt: {line}",
+  "window.what.ask-app": "Hilf mir, {name} einzurichten, damit ich dich dort erreiche.",
+  "window.what.ask-flow": "Führe meinen Ablauf {name} aus. Er sagt: {line}"
 }
