@@ -157,6 +157,20 @@ test("approvals: the owner's standing yes does not reach a chat's task, and a ch
   assert.equal(chat.sent.some((m) => m.buttons), false, "no question went out to the chat");
   assert.deepEqual(app.runtime.waitingApprovals(run.sessionId), [], "and nothing waits for a yes");
   await assert.rejects(readFile(join(app.runtime.workspace, "note.txt"), "utf8"), "nothing was written");
+  // A line that grants this chat files.write lets the call be weighed, and still the owner's standing yes does not reach
+  // it: the change waits for a yes. mac7/chat-allowlist (integration review): the chat is offered no Yes at all, neither
+  // the standing one nor the once, only No and the sentence saying where the yes belongs. A chat sender must not approve
+  // their own task's change.
+  allowFromChat(app, ["files.write"]);
+  const granted = await say('please files.write {"path":"granted.txt","content":"hi"}');
+  assert.equal(app.store.run(granted.id).status, "needs_input", "a change from a chat waits for a yes");
+  const question = chat.sent.find((m) => m.buttons);
+  assert.ok(question, "the question went out with buttons");
+  assert.deepEqual(question.buttons.map((b) => b.label), ["No"], "a chat was offered a yes it may not give");
+  assert.match(question.text, /Branch app window/, "the question does not say where the yes belongs");
+  const waiting = app.runtime.waitingApprovals(granted.sessionId)[0];
+  assert.throws(() => app.runtime.approve(granted.sessionId, "allow", "always", waiting.fingerprint, "chat"), /./);
+  await assert.rejects(readFile(join(app.runtime.workspace, "granted.txt"), "utf8"), "nothing was written without the owner's yes");
   assert.equal(app.store.audit.list(owner, { action: "approval.decided" }).length, 0);
   // The owner's own task keeps its standing yes.
   const own = await app.runtime.run({ prompt: 'please files.write {"path":"own.txt","content":"hi"}' });
