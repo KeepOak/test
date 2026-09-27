@@ -1,7 +1,8 @@
 import { access, constants } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
+import { FeatureModeSchema, mediaProgramsShipsAs, type FeatureMode } from "./feature-switches.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 import type { Store } from "./store.js";
 import { findOnPath } from "./voice-tts.js";
 
@@ -13,8 +14,7 @@ import { findOnPath } from "./voice-tts.js";
  * arguments are pure so a test can read them without a program being installed.
  */
 export const MediaProgramsSchema = z.object({
-  /** The three-way switch. Off until the owner turns it on: kept off by the owner's rule (e), heavy CPU, since ffmpeg
-      decodes whole videos on this computer. */
+  /** The three-way switch. Read through `mediaProgramsSettings`, which gives how it ships ("when needed") unless the owner chose. */
   mode: FeatureModeSchema.default("off"),
   /** Where ffmpeg lives. Empty means "look for it on this computer's search path". */
   ffmpeg: z.string().trim().max(400).default(""),
@@ -30,7 +30,9 @@ export type MediaPrograms = z.infer<typeof MediaProgramsSchema>;
 const settingsKey = "media-programs";
 export function mediaProgramsSettings(store: Pick<Store, "get">, owner: string): MediaPrograms {
   const saved = MediaProgramsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : MediaProgramsSchema.parse({});
+  if (!saved.success) return MediaProgramsSchema.parse({});
+  // The record also holds the programs' places, so an "off" beside them may be the old default (src/ship-on.ts).
+  return shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: mediaProgramsShipsAs });
 }
 export function saveMediaProgramsSettings(store: Store, owner: string, input: unknown): MediaPrograms {
   const given = input && typeof input === "object" && !Array.isArray(input) ? input : {};
@@ -39,6 +41,7 @@ export function saveMediaProgramsSettings(store: Store, owner: string, input: un
     if (path && (!isAbsolute(path) || path.startsWith("-")))
       throw new Error("Give the full place of the program, for example /opt/homebrew/bin/ffmpeg");
   store.save("settings", owner, settingsKey, value);
+  markChosen(store, owner, settingsKey, sentKeys(given));
   return value;
 }
 export const mediaProgramsMode = (store: Pick<Store, "get">, owner: string): FeatureMode =>

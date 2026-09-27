@@ -18,7 +18,6 @@
    Run:  PORT=3765 MODEL_PORT=43765 PAGE_PORT=43766 node design/redesign/tools/verify-parity-b2.cjs   (SHOTS=<dir> keeps screenshots) */
 const http = require("node:http");
 const { spawn } = require("node:child_process");
-const { createHash } = require("node:crypto");
 const { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
@@ -27,6 +26,7 @@ const { chromium } = require("playwright");
 
 const PORT = Number(process.env.PORT ?? 3765), MODEL_PORT = Number(process.env.MODEL_PORT ?? 43765), PAGE_PORT = Number(process.env.PAGE_PORT ?? 43766);
 const PAGE = `http://127.0.0.1:${PAGE_PORT}/b2`;
+const ENDPOINT = `http://127.0.0.1:${MODEL_PORT}/v1`;
 const pages = http.createServer((req, res) => { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end('<!doctype html><title>B2 page</title><body bgcolor="#2f8c86"><h1>B2 page</h1></body>'); });
 if ([3210, 3299, 3300].includes(PORT)) { console.error("Never the owner's ports."); process.exit(2); }
 const ROOT = resolve(__dirname, "../../..");
@@ -43,7 +43,12 @@ const until = async (fn, ms = 20000) => { const end = Date.now() + ms; while (Da
 const shot = (page, name) => (SHOTS ? page.screenshot({ path: join(SHOTS, `${name}.png`) }).catch(() => undefined) : undefined);
 
 /* ---------- the stand-in model ---------- */
-const wire = (name) => "branch_" + createHash("sha256").update(name).digest("hex").slice(0, 24);
+/* How a tool's name travels to this stand-in is the engine's own rule (src/providers.ts wireName, by wireRuleFor of the
+   stand-in's address), read from dist when the script starts, never a copy of it: a copy once drifted (hashes after
+   local models were given readable names) and the stand-in asked to load a tool it had already been offered, round
+   after round. tests/real-model-tools.test.mjs pins what that rule is for a model on this computer. */
+const naming = { wire: null };
+const travels = (name, sent) => sent === naming.wire(name);
 const PLAN = JSON.stringify({ steps: [{ title: "Look in the notes folder", touches: "notes", changes: false }, { title: "Write the summary", touches: "summary.md", changes: true }] });
 const model = { held: [], hold: false };
 const textOf = (m) => (typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? ""));
@@ -54,14 +59,17 @@ function answer(body) {
   const users = messages.map((m, i) => (m.role === "user" && textOf(m) !== "Yes, go ahead." ? i : -1)).filter((i) => i >= 0);
   const last = users.at(-1) ?? -1, prompt = textOf(messages[last]), since = messages.slice(last + 1);
   const named = new Map(since.flatMap((m) => m.tool_calls ?? []).map((c) => [c.id, c.function?.name]));
-  const ok = (name) => since.filter((m) => m.role === "tool" && named.get(m.tool_call_id) === wire(name) && /"ok":\s*true/.test(textOf(m))).length;
-  const offered = new Set((body.tools ?? []).map((x) => x.function?.name));
+  const ok = (name) => since.filter((m) => m.role === "tool" && travels(name, named.get(m.tool_call_id)) && /"ok":\s*true/.test(textOf(m))).length;
+  const offered = [...new Set((body.tools ?? []).map((x) => x.function?.name))];
+  const offeredAs = (name) => offered.find((wireName) => travels(name, wireName));
   // A tool not offered this round is loaded by its exact name first (the engine's "Load tools you already know").
   const loader = (body.tools ?? []).find((x) => /^Load tools you already know/.test(x.function?.description ?? ""));
-  const call = (name, args) => (offered.size && !offered.has(wire(name)) && loader
-    ? { tool: loader.function.name, args: { names: [name] } } : { tool: wire(name), args });
+  // Loaded once and still not offered: said plainly, so the task ends and its check fails with the reason.
+  const loaded = (name) => since.some((m) => (m.tool_calls ?? []).some((c) => c.function?.name === loader?.function.name && JSON.parse(c.function.arguments || "{}").names?.includes(name)));
+  const call = (name, args) => (offered.length && !offeredAs(name) && loader
+    ? (loaded(name) ? { say: `Not offered after loading: ${name}` } : { tool: loader.function.name, args: { names: [name] } })
+    : { tool: offeredAs(name) ?? naming.wire(name), args });
   if (since.filter((m) => m.role === "tool").length > 10) return { say: "Stopped." };
-  if (process.env.DEBUG === "2" && prompt.includes("b2 commands")) console.log("DEBUG", offered.size, wire("shell.execute"), [...offered].filter((n) => !/^branch_[0-9a-f]{24}$/.test(n)).join(","), (body.tools ?? []).filter((x) => /command|executable/i.test(x.function?.description ?? "")).map((x) => x.function.name + ":" + x.function.description.slice(0, 40)).join(" | "));
   if (prompt.includes("b2 commands")) {
     const ran = ok("shell.execute");
     return ran === 0 ? call("shell.execute", { executable: "node", args: ["-v"] }) : ran === 1 ? call("shell.execute", { executable: "node", args: ["-p", "1+1"] }) : { say: "Both ran." };
@@ -114,7 +122,7 @@ async function seed(dataDir, workspace) {
 }
 function startEngine(dataDir, workspace, integrations) {
   const env = { ...process.env, BRANCH_DATA_DIR: dataDir, BRANCH_WORKSPACE: workspace, BRANCH_PORT: String(PORT), BRANCH_INTEGRATIONS: integrations,
-    BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: `http://127.0.0.1:${MODEL_PORT}/v1`, BRANCH_MODEL: "stand-in", BRANCH_API_KEY: "local-test" };
+    BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: ENDPOINT, BRANCH_MODEL: "stand-in", BRANCH_API_KEY: "local-test" };
   const child = spawn(process.execPath, [join(ROOT, "dist/cli.js"), "start"], { cwd: workspace, env, stdio: ["ignore", "pipe", "pipe"] });
   return new Promise((ok, bad) => {
     let out = "";
@@ -190,17 +198,21 @@ async function planInThread(page) {
 async function commands(page) {
   await newConversation(page);
   await send(page, "b2 commands");
-  await runFor("b2 commands", ["needs_input"]);
+  const first = await runFor("b2 commands", ["needs_input", "completed", "failed", "cancelled"]);
+  if (first?.status !== "needs_input") throw new Error(`the second command did not ask first · ${first?.status}:${String(first?.output ?? "").slice(0, 160)}`);
   const allow = page.locator('#conversation [data-act="ask"][data-v="allow"]');
   await allow.first().waitFor({ timeout: 30000 }).catch(async (error) => {
     const runs = (await api("state")).runs.filter((r) => r.prompt === "b2 commands").map((r) => `${r.status}:${String(r.output ?? "").slice(0, 120)}`);
     throw new Error(`${error.message.split(String.fromCharCode(10))[0]} · ${runs.join(" | ")} · ${(await text(page.locator("#conversation"))).slice(-300)}`);
   });
   await allow.first().click();
-  // The yes carries the task on as the conversation's next task ("Yes, go ahead."), which runs the command again.
+  // QA Q050: the yes carries the task that asked on itself (no second task, nothing said in the owner's name), and it
+  // runs the command it asked about.
   const asked = await runFor("b2 commands");
-  const run = await until(async () => (await api("state")).runs.find((r) => r.sessionId === asked.sessionId && r.prompt === "Yes, go ahead." && r.status === "completed"), 45000);
-  if (!run) throw new Error("the task was not carried on after the yes");
+  const run = await until(async () => (await api("state")).runs.find((r) => r.id === asked.id && r.status === "completed"), 45000);
+  if (!run) throw new Error(`the task was not carried on after the yes · ${String((await api("state")).runs.find((r) => r.id === asked.id)?.output ?? "").slice(0, 160)}`);
+  const again = (await api("state")).runs.filter((r) => r.sessionId === asked.sessionId && r.id !== asked.id);
+  check("pane-stage-005: the yes starts no second task", again.length === 0, again.map((r) => r.prompt).join(" | "));
   const work = await until(async () => { const w = await api(`panels/work?session=${run.sessionId}`); return w.terminal.entries.filter((e) => e.state === "done").length === 2 && w; }, 30000);
   const all = work ?? await api(`panels/work?session=${run.sessionId}`);
   const by = all.terminal.entries.filter((e) => e.state === "done").map((e) => `${e.what}=${e.allowed}`);
@@ -238,7 +250,9 @@ async function files(page, workspace) {
   check("pane-stage-003: Put back the earlier version restores it (GET /api/history/files keeps the one it replaced)", !!back && readFileSync(join(workspace, "notes/old.md"), "utf8") === "the original words\n");
   await act(page, "fileopen", { n: "notes/new.md", st: "made" });
   await dlg.waitFor();
-  check("pane-stage-003: a made file shows what the task wrote", (await text(dlg.locator("pre.made-b2"))).startsWith("made by the b2 check"), await text(dlg.locator("p").first()));
+  // A Markdown file reads as an answer does (dogfood D19), so notes/new.md is drawn as text, not a raw block.
+  const wrote = await text(dlg.locator(".docread18, pre.made-b2").first());
+  check("pane-stage-003: a made file shows what the task wrote", wrote.startsWith("made by the b2 check"), wrote);
   check("pane-stage-003: Edit stays greyed (no route edits a file from the window)", await greyed(dlg.locator('[data-act="file-edit"]')));
   await page.keyboard.press("Escape");
   await act(page, "fileopen", { n: "notes/keep.md", st: "read" });
@@ -280,10 +294,12 @@ async function stage(page, trunk) {
   await page.locator('#pip7 [data-act="stage"]').first().click();
   await st.waitFor();
   check("pane-stage-008: the steps' replay stays greyed (the engine keeps no frames per step)", (await st.locator('[data-act="stage-step"]').count()) === 0 || await greyed(st.locator('[data-act="stage-step"]')));
-  check("pane-stage-006: Pause stays greyed (the engine cannot pause a task)", (await st.locator('[data-act="stage-pause"]').count()) === 0 || await greyed(st.locator('[data-act="stage-pause"]')));
+  check("pane-stage-006: Pause is the chat's own (POST /api/runs/<id>/pause, batch A), never a greyed stand-in", (await st.locator('[data-act="stage-pause"]').count()) === 0);
   await st.locator('.dk7-foot [data-act="setgo"]').click();
   check("pane-stage-006: Change what it may use opens Settings › Computer & browser", !!(await until(async () => (await text(page.locator(".settings h1"))) === "Computer & browser", 10000)));
-  await page.keyboard.press("Escape");
+  // Settings is a place, left by its own way back (as the prototype's is; Escape closes menus and dialogs only).
+  await page.locator(".set-back").first().click();
+  await page.locator("#prompt").waitFor({ state: "visible" });
 }
 
 /* ---------- 4b. the owner's address field: Branch's own browser goes where the owner typed ---------- */
@@ -402,6 +418,9 @@ async function main() {
   writeFileSync(integrations, JSON.stringify({ web: { allowPrivateAddresses: true, allowedHosts: ["127.0.0.1"] }, browser: { allowedOrigins: [new URL(PAGE).origin] },
     shell: { executables: { node: { path: process.execPath } } } }));
   await new Promise((ok) => pages.listen(PAGE_PORT, "127.0.0.1", ok));
+  const { wireName, wireRuleFor } = await import(pathToFileURL(join(ROOT, "dist/providers.js")).href);
+  const rule = wireRuleFor(ENDPOINT);
+  naming.wire = (name) => wireName(name, rule);
   await new Promise((ok) => stub.listen(MODEL_PORT, "127.0.0.1", ok));
   await seed(dataDir, workspace);
   const engine = await startEngine(dataDir, workspace, integrations);

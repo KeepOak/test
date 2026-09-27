@@ -41,7 +41,11 @@ export const autonomyShipsOn: Partial<Record<AutonomyPart, AutonomyMode>> = {
   readiness: "when-needed",
   // The owner's rule (ships on, 2026-09-26): a "from now on" instruction is kept only after the owner says yes; none of (a)–(f).
   instructions: "when-needed",
-  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): session-commands sends the conversation out (/handoff); procedures run steps without a yes at "auto".
+// The owner's rule (ships on, 2026-09-26): /subgoal, /bg and /handoff run only when the owner types them, and handing on to another assistant still needs
+  // its own switch; none of (a)–(f).
+  "session-commands": "when-needed",
+  // Kept off, by the owner's rule: procedures that start themselves run their steps without a yes each time (f). Setup
+  // offers them in one sentence (public/app/flows/setup.js, Keep it running).
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
@@ -61,7 +65,7 @@ export const autonomyTools: Record<AutonomyPart, readonly string[]> = {
   orders: ["orders.list", "orders.propose"],
   loops: [],
   "session-commands": [],
-  procedures: ["procedures.auto.list", "procedures.auto.propose"],
+  procedures: ["procedures.auto.list", "procedures.auto.propose", "procedures.auto.suggest_change"],
   readiness: ["skills.readiness"],
   instructions: ["instructions.list", "instructions.propose"],
 };

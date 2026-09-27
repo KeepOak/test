@@ -10,7 +10,7 @@ import { $, esc, render, renderNow } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
 import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
-import { S, E } from "../core/state.js";
+import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -28,7 +28,9 @@ const resetWords = (iso) => (Date.parse(iso) - Date.now() < 86_400_000 ? t("term
    engine's accountLabel: the sign-in's email where the service said it). How it was measured is never said here (the
    owner, 2026-09-27: no header names, no plumbing words). Settings › Usage draws the same line. */
 export function updatedWords(r) {
-  const at = Math.max(...(r.windows ?? []).map((w) => Date.parse(w.measuredAt ?? "")).filter(Number.isFinite));
+  return agoWords(Math.max(...(r.windows ?? []).map((w) => Date.parse(w.measuredAt ?? "")).filter(Number.isFinite)));
+}
+function agoWords(at) {
   if (!Number.isFinite(at)) return "";
   const min = Math.round((Date.now() - at) / 60000);
   return t("dashboard.updated", { time: min < 2 ? t("glance.justNow") : min < 90 ? t("glance.minAgo", { count: min }) : t("glance.hAgo", { count: Math.round(min / 60) }) });
@@ -36,30 +38,62 @@ export function updatedWords(r) {
 
 /* The share of a window left, 0 to 100, or null where the service gave no limit and remainder (money never is one).
    The list and the status bar's line both use it, so they never disagree. */
-const pctLeft = (w) => (w.kind === "money" || !w.limit || w.remaining == null ? null : Math.max(0, Math.min(100, Math.round((w.remaining / w.limit) * 100))));
+const pctLeft = (w) => (w.kind === "money" || !w.limit || w.remaining == null || refilled(w) ? null : Math.max(0, Math.min(100, Math.round((w.remaining / w.limit) * 100))));
+/* A window whose refill time has passed was measured before it refilled: its old share is known to be wrong now, so it is
+   not drawn as current (reading it again gives the real one). */
+const refilled = (w) => !!w.resetAt && Date.parse(w.resetAt) <= Date.now();
+
+/* ---------- reading plans again: on each look at the popover, Check now, and the status bar's own cadence ----------
+   Only rows the engine says it can read (row.readable: a ChatGPT or Claude Code sign-in, read from the service itself
+   with no message sent, POST /api/usage/limits/refresh) say "Checking…" while their read is on its way. */
+const checking = new Set();
+const rowKey = (r) => `${r.connection}|${r.account ?? "primary"}`;
+let looks = 0;
+async function checkRows(rows) {
+  const look = ++looks, mine = rows.filter((r) => r.readable);
+  for (const r of mine) checking.add(rowKey(r));
+  redrawPop(look);
+  await Promise.all(mine.map(async (r) => {
+    try { keep(await api("usage/limits/refresh", { connection: r.connection, account: r.account ?? "primary" })); }
+    catch (error) { toast(error.message); }
+    finally { checking.delete(rowKey(r)); redrawPop(look); }
+  }));
+}
+/* The popover is drawn again only while it is still the one these reads were started for. */
+function redrawPop(look) {
+  const at = document.querySelector('#statusbar [data-act="usagepop"]');
+  if (look !== looks || !at || !document.querySelector(".pop .lims")) return;
+  openPop(at, popHTML(glance), { right: true, force: true });
+}
 
 function windowRow(w, estimated) {
   const pct = pctLeft(w);
-  if (pct === null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null ? "" : esc(String(w.remaining))}</span></div>`;
+  if (pct === null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null || refilled(w) ? "" : esc(String(w.remaining))}</span></div>`;
   const reset = w.resetAt && Date.parse(w.resetAt) > Date.now() ? ` · ${esc(resetWords(w.resetAt))}` : "";
   return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${reset}</span></div>`;
 }
 
 /* A sign-in never measured yet says so, and offers Measure now (POST /api/usage/limits/measure): one tiny real message. */
 function limitRow(r) {
-  const said = updatedWords(r);
-  const measure = r.signIn && !r.windows?.length ? `<small>${esc(t("glance.measureNote"))}</small><button class="btn sm" type="button" data-act="limmeasure" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "primary")}">${esc(t("glance.measureNow"))}</button>` : "";
+  const busy = checking.has(rowKey(r)), said = busy ? t("glance.checking") : updatedWords(r);
+  const measure = r.signIn && !r.windows?.length && !busy ? `<small>${esc(t("glance.measureNote"))}</small><button class="btn sm" type="button" data-act="limmeasure" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "primary")}">${esc(t("glance.measureNow"))}</button>` : "";
   const body = r.windows?.length
     ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}${r.note ? ` ${esc(r.note)}` : ""}</small>`
-    : `<small>${esc(r.note)}</small>${measure}`;
+    : `<small>${esc(busy ? said : r.note)}</small>${measure}`;
   return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}</div></div>`;
+}
+
+/* A plan signed in on this computer that is not a connection yet (GET/POST glance `addable`, the engine's own sentence):
+   one Connect adds it, as Add an account does (POST /api/providers/cli-agents), and its plan is read at once. */
+function addRow(a) {
+  return `<div class="lim">${logo(`cli-${a.program}`, a.connectionName, 28)}<div><div class="lim-h"><b>${esc(a.connectionName)}</b></div><small>${esc(a.note)}</small><button class="btn sm" type="button" data-act="limconnect" data-v="${esc(a.program)}">${t("action.connect")}</button></div></div>`;
 }
 
 function popHTML(g) {
   const month = g?.month?.pricedRuns ? `<span>${t("glance.thisMonth")} <b>$${Number(g.month.cost).toFixed(2)}</b></span>` : "";
-  return `<div class="lims"><div class="ph" data-css="padding:4px 6px 6px">${t("glance.title")}</div>${(g?.rows ?? []).map(limitRow).join("")}
+  return `<div class="lims"><div class="ph" data-css="padding:4px 6px 6px">${t("glance.title")}</div>${(g?.rows ?? []).map(limitRow).join("")}${(g?.addable ?? []).map(addRow).join("")}
     <p data-css="font-size:12px;color:var(--ink-3);margin:8px 6px 4px">${esc(g?.summary ?? "")}</p>
-    <div class="lim-foot">${month}<span class="tb-grow"></span><button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
+    <div class="lim-foot">${month}<span class="tb-grow"></span>${(g?.rows ?? []).some((r) => r.readable) ? `<button class="btn sm" type="button" data-act="limcheck">${t("action.check-now")}</button>` : ""}<button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
 }
 
 /* The version popover: while update by itself holds a ready update, its title is "Update ready, installs when …" in the
@@ -74,7 +108,7 @@ function updatePop(plan, next) {
     .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
   const title = held ?? (next ? t("window.flows.whatsnew.is-ready", { version: next.version }) : `Branch ${version}`);
   const lines = next?.lines.length ? `<ul class="steps-list" data-css="padding:0 10px 8px 28px;font-size:12.5px">${next.lines.slice(0, 3).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
-  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"), "", 'data-why="update-remind"')}`;
 }
 /* The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked. */
 async function openUpdates(el) {
@@ -120,10 +154,14 @@ function countDown(el) {
    Settings › Data & usage, or the window is not the owner's. It is read again every 20 seconds and whenever the engine's
    state is read again (each event), and the bar is drawn again only when the line changed. */
 let glance = null, readFor = null, reading = false, again = false;
-function planOf(g) {
+const STALE_MS = 15 * 60_000, METER_EVERY_MS = 5 * 60_000;
+const inUseRow = (g) => {
   const id = E.state?.activeModel?.presetId;
-  if (!g?.available || g.settings?.ring === "hidden" || !id) return null;
-  const row = (g.rows ?? []).find((r) => (r.presets ?? [r.connection]).includes(id) && r.inUse);
+  return id ? (g?.rows ?? []).find((r) => (r.presets ?? [r.connection]).includes(id) && r.inUse) ?? null : null;
+};
+function planOf(g) {
+  if (!g?.available || g.settings?.ring === "hidden") return null;
+  const row = inUseRow(g);
   if (!row) return null;
   let best = null;
   for (const w of row.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
@@ -143,7 +181,9 @@ export function planMeter(label) {
   if (!p) return `<span class="hide-sm">${esc(label)}</span>`;
   if (p.pct === null) return `${ringSVG(null, false)}<span class="hide-sm">${esc(p.name)} · ${esc(p.signIn ? t("glance.measuring") : t("glance.noLimit"))}</span>`;
   const reset = p.w.resetAt && Date.parse(p.w.resetAt) > Date.now() ? resetWords(p.w.resetAt) : "";
-  const words = [esc(p.name), t("glance.left", { percent: p.pct }), esc(reset)].filter(Boolean).join(" · ");
+  /* A figure older than a quarter of an hour says how old it is. */
+  const at = Date.parse(p.w.measuredAt ?? ""), old = Number.isFinite(at) && Date.now() - at > STALE_MS ? agoWords(at) : "";
+  const words = [esc(p.name), t("glance.left", { percent: p.pct }), esc(reset), esc(old)].filter(Boolean).join(" · ");
   return `${ringSVG(p.pct, p.w.state === "estimated")}<span class="hide-sm">${words}</span>`;
 }
 /* The every-few-seconds re-read stays quiet when it fails: the status bar already says the engine is not answering. */
@@ -157,6 +197,19 @@ function keep(g) {
   const before = JSON.stringify(planOf(glance));
   glance = g;
   if (JSON.stringify(planOf(glance)) !== before) render();
+}
+
+/* The status bar's own cadence: a ChatGPT plan in use is read again every five minutes while this window is in front (and
+   when it comes back to the front after that long). Claude Code is not on this cadence, since reading it starts the
+   program: it is read when the popover opens or on Check now, and each of its replies says what is left anyway. Every
+   model reply that says what is left updates the meter through the engine's state. */
+let meterAt = 0; // the first look comes within a minute of opening
+function meterCheck() {
+  if (document.visibilityState !== "visible" || !document.hasFocus() || Date.now() - meterAt < METER_EVERY_MS) return;
+  const row = inUseRow(glance);
+  if (!row?.readable || row.connection !== "chatgpt") return;
+  meterAt = Date.now();
+  api("usage/limits/refresh", { connection: row.connection, account: row.account ?? "primary" }).then(keep).catch((error) => console.warn(error.message));
 }
 
 async function checkLimits() {
@@ -215,13 +268,16 @@ function startInBackground() {
 }
 
 export function initUsage() {
-  markLive(["usagepop", "limmeasure", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
+  markLive(["usagepop", "limmeasure", "limcheck", "limconnect", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
   on("tasks10", (el) => openTasks(el));
   on("bg-new", () => startInBackground());
   on("ckpt-save", saveProgress);
   on("ckpt-no", () => document.querySelector(".ckpt-q")?.remove());
   checkLimits();
   setInterval(checkLimits, 20000);
+  setInterval(meterCheck, 60_000);
+  window.addEventListener("focus", meterCheck);
+  on("limcheck", () => checkRows(glance?.rows ?? []));
   on("updmenu", (el) => openUpdates(el));
   on("limmeasure", async (el) => {
     el.disabled = true;
@@ -232,5 +288,21 @@ export function initUsage() {
     const pop = el.closest(".pop");
     if (pop && g) { const at = document.querySelector('#statusbar [data-act="usagepop"]'); if (at) openPop(at, popHTML(g), { right: true, force: true }); }
   });
-  on("usagepop", async (el) => openPop(el, popHTML(await api("usage/glance").catch(() => null)), { right: true }));
+  /* Opening the popover reads every plan it can again at once; each row says "Checking…" until its answer is back. */
+  on("usagepop", async (el) => {
+    const g = await api("usage/glance").catch((error) => { toast(error.message); return null; });
+    if (g) keep(g);
+    openPop(el, popHTML(g), { right: true });
+    if (!g || !document.querySelector(".pop .lims")) return;
+    checkRows(g.rows ?? []);
+    const look = looks;
+    api("usage/limits/look", {}).then((next) => { keep(next); redrawPop(look); }).catch((error) => toast(error.message));
+  });
+  on("limconnect", async (el) => {
+    el.disabled = true;
+    try { await api("providers/cli-agents", { id: el.dataset.v }); await refresh(); }
+    catch (error) { toast(error.message); el.disabled = false; return; }
+    const g = await api("usage/glance").catch((error) => { toast(error.message); return null; });
+    if (g) { keep(g); checkRows(g.rows ?? []); }
+  });
 }

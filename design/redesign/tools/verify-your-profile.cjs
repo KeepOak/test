@@ -133,17 +133,7 @@ async function everywhere(page) {
   check("Team › People: Robin, with the photo", await until(async () => (await page.locator("#main .t9-item .photo-yp img").count()) >= 1 && /Robin/.test(await page.locator("#main .t9-list").innerText())));
   await page.waitForTimeout(700); // the place eases in
   await shot(page, "06-team-people");
-  await page.locator('[data-act="guide"]').first().click();
-  await page.locator('.pop [data-act="onboard"]').click();
-  await page.locator(".ob-agree").click();
-  await page.locator('[data-act="ob-go"][data-v="8"]').click();
-  check("setup's People step: asks the name, and has Robin", await until(async () => (await page.locator("#ob-name").inputValue()) === "Robin"));
-  await page.locator("#ob-name").fill("Robin Hood");
-  await page.locator("#ob-name").press("Enter");
-  check("setup's People step: a new name is saved (GET /api/profiles)", await until(async () => (await api("profiles")).owner.name === "Robin Hood"));
-  check("setup's People step: nothing greyed on the name field", !(await page.locator("#ob-name").isDisabled()));
-  await shot(page, "07-setup-people");
-  await page.locator('[data-act="ob-close"]').first().click();
+  // Pass 18c: setup no longer has a People step (it waits on Overview's Finish setting up, which opens Settings › People).
 }
 
 /* 5: a household person edits only their own profile. */
@@ -159,7 +149,7 @@ async function household(page, amara) {
   await until(async () => (await page.locator('#side [data-act="owner"] .who14 b').innerText()) === "Amara");
   await page.locator('#side [data-act="owner"]').click();
   check("as Amara: the owner's tile switches back, Amara's opens her profile",
-    /Robin Hood/.test(await page.locator('.pop [data-act="switchto"]').innerText()) && /Amara/.test(await page.locator('.pop [data-act="yp-open"]').innerText()));
+    /Robin/.test(await page.locator('.pop [data-act="switchto"]').innerText()) && /Amara/.test(await page.locator('.pop [data-act="yp-open"]').innerText()));
   await page.locator('.pop [data-act="yp-open"]').click();
   await page.locator("#yp").waitFor();
   check("as Amara: only her own name and picture (no language, time zone, App lock or accounts)",
@@ -173,7 +163,7 @@ async function household(page, amara) {
   await page.locator('#yp [data-act="yp-emoji"][data-v="🌻"]').click();
   const list = await until(async () => { const l = await api("profiles"); const me = l.profiles.find((p) => p.id === amara.id); return me.name === "Amara K" && me.avatar.emoji === "🌻" ? l : null; });
   check("as Amara: her name and emoji are saved (GET /api/profiles)", !!list);
-  check("as Amara: the owner's profile is untouched (GET /api/profiles owner)", list?.owner.name === "Robin Hood" && list?.owner.avatar.face === "photo");
+  check("as Amara: the owner's profile is untouched (GET /api/profiles owner)", list?.owner.name === "Robin" && list?.owner.avatar.face === "photo");
   const refused = await api("profiles/owner/about", { name: "Mallory" }).then(() => "", (e) => e.message);
   check("as Amara: the engine refuses her the owner's profile", /belongs to the owner/.test(refused), refused);
   await page.locator('.dlg [data-act="dlg-close"]').first().click();

@@ -21,6 +21,8 @@ export interface Invocation {
   sessionId?: string | undefined;
   access: Access;
   permissions?: string[];
+  /** This computer's own window, with its own key and not through a door (settings.ts `windowShipsAs`). */
+  ownWindow?: boolean;
 }
 export interface Outcome extends Reply { command: string; refused?: true }
 
@@ -37,15 +39,15 @@ export function refusalFor(level: Level, access: Access, surface: Surface): stri
 }
 
 /** The command a line is for this surface, or null when the surface should treat it as before. */
-export function commandFor(host: CommandHost, surface: Surface, line: string): { command: CatalogCommand; argument: string } | null {
-  const mode = commandMode(host.runtime.store, host.runtime.owner, surface);
+export function commandFor(host: CommandHost, surface: Surface, line: string, ownWindow = false): { command: CatalogCommand; argument: string } | null {
+  const mode = commandMode(host.runtime.store, host.runtime.owner, surface, ownWindow);
   const parsed = parseLine(line, mode === "off", surface);
   if (!parsed || !available(parsed.command, surface, mode) || !HANDLERS[parsed.command.name]) return null;
   return parsed;
 }
 
 export async function executeCommand(host: CommandHost, input: Invocation): Promise<Outcome | null> {
-  const parsed = commandFor(host, input.surface, input.line);
+  const parsed = commandFor(host, input.surface, input.line, input.ownWindow === true);
   // ---- bucket 12: the owner's own saved commands, only when the shipped table did not know the line ----
   // Q259: they are the owner's, so for a household person at the window such a line is no command at all (which says
   // nothing about what the owner saved), and `/prompts` typed while the shipped table is off is refused as it is on.
@@ -62,7 +64,7 @@ export async function executeCommand(host: CommandHost, input: Invocation): Prom
   if (notTheirs) return { command: name, text: notTheirs, refused: true };
   const call: Call = {
     host, surface: input.surface, argument, sessionId: input.sessionId, access: input.access,
-    mode: commandMode(host.runtime.store, host.runtime.owner, input.surface), ...(input.permissions ? { permissions: input.permissions } : {}),
+    mode: commandMode(host.runtime.store, host.runtime.owner, input.surface, input.ownWindow === true), ...(input.permissions ? { permissions: input.permissions } : {}),
   };
   try {
     if (level === "owner") host.requireOwner(`/${name}`);

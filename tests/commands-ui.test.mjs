@@ -79,12 +79,14 @@ test("a command runs without reaching the model, and a place command opens the p
 /* Redesign: with the switch off the prototype's list still opens, and offers only what the engine lists for the window
    when off: the commands the window always had (GET /api/commands?surface=window, listed). */
 test("with the switch off the list offers only the commands the window always had, and /help lists them", async (t) => {
-  const { page, errors } = await fixture(t, undefined, null);
+  // Batch A: this computer's window ships the switch on (src/commands/settings.ts windowShipsAs), so off is saved here.
+  const { page, errors } = await fixture(t, undefined, "off");
   await page.locator("#prompt").fill("/");
   await page.locator("#prompt").dispatchEvent("input");
   const menu = page.locator(".slash6");
   await menu.waitFor({ state: "visible" });
-  assert.deepEqual(await menu.locator("[role=option] b").allTextContents(), ["/help", "/model", "/goal"]);
+  // /prompts is the prompt library's own command, and that library ships on (src/prompt-library.ts).
+  assert.deepEqual(await menu.locator("[role=option] b").allTextContents(), ["/help", "/model", "/goal", "/prompts"]);
   await page.locator("#prompt").fill("/to");
   await page.locator("#prompt").dispatchEvent("input");
   await page.waitForTimeout(500);

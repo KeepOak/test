@@ -26,14 +26,14 @@ const screenPermissions: ReadonlySet<string> = new Set(["desktop.view", "desktop
  * Whether a call reaches the owner's screen, keyboard, mouse or clipboard, or a desktop Branch drives on their behalf.
  * `computer.*` works on a page or a window; only the window side is the screen.
  */
-export function reachesScreen(tool: string, permission: string, args: unknown): boolean {
-  if (screenPermissions.has(permission) || tool.startsWith("desktop.")) return true;
+export function reachesScreen(tool: string, permission: string, args: unknown, declared = false): boolean {
+  if (declared || screenPermissions.has(permission) || tool.startsWith("desktop.")) return true;
   return tool.startsWith("computer.") && (args as { at?: unknown } | null)?.at === "window";
 }
 
 /** Whether a tool is one of the screen tools that are left out of a task the owner did not start for the screen. */
-export const screenTool = (tool: string, permission: string): boolean =>
-  screenPermissions.has(permission) || tool.startsWith("desktop.");
+export const screenTool = (tool: string, permission: string, declared = false): boolean =>
+  declared || screenPermissions.has(permission) || tool.startsWith("desktop.");
 
 const screenWords = /\b(screens?|screenshots?|desktop|clipboard|mouse|keyboard)\b|\b(my computer|this computer|my pc|computer use|take over)\b/i;
 /** Starting, closing or switching to a program on this computer ("open notepad"), which is the screen too. */
@@ -57,3 +57,51 @@ export const screenWithheldRefusal =
   "This task was not started to use the owner's screen, keyboard, mouse or clipboard, so that tool is not available and "
   + "nothing was done. For a web page use Branch's own browser (browser.* tools, including browser.act to press a key) "
   + "or the web tools. Do not ask the owner to allow screen tools; carry on another way and say what you could not do.";
+
+/**
+ * Dogfood follow-up: a tool from outside (an MCP server, a plugin, a program lending tools) that reaches the owner's
+ * own screen, keyboard, mouse or clipboard, whatever it is called, so it gets the same guard as desktop.*. Read from
+ * what the tool says about itself: a declared category, its MCP annotations' title, its name, its description and its
+ * inputs. Only ever stricter: a tool wrongly taken for a screen tool is offered only when the owner asks for the screen.
+ * Tools that drive a browser of their own (a page, a tab, Playwright) are not the owner's screen, unless their inputs
+ * are computer-use actions: a name never exempts those.
+ */
+export interface ToolSelfDescription {
+  name: string;
+  title?: string | undefined;
+  description?: string | undefined;
+  inputSchema?: unknown;
+  /** A category the tool declares for itself ("computer-use", "screen", "desktop"). */
+  category?: string | undefined;
+}
+const words = (text: string): string[] =>
+  text.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const screenCategories = /^(computer[-_ ]?use|screen|desktop|gui|input[-_ ]?control|remote[-_ ]?desktop)$/i;
+/** Name words that on their own mean the screen. */
+const strongNames = new Set(["screenshot", "screenshots", "screencap", "screen", "desktop", "mouse", "cursor", "clipboard",
+  "keyboard", "keypress", "hotkey", "hotkeys", "computer"]);
+/** Name words that mean the screen when the description says so too. */
+const weakNames = new Set(["click", "type", "key", "keys", "scroll", "drag", "zoom", "focus", "window", "windows", "app",
+  "apps", "application", "launch", "press", "tap", "swipe", "ui", "ocr", "capture"]);
+/** Name words for a tool that works in a browser of its own, which is not the owner's screen. */
+const browserNames = new Set(["browser", "page", "tab", "tabs", "playwright", "puppeteer", "web", "url", "navigate", "dom", "html"]);
+const screenNouns = /\b(screen|desktop|mouse|keyboard|clipboard|display|cursor|(?:app(?:lication)?|native) windows?|the user'?s computer|this computer)\b/i;
+const screenVerbs = /\b(click|press|type|keystroke|capture|screenshot|move the (?:mouse|cursor)|control|scroll|drag)\w*/i;
+/** Inputs that are the actions of a computer-use tool. */
+const screenInputs = /"(left_click|right_click|double_click|middle_click|mouse_move|left_click_drag|screenshot|key_press|cursor_position|type_text)"/;
+
+export function describesScreen(tool: ToolSelfDescription): boolean {
+  if (tool.category && screenCategories.test(tool.category.trim())) return true;
+  // What a tool can be asked to do comes first: a name never exempts inputs that are computer-use actions.
+  let inputs = "";
+  try { inputs = JSON.stringify(tool.inputSchema ?? {}).slice(0, 20_000); } catch { /* unreadable inputs say nothing */ }
+  if (screenInputs.test(inputs)) return true;
+  // "screen name" (a social account's handle) is not the screen.
+  const named = words(`${tool.name} ${tool.title ?? ""}`).filter((word, at, all) => !(word === "screen" && all[at + 1] === "name"));
+  // A browser word in the name only helps classify what is otherwise unknown.
+  if (named.some((word) => browserNames.has(word))) return false;
+  const described = String(tool.description ?? "");
+  if (named.some((word) => strongNames.has(word))) return true;
+  if (named.some((word) => weakNames.has(word)) && screenNouns.test(described)) return true;
+  return screenNouns.test(described) && screenVerbs.test(described) && !/\b(browser|web ?page|tab)\b/i.test(described);
+}
