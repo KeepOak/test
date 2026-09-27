@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,6 +16,7 @@ import { z } from "zod";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy, TelegramAdapter } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { loadIntegrations } from "../dist/integrations/bootstrap.js";
 
 /** BotFather's shape: digits, a colon, 30 to 64 letters. Made up; it opens nothing anywhere. */
 const token = `123456:TEST-fake-token-${"a".repeat(20)}`;
@@ -329,4 +330,51 @@ test("a Telegram channel from the settings file is never replaced by the card's 
   assert.match(await app.neverBreak.telegram.connect(), /from the settings file/);
   assert.equal(app.channels.adapter("telegram"), fromFile, "the settings file's bot is still the one read");
   assert.equal(bot.state.calls.filter((c) => c.botId === "123456").length, 0, "the card's bot never asked Telegram");
+});
+
+test("a read position is kept per bot: one saved by another bot, or before bots were named, is never used", async () => {
+  const { channelPosition } = await import("../dist/never-break/channel-position.js");
+  const saved = new Map();
+  const store = { get: (_table, owner, id) => saved.get(`${owner}/${id}`), save: (_table, owner, id, data) => { saved.set(`${owner}/${id}`, { data }); } };
+  channelPosition(store, "telegram", "local", "111").save(42);
+  assert.equal(saved.get("local/channel-position:telegram").data.reader, "111", "saved with the bot it belongs to");
+  assert.equal(channelPosition(store, "telegram", "local", "111").load(), 42);
+  assert.equal(channelPosition(store, "telegram", "local", "222").load(), 0, "another bot starts from Telegram's earliest unconfirmed update");
+  saved.set("local/channel-position:telegram", { data: { offset: 42 } });
+  assert.equal(channelPosition(store, "telegram", "local", "111").load(), 0, "a position saved before bots were named is not trusted");
+  assert.equal(channelPosition(store, "telegram", "local").load(), 42, "a position with no reader named reads as before");
+});
+
+test("the card's bot never starts from a position another bot left, so its first message is answered", async (t) => {
+  const bot = await fakeBotApi(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-telegram-e2e-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model(), telegramApiBase: bot.base });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.web.policy.configure({ allowPrivateAddresses: true }); // the stand-in lives on this computer
+  const owner = app.runtime.owner;
+  // Left by another bot (a settings-file bot, or a token replaced since), far past this bot's first update.
+  app.store.save("settings", owner, "channel-position:telegram", { offset: 5000, reader: "654321" });
+  await app.neverBreak.telegram.save({ token, mode: "on" });
+  bot.say("hello"); // this bot's update 1, waiting at Telegram
+  assert.equal(await app.neverBreak.telegram.connect(), null);
+  await until(() => bot.state.sent.some((sent) => sent.botId === "123456" && /code \d{6}/.test(sent.text)), "the first message answered");
+  const polls = bot.state.calls.filter((c) => c.method === "getUpdates" && c.botId === "123456");
+  assert.equal(polls[0].body.offset, 0, "asked from the earliest unconfirmed update, not the other bot's position");
+  await until(() => app.store.get("settings", owner, "channel-position:telegram")?.data.reader === "123456", "its own position saved, named for it");
+});
+
+test("a settings-file bot never starts from a position the card's bot left under the same name", async (t) => {
+  const bot = await fakeBotApi(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-telegram-e2e-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model() });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.web.policy.configure({ allowPrivateAddresses: true }); // the stand-in lives on this computer
+  app.store.save("settings", "local", "channel-position:telegram", { offset: 5000, reader: "123456" }); // the card's bot's
+  const configPath = join(root, "integrations.json");
+  await writeFile(configPath, JSON.stringify({ channels: [{ type: "telegram", tokenEnv: "E2E_BOT_TOKEN", apiBase: bot.base }] }));
+  bot.say("hello", "654321");
+  const loaded = await loadIntegrations(app.registry, configPath, { E2E_BOT_TOKEN: replacement }, app.secretsFor, app.channelHost);
+  t.after(() => loaded.close());
+  await until(() => bot.state.sent.some((sent) => sent.botId === "654321"), "the settings-file bot answered its first message");
+  assert.equal(bot.state.calls.find((c) => c.method === "getUpdates" && c.botId === "654321").body.offset, 0);
 });

@@ -122,7 +122,7 @@ async function saveAutostart(context: DeploymentContext, platform: NodeJS.Platfo
   const { enabled, minimized } = EnabledSchema.parse(body);
   const program = signInProgram(context, deps);
   if (!program) throw new Error(`Branch has to be installed on this computer before it can ${startsBySelfWords(platform)}.`);
-  if (context.loginItem) context.loginItem.set(enabled);
+  if (context.loginItem) await context.loginItem.set(enabled);
   else if (platform !== "win32") throw new Error(noSignInStartHereWords);
   else await setAutostart(enabled, { executable: program, minimized: minimized ?? true }, context.autostartDeps);
   return autostartView(context, platform, deps);

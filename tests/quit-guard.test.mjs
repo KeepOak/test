@@ -47,7 +47,9 @@ test("the window marks an update, a restart and `branch quit` so none of them as
   assert.match(main, /registerUpdaterIpc\(window, url, app\.getVersion\(\), \(\) => \{ quitReason = "update"; app\.quit\(\); \}/);
   assert.match(main, /app\.relaunch\([\s\S]{0,120}quitReason = "restart";\s*app\.quit\(\);/);
   assert.match(main, /quit: \(\) => \{ quitReason = "command"; app\.quit\(\); \}/);
-  assert.match(main, /asksBeforeQuit\(\{ reason: quitReason, runningTasks: runningNow\(\), engineInBackground: joinedBackground \}\)/);
+  // The engine runs in a process of its own, so the count of working tasks is its answer (or the last count it told).
+  assert.match(main, /runningNow = \(\) => host\.call<number>\("running-count", undefined, 5000\)/);
+  assert.match(main, /asksBeforeQuit\(\{ reason: quitReason, runningTasks, engineInBackground: joinedBackground \}\)/);
 });
 
 test("integration review: the computer shutting down or signing out never waits for the question, nor does an update while it shows", async () => {
@@ -57,6 +59,7 @@ test("integration review: the computer shutting down or signing out never waits 
   assert.match(main, /window\.on\("session-end", \(\) => \{ quitReason = "system"; \}\)/);
   const beforeQuit = main.slice(main.indexOf('app.on("before-quit"'), main.indexOf("powerMonitor.on("));
   assert.doesNotMatch(beforeQuit, /if \(askingToQuit\) return;/, "a quit that was already decided is never swallowed by an open question");
-  assert.match(beforeQuit, /if \(!askingToQuit\) void askThenQuit\(\);\s*return;\s*\}\s*shutDown\(\);/);
+  assert.match(beforeQuit, /if \(quitReason !== "person" \|\| joinedBackground\) return shutDown\(\);/, "a decided quit never waits for the count");
+  assert.match(beforeQuit, /if \(!askingToQuit\) void askThenQuit\(runningTasks\);\s*return;\s*\}\s*shutDown\(\);/);
   assert.match(main, /if \(quitting\) return; \/\/ an update/, "an answer that arrives after the quit already began does nothing");
 });
