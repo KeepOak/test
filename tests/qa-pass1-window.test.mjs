@@ -76,7 +76,8 @@ test("Q011: a blank group chat waits for a name and two Trunks, and the engine's
   assert.doesNotMatch(refused.body.error, /Too small|expected string|>=/, refused.body.error);
   assert.match(refused.body.error, /"name" cannot be empty/);
   await ready(f.page);
-  await f.page.locator('.side-nav [data-v="customize"]').click();
+  // With no Trunks yet Customize shows its empty state; the sidebar's + menu always offers a new room.
+  await f.page.locator('[data-act="newmenu"]').click();
   await f.page.locator('[data-act="grp-new"]').first().click();
   const start = f.page.locator('.dlg [data-act="grp-make"]');
   await start.waitFor();
