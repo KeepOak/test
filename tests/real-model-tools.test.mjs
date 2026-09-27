@@ -391,7 +391,26 @@ test("a text call naming a tool by its hashed wire name is still one", async (t)
   assert.equal(run.output, textCallEnding);
 });
 
+test("a call with a stray word in front and a closing tag is one too, and never reaches a stream or a message", async (t) => {
+  // qfix3's real run: qwen2.5:7b wrote `portun {json} </tool_call>`, posted as a room reply. Mutation: drop the stray-word
+  // strip in writesToolCallAsText → the JSON is the answer, red; hand the gate no wait for the second word → streamed, red.
+  const stray = `portun ${textCall} </tool_call>`;
+  const { provider } = standIn([{ content: stray }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const streamed = [];
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], onTextDelta: (text) => streamed.push(text) });
+  assert.equal(run.output, "It says eggs.");
+  assert.ok(!streamed.join("").includes('"arguments"') && !streamed.join("").includes("portun"), streamed.join(""));
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => /"arguments"|portun/.test(String(message.content ?? ""))), "in no message");
+  assert.equal(events(branch, run, "model.text_call").length, 1);
+});
+
 test("only a whole reply shaped like a call is one", () => {
+  for (const text of [`portun ${textCall} </tool_call>`, `portun\n${textCall}`, `${textCall}</tool_call>`, `<tool_call>${textCall}`,
+    "call```json\n" + textCall + "\n```"])
+    assert.ok(writesToolCallAsText(text), text);
+  for (const text of ["Here is the call: " + textCall, "Two words " + textCall, `Example: ${textCall}`, "averyveryveryverylongwordindeed " + textCall])
+    assert.ok(!writesToolCallAsText(text), text);
   for (const text of [textCall, `[${textCall}]`, '<tool_call>{"name":"files.read","arguments":{}}</tool_call>',
     '{"tool_calls":[{"type":"function","function":{"name":"files.read","arguments":"{}"}}]}', '{"name":"files.read","parameters":{"path":"a"}}'])
     assert.ok(writesToolCallAsText(text), text);

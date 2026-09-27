@@ -287,13 +287,18 @@ const nextStepVerbs = /^(start|begin|proceed|continue|organi[sz]e|sort|tidy|put|
  * and (with `isTool`) only when every call names a tool Branch has: an example a person asked for ("get_weather") is an answer.
  */
 export function writesToolCallAsText(text: string, isTool: (name: string) => boolean = () => true): boolean {
-  const said = String(text ?? "").trim();
+  let said = String(text ?? "").trim();
   if (/^<tool_call>[\s\S]*<\/tool_call>$/i.test(said)) return true;
+  // qwen2.5:7b once wrote `portun {"name": …} </tool_call>`: one stray word in front, a closing tag with no opening one.
+  // One word (letters and digits only, so "Here is the call:" stays an answer) and either tag on its own are dropped.
+  said = said.replace(strayWord, "").replace(/^<tool_call>\s*/i, "").replace(/\s*<\/tool_call>$/i, "");
   let value: unknown;
   try { value = JSON.parse(/^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(said)?.[1] ?? said); } catch { return false; }
   const calls = Array.isArray(value) ? value : [value];
   return calls.length > 0 && calls.every((call) => isCallShape(call, isTool));
 }
+/** One stray word before something shaped like a call: `{`, `[`, a fence or a tag. */
+const strayWord = /^[\p{L}\p{N}_-]{1,24}\s*(?=[{[`<])/u;
 const callKeys = new Set(["name", "arguments", "parameters", "id", "type", "function", "tool_calls"]);
 function isCallShape(value: unknown, isTool: (name: string) => boolean): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -318,7 +323,12 @@ function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((tex
       held += text;
       const start = held.trimStart();
       if (!start) return;
-      if (mode === "undecided") mode = /^[{[`<]/.test(start) ? "hold" : "pass";
+      if (mode === "undecided") {
+        // One word so far (it may be a stray word before a call): wait for what follows it.
+        const word = /^[\p{L}\p{N}_-]{1,24}(\s*)([\s\S]*)$/u.exec(start);
+        if (word && !word[2]) return;
+        mode = /^[{[`<]/.test(word ? word[2]! : start) ? "hold" : "pass";
+      }
       if (mode === "pass") { const out = held; held = ""; emit(out); }
     },
     settle: (pass) => { if (pass && held) emit(held); held = ""; mode = "pass"; },
@@ -370,11 +380,14 @@ const coreMemoryTools = ["memory.put", "memory.search", "memory.delete"] as cons
  * whether to start.
  */
 export function ownerFolderInstructions(prompt: string, permissions: ReadonlySet<string>): string {
-  if (!permissions.has("files.write") || !/\b(downloads|desktop|documents)\b/i.test(prompt)) return "";
+  const named = /\b(downloads|desktop|documents)\b/i.exec(prompt)?.[1];
+  if (!permissions.has("files.write") || !named) return "";
+  const folder = `~/${named[0]!.toUpperCase()}${named.slice(1).toLowerCase()}`;
   return "The person's own folders are ~/Downloads, ~/Desktop and ~/Documents. See one with files.list and move files in it "
     + "with files.move (the person is asked once before you work in each folder). To tidy a folder, list it, then move every "
-    + "loose file into a subfolder named for its kind, such as Pictures, Documents, Music or Installers, in one files.move "
-    + "call with moves. Do the work rather than asking whether to start. ";
+    + "loose file into a subfolder inside that same folder named for its kind, such as Pictures, Documents, Music or Installers "
+    + `(for example from ${folder}/photo.jpg to ${folder}/Pictures/photo.jpg), in one files.move call with moves. `
+    + "Do the work rather than asking whether to start. ";
 }
 const coreFileTools = ["files.read", "files.list", "files.write", "files.edit", "files.move"] as const;
 const tooLong = "This conversation has grown too long to continue. Start a new conversation and mention what matters from this one.";
