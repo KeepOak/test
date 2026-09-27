@@ -162,15 +162,17 @@ test.skip("A3 when one runs low: the fallback order and the way to change it", a
   assert.deepEqual(errors, []);
 });
 
-test("A3 when one runs out: the switches are in place, greyed out until the engine keeps them", async (t) => {
+/* Batch D: "Fall back to this computer" is the engine's fallback order (tests/settings-batch-d.test.mjs D2); with no model
+   on this computer, as here, it is greyed with that reason. "Move to the next account" stays greyed with its own. */
+test("A3 when one runs out: the switches are in place, each greyed with its reason while it cannot act", async (t) => {
   const { call, page, errors, open } = await fixture(t);
   await withAccounts(call);
   await open();
   await openSettingsPage(page, "accounts");
-  for (const id of ["ac-next", "ac-fall"]) {
-    const box = page.locator(`#${id}`);
-    assert.equal(await box.getAttribute("aria-disabled"), "true", `${id} is Coming soon`);
+  for (const box of [page.locator("#ac-next"), page.locator('.set-col input.sw[data-why="ac-fall"]')]) {
+    assert.equal(await box.getAttribute("aria-disabled"), "true");
     assert.equal(await box.isDisabled(), true);
+    assert.ok(await box.locator("xpath=ancestor::div[contains(@class,'ctl')]").getAttribute("data-why-text"), "its reason is under its row");
   }
   assert.deepEqual(errors, []);
 });

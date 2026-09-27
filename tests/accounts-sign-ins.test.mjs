@@ -29,7 +29,10 @@ async function fixture(t) {
 
 test("the sign-ins are listed with the switch on as it ships, hold no account, and are the owner's", async (t) => {
   const { app, call } = await fixture(t);
-  assert.equal((await call("GET", "/api/accounts")).body.mode, "when-needed", "several accounts per connection ships on");
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); the owner switches it off here.
+  assert.equal((await call("GET", "/api/accounts")).body.mode, "when-needed");
+  assert.equal((await call("POST", "/api/accounts/settings", { mode: "off" })).status, 200);
+  assert.equal((await call("GET", "/api/accounts")).body.mode, "off");
   const listed = await call("GET", "/api/accounts/sign-ins");
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.body.programs.map((p) => p.id), ["claude-code", "codex", "copilot", "gemini-cli"]);
@@ -100,8 +103,8 @@ test("a coding assistant the owner added comes back after a restart, and one tak
   engine = await open();
   assert.ok(engine.app.runtime.models.presets.has("cli-claude-code"), "Claude Code is a connection again after the restart");
   const lists = (await engine.call("GET", "/api/accounts")).body;
-  assert.equal(lists.mode, "when-needed");
-  assert.ok(lists.pools.some((pool) => pool.pool === "cli-claude-code"), "and its list is back with several accounts per connection on, as it ships");
+  assert.equal(lists.mode, "when-needed", "several accounts per connection ships on (the owner's decision, 2026-09-27)");
+  assert.ok(lists.pools.some((pool) => pool.pool === "cli-claude-code"), "and its list is back");
   assert.equal((await engine.call("GET", "/api/accounts/sign-ins")).body.programs.find((p) => p.id === "claude-code").connected, true);
   assert.equal((await engine.call("POST", "/api/connections/forget", { id: "cli-claude-code" })).status, 200);
   await engine.close();

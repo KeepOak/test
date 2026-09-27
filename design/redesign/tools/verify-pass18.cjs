@@ -54,7 +54,7 @@ async function empty(page) {
     await tab(page, v);
     const said = await emptyText(page);
     check(`${where} › ${v}: the engine's list is empty and the welcome says so`, engineEmpty && said.startsWith(words), said);
-    if (v === "live") check("empty18c: the Branch pose is its loop, gated like every face", (await page.locator("#main .empty18c video.gate17").count()) === 1);
+    if (v === "live") check("empty18c: a line icon, never the mascot (the owner's faces rule)", (await page.locator("#main .empty18c .ico18c svg.i").count()) === 1 && (await page.locator("#main .empty18c :is(img, video)").count()) === 0);
     if (["live", "agents"].includes(v)) await shot(page, `empty-team-${v}`);
   }
   await place(page, "team");

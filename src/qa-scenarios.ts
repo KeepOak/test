@@ -6,6 +6,7 @@ import type { SuiteRun } from "./evaluation-runner.js";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { WorkspaceFiles } from "./files.js";
 import type { Store } from "./store.js";
+import { shippedUnlessChosen } from "./ship-on.js";
 
 /**
  * w911 (A1753): plain-language test scenarios for a page. The owner writes a name, the page (an
@@ -17,9 +18,12 @@ import type { Store } from "./store.js";
 export const QaSettingsSchema = z.object({ mode: FeatureModeSchema.default("off") }).strict();
 export type QaSettings = z.infer<typeof QaSettingsSchema>;
 const settingsKey = "qa-scenarios";
+// The owner's rule (ships on, 2026-09-26): a scenario is drafted only when the owner asks, on the owner's model; none of (a)–(f).
+export const qaShipsAs: FeatureMode = "when-needed";
+
 export function qaSettings(store: Pick<Store, "get">, owner: string): QaSettings {
   const saved = QaSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : QaSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: qaShipsAs }) : QaSettingsSchema.parse({});
 }
 export function saveQaSettings(store: Store, owner: string, input: unknown): QaSettings {
   const given = input && typeof input === "object" && !Array.isArray(input) ? input : {};

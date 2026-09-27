@@ -17,6 +17,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy, TelegramAdapter } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { loadIntegrations } from "../dist/integrations/bootstrap.js";
+import { saveChatLiveSwitches } from "../dist/channels/chat-live-settings.js";
 
 /** BotFather's shape: digits, a colon, 30 to 64 letters. Made up; it opens nothing anywhere. */
 const token = `123456:TEST-fake-token-${"a".repeat(20)}`;
@@ -129,6 +130,9 @@ test("Telegram end to end: paste, check, pair, talk, approve by button, split, r
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   app.web.policy.configure({ allowPrivateAddresses: true }); // the stand-in lives on this computer
   app.channels.mergeWindowMs = 0;
+  // The chat extras ship when needed (the ship-on rule): steering would fold a message into the task already working.
+  // This is about each message answered once, in order, so the owner switches them off.
+  saveChatLiveSwitches(app.store, app.runtime.owner, { liveStatus: "off", steering: "off", splitting: "off" });
   const call = async (path, body) => {
     const response = await fetch(`${server.url}/api/${path}`, { method: body ? "POST" : "GET",
       headers: { authorization: `Bearer ${server.token}`, origin: server.url, ...(body ? { "content-type": "application/json" } : {}) },

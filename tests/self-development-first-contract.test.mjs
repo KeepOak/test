@@ -52,6 +52,9 @@ test("the first contract is made only after the owner's own yes, and that yes is
   const app = await createBranch({ workspace, dataDir: join(root, "data"), provider, web: { allowPrivateAddresses: true } });
   t.after(async () => { await app.close(); await discardTemp(root); });
   savePolicy(app.store, app.runtime.owner, { preset: "off" });
+  // The history of what is remembered ships when needed and keeps its own Git repository after each task (the ship-on
+  // rule); this is about the Git a source change runs, so the owner switches that history off.
+  app.memoryHistory.configure(app.runtime.owner, { mode: "off" });
   app.registry.register({ name: "git.push", permission: "git.remote", description: "test double", parameters: z.object({}).passthrough(),
     execute: async () => ({}) });
   await mkdir(join(workspace, "branch-agent-source"), { recursive: true });
