@@ -166,6 +166,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   // phase2/panels: the side panel's Browser and Terminal tabs carry the commands the owner's tasks ran
   // and what they printed, and the pages they opened.
   /^\/api\/panels\/work$/,
+  // live-stage: frames of the owner's tasks' browser as it works, with the addresses and titles of the pages it has open.
+  /^\/api\/panels\/live$/,
   // The desktop handover sees every person's busy tasks and the owner's release channel.
   /^\/api\/comfort\/update-readiness$/,
   // Q55: what the owner's last update did, and which versions it went between.

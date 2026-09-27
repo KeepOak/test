@@ -51,8 +51,8 @@ async function load() {
 /* ---------- Rules for each tool and folder ----------
    Each rule as the prototype's row: Allow / Ask / Never, the engine's sentence for it, and its place in the list.
    Add a rule is POST /api/rules/add (in front of the others); Remove is POST /api/rules/remove { index }, sent only after
-   the list is read again and the rule at that place is still the one drawn, so a list changed meanwhile never loses the
-   wrong rule. Both save the list as the owner's own (the preset reads "custom" afterwards) and are refused under
+   the list is read again and the rule at that place is still the one drawn on the pressed button (not the list as last
+   read, which a draw held under the press may not show yet), so a list changed meanwhile never loses the wrong rule. Both save the list as the owner's own (the preset reads "custom" afterwards) and are refused under
    Lockdown. Move up stays greyed: the engine has no route that moves one rule, and moving an allow above a refusal
    would loosen the list with nothing asking first. */
 const PILLS = { allow: ["ok", "window.settings.permissions.rule-allow"], ask: ["idle", "window.settings.permissions.rule-ask"], deny: ["bad", "window.settings.permissions.rule-never"] };
@@ -60,7 +60,7 @@ function ruleRows() {
   const rows = P.rules.map(({ index, rule, sentence }) => {
     const [tone, key] = PILLS[rule.decision] ?? ["idle", null];
     const word = key ? t(key) : rule.decision;
-    return `<div class="prow rule15"><span class="pill ${tone}">${esc(word)}</span><span class="grow"><b>${esc(sentence)}</b><small>${esc(t("window.settings.permissions.rule-n", { n: index + 1 }))}</small></span><button class="icon-btn" type="button" aria-label="${t("accounts.action.up")}" data-act="rule-up8">${ic("up", "s")}</button><button class="icon-btn" type="button" aria-label="${t("accounts.action.remove")}" data-act="rule-rm8" data-i="${index}">${ic("x", "s")}</button></div>`;
+    return `<div class="prow rule15"><span class="pill ${tone}">${esc(word)}</span><span class="grow"><b>${esc(sentence)}</b><small>${esc(t("window.settings.permissions.rule-n", { n: index + 1 }))}</small></span><button class="icon-btn" type="button" aria-label="${t("accounts.action.up")}" data-act="rule-up8">${ic("up", "s")}</button><button class="icon-btn" type="button" aria-label="${t("accounts.action.remove")}" data-act="rule-rm8" data-i="${index}" data-v="${esc(JSON.stringify(rule))}">${ic("x", "s")}</button></div>`;
   });
   return `<div class="rows">${rows.join("")}</div>`;
 }
@@ -91,11 +91,10 @@ async function addRule() {
   await load();
 }
 async function removeRule(el) {
-  const at = Number(el.dataset.i);
-  const drawn = P.rules.find((r) => r.index === at)?.rule;
+  const at = Number(el.dataset.i), drawn = el.dataset.v;
   let now;
   try { now = (await api("rules")).rules ?? []; } catch (error) { toast(error.message); return; }
-  if (!drawn || JSON.stringify(now[at]?.rule) !== JSON.stringify(drawn)) { P.rules = now; render(); return; }
+  if (!drawn || JSON.stringify(now[at]?.rule) !== drawn) { P.rules = now; render(); return; }
   try { await api("rules/remove", { index: at }); } catch (error) { toast(error.message); }
   await load();
 }

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
 import { newAppHold, newAppHoldReason } from "./desktop-app-ask.js"; // unhold-control
 import { currentAccountCall, withAccountCall } from "./accounts/context.js"; // mac6/accounts (currentAccountCall: mac7/lockdown-fix)
@@ -92,6 +92,7 @@ import {
   ApprovalGate, ApprovalRequiredError, RateLimiter, approvalQuestion, droppedPendingMessage,
   jsonWriteProblem, refusedByPolicy, simulatedResult, sleepFor, type PendingApproval,
 } from "./approvals.js";
+import { argumentFingerprint } from "./question-fingerprint.js";
 import {
   addPolicyRule, cappedPolicy, evaluatePolicy, isReadOnlyPermission, keepPolicyRule, policyFullNote, readPolicy,
   type Policy, type PolicyDecision, type PolicyRemember, type RunSource,
@@ -830,7 +831,7 @@ export class Runtime {
   /** mac5/manual-actions: src/tool-gate.ts decides; a refusal is written on the record first. */
   private gateManual(runId: string, name: string, args: unknown, context: ToolContext, options: ToolGateOptions) {
     try {
-      return gateToolUse(this, name, args, context, argumentFingerprint(JSON.stringify(args ?? {})), options.mode);
+      return gateToolUse(this, name, args, context, argumentFingerprint(name, JSON.stringify(args ?? {})), options.mode);
     } catch (error) {
       const kind = error instanceof ApprovalRequiredError ? "policy.ask" : "policy.denied";
       this.store.event(runId, kind, { name, manual: true, reason: this.hideSecrets(errorText(error)) });
@@ -851,7 +852,7 @@ export class Runtime {
     // step or a later single-step call. Otherwise use the argument fingerprint (single-step case).
     const fingerprint = index !== undefined
       ? stepFingerprint(tool, index, target, argumentBytes)
-      : argumentFingerprint(argumentBytes);
+      : argumentFingerprint(tool, argumentBytes);
     const at = target === undefined ? undefined : { target };
     const host = { store: this.store, owner: this.owner, guards: this.guards,
       checkPolicy: (name: string, sent: unknown, c: ToolContext, fingerprint?: string) => this.checkPolicy(name, sent, c, fingerprint, at),
@@ -1108,6 +1109,7 @@ ${run.output.slice(0, 6000)}`;
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
     const run = this.prepareRun(options);
+    if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     if (trunk) this.trunkRuns.set(run.id, trunk.trunkId); // eng-trunk-controls
     this.joinSpend(run.id, parent?.runId); // R17-S09
     if (inlet?.applied.length) this.store.event(run.id, "filter.applied", { stage: "inlet", filters: inlet.applied });
@@ -1749,7 +1751,7 @@ ${run.output.slice(0, 6000)}`;
       // share one only when neither would be asked.
       decisionOf: (call) =>
         this.checkPolicy(call.name, safeArguments(call.arguments), context,
-          argumentFingerprint(call.arguments)).decision,
+          argumentFingerprint(call.name, call.arguments)).decision,
       // Asking the person something, and the four tools that change what the next round is shown,
       // each need the rounds before and after them to be settled, so they never share a group.
       alone: [...aloneTools],
@@ -3085,7 +3087,7 @@ ${run.output.slice(0, 6000)}`;
     // The exact bytes the model asked for. A yes is bound to them, so a command that changes by one
     // character is a new question rather than something an earlier yes covers. What is shown (to the
     // person and to the second model) is `shown`: the call without the arguments the tool does not take.
-    const fingerprint = argumentFingerprint(call.arguments);
+    const fingerprint = argumentFingerprint(call.name, call.arguments);
     // Wave mac3 (tool-safety): a second model may look at a risky or unknown call first; it can only
     // make the answer stricter, or confirm that a tool which does not say only reads (src/approval-reviewer.ts).
     const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason } =
@@ -3216,7 +3218,7 @@ ${run.output.slice(0, 6000)}`;
       /** How tightly the rule wants the program held, so the card can say it before the yes. */
       sandbox?: SandboxChoice | null;
       /** The exact request the person is shown, and the fingerprint their yes is bound to. */
-      bytes?: string; fingerprint?: string;
+      bytes?: string; fingerprint: string;
       /** mac7/coding-next: a question in words of its own, and its kind (for its own answers). */
       question?: string; kind?: "project-tests";
       /** mac7/multi-target: every file the call touches, for the card to list. */
@@ -3243,13 +3245,12 @@ ${run.output.slice(0, 6000)}`;
       ...(context.trunk ? { trunk: context.trunk } : {}),
       ...(about.sandbox ? { sandbox: about.sandbox } : {}),
       ...(about.kind ? { kind: about.kind } : {}),
-      ...(about.bytes === undefined ? {} : { bytes: about.bytes }),
-      ...(about.fingerprint === undefined ? {} : { fingerprint: about.fingerprint }) });
+      ...(about.bytes === undefined ? {} : { bytes: about.bytes }), fingerprint: about.fingerprint });
     if (dropped) this.letOldestQuestionGo(dropped);
     // The exact bytes and their fingerprint travel with the event, so a phone or a chat channel
     // watching the socket sees the same question the app does and can answer under the same binding.
     this.store.event(context.runId, "policy.ask", { name: about.tool, id: callId, label, target, remember,
-      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint ?? "", ...files, ...noStanding, ...noAlways,
+      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...noStanding, ...noAlways,
       ...(about.kind ? { kind: about.kind } : {}) });
     throw new NeedsInputError(question);
   }
@@ -3613,8 +3614,7 @@ ${run.output.slice(0, 6000)}`;
       if (e instanceof ApprovalRequiredError) {
         span?.end("error", "waiting for the person");
         this.askApproval(context, { tool: e.tool, label: e.label, target: e.target,
-          source: this.sourceOf(context), remember: e.remember, ...e.asked,
-          ...(e.fingerprint === undefined ? {} : { fingerprint: e.fingerprint }) }, call.id);
+          source: this.sourceOf(context), remember: e.remember, ...e.asked, fingerprint: e.fingerprint }, call.id);
       }
       if (e instanceof NeedsInputError) e.callId ??= call.id; // this call is the one that asked
       if (e instanceof BudgetError || e instanceof NeedsInputError || context.signal.aborted) {
@@ -3753,16 +3753,15 @@ export function ignoredNote(keys: readonly string[]): string {
   return `Ignored ${keys.length === 1 ? "an argument" : "arguments"} this tool does not take: ${keys.join(", ")}.`;
 }
 
-export function argumentFingerprint(argumentBytes: string): string {
-  return createHash("sha256").update(argumentBytes, "utf8").digest("hex").slice(0, 32);
-}
+/** Every question's fingerprint (src/question-fingerprint.ts), where the rest of the app has always found it. */
+export { argumentFingerprint };
 
 /**
  * FQ-execution.browser: a fingerprint for a browser.flow step that includes the tool, index,
  * target/host, and canonical arguments, so a "Yes, just now" is bound to that exact step and
- * cannot cover another step or a later single-step call.
+ * cannot cover another step or a later single-step call. Keyed like every question's.
  */
 function stepFingerprint(tool: string, index: number, target: string | undefined, argumentBytes: string): string {
   const parts = ["browser.flow step", index, tool, target ?? "", canonicalArguments(argumentBytes)];
-  return createHash("sha256").update(parts.join("\u0000"), "utf8").digest("hex").slice(0, 32);
+  return argumentFingerprint(tool, parts.join("\u0000"));
 }

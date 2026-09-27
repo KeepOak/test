@@ -4,15 +4,18 @@
      shows the engine's own sentence. "Leave it stopped" keeps the stop but no longer offers it (POST /api/adapt/leave).
      "Fetch it and carry on" and the pick stay greyed: a yes installs a program through the one button and starts the task
      again, which is for the security review.
-   - Later: every job a task handed over to finish later (GET /api/deferred), with its own words; one still waiting is
-     answered with Done (POST /api/deferred/settle), which carries its task on in its own conversation.
+   - Later: every job a task handed over to finish later (GET /api/deferred), with its own words and one action for its
+     kind, each through POST /api/deferred/settle, which carries its task on in its own conversation: a step you do by
+     hand (user.task) is answered Done; a job an outside tool handed over, which finishes when that tool answers, can be
+     given up with Stop waiting, which tells the task so. Nothing in the engine hands work over to a later time, so the
+     prototype's "Finish now" has no job to act on and is never drawn.
    - History › Signed receipts: the engine's tamper-evident chain of what happened (GET /api/safety-extras/activity), each
      entry with its fingerprint and the one it links to, the break the engine's own check found (POST
      /api/safety-extras/activity/verify), and "Check this run" reads that run's signed receipts (GET
      /api/runs/<id>/receipts). "What a break looks like" would draw made-up entries, so it stays greyed. */
 
 import { esc, renderNow } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, chatFace, ownName } from "../core/state.js";
 import { av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -25,12 +28,13 @@ let stops = [];
 let deferred = [];
 const trunks = () => (Array.isArray(E.trunks) ? E.trunks : []);
 /* The Trunk a conversation belongs to, or none. */
-function trunkOf(sessionId) {
+export function trunkOf(sessionId) {
   const s = E.sessions.find((x) => (x.sessionId ?? x.id) === sessionId);
   return trunks().find((t) => t.id === s?.trunkId || (t.chatSessionId && t.chatSessionId === sessionId)) ?? null;
 }
-const faceOf = (sessionId, size) => av(trunkOf(sessionId) ?? { kind: "main" }, size);
-const nameOf = (sessionId) => trunkOf(sessionId)?.name ?? E.state?.identity?.name ?? "";
+/* The face and name a conversation is drawn with: its Trunk's, a room's (its stack of members, its name), else Branch's. */
+export const faceOf = (sessionId, size) => av(trunkOf(sessionId) ?? chatFace(sessionId), size);
+export const nameOf = (sessionId) => trunkOf(sessionId)?.name || ownName(sessionId) || E.state?.identity?.name || "";
 
 /* ---------- Needs you: a stopped task says what it needs ---------- */
 export function adaptCards() {
@@ -62,12 +66,14 @@ async function leaveStopped(id) {
 
 /* ---------- Later: work handed over to finish later ---------- */
 const HOW = { "user.task": "A step you do by hand", "web.page": "A step you do by hand", "web.crawl": "A step you do by hand" };
+const byHand = (d) => Boolean(HOW[d.tool]);
 export const laterCount = () => deferred.filter((d) => !d.settledAt).length;
 
 function laterRow(d) {
   const settled = Boolean(d.settledAt);
   const line = settled ? d.outcome : when17(d.createdAt);
-  const right = settled ? pill17("done", t("window.places.inbox17.settled")) : btn17("laterb17", t("first-run-steps.done"), `data-id="${esc(d.id)}"`);
+  const act = byHand(d) ? btn17("laterb17", t("first-run-steps.done"), `data-id="${esc(d.id)}" data-v="done"`) : btn17("laterb17", t("window.places.inbox17.stop-waiting"), `data-id="${esc(d.id)}" data-v="stop"`);
+  const right = settled ? pill17("done", t("window.places.inbox17.settled")) : act;
   return `<div class="prow later-b17">${faceOf(d.sessionId, 34)}<span class="grow"><b>${esc(String(d.description ?? "").split("\n")[0])}</b><small>${esc(line)}</small><small class="how-b17">${esc(say(HOW[d.tool]) ?? t("window.places.inbox17.handed-over"))}</small></span>${right}</div>`;
 }
 export function laterTab() {
@@ -76,7 +82,8 @@ export function laterTab() {
 
 async function settle(el) {
   el.disabled = true;
-  try { await api("deferred/settle", { id: el.dataset.id, outcome: "Done." }); } catch (error) { toast(error.message); }
+  const outcome = el.dataset.v === "stop" ? t("window.places.inbox17.you-stopped-waiting") : "Done.";
+  try { await api("deferred/settle", { id: el.dataset.id, outcome }); } catch (error) { toast(error.message); }
   await readDeferred();
   renderNow();
 }

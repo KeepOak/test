@@ -681,11 +681,16 @@ test("B4 while Branch is open, the commands that only look work from another ter
   const { root, app, dataDir } = await openBranch(t);
   app.store.save("memory", "local", randomUUID(), { text: "the office plant is called Fern", source: "the owner said so" });
 
-  const doctor = await branchCli(dataDir, root, ["doctor"]);
+  const doctor = await branchCli(dataDir, root, ["doctor", "--json"]);
   assert.equal(doctor.code, 0, doctor.stderr);
   const said = JSON.parse(doctor.stdout);
   assert.match(said.from, /^the Branch already open at http/);
   assert.ok(Array.isArray(said.health.items) && said.health.items.length, "the checks came back");
+  // B5 (CL-05): without --json a person reads lines, not a JSON object.
+  const plainDoctor = await branchCli(dataDir, root, ["doctor"]);
+  assert.equal(plainDoctor.code, 0, plainDoctor.stderr);
+  assert.match(plainDoctor.stdout, /^From the Branch already open at http/);
+  assert.match(plainDoctor.stdout, /^(Everything checks out\.|Some checks need attention:)$/m);
 
   const memory = await branchCli(dataDir, root, ["memory"]);
   assert.equal(memory.code, 0, memory.stderr);
@@ -750,10 +755,12 @@ test("B4 a command that would write to the same saved work still refuses, and sa
   assert.match(refused.stderr, /branch doctor, branch token, branch trace, branch schedule/);
   assert.match(refused.stderr, /from any terminal: branch status, branch doctor/, "status is named among the ones that work");
   assert.match(refused.stderr, /needs that Branch closed first/);
-  // The terminal's own writers are refused over the running Branch too, not quietly allowed.
+  // B5 (CL-04): the terminal's own writers go through the running Branch's routes now (tests/cli-engine.test.mjs),
+  // and the sentence names them among the ones that work.
+  assert.match(refused.stderr, /branch approve, branch lockdown, branch permissions, branch theme, branch model, branch gateway/);
   const themed = await branchCli(dataDir, root, ["theme", "dark"]);
-  assert.equal(themed.code, 1);
-  assert.match(themed.stderr, /Branch is already open/);
+  assert.equal(themed.code, 0, themed.stderr);
+  assert.doesNotMatch(themed.stderr, /Branch is already open/);
 });
 
 test("B4 branch trace reads one task's steps from the Branch that is open", async (t) => {
