@@ -30,6 +30,8 @@ import { commandPermission, commandShown, ownerCommands, ownerCommandsHere, save
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { channelRoutes, saveChannelRoute, routeFor, ChannelRouteError } from "./routes.js";
+import { chatScreenAccount, chatScreenSettings } from './screen-settings.js';
+import type { ScreenChat } from './screen-sessions.js';
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -81,6 +83,8 @@ export interface ChannelHealth {
 const pairingCodeMs = 60 * 60_000;
 const pairingCodeFresh = (pair: { requestedAt?: string }): boolean => Date.now() - Date.parse(pair.requestedAt ?? "") <= pairingCodeMs;
 export interface ChannelAdapter {
+  verifyMiniApp?(initData: string): import('./telegram-init-data.js').TelegramLaunch;
+  sendScreenLink?(chatId: string, url: string): Promise<void>;
   readonly id: string;
   readonly kind: string;
   /** Longest single message this channel accepts; the ledger splits replies to fit. */
@@ -364,6 +368,14 @@ export class ChannelRouter {
   liveAllowed: () => boolean = () => true;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
+  screenCommand: ((chat: ScreenChat, argument: string) => Promise<string>) | undefined;
+  screenEligible(chat: ScreenChat): boolean {
+    const adapter = this.adapters.get(chat.channel)?.adapter;
+    return !!adapter && !this.appLocked() && !lockedDown(this.store, this.runtime.owner)
+      && chatScreenAccount(chatScreenSettings(this.store, this.runtime.owner), chat, adapter.kind)
+      && this.pair(chat.channel, chat.senderId)?.status === 'approved'
+      && this.senderAllowed(chat.channel, chat.senderId);
+  }
   /**
    * Hides key-shaped values and known secrets in what the live status shows (step labels, streamed
    * text). `createBranch` connects the leak guard; on its own this changes nothing.
@@ -442,6 +454,7 @@ export class ChannelRouter {
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
+      ownerScreen: chatScreenSettings(this.store, owner),
     };
   }
   /** Changes the chat extras' switches (chat-live-settings.ts); the ones not named stay as they are. */
@@ -772,6 +785,8 @@ export class ChannelRouter {
   }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
+    const screen = !message.voice && /^\/screen(?:@[a-z0-9_]+)?(?:\s+(.*))?\s*$/i.exec(message.text.trim());
+    if (screen) return { name: 'screen', argument: screen[1]?.trim() ?? '' };
     const routing = !message.voice && /^\/trunk(?:@[a-z0-9_]+)?(?:\s+(.*))?\s*$/i.exec(message.text.trim());
     if (routing) return { name: "trunk", argument: routing[1]?.trim() ?? "" };
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
@@ -854,6 +869,14 @@ export class ChannelRouter {
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
     const turn = this.turns.get(chatKey(message));
+    if (command.name === 'screen') {
+      const chat: ScreenChat = { channel, chatId, senderId: message.senderId, chatKind: message.chatKind,
+        ...(message.caughtUp === true ? { caughtUp: true } : {}), trunk: this.chatTrunk(channel, chatId) };
+      const reply = this.screenCommand ? await this.screenCommand(chat, command.argument).catch(error => error instanceof Error ? error.message : 'The screen session could not start.')
+        : 'Screen sessions from chat are not available on this host.';
+      await this.deliver(channel, chatId, reply, `screen:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
+      return 'replied';
+    }
     if (command.name === "trunk") {
       const reply = this.routeCommand(message, command.argument);
       await this.deliver(channel, chatId, reply, `route:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);

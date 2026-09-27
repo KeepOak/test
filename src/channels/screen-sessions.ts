@@ -28,7 +28,7 @@ export interface ScreenSessionPorts {
   confirmPin(pin: string): Promise<boolean>;
   /** The authenticated local owner window is the only caller of confirmInWindow. */
   windowOwner(): boolean;
-  open(chat: ScreenChat, stopped: () => void, signal: AbortSignal): Promise<ScreenSessionDesktop>;
+  open(chat: ScreenChat, stopped: () => void, signal: AbortSignal, selection?: string): Promise<ScreenSessionDesktop>;
   audit(event: 'requested' | 'confirmed' | 'started' | 'action' | 'control' | 'stopped', detail: Record<string, unknown>): void;
   now?: () => number;
 }
@@ -99,7 +99,26 @@ export class ChatScreenSessions {
     if (!pending || pending.expires <= this.now()) { this.pending.delete(id); throw new ScreenRefusal(); }
     return pending;
   }
-  async start(id: string, initData: string, pin?: string): Promise<{ id: string; key: string; expires: number }> {
+  /** Authenticates target enumeration without consuming the launch or opening a capture reader. */
+  async prepare(id: string, initData: string, pin?: string): Promise<ScreenChat> {
+    const pending = this.findPending(id);
+    this.allowed(pending.chat);
+    if (this.active || this.opening) throw new ScreenRefusal('Stop the current screen session first.');
+    const launch = this.ports.verify(pending.chat.channel, initData);
+    if (launch.senderId !== pending.chat.senderId || this.launches.has(launch.hash)) throw new ScreenRefusal();
+    if (pending.confirmedUntil <= this.now()) {
+      if (typeof pin !== 'string' || !await this.ports.confirmPin(pin)) throw new ScreenRefusal('Confirm this session in Branch’s window, or enter your PIN.');
+      this.findPending(id);
+      this.allowed(pending.chat);
+      this.ports.verify(pending.chat.channel, initData);
+      pending.confirmedUntil = Math.min(pending.expires, this.now() + 2 * 60_000);
+      this.ports.audit('confirmed', { session: id, from: 'pin' });
+    }
+    this.findPending(id);
+    this.allowed(pending.chat);
+    return { ...pending.chat };
+  }
+  async start(id: string, initData: string, pin?: string, selection?: string): Promise<{ id: string; key: string; expires: number }> {
     const pending = this.findPending(id);
     this.allowed(pending.chat);
     if (this.active || this.opening) throw new ScreenRefusal('Stop the current screen session first.');
@@ -124,7 +143,7 @@ export class ChatScreenSessions {
       if (this.launches.size >= 128) throw new ScreenRefusal('Too many screen sessions started recently. Wait three minutes.');
       this.launches.set(launch.hash, this.now() + waiting);
       this.pending.delete(id);
-      desktop = await this.ports.open(pending.chat, () => controller.abort(), controller.signal);
+      desktop = await this.ports.open(pending.chat, () => controller.abort(), controller.signal, selection);
       this.allowed(pending.chat);
       this.ports.verify(pending.chat.channel, initData); // The launch must still be fresh at key issuance.
       if (pending.expires <= this.now()) throw new ScreenRefusal();
@@ -193,6 +212,10 @@ export class ChatScreenSessions {
   }
   stopFromWindow(): void {
     if (!this.ports.windowOwner()) throw new ScreenRefusal();
+    this.revoke();
+  }
+  /** Trusted lifecycle hook for lock, permission changes and app shutdown; never an unauthenticated HTTP route. */
+  revoke(): void {
     this.pending.clear();
     this.openingController?.abort();
     this.stopActive('window');

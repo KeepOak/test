@@ -120,6 +120,13 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.username; }
   verifyMiniApp(raw: string): TelegramLaunch { return verifyTelegramLaunch(raw, this.options.token); }
+  async sendScreenLink(chatId: string, url: string): Promise<void> {
+    if (!/^[1-9]\d{0,15}$/.test(chatId)) throw new Error('Screen links belong in your own Telegram direct chat.');
+    const address = new URL(url);
+    if (address.protocol !== 'https:' || address.username || address.password || address.pathname !== '/chat-screen') throw new Error('Use the secure screen address.');
+    await this.call('sendMessage', { chat_id: chatId, text: 'Open your screen session',
+      reply_markup: { inline_keyboard: [[{ text: 'Open screen', web_app: { url: address.toString() } }]] } });
+  }
   /** P17-D §8: a refused token stops every message arriving, so it is said, not retried in silence. */
   health(): ChannelHealth { return this.refused ? { state: "needs attention", reason: this.refused } : { state: "connected" }; }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {

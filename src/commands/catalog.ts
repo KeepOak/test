@@ -64,6 +64,7 @@ const was = (...where: Surface[]): Extra => ({ legacy: where });
  * this table added follow.
  */
 export const COMMANDS: readonly CatalogCommand[] = [
+  entry('screen', [], '[stop]', 'open a freshly confirmed screen session from your own paired Telegram direct chat, or stop it', ['chat'], 'owner', { ...was('chat'), whileWorking: true }),
   entry("help", ["?"], "[question]", "the commands you can use here; with a question, an answer from Branch's handbook", ALL, "look", { ...was("window", "phone", "terminal", "chat"), whileWorking: true, newAliases: added(["?"], "window", "phone", "chat"), withArgument: "run" }),
   entry("model", ["models"], "[id]", "which model answers; /model on its own lists them", ["window", "phone", "terminal", "chat"], "run", { ...was("window", "phone", "terminal"), bareLooks: true, route: { method: "POST", path: "/api/models/switch" }, newAliases: added(["models"], "window", "phone") }),
   entry("think", ["reasoning"], "<low|medium|high|default>", "how hard the model thinks in this conversation", ["window", "phone", "terminal", "chat"], "run", was("terminal")),

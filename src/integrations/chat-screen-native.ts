@@ -7,6 +7,7 @@ import type { NativeCaptureTarget, CaptureExclusion, ScreenBox } from './desktop
 import type { NativeCaptureLease, LiveFrame, LiveFrames } from './desktop.js';
 import type { DesktopBanner, BannerLease } from './desktop-banner.js';
 import { secretReferenceIn, type WindowInfo } from './desktop-config.js';
+import { nativeWindowViewable } from './native-view-target.js';
 
 const Snapshot = z.object({ handle: z.string().min(1), processId: z.number().int().positive(),
   x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).passthrough();
@@ -132,6 +133,7 @@ export class ChatNativeScreen implements ScreenSessionDesktop {
     if (action.action === 'type') { const problem = secretReferenceIn(action.text); if (problem) refuse(problem); }
     try {
       const exclusion = await this.checked(signal), window = await this.parts.resolve(action.window, signal);
+      if (!nativeWindowViewable(window, exclusion.processId)) refuse('That window cannot prove a safe native viewer identity.');
       const snapshot = this.snapshot(window);
       if (this.target.kind === 'window' && (String(window.handle) !== this.target.handle || window.processId !== this.target.processId)) refuse('Choose the window shown in the live view.');
       const point = this.point(action, snapshot);

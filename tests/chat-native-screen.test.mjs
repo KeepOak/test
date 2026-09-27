@@ -99,6 +99,12 @@ test('window target rejects a different HWND before native input', async (t) => 
   const w = world(t, chosen), screen = await w.open(); await next(screen); screen.takeOver();
   await assert.rejects(screen.act(action, new AbortController().signal), /window shown/); assert.equal(w.calls.length, 0);
 });
+test('native input rereads executable and window class provenance after the displayed frame', async (t) => {
+  const w = world(t), screen = await w.open(); await next(screen); screen.takeOver();
+  w.parts.resolve = async () => ({ ...window, className: 'Chrome_WidgetWin_1' });
+  await assert.rejects(screen.act(action, new AbortController().signal), /native viewer identity/);
+  assert.equal(w.calls.length, 0); assert.equal(w.counts().readersClosed, 1);
+});
 test('scroll uses the displayed window center and never reaches another monitor', async (t) => {
   const w = world(t), screen = await w.open(); await next(screen); screen.takeOver();
   await screen.act({ action: 'scroll', window: 'Notes', steps: -2 }, new AbortController().signal);

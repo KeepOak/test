@@ -52,6 +52,7 @@ export const auditActions = [
   // defaulttrunk: the owner picked another default Trunk, or conversations with no Trunk were put with one (src/trunks/defaults.ts).
   "trunk.default",
   "trunk.files",
+  "screen.session",
 ] as const;
 export type AuditAction = (typeof auditActions)[number];
 
@@ -132,6 +133,7 @@ const actionLabels: Record<AuditAction, string> = {
   "trunk.computers": "The computers a Trunk may use were changed",
   "trunk.default": "The default Trunk, or which Trunk a conversation is with, was changed",
   "trunk.files": "A Trunk personality file was changed",
+  "screen.session": "A screen session from your own chat was confirmed, used or stopped",
 };
 export const auditLabel = (action: AuditAction): string => actionLabels[action];
 

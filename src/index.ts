@@ -165,6 +165,7 @@ import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
 import { TakeOverBanner } from "./integrations/linux-desktop-banner.js";
 import { registerLinuxDesktop } from "./integrations/linux-desktop-tools.js";
 import { screenControlParts, type BannerWindowFactory } from "./integrations/desktop-banner.js";
+import { installChatScreenEntry } from './channels/install-screen-entry.js';
 import { migrateFeatureSwitches } from "./feature-switch-migration.js";
 import { registerDesktop } from "./integrations/desktop-tools.js";
 import { registerComputer, type ComputerLayers } from "./integrations/computer.js";
@@ -1363,6 +1364,9 @@ export async function createBranch(options: {
     transcribe: async (clip) => (await voice.transcribe(runtime.owner, { ...clip, name: "spoken answer" })).text,
     lockdownRefusal: () => (lockedDown(store, runtime.owner) ? lockdownRefusal : null) });
   releaseOnLock.push(() => personal.close()); // locking Branch stops the tunnel and forgets spoken answers
+  const chatScreen = installChatScreenEntry({ store, owner: runtime.owner, channels, desktop, lock: sessionLock,
+    publicAddress: () => personal.tunnel.status().address });
+  releaseOnLock.push(async () => chatScreen.revoke());
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──
   // It runs only while the switch is on, a word is chosen, and this computer can really listen, and
@@ -1625,6 +1629,7 @@ export async function createBranch(options: {
     attachments,
     /** The screen and keyboard of this computer, and the switch that has to be on to use them. */
     desktop,
+    chatScreen,
     /** FQ-execution.desktop: the shared Linux desktop the owner may watch or take over. */
     linuxDesktop,
     /** What Windows itself allows: the microphone, the camera and taking hold of windows. */
@@ -1798,6 +1803,7 @@ export async function createBranch(options: {
       await rings.idle(); // Seasons: a night under way finishes its step before the database closes
       // Wave 8: a connection that stays open must not outlive the app either.
       live.closeAll("Branch closed");
+      chatScreen.close();
       plugins.stop();
       // A file of the owner's own holding the vectors is let go of; the app's own database is not.
       knowledgeBases.vectors.close?.();
