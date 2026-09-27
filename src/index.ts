@@ -1311,7 +1311,7 @@ export async function createBranch(options: {
   // defaulttrunk: the default Trunk is the owner's own assistant, so it answers on every chat app, as Branch always did.
   const reachRefusal = (channel: string, trunkId: string): string | null => {
     const trunk = trunks.records.find(trunkId);
-    return trunk && trunk.id !== trunks.defaultTrunk()?.id && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
+    return trunk && trunk.id !== trunks.ownerDefault()?.id && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
       ? `${trunk.name} does not answer on ${channel}. The owner can allow it under Customize → Trunks.` : null;
   };
   channels.trunkReach = (channel, sessionId) => {
@@ -1320,7 +1320,7 @@ export async function createBranch(options: {
       ?? trunks.pausedForConversation(sessionId, "it did not answer"); // eng-trunk-controls
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
-  channels.defaultTrunk = () => trunks.ensureDefault()?.id ?? null;
+  channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
   // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.
