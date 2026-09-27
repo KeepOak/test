@@ -62,6 +62,7 @@ export async function refresh() {
   E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
   if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   E.sessions = sessions?.sessions ?? [];
+  E.putAway = { archived: sessions?.archived ?? 0, deleted: sessions?.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
   E.loaded = true;
   render();
 }
