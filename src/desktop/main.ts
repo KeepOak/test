@@ -74,6 +74,7 @@ import { builtFrom } from "./build-identity.js";
 import { askHeader, proveOnce, sessionKey } from "../engine-proof.js";
 import { AnswerCheck } from "./answer-check.js";
 import { EngineClient, startingAgain, webResponse } from "./engine-client.js";
+import { EnginePage } from "./engine-page.js";
 import { Readable } from "node:stream";
 import { EngineGate, type EngineAccess } from "./engine-gate.js";
 import { RequestHold } from "./request-hold.js";
@@ -271,14 +272,9 @@ async function createWindow(
   protectWindow(window, url, key, mic, access, client);
   // A page that went away while the engine was not there (its load was held too long) is opened again once it is back.
   const shown = window;
-  let wasLost = false;
-  access.onLost(() => { wasLost = true; });
-  access.onReady(() => {
-    if (!wasLost) return; // the first proof: the window's own first load is on its way
-    wasLost = false;
-    if (!shown.isDestroyed() && new URL(shown.webContents.getURL() || "about:blank").origin !== url)
-      void shown.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message));
-  });
+  const pageRecovery = new EnginePage(access,
+    () => !shown.isDestroyed() && new URL(shown.webContents.getURL() || "about:blank").origin !== url,
+    () => { void shown.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message)); });
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
   // attach-anything: the clipboard's files go to the page only just after a paste the person made here: the keys,
@@ -337,7 +333,9 @@ async function createWindow(
   // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
   // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
   await window.loadURL(`${url}/?desktop=1`).catch((error: unknown) => {
-    if ((error as { code?: unknown }).code !== "ERR_ABORTED") throw error;
+    if ((error as { code?: unknown }).code === "ERR_ABORTED") return;
+    console.error("Window:", (error as Error).message);
+    pageRecovery.failed();
   });
   createTray();
 }
