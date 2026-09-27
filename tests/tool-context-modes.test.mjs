@@ -259,3 +259,94 @@ test("a server connected mid-task: a narrowed task never gets its tools; the own
     "the approval rule applies to a tool that arrived mid-task");
   assert.deepEqual(fullCalls, [], "nothing ran without the yes");
 });
+
+test("on demand, a crashed server starts again on its next call after the checks a start makes; under Lockdown it does not", async (t) => {
+  const { app, api, pidfile } = await fixture(t, [say("ok")], { http: true });
+  await api("mcp/connections", { connect: "on-demand" });
+  // The waits between tries and before a restart are stepped over; what is checked is what happens, not how long it takes.
+  app.mcpConnections.backoffMs = () => 0;
+  app.mcpConnections.restartMs = () => 0;
+  const pids = pidfile("demand");
+  const { server: { id } } = await api("mcp/servers", { name: "Demand", server: { transport: "stdio", command: process.execPath, args: [slowServer, "--delay", "0", "--pidfile", pids] } });
+  const switchOn = async () => {
+    await api(`mcp/servers/${id}/start`, {});
+    const question = (await api("policy")).waiting.find((q) => q.tool === "mcp.start" && q.target === id);
+    await api("policy/approve", { sessionId: question.sessionId, decision: "allow", remember: "never", fingerprint: question.fingerprint });
+  };
+  const toolsOf = () => app.registry.names().filter((name) => name.startsWith(`mcp.${id}.`));
+  // The first start connects once and notes its tools; switched on again, they are listed from that and nothing runs.
+  await switchOn();
+  assert.ok(await until(() => toolsOf().length === 2), "the first start is on");
+  await api(`mcp/servers/${id}/stop`, {});
+  await switchOn();
+  assert.ok(await until(() => toolsOf().length === 2), "on again, on demand");
+  const echo = toolsOf()[0];
+  const context = () => ({ ...app.runtime.context(), permissions: new Set([echo]) });
+  const calls = async () => { try { return /called/.test(JSON.stringify(await app.registry.execute(echo, {}, context()))); } catch { return false; } };
+  const count = (await pidsIn(pids)).length;
+  assert.ok(await calls(), "the first call opens it");
+  const first = (await pidsIn(pids)).at(-1);
+  assert.equal((await pidsIn(pids)).length, count + 1);
+  process.kill(first, "SIGKILL");
+  assert.ok(await until(() => !alive(first)));
+  // The next call reaches a new program. Red: the on-demand opener in startMcp dropping `alive` (src/integrations/bootstrap.ts).
+  assert.ok(await until(calls), "a call after the crash is answered");
+  const second = (await pidsIn(pids)).at(-1);
+  assert.ok(second !== first && alive(second), "by a new program");
+  // Under Lockdown a crashed command server is not started again. Red: the on-demand opener not running `beforeRestart`.
+  await app.store.save("settings", app.runtime.owner, "lockdown", { on: true });
+  const before = (await pidsIn(pids)).length;
+  process.kill(second, "SIGKILL");
+  assert.ok(await until(() => !alive(second)));
+  const lastError = () => app.mcpConnections.health().find((server) => server.id === id)?.lastError ?? "";
+  assert.ok(await until(async () => !(await calls()) && /Lockdown/.test(lastError())), "the next call's start is refused for Lockdown");
+  assert.equal((await pidsIn(pids)).length, before, "no program was started");
+});
+
+test("a server connected mid-task goes only to a task the owner started, read from the task, not from whoever is at the window", async (t) => {
+  const calls = [];
+  let app;
+  const { app: made, provider } = await fixture(t, [
+    () => { standIn(app, "late", ["track"], calls); return call("files.list", { path: "." })(); },
+    call("mcp.late.track", { tracking: "PX-1" }),
+    say("Done."),
+  ]);
+  app = made;
+  const sam = app.store.profiles.create({ name: "Sam", pin: "1234" });
+  app.store.profiles.switch({ profileId: sam.id, pin: "1234" });
+  // Sam starts a task holding every permission; the window is back on the owner before its first round.
+  const run = await app.runtime.run({ prompt: "Have a look around.", permissions: app.registry.permissions(),
+    onStarted: () => app.store.profiles.switch({ profileId: null }) });
+  assert.equal(app.store.events(run.id).find((event) => event.kind === "run.started").data.personProfileId, sam.id, "the task is Sam's");
+  assert.ok(app.store.profiles.isOwner(), "while the owner is at the window");
+  // Red: `wholeKit` read from `profiles.isOwner()` instead of the task's own record (src/runtime.ts openCatalog).
+  assert.ok(!searcher(provider.requests[1]).includes("mcp.late.track"), "not in Sam's task's index");
+  assert.ok(!provider.requests[1].names.includes("mcp.late.track"));
+  assert.deepEqual(calls, [], "and its call never ran");
+});
+
+test("a server connected mid-task never goes to a Trunk's task, even one holding every permission", async (t) => {
+  const calls = [];
+  let app, armed = false; // Ada's introduction answers first; the server connects only during the task below
+  const { app: made, provider } = await fixture(t, [
+    () => { if (armed) standIn(app, "late", ["track"], calls); return armed ? call("files.list", { path: "." })() : say("Hello.")(); },
+    call("mcp.late.track", { tracking: "PX-1" }),
+    say("Done."),
+  ]);
+  app = made;
+  // A Trunk allowed to run commands, with Trunks since switched off (so nothing is kept from its shape): it holds everything.
+  const ada = app.trunks.create({ name: "Ada" });
+  app.trunks.edit(ada.id, { reach: { channels: [], commands: true } });
+  await app.trunks.introduced();
+  app.trunks.setMode("trunks", { mode: "off" });
+  provider.requests.length = 0; // the steps above are this task's, not Ada's introduction's
+  armed = true;
+  const all = app.registry.permissions();
+  assert.deepEqual(all.filter((permission) => !app.runtime.trunkShape({ prompt: "", trunkId: ada.id }).permissions.includes(permission)), [],
+    "Ada's turn holds every permission there is");
+  await app.runtime.run({ prompt: "Have a look around.", trunkId: ada.id });
+  // Red: dropping `!context.trunk` from `wholeKit` (src/runtime.ts openCatalog). A Trunk reaches only the servers given to it.
+  assert.ok(!searcher(provider.requests[1]).includes("mcp.late.track"), "not in Ada's index");
+  assert.ok(!provider.requests[1].names.includes("mcp.late.track"));
+  assert.deepEqual(calls, [], "and its call never ran");
+});
