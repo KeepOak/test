@@ -60,6 +60,7 @@ const REVIEWED = [
   "/api/memory/tidy", "/api/memory/archive", "/api/memory/checkpoints", "/api/memory/export", "/api/memory/learned",
   "/api/memory/proposals", "/api/memory/versions", "/api/labels",
   "/api/connections/catalog", "/api/mcp/catalogue", "/api/release-notes",
+  "/api/your-data", "/api/your-data/export/:id", "/api/your-data/export/:id/file",
 ];
 /** Reads that never end: asked by the rule, not over HTTP. */
 const STREAMS = new Set(["/api/events/stream"]);

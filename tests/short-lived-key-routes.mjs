@@ -101,6 +101,14 @@ export const ROUTES = {
   "/api/audit/export.csv": "look",
   "/api/background-programs": "owner POST",
   "/api/backup": "secret-read",
+  // privacy: Settings › Your data. Counts, and an export's progress and file, are looking (each read under the person at
+  // the window, like /api/memory/export); starting an export and deleting everything are refused to every short-lived key.
+  "/api/your-data": "look",
+  "/api/your-data/": "prefix",
+  "/api/your-data/delete": "other POST",
+  "/api/your-data/export": "other POST",
+  "/api/your-data/export/:id": "look",
+  "/api/your-data/export/:id/file": "look",
   "/api/batch": "owner POST",
   "/api/batch-sets": "look",
   "/api/batch/run": "other POST",
