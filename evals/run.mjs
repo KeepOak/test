@@ -13,7 +13,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describeModel, preflight } from "./lib/models.mjs";
+import { describeModel, preflight, warmRemote } from "./lib/models.mjs";
 import { makeModelJudge } from "./lib/judge.mjs";
 import { makeContext, tokensUsed } from "./lib/harness.mjs";
 import { stopAllEngines } from "./lib/engine.mjs";
@@ -54,6 +54,7 @@ async function main() {
   // One preflight: a model that cannot answer at all marks its tasks, rather than failing each in turn.
   let modelBlock = model.unavailable ?? null;
   if (!modelBlock && model.kind !== "standin") {
+    await warmRemote(model);
     const probe = await makeContext({ task: { id: "preflight" }, model, root: join(scratch(args), "preflight"), port: args.basePort });
     try { await probe.start(); modelBlock = await preflight(probe.engine); } catch (error) { modelBlock = `model did not start: ${error.message}`; }
     finally { await probe.stop().catch(() => undefined); }

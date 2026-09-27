@@ -95,6 +95,18 @@ async function sizedTag(tag) {
   return sized;
 }
 
+/**
+ * Loads a model on another machine (EVAL_OLLAMA_URL) before the preflight: a 14B model's first load there can outrun
+ * the engine's own model-test timeout, and every task would then say "did not answer". An empty prompt only loads the
+ * model; nothing is created, pulled or kept past Ollama's own default idle time.
+ */
+export async function warmRemote(model) {
+  if (model.kind !== "env" || !model.tag) return;
+  await fetch(`${ollamaBase}/api/generate`, {
+    method: "POST", signal: AbortSignal.timeout(300_000), body: JSON.stringify({ model: model.tag, prompt: "" }),
+  }).then((r) => r.text()).catch(() => undefined); // an unreachable model is said by the preflight that follows
+}
+
 /** Connects the model to a fresh engine and makes it the one in use. */
 export async function connectModel(engine, model) {
   if (model.kind === "standin" || model.kind === "env") return;
