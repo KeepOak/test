@@ -1014,6 +1014,8 @@ export class Store {
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
   restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  /** Seasons: moves one fact into the archive with a note; nothing is destroyed and the Memory view can bring it back. */
+  setAsideMemory(owner: string, id: string, note: string) { return this.memories.setAside(owner, id, note); }
   archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
   purgeArchivedMemory(owner: string, seen: number) { return this.memories.purgeArchive(owner, seen); }
   /** Keeps a note made while doing one job, so finishing that job no longer clears it. */
