@@ -430,13 +430,17 @@ function authorize(
     throw new HttpError(403, "Origin rejected");
   if (request.headers["sec-fetch-site"] === "cross-site")
     throw new HttpError(403, "Cross-site request rejected");
-  const supplied = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
+  // A bare "Bearer" (the header's trailing space is trimmed on the way) carries no key at all.
+  const supplied = request.headers.authorization?.replace(/^Bearer(?: |$)/, "") ?? "";
   const correct =
     supplied.length === token.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
   const from = requestSource(request.socket?.remoteAddress, request.headers);
   // The right key is checked first and clears the count at once, so the owner's own app can never
   // shut itself out. Only a wrong key is counted, and a place that keeps guessing is made to wait.
   if (correct) { limits?.limiter.succeed(from); return; }
+  // Dogfood E7: no key is no guess. The window asks for its data before it is signed in; counting those
+  // made this computer wait (429) for its own scripts' keys and wrote a false "wrong tries" line.
+  if (!supplied) throw new HttpError(401, "Local session token required");
   const waiting = limits?.limiter.refusal(from, "key");
   if (waiting) throw new HttpError(429, waiting);
   const refusal = supplied && scoped ? scoped(supplied) : "Local session token required";
@@ -1826,6 +1830,7 @@ async function api(
       ...(input.plan !== undefined ? { plan: input.plan } : {}),
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
+      ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
       onUserMessageId: (id) => { userMessageId = id; },
     });
     return userMessageId !== undefined ? { ...run, userMessageId } : run;
@@ -3509,7 +3514,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // It matters most behind the never-break gateway, where every device on the private network
         // reaches the engine from 127.0.0.1 and so shares one entry.
         const from = requestSource(request.socket?.remoteAddress, request.headers);
-        const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096) },
+        // B6: the phone let in from "Pair a phone" collects what POST /api/pair hands over (below): the window's key
+        // and its own "this exact phone" secret. Once, signed with its pairing key; src/devices/book.ts collectPhoneSession.
+        const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096),
+          phone: { windowKey: token, remember: (name) => gateway.remember(name) } },
           path, from).catch((error: unknown) => {
           if (!(error instanceof DevicesHttpError)) throw error;
           if (error.status !== 403) throw new HttpError(error.status, error.message);
@@ -3694,7 +3702,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           app.store.profiles.requireOwner("Your devices");
           const answer = await devicesApi({ devices: app.devices, store: app.store, owner: app.runtime.owner, method: request.method ?? "GET",
             readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url,
-            trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null }, path).catch((error: unknown) => {
+            trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
+            forgetGateway: (id) => void gateway.forget(id),
+            // B6: the paired door, or any caller not on this computer (a widened listener, the webhook door), is a door.
+            viaDoor: viaRemote || !fromThisComputer(request.socket?.remoteAddress, request.headers) }, path).catch((error: unknown) => {
             throw error instanceof DevicesHttpError ? new HttpError(error.status, error.message) : error;
           });
           if (answer === undefined) throw new HttpError(404, "Endpoint not found");

@@ -15,9 +15,15 @@ export const SWITCH_POSITIONS = ["off", "when-needed", "on"];
 export const switchPosition = (value) => (SWITCH_POSITIONS.includes(value) ? value : "off");
 /** The phone's own switches, all off on a fresh install. */
 export const DEFAULT_SWITCHES = Object.freeze({ lock: "off", notifications: "off", push: "off", share: "off", voice: "off" });
+/**
+ * Settings › Notifications: which kinds of news the "Tell me when a task needs me" switch brings, each on or off.
+ * They only narrow that switch (it still starts off), so the two kinds the phone can tell start on.
+ */
+export const DEFAULT_KINDS = Object.freeze({ notifyNeeds: "on", notifyDone: "on" });
 export function readSwitches(saved) {
   const out = {};
   for (const name of Object.keys(DEFAULT_SWITCHES)) out[name] = switchPosition(saved?.[name]);
+  for (const [name, start] of Object.entries(DEFAULT_KINDS)) out[name] = saved?.[name] === "on" || saved?.[name] === "off" ? saved[name] : start;
   return out;
 }
 
@@ -66,9 +72,11 @@ export function checkAddress(text) {
 }
 
 const offerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const devicePattern = /^[a-f0-9]{32}$/;
 /**
- * Reads what the owner scanned or pasted: the invitation link (origin + /pair?id=…) or a bare
- * address. A bare "host:port" is taken as http, which checkAddress then limits to private hosts.
+ * Reads what the owner scanned or pasted: the window's "Pair a phone" square (origin + /devices/pair?offer=…),
+ * the older invitation link (origin + /pair?id=…), or a bare address. A bare "host:port" is taken as http,
+ * which checkAddress then limits to private hosts. Only the address and the invitation are kept.
  */
 export function readInvitation(text) {
   const raw = String(text ?? "").trim();
@@ -77,39 +85,26 @@ export function readInvitation(text) {
   const origin = checkAddress(withScheme);
   const url = new URL(withScheme);
   const where = url.pathname.replace(/\/+$/, "");
-  if (where === "/devices/pair")
-    throw refusal("phone.error.deviceLink", "That is the square from Your devices. Use \u201cLend this phone to Branch\u201d further down instead.");
+  if (where === "/devices/pair") {
+    const offer = url.searchParams.get("offer") ?? "";
+    if (!devicePattern.test(offer)) throw refusal("phone.error.damaged", "That invitation link is damaged. Show the square code again.");
+    return { origin, offerId: null, offer };
+  }
   const id = where === "/pair" ? url.searchParams.get("id") : null;
   if (id !== null && !offerPattern.test(id)) throw refusal("phone.error.damaged", "That invitation link is damaged. Show the square code again.");
   return { origin, offerId: id };
 }
 
-/* ---------- Lend this phone to Branch (the Devices card's invitation) ---------- */
+/* ---------- this phone as one of the owner's devices ---------- */
 
 /**
  * What this phone can promise never to do, whatever Branch switches on: the four the owner is most
- * likely to mind. They are the capability names src/devices/capabilities.ts uses.
+ * likely to mind. They are the capability names src/devices/capabilities.ts uses. The native sides keep
+ * the list; while lending is hidden (the phone cannot yet do what it would offer), the phone offers nothing.
  */
 export const DEVICE_REFUSALS = ["camera", "screen", "listen", "run"];
 /** A kept refusal list, in a fixed order, with anything unknown dropped. */
 export const readNever = (saved) => DEVICE_REFUSALS.filter((name) => (Array.isArray(saved) ? saved : []).includes(name));
-
-const devicePattern = /^[a-f0-9]{32}$/;
-/**
- * Reads the square code from Customize, Channels, Your devices: the computer's address and the
- * invitation id, and nothing else. The same address rule as everything else on this phone.
- */
-export function readDeviceInvitation(text) {
-  const raw = String(text ?? "").trim();
-  if (!raw) throw refusal("phone.error.deviceEmpty", "Scan the square code from Your devices on your computer.");
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
-  const origin = checkAddress(withScheme);
-  const url = new URL(withScheme);
-  if (url.pathname.replace(/\/+$/, "") !== "/devices/pair") throw refusal("phone.error.notDeviceLink", "That is not the square from Your devices. Press Pair a device on your computer.");
-  const offer = url.searchParams.get("offer") ?? "";
-  if (!devicePattern.test(offer)) throw refusal("phone.error.damaged", "That invitation link is damaged. Show the square code again.");
-  return { origin, offer };
-}
 
 /** The six numbers showing on the computer, with the spaces people type taken out. */
 /**
@@ -190,9 +185,24 @@ export function newAttention(state, seen) {
     .filter((item) => typeof item?.runId === "string" && !known.has(item.runId))
     .map((item) => ({ id: item.runId, question: String(item.question ?? "").slice(0, 180) }));
 }
-/** How often to ask, by switch position: never, while the app is open, or also in the background. */
+/**
+ * Tasks that finished since the phone last looked, given the ids already told about (GET /api/state runs,
+ * status "completed"). The first look only remembers what is there, so opening the app never floods it.
+ */
+export function newFinished(state, seen) {
+  const known = new Set(seen ?? []);
+  const done = (Array.isArray(state?.runs) ? state.runs : []).filter((run) => run?.status === "completed" && typeof run.id === "string");
+  return done.filter((run) => !known.has(run.id))
+    .map((run) => ({ id: run.id, sessionId: run.sessionId, words: String(run.prompt ?? "").split("\n")[0].slice(0, 180) }));
+}
+/**
+ * How often to ask, by switch position: never, while the app is open, or also in the background. Every
+ * position that asks also asks at once when the app opens or comes back (notify.js). "On" is never slower
+ * than "When needed" while the app is open; closed, it adds the platform's background check (at most every
+ * fifteen minutes, which is as often as Android and iOS allow without a push service).
+ */
 export function pollPlan(position) {
   const at = switchPosition(position);
-  if (at === "off") return { foreground: false, background: false, everySeconds: 0 };
-  return { foreground: true, background: at === "on", everySeconds: at === "on" ? 900 : 60 };
+  if (at === "off") return { foreground: false, background: false, everySeconds: 0, onOpen: false };
+  return { foreground: true, background: at === "on", everySeconds: at === "on" ? 30 : 60, onOpen: true };
 }

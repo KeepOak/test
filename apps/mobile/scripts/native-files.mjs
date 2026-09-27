@@ -15,7 +15,7 @@ const repo = join(app, "..", "..");
 export const APP_ID = "com.keepoak.branchagent";
 export const APP_NAME = "Branch Agent";
 export const APP_GROUP = "group.com.keepoak.branchagent";
-const LANGUAGES = ["en", "fr"];
+export const LANGUAGES = ["en", "fr", "es", "de"];
 
 /** The words the native pieces say: every `phone.*` key, in each language. */
 export async function nativeWords(root = repo) {
@@ -91,7 +91,8 @@ export async function writeNativeFiles(root = app) {
     await put(join(android, "res", "values", "branch_colors.xml"), androidColours(palettes.light));
     await put(join(android, "res", "values-night", "branch_colors.xml"), androidColours(palettes.dark));
     await put(join(android, "res", "values", "branch_strings.xml"), androidStrings(words.en));
-    await put(join(android, "res", "values-fr", "branch_strings.xml"), androidStrings({ ...words.en, ...words.fr }));
+    for (const language of LANGUAGES.filter((l) => l !== "en"))
+      await put(join(android, "res", `values-${language}`, "branch_strings.xml"), androidStrings({ ...words.en, ...words[language] }));
   }
   const ios = join(root, "ios", "App");
   if (existsSync(ios)) {

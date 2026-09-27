@@ -181,6 +181,21 @@ test("review: a working key refused a route is not a wrong key, so a script cann
   assert.equal(last.status, 429);
 });
 
+test("dogfood E7: no key is no guess, so the window asking before sign-in never makes this computer wait", async (t) => {
+  const { app, server, make, call } = await servedWithDefaultLimits(t);
+  const read = make("read");
+  for (const authorization of [undefined, "Bearer ", "Bearer"])
+    for (let i = 0; i < 8; i++) {
+      const asked = await fetch(`${server.url}/api/state`, authorization === undefined ? {} : { headers: { authorization } });
+      assert.equal(asked.status, 401, `${authorization ?? "no header"}, ask ${i + 1}: a refusal, not a wait`);
+    }
+  assert.equal((await call("GET", "/api/state", read)).status, 200, "a script's key from this computer still works");
+  assert.deepEqual(app.store.audit.list(app.runtime.owner, { action: "auth.refused" }), [], "and no wrong tries are written down");
+  let last;
+  for (let i = 0; i < 6; i++) last = await call("GET", "/api/state", "not-the-key-000000000000");
+  assert.equal(last.status, 429, "a wrong key is still counted");
+});
+
 test("review: spellings and methods that differ from a task route are refused, not let through", () => {
   const id = SAMPLE_ID;
   for (const path of ["/api/run/", "//api/run", "/API/run", "/api/run;x", "/api/run%2F", "/api/runs", `/api/runs/${id}/cancel/`,

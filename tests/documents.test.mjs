@@ -150,7 +150,7 @@ test("with an embeddings key meaning and wording are combined, in batches, and a
   const big = await app.documents.add("local", { name: "Manual", text: many });
   assert.ok(big.chunks > 64, "the manual is long enough to need more than one request");
   assert.equal(service.calls.every((call) => call.length <= 64), true, "no request carries more than 64 passages");
-  assert.equal(service.calls.length, Math.ceil(big.chunks / 64));
+  assert.equal(service.calls.length, Math.ceil(big.chunks / 64), `every batch reached the service (the document says: ${big.note})`);
 
   service.calls.length = 0;
   await app.runtime.executeTool("files.write", { path: "notes.md", content: "Staff may take holiday after one month." });

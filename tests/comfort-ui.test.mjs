@@ -382,9 +382,16 @@ test.skip("R17-S15: keys pressed into Settings set every window action, and the 
   saveComfort(app.store, "local", "keys", { newTrunk: "Alt+T", searchHistory: "Alt+H", stopTask: "Alt+S", lookInside: "Alt+L" });
   await refresh(page);
   await clicks("rail-new-trunk");
+  // A slow runner, made certain: the panel's module arrives a moment after the press.
+  await page.route("**/studio.js", async (route) => { await new Promise((resolve) => setTimeout(resolve, 1500)); await route.continue(); });
   await page.keyboard.press("Alt+t");
   assert.equal(await clicked("rail-new-trunk"), 1, "new Trunk");
+  // New Trunk loads its panel's module first, so on a slow runner Escape used to land before the panel was open, and
+  // the panel then opened and took the focus from the history search (trunk Windows run after R19).
+  await page.locator("#studio").waitFor({ state: "visible" });
   await page.keyboard.press("Escape");
+  await page.locator("#studio").waitFor({ state: "hidden" });
+  await page.unroute("**/studio.js"); // NAS's LOW: the delay is for this step only
   await page.keyboard.press("Alt+h");
   await page.waitForFunction(() => document.activeElement?.id === "history-query");
   assert.ok(await page.locator("#history-query").isVisible(), "the history search is open, ready to type in");
