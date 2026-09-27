@@ -170,12 +170,13 @@ test.skip("the background bar comes first where Branch is installed, and Yes set
   assert.deepEqual(f.errors, []);
 });
 
-test("Updates in Settings are three choice cards, the recommended one marked, and picking one saves it", async (t) => {
+test("Updates in Settings keeps Branch up to date by itself with one switch, which saves installing by itself", async (t) => {
   const f = await fixture(t);
   await f.call("/api/deployment/suggestion", { id: "updates", answer: "never" });
   await f.open();
   // Redesign: replaced by the new window (prototype.html's Settings › Updates keeps one switch, "Keep Branch up to date by
-  // itself", where the old page had three choice cards); switching it saves the engine's choice.
+  // itself", where the old page had three choice cards); switching it on saves "install" (73ecbc51: the owner never
+  // presses Update, so update by itself installs, still waiting for idle tasks), the same as the bar's Yes.
   await openSettings(f.page, "updates");
   const auto = f.page.getByLabel("Keep Branch up to date by itself", { exact: true });
   await auto.waitFor();
@@ -184,7 +185,7 @@ test("Updates in Settings are three choice cards, the recommended one marked, an
   assert.equal(await auto.isChecked(), false, "Off, as shipped");
   await auto.check();
   for (let tries = 0; tries < 40 && readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate === "off"; tries++) await f.page.waitForTimeout(50);
-  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "check");
+  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "install");
   assert.deepEqual(f.errors, []);
 });
 

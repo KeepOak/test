@@ -28,6 +28,7 @@ import { limitRow } from "../settings/pages/usage.js";
 import { t, language } from "../../i18n.js";
 import { av } from "../core/ui.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { helperSource, helperControls } from "../chat/helpframe.js"; // pass 18b: a lane's Steer and Stop
 
 const D = { card: null, links: [], teams: [], tasks: {}, audit: [], glance: null, projects: [] };
 /* Pass 18: the tabs whose data came back from the engine; only those draw an empty state (never while still reading). */
@@ -180,7 +181,10 @@ const stateWords = (s) => t(WHY[s?.why] ?? STATE[s?.state]?.[1] ?? "task.queued"
 const MEMBER = { working: ["work", "task.working"], "waiting-owner": ["warn6", "window.places.team.waiting"], "waiting-service": ["warn6", "window.places.team.waiting"], blocked: ["warn6", "window.places.team.waiting"], finished: ["done", "task.finished"] };
 /* Pass 18b, the team run board: every team (GET /api/teams) as a card with its name, purpose and member faces with
    their roles; its newest task (GET /api/teams/<id>/tasks) opens into rounds, one per batch the engine really started
-   (each member's `batch`), with one lane per member: its face, its role and its state in Q51's words. The card opens
+   (each member's `batch`), with one lane per member: its face, its role and its state in Q51's words. A member whose run
+   works or waits is a helper of the team's turn, so its lane has Steer and Stop, the helpers frame's own
+   (POST /api/runs/<member run>/steer {text} and /cancel, chat/helpframe.js); the engine decides who may act on it
+   (src/helper-control.ts), and the tab is read again after. The card opens
    while that task works or has a handoff open, and the header folds it (window state). A handoff offered to a person is
    drawn with Accept and Reject held (data-held="security"): who may take over a team task is reviewed separately
    (POST /api/teams/<id>/handoffs/<id>/accept|reject). With no team yet, the tab is a welcome. */
@@ -195,13 +199,19 @@ function statePill(task) {
   const words = round && task.task?.state === "working" ? t("window.p18.working-round", { n: round }) : stateWords(task.task);
   return `<span class="pill ${cls}"><i></i>${esc(words)}</span>`;
 }
+const memberName = (m, team) => specName((team.members ?? []).find((x) => x.role === m.role)?.specialistId) || m.role || t("teamTasks.member.unnamed");
+const LIVE = new Set(["working", "waiting-owner", "waiting-service"]);
+const steerable = (m) => !!m.runId && LIVE.has(m.task?.state);
+/* The members Steer and Stop can reach: each team's newest task's working or waiting ones. */
+const liveMembers = () => D.teams.flatMap((team) => (D.tasks[team.id]?.[0]?.members ?? []).filter(steerable).map((m) => ({ runId: m.runId, name: memberName(m, team) })));
 function lane(m, team) {
   const [, key] = m.task ? MEMBER[m.task.state] ?? ["idle", "window.places.team.not-yet"] : ["idle", "window.places.team.not-yet"];
-  const seat = (team.members ?? []).find((x) => x.role === m.role);
-  const name = specName(seat?.specialistId) || m.role || t("teamTasks.member.unnamed");
+  const name = memberName(m, team);
   const wait = m.task && MEMBER[m.task.state]?.[0] === "warn6", done = m.task?.state === "finished";
   const line = [t(key), m.task?.reason].filter(Boolean).join(" · ");
-  return `<div class="card18a${wait ? " wait18" : done ? " done18" : ""}"><div class="ch18a">${av({ name }, 36)}<span class="grow"><b>${esc(name)}</b><span class="live18${wait ? " you18" : ""}">${esc(line)}</span></span>${m.role && m.role !== name ? `<span class="chip18">${esc(m.role)}</span>` : ""}</div></div>`;
+  const ctl = steerable(m) ? helperControls({ runId: m.runId, name }) : null;
+  const acts = ctl ? `${ctl.box}<div class="acts18a"><span class="grow"></span>${ctl.acts}</div>` : "";
+  return `<div class="card18a${wait ? " wait18" : done ? " done18" : ""}"><div class="ch18a">${av({ name }, 36)}<span class="grow"><b>${esc(name)}</b><span class="live18${wait ? " you18" : ""}">${esc(line)}</span></span>${m.role && m.role !== name ? `<span class="chip18">${esc(m.role)}</span>` : ""}</div>${acts}</div>`;
 }
 function board(team, task) {
   const batches = [...new Set(task.members.map((m) => m.batch))].sort((a, b) => (a ?? 99) - (b ?? 99));
@@ -209,7 +219,7 @@ function board(team, task) {
   const h = task.handoff;
   const hand = h ? `<div class="hand18b">${ic("branch", "s")}<span class="grow"><b>${esc(t("window.p18.open-handoff", { from: party(task.heldBy ?? task.askedBy), to: party(h.to) }))}</b><small>${esc(h.reason ?? "")}</small></span><button class="btn sm held18" type="button" data-act="hoaccept18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.accept")}</button><button class="btn ghost sm held18" type="button" data-act="horeject18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.reject")}</button></div>` : "";
   const stops = task.blocker ? `<p class="hint">${esc(t("window.places.team.what-stops-it", { text: task.blocker }))}</p>` : "";
-  return `<div class="board18b">${rounds}${hand}${stops}<p class="hint" data-css="margin:0">${t("window.places.team.this-card-only-looks")}</p></div>`;
+  return `<div class="board18b">${rounds}${hand}${stops}</div>`;
 }
 function teamCard(team, task) {
   const open = task && opened(team, task);
@@ -279,11 +289,11 @@ function usageTab() {
 }
 /* The workspace's rules live on keepoak.com, which the engine does not reach: drawn greyed, nothing pressed. */
 function rulesTab() {
-  return `${ctlSeg(t("window.places.team.spending-that-needs-an-admins-yes"), t("window.places.team.anything-a-trunk-would-buy"), [t("window.places.team.over-10"), t("window.places.team.over-25"), t("window.places.team.over-100")], null)}
+  return `${ctlSeg(t("window.places.team.spending-that-needs-an-admins-yes"), t("window.places.team.anything-a-trunk-would-buy"), [t("window.places.team.over-10"), t("window.places.team.over-25"), t("window.places.team.over-100")], null, "f15-spending-that-needs-an-admin-s-yes")}
     ${ctl("tr-models", t("window.places.team.only-these-services-for-shared"), t("window.places.team.chatgpt-and-claude-through"), false)}
     ${ctl("tr-skills", t("window.places.team.only-admins-install-skills"), t("window.places.team.members-can-ask"), false)}
     ${ctl("tr-sso", t("window.places.team.sign-in-with-keepoak"), t("window.places.team.everyone-signs-in-with-keepoak"), false)}
-    ${ctlSeg(t("window.places.team.keep-team-conversations"), t("window.places.team.only-conversations-with-shared"), [t("window.places.team.30-days"), t("window.places.team.1-year"), t("window.places.team.forever")], null)}`;
+    ${ctlSeg(t("window.places.team.keep-team-conversations"), t("window.places.team.only-conversations-with-shared"), [t("window.places.team.30-days"), t("window.places.team.1-year"), t("window.places.team.forever")], null, "f15-keep-team-conversations")}`;
 }
 
 export function tabBody(tab, card) {
@@ -325,6 +335,14 @@ export async function readTab(tab) {
 }
 
 export function initTeamTabs(reload) {
+  helperSource(liveMembers, async () => { await readTab("agents"); renderNow(); });
+  /* While a team's turn works on screen, its board is read again every two seconds, so a lane's state (and its Steer and
+     Stop) follows the member's run; never while a steering note is being typed, and drawn again only when it changed. */
+  setInterval(async () => {
+    if (S.view !== "team" || S.tabs.team !== "agents" || document.hidden || document.activeElement?.id === "steer18") return;
+    if (!D.teams.some((team) => D.tasks[team.id]?.[0]?.task?.state === "working")) return;
+    if (await readTab("agents")) renderNow();
+  }, 2000);
   markLive(["tboard18b", "mkteam18c", "mkpick18c", "mksave18c", "sw:mkteam-name", "tgrp-new", "tgrp-edit", "tgrp-pick", "tgrp-save", "tgrp-rm", "sw:tgrp-name", "sw:tgrp-spend", "tsh-manage", "tsh-rel", "tsh-stop"]);
   on("tgrp-new", () => openGroup(null));
   on("mkteam18c", () => { M = { name: "", picked: [] }; teamDlg(); });

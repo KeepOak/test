@@ -32,6 +32,9 @@ export interface RunActivity {
   plan?: ActivityPlan; milestone?: string; verdict?: string;
   /** Q51: what the task is really doing, from its events. */
   task?: TaskState;
+  /** QA Q048: the task that started this one, when it is a helper (run.started `parentRunId`); the window folds a
+      helper into its parent instead of listing it as work of its own. */
+  parentRunId?: string;
 }
 
 /**
@@ -133,9 +136,43 @@ export function filePathOf(name: string, args: unknown): string {
   return typeof path === "string" && path && path !== "." ? path.slice(0, 200) : "";
 }
 
-/** What a tool call is doing, for people; arguments are summarised and never echoed in full. */
-export function describeToolCall(name: string, args: unknown): string {
+/** "Researcher, Checker and Writer": names in a sentence. */
+const listed = (names: string[]): string => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "");
+/**
+ * QA Q049: handing work to helpers at once, in words: "Start 3 helpers: Researcher, Checker and Writer", each named by
+ * `nameOf` (a specialist's id to its name); without names, how many. Null for any other call.
+ */
+function helpersLabel(name: string, a: Record<string, unknown>, nameOf?: (id: string) => string | null): string | null {
+  if (name !== "delegate.parallel" && name !== "specialists.fanout") return null;
+  const tasks = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
+  if (!tasks.length) return null;
+  const names = tasks.map((task) => { const id = String(task?.specialist ?? task?.id ?? ""); return (id && nameOf?.(id)) || ""; });
+  const count = tasks.length === 1 ? "1 helper" : `${tasks.length} helpers`;
+  return names.every(Boolean) ? `Start ${count}: ${short(listed(names), 160)}` : `Start ${count}`;
+}
+
+/**
+ * QA Q049: each job a call hands to helpers, in words: who does it (the specialist's name, or the name the call gave when
+ * it is not an id) and what it was asked. Empty for any other call. Never an id: a specialist with no name is unnamed.
+ */
+export function helperJobs(name: string, args: unknown, nameOf?: (id: string) => string | null): { name: string; job: string }[] {
+  if (name !== "delegate.parallel" && name !== "specialists.fanout") return [];
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const tasks = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
+  const idLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return tasks.slice(0, 8).map((task) => {
+    const who = String(task?.specialist ?? "");
+    const named = (who && nameOf?.(who)) || (who && !idLike.test(who) ? who : "");
+    return { name: named.slice(0, 60), job: String(task?.prompt ?? "").slice(0, 600) };
+  }).filter((one) => one.job);
+}
+
+/** What a tool call is doing, for people; arguments are summarised and never echoed in full. `nameOf` names a
+    specialist by its id, where the caller can. */
+export function describeToolCall(name: string, args: unknown, nameOf?: (id: string) => string | null): string {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const helpers = helpersLabel(name, a, nameOf);
+  if (helpers) return helpers;
   switch (name) {
     case "files.read": return `Reading ${short(a.path)}`;
     case "files.write": return `Writing ${short(a.path)}`;
@@ -213,10 +250,12 @@ export function runActivity(run: Run, events: Event[], options: { now?: number; 
   // mac7/coding-next: a model on this computer still loading into memory is still the model's turn.
   const thinking = events.at(-1)?.kind === "model.started" || events.at(-1)?.kind === "model.loading";
   const current = run.status !== "running" ? null : working ? working.label : thinking || !list.length ? "Thinking" : "Thinking about the results";
+  const parent = events.find((event) => event.kind === "run.started")?.data.parentRunId;
   return {
     runId: run.id, sessionId: run.sessionId, prompt: run.prompt, status: run.status,
     startedAt: run.createdAt, current, steps: list.slice(-30), ...orchestrationState(events),
     task: taskState(run, events, options),
+    ...(typeof parent === "string" && parent ? { parentRunId: parent } : {}),
   };
 }
 

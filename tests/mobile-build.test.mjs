@@ -111,6 +111,17 @@ test("the phone apps are built for a release tag or by hand, never for a pull re
   assert.match(workflows, /^\s+workflow_dispatch:/m);
 });
 
+test("the phone workflow compiles all the native code: the Java tests run and the push code compiles", async () => {
+  const workflow = await readFile(join(process.cwd(), ".github", "workflows", "mobile.yml"), "utf8");
+  const gradle = await readFile(join(MOBILE, "android", "app", "build.gradle"), "utf8");
+  assert.match(workflow, /run: \.\/gradlew --no-daemon testReleaseUnitTest$/m);
+  assert.match(workflow, /run: \.\/gradlew --no-daemon -PbranchPushCompile compileReleaseJavaWithJavac$/m);
+  for (const job of workflow.split(/^  (?=android:|ios:)/m).slice(1)) assert.match(job, /^    timeout-minutes: 15$/m);
+  // Compiling the push code needs no Firebase project, and never applies the Google services plugin.
+  assert.match(gradle, /if \(project\.hasProperty\('branchPush'\) \|\| project\.hasProperty\('branchPushCompile'\)\) \{\n\s+sourceSets\.main\.java\.srcDirs \+= 'src\/push\/java'/);
+  assert.match(gradle, /if \(project\.hasProperty\('branchPush'\)\) \{\n\s+apply plugin: 'com\.google\.gms\.google-services'/);
+});
+
 const sdk = await androidSdk();
 test("the Android app builds", {
   skip: !sdk ? "no Android SDK on this machine" : process.env.BRANCH_MOBILE_BUILD !== "1" ? "set BRANCH_MOBILE_BUILD=1 to build" : false,

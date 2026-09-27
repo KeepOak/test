@@ -16,7 +16,7 @@ import { commandMode } from "./commands/settings.js";
 import { commandHost } from "./commands/host.js";
 import type { FeatureMode } from "./feature-switches.js";
 import { PLACE_ROWS, assistantName, needsCount, type PlaceApp, type Row } from "./terminal-place-data.js";
-import { settingsRows } from "./terminal-settings.js";
+import { knowCopysCommit, settingsRows } from "./terminal-settings.js";
 import { PLACES, SETTINGS_PAGES, firstTab, homeOf, parseRoute, placeById, settingsPage, type PlaceId, type Route } from "./terminal-places.js";
 import { renderScreen, wrapHelp, type Overlay, type PaletteItem, type ScreenModel } from "./terminal-screen.js";
 import { ScreenWriter } from "./terminal-output.js";
@@ -299,6 +299,7 @@ export class Tui {
     if (!this.app) return [{ title: this.words.t("terminal.noApp", "Open Branch to see this."), tone: "muted" }];
     if ("settings" in route) {
       const state = { look: this.look, mode: this.mode, themeName: this.themeName(), switches: this.switches };
+      await knowCopysCommit();
       return settingsRows(this.app, this.words, route.settings, route.sub, state);
     }
     this.loading = true;

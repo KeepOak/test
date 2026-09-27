@@ -30,6 +30,14 @@ export function t(key, values) {
     ? raw.replace(/\{(\w+)\}/g, (whole, name) => (name in values ? String(values[name]) : whole))
     : raw;
 }
+/**
+ * A count in words, in the chosen language's plural form (Intl.PluralRules): `key.one`, `key.few`, … and `key.other`,
+ * which every language has and which answers any form it does not name. {count} is filled in, as are `values`.
+ */
+export function tc(key, count, values = {}) {
+  const form = `${key}.${new Intl.PluralRules(current).select(count)}`;
+  return t(form in dictionary || form in english ? form : `${key}.other`, { ...values, count });
+}
 export const language = () => current;
 /**
  * The words for a count, in the form the chosen language uses for it (Intl.PluralRules: "one", "other", and "few" or

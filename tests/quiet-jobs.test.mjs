@@ -387,10 +387,11 @@ test("a check that keeps failing says so once, not on every turn", async (t) => 
 
 /* ---------------------------------------------------------------- the three-way switches */
 
-test("everything ships off: checks send every result, scripts are refused, no check-in runs", async (t) => {
+test("check-in and script gates ship off, news-only ships when needed; switched off: checks send every result, scripts are refused, no check-in runs", async (t) => {
   const { app, root, provider, context } = await fixture(t);
   const overview = await quietJobsApi(app.scheduler, "GET", "/api/heartbeat", async () => ({}));
-  assert.deepEqual(overview.switches, { checkIn: "off", scriptGates: "off", notifyGate: "off" });
+  assert.deepEqual(overview.switches, { checkIn: "off", scriptGates: "off", notifyGate: "when-needed" });
+  switchOn(app, { notifyGate: "off" });
   const program = join(root, "probe");
   await writeFile(program, "fake");
   assert.throws(() => app.scheduler.create(context, { prompt: "x", dueAt: noon.toISOString(), kind: "task", gate: { executable: program } }), /switched off/);

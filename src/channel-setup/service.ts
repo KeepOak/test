@@ -47,7 +47,7 @@ export function commandFor(id: string): { posix: string; windows: string } {
 export function setupList(store: Pick<Store, "get">, owner: string): Record<string, unknown> {
   const book = recipeBook();
   return { mode: setupMode(store, owner), checked: book.checked, count: book.recipes.length,
-    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family })) };
+    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family, ...(recipe.what ? { what: recipe.what } : {}) })) };
 }
 
 /** Everything the Set up panel shows for one app. Nothing here is secret. */
@@ -75,7 +75,20 @@ export interface SetupHost {
   /** Already behind the network settings. */
   fetch: typeof fetch;
   /** The Telegram card from never-break: its save, and connecting the bot right away. */
-  telegram?: { save: (input: unknown) => Promise<void>; connect?: () => Promise<string | null> };
+  telegram?: {
+    save: (input: unknown) => Promise<void>;
+    /** `background`: answer once all but reaching Telegram is done (see connectGuidedTelegram). */
+    connect?: (options?: { background?: boolean }) => Promise<string | null>;
+    /** Test-only stand-in for https://api.telegram.org, set in code by createBranch and never from a request. */
+    apiBase?: string | undefined;
+  };
+}
+const telegramApi = "https://api.telegram.org/";
+/** The card's recipe with its check pointed at the stand-in, when a test set one. */
+function checkedAt(recipe: Recipe, host: SetupHost): Recipe {
+  const base = recipe.turnOn === "guided" ? host.telegram?.apiBase : undefined;
+  if (!base || !recipe.check?.url.startsWith(telegramApi)) return recipe;
+  return { ...recipe, check: { ...recipe.check, url: `${base.replace(/\/+$/, "")}/${recipe.check.url.slice(telegramApi.length)}` } };
 }
 export interface SaveInput { values: Record<string, unknown>; enable?: FeatureMode | undefined }
 
@@ -90,7 +103,9 @@ export function entryLine(recipe: Recipe, values: Values): string | null {
 async function switchOn(host: SetupHost, recipe: Recipe, values: Values, enable: FeatureMode | undefined): Promise<string | null> {
   if (recipe.turnOn === "guided") {
     await host.telegram?.save({ token: values.TELEGRAM_BOT_TOKEN, ...(enable ? { mode: enable } : {}) });
-    return enable && enable !== "off" && host.telegram?.connect ? host.telegram.connect() : null;
+    // The check just asked Telegram about this token, so the save does not wait for the bot to connect as
+    // well: that asks Telegram again, and a slow answer held the owner's click for up to twenty seconds.
+    return enable && enable !== "off" && host.telegram?.connect ? host.telegram.connect({ background: true }) : null;
   }
   if (recipe.turnOn === "switch" && enable) saveParitySwitches(host.store, host.owner, { [recipe.id]: enable }, parityKinds());
   return null;
@@ -104,7 +119,7 @@ export async function saveSetup(host: SetupHost, id: string, input: SaveInput): 
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
   if (recipe.turnOn === "guided" && !host.telegram) throw new SetupRefusal(503, "The Telegram card is not available in this launch.");
   const values = readValues(recipe, input.values);
-  const checked = await runCheck(recipe, values, host.fetch);
+  const checked = await runCheck(checkedAt(recipe, host), values, host.fetch);
   if (checked.ok === false) throw new SetupRefusal(422, checked.reason);
   const secrets = Object.keys(values).filter((name) => /^[A-Z]/.test(name));
   for (const name of secrets)
