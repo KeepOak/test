@@ -111,17 +111,6 @@ test("G3 the Gemini card has a route that reports whether a sign-in is set up", 
 
 /* ---------- G6: "/model" and "/help" without public/model-profiles.js ---------- */
 
-// Redesign: replaced by the new window (public/app.js and public/model-profiles.js are the old window's; the new
-// message box is public/app/chat/chat.js, checked in "typing /model … still lists the choices" below).
-test.skip("G6 the message box knows its own commands, so /model and /help work without the module", async () => {
-  const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  assert.match(source, /export function parseSlashCommand/, "the parser lives in app.js, not only in the module");
-  assert.match(source, /switchModelWithoutModule/, "app.js can change the model on its own");
-  const module = await readFile(new URL("../public/model-profiles.js", import.meta.url), "utf8");
-  assert.match(module, /branchSlashCommand/, "the module is still the handler when it is loaded");
-  assert.match(module, /presetName/, "profile cards read connection names rather than ids");
-});
-
 /* ---------- G2: approval buttons in a chat app ---------- */
 
 /** A stand-in for api.telegram.org: queued updates come out of getUpdates; sends are recorded. */
@@ -557,25 +546,6 @@ test("D3 the Activity screen shows the live feed and stops it when you leave (th
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the old Runs page's event feed card); ported above.
-test.skip("D3 the Activity screen shows the live feed and stops it when you leave", async (t) => {
-  const { page, api, errors } = await onPage(t, { provider: writesAFile("live.txt") });
-  await openPlace(page, "runs");
-  await page.locator("#activity-feed-card").waitFor({ state: "visible" });
-  await api("POST", "/api/run", { prompt: "write it" });
-  await page.locator("#activity-feed .feed-row").first().waitFor({ timeout: 25000 });
-  /* The rows arrive one by one; the model's steps come before the tool's. */
-  await page.locator("#activity-feed .feed-row strong").filter({ hasText: /tool/i }).first()
-    .waitFor({ timeout: 25000 }).catch(() => undefined);
-  const words = await page.locator("#activity-feed .feed-row strong").allTextContents();
-  assert.ok(words.some((line) => /tool/i.test(line)), `a tool step arrived: ${words.join(" | ")}`);
-  assert.ok(words.every((line) => !/^(run|model|tool|policy)\./.test(line)),
-    `each line opens with plain words, not an event name: ${words.join(" | ")}`);
-  await openPlace(page, "chat");
-  await page.locator("#activity-feed-card").waitFor({ state: "hidden" });
-  assert.deepEqual(errors, []);
-});
-
 /* ---------- D4: the month view, the forecast and the cost columns ---------- */
 
 // Redesign: Coming soon (Settings › Data & usage: the report, rep15 and repopen15), checked at ef021c57.
@@ -601,23 +571,6 @@ test.skip("D4 the month card's numbers come from the ledger and the forecast say
   for (const wanted of ["This month", "This month by model", "This month by conversation", "This month by where the task came from", "How it has been going"])
     assert.ok(headings.includes(wanted), `${wanted} is on the screen (${headings.join(", ")})`);
   assert.deepEqual(errors, []);
-});
-
-test.skip("D4 the forecast is worked out from the pace so far, and says nothing when nothing is priced", async () => {
-  // Redesign: usage.js moved into the backend; calculation no longer exposed as a public module
-  const { forecastMonth } = await import("../public/usage.js").catch(() => ({}));
-  void forecastMonth;
-  /* The page module cannot be imported outside a browser, so the same arithmetic is checked here. */
-  const midMonth = new Date(2026, 5, 10);
-  const days = [{ date: "2026-06-01", pricedRuns: 2, estimatedCost: 4 }, { date: "2026-06-09", pricedRuns: 3, estimatedCost: 6 }];
-  const cost = days.reduce((total, day) => total + (day.pricedRuns ? day.estimatedCost : 0), 0);
-  const daysInMonth = new Date(2026, 6, 0).getDate();
-  assert.equal(daysInMonth, 30);
-  assert.equal((cost / midMonth.getDate()) * daysInMonth, 30, "ten pounds over ten days is thirty over thirty");
-  const source = await readFile(new URL("../public/usage.js", import.meta.url), "utf8");
-  assert.match(source, /export function forecastMonth/);
-  assert.match(source, /At this pace, about/, "the sentence is plain and says about");
-  assert.match(source, /nothing to add up|cannot be guessed at/, "an unpriced month says so rather than showing zero");
 });
 
 test("D4 the spreadsheet file carries the money columns", async (t) => {
@@ -812,110 +765,7 @@ test("G1 a standing rule that says go ahead is listed beside the conversation's 
   assert.deepEqual(after.standing.map((entry) => entry.rule.tool), ["files.read"]);
 });
 
-// Redesign: replaced by the new window (the side panel is live at ef021c57 but has no allowed list, which is not in the
-// prototype's panel; the card's "Yes, for this conversation" and the sentence under each yes are not in the design's card).
-test.skip("G1 the context pane lists a grant and the approval card says what a yes leaves behind", async (t) => {
-  const { page, errors } = await onPage(t, { provider: writesAFile("gated.txt") });
-  await page.evaluate(async (token) => {
-    await fetch("/api/policy", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify({ preset: "ask-before-changes" }) });
-    /* Q59: Ask first offers no "Yes, always", so this conversation follows the owner's setting to show all three yeses. */
-    await fetch("/api/conversation-mode/settings", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify({ newConversation: "follow", confirmLoosening: true }) });
-    await globalThis.branchConversationMode.refresh();
-  }, await page.evaluate(() => sessionStorage.getItem("branch-token")));
-  await page.locator("#prompt").fill("write it");
-  await page.locator("#send").click();
-  await page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
-  /* Before pressing anything, each yes says what it will leave behind. */
-  const sentences = await page.locator("#live-ask .live-ask-grant").allTextContents();
-  assert.equal(sentences.length, 3, "one sentence per yes");
-  assert.match(sentences[0], /asks again next time/);
-  assert.match(sentences[1], /Remembered for this conversation/);
-  assert.match(sentences[2], /standing rule/);
-
-  await page.locator("#live-ask").getByRole("button", { name: "Yes, for this conversation", exact: true }).click();
-  /* DG-114: the side panel is a card, closed until asked for, in the full window too. */
-  await page.locator("#aside-toggle").click();
-  await page.locator("#context-panel").waitFor({ state: "visible" });
-  const list = page.locator("#context-allowed");
-  await list.locator(".allowed-row").first().waitFor({ timeout: 15000 });
-  assert.match(await list.locator(".allowed-row strong").first().textContent(), /gated\.txt|files\.write/);
-  assert.match(await list.locator(".allowed-row .meta").first().textContent(), /until/);
-
-  await list.locator(".allowed-revoke").first().click();
-  await page.waitForFunction(() => !document.querySelector("#context-allowed .allowed-row"), null, { timeout: 15000 });
-  assert.match(await list.locator(".context-empty").textContent(), /Nothing extra is allowed/);
-  assert.deepEqual(errors, []);
-});
-
 /* ---------- G4: label chips in Recents, in Ctrl+K, and on the conversation title ---------- */
-
-// Redesign: replaced by the new window (conversation labels and their chips are not in the design).
-test.skip("G4 label chips filter Recents and the Ctrl+K box through the labels search parameter", async (t) => {
-  const answers = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
-  const { page, api, errors } = await onPage(t, { provider: answers });
-  const first = (await api("POST", "/api/run", { prompt: "the kitchen tiles" })).body;
-  const second = (await api("POST", "/api/run", { prompt: "the car insurance" })).body;
-  await api("POST", "/api/labels", { target: "conversation", targetId: first.sessionId, label: "house" });
-
-  await page.reload();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  const chips = page.locator("#rail-labels .label-chip");
-  await chips.first().waitFor({ timeout: 15000 });
-  assert.equal(await chips.count(), 1, "one label is in use");
-  assert.equal(await chips.first().textContent(), "house (1)");
-  assert.equal(await page.locator("#rail-list .rail-item").count(), 2, "both conversations before filtering");
-
-  await chips.first().click();
-  await page.waitForFunction(() => document.querySelectorAll("#rail-list .rail-item").length === 1, null, { timeout: 15000 });
-  assert.match(await page.locator("#rail-list .rail-item").first().textContent(), /kitchen tiles/);
-  assert.equal(await chips.first().getAttribute("aria-pressed"), "true");
-
-  /* The Ctrl+K box shows the same chips and offers only the conversations they leave. */
-  await page.keyboard.press("ControlOrMeta+k");
-  await page.locator("#cmd").waitFor({ state: "visible" });
-  const paletteChips = page.locator("#cmd-labels .label-chip");
-  await paletteChips.first().waitFor();
-  assert.equal(await paletteChips.first().getAttribute("aria-pressed"), "true");
-  await page.locator("#cmd-input").fill("insurance");
-  assert.equal(await page.locator(".cmd-item").count(), 0, "the filtered-out conversation is not offered");
-
-  /* Letting the chip go brings everything back. */
-  await paletteChips.first().click();
-  await page.waitForFunction(() => document.querySelectorAll("#rail-list .rail-item").length === 2, null, { timeout: 15000 });
-  assert.ok(second.sessionId);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (conversation labels and the label picker are not in the design).
-test.skip("G4 the conversation title has a label picker that puts a label on what you are reading", async (t) => {
-  const answers = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
-  const { page, api, app, errors } = await onPage(t, { provider: answers });
-  const run = (await api("POST", "/api/run", { prompt: "the loft hatch" })).body;
-  await api("POST", "/api/labels", { target: "conversation", targetId: run.sessionId, label: "house" });
-  await page.reload();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  await page.locator("#rail-list .rail-item").first().click();
-  /* Opening a conversation reads it from the server first. The picker is for the conversation that
-     is open, so pressing Labels before it has arrived only says "open a conversation first". */
-  await page.waitForFunction((id) => document.getElementById("conversation")?.dataset.sessionId === id, run.sessionId, { timeout: 15000 });
-  await page.locator("#thread-labels").click();
-  const picker = page.locator(".label-picker");
-  await picker.waitFor();
-  /* The label it already carries reads as chosen; pressing it takes it off. */
-  const chip = picker.locator(".label-chip").first();
-  assert.equal(await chip.getAttribute("aria-pressed"), "true");
-  await chip.click();
-  /* It was the only thing carrying that label, so the label itself is gone from the picker. */
-  await page.waitForFunction(() => document.querySelectorAll(".label-picker .label-chip").length === 0, null, { timeout: 15000 });
-  assert.deepEqual(app.store.labels.forTarget(app.runtime.owner, "conversation", run.sessionId), []);
-  /* And a new one can be typed in without leaving the screen. */
-  await picker.locator(".label-new").fill("loft");
-  await picker.locator(".label-add").click();
-  await page.waitForFunction(() => document.querySelector(".label-picker .label-chip")?.getAttribute("aria-pressed") === "true", null, { timeout: 15000 });
-  assert.equal(await picker.locator(".label-chip").first().textContent(), "loft");
-  assert.deepEqual(app.store.labels.forTarget(app.runtime.owner, "conversation", run.sessionId), ["loft"]);
-  assert.deepEqual(errors, []);
-});
 
 /* ---------- G5: markdown everywhere, and Appearance in French ---------- */
 

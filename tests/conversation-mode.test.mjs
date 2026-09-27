@@ -229,23 +229,6 @@ test("the chip starts a new conversation on Ask first, and its menu asks before 
   assert.equal(startedOn, "ask", "the conversation was started on Ask first");
 });
 
-// Redesign: replaced by the new window (arrow keys inside the mode menu are not in the prototype; its rows carry 1–4).
-test.skip("the window's refresh redrawing the Lockdown switch leaves the open menu and the keyboard's place in it", async (t) => {
-  const f = await windowFixture(t);
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode === "ask");
-  await f.page.locator("#mode-chip").click();
-  await f.page.locator("#mode-menu").waitFor({ state: "visible" });
-  await f.page.keyboard.press("ArrowDown");
-  assert.equal(await f.page.evaluate(() => document.activeElement?.dataset.mode), "plan");
-  /* What the refresh every 3 s does: the Lockdown switch is drawn again, which asks the menu to look again.
-     The menu used to be redrawn each time, and the keyboard fell out of it (trunk 98beb5d8, macOS). */
-  await f.page.evaluate(async () => { await window.branchOther.render(); await window.branchConversationMode.refresh(); });
-  assert.equal(await f.page.evaluate(() => document.activeElement?.dataset.mode), "plan", "the keyboard is still on Plan");
-  await f.page.keyboard.press("ArrowDown");
-  assert.equal(await f.page.evaluate(() => document.activeElement?.dataset.mode), "full", "and the arrows carry on from there");
-  assert.deepEqual(f.errors, []);
-});
-
 /* Redesign: under Lockdown the prototype's menu greys every mode (POPS.modemenu2: disabled when S.locked) and the chip says
    Lockdown; the reason in a title and Plan staying pickable are the old menu's (replaced by the new window). */
 test("under Lockdown the looser modes are greyed with the reason, not hidden, and cannot be picked", async (t) => {
@@ -281,43 +264,6 @@ test("Q59: a question in an Ask first conversation offers no standing yes on its
   assert.equal(answers.some((a) => /^Always allow/.test(a.text) && a.live), false, "Ask first reads no standing yes, so none is offered");
   const sessionId = (await f.call("/api/policy")).body.waiting[0].sessionId;
   assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, sessionId).mode, "ask", "control: the conversation is on Ask first");
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (the menu's footer is not in the prototype's POPS.modemenu2).
-test.skip("the menu's footer names what a new conversation from this window really starts on", async (t) => {
-  const f = await windowFixture(t);
-  const chip = f.page.locator("#mode-chip"), menu = f.page.locator("#mode-menu");
-  const footer = async () => {
-    await chip.click();
-    await menu.waitFor({ state: "visible" });
-    const text = await menu.locator(".mode-footer").innerText();
-    await chip.click();
-    await menu.waitFor({ state: "hidden" });
-    return text;
-  };
-  savePolicy(f.app.store, f.app.runtime.owner, { preset: "ask-before-changes" });
-  assert.equal((await f.call("/api/conversation-mode/settings", { newConversation: "auto", confirmLoosening: true })).status, 200);
-  await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode === "auto");
-  assert.match(await footer(), /New conversations start on Auto\./, "default Auto: the footer names Auto");
-  // Somebody else in the house: Auto is looser than the owner's setting, so the view gives null and the
-  // window sends nothing (the conversation follows the owner's rules), whatever the owner saved.
-  const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
-  f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
-  const view = await f.call("/api/conversation-mode");
-  assert.equal(view.body.newConversation, null);
-  assert.equal(view.body.settings.newConversation, "auto", "the owner's saved default is still Auto");
-  await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode !== "auto");
-  // The footer shows once a mode is chosen for the next conversation: Sam picks Plan first.
-  await chip.click();
-  await menu.locator('[data-mode="plan"]').click();
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode === "plan");
-  const text = await footer();
-  assert.match(text, /New conversations start on Follow my rules\./, "a household person: the footer names what the window sends");
-  assert.doesNotMatch(text, /start on Auto/);
-  f.app.store.profiles.switch({ profileId: null });
   assert.deepEqual(f.errors, []);
 });
 

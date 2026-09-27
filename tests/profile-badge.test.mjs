@@ -8,7 +8,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { closeSettings, openPlace } from "./places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -118,36 +117,3 @@ test("with the owner's PIN set, the person menu's way back asks for it", async (
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (no chat-app card loads by itself in Settings; not asking on somebody else's
-// profile is re-pointed above).
-test.skip("on somebody else's profile the window stops asking for the owner's chat apps, and asks again once back", async (t) => {
-  const f = await fixture(t, false);
-  const asked = [];
-  f.page.on("request", (request) => {
-    const path = new URL(request.url()).pathname;
-    if (/^\/api\/(channels|channel-setup|secrets)(\/|$)/.test(path)) asked.push(path);
-  });
-  const said = [];
-  f.page.on("console", (message) => { if (message.type() === "error") said.push(message.text()); });
-  /* The owner opens the chat apps, so their cards and the Telegram panel are on the page. */
-  await openPlace(f.page, "settings:channels");
-  await f.page.locator("#channel-setup-card .settings-card-title").waitFor({ state: "visible", timeout: 15000 });
-  await closeSettings(f.page);
-
-  await f.call("/api/profiles/switch", { profileId: f.sam.id, pin: "2468" });
-  await f.page.locator("#profile-badge").waitFor({ state: "visible", timeout: 15000 });
-  asked.length = 0;
-  /* Settings opened again, and two of the window's own three-second refreshes. */
-  await openPlace(f.page, "settings:channels");
-  await f.page.waitForTimeout(7000);
-  assert.deepEqual(asked, [], "the window kept asking for the owner's chat apps and locker");
-  assert.equal(await f.page.locator("#channel-setup-card .settings-card-title").count(), 0, "the owner's chat-app setup stayed on the page");
-  await closeSettings(f.page);
-
-  await f.page.locator("#profile-badge").getByRole("button", { name: "Switch back" }).click();
-  await f.page.locator("#profile-badge").waitFor({ state: "hidden", timeout: 15000 });
-  await f.page.waitForFunction(() => document.querySelector("#channel-setup-card .settings-card-title"), null, { timeout: 15000 });
-  assert.ok(asked.some((path) => path.startsWith("/api/channel-setup")), "the chat-app setup was not loaded again");
-  assert.deepEqual(f.errors, [], "an expected refusal surfaced as a page error");
-  assert.deepEqual(said.filter((line) => /belongs to the owner/.test(line)), []);
-});

@@ -14,7 +14,6 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { zipWrite } from "../dist/skill-package.js";
 import { signIn, openPlace } from "./new-window-places.mjs";
 
 async function fixture(t, viewport = { width: 1280, height: 900 }) {
@@ -42,7 +41,6 @@ async function fixture(t, viewport = { width: 1280, height: 900 }) {
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
   return { app, page, errors, seen, call };
 }
-const sideways = (page) => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 
 test("saved prompts: switched on in Procedures, written, saved, then typed as a command in the message box", async (t) => {
   const { page, errors, seen, call } = await fixture(t);
@@ -79,35 +77,3 @@ test("saved prompts: switched on in Procedures, written, saved, then typed as a 
   assert.deepEqual(errors, []);
 });
 
-test.skip("saved prompts and the install record fit a 400 px window, and a skill folder installs with its steps shown", async (t) => {
-  // Redesign: replaced by the new window (prototype.html has no "Install record" card in Customize › Skills and no switch
-  // for saved prompts; a phone-width Procedures is blocked by the side list, the WINDOW BUG in library-tabs.test.mjs).
-  const { page, errors } = await fixture(t, { width: 400, height: 860 });
-  await openPlace(page, "automations:procedures");
-  await page.getByLabel("Saved prompts", { exact: true }).selectOption("on");
-  await page.locator("#prompts-editor").waitFor({ state: "visible" });
-  assert.ok(await sideways(page) <= 0, "no sideways scrolling in Procedures");
-
-  await openPlace(page, "customize:skills");
-  const card = page.locator("#skill-installs-card");
-  await card.waitFor({ state: "visible" });
-  await page.getByLabel("Install record", { exact: true }).selectOption("on");
-  await card.locator("#skill-installs-file").waitFor({ state: "visible" });
-  const zip = zipWrite([["tidy-summary/SKILL.md", "---\nname: tidy-summary\ndescription: Tidy summaries.\n---\n\nKeep it short.\n"],
-    ["tidy-summary/scripts/run.sh", "echo never"]]);
-  await card.locator("#skill-installs-file").setInputFiles({ name: "tidy-summary.zip", mimeType: "application/zip", buffer: zip });
-  await card.getByRole("button", { name: "Install it" }).click();
-  await card.locator("details summary").filter({ hasText: "tidy-summary" }).waitFor();
-  await card.locator("details summary").first().click();
-  assert.match(await card.locator("details").first().textContent(), /Left out tidy-summary\/scripts\/run\.sh/);
-  await page.route("**/api/skill-installs", async (route) => {
-    if (route.request().method() !== "GET") return route.continue();
-    await route.fulfill({ json: { mode: "on", records: [], skills: [{ id: "literal", name: "action.save", enabled: false }] } });
-  });
-  await page.evaluate(() => document.dispatchEvent(new CustomEvent("branch-language", { detail: { language: "en" } })));
-  const literal = page.locator('#skill-installs-skill option[value="literal"]');
-  await literal.waitFor({ state: "attached" });
-  assert.equal(await literal.innerText(), "action.save", "an installed skill name is not translated as interface copy");
-  assert.ok(await sideways(page) <= 0, "no sideways scrolling in Skills");
-  assert.deepEqual(errors, []);
-});

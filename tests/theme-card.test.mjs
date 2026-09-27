@@ -115,23 +115,6 @@ test.skip("DG-166/DG-040: the Theme card has the sample's rows, words and notes,
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the old "Standard / High contrast" row is prototype.html's "More contrast" switch,
-// checked live above).
-test.skip("DG-166: Contrast is two choices that still reach the terminal, and come back from it", async (t) => {
-  const { app, page, errors, call } = await appearance(t);
-  assert.equal(await pressed(page, "lx-contrast"), "Standard");
-  await page.locator("#lx-contrast").getByRole("button", { name: "High contrast", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('#lx-contrast [aria-pressed="true"]')?.textContent === "High contrast");
-  let look = await call("/api/look");
-  for (let tries = 0; tries < 50 && look.contrast !== "more"; tries += 1) look = await page.waitForTimeout(100).then(() => call("/api/look"));
-  assert.equal(look.contrast, "more", "the window's choice is written for the terminal");
-  /* The terminal writes the look itself (the window's own route always says it came from the window). */
-  await saveLook(app.store, app.runtime.owner, { contrast: "standard", changedBy: "terminal" });
-  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await page.waitForFunction(() => document.querySelector('#lx-contrast [aria-pressed="true"]')?.textContent === "Standard");
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: Coming soon (sw:a-still, "Keep things still"), checked at e5b8a610; Conversation width is checked live
 // above.
 test.skip("DG-166: Conversation width and Keep things still are this card's own controls, saved, and nowhere else", async (t) => {

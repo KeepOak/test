@@ -58,16 +58,6 @@ test("DG-017 every three-way reads Off · When needed · On in that order, savin
   assert.deepEqual(errors, []);
 });
 
-// Redesign: the old window's one-click model setup switch (public/local-oneclick.js, "local-install-mode") left with that
-// window; the prototype's Settings › On this computer offers Install on each model instead (public/app/settings/pages/
-// local.js), with no three-way to draw later.
-test.skip("DG-017 the switch drawn only later is built from the same three positions, in the same order", async () => {
-  const script = await readFile(new URL("../public/local-oneclick.js", import.meta.url), "utf8");
-  assert.match(script, /select\.id = "local-install-mode";[\s\S]*?for \(const \[value, key\] of positions\)/, "local-install-mode draws the shared positions");
-  const declared = script.match(/const positions = (\[\[.*?\]\]);/s);
-  assert.deepEqual(JSON.parse(declared[1]), [["off", "field.switch-off"], ["when-needed", "field.switch-when-needed"], ["on", "field.switch-on"]]);
-});
-
 /* Words of the prototype's own that only look like an old position: "Join meetings from your calendar" (pass 17 part D,
    public/app/chat/calls17d.js) is a two-way choice, Only when I ask · Meetings I'm invited to, not a switch position. */
 const NOT_A_POSITION = new Set(["window.p17d.only-when-ask"]);

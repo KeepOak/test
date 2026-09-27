@@ -14,7 +14,6 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { openSettingFor } from "./places.mjs";
 import { signIn as signInNew, openPlace as openNewPlace } from "./new-window-places.mjs";
 
 function writesAFile(name) {
@@ -35,29 +34,6 @@ async function signIn(page, server) {
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-}
-
-function cardShape(page, id) {
-  return page.evaluate((cardId) => {
-    const card = document.getElementById(cardId);
-    const filled = [...card.querySelectorAll("button")].filter((b) => !b.classList.contains("quiet-button") && !b.classList.contains("text-button"));
-    const unnamed = [...card.querySelectorAll("input, select, textarea")].filter((c) => !c.labels?.length);
-    return {
-      home: card.dataset.home, tag: card.tagName, headings: card.querySelectorAll("h2, h3.settings-card-title").length,
-      sentence: card.querySelector(":is(h2, h3.settings-card-title) + p.subtle")?.textContent ?? "", filled: filled.length, unnamed: unnamed.length,
-      keyless: [...card.querySelectorAll("h2, h3.settings-card-title, label, button, summary")].filter((n) => !n.dataset.t).length,
-    };
-  }, id);
-}
-
-function assertAnatomy(shape, id, home) {
-  assert.equal(shape.home, home, id);
-  assert.equal(shape.tag, "SECTION");
-  assert.equal(shape.headings, 1);
-  assert.ok(shape.sentence.length > 10, `${id} says what it is for`);
-  assert.equal(shape.filled, 1, `${id} has one filled button`);
-  assert.equal(shape.unnamed, 0, `${id}: every control can be named`);
-  assert.equal(shape.keyless, 0, `${id}: every word goes through a key`);
 }
 
 test("Watch a task again: off at first, then a finished task plays back step by step at 400 px", async (t) => {
@@ -103,27 +79,3 @@ test("Watch a task again: off at first, then a finished task plays back step by 
   assert.deepEqual(errors, []);
 });
 
-test.skip("Is Branch keeping up: lives in Settings, Advanced, and its switch is saved", async (t) => {
-  // Redesign: replaced by the new window (prototype.html's Settings › Advanced has no "Is Branch keeping up" event-loop card).
-  const root = await mkdtemp(join(tmpdir(), "branch-bucket13-ui-"));
-  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
-  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await signIn(page, server);
-  await page.locator("#event-loop-card").waitFor({ state: "attached" });
-  await openSettingFor(page, "#event-loop-card");
-  await page.locator("#event-loop-card h3.settings-card-title").waitFor({ state: "visible" });
-  assertAnatomy(await cardShape(page, "event-loop-card"), "event-loop-card", "settings:advanced");
-  await page.locator("#event-loop-mode").selectOption("when-needed");
-  await page.locator("#event-loop-card").getByRole("button", { name: "Save", exact: true }).click();
-  await page.locator("#event-loop-card [role=status]", { hasText: "Saved" }).waitFor();
-  await page.locator("#event-loop-card").getByRole("button", { name: "Check now" }).click();
-  await page.waitForFunction(() => /Branch is/.test(document.getElementById("event-loop-reading")?.textContent ?? ""), null, { timeout: 15000 });
-  const response = await fetch(`${server.url}/api/event-loop`, { headers: { authorization: `Bearer ${server.token}` } });
-  assert.equal((await response.json()).settings.mode, "when-needed");
-  assert.deepEqual(errors, []);
-});

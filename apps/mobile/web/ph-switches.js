@@ -4,7 +4,7 @@
  * never by the engine. Lockdown sits with them: it is the engine's (GET/POST /api/lockdown). Switching it on is
  * one tap from the phone; switching it off loosens it, so it is drawn and not live here (it is done on the computer).
  */
-import { E, attempt, draw, esc, ios, on, post, soon, w } from "/ph-core.js";
+import { E, attempt, draw, esc, ios, on, post, soon, toast, w } from "/ph-core.js";
 import { loadLockdown, loadProfiles } from "/ph-data.js";
 import { phone, plugin } from "/phone-common.js";
 import { DEFAULT_KINDS, DEFAULT_SWITCHES, SWITCH_POSITIONS, readSwitches } from "/rules.js";
@@ -51,7 +51,11 @@ export function setSwitch(name, position) {
     current = await phone.vault.setSwitch(name, position);
     await plugin.switchesChanged?.();
     restartChecks(current);
-  }).catch(async () => { current = await phone.vault.switches(); }).finally(draw);
+  }).catch(async (error) => {
+    // A save that failed says why, in the words it failed with, and the switches go back to what is really kept.
+    toast(String(error?.message ?? error));
+    current = await phone.vault.switches();
+  }).finally(draw);
   return changes;
 }
 function cycle(name) {

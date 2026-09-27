@@ -70,54 +70,6 @@ test("Saved sign-ins fits a 400-pixel window", async (t) => {
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the prototype's Saved sign-ins has no form to write a sign-in down; its
-// "Branch may fill" list is re-pointed above).
-test.skip("the card is in Settings, Secrets, starts off, and writes down one sign-in", async (t) => {
-  const { app, page, errors } = await fixture(t, { width: 1280, height: 900 });
-  await openSettings(page, "secrets");
-  const card = page.locator("#vault-autofill");
-  await card.waitFor({ state: "visible" });
-  assert.equal(settings(app).mode, "off", "a fresh install fills nothing");
-  assert.deepEqual(settings(app).logins, []);
-  await page.getByText("No sign-ins yet. Add one below and Branch will fill it when you ask.").waitFor();
-
-  await page.getByLabel("Filling a saved sign-in", { exact: true }).selectOption("when-needed");
-  await page.getByLabel("What you will call it", { exact: true }).fill("shop");
-  await page.getByLabel("The website it belongs to", { exact: true }).fill("example.com");
-  await page.getByLabel("The item in your password manager", { exact: true }).fill("My Shop");
-  await page.getByLabel("The sign-in page's address", { exact: true }).fill("https://example.com/login");
-  // The owner's own extra website names: nothing is worked out from the site above.
-  await page.getByLabel("Other website names it signs in on", { exact: true }).fill("accounts.example.com");
-  await card.getByRole("button", { name: "Add this sign-in", exact: true }).click();
-  await page.locator("#vault-autofill-status", { hasText: "Saved." }).waitFor();
-
-  const saved = settings(app);
-  assert.equal(saved.mode, "when-needed");
-  assert.deepEqual(saved.logins, [{ name: "shop", site: "example.com", service: "bitwarden", item: "My Shop",
-    alsoHosts: ["accounts.example.com"], address: "https://example.com/login", code: false, note: "" }]);
-  // The card is a list of names. Nothing on it is a box a password could be typed into.
-  assert.equal(await card.locator('input[type="password"]').count(), 0);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (the card's mode select and form fields are gone; Saved sign-ins has only a
-// Remove button per row).
-test.skip("every control on the card says what it does", async (t) => {
-  const { page, errors } = await fixture(t, { width: 1280, height: 900 });
-  await openSettings(page, "secrets");
-  await page.locator("#vault-autofill").waitFor({ state: "visible" });
-  const undescribed = await page.evaluate(() =>
-    [...document.querySelectorAll("#vault-autofill :is(input, select, textarea)")]
-      .filter((node) => {
-        const id = node.getAttribute("aria-describedby");
-        const note = id && document.getElementById(id);
-        return !note || !note.textContent.trim();
-      })
-      .map((node) => node.id || node.outerHTML.slice(0, 80)));
-  assert.deepEqual(undescribed, [], "these controls have no sentence describing them");
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: Coming soon (sw:lang), checked at fc541c24. The 400-pixel half is re-pointed above.
 test.skip("the card fits a 400-pixel window and reads in French", async (t) => {
   const { page, errors } = await fixture(t, { width: 400, height: 900 });

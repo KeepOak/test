@@ -159,28 +159,6 @@ function oldSharedList(app, owner) {
   accountsServiceFor(app.runtime.models).applyPoolingRule();
 }
 
-// Redesign: replaced by the new window (prototype.html's Settings › Accounts has no pooling notice and no "Kept
-// separate" box; its accounts are rows with "used next", Move up and the account menu).
-test.skip("U3 a sign-in list says once why sharing stopped, and an account can be marked kept separate", async (t) => {
-  const { page, errors, app } = await fixture(t, 1440, oldSharedList);
-  await openCard(page);
-  const pool = page.locator('.accounts-pool[data-pool="cli-claude-code"]');
-  await pool.waitFor();
-  const notice = pool.locator(".accounts-notice");
-  assert.match(await notice.innerText(), /no longer switches between your own .+ plans.*mark it kept separate/s);
-  await notice.getByRole("button", { name: "Got it" }).click();
-  await notice.waitFor({ state: "detached" });
-  const row = pool.locator(".accounts-row", { hasText: "Partner plan" });
-  await row.getByLabel(/Kept separate/).check();
-  await pool.locator(".accounts-row", { hasText: "Partner plan" }).getByText("(kept separate)").waitFor();
-  const saved = accountsServiceFor(app.runtime.models).settings();
-  assert.equal(saved.pools[0].accounts.find((account) => account.id === "abcd1234").keptSeparate, true);
-  assert.deepEqual(saved.poolingNotices, [], "the notice is read once");
-  assert.match(await pool.innerText(), /It never moves between your own plans/, "the words beside the tick box say the rule");
-  assert.equal(await pool.getByLabel(/Kept separate/).count(), 2, "every sign-in has the box");
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: replaced by the new window (no pooling notice or "Kept separate" box in prototype.html); its French is
 // Coming soon (sw:lang), checked at e5b8a610.
 test.skip("U4 the notice and the Kept separate box fit at 400 px, carry keys, and read in French", async (t) => {

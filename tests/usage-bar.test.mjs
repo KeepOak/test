@@ -16,7 +16,7 @@ import { smartOrder, freshState, remainingShown, unknownRemainingForOrder } from
 import { usageLimits } from "../dist/usage-limits-api.js";
 import { createBranch } from "../dist/index.js";
 import { asPerson } from "../dist/people/context.js";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -244,17 +244,3 @@ test("a household person is refused the owner's figures outright, not shown a th
     (error) => error.status === 403, "a person's own key is refused too");
 });
 
-// Redesign: public/usage.js and public/conversation-facts.js deleted
-test.skip("the panel is the Usage screen's, not the context chip's: the two measure different things", async () => {
-  const configuration = await readFile(join(import.meta.dirname, "..", "docs", "configuration.md"), "utf8");
-  assert.match(configuration, /### What each connection has left \(mac7\/usage-bar\)/);
-  assert.match(configuration, /This service does not say what it allows/);
-  assert.match(configuration, /"Context used" chip under the message box measures how much of\n\*this conversation's\* room/);
-  const screen = await readFile(join(import.meta.dirname, "..", "public", "usage.js"), "utf8");
-  /* DG-081: drawn by the Usage screen into a card of its own, which lives on Data & usage. */
-  assert.match(screen, /renderLimits\(left\);/, "the panel is drawn by the Usage screen");
-  assert.match(screen, /left = host\("usage-left-card"\)/);
-  assert.match(screen, /card\.dataset\.home = "settings:data";/, "and its card lives on Data & usage");
-  const facts = await readFile(join(import.meta.dirname, "..", "public", "conversation-facts.js"), "utf8");
-  assert.ok(!/usage\/limits/.test(facts), "and never in the line under the box, whose chip is a context-window figure (DG-101)");
-});
