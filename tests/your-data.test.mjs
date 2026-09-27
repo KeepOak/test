@@ -15,11 +15,16 @@
  *   M8 a failed listing on the outside service swallowed instead of stopping the delete     → "outside memory: refused"
  *   M9 memoryLeaves / everybodysLeaves left out of leaves()                                  → "leaves"
  *   M10 the short-lived key refusal narrowed back to POST export and delete                  → "short-lived keys"
+ *   M11 the whole-app backup.json put back in the owner's export                             → "export (review)"
+ *   M12 file names split on "/" only (Windows paths collapse to one name)                    → "export (review)"
+ *   M13 the record exported as the newest 1,000 entries again                                → "export (review)"
+ *   M14 the word index left in place when memory_terms is deleted                            → "delete (review)"
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateRawSync, crc32 } from "node:zlib";
@@ -30,6 +35,8 @@ import { savePolicy } from "../dist/policy.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { buildZip, zipName } from "../dist/zip-write.js";
 import { saveTraceExportSettings } from "../dist/tracing-export.js";
+import { folderFor } from "../dist/attachments.js";
+import { audit } from "../dist/audit.js";
 import { createServer } from "node:http";
 
 const secretValue = "zq-secret-value-7a41c0";
@@ -284,4 +291,38 @@ test("short-lived keys: no short-lived key reads the summary, an export's progre
     }
   }
   assert.equal((await call("GET", "/api/your-data")).status, 200, "the app window still reads it");
+});
+
+test("export (review): the owner's .zip holds nothing of a household person's, every file keeps its own name, the whole record and put-away facts", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner;
+  const [session] = app.store.sqlite.prepare("SELECT id FROM sessions WHERE owner=?").all(owner);
+  const folder = join(app.store.folder, "attachments", folderFor(session.id), "notes");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "zq-one.txt"), "zq-one");
+  writeFileSync(join(folder, "zq-two.txt"), "zq-two");
+  app.store.sqlite.prepare("INSERT INTO memory_archive(id, owner, data, created_at, updated_at, revision, archived_at) VALUES(?,?,?,?,?,?,?)")
+    .run("zq-put-away", owner, JSON.stringify({ text: "zq-put-away-fact" }), "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", 1, "2026-01-02T00:00:00.000Z");
+  for (let i = 0; i < 1005; i++) audit(app.store, owner, { action: "data.exported", actor: owner, subject: `zq-entry-${i}`, reason: "zq", outcome: "saved" });
+  const files = await exportAll(call);
+  const all = Object.values(files).join("\n");
+  assert.ok(!/zqsam/.test(all), "Sam's conversation and fact are not in the owner's export");
+  assert.equal(files["backup.json"], undefined);
+  const prefix = `files/${session.id.slice(0, 8)}/notes/`;
+  assert.equal(files[`${prefix}zq-one.txt`], "zq-one", Object.keys(files).join(", "));
+  assert.equal(files[`${prefix}zq-two.txt`], "zq-two");
+  assert.match(files["logs/record.csv"], /"zq-entry-0"/, "the oldest entry is there too");
+  assert.match(files["memory-archive.json"], /zq-put-away-fact/);
+});
+
+test("delete (review): no remembered text is left in the word index", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner;
+  if (!app.memory.retrieval.ranked) return t.skip("this SQLite has no word index");
+  app.memory.retrieval.syncIndex(owner);
+  const indexed = () => app.store.sqlite.prepare("SELECT count(*) AS n FROM memory_search WHERE fact_text LIKE '%zqowner-fact%'").get().n;
+  assert.ok(indexed() >= 1, "the fact was indexed");
+  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(indexed(), 0, "its text is gone from the index");
 });

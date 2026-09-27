@@ -175,6 +175,10 @@ export class AuditLog {
     return () => { this.recordListeners.delete(listener); };
   }
   // ── end mac7/r17-g ──
+  /** Every entry of this owner's, oldest first: Settings › Your data exports the whole record, not a recent window. */
+  everything(owner: string): AuditEntry[] {
+    return this.db.prepare("SELECT * FROM audit WHERE owner=? ORDER BY id").all(owner).map(toEntry);
+  }
   /** Entries newest first, narrowed by what happened, where it came from and when. */
   list(owner: string, input: unknown = {}): AuditEntry[] {
     const query = AuditQuerySchema.parse(input ?? {});

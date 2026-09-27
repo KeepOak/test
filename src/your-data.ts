@@ -32,6 +32,8 @@ export interface DoorFacts { phoneDoor: () => boolean; beyondThisComputer: () =>
 export const handlesYourDataPath = (path: string): boolean => path === "/api/your-data" || path.startsWith("/api/your-data/");
 export const deletePhrase = "delete everything";
 const maximumExportBytes = 512 * 1024 * 1024;
+/** A person's facts that are not in use now; exported beside memory.json. */
+const pastMemoryTables = ["memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints"] as const;
 const memoryTables = ["memory", "memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints", "memory_terms",
   "memory_vectors", "memory_uses", "memory_suppressions"] as const; // never memory_outside_forgotten: see deleteEverything
 
@@ -233,11 +235,14 @@ function conversationParts(app: Branch, scope: string): ZipEntry[] {
 function memoryPart(app: Branch, scope: string): ZipEntry[] {
   const rows = app.store.sqlite.prepare("SELECT id, data, created_at, updated_at FROM memory WHERE owner=? ORDER BY created_at").all(scope) as
     { id: string; data: string; created_at: string; updated_at: string }[];
-  return [json("memory.json", rows.map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, fact: JSON.parse(row.data) })))];
+  const kept = Object.fromEntries(pastMemoryTables.filter((table) => tableExists(app, table))
+    .map((table) => [table.replace("memory_", ""), app.store.sqlite.prepare(`SELECT * FROM ${table} WHERE owner=?`).all(scope)]));
+  return [json("memory.json", rows.map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, fact: JSON.parse(row.data) }))),
+    json("memory-archive.json", kept)];
 }
 function filesPart(app: Branch, scope: string): ZipEntry[] {
   return sessionFiles(app, scope).map((file) => ({
-    name: `files/${file.session.slice(0, 8)}/${relative(join(attachmentsRoot(app)), file.path).split(/[\/]/).slice(1).join("/")}`,
+    name: `files/${file.session.slice(0, 8)}/${relative(join(attachmentsRoot(app)), file.path).split(/[\\/]/).slice(1).join("/")}`,
     data: readFileSync(file.path),
   }));
 }
@@ -258,18 +263,18 @@ function ownerParts(app: Branch, doors: DoorFacts): ZipEntry[] {
   const logs = filesUnder(join(app.store.folder, "logs"));
   return [
     json("keys-and-connections.json", keysAndConnections(app, doors)),
-    { name: "logs/record.csv", data: Buffer.from(auditCsv(app.store.audit.list(app.runtime.owner, { limit: 1000 })), "utf8") },
+    { name: "logs/record.csv", data: Buffer.from(auditCsv(app.store.audit.everything(app.runtime.owner)), "utf8") },
     ...logs.map((file) => ({ name: `logs/${relative(join(app.store.folder, "logs"), file.path)}`, data: readFileSync(file.path) })),
-    json("backup.json", app.store.backup(app.version)),
   ];
 }
 const readme = (owner: boolean): string => [
   "Everything Branch keeps for you, as plain files.",
   "conversations/: each conversation as a page you can read (.md) and as data (.json).",
-  "memory.json: what Branch remembers for you. files/: the files you added to conversations.",
+  "memory.json: what Branch remembers for you. memory-archive.json: facts put away, earlier wordings, suggestions and checkpoints.",
+  "files/: the files you added to conversations.",
   "recordings.json: every step each task took. receipts.json: the signed proof of each tool that finished.",
   ...(owner ? ["keys-and-connections.json: the names of your keys and connections. No key, password or token is in this file.",
-    "logs/: the record of what Branch was allowed to do, and its own logs. backup.json: everything else, for a restore."] : []),
+    "logs/: the record of what Branch was allowed to do, and its own logs."] : []),
   "Keys, passwords and sign-ins never go in an export.", "",
 ].join("\n");
 
@@ -338,6 +343,9 @@ async function deleteEverything(app: Branch, confirm: string) {
     conversations++;
   }
   let memory = outside.removed;
+  // The word index keeps each fact's text under a row number only memory_terms ties to its owner, so it goes first.
+  if (tableExists(app, "memory_search") && tableExists(app, "memory_terms"))
+    app.store.sqlite.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=?)").run(scope);
   for (const table of memoryTables) {
     if (!tableExists(app, table)) continue;
     const changes = Number(app.store.sqlite.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
