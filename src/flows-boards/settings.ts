@@ -38,8 +38,9 @@ export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = {
   // Orchard (src/orchard, the owner's rule, 2026-09-27: ships on). The reason it was kept off is met: every Orchard tool
   // declares what it touches (reach "local", target "orchard:<board or card>"). It pulls only cards the owner posted or
   // said yes to, never while Lockdown is on or its Trunk is paused, and each runs under the owner's approval rules exactly
-  // as they are; none of (a)–(f).
-  kanban: "on",
+  // as they are; none of (a)–(f). "When needed" like the rest: it works, and its tools wait in the index until a task
+  // calls for them, so no task carries them from its first round.
+  kanban: "when-needed",
 };
 
 /** What each part is, in the owner's words, for the cards and for a refusal. */

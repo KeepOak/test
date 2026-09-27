@@ -73,7 +73,7 @@ const callAs = (app, context, name, args) => app.registry.execute(name, args, co
 
 test("Orchard ships on, every tool says it only touches Orchard, and the old shared board's tools are gone", async (t) => {
   const { app } = await fixture(t);
-  assert.equal(app.flowsBoards.mode("kanban"), "on");
+  assert.equal(app.flowsBoards.mode("kanban"), "when-needed", "on, its tools waiting in the index until a task calls for them");
   for (const name of ["orchard.boards", "orchard.cards", "orchard.card_add", "orchard.card_comment", "orchard.card_block"]) {
     assert.ok(app.registry.names().includes(name), name);
     assert.equal(app.registry.reachOf(name), "local", `${name} reaches nothing outside this computer`);

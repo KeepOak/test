@@ -28,7 +28,8 @@ test("every word on the flows-and-boards cards has English and real French, and 
     const keys = [...new Set([...source.matchAll(/\bt\("([A-Za-z0-9_.-]+)"/g)].map((m) => m[1]))];
     assert.ok(keys.length > 40, `${file}: ${keys.length} keys`);
     // The same words in French on purpose: "version {version}".
-    const cognates = new Set(["window.places.automations.version-version"]);
+    // Orchard is Branch's own name for its board in every language.
+    const cognates = new Set(["window.places.automations.version-version", "window.places.orchard.tab"]);
     assert.deepEqual(keys.filter((key) => !en[key] || !fr[key] || (en[key] === fr[key] && !cognates.has(key))), [], file);
     assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(source), false, `${file}: no colour written down`);
   }

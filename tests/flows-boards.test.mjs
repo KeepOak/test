@@ -52,11 +52,11 @@ const chatRun = (app) => {
 };
 const callAs = (app, runId, name, args) => app.registry.execute(name, args, app.runtime.context({ runId }));
 
-test("every part ships when needed and Orchard ships on; switched off, no tools, and each refuses in one sentence", async (t) => {
+test("every part ships when needed, Orchard too; switched off, no tools, and each refuses in one sentence", async (t) => {
   const { app } = await fixture(t);
-  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), part === "kanban" ? "on" : "when-needed", part);
+  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), "when-needed", part);
   assert.ok(app.registry.names().includes("procedures.replay_checked"), "a part that ships when needed has its tools listed on a fresh install");
-  assert.ok(app.registry.names().includes("orchard.cards"), "Orchard ships on");
+  assert.ok(app.registry.names().includes("orchard.cards"), "Orchard ships on, its tools listed"); 
   for (const part of boardParts) app.flowsBoards.setMode(part, { mode: "off" });
   const names = new Set(app.registry.names());
   for (const tool of Object.values(boardTools).flat()) assert.equal(names.has(tool), false, `${tool} is hidden while off`);
@@ -359,7 +359,7 @@ test("the owner's routes: switches, the board, and a short-lived key refused eve
     headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const overview = await (await call("/api/flows-boards")).json();
-  assert.equal(overview.modes.kanban, "on", "Orchard ships on");
+  assert.equal(overview.modes.kanban, "when-needed", "Orchard ships on (when needed)");
   assert.equal((await call("/api/flows-boards/switch", { part: "kanban", mode: "off" })).status, 200);
   assert.equal((await call("/api/orchard")).status, 409, "switched off, Orchard refuses");
   assert.equal((await call("/api/flows-boards/switch", { part: "kanban", mode: "on" })).status, 200);

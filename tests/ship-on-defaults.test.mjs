@@ -275,7 +275,7 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
   assert.equal(languageServerSettings(store, owner).keepRunning, false, "no language server is kept running between tasks (e)");
   assert.equal(debugSettings(store, owner).keepRunning, false);
   // Orchard (the shared board before it) ships on: its tools declare what they touch (src/orchard/tools.ts).
-  assert.equal(boardMode(store, owner, "kanban"), "on", "Orchard ships on");
+  assert.equal(boardMode(store, owner, "kanban"), "when-needed", "Orchard ships on");
   const { hidden } = switchedToolTiers(store, owner, ["procedures.auto.list", "orchard.cards", "memory.outside_recall", "learn.map", "addon.draft"]);
   assert.deepEqual(hidden.sort(), ["memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
 });
