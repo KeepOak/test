@@ -77,3 +77,34 @@ export async function writeScorecard(dir, current, previous) {
   await writeFile(mdPath, scorecardMarkdown(current, previous));
   return { jsonPath, mdPath };
 }
+
+/**
+ * One night, several models side by side: each model's pass rate, then one row per task with each model's status and
+ * time. A model whose suite could not run is a column with the reason instead of results, never an empty pass.
+ * `cards` are scorecardJson() results, or { model: { label }, missing: "<why>" }; `links` name each model's own page.
+ */
+export function sideBySideMarkdown(date, cards, links = []) {
+  const lines = [`# Branch evals — ${date}`, "", "| Model | Pass rate (pass+fail only) | Time | Other statuses |", "|---|---|---|---|"];
+  for (const card of cards) {
+    if (card.missing) { lines.push(`| ${card.model.label} | did not run: ${cell(card.missing)} | — | — |`); continue; }
+    const s = card.summary, rate = s.passRate === null ? "—" : `**${s.passed}/${s.counted}** (${Math.round(s.passRate * 100)}%)`;
+    const other = STATUS_ORDER.filter((k) => !COUNTED.has(k) && s.counts[k]).map((k) => `${k}: ${s.counts[k]}`).join(" · ") || "—";
+    lines.push(`| ${card.model.label} | ${rate} | ${Math.round(card.durationMs / 1000)}s | ${other} |`);
+  }
+  const ran = cards.filter((card) => !card.missing);
+  const ids = [...new Set(ran.flatMap((card) => card.results.map((r) => r.id)))];
+  lines.push("", `| Task | Area | ${cards.map((card) => card.model.label).join(" | ")} |`, `|---|---|${cards.map(() => "---|").join("")}`);
+  for (const id of ids) {
+    const area = ran.map((card) => card.results.find((r) => r.id === id)?.area).find(Boolean) ?? "";
+    const cells = cards.map((card) => {
+      const r = card.results?.find((x) => x.id === id);
+      return r ? `${badge(r.status)}${r.ms ? ` · ${Math.round(r.ms / 100) / 10}s` : ""}` : "—";
+    });
+    lines.push(`| ${id} | ${area} | ${cells.join(" | ")} |`);
+  }
+  if (links.length) lines.push("", `Each model's own page, with notes and the trend against its previous night: ${links.join(" · ")}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
+function cell(words) { return String(words).replace(/\s+/g, " ").replace(/\|/g, "\\|").trim().slice(0, 160); }
