@@ -177,7 +177,7 @@ test("where a pull request may be opened is written with the contract, kept by a
   const pr = { repo: "alice/Branch-Agent", title: "t", head: "branch/self-fix", base: "redesign/window", draft: true };
   assert.equal(pullRequestPinned(pr, wider.sendRepositories), null);
   assert.match(pullRequestPinned({ ...pr, repo: "stabrea/Branch-Agent" }, wider.sendRepositories) ?? "", /proposed only to alice\/branch-agent/);
-  assert.match(pullRequestPinned(pr, undefined) ?? "", /prepared before Branch kept where its changes may be proposed/,
+  assert.match(pullRequestPinned(pr, undefined) ?? "", /prepared before Branch kept where its changes may go.*Prepare the change again under the same name/,
     "a contract written before the repositories were kept opens no pull request at all");
 });
 
@@ -246,7 +246,8 @@ function guardWith(git, contract = {}, workspace = "/w") {
       ...(args.paths ?? []).map((path) => ({ kind: "write", path: `${args.folder}/${path}` }))],
     parameters: z.object({ folder: z.string().default("."), message: z.string().default("m"), paths: z.array(z.string()).optional() }), execute: async () => ({}) });
   book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree,
-    terms: { ...terms, permissions: ["files.write", "github.pull_request_from_changes", "git.push", "git.pull", "git.commit", "github.publish_repo"], ...contract } });
+    terms: { ...terms, permissions: ["files.write", "github.pull_request_from_changes", "git.push", "git.pull", "git.commit", "github.publish_repo"], ...contract },
+    sendRepositories: ["stabrea/Branch-Agent"] });
   const calls = [];
   const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace, registry, book,
     git: async (options) => {
@@ -257,6 +258,8 @@ function guardWith(git, contract = {}, workspace = "/w") {
       if (options.args[0] === "rev-parse" && !git.ownRevParse) return answer(`${options.cwd}\n${join(options.cwd, "..", "..", ".git")}\n`);
       // selfdev: the worktree is on its own branch/… line, the only kind a push from Branch's own source may send.
       if (options.args[0] === "symbolic-ref") return answer("refs/heads/branch/self-remove-button\n");
+      // Where origin sends: the repository the worktree was made from, unless a test says otherwise.
+      if (options.args[0] === "remote" && options.args[1] === "get-url" && !git.ownRemote) return answer("https://github.com/stabrea/Branch-Agent.git\n");
       return git(options.args);
     } });
   return { guard, calls, log };
@@ -391,6 +394,18 @@ test("a tool that works on a whole folder needs the allowed paths to cover all o
   assert.equal(narrow.calls.length, 0, "refused before Git is asked anything");
   const wide = guardWith(() => answer(""), { allowedPaths: ["**"] });
   await wide.guard("git.pull", { folder: "." }, { runId: "r", signal: signal() });
+});
+
+test("a push goes only to the repository origin pushed to when the worktree was made, whatever the remote says now", async () => {
+  const sendsTo = (stdout, status = "completed") => Object.assign((args) => (args[0] === "remote" ? answer(stdout, status) : answer("")), { ownRemote: true });
+  const push = (git, remote = "origin") => guardWith(git).guard("git.push", { folder: ".", remote }, { runId: "r", signal: signal() });
+  await push(sendsTo("git@github.com:STABREA/Branch-Agent.git\n"));
+  await assert.rejects(push(sendsTo("https://github.com/mallory/Branch-Agent.git\n")),
+    /sent only to stabrea\/branch-agent, where this worktree was made from, and origin sends to mallory\/branch-agent, so nothing is sent/);
+  await assert.rejects(push(sendsTo("https://github.com/stabrea/Branch-Agent.git\nhttps://github.com/mallory/Branch-Agent.git\n")),
+    /and origin sends to stabrea\/branch-agent, mallory\/branch-agent, so nothing is sent/, "every push address counts");
+  await assert.rejects(push(sendsTo("https://gitlab.com/stabrea/Branch-Agent.git\n")), /origin: The remote is not on GitHub\. So nothing is sent/);
+  await assert.rejects(push(sendsTo("", "failed"), "fork"), /fork is not a remote of this worktree, so nothing is sent/);
 });
 
 test("a push is walked commit by commit, both sides of each change, for the branch actually sent", async () => {
