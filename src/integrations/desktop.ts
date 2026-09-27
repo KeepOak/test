@@ -1,5 +1,5 @@
 import { noteAppOpened } from '../desktop-app-ask.js'; // unhold-control
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile, rm } from 'node:fs/promises';
 import { z } from 'zod';
 import type { ToolContext } from '../contracts.js';
@@ -12,8 +12,11 @@ import {
   DesktopClickSchema, DesktopClipboardSchema, DesktopKeySchema, DesktopOpenSchema,
   DesktopReadSchema, DesktopScreenshotSchema, DesktopTypeSchema, DesktopWindowsSchema,
 } from './desktop-config.js';
-import { DesktopScriptRunner, screenBox, type LiveScreenProcess, type ScreenBox } from './desktop-script.js';
+import { DesktopScriptRunner, screenBox, type LiveScreenProcess, type ScreenBox, type NativeCaptureTarget, type CaptureExclusion } from './desktop-script.js';
 import { DesktopBanner } from './desktop-banner.js';
+import { ChatNativeScreen, type CapturedNativeFrame } from './chat-screen-native.js';
+import type { LivePointer } from '../live-screen.js';
+import { CaptureExclusionSchema } from '../desktop/capture-lease.js';
 
 /**
  * Letting the assistant look at this computer's screen and use its keyboard.
@@ -29,6 +32,11 @@ interface RunState { actions: number; stopped: boolean; controller: AbortControl
 export interface Pointer { x: number; y: number; at: string; runId: string; trunk: string | null }
 /** Said to a task whose screen action waited while the owner drove, and was stopped or ran out of time waiting. */
 export const drivingMessage = "The owner took over this computer's screen, so Branch waited and let go. Try again once they hand it back.";
+/** Trusted desktop-host calls; never populated from an HTTP request or saved setting. Older hosts refuse capture. */
+export interface NativeCaptureLease {
+  acquire(leaseId: string): Promise<{ processId: number; handles: string[] }>;
+  release(leaseId: string): Promise<void>;
+}
 
 export class DesktopControl {
   private readonly runs = new Map<string, RunState>();
@@ -39,15 +47,19 @@ export class DesktopControl {
   private readonly live = new Set<LiveFrames>();
   private readonly runner: DesktopScriptRunner;
   private readonly banner: DesktopBanner;
+  private readonly nativeCaptureLease: NativeCaptureLease | undefined;
+  private readonly nativeScreens = new Set<ChatNativeScreen>();
+  private nativeOpening = false;
   /** Where screenshots are kept; without it, taking one is refused rather than lost. */
   artifacts: RunArtifacts | undefined;
   /** What Windows itself allows. Left unset, only Branch's own switch is consulted, as before. */
   permissions: { check(capability: 'screen'): Promise<{ allowed: boolean; message: string }> } | undefined;
-  constructor(private readonly store: Store, options: { artifacts?: RunArtifacts; runner?: DesktopScriptRunner; banner?: DesktopBanner; permissions?: DesktopControl['permissions'] } = {}) {
+  constructor(private readonly store: Store, options: { artifacts?: RunArtifacts; runner?: DesktopScriptRunner; banner?: DesktopBanner; permissions?: DesktopControl['permissions']; nativeCaptureLease?: NativeCaptureLease } = {}) {
     this.artifacts = options.artifacts;
     this.permissions = options.permissions;
     this.runner = options.runner ?? new DesktopScriptRunner();
     this.banner = options.banner ?? new DesktopBanner(this.runner);
+    this.nativeCaptureLease = options.nativeCaptureLease;
   }
   /** Whether the owner has turned the screen and keyboard on. Read again before every action. */
   enabled(owner: string): boolean {
@@ -123,10 +135,77 @@ export class DesktopControl {
     this.store.event(context.runId, 'desktop.resumed', { reason: 'the owner handed the screen back' });
   }
   /** Where the newest click of a task that is still going landed, and whose it is; null when there is none. */
-  pointer(): Pointer | null {
+  pointer(): LivePointer | null {
+    const remote = [...this.nativeScreens].find((screen) => screen.visible());
+    const pointer = remote?.pointer();
+    if (pointer) return pointer;
+    return this.agentPointer();
+  }
+  private agentPointer(): Pointer | null {
     const at = this.pointerAt;
     const state = at ? this.runs.get(at.runId) : undefined;
     return at && state && !state.stopped ? at : null;
+  }
+
+  /** Only a trusted owner screen-session factory calls this; there is no tool/approval context bypass. */
+  async chatScreen(owner: string, options: { target: NativeCaptureTarget; guard: () => void; stopped: () => void; signal: AbortSignal }): Promise<ChatNativeScreen> {
+    if (this.nativeScreens.size || this.nativeOpening) throw new Error('Stop the current native screen session first.');
+    this.nativeOpening = true;
+    let holder: typeof this.driving = null;
+    let made: ChatNativeScreen | undefined;
+    try {
+      const screen = await ChatNativeScreen.open({ ...options, host: this.nativeCaptureLease, banner: this.banner,
+        check: (signal) => this.checkChatScreen(owner, options.guard, signal),
+        frames: (target, exclusion) => this.liveFrames(owner, target, exclusion),
+        resolve: (window, signal) => this.resolve(window, signal),
+        input: (action, window, payload, signal) => {
+          const input = action.action === 'type' ? { text: action.text } : action.action === 'key' ? { keys: keyChord(action.chord) }
+            : action.action === 'scroll' ? { steps: action.steps } : {};
+          return this.runner.run(action.action, { handle: window.handle, ...payload, ...input }, signal);
+        },
+        takeOver: () => {
+          if (this.driving && this.driving !== holder) throw new Error('The owner already holds control in Branch’s window. Hand it back there first.');
+          this.takeOver(); holder = this.driving;
+        },
+        handBack: () => { if (holder && this.driving === holder) this.handBack(); holder = null; },
+        holdsControl: () => holder !== null && this.driving === holder,
+        agentPointer: () => this.agentPointer(),
+        finished: () => { if (made) this.nativeScreens.delete(made); },
+      });
+      made = screen;
+      this.nativeScreens.add(screen);
+      return screen;
+    } finally { this.nativeOpening = false; }
+  }
+  private async checkChatScreen(owner: string, guard: () => void, signal: AbortSignal): Promise<void> {
+    guard(); signal.throwIfAborted();
+    if (!this.enabled(owner)) throw new Error(switchedOffMessage);
+    if (!this.permissions) throw new Error('This host cannot prove native screen permission.');
+    const allowed = await this.permissions.check('screen');
+    if (!allowed.allowed) throw new Error(allowed.message);
+    guard(); signal.throwIfAborted();
+    if (!this.enabled(owner)) throw new Error(switchedOffMessage);
+    await this.assertNothingPrivateOnScreen(signal);
+    guard(); signal.throwIfAborted();
+  }
+  async captureTargets(owner: string, guard: () => void, signal: AbortSignal): Promise<Record<string, unknown>> {
+    guard(); signal.throwIfAborted();
+    if (!this.nativeCaptureLease) throw new Error('This desktop host cannot prove which viewer windows to exclude. Open the supported Branch desktop app.');
+    const leaseId = randomBytes(16).toString('hex');
+    let acquired = false, failed = false;
+    try {
+      const raw = await this.nativeCaptureLease.acquire(leaseId); acquired = true;
+      const proof = CaptureExclusionSchema.parse(raw);
+      await this.checkChatScreen(owner, guard, signal);
+      const result = await this.runner.run('capture-targets', {}, signal);
+      await this.checkChatScreen(owner, guard, signal);
+      const windows = Array.isArray(result.windows) ? result.windows.filter((raw) => {
+        const window = raw as Partial<WindowInfo> | null;
+        return window && Number.isSafeInteger(window.processId) && window.processId! > 0 && window.processId !== proof.processId;
+      }) : [];
+      return { ...result, windows, excludedProcessId: proof.processId };
+    } catch (error) { failed = true; throw error; }
+    finally { if (acquired) { try { await this.nativeCaptureLease.release(leaseId); } catch (error) { if (!failed) throw error; } } }
   }
 
   /** The Stop button, and the same thing the cancel route does: let go of the screen at once. */
@@ -225,8 +304,9 @@ export class DesktopControl {
    * handles passwords shows is dropped unread. On a Mac each frame is one run of the screen tool, whose file goes at
    * once, and the windows are asked for on their own. `close` ends the program; nothing runs after it.
    */
-  liveFrames(owner: string): LiveFrames {
-    const reader = this.runner.liveProcess?.() ?? null;
+  liveFrames(owner: string, target?: NativeCaptureTarget, exclusion?: CaptureExclusion): LiveFrames {
+    const reader = this.runner.liveProcess?.(target, exclusion) ?? null;
+    if (target && !reader) throw new Error('This host cannot capture the selected native target without falling back to a physical monitor.');
     const frames: LiveFrames = {
       next: (maxWidth, signal) => this.liveFrame(owner, reader, maxWidth, signal),
       close: () => { this.live.delete(frames); reader?.close(); },
@@ -235,7 +315,7 @@ export class DesktopControl {
     this.live.add(frames);
     return frames;
   }
-  private async liveFrame(owner: string, reader: LiveScreenProcess | null, maxWidth: number, signal: AbortSignal): Promise<LiveFrame> {
+  private async liveFrame(owner: string, reader: LiveScreenProcess | null, maxWidth: number, signal: AbortSignal): Promise<CapturedNativeFrame> {
     if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
     const windows = await this.permissions?.check('screen');
     if (windows && !windows.allowed) throw new Error(windows.message);
@@ -245,7 +325,9 @@ export class DesktopControl {
       privateShowing(answer.after);
       // The switch turned off while the frame was being taken: dropped, not shown.
       if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
-      return { bytes: Buffer.from(answer.data, 'base64'), type: 'image/jpeg', width: answer.width, height: answer.height, ...(answer.screen ? { screen: answer.screen } : {}) };
+      return { bytes: Buffer.from(answer.data, 'base64'), type: 'image/jpeg', width: answer.width, height: answer.height,
+        ...(answer.screen ? { screen: answer.screen } : {}), ...(answer.target ? { target: answer.target } : {}),
+        ...(answer.method ? { method: answer.method } : {}), windows: answer.windows, after: answer.after };
     }
     const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);
     try {
@@ -369,6 +451,8 @@ export class DesktopControl {
     await this.banner.hide();
   }
   async close(): Promise<void> {
+    for (const screen of this.nativeScreens) await screen.close();
+    this.nativeScreens.clear();
     for (const frames of [...this.live]) frames.close(); // parity-b2: no live view outlives Branch
     for (const state of this.runs.values()) state.controller.abort(new Error('Branch stopped.'));
     this.handBack();

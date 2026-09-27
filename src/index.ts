@@ -160,7 +160,7 @@ import { Monitors, registerMonitors, trunksSwitchedOff } from "./monitors.js";
 // Wave 8: watching a rectangle of the screen for a change, off unless the owner asks twice.
 import { ScreenWatches, registerScreenWatches } from "./screen-watch.js";
 import { MorningBrief, registerBrief } from "./brief.js";
-import { DesktopControl } from "./integrations/desktop.js";
+import { DesktopControl, type NativeCaptureLease } from "./integrations/desktop.js";
 import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
 import { TakeOverBanner } from "./integrations/linux-desktop-banner.js";
 import { registerLinuxDesktop } from "./integrations/linux-desktop-tools.js";
@@ -316,6 +316,8 @@ export async function createBranch(options: {
   reliability?: ReliabilityInput;
   /* mac2/desktop-ui: the desktop app's own Stop notice window, for screen control on macOS and Linux. */
   bannerWindow?: BannerWindowFactory;
+  /** The authenticated native host's own-window capture lease; no HTTP body or CLI setting supplies it. */
+  nativeCaptureLease?: NativeCaptureLease;
   /** Wave mac2: how the hidden snapshot store runs git; null means "git is not installed". */
   snapshotGit?: GitCall | null;
   /** mac3/security-check: the home folder the security check looks under; this computer's own when left out. */
@@ -538,6 +540,7 @@ export async function createBranch(options: {
   // mac2/desktop-ui: on a Mac or Linux the screen is used only while the app's Stop notice shows.
   const desktop = new DesktopControl(store, {
     artifacts, ...screenControlParts(options.bannerWindow ? { window: options.bannerWindow } : {}),
+    ...(options.nativeCaptureLease ? { nativeCaptureLease: options.nativeCaptureLease } : {}),
   });
   // Batch 26 (wave 8): Windows has switches of its own under Privacy & security, and a refusal
   // there looks like nothing happening at all. The screen is probed by asking for the window list;
