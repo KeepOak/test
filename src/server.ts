@@ -1,3 +1,4 @@
+import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import {
   createServer,
   type IncomingMessage,
@@ -5,6 +6,8 @@ import {
   type Server,
 } from "node:http";
 import { changeContextMode, contextSources } from "./tool-context-api.js";
+import { picturesMessage, tryReadDocument } from "./document-readers.js"; // dogfood-ux-2
+import { maxArtifactBytes } from "./artifacts.js"; // dogfood-ux-2
 import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
@@ -209,7 +212,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
-import { handlesYourDataPath, yourDataApi } from "./your-data.js";
+import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
@@ -785,12 +788,13 @@ function toolInventory(app: Branch) {
  * Dogfood A6/B6: an answer settles the task that stopped to ask. A task stops on its question, so a yes alone
  * carried nothing on, and the task went on waiting in the banner. Now a yes to the owner's own task, given in the
  * owner's window, carries that same task on (Q050: under its own id, with no words written for the owner and no second
- * task beside it); any other answer (a no, or a yes to a chat's or a schedule's task, which carries on from where it
- * came) ends its wait. A task with another question still waiting is left for that one.
+ * task beside it), and so does a no (dogfood D5: told of the no, it replies with what it can do instead). Any other
+ * answer (to a chat's or a schedule's task, which carries on from where it came) ends its wait. A task with another
+ * question still waiting is left for that one.
  */
 /** What an answer did to the task that asked (NAS bd6cf44): the window says so, rather than always "it carries on". */
 type Settled = "carrying-on" | "still-waiting" | "settled";
-async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string }, decision: "allow" | "deny"): Promise<Settled> {
+async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string; label: string; fingerprint: string }, decision: "allow" | "deny"): Promise<Settled> {
   const run = app.store.run(asked.runId);
   if (!run || run.status !== "needs_input" || app.runtime.approvals.waiting(asked.sessionId).length) return "still-waiting";
   // Only the owner's own task, answered by the owner at the window: never a key's (it records source "owner" too,
@@ -798,37 +802,51 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
   // Pass 17 (Helpers): nor a helper's. Its carry-on would start in the helper's conversation as a task of the owner's
   // own, without the narrower reach the helper was given; its question is answered and the helper is settled instead.
   const owners = asked.source === "owner" && ownersOwnTask(app.store, run.id);
-  if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) {
-    // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
-    // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
-    // and the owner answers the plan, then carries on. So too for an agreed plan stopped at a check-back (NAS dead082):
-    // its "go ahead" would clear the next step. Only the plan's own task asking carries on (pausePlan keeps its runId).
-    const plan = app.runtime.orchestration.plan(run.sessionId);
-    if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return "still-waiting";
-    // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
-    // question (`user.ask` takes the owner's next message as the answer), and carrying on would talk over it.
-    if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return "still-waiting";
-    // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
-    // report): the carry-on's model reads the conversation, so it would take the yes as their answer. A task with no
-    // record of where it stopped (asked before this was kept) is left for the owner too.
-    const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
-    if (typeof stopped !== "number" || app.store.lastMessageId(run.sessionId) !== stopped) return "still-waiting";
+  if (owners && app.store.profiles.isOwner() && !startedWithShortLivedKey() && carryOnAllowed(app, run)) {
     // The conversation busy with another task: the carry-on is not started, and this task keeps waiting (the one-time
     // yes is still there for the owner's next message), rather than being marked done with its work undone.
     // A carry-on refused as it starts (the monthly budget, the owner's inlet filter, a closing app) leaves the task waiting
     // and writes down why, where the task's own record shows it (NAS bd6cf44).
     let refused = false;
     // Q050: the task that asked carries on itself, told of the yes to its exact request; nothing is said in the owner's
-    // name, and no second task starts.
-    const carry = app.runtime.continueAsked(run.id)
+    // name, and no second task starts. Dogfood D5: a No carries it on the same way, told of the No, so the owner gets a
+    // reply and another way rather than silence.
+    const started = decision === "allow" ? app.runtime.continueAsked(run.id) : app.runtime.continueRefused(run.id, asked.fingerprint);
+    const carry = started
       .catch((error: unknown) => { refused = true; app.store.event(run.id, "run.carry_on_refused", { reason: errorText(error).slice(0, 300) }); });
     // NAS 0adb368: a refusal as it starts (the budget, an inlet filter, a busy conversation) settles within microtasks,
     // so one turn of the event loop tells it apart, and the window never says "it carries on" when nothing did.
     await Promise.race([carry, new Promise((resolve) => setTimeout(resolve, 0))]);
-    return refused ? "still-waiting" : "carrying-on";
+    if (decision === "allow") return refused ? "still-waiting" : "carrying-on";
+    if (!refused) return "carrying-on";
+    // A No always ends this task's wait: one that could not carry on is ended here.
+    app.store.finish(run.id, "cancelled", run.output);
+    return "settled";
   }
+  if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) return "still-waiting";
   app.store.finish(run.id, decision === "allow" ? "completed" : "cancelled", run.output);
   return "settled";
+}
+/**
+ * Whether the owner's answer may carry the task on in its conversation now. With a plan waiting for the owner's own
+ * answer, a carry-on would read as agreeing to it (NAS 06a9508, dead082); a newer task, or words written after the task
+ * stopped, would be answered by it instead (NAS 166fbe3, 3fd7700).
+ */
+function carryOnAllowed(app: Branch, run: Run): boolean {
+  // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
+  // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
+  // and the owner answers the plan, then carries on. So too for an agreed plan stopped at a check-back (NAS dead082):
+  // its "go ahead" would clear the next step. Only the plan's own task asking carries on (pausePlan keeps its runId).
+  const plan = app.runtime.orchestration.plan(run.sessionId);
+  if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return false;
+  // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
+  // question (`user.ask` takes the owner's next message as the answer), and carrying on would talk over it.
+  if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return false;
+  // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
+  // report): the carry-on's model reads the conversation, so it would take the answer as theirs. A task with no
+  // record of where it stopped (asked before this was kept) is left for the owner too.
+  const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
+  return typeof stopped === "number" && app.store.lastMessageId(run.sessionId) === stopped;
 }
 /**
  * Q257: refuses a household person an answer to a question that is not their own task's, in the same words and with
@@ -1437,6 +1455,19 @@ async function api(
       { store: app.store, owner: app.runtime.owner, understanding: app.understanding, engines: app.voice.engines },
       request.method ?? "GET", path, () => readBody(request), () => readMediaBody(request),
     );
+  // dogfood-ux-2: Library › Made for you › Open reads one kept file in the window. A picture or a sound is shown from
+  // /api/artifacts/file; anything else is read to its words by the document library's own readers, never run or opened
+  // in another program. Only a file the assistant kept is found, as /api/artifacts/file finds it.
+  if (request.method === "GET" && path === "/api/artifacts/read") {
+    const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
+    const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
+    if (!entry) throw new HttpError(404, "That file was not made by the assistant");
+    if (/^(image|audio)\//.test(entry.mediaType)) return { name: entry.name, mediaType: entry.mediaType, shown: true };
+    const read = tryReadDocument(await app.artifacts.read(entry.path), entry.name, { byteLimit: maxArtifactBytes });
+    const text = read.document && !read.document.pictures ? read.document.text : null;
+    return { name: entry.name, mediaType: entry.mediaType, text,
+      note: !read.document ? read.reason : read.document.pictures ? picturesMessage : read.document.limits.join(" ") };
+  }
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
     const kept = await app.artifacts.list();
@@ -1906,8 +1937,10 @@ async function api(
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
       // long-work: a task started from the window may work for hours; its budgets and the stall watch still hold it.
       timeoutMs: longTaskDeadlineMs,
-      // Projects are the owner's: a household person's new conversation is never filed under one of them by name.
-      ...(input.project && !input.sessionId && app.store.profiles.isOwner() ? { conversationProject: input.project } : {}),
+      // Projects are the owner's: a household person's new conversation is never filed under one of them by name. A task
+      // reaches its project's folder and secrets (src/project-scope.ts), so naming one is the owner's own act in the app,
+      // never a short-lived key's: a key's new conversation goes where the owner's pick files it, as it always did.
+      ...(input.project && !input.sessionId && app.store.profiles.isOwner() && !startedWithShortLivedKey() ? { conversationProject: input.project } : {}),
       personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
@@ -2451,8 +2484,11 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
-    return { proposal: await proposeSchedule(await readBody(request), { now: new Date(),
-      defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) }) };
+    const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
+      defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
+    // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
+    const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
+    return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
@@ -4351,6 +4387,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
   settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
+  void resumeUnfinishedDeletes(app); // your-data/for-good: a Delete everything cut short carries on (never throws)
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
@@ -4582,15 +4619,16 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       throw new HttpError(/too big|does not fit/.test((error as Error).message) ? 413 : 400, (error as Error).message);
     }
   }
-  // A file a person attached, handed back to their own window (src/attachments.ts). The owner's alone,
-  // checked first so the guard moves with the route; nothing the caller sends is ever used as a path.
+  // A file a person attached, handed back to their own window (src/attachments.ts): the owner's, or a household
+  // person's own conversation's, checked first so the guard moves with the route; nothing the caller sends is a path.
   if (request.method === "GET" && path === "/api/attachments/file") {
     const wanted = new URL(request.url ?? "/", "http://local").searchParams;
-    // The owner check lives at the top of attachmentForWindow, so it cannot be left behind here.
+    // Who may open it is decided at the top of attachmentForWindow, so it cannot be left behind here.
     const found = await attachmentForWindow(
       {
         profiles: app.store.profiles, attachments: app.attachments,
         temporaryConversation: (session) => app.store.sessionTemporary(session),
+        ownsConversation: (owner, session) => app.store.ownsSession(owner, session),
       },
       { session: wanted.get("session") ?? "", id: wanted.get("id") ?? "" },
     ).catch(() => null);

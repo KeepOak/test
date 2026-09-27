@@ -9,7 +9,9 @@
    Keys, passwords and sign-ins never go in it, so there is no passphrase to choose.
    Delete everything: never automatic. The dialog offers the export first, the person types the engine's phrase, and
    POST /api/your-data/delete { confirm } does it; the engine refuses it under Lockdown, through a door, to a
-   short-lived key and while a task works, and writes every delete to the owner's record. */
+   short-lived key and while a task works, and writes every delete to the owner's record. The page then shows the
+   engine's sentences of what was removed (the answer's `removed`) and, while any step is left, `unfinished` from
+   GET /api/your-data. */
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { api, token } from "../../core/api.js";
@@ -21,6 +23,7 @@ import { t, language } from "../../../i18n.js";
 let data = null;
 let job = null; // the export in progress or ready: { id, done, total, ready, bytes, error }
 let polling = false;
+let removedNote = null; // the engine's sentences of what the last Delete everything removed, shown on the page
 
 async function loadData() {
   try { data = await api("your-data"); } catch (error) { data = null; toast(error.message); }
@@ -59,6 +62,13 @@ function deleteRow() {
   return `<div class="ctl"><b>${t("window.settings.data.delete")}</b><span class="right"><button class="btn bad sm" type="button" data-act="data-del">${t("window.settings.data.delete-go")}</button></span><small>${t(data?.owner ? "window.settings.data.delete-sub-owner" : "window.settings.data.delete-sub-person")}</small></div>`;
 }
 
+/* What Delete everything removed, and what it still has to do, each in the engine's own words (statusBox escapes them). */
+function deletedRows() {
+  const removed = removedNote?.length ? statusBox(t("window.settings.data.delete"), removedNote.join(" ")) : "";
+  const left = data?.unfinished ? statusBox(t("window.settings.data.delete"), data.unfinished, true) : "";
+  return removed + left;
+}
+
 export function draw() {
   const head = `<h1>${t("window.settings.data.title")}</h1><p class="lede">${t("window.settings.data.lede")}</p>`;
   if (!data) return head;
@@ -67,7 +77,7 @@ export function draw() {
   return `${head}${lock}
     <div class="sec"><h2>${t("window.settings.data.kept")}</h2><div class="rows">${keptRows()}</div>${folder}</div>
     <div class="sec"><h2>${t("window.settings.data.leaves")}</h2><div class="rows">${leaveRows()}</div></div>
-    <div class="sec"><h2>${t("window.settings.data.take")}</h2>${exportRow()}${deleteRow()}</div>`;
+    <div class="sec"><h2>${t("window.settings.data.take")}</h2>${exportRow()}${deleteRow()}${deletedRows()}</div>`;
 }
 
 /* ---------- Export: the bar moves only as the engine writes each part ---------- */
@@ -117,7 +127,8 @@ async function deleteGo() {
     const done = await api("your-data/delete", { confirm });
     if (dialog() === box) closeDlg();
     const said = t("window.settings.data.deleted", { conversations: done.deleted.conversations, memory: done.deleted.memory });
-    toast(done.problem ? `${said} ${done.problem}` : said); // the engine's own words for facts an outside service kept
+    removedNote = Array.isArray(done.removed) ? done.removed : null;
+    toast(said);
   } catch (error) { toast(error.message); return; }
   job = null;
   await loadData();

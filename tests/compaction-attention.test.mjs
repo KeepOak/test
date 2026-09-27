@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, compactionSplit, compactionThreshold } from "../dist/index.js";
+import { createBranch, compactionSplit, compactionThreshold, saveKnobs } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 function scripted(steps) {
@@ -27,6 +27,8 @@ const filler = (n) => `Turn ${n}: ` + "photo renaming details ".repeat(70);
 
 test("an oversized conversation is compacted into a handoff summary; recent turns and the stored history stay", async (t) => {
   const { app, provider } = await fixture(t);
+  // dogfood D22: the room is the model's own now (a hosted one has far more); this conversation is held to 20,000 as before.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: 20000 });
   const first = await app.runtime.run({ prompt: "start renaming photos in /pics" });
   const sessionId = first.sessionId;
   for (let n = 1; n <= 40; n++) app.store.message(sessionId, { role: n % 2 ? "user" : "assistant", content: filler(n) });

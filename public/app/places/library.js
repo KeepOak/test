@@ -19,7 +19,7 @@ import { nameOf } from "./inbox17.js";
 import { t, language, plural } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
-import { initDocRead } from "./docread.js"; // dogfood D6
+import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -60,9 +60,9 @@ function memoryTab(mem) {
   return html + (mem.length ? "" : empty18("library:memory"));
 }
 
-/* "Write a new document" and a Made file's Open stay greyed with their reasons (window.why.doc-new, made-open): the engine
-   keeps a document only from a file or finished text (src/documents.ts AddSchema) and has no route that opens a file in
-   its own app. A document's Open reads it in the window (places/docread.js, GET /api/documents/<id>, dogfood D6). */
+/* "Write a new document" stays greyed with its reason (window.why.doc-new): the engine keeps a document only from a file
+   or finished text (src/documents.ts AddSchema). A document's Open and a Made file's Open read it in the window
+   (places/docread.js: GET /api/documents/<id>, dogfood D6; GET /api/artifacts/read, dogfood-ux-2). */
 function documentsTab() {
   const view = [["list", "list15", t("addons.lists.address")], ["map", "map15", t("window.places.library.map")]].map(([k, i, l]) => `<button type="button" aria-pressed="${docView === k}" data-act="dv15" data-v="${k}">${ic(i, "s")}${l}</button>`).join("");
   let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="toast" data-why="doc-new" data-msg="Opens a blank document.">
@@ -102,7 +102,7 @@ export function draw() {
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
         <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
-        <button class="btn sm" type="button" data-act="toast" data-why="made-open" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
+        ${revealable() ? `<button class="btn ghost sm" type="button" data-act="made-reveal" data-v="${esc(a.path)}">${t("window.places.library.show-in-folder")}</button>` : ""}<button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`).join('');
     if (artsKey === "[]") html += empty18("library:made"); // read, and nothing made yet
   }
 

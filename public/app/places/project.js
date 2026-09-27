@@ -4,11 +4,10 @@
    - GET /api/projects/<id>/conversations the conversations whose latest task ran under it, newest first;
    - POST /api/projects saves a project whole: its schema is strict, so a body is built from the project's own fields;
      POST /api/projects/new makes one and refuses an id already in use;
-   - POST /api/projects/active makes one the project whose folder and saved secrets tasks reach, which is why starting a
-     conversation in a project makes it the active one; that conversation is filed under the project by name (POST
-     /api/run project) and stays in it (src/store.ts createRun), and a plain new conversation goes to the default one
-     (chat/chat.js newProject, dogfood D14); opening a project's page only shows it, as the prototype's own project
-     action does;
+   - a new conversation in a project is filed under it by name (POST /api/run project) and stays in it (src/store.ts
+     createRun); each of its tasks reaches that project's folder and saved secrets and no other (src/project-scope.ts),
+     so the window never switches a global project; a plain new conversation goes to the default one (chat/chat.js
+     newProject, dogfood D14); opening a project's page only shows it, as the prototype's own project action does;
    - POST /api/projects/<id>/remove removes one (its instructions and settings) and the secrets saved in it, never its
      conversations or anything in its folder; the default project
      cannot be removed.
@@ -16,7 +15,7 @@
    shown. Projects are the owner's: a household person is refused them, so nothing of them is drawn for one. */
 
 import { $, esc, render, renderNow, onRender } from "../core/dom.js";
-import { S, E, refresh, ownerHere, projectName, chatFace, ownName } from "../core/state.js";
+import { S, E, ownerHere, projectName, chatFace, ownName } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, openDlg, closeDlg, toast } from "../core/ui.js";
@@ -105,9 +104,7 @@ function openProject(id) {
 }
 
 /* The new conversation is filed under this project by name (POST /api/run project), and the chat's header says so. */
-async function newConversationIn(id) {
-  try { P.active = (await api("projects/active", { active: id })).id; } catch (error) { toast(error.message); return; }
-  await refresh().catch((error) => toast(error.message));
+function newConversationIn(id) {
   startConversation(id);
 }
 

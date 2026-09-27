@@ -11,7 +11,7 @@ import { markLive } from "../core/features.js";
 import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
-import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
@@ -43,7 +43,7 @@ import { initMore } from "./more.js";
 import { initDiagram } from "./diagram.js";
 import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's character beside the conversation
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
-import { steerChip, steeredNotes, steeredLine, steerWords, initSteer } from "./steer.js";
+import { steerChip, steeredNotes, steeredLine, steerWords, chatSteerOf, chatSteerLine, initSteer } from "./steer.js";
 import { helpFrame, frameAfter, viewingHelper, leaveHelper, helperWho, helperThread, helperDock, initHelpFrame } from "./helpframe.js"; // pass 18a
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
@@ -102,15 +102,10 @@ function projectChip() {
   return pr ? `<button class="proj-chip18" type="button" data-act="project" data-v="${esc(pr.id)}">${ic("folder", "s")}<span>${esc(projectName(pr))}</span></button>` : "";
 }
 /* A new conversation starts in the project it was begun from (a project's "New conversation in …"), else in the default
-   one, never in whichever project happened to be opened last (dogfood D14). A plain new conversation also makes the
-   default project the active one again, so its tasks reach the default project's folder and saved secrets, not another's. */
-async function newProject() {
-  if (!ownerHere()) return {};
-  const project = C.project ?? "default";
-  if (project === "default" && E.state?.project?.active?.id && E.state.project.active.id !== "default") {
-    try { await api("projects/active", { active: "default" }); } catch (error) { toast(error.message); }
-  }
-  return { project };
+   one, never in whichever project happened to be opened last (dogfood D14). It is named on the message itself, and the
+   engine keeps every task in its own conversation's project (src/project-scope.ts), so nothing global is switched. */
+function newProject() {
+  return ownerHere() ? { project: C.project ?? "default" } : {};
 }
 
 /* The prototype's computer and browser buttons (its "calmer window" pass): each opens the stage full size (chat/stage.js's
@@ -125,7 +120,9 @@ function stageButtons(working) {
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
 /* In a view-only conversation (a room member's, pass 18b) a message has no actions: nothing there starts work. */
 const acts = (m) => (viewingHelper() ? "" : msgActs(m));
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+/* dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; the thread shows its words. */
+const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(ownWords(m.content))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
@@ -228,6 +225,8 @@ function userRow(T, m, i, marks) {
      it steered carries on (dogfood D23: never the engine's wrapper as a message). */
   const steered = steerWords(m);
   if (steered !== null) { T.out.push(marks.before(m) + steeredLine(steered) + marks.after(m)); T.lastRole = "steer"; return; }
+  const fromChat = chatSteerOf(m); // dogfood-ux-2: a note from a chat app, as its sender's name and words
+  if (fromChat) { T.out.push(marks.before(m) + chatSteerLine(fromChat) + marks.after(m)); T.lastRole = "steer"; return; }
   flushDecided(T);
   flushFailed(T);
   const a2a = a2aOf(m);
@@ -312,7 +311,7 @@ function composer() {
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
-      : `<button class="c-btn send${draft.trim() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
+      : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
 }
 
 /* ---------- hook points for other batches (PARITY.md, batch B1's hook tasks) ---------- */
@@ -500,8 +499,12 @@ async function carryOut(client) {
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
-  if (!prompt || viewingHelper()) return; // pass 18a: a helper's conversation is view only
-  if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, words === undefined); return; }
+  if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
+  if (!prompt && !(words === undefined && hasFiles())) return;
+  /* While a task works, words join its waiting line; files wait on their chips for the next message. */
+  if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
+  /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
+  if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain(""); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
   if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
@@ -582,8 +585,9 @@ async function sendPlain(prompt) {
   renderNow();
   let started = false;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...(await newProject()) }) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
+    filesSent();
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
@@ -617,8 +621,11 @@ function keepForLater(prompt) {
   S.drafts[sid ?? "new"] = prompt;
   const box = $("#prompt");
   if (box) box.value = prompt;
-  whenBack().then(() => {
-    if (C.sessionId === sid && !C.sending && ($("#prompt")?.value ?? "").trim() === prompt) return send();
+  /* Its files stay on their chips, and are sent ahead again once the engine answers (what it had waiting may be gone). */
+  whenBack().then(async () => {
+    if (C.sessionId !== sid || C.sending || ($("#prompt")?.value ?? "").trim() !== prompt) return;
+    if (hasFiles()) await resendFiles();
+    if (prompt || hasFiles()) return send();
   }).catch((error) => toast(error.message));
 }
 
@@ -814,7 +821,7 @@ export function init() {
     // Stop holds Send's place only while the box is empty: typing gives Send back, clearing the box brings Stop again.
     const stopNow = !e.target.value.trim() && (C.sending || !!liveRun());
     if (stopNow !== ($("#send")?.dataset.act === "stop-run")) renderNow();
-    $("#send")?.classList.toggle("ready", !!e.target.value.trim()); // pass 17: Send turns copper once there is something to send
+    $("#send")?.classList.toggle("ready", !!e.target.value.trim() || hasFiles()); // pass 17: Send turns copper once there is something to send
   });
   setInterval(async () => {
     if (S.view !== "chat" || !C.sessionId || C.sending) return;

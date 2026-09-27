@@ -30,6 +30,10 @@ export interface ConversationFiles {
   bytesHeld(sessionId: string): number | null;
   /** Throws away everything written for a copy whose database work did not go through. */
   discard(sessionId: string): void;
+  /** A duplicate's files copied ahead of its database work, off the engine thread, keeping the disk's reserve. */
+  prepareCopies(from: string, to: string, refs: readonly AttachmentRef[]): Promise<AttachmentRef[]>;
+  /** Moves those copies into place and lists them, inside the duplicate's transaction. */
+  commitPrepared(to: string, made: AttachmentRef[]): AttachmentRef[];
 }
 /**
  * Gives every message in a copy its own references, by copying the files the originals name into the

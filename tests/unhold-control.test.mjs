@@ -268,6 +268,13 @@ function standInScreen(app) {
   return { screen, opened };
 }
 const ctx = (app, run, trunk) => ({ ...app.runtime.context({ runId: run.id }), ...(trunk ? { trunk } : {}) });
+/** Dogfood D4: the first use of the owner's screen in a conversation asks; the owner's yes to it, through the real answer path. */
+function screenYes(app, run) {
+  const fingerprint = "d4".padEnd(32, "0");
+  app.runtime.approvals.ask({ runId: run.id, sessionId: run.sessionId, tool: "desktop.open", target: "notepad", label: "Open notepad",
+    question: "Open notepad?", source: "owner", remember: "never", askedAt: new Date().toISOString(), fingerprint, screen: true });
+  app.runtime.approve(run.sessionId, "allow", "never", fingerprint);
+}
 
 // rw4: a stricter guard ships on. Mutation: in src/desktop-app-ask.ts, set AppAskSettingsSchema's default back to false
 // (a fresh engine reads it as off and a new app on the owner's own assistant is let through unasked). The owner's own
@@ -297,6 +304,7 @@ test("Ask before opening an app it hasn't used ships on, and an owner who turned
   live = await open();
   assert.deepEqual((await live.call("GET", "/api/desktop/app-ask")).body, { on: false }, "and it is still off after a restart");
   const again = live.app.store.createRun(live.app.runtime.owner, "open an app");
+  screenYes(live.app, again); // dogfood D4: the conversation's first screen use was answered
   assert.equal(live.app.runtime.checkPolicy("desktop.open", { app: "notepad" }, ctx(live.app, again)).decision, "allow",
     "switched off by the owner, nothing is held");
 });
@@ -320,6 +328,7 @@ test("Ask before opening an app it hasn't used: once per app, per Trunk, and the
   await screen.open({ app: "notepad" }, ctx(app, run, "trunk-a"));
   assert.deepEqual(opened, ["notepad"]);
   assert.deepEqual(appsUsed(app.store, app.runtime.owner, "trunk-a"), ["notepad"]);
+  screenYes(app, run); // dogfood D4: the yes above, as the conversation's first screen use
   assert.equal(app.runtime.checkPolicy("desktop.open", { app: "Notepad" }, ctx(app, run, "trunk-a")).decision, "allow", "the same app on the same Trunk is not asked again");
   assert.equal(app.runtime.checkPolicy("desktop.open", { app: "notepad" }, ctx(app, run, "trunk-b")).decision, "ask", "the same app on another Trunk is asked again");
   assert.equal(app.runtime.checkPolicy("desktop.open", { app: "notepad" }, ctx(app, run)).decision, "ask", "and on the owner's own assistant");

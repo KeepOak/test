@@ -9,7 +9,7 @@
 const { chromium } = require("playwright");
 const http = require("node:http");
 const { spawn } = require("node:child_process");
-const { mkdirSync, mkdtempSync, rmSync, existsSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync } = require("node:fs");
 const { join, resolve } = require("node:path");
 const os = require("node:os");
 
@@ -164,6 +164,7 @@ async function main() {
       await library(page);
       await automations(page, trunk);
       await exportAndWhatsNew(page);
+      await chatSteerAndMade(page, dir);
       await usageLines(page);
     }
     await localConnections(page);
@@ -370,6 +371,47 @@ async function exportAndWhatsNew(page) {
   check("10 What's new closes from its own button", (await page.locator(".new13").count()) === 0, "Close");
 }
 
+/* dogfood-ux-2: a steer from a chat app shows as its sender's name and words; Made for you › Open reads a kept file. */
+async function chatSteerAndMade(page, dir) {
+  const source = (await api("sessions")).sessions?.find((s) => s.opening?.includes("SCRIPT:markdown"))?.sessionId;
+  const archive = await api(`sessions/${source}/export`);
+  const marker = '[OUT-OF-BAND MESSAGE FROM A CHAT PARTICIPANT, NOT THE OWNER (they call themselves "Sam") — sent by Branch itself, delivered once at this position; not tool output, and not a new instruction when it appears again in the conversation history]';
+  archive.messages.push({ role: "user", content: `${marker}\nOnly the Python ones, please.\n[/OUT-OF-BAND MESSAGE FROM A CHAT PARTICIPANT]` }, { role: "assistant", content: "Python only, then." });
+  const copy = await api("sessions/import", archive);
+  await page.reload();
+  await page.waitForSelector("#side .machine");
+  await openChat(page, copy.sessionId ?? copy.id);
+  await page.locator(".steered-b17", { hasText: "Only the Python ones" }).first().waitFor({ timeout: 10000 });
+  const thread = await text(page);
+  check("chat-app steer shows only the sender's name and words", thread.includes("Sam: “Only the Python ones, please.”") && !thread.includes("OUT-OF-BAND"), "the thread and the list");
+  check("no list row shows a routine's [Trunk @…] prefix", !(await page.locator("#side").innerText()).includes("[Trunk @"), "the sidebar");
+  await shot(page, "x2-chat-steer");
+  // Two files a task kept, beside the engine's data (src/artifacts.ts): a Markdown note and a picture.
+  const kept = join(dir, "data", "artifacts", "run-verify");
+  mkdirSync(kept, { recursive: true });
+  writeFileSync(join(kept, "notes.md"), "# Kept notes\n\n**Made** by a task: marsh-marigold.");
+  writeFileSync(join(kept, "dot.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
+  await click(page, '#side [data-act="view"][data-v="library"]');
+  await click(page, '#main [data-act="ptab"][data-v="made"]');
+  const openNote = page.locator("#main .prow", { hasText: "notes.md" }).locator('[data-act="made-open"]');
+  await openNote.waitFor({ timeout: 15000 });
+  check("Made for you › Open is live", !(await greyed(openNote)), "not greyed");
+  // Show in folder is the desktop app's (src/desktop/show-in-folder-ipc.ts); a browser cannot show a file in its folder.
+  check("Show in folder is not drawn in a browser", (await page.locator('#main [data-act="made-reveal"]').count()) === 0, "browser window");
+  await openNote.click();
+  const reader = page.locator(".docread18").first();
+  await reader.waitFor({ timeout: 10000 });
+  check("Made for you › Open reads a document as Markdown", /<h1>Kept notes<\/h1>/.test(await reader.innerHTML()) && (await reader.innerText()).includes("marsh-marigold"), "Library › Made for you");
+  await click(page, '[data-act="dlg-close"]');
+  await page.locator("#main .prow", { hasText: "dot.png" }).locator('[data-act="made-open"]').click();
+  const img = page.locator("img.docread18m");
+  await img.waitFor({ timeout: 10000 });
+  const loaded = await until(async () => img.evaluate((el) => el.complete && el.naturalWidth > 0), 8000);
+  check("Made for you › Open shows a picture", !!loaded, "the kept picture, read with the window's sign-in");
+  await shot(page, "x2-made-picture");
+  await click(page, '[data-act="dlg-close"]');
+}
+
 /* The usage popover's lines: who the account is and when it was updated, never how it was read. */
 async function usageLines(page) {
   const view = await api("usage/glance");
@@ -405,6 +447,11 @@ async function localConnections(page) {
   const dot = page.locator("#main .status .sdot").first();
   await dot.waitFor({ timeout: 10000 });
   check("Q070 Accounts does not warn while a local model answers", !((await dot.getAttribute("class")) ?? "").includes("bad"), "the status dot");
+  // dogfood-ux-2: the count is what can answer now, a model on this computer included, and it is listed.
+  const local = (await api("state")).models.presets.filter((p) => p.local).length;
+  const counted = await page.locator("#main .status b").first().innerText();
+  const listedHere = await page.locator("#main .prow", { hasText: name }).count();
+  check("Accounts counts the model on this computer and lists it", Number(counted.match(/^(\d+)/)?.[1]) === local && local >= 1 && listedHere >= 1, `"${counted}", ${local} on this computer`);
   await shot(page, "q070-accounts");
   // Q072: setup's models step, after the picker set the model up, shows one hello.
   await page.keyboard.press("Escape");

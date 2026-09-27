@@ -66,7 +66,9 @@ export function sections17(lv) {
     + (stopped ? row17(t("safety.stop.title"), t("window.settings.p17-permissions.stopped-every-task-is-halted-nothing"), t("window.settings.p17-permissions.let-them-resume"), onlyEverything ? "estoprelb17" : "estoprelb17-soon")
       : row17(t("safety.stop.title"), t("window.settings.p17-permissions.stops-every-task-at-once-on"), t("window.settings.p17-permissions.stop-everything"), "estopb17"))
     + demos17(["audit", "practice"]));
-  if (lv >= 2) html += sec17(t("window.settings.p17-permissions.guards-that-are-always-on"), demos17(["injection", "chatperm", "loopguard", "leakguard", "codecheck"]));
+  /* The loop guard ships on (src/loop-guard.ts loopGuardShipsAs); it is listed as always on only while the engine says it is. */
+  const guards = ["injection", "chatperm", ...(kitMode("loop_guard") === "off" ? [] : ["loopguard"]), "leakguard", "codecheck"];
+  if (lv >= 2) html += sec17(t("window.settings.p17-permissions.guards-that-are-always-on"), demos17(guards));
   return html;
 }
 

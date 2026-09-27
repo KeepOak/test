@@ -3,7 +3,7 @@ import type { Message } from "./contracts.js";
 import { MemoryDataSchema, type MemoryRecord } from "./memory.js";
 import { normaliseFact } from "./memory-hygiene.js";
 import type { Store } from "./store.js";
-import { steerWords } from "./steer.js"; // dogfood D23
+import { chatSteer, steerWords } from "./steer.js"; // dogfood D23, dogfood-ux-2
 
 /**
  * Taking memory and conversations out of the app, and putting facts back in. Facts travel as JSON
@@ -88,9 +88,11 @@ export function conversationMarkdown(meta: { sessionId: string; createdAt?: stri
   if (meta.createdAt) lines.push(`Started ${meta.createdAt}`);
   for (const message of messages.slice(0, 2000)) {
     if (message.role === "system") continue;
-    // A steer is written as the owner's own words, never the marker the model was given it in (dogfood D23).
-    const words = (message.role === "user" ? steerWords(message.content) : null) ?? message.content;
-    lines.push("", `## ${speaker[message.role] ?? message.role}`, "", words.slice(0, 20000) || "_(no words)_");
+    // A steer is written as the words that were sent, never the marker the model was given it in (dogfood D23); one
+    // from a chat app under the name its sender goes by, never as the owner's.
+    const fromChat = message.role === "user" ? chatSteer(message.content) : null;
+    const words = fromChat?.words ?? (message.role === "user" ? steerWords(message.content) : null) ?? message.content;
+    lines.push("", `## ${fromChat ? fromChat.from : speaker[message.role] ?? message.role}`, "", words.slice(0, 20000) || "_(no words)_");
     for (const call of message.toolCalls ?? []) lines.push("", `_used ${call.name}_`);
   }
   return lines.join("\n") + "\n";
