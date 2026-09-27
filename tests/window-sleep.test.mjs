@@ -1,5 +1,6 @@
 /* Everything that moves falls asleep when it is left alone, and wakes when you come back (core/sleep.js). A face sleeps
-   two minutes after it was last in focus (its conversation open while you use the window, or its row hovered), the
+   two minutes after it was last in focus (its conversation open while you use the window, or its row hovered) and, when
+   its conversation is not open, lies still twenty seconds later; the
    window's own motion two minutes after your last input, and after ten minutes every sleeping loop holds still. A face
    at work never sleeps. Headless, against 127.0.0.1, with the page's clock moved forward (Playwright clock). */
 import test from "node:test";
@@ -88,6 +89,8 @@ test("only the open conversation's Trunk stays awake while you use the window; h
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains("doze18")), false, "the window is awake while you use it");
   assert.match(await loopOf(page, trunks.Ledger), /ember\/idle/, "the open conversation's face stays awake");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a face whose conversation is not open sleeps");
+  assert.equal(await face(page, trunks.Scout).evaluate((el) => el.querySelector("video").paused), true, "and, fallen asleep, lies still");
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll("#side [data-rk] video")].filter((v) => !v.paused).map((v) => v.closest("[data-rk]").dataset.rk).every((k, _, all) => k === all[0])), true, "only the open conversation's face moves in the list");
   await face(page, trunks.Scout).hover();
   await page.waitForTimeout(300);
   assert.match(await loopOf(page, trunks.Scout), /kite\/idle/, "hovering its row wakes it");

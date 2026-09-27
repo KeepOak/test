@@ -2,8 +2,8 @@
    "ALL the animations have a sleeping side when they're left for a certain amount of time, because that can eat CPU").
 
    A face (a Trunk's or Branch's own) sleeps DOZE_MS after it was last in focus: its conversation open while you were
-   using the window, or its row hovered or clicked. So only the open conversation's face, and faces at work, move for
-   long. Everything else that moves (the pet, the painted scene, the feature pictures, the rings and dots) sleeps
+   using the window, or its row hovered or clicked. A face whose conversation is not open falls asleep (SETTLE_MS of its
+   sleeping loop) and then lies still: only the open conversation's face, and faces at work, move for long. Everything else that moves (the pet, the painted scene, the feature pictures, the rings and dots) sleeps
    DOZE_MS after your last click, key, touch or pointer move, unless a task is working in view. After STILL_MS every
    sleeping loop holds still as well: nothing decodes or draws.
    A face at work never sleeps. Your input, the window regaining focus, a task starting and a reply or question arriving
@@ -15,6 +15,8 @@ import { render, afterDraw } from "./dom.js";
 
 export const DOZE_MS = 2 * 60 * 1000;
 export const STILL_MS = 10 * 60 * 1000;
+/* How long a face whose conversation is not open plays its sleeping loop before it lies still on it. */
+export const SETTLE_MS = 20 * 1000;
 /* What a face does while its task works: it keeps its working loop wherever it is drawn. */
 export const WORKING = new Set(["work", "think", "search", "read"]);
 
@@ -31,15 +33,16 @@ function openKeys() {
   const room = id ? (E.rooms ?? []).find((r) => r.sessionId === id) : null;
   return room ? (room.members ?? []).map((m) => `t:${m}`) : ["branch"];
 }
-export const trunkKey = (trunk) => (trunk?.kind === "main" || trunk?.isBranch ? "branch" : trunk?.id ? `t:${trunk.id}` : "");
 
 const stageAt = (since, now) => (now - since >= STILL_MS ? "still" : now - since >= DOZE_MS ? "doze" : "awake");
-const sinceOf = (key) => (openKeys().includes(key) ? lastInput : Math.min(focusAt.get(key) ?? bornAt, lastInput));
 
 /* A face's stage: "awake", "doze" (its sleeping loop) or "still" (its sleeping loop held still). */
 export function restOf(key, st = "idle") {
   if (WORKING.has(st)) return "awake";
-  return stageAt(key ? sinceOf(key) : lastInput, Date.now());
+  const now = Date.now();
+  if (!key || openKeys().includes(key)) return stageAt(lastInput, now);
+  const since = Math.min(focusAt.get(key) ?? bornAt, lastInput);
+  return now - since >= DOZE_MS + SETTLE_MS ? "still" : stageAt(since, now);
 }
 
 /* A task working in a conversation that is open or whose face is drawn keeps the window's own motion awake. */
@@ -112,7 +115,7 @@ function wakeUp(html) {
 let timer = 0;
 function plan() {
   clearTimeout(timer);
-  const now = Date.now(), times = [lastInput, bornAt, ...focusAt.values()].flatMap((t) => [t + DOZE_MS, t + STILL_MS]).filter((t) => t > now);
+  const now = Date.now(), times = [lastInput, bornAt, ...focusAt.values()].flatMap((t) => [t + DOZE_MS, t + DOZE_MS + SETTLE_MS, t + STILL_MS]).filter((t) => t > now);
   if (times.length) timer = setTimeout(changed, Math.min(...times) - now + 20);
 }
 

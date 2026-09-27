@@ -19,13 +19,24 @@ async function cpu(session) {
   return processInfo.reduce((a, p) => a + p.cpuTime, 0);
 }
 
-const moving = (page) => page.evaluate(() => ({
-  videosAwake: [...document.querySelectorAll("video")].filter((v) => !v.paused && !/sleep/.test(v.src)).length,
-  videosAsleep: [...document.querySelectorAll("video")].filter((v) => !v.paused && /sleep/.test(v.src)).length,
-  pebblesDrawing: document.querySelectorAll(".av.pbl.pbl-live").length,
-  cssRunning: document.getAnimations().filter((a) => a.playState === "running").length,
-  asleep: document.documentElement.className.match(/\b(doze18|still18)\b/)?.[1] ?? "awake",
-}));
+/* What still moves: videos playing (awake loops and sleeping ones), pebble canvases that changed over a second, running
+   CSS animations, and the faces (by their key, core/sleep.js data-rk) with a video playing or a canvas changing. */
+const moving = (page) => page.evaluate(async () => {
+  const shot = () => new Map([...document.querySelectorAll(".pbl-cv")].map((c) => [c, c.toDataURL()]));
+  const a = shot();
+  await new Promise((r) => setTimeout(r, 1000));
+  const b = shot(), changed = [...b].filter(([c, url]) => a.has(c) && a.get(c) !== url).map(([c]) => c);
+  const playing = [...document.querySelectorAll("video")].filter((v) => !v.paused);
+  const faces = new Set([...playing, ...changed].map((el) => el.closest("[data-rk]")?.dataset.rk).filter(Boolean));
+  return {
+    videosAwake: playing.filter((v) => !/sleep/.test(v.src)).length,
+    videosAsleep: playing.filter((v) => /sleep/.test(v.src)).length,
+    pebblesChanging: changed.length,
+    cssRunning: document.getAnimations().filter((x) => x.playState === "running").length,
+    facesMoving: faces.size,
+    asleep: document.documentElement.className.match(/(doze18|still18)/)?.[1] ?? "awake",
+  };
+});
 
 (async () => {
   if (!PORT || !TOKEN) throw new Error("PORT and TOKEN are needed");
