@@ -15,7 +15,7 @@ import { on } from "../core/actions.js";
 import { inlineText } from "../chat/markdown.js"; // a fact keeps its inline formatting, drawn from escaped text
 import { workSection, labelled, mapSection, manageSection, learnSection, readLibrary17, initLibrary17 } from "./library17.js";
 import { nameOf } from "./inbox17.js";
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
@@ -50,7 +50,7 @@ function memoryTab(mem) {
   const n = findingCount();
   const acts = `<span class="st-acts15"><button type="button" class="btn sm" data-act="tidy15">${t("memory.card.tidy-up")}${n ? `<span class="n15">${n}</span>` : ""}</button><button type="button" class="icon-btn" aria-label="${t("window.places.library.more-for-memory")}" data-act="memmore15">${ic("more", "s")}</button></span>`;
   let html = `<div class="status memst15" data-css="margin:6px 0 10px">${cap ? ring(cap.count, cap.maxFacts) : '<span class="sdot"></span>'}<div>
-      <b>${cap ? t("window.places.library.count-of-maxfacts-remembered", { count: cap.count, maxFacts: cap.maxFacts }) : t("window.places.library.count-things-remembered", { count: mem.length })}</b>
+      <b>${cap ? t("window.places.library.count-of-maxfacts-remembered", { count: cap.count, maxFacts: cap.maxFacts }) : plural(mem.length, { one: "window.places.library.count-things-remembered.one", other: "window.places.library.count-things-remembered" })}</b>
       <p>${t("window.places.library.trunks-suggest-what-to-remember-and")}</p></div>${acts}</div>`;
   html += mem.map((m, i) => `<div class="prow"><span class="ico-tile">${ic('star', 's')}</span>
         <span class="grow"><b>${inlineText(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "")}</b><small>${esc([m.data?.source, when(m.updatedAt ?? m.createdAt)].filter(Boolean).join(" · "))}</small></span>

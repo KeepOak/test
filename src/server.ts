@@ -270,8 +270,8 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { liveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
-import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, close as closeBrowse, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
@@ -962,8 +962,10 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
  * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
  */
 const pairedDoorRequests = new WeakSet<IncomingMessage>();
-/** parity-b2: a request through the paired door, or from a caller not on this computer: never this computer's own window. */
-const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers);
+/** parity-b2: a request through the paired door, with a paired phone's own key (whatever address it comes from), or
+ *  from a caller not on this computer: never this computer's own window. */
+const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || throughADoor(request)
+  || !fromThisComputer(request.socket?.remoteAddress, request.headers);
 
 async function api(
   app: Branch,
@@ -1899,9 +1901,6 @@ async function api(
       new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // parity-b2: the owner's live view of this computer's screen (src/live-screen.ts), and the owner typing an address
   // into Branch's browser (src/owner-browse.ts). Both the owner's alone, at this computer's own window.
-  if (request.method === "GET" && path === liveScreenPath)
-    return liveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request), desktop: app.desktop ?? null })
-      .catch((error: unknown) => { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; });
   if (request.method === "POST" && path === ownerBrowsePath) {
     const input = BrowseSchema.parse(await readBody(request));
     return browse({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
@@ -1912,8 +1911,9 @@ async function api(
   }
   if (request.method === "POST" && path === ownerBrowseClosePath) {
     const { sessionId } = BrowseCloseSchema.parse(await readBody(request));
-    app.store.profiles.requireOwner("Branch's browser");
-    return { closed: closeBrowse(sessionId) };
+    // Refused through a door, as typing an address is: the window it closes is this computer's own window's.
+    try { return closeBrowseFor({ viaDoor: throughDoor(request), profiles: app.store.profiles }, sessionId); }
+    catch (error) { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; }
   }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
@@ -2201,7 +2201,7 @@ async function historyApi(app: Branch, request: IncomingMessage, path: string): 
   if (request.method === "GET" && path === "/api/history/files")
     return { versions: history.history(new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "") };
   if (request.method === "POST" && path === "/api/history/restore")
-    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId);
+    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId, { anyScope: true });
   if (request.method === "GET" && path === "/api/history/snapshots") return { snapshots: history.snapshots() };
   if (request.method === "POST" && path === "/api/history/snapshots") return history.snapshot(await readBody(request));
   const restore = /^\/api\/history\/snapshots\/([a-f0-9-]{36})\/restore$/.exec(path);
@@ -3782,6 +3782,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
       if (await handleMcpRequest(app, request, response)) return;
+      // parity-b2: the owner's live view of this computer's screen, a stream of frames for as long as the view is open
+      // (src/live-screen.ts). Every check above has already run; its own are asked again before every frame.
+      if (request.method === "GET" && path === liveScreenPath) {
+        try {
+          streamLiveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("GET", liveScreenPath), desktop: app.desktop ?? null }, request, response);
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
@@ -4327,6 +4336,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
+      stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
       await remote.close().catch(() => undefined); // every door it opened, and none opens after this
@@ -4539,7 +4549,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       const command = app.voice.engines?.command(app.runtime.owner, written.text) ?? null;
       response.end(JSON.stringify({ text: written.text, via: written.route, language: written.language, cost: written.cost, command }));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4558,7 +4568,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       });
       response.end(Buffer.from(spoken.bytes));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;

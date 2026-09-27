@@ -12,7 +12,7 @@
    conversation stops the task it made (POST /api/runs/<id>/cancel), so it holds no update or quit. */
 
 import { esc, applyCss } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, chatFace, ownName } from "../core/state.js";
 import { api, token, isDesktop } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { app, av, toast, closePop } from "../core/ui.js";
@@ -39,10 +39,10 @@ function caption() {
   return L.caption || (L.phase === "listening" ? t("window.chat.voice.listening") : "");
 }
 function viewHtml() {
-  const name = E.state?.identity?.name ?? "";
+  const name = ownName(L.sessionId) || E.state?.identity?.name || "";
   const who = name ? `${esc(t("window.chat.voice.talking-with", { name }))} · ` : "";
   const still = L.muted || L.phase === "starting";
-  return `<div class="vin"><div class="v-top">${av({ kind: "main" }, 28)}<span>${who}<span id="v-t">${clock()}</span></span></div>
+  return `<div class="vin"><div class="v-top">${av(chatFace(L.sessionId), 28)}<span>${who}<span id="v-t">${clock()}</span></span></div>
     <div class="orb${still ? " muted" : ""}" aria-hidden="true"></div><p class="v-cap" id="v-cap" aria-live="polite">${esc(caption())}</p>
     <div class="acts"><button class="btn" type="button" data-act="v-mute" aria-pressed="${L.muted}">${t(L.muted ? "voiceView.unmute" : "voiceView.mute")}</button><button class="btn bad" type="button" data-act="v-end">${t("voiceView.end")}</button></div>
     ${L.note ? `<p class="hint" data-css="margin:0">${esc(L.note)}</p>` : ""}</div>`;

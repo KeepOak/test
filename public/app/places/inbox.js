@@ -62,17 +62,17 @@ function askRow(q) {
 /* A request for a package or a tool server (GET /api/flows-boards/installs, status waiting). Answering it only writes the
    answer down: a yes comes back with the exact next step, and nothing is installed. */
 function installRow(r) {
-  return `${prowOpen(`install:${r.id}`, r.createdAt)}${av({ kind: "main" }, 34)}<span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
+  return `${prowOpen(`install:${r.id}`, r.createdAt)}<span class="ico-tile">${ic("puzzle", "s")}</span><span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
 }
 function messageRow(m) {
-  return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${av(trunkById(m.from) ?? { kind: "main" }, 34)}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
+  return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${trunkById(m.from) ? av(trunkById(m.from), 34) : `<span class="ico-tile">${ic("chat", "s")}</span>`}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
 }
 
 /* A task Branch closed on, from the engine's attention list; its name is the task's own first line. */
 function cutCard(a) {
   const trunk = a.who ? (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.name === a.who) : null;
   const name = (runById(a.runId)?.title ?? firstLine(runById(a.runId)?.prompt)) || a.question;
-  return `<div class="cut15" role="status">${trunk ? av(trunk, 30) : av({ kind: "main" }, 30)}<span class="grow"><b>${t("window.places.inbox.pick-up-what-the-update-cut")}</b><small>${esc(name)}</small></span><button class="btn ghost sm" type="button" data-act="cutno15" data-id="${esc(a.runId)}">${t("window.places.inbox.leave-it")}</button><button class="btn pri sm" type="button" data-act="cutgo15" data-id="${esc(a.runId)}" data-sid="${esc(a.sessionId)}">${t("window.places.inbox.pick-it-up")}</button></div>`;
+  return `<div class="cut15" role="status">${trunk ? av(trunk, 30) : `<span class="ico-tile">${ic("retry", "s")}</span>`}<span class="grow"><b>${t("window.places.inbox.pick-up-what-the-update-cut")}</b><small>${esc(name)}</small></span><button class="btn ghost sm" type="button" data-act="cutno15" data-id="${esc(a.runId)}">${t("window.places.inbox.leave-it")}</button><button class="btn pri sm" type="button" data-act="cutgo15" data-id="${esc(a.runId)}" data-sid="${esc(a.sessionId)}">${t("window.places.inbox.pick-it-up")}</button></div>`;
 }
 const cutCards = () => (E.state.attention ?? []).filter((a) => a.canContinue && !a.parentRunId).map(cutCard).join(""); // not a helper (FEATURES17C §4)
 

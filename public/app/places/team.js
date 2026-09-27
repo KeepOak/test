@@ -21,7 +21,7 @@
    the Signing in tab is not drawn at all (ownerHere(), the engine's isOwner): it is not theirs to use, not "coming soon". */
 
 import { esc, render, renderNow } from "../core/dom.js";
-import { S, E, personHere, ownerHere, ownName, trunkIntro, activeId } from "../core/state.js";
+import { S, E, personHere, ownerHere, ownName, trunkIntro, activeId, chatFace } from "../core/state.js";
 import { face } from "../core/faces.js"; // your-profile
 import { av, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -79,7 +79,7 @@ function liveRow(r) {
   const waiting = r.status === "needs_input";
   const trunk = trunkOf(r);
   const session = E.sessions.find((s) => (s.sessionId ?? s.id) === r.sessionId);
-  const who = trunk ? av(trunk, 30) : av({ kind: "main" }, 30);
+  const who = av(trunk ?? chatFace(r.sessionId), 30);
   const pill = waiting ? `<span class="pill work"><i></i>${t("window.places.team.waiting-for-them")}</span>` : `<span class="pill ok"><i></i>${t("window.shell.working")}</span>`;
   const plan = planOf(r);
   const small = [plan?.line, since(r), modelName(r.model)].filter(Boolean).join(" · ");
