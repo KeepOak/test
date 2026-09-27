@@ -28,7 +28,7 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
 import { lockedDown } from "../lockdown.js";
-import { commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
+import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -672,7 +672,7 @@ export class ChannelRouter {
     const mayApprove = permission === commandPermission
       ? this.commandYesHere(channel, chatId, asked.runId, read.fingerprint, from)
         && !!read.nonce && this.shownCommands.get(`${channel}\u0000${chatId}\u0000${asked.fingerprint}`) === read.nonce
-        && commandShown(asked.bytes) !== null
+        && commandShown(asked.bytes) !== null && commandBytesExact(asked.tool, asked.bytes, asked.fingerprint)
       : chatMayApprove(permission, this.chatApprovals(channel, from));
     if (read.decision === "allow" && !mayApprove)
       return { decision: "in-window", tool: asked.tool, refusal: approveInWindow(asked.label || asked.tool) };
@@ -712,7 +712,8 @@ export class ChannelRouter {
     if (!adapter) return;
     // A command from the owner's own chat is shown whole, as a code block, before its Yes (src/channels/owner-commands.ts).
     const permission = this.runtime.registry.permissionOf(waiting.tool);
-    const command = permission === commandPermission && this.ownerCommandsFrom(message) ? commandShown(waiting.bytes) : null;
+    const command = permission === commandPermission && this.ownerCommandsFrom(message)
+      && commandBytesExact(waiting.tool, waiting.bytes, waiting.fingerprint) ? commandShown(waiting.bytes) : null;
     const asked = command ? `${lead}${waiting.question}\n\n` : lead + waiting.question;
     const checked = await this.outboundGuard(this.hideLeaks(command ? asked + command : asked));
     if (checked.blocked) return;
