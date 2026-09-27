@@ -10,7 +10,7 @@ import { stillOutOfSight } from "../core/still.js";
 import { head as chatHead, openConversation, startConversation } from "../chat/chat.js";
 import { statusItems } from "../chat/messages.js";
 import { initExtras } from "./extras.js";
-import { initUsage } from "./usage.js";
+import { initUsage, planMeter } from "./usage.js";
 import { initCelebrate } from "./celebrate.js";
 import { initAutoUpdate } from "./autoupdate.js";
 import { api, link } from "../core/api.js";
@@ -158,7 +158,7 @@ function status() {
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>
     ${petHTML("status")}
     <span class="tb-grow"></span>
-    ${model && !hidden("usage") ? `<button class="sb usage" type="button" data-act="usagepop" data-hide="usage" data-tip="${t("window.shell.shell.what-each-connection-has-left-5")}"><span class="hide-sm">${esc(model)}</span></button>` : ""}
+    ${model && !hidden("usage") ? `<button class="sb usage" type="button" data-act="usagepop" data-hide="usage" data-tip="${t("window.shell.shell.what-each-connection-has-left-5")}">${planMeter(model)}</button>` : ""}
     ${version ? `<button class="sb hide-sm" type="button" data-act="updmenu" data-tip="${t("window.shell.shell.version-and-updates")}">${esc(version)}</button>` : ""}`;
 }
 

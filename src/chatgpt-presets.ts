@@ -31,7 +31,8 @@ export function syncChatGPTPresets(models: ModelRouter, auth: ChatGPTAuth, signe
     const id = chatgptPresetId(entry.id);
     models.register({
       id, name: `ChatGPT (unofficial) · ${entry.label}`, model: entry.id, reasoning: entry.reasoning,
-      provider: new ChatGPTProvider(auth, { model: entry.id, userAgent }),
+      // Its answers are watched like any connection's, so the plan window ChatGPT reports on them is read.
+      provider: new ChatGPTProvider(auth, { model: entry.id, userAgent, fetch: models.health.watch(id) }),
     });
     return id;
   });
