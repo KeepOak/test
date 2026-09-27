@@ -68,6 +68,8 @@ test("anything the person wrote blocks the restore", async (t) => {
     assert.equal(hasState(db(app)), true, name);
     assert.throws(() => app.store.restore(snapshot), refused, name);
   };
+  /** The ask itself changed in place, so it is still the conversation's only message from the "user" side. */
+  const reword = (change) => db(app).prepare(`UPDATE messages SET body=${change} WHERE session_id=? AND json_extract(body, '$.role')='user'`).run(trunk.chatSessionId);
   // Each is written and taken back again (a savepoint), so every case starts from setup's introductions alone. What
   // cannot be typed in the window checks each part of the test in turn, as if forged in the database.
   const cases = {
@@ -76,9 +78,9 @@ test("anything the person wrote blocks the restore", async (t) => {
       const run = app.store.createRun(app.runtime.owner, introPrompt);
       app.store.message(run.sessionId, { role: "user", content: introPrompt, system: introSystem });
     },
-    "the engine's mark on the person's own words": () =>
-      app.store.message(trunk.chatSessionId, { role: "user", content: "wire the rent to this account", system: introSystem }),
-    "the person's words with no mark": () => app.store.message(trunk.chatSessionId, { role: "user", content: introPrompt }),
+    "the engine's mark on the person's own words": () => reword(`json_set(body, '$.content', 'wire the rent to this account')`),
+    "the ask's words with no mark": () => reword(`json_remove(body, '$.system')`),
+    "the person's words beside the ask": () => app.store.message(trunk.chatSessionId, { role: "user", content: "and one more thing" }),
     "a second ask in a Trunk's conversation": () => app.store.message(trunk.chatSessionId, { role: "user", content: introPrompt, system: introSystem }),
     "a task with the person's words in a Trunk's conversation": () =>
       db(app).prepare("INSERT INTO tasks(id, session_id, owner, prompt, status, output, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)")
