@@ -72,7 +72,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),
   entry("verify", [], "[on|off]", "turn a reviewer's check of the answer on or off", ["terminal"], "look", was("terminal")),
-  entry("dry-run", ["practice"], "[on|off]", "a practice run: it shows what it would do without doing it", ["terminal"], "look", was("terminal")),
+  entry("dry-run", [], "[on|off]", "a dry run: it shows what it would do without doing it", ["terminal"], "look", was("terminal")),
   entry("temporary", ["incognito"], "[on|off]", "a conversation that is not remembered; set it before the first message", [...W, "terminal"], "look", was("terminal")),
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
@@ -94,7 +94,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("exit", ["quit"], "", "leave", ["terminal"], "look", was("terminal")),
   // ---- the redesign's terminal (design/redesign/prototype.html termRun): Team, finding and the chat apps ----
   entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", ["terminal"], "look"),
-  entry("find", ["search"], "<words>", "search every conversation and message", ["terminal"], "look"),
+  entry("find", ["search"], "<words>", "search every conversation and message", ["terminal"], "owner"),
   entry("channels", [], "", "the chat apps and which ones reach Branch", ["terminal"], "owner"),
   // ---- added with this table ----
   entry("stop", ["cancel"], "[task]", "stop what is working now", ["window", "phone", "terminal", "chat", "dashboard"], "run", { ...was("chat"), whileWorking: true }),

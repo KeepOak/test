@@ -104,7 +104,7 @@ function toggle(name: "plan" | "verify" | "dryRun" | "temporary"): TerminalComma
       return context.say("warn", "[a conversation becomes temporary when it starts; /new, then /temporary]");
     const said = name === "temporary" ? `temporary: ${on ? "on, nothing from this conversation is remembered" : "off"}`
       : name === "plan" ? `a short plan first: ${on ? "on" : "off"}`
-      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `practice run: ${on ? "on, it shows what it would do without doing it" : "off"}`;
+      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `dry run: ${on ? "on, it shows what it would do without doing it" : "off"}`;
     context.say("note", `[${said}]`);
   };
 }

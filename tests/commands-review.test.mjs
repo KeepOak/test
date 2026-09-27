@@ -115,7 +115,7 @@ test("a command that asks the model counts as a task started, like /api/run", as
    src/channels/chat-commands.ts, and the window's app.js + goal.js. */
 const OLD_TERMINAL = {
   help: ["?"], model: ["models"], think: ["reasoning"], preset: ["permissions"], memory: [], skills: [], plan: [], verify: [],
-  "dry-run": ["practice"], temporary: ["incognito"], attach: ["image"], history: [], export: ["save"], new: ["clear", "reset"],
+  "dry-run": [], temporary: ["incognito"], attach: ["image"], history: [], export: ["save"], new: ["clear", "reset"],
   sessions: ["resume"], go: ["open"], inbox: [], automations: ["cron"], library: [], customize: ["tools"], settings: ["config"],
   theme: ["skin"], default: [], switch: [], pane: ["details"], lockdown: ["pause"], keys: [], exit: ["quit"],
 };
@@ -133,6 +133,9 @@ test("switch off: the terminal answers to exactly the names it had", () => {
   }
   assert.equal(findCommand("/clear", "on")?.name, "new");
   assert.equal(findCommand("/shortcuts", "on")?.name, "keys");
+  // The owner's rule: nothing is called practice, so /dry-run has no /practice alias on either side of the switch.
+  assert.equal(findCommand("/practice", "on"), undefined);
+  assert.equal(findCommand("/practice", "off"), undefined);
 });
 
 test("switch off: a chat answers to exactly the names it had", () => {

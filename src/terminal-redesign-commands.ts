@@ -27,9 +27,13 @@ const flat = (text: string, size: number): string => {
   return line.length > size ? `${line.slice(0, size - 1)}…` : line;
 };
 
-/** `/find <words>`: every conversation and message of the person here that holds all the words. */
+/**
+ * `/find <words>`: every conversation and message that holds all the words. The owner's alone, as the window's
+ * search across everything is (src/unified-search.ts): refused here too, not only by the command's level.
+ */
 export function findWords(context: RedesignContext, argument: string): void {
   const { words } = context, store = context.runtime.store;
+  store.profiles.requireOwner("/find");
   const keywords = historyKeywords(argument).slice(0, historyKeywordLimit);
   if (!keywords.length) return context.say("warn", words.t("terminal.find.say", "Say what to find: /find <words>"));
   const scope = store.profiles.scope();

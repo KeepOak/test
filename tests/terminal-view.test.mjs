@@ -545,6 +545,18 @@ test("the prototype's keys and commands: Tab walks the places, a bare /lockdown 
   await tui.command("/channels");
   assert.ok(tui.conversation.transcript.slice(lines).every((line) => !/reach Branch/.test(line.text)),
     "the chat apps are the owner's: a household profile is shown none");
+  tui.overlay = undefined;
+  const before = tui.conversation.transcript.length;
+  await tui.command("/find hartwell");
+  await settle();
+  assert.notEqual(tui.overlay?.kind, "picker", "searching every conversation is the owner's: a household profile is refused");
+  assert.ok(tui.conversation.transcript.slice(before).every((line) => !/hartwell/i.test(line.text) || /\/find/.test(line.text)),
+    "nothing found is printed for a household profile");
+  const { findWords } = await import("../dist/terminal-redesign-commands.js");
+  const quiet = [];
+  assert.throws(() => findWords({ runtime: app.runtime, words: loadWords("en"), say: (kind, text) => quiet.push(text) }, "hartwell"),
+    "the search itself refuses anyone but the owner, whatever calls it");
+  assert.deepEqual(quiet, []);
 });
 
 test("one key answers y, n or s; a (yes, always) writes a rule, so it waits for Enter", async (t) => {

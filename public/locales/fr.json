@@ -5040,7 +5040,7 @@
   "telegram-setup.token-note": "Le jeton va directement dans le coffre verrouillé de Branch et n'est plus jamais affiché.",
   "telegram-setup.token-placeholder": "Collez le jeton ici",
   "terminal.chip.plan": "Plan d'abord",
-  "terminal.chip.practice": "Essai",
+  "terminal.chip.dry-run": "Essai",
   "terminal.composer.answer": "Répondez y (oui), n (non), a (oui, toujours) ou s (oui, pour cette conversation)",
   "terminal.composer.placeholder": "Décrivez ce que vous voulez faire… (Entrée envoie, Alt+Entrée ajoute une ligne)",
   "terminal.empty.channels": "Aucun canal pour l'instant. Un canal vous permet de joindre votre assistant depuis une messagerie.",

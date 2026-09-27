@@ -5038,7 +5038,7 @@
   "telegram-setup.token-note": "Das Token geht direkt in Branchs verschlossenen Geheimnisspeicher und wird nie wieder auf dem Bildschirm angezeigt.",
   "telegram-setup.token-placeholder": "Token hier einfügen",
   "terminal.chip.plan": "Erst planen",
-  "terminal.chip.practice": "Probelauf",
+  "terminal.chip.dry-run": "Probelauf",
   "terminal.composer.answer": "Antworte y (ja), n (nein), a (ja, immer) oder s (ja, für diese Unterhaltung)",
   "terminal.composer.placeholder": "Beschreib, was du tun willst … (Enter sendet, Alt+Enter fügt eine Zeile hinzu)",
   "terminal.empty.channels": "Noch keine Kanäle. Über einen Kanal erreichst du deinen Assistenten aus einer Chat-App.",

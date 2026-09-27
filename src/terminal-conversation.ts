@@ -86,7 +86,7 @@ export class Conversation {
     const label = say(`settings-kit.value.policy.preset.${policy}`, english);
     return [preset?.name ?? id, label, ...this.attachments.map((file) => `+ ${file.name}`),
       ...(this.temporary ? [say("composer.temporary", "Temporary")] : []),
-      ...(this.dryRun ? [say("terminal.chip.practice", "Practice run")] : []), ...(this.plan ? [say("terminal.chip.plan", "Plan first")] : [])];
+      ...(this.dryRun ? [say("terminal.chip.dry-run", "Dry run")] : []), ...(this.plan ? [say("terminal.chip.plan", "Plan first")] : [])];
   }
   modelName(): string { return this.chips()[0] ?? ""; }
   /** phase2/everywhere: the conversation's title, as the window names it: its first message. */
@@ -282,7 +282,7 @@ export function stepRow(event: Event, steps: Step[]): string | undefined {
     return `  ${event.kind === "tool.failed" ? "x" : "ok"} ${label || step?.label || tool}`;
   }
   if (event.kind === "policy.ask") return `  ? ${label || tool} is waiting for your yes`;
-  if (event.kind === "tool.simulated") return `  ~ ${label || tool} (practice run: shown, not done)`;
+  if (event.kind === "tool.simulated") return `  ~ ${label || tool} (dry run: shown, not done)`;
   if (event.kind === "model.retry_scheduled") return "  · the model is busy; trying again";
   if (event.kind === "run.steered") return "  · your note was added to the task";
   if (event.kind === "plan.created") return "  · a plan was written";
