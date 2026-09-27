@@ -166,9 +166,12 @@ export function parseConversationArchive(input: unknown): Archive {
 /** phase2/rooms: leaves the given conversations out of a list (bound as parameters, never written in). */
 const notIn = (hidden: readonly string[]): string => (hidden.length ? `AND s.id NOT IN (${hidden.map(() => "?").join(",")})` : "");
 /** fix399: a conversation made only of tasks the engine kept out of Recent (Store.markAside recent: false: a learning pass,
-    reading words, their helpers) is left out of Recent and search, and kept. One task of anyone else's shows it again. */
+    reading words, their helpers) is left out of Recent and search, and kept. One task of anyone else's shows it again.
+    Pass 18a: so is a conversation made only of helpers (tasks another task started, run.started `parentRunId`): a helper
+    is seen from its parent's helpers frame, view only, and never joins the sidebar. */
 const notEngineOnly = `AND NOT (EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=s.id
-  AND NOT EXISTS(SELECT 1 FROM events e WHERE e.run_id=t.id AND e.kind='run.aside' AND json_extract(e.data,'$.recent')=0)))`;
+  AND NOT EXISTS(SELECT 1 FROM events e WHERE e.run_id=t.id AND ((e.kind='run.aside' AND json_extract(e.data,'$.recent')=0)
+    OR (e.kind='run.started' AND json_extract(e.data,'$.parentRunId') IS NOT NULL)))))`;
 /**
  * The project a conversation is in: the one its latest task ran under (every task records its project when it starts,
  * src/store.ts createRun, and src/session-carry.ts carries the same one back), or the default project before any task.
