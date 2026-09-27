@@ -1402,6 +1402,10 @@ body.lx .model-controls .text-button {
   .first-run .doors {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  /* the onboarding questions with three doors keep them on one row (Mac mini's E1 review) */
+  .first-run .doors.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 .first-run .door strong {
   font-size: 16px;

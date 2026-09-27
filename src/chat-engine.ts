@@ -49,7 +49,7 @@ export function looksLikeFollowUp(prompt: string): boolean {
 
 /** The earlier turns worth showing the rewriter: plain words from you and the assistant, newest last. */
 export function earlierTurns(messages: readonly Message[], prompt: string, limit = 6): Message[] {
-  const spoken = messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim() && !m.toolCalls?.length);
+  const spoken = messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && m.content.trim() && !m.toolCalls?.length);
   const withoutCurrent = spoken.at(-1)?.role === "user" && spoken.at(-1)?.content.trim() === prompt.trim() ? spoken.slice(0, -1) : spoken;
   return withoutCurrent.slice(-limit);
 }
