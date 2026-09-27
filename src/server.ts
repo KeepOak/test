@@ -3460,6 +3460,8 @@ export function listenOn(server: Server, port: number, address: string, anyPortI
   });
 }
 
+/** Tests only: see `policyProbe` below. */
+export const policyProbeHeader = "x-branch-policy-probe";
 export async function startServer(
   app: Branch,
   options: {
@@ -3487,6 +3489,12 @@ export async function startServer(
     listenCheckMs?: number;
     /** mac7/bind: how the door asks Tailscale for this computer's address; tests hand in their own. */
     tailscale?: ProbeTailscale;
+    /**
+     * Tests only (tests/caller-policy.test.mjs): a request carrying `policyProbeHeader` is answered 204 at the exact
+     * point the route's own code would start, so every route can be asked who may call it without running it.
+     * Never set by the app, the CLI or the desktop app.
+     */
+    policyProbe?: boolean;
   },
 ) {
   // Removing a phone that was handed this key makes a new one (rotateWindowKey below), so it is read where it is used.
@@ -3728,6 +3736,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Checked before the activity below, so a request after the quiet period cannot restart it.
       const lockedOut = app.sessionLock.refusal(request.method, path);
       if (lockedOut) throw new HttpError(423, lockedOut);
+      if (options.policyProbe && request.headers[policyProbeHeader] !== undefined) { response.writeHead(204).end(); return; }
       // Setup polish 2: what setup asks for is first-run configuration, set aside by achievements (src/setup-origin.ts).
       noteSetupOrigin(request.headers[setupOriginHeader]);
       // Doing something counts as activity; merely looking does not, or the app's own three-second
