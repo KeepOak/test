@@ -14,6 +14,7 @@ import { setLockdown, initApprovals } from "./approvals.js";
 import { t } from "../../i18n.js";
 import { accountLow } from "./dockinfo.js"; // parity B1
 import { initLocalPick } from "../flows/localpick.js";
+import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 
 const PMODES = [["auto", "look.season.auto", "window.chat.mode.auto-hint", "spark"], ["ask", "mode.ask", "window.chat.mode.ask-hint", "shield"], ["plan", "mode.plan", "window.chat.mode.plan-hint", "plan"], ["full", "window.chat.mode.full", "window.chat.mode.full-hint", "unlock"]];
 const M = { sid: undefined, model: null, mode: null, at: 0, pending: null };
@@ -40,17 +41,25 @@ function modeNow() {
 /* The mode a new conversation's first message carries (POST /api/run mode), so it starts exactly as the chip says. A
    first message sent before the engine's answer arrived would carry none, and the conversation would follow the owner's
    setting, which may be looser than what new conversations start on; so that answer is read first. When it cannot be
-   read, the conversation starts on Ask first rather than on the owner's setting. */
-export async function startMode() {
-  let unread = false;
-  if (!S.chat && !M.mode) {
+   read, the conversation starts on Ask first rather than on the owner's setting. Under Lockdown it starts on what the
+   engine says new ones start on there, else on Ask first, so it does not fall back to the owner's setting once Lockdown
+   ends. `picked` is a mode chosen for this conversation before its first message (the composer's chip). */
+export async function newConversationMode(picked = null) {
+  if (!M.mode) {
     const read = await api("conversation-mode").catch(() => null);
     if (read && !M.mode) M.mode = read;
-    unread = !M.mode;
   }
-  const mode = !S.chat && !M.mode?.locked ? M.pending ?? M.mode?.newConversation ?? (unread ? "ask" : null) : null;
-  M.pending = null;
+  if (!M.mode) return { mode: "ask" };
+  const askable = M.mode.choices?.some((choice) => choice.mode === "ask" && choice.available) ?? true;
+  const mode = M.mode.locked ? M.mode.newConversation ?? (askable ? "ask" : null) : picked ?? M.mode.newConversation ?? null;
   return mode ? { mode } : {};
+}
+/* The composer's first message in a new conversation: its chip's pick, used once. */
+export async function startMode() {
+  if (S.chat) return {};
+  const picked = M.pending;
+  M.pending = null;
+  return newConversationMode(picked);
 }
 
 export function chips() {
@@ -89,12 +98,28 @@ function redrawChips() {
   old[1].replaceWith(tmp.content.children[0]);
 }
 
+/* Stress test B008: in a Trunk's conversation, a connection that answers through a sign-in is greyed (a Trunk never
+   answers through one), with the reason and the way to add one it can use under the list (places/switch-on.js). */
+function inTrunkChat() {
+  const sid = S.chat, s = sid ? E.sessions.find((x) => (x.sessionId ?? x.id) === sid) : null;
+  return Boolean(sid) && (Array.isArray(E.trunks) ? E.trunks : []).some((tr) => tr.id === s?.trunkId || tr.chatSessionId === sid);
+}
+/* True when this is a Trunk's conversation and its model is one the Trunk cannot answer through. */
+export function trunkModelRefused() {
+  const preset = presets().find((x) => x.id === current().id);
+  return Boolean(preset) && inTrunkChat() && !trunkCanUse(preset);
+}
+/* The model menu, opened by the window (a message held back because its Trunk cannot use the model picked). */
+export function showModelMenu() {
+  const chip = document.querySelector('[data-act="modelmenu2"]');
+  if (chip) openPop(chip, modelMenu(), { force: true });
+}
 function modelMenu() {
-  const m = current(), preset = presets().find((x) => x.id === m.id);
+  const m = current(), preset = presets().find((x) => x.id === m.id), trunk = inTrunkChat();
   const levels = preset?.thinking?.levels ?? [];
-  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.model)}</span></span></button>`).join("");
+  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"${trunk && !trunkCanUse(x) ? " disabled" : ""}><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.model)}</span></span></button>`).join("");
   const think = levels.length ? `<hr><div class="row-in"><span>${t("field.thinking")}</span><span class="seg">${levels.map((lv) => `<button type="button" data-act="pick-think" data-v="${esc(lv)}" aria-pressed="${m.reasoning === lv}">${esc(lv[0].toUpperCase() + lv.slice(1))}</button>`).join("")}</span></div><p class="pp" data-css="padding-top:6px">${t("window.chat.mode.thinking-hint")}</p>` : "";
-  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${think}${mi("lp-open", "cpu", t("glance.local"))}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
+  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${trunk ? trunkModelNote(E.state?.models) : ""}${think}${mi("lp-open", "cpu", t("glance.local"))}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
 }
 
 /* The menu offers what the conversation's model takes now: the model is read again as it opens (it may have been changed

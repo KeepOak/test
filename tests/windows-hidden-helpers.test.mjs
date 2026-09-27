@@ -54,8 +54,17 @@ function windowsOnScreen() {
 let blind = false;
 const BLIND = "the no-window check is skipped: this build machine shows the test no console windows (see the first test); the work itself was checked";
 
-/** Runs `start`, then watches the screen for as long as the work can take. */
-async function windowsOpenedBy(start, watchMs = 4000) {
+/**
+ * Runs `start`, then watches the screen for as long as the work can take. On a build machine that shows the test no
+ * console windows (`blind`, see the first test) the screen is not asked, as the no-window checks are skipped there: it
+ * waits only until the work has written its `count`th line to `done`, the proof the attempt really ran.
+ */
+async function windowsOpenedBy(start, { done, count }, watchMs = 4000) {
+  if (blind) {
+    const result = await start();
+    for (let waited = 0; waited < 30000 && readCount(done) < count; waited += 100) await sleep(100);
+    return { opened: new Map(), result };
+  }
   const before = windowsOnScreen();
   const result = await start();
   const opened = new Map();
@@ -98,7 +107,7 @@ test("the update hand-over opens no window through the scheduler, ten times over
   { skip: !onWindows }, async (t) => {
     const { script, done } = workspace(t);
     for (let attempt = 1; attempt <= 10; attempt += 1) {
-      const { opened, result } = await windowsOpenedBy(() => launchHandOver(script, 900000 + attempt, {}));
+      const { opened, result } = await windowsOpenedBy(() => launchHandOver(script, 900000 + attempt, {}), { done, count: attempt });
       assert.equal(result, "task", `attempt ${attempt} did not take the scheduler route`);
       if (!blind) assert.deepEqual([...opened], [], `attempt ${attempt} put a window on the screen`);
     }
@@ -110,7 +119,7 @@ test("and none through the fallback either, which is where the flag was being ig
   { skip: !onWindows }, async (t) => {
     const { script, done } = workspace(t);
     for (let attempt = 1; attempt <= 10; attempt += 1) {
-      const { opened, result } = await windowsOpenedBy(() => launchHandOver(script, 910000 + attempt, noScheduler));
+      const { opened, result } = await windowsOpenedBy(() => launchHandOver(script, 910000 + attempt, noScheduler), { done, count: attempt });
       assert.equal(result, "spawn", `attempt ${attempt} did not take the fallback route`);
       if (!blind) assert.deepEqual([...opened], [], `attempt ${attempt} put a window on the screen`);
     }

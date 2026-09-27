@@ -337,6 +337,46 @@ test("in the window, a first message sent when the mode cannot be read starts on
   assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "the conversation holds Ask first");
 });
 
+/** The body of each POST /api/run the window sends, as it sends it. */
+const runsSent = (page) => {
+  const sent = [];
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") sent.push(request.postDataJSON()); });
+  return sent;
+};
+
+/* Under Lockdown the window's first message says what the conversation starts on (Ask first), so it does not follow the
+   owner's own setting once Lockdown ends. The owner's setting here is "follow", which Lockdown cannot start on. */
+test("in the window, a first message under Lockdown starts the conversation on Ask first, which it keeps after", async (t) => {
+  const f = await windowFixture(t);
+  assert.equal((await f.call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true })).status, 200);
+  assert.equal((await f.call("/api/lockdown", { on: true })).status, 200);
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  const sent = runsSent(f.page);
+  await f.page.locator("#prompt").fill("hello there");
+  await f.page.locator("#send").click();
+  for (let tries = 0; tries < 100 && !sent.length; tries++) await f.page.waitForTimeout(50);
+  assert.equal(sent[0]?.mode, "ask", "the first message names Ask first");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal((await f.call("/api/lockdown", { on: false })).status, 200);
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "and keeps it once Lockdown is off");
+});
+
+/* Setup's "Have Branch suggest Trunks" starts a conversation of its own; its first message carries what new conversations
+   start on, exactly as the message box's does (public/app/flows/setup.js propose, public/app/chat/chips.js). */
+test("in the window, setup's Trunk suggestions start their conversation on what new conversations start on", async (t) => {
+  const f = await windowFixture(t);
+  assert.equal((await f.call("/api/onboarding", { trust: true, step: "trunks" })).status, 200);
+  await f.page.reload();
+  await f.page.locator("#ob-life").waitFor({ timeout: 60000 });
+  const sent = runsSent(f.page);
+  await f.page.locator("#ob-life").fill("I run a small bakery");
+  await f.page.locator('[data-act="ob-propose"]').click();
+  for (let tries = 0; tries < 100 && !sent.length; tries++) await f.page.waitForTimeout(50);
+  assert.equal(sent[0]?.temporary, true, "control: this is setup's own conversation");
+  assert.equal(sent[0]?.mode, "ask", "it starts on Ask first, as new conversations do");
+});
+
 /* ---------------------------------------------------------------- integration review */
 
 /** A model that calls `files.write` on `file` when the newest message asks to write, and says done after any tool result. */

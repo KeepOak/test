@@ -5,6 +5,7 @@ import type { CredentialRef, CredentialService } from "./credential-cli.js";
 import { FeatureModeSchema, optionalFields, settleSwitch } from "./feature-switches.js";
 import { runOrigin, startedFromChat, startedWithShortLivedKey } from "./key-context.js";
 import { lockdownActive } from "./lockdown.js";
+import { whileSignInShows } from "./sign-in-showing.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -282,7 +283,8 @@ export class VaultAutofill {
       throw new Error(`Your "${entry.name}" sign-in is not marked as holding a one-time code. Tick that in Settings if it does.`);
     if (asked.box === "code" && entry.service !== "bitwarden")
       throw new Error("Branch reads a one-time code from Bitwarden only. Type this one yourself.");
-    await this.put(entry, asked, address, context);
+    // parity-b2: the owner's live view of the screen takes no frame while a saved sign-in is read and typed.
+    await whileSignInShows(() => this.put(entry, asked, address, context));
     this.note(entry, asked.box, address, context, "filled");
     return { filled: asked.box, login: entry.name, site: entry.site, url: address,
       note: "Branch typed it straight into the page. It was never shown to the assistant." };

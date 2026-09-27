@@ -54,7 +54,7 @@ async function fixture(t) {
     if (answer.status !== 200) throw new Error(`${answer.status} ${answer.body.error}`);
     return answer.body;
   };
-  const on = (...parts) => Promise.all(parts.map((part) => api("/api/autonomy/switch", { part, mode: "on" })));
+  const on = (...parts) => Promise.all(parts.map((part) => api("/api/autonomy/switch", { part, mode: "on", confirmLoosening: true })));
   const off = (...parts) => Promise.all(parts.map((part) => api("/api/autonomy/switch", { part, mode: "off" })));
   const command = (line, sessionId, key) => call("/api/commands/run", { surface: "window", line, ...(sessionId ? { sessionId } : {}) }, key);
   await api("/api/commands/settings", { mode: "on" });

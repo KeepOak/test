@@ -327,12 +327,10 @@ test("C11 the danger zone is the last card in Settings, fits 400 px, and says it
   await page.locator(".sec.danger8").waitFor({ state: "visible", timeout: 30000 });
   assert.equal(await page.locator(".sec.danger8 h2").textContent(), "Remove Branch");
 
-  // Redesign: button #dz-go is greyed (data-act="uninstall" is not live) - assert starts disabled and stays disabled
-  assert.equal(await page.locator("#dz-go").isDisabled(), true, "the button starts off");
-  assert.match(await page.locator("#dz-go").textContent(), /Remove Branch and everything it installed/);
-
-  // Redesign: removing Branch is greyed until the engine has an uninstall route, and its confirmation box with it.
-  assert.equal(await page.locator("#dz-confirm").isDisabled(), true, "the confirmation box is greyed too - route not live");
+  // Removing Branch is done outside the window (Settings shows the plain steps and the line to copy:
+  // tests/remove-branch-steps.test.mjs), so nothing here removes it: no Remove button and no box to type into.
+  assert.equal(await page.locator(".sec.danger8 #dz-go, .sec.danger8 #dz-confirm, .sec.danger8 [data-act=\"uninstall\"]").count(), 0,
+    "nothing in the window removes Branch");
 
   // Check that the danger zone is the last card on the page
   const isLastCard = await page.evaluate(() => {
@@ -344,10 +342,10 @@ test("C11 the danger zone is the last card in Settings, fits 400 px, and says it
   const wide = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   assert.equal(wide, false, "no sideways scrolling at 400 px");
   const fits = await page.evaluate(() => {
-    const box = document.querySelector("#dz-go").getBoundingClientRect();
+    const box = document.querySelector(".sec.danger8").getBoundingClientRect();
     return box.width > 0 && box.x >= 0 && box.right <= 400;
   });
-  assert.ok(fits, "the button fits inside 400 px");
+  assert.ok(fits, "the danger zone fits inside 400 px");
 
   // The page's language is the window's (Settings › Appearance); chosen French, the danger zone says its words in French.
   const fr = JSON.parse(await readFile(join(import.meta.dirname, "..", "public", "locales", "fr.json"), "utf8"));
@@ -355,7 +353,7 @@ test("C11 the danger zone is the last card in Settings, fits 400 px, and says it
   await openSettingsPage(page, "general");
   await openSettingsPage(page, "updates");
   await page.locator(".sec.danger8 h2", { hasText: fr["window.settings.updates.remove-branch"] }).waitFor();
-  assert.equal(await page.locator("#dz-go").isDisabled(), true, "still off in French");
+  assert.equal(await page.locator(".sec.danger8 #dz-go, .sec.danger8 #dz-confirm").count(), 0, "nothing removes Branch in French either");
   assert.deepEqual(errors, []);
 });
 

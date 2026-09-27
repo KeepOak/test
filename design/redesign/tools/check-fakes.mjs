@@ -27,7 +27,7 @@ const RULES = [
   [/["'`\/@][\w-]+(\.[\w-]+)*\.example(?![\w-]|s\b)(?!\.[a-z])/, "example address written in (leave the field empty)"],
   [/\.length\s*\?\s*\w+\s*:\s*\[\s*\[\s*["']/, "made-up rows drawn when the engine has none (show nothing)"],
   [/\b\d+ of them\b/, "count written into words (use the engine's count or none)"],
-  [/data-act=\\?["'](ckpt-demo|proto-reset|notes-toggle|note)\\?["']/, "prototype-only control (it has no feature behind it)"],
+  [/data-act=\\?["'](ckpt-demo|proto-reset|notes-toggle|note|empty18proto)\\?["']/, "prototype-only control (it has no feature behind it)"],
   [/read out at \d|\bFive places\b/, "a time or count written in that the engine or window decides"],
 ];
 // A toast's own words must be the prototype's: any literal toast text has to appear in prototype.html.

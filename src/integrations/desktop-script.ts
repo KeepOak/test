@@ -104,6 +104,34 @@ function Save-Area($x, $y, $width, $height, $path) {
   return @{ width = $width; height = $height }
 }
 
+# parity-b2: the owner's live view of this screen, made smaller as a JPEG so a frame travels light. It is handed back in
+# the answer itself and never written to a file, so no frame is left on disk even if Branch stops mid-frame.
+function Read-Scaled($x, $y, $width, $height, $maxWidth) {
+  if ($width -lt 1 -or $height -lt 1) { throw 'That window has nothing to photograph.' }
+  $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  $graphics.CopyFromScreen($x, $y, 0, 0, (New-Object System.Drawing.Size($width, $height)))
+  $graphics.Dispose()
+  $scale = [Math]::Min(1.0, [double]$maxWidth / $width)
+  $w = [int][Math]::Max(1, [Math]::Round($width * $scale))
+  $h = [int][Math]::Max(1, [Math]::Round($height * $scale))
+  $small = New-Object System.Drawing.Bitmap($w, $h)
+  $drawn = [System.Drawing.Graphics]::FromImage($small)
+  $drawn.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+  $drawn.DrawImage($bitmap, 0, 0, $w, $h)
+  $drawn.Dispose()
+  $bitmap.Dispose()
+  $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+  $quality = New-Object System.Drawing.Imaging.EncoderParameters(1)
+  $quality.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]70)
+  $stream = New-Object System.IO.MemoryStream
+  $small.Save($stream, $codec, $quality)
+  $small.Dispose()
+  $data = [Convert]::ToBase64String($stream.ToArray())
+  $stream.Dispose()
+  return @{ width = $w; height = $h; format = 'jpeg'; data = $data }
+}
+
 function Save-Window($handle, $path) {
   $rect = New-Object BranchDesktop+RECT
   [void][BranchDesktop]::GetWindowRect($handle, [ref]$rect)
@@ -212,8 +240,16 @@ switch ($Action) {
       $index = [int]$request.display - 1
       if ($index -lt 0 -or $index -ge $screens.Length) { throw ('This computer has ' + $screens.Length + ' screen(s).') }
       $bounds = $screens[$index].Bounds
-      $size = Save-Area $bounds.X $bounds.Y $bounds.Width $bounds.Height $request.outPath
-      $result = @{ width = $size.width; height = $size.height; title = ('Screen ' + $request.display) }
+      if ($request.maxWidth) {
+        # The windows open at the moment of the frame, in the same run, so the engine can drop a frame that shows one
+        # which handles passwords before it leaves this computer's temporary folder.
+        $listed = @(Get-Windows)
+        $size = Read-Scaled $bounds.X $bounds.Y $bounds.Width $bounds.Height ([int]$request.maxWidth)
+        $result = @{ width = $size.width; height = $size.height; format = $size.format; data = $size.data; title = ('Screen ' + $request.display); windows = $listed }
+      } else {
+        $size = Save-Area $bounds.X $bounds.Y $bounds.Width $bounds.Height $request.outPath
+        $result = @{ width = $size.width; height = $size.height; title = ('Screen ' + $request.display) }
+      }
     }
   }
   'read' {
@@ -376,7 +412,7 @@ export class DesktopScriptRunner {
    * Runs one action. The answer is a single JSON line; anything else (a crash, a refusal from
    * Windows, a timeout) becomes a plain error the model can read.
    */
-  async run(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+  async run(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal, outputBytes = maxOutputBytes): Promise<Record<string, unknown>> {
     if (this.platform !== 'win32') return this.runPosix(action, payload, signal);
     const script = await this.scriptPath();
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
@@ -384,7 +420,7 @@ export class DesktopScriptRunner {
       executable: this.executable,
       args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Action', action, '-Payload', body],
       cwd: tmpdir(), env: scriptEnvironment(),
-      signal, timeoutMs, maxOutputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
+      signal, timeoutMs, maxOutputBytes: outputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
     });
     const outcome = await child.run();
     if (outcome.status !== 'completed' || outcome.exitCode !== 0)

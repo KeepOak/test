@@ -14,6 +14,7 @@ import { init as initShare } from "./share.js";
 import { looks17, look17, NEW17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
@@ -42,6 +43,8 @@ async function loadRooms() {
   const answer = await api("trunks");
   rooms = Array.isArray(answer?.rooms) ? answer.rooms : [];
 }
+/** trunk-rooms-live: the rooms read again after a room was made or changed elsewhere in the window (flows/roomwith.js). */
+export const roomsChanged = () => loadRooms();
 
 function openChat(sessionId) {
   const el = document.createElement("button");
@@ -168,20 +171,21 @@ function emojiRow(tr) {
 const ctl = (id, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" id="${id}" aria-label="${esc(title)}" data-sw="set"><small>${esc(sub)}</small></div>`;
 const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg">${esc(o)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
 
-/* Which model: the engine's own presets (GET /api/state models.presets, by their names), saved at once as the Trunk's
-   model (POST /api/trunks/{id} model, a preset id). Choosing the one it has again gives it back to the conversation's
-   model (""). With no presets set up there is nothing to choose, so none is drawn. */
+/* Which model: the engine's own presets (GET /api/state models.presets, by their names) in the window's ordinary select,
+   saved at once as the Trunk's model (POST /api/trunks/{id} model, a preset id); Default ("") follows the conversation's
+   model. A connection that answers through a sign-in is drawn greyed (a Trunk never uses one), with the reason and the
+   way to add one it can use underneath (places/switch-on.js); so is the row with none a Trunk can use. */
 function modelSeg(tr) {
-  const presets = E.state?.models?.presets ?? [];
-  const opts = presets.map((p) => `<button type="button" data-act="tm-model" data-id="${esc(tr.id)}" data-v="${esc(p.id)}" aria-pressed="${tr.model === p.id}">${esc(p.name)}</button>`).join("");
-  return `<div class="ctl"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.trunk.which-model")}">${opts}</span></span><small>${t("window.flows.trunk.which-model-hint")}</small></div>`;
+  const models = E.state?.models, presets = models?.presets ?? [];
+  const opts = presets.map((p) => `<option value="${esc(p.id)}" ${tr.model === p.id ? "selected" : ""} ${trunkCanUse(p) ? "" : "disabled"}>${esc(p.name)}</option>`).join("");
+  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><select class="inp" id="tm-model-sel" data-id="${esc(tr.id)}" aria-label="${t("window.flows.trunk.which-model")}"><option value="" ${tr.model ? "" : "selected"}>${t("voice.default")}</option>${opts}</select></span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
 }
 async function setModel(el) {
   const tr = trunkById(el.dataset.id);
   if (!tr) return;
   keepFields();
   try {
-    await api(`trunks/${encodeURIComponent(tr.id)}`, { model: tr.model === el.dataset.v ? "" : el.dataset.v });
+    await api(`trunks/${encodeURIComponent(tr.id)}`, { model: el.value });
     await refresh();
     if (ed?.id === tr.id) drawEditor();
   } catch (error) { toast(error.message); }
@@ -425,8 +429,13 @@ async function makeRoom() {
 const PATTERNS = [["one", "window.flows.trunk.one", "A Trunk calls a specialist, waits, carries on."], ["super", "window.flows.trunk.lead-helpers", "One Trunk plans and hands out the parts."],
   ["swarm", "window.flows.trunk.swarm", "Equals pass the work to whoever fits best."], ["router", "window.flows.trunk.router", "Sends each request to the one Trunk that matches."],
   ["parallel", "window.flows.trunk.parallel", "The same job split up, then gathered."], ["teams", "window.flows.trunk.teams", "Small groups, each with its own lead."]];
-const RULE_LINE = { lead: "window.flows.trunk.rule-lead-line", all: "window.flows.trunk.rule-all-line", mention: "window.flows.trunk.nobody" };
-const RULE_SHORT = { lead: "window.flows.trunk.rule-lead-short", all: "window.flows.trunk.rule-all-short", mention: "window.flows.trunk.rule-mention-short" };
+/* trunk-rooms-live: the engine's two rules the owner asked for ("Only who I tag", "Work together", src/trunks/room-plan.ts)
+   are chosen here too, and by the toggle by the message box (flows/roomwith.js). */
+const ROOM_RULES = [...RULES, ["tag", "window.flows.trunk.rule-tag"], ["together", "window.flows.trunk.rule-together"]];
+const RULE_LINE = { lead: "window.flows.trunk.rule-lead-line", all: "window.flows.trunk.rule-all-line", mention: "window.flows.trunk.nobody",
+  tag: "window.flows.trunk.rule-tag-line", together: "window.flows.trunk.rule-together-line" };
+const RULE_SHORT = { lead: "window.flows.trunk.rule-lead-short", all: "window.flows.trunk.rule-all-short", mention: "window.flows.trunk.rule-mention-short",
+  tag: "window.flows.trunk.rule-tag-short", together: "window.flows.trunk.rule-together-short" };
 const ruleOf = (r) => (RULE_SHORT[r?.rule] ? r.rule : "mention");
 const ownDefault = () => {
   const v = E.state?.orchestration?.pattern, p = PATTERNS.find(([k]) => k === v);
@@ -436,7 +445,7 @@ const pick = (act, v, id, text, sub, on) => `<button class="mi" type="button" ro
 function rulesPop(id) {
   const r = rooms.find((x) => x.id === id);
   if (!r) return "";
-  const rules = ["lead", "all", "mention"].map((k) => RULES.find(([v]) => v === k)).map(([v, l]) => pick("room-rule", v, id, t(l), t(RULE_LINE[v]), ruleOf(r) === v)).join("");
+  const rules = ["lead", "all", "mention", "tag", "together"].map((k) => ROOM_RULES.find(([v]) => v === k)).map(([v, l]) => pick("room-rule", v, id, t(l), t(RULE_LINE[v]), ruleOf(r) === v)).join("");
   const pats = PATTERNS.map(([v, l, line]) => pick(v === "teams" ? "room-pat-teams" : "room-pat", v, id, t(l), esc(say(line)), r.pattern === v)).join("");
   return `<div class="pt">${t("window.flows.trunk.room-rules")}</div><div class="ph">${t("rooms.who.choose")}</div>${rules}<hr><div class="ph">${t("window.flows.trunk.together-here")}</div>${pick("room-pat", "default", id, esc(t("window.flows.trunk.your-default", { name: ownDefault() })), "", !r.pattern)}${pats}`;
 }
@@ -453,7 +462,7 @@ async function setRule(el, field) {
   if (!r) return;
   const value = field === "pattern" && v === "default" ? null : v;
   if ((field === "rule" ? ruleOf(r) : r.pattern) === value) return;
-  if (await change("room", r.id, { [field]: value })) toast(field === "rule" ? t("window.flows.trunk.rule-in-room", { rule: t(RULES.find(([k]) => k === v)[1]), room: r.name }) : `${r.name}: ${value ? t(PATTERNS.find(([k]) => k === v)[1]) : ownDefault()}.`);
+  if (await change("room", r.id, { [field]: value })) toast(field === "rule" ? t("window.flows.trunk.rule-in-room", { rule: t(ROOM_RULES.find(([k]) => k === v)[1]), room: r.name }) : `${r.name}: ${value ? t(PATTERNS.find(([k]) => k === v)[1]) : ownDefault()}.`);
 }
 
 export function init() {
@@ -475,8 +484,8 @@ export function init() {
   on("st-eyes", (el) => { keepFields(); ed.d.eyes = el.dataset.v; drawEditor(); });
   on("st-photo", () => pickPhoto());
   on("st-photo-x", () => removePhoto());
-  on("tm-model", (el) => setModel(el));
-  markLive(["st-eyes", "st-photo", "st-photo-x", "tm-model"]);
+  document.addEventListener("change", (e) => { if (e.target.id === "tm-model-sel") setModel(e.target); });
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));

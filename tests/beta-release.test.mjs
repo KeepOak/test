@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { discardTemp } from "./temp-dir.mjs";
 import { approvedExactHead, betaAssets, betaPlan, fastProof, latestTrustedChecks,
-  latestTrustedFast, publishBeta, stampBetaVersion } from "../scripts/beta-release.mjs";
+  latestTrustedFast, latestTrustedSuite, publishBeta, stampBetaVersion } from "../scripts/beta-release.mjs";
 
 // The repository the script under test takes as its own: the one it runs in when that is one of Branch's two
 // names (after the move to KeepOak, Actions sets KeepOak), otherwise the name it had before the move.
@@ -25,6 +25,9 @@ const fast = (id, conclusion = "success", overrides = {}) => ({
   head_branch: "feature",
   status: "completed", conclusion, repository: { full_name: repo }, head_repository: { full_name: repo },
   pull_requests: [{ number: 42 }], html_url: `https://github.test/fast/${id}`, ...overrides,
+});
+const suite = (id, conclusion = "success", overrides = {}) => ({
+  ...fast(id, conclusion), path: ".github/workflows/checks.yml", html_url: `https://github.test/suite/${id}`, ...overrides,
 });
 const pull = { number: 42, merged_at: "2026-09-23T00:00:00Z", merge_commit_sha: sha,
   base: { ref: "mac/cross-platform", repo: { full_name: repo } },
@@ -75,8 +78,10 @@ test("fast proof requires exact merged PR, independent exact-head approval and l
   let mergeTree = "d".repeat(40), headTree = mergeTree;
   let reviewedSha = head;
   let rollupRun = null;
+  let suites = [suite(20)];
   const gh = async (args) => {
     const path = args[3] ?? args[1];
+    if (path.includes("/checks.yml/runs")) return JSON.stringify({ workflow_runs: suites });
     if (path.includes(`/commits/${sha}/pulls`)) return JSON.stringify([pull]);
     if (path === `repos/${repo}/commits/${sha}`) return JSON.stringify({ sha, parents: mergeParents, commit: { tree: { sha: mergeTree } } });
     if (path === `repos/${repo}/commits/${head}`) return JSON.stringify({ sha: reviewedSha, commit: { tree: { sha: headTree } } });
@@ -110,6 +115,19 @@ test("fast proof requires exact merged PR, independent exact-head approval and l
   rollupRun = 1;
   assert.equal(await fastProof(sha, repo, gh), null, "PR check rollup must bind to this exact accepted run");
   rollupRun = null;
+  suites = [];
+  assert.equal(await fastProof(sha, repo, gh), null, "a broad change the fast gate left to the whole suite needs that suite's run");
+  suites = [suite(20), suite(21, "failure")];
+  assert.equal(await fastProof(sha, repo, gh), null, "the newest whole-suite run for the head must have passed");
+  suites = [suite(22, null, { status: "in_progress" })];
+  assert.equal(await fastProof(sha, repo, gh), null, "a whole-suite run still going is not a pass");
+  suites = [suite(23, "success", { head_repository: { full_name: "fork/repo" } })];
+  assert.equal(await fastProof(sha, repo, gh), null, "a fork's run cannot stand in for this repository's");
+  suites = [suite(24, "success", { event: "workflow_dispatch" })];
+  assert.equal(await fastProof(sha, repo, gh), null, "only the pull request's own run counts here");
+  suites = [suite(25)];
+  assert.equal((await fastProof(sha, repo, gh)).kind, "reviewed-fast", "a passing whole-suite run restores acceptance");
+  assert.equal(latestTrustedSuite({ workflow_runs: [suite(26, "success", { head_branch: "other" })] }, head, repo, "feature"), null);
   runs = [fast(8), fast(10, "failure")];
   assert.equal(await fastProof(sha, repo, gh), null, "newer failure vetoes older success");
   runs = [fast(11)];

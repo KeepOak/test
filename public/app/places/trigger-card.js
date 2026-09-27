@@ -33,7 +33,7 @@ const keepWhat = () => { const w = document.getElementById("pp-twhat17d"); if (T
 /* The box's words, read by the engine; its refusal is shown in its own words. */
 async function propose() {
   const text = $("#nl-in")?.value.trim();
-  if (!text) return;
+  if (!text) { $("#nl-in")?.focus(); return; } // B002: nothing to read yet; the box is where the words go
   try { T = (await api("triggers/propose", { text })).proposal; } catch (error) { toast(error.message); return; }
   renderNow();
   document.getElementById("pp-twhat17d")?.focus();
