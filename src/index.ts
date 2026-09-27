@@ -594,6 +594,8 @@ export async function createBranch(options: {
   };
   runtime.artifacts = artifacts;
   runtime.attachments = attachments;
+  // QA (first task): the owner's Downloads, Desktop and Documents, asked about once per folder (src/owner-folders.ts).
+  files.ownerFolders = { store, owner: runtime.owner, approvals: runtime.approvals, sessionOf: (context) => runtime.approvalSessionOf(context) };
   // mac7/coding-next: "Let Branch run this project's tests?", answered through the ordinary questions.
   codeChanges.testsPermission = (context, folder) => projectTestsVerdict({ store, owner: runtime.owner,
     approvals: runtime.approvals, sessionId: runtime.approvalSessionOf(context),
