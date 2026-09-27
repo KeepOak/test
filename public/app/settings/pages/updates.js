@@ -45,7 +45,7 @@ async function loadComfort() {
    into the notify card). */
 async function saveAutoUpdate(on) {
   try {
-    // "Keep Branch up to date by itself" installs (the plan still waits for idle tasks, Lockdown and a failed release).
+    // "Keep Branch up to date by itself" installs (the plan still waits for idle tasks and a failed release).
     comfortData = (await api("comfort", { card: "notify", values: { autoUpdate: on ? "install" : "off" } })).values ?? comfortData;
   } catch (e) {
     toast(e.message);
