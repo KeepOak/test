@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { errorText } from "./request-errors.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { accountsServiceFor } from "./accounts/service.js";
@@ -43,7 +44,7 @@ function requireOwnerHere(store: Store): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new UsageLimitsError(403, "Only the owner can see what each connection has left, in the app window.");
   try { store.profiles.requireOwner("What each connection has left"); }
-  catch (error) { throw new UsageLimitsError(403, (error as Error).message); }
+  catch (error) { throw new UsageLimitsError(403, errorText(error)); }
 }
 
 const planFrom = { chatgpt: "from headers on answers Branch was getting anyway (x-codex-*, as Codex reads them)",
@@ -168,7 +169,7 @@ async function measureNow(app: LimitsApp, input: unknown): Promise<LimitsView> {
   if (typeof body.connection !== "string" || typeof body.account !== "string" || !service)
     throw new UsageLimitsError(400, "Say which connection and which account to measure.");
   try { await service.measure(body.connection, body.account, AbortSignal.timeout(120_000)); }
-  catch (error) { throw new UsageLimitsError(400, (error as Error).message); }
+  catch (error) { throw new UsageLimitsError(400, errorText(error)); }
   return limitsNow(app);
 }
 

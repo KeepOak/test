@@ -1263,6 +1263,19 @@ export async function createBranch(options: {
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
   // opened), and Talk live is refused where it would step round a Trunk, Lockdown or an outside hold.
   store.hiddenSessions = () => [...trunks.rooms.memberConversations().keys()];
+  // Conversations, like iMessage (src/conversation-actions.ts): a room goes with its Trunks' sides; a Trunk whose own
+  // conversation is deleted for good is given a new one, and a room whose conversation is deleted for good is removed.
+  store.conversationCompanions = (sessionId) =>
+    Object.values(trunks.rooms.list().find((room) => room.sessionId === sessionId)?.memberSessions ?? {});
+  store.beforeConversationPurge = (sessionId) => {
+    for (const trunk of trunks.records.list().filter((one) => one.chatSessionId === sessionId)) trunks.retireChat(trunk.id);
+    for (const room of trunks.rooms.list().filter((one) => one.sessionId === sessionId)) trunks.rooms.remove(room.id);
+  };
+  store.runFiles = artifacts;
+  // Recently Deleted keeps a conversation 30 days; whatever has had them is removed at start (once the Trunks, rooms and
+  // task files above are wired, so they go with it) and every hour after. Only this upkeep removes them; no route does.
+  try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
+  setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
   channels.trunkReach = (channel, sessionId) => {
     const owned = trunks.trunkForConversation(sessionId);

@@ -10,7 +10,7 @@ import { esc, render, $ } from "../../core/dom.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
-import { t, language } from "../../../i18n.js";
+import { t, language, plural } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 
 /* The prototype's line for each file, by the engine's slot. */
@@ -37,7 +37,7 @@ async function loadFiles() {
 
 function fileRow(f) {
   const one = opened[f.slot], n = lines(one?.text), h = one?.lastSave ? 1 : 0;
-  return `<div class="prow"><code class="if-name">${esc(nameOf(f))}</code><span class="grow"><b data-css="font-weight:500">${esc(say(ABOUT[f.slot]) ?? f.about)}</b><small>${n ? t("window.settings.instructions.count-lines", { count: n }) : t("agent-files.empty")}${h ? t("window.settings.instructions.value-earlier-version", { value: h }) : ""}</small></span><input class="sw" type="checkbox" data-sw="if-read" data-f="${esc(f.slot)}" ${f.setting === "off" ? "" : "checked"} aria-label="${esc(t("window.settings.instructions.read-name", { name: nameOf(f) }))}"><button class="btn sm" type="button" data-act="if-open" data-f="${esc(f.slot)}">${n ? t("prompts.action.edit") : t("agent-files.write")}</button></div>`;
+  return `<div class="prow"><code class="if-name">${esc(nameOf(f))}</code><span class="grow"><b data-css="font-weight:500">${esc(say(ABOUT[f.slot]) ?? f.about)}</b><small>${n ? plural(n, { one: "window.settings.instructions.count-lines.one", other: "window.settings.instructions.count-lines" }) : t("agent-files.empty")}${h ? t("window.settings.instructions.value-earlier-version", { value: h }) : ""}</small></span><input class="sw" type="checkbox" data-sw="if-read" data-f="${esc(f.slot)}" ${f.setting === "off" ? "" : "checked"} aria-label="${esc(t("window.settings.instructions.read-name", { name: nameOf(f) }))}"><button class="btn sm" type="button" data-act="if-open" data-f="${esc(f.slot)}">${n ? t("prompts.action.edit") : t("agent-files.write")}</button></div>`;
 }
 
 /* "Whose files" (if-owner): Every Trunk, or one Trunk. A Trunk has one file of its own in the engine, its SOUL (its own
@@ -48,7 +48,7 @@ let owner = "branch";
 const trunkOf = () => (owner === "branch" ? null : E.trunks.find((tr) => tr.id === owner) ?? null);
 function trunkRow(f, trunk) {
   const own = f.slot === "soul", n = own ? lines(trunk.instructions) : 0;
-  const small = n ? t("window.settings.instructions.count-lines", { count: n }) : t("window.settings.instructions.uses-the-shared-one");
+  const small = n ? plural(n, { one: "window.settings.instructions.count-lines.one", other: "window.settings.instructions.count-lines" }) : t("window.settings.instructions.uses-the-shared-one");
   return `<div class="prow"><code class="if-name">${esc(nameOf(f))}</code><span class="grow"><b data-css="font-weight:500">${esc(say(ABOUT[f.slot]) ?? f.about)}</b><small>${small}</small></span>${own ? `<button class="btn sm" type="button" data-act="if-open" data-f="soul">${n ? t("prompts.action.edit") : t("agent-files.write")}</button>` : ""}</div>`;
 }
 

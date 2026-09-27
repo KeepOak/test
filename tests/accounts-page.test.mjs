@@ -105,17 +105,18 @@ test("A2 a new key can be given to a Trunk, saved on the Trunk, and a sign-in ne
   assert.ok(scoutKey, "the engine kept the new key");
   assert.equal(app.trunks.records.get(trunk.id).keys.accounts["openai-work"], scoutKey.id);
   assert.equal((await page.content()).includes("test-key-not-real-sample-0000"), false, "the key is never on the page");
-  // A sign-in account is never used for a Trunk (src/trunks/accounts.ts), so it is never saved as one's pick.
+  // trunks-use-subscriptions: a sign-in answers a Trunk's own work (src/accounts/trunk-guard.ts), so it is picked like a key.
   await page.locator('[data-act="addacct"][data-v="cli-claude-code"]').click();
-  // For a sign-in, the Trunk chip is drawn disabled on purpose (#326): it cannot be picked at all.
-  assert.equal(await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"]`).isDisabled(), true, "a sign-in's Trunk chip is disabled");
+  await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"]`).click();
+  await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"][aria-pressed="true"]`).waitFor();
   await page.getByLabel("Call it", { exact: true }).fill("Partner plan");
   await page.getByRole("button", { name: "Add account", exact: true }).click();
   // accounts-wizard-plans: an extra program account then shows the engine's line that signs it in to its own folder.
   await page.locator(".dlg .sigline14").waitFor({ timeout: 30000 });
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.locator(".dlg").waitFor({ state: "detached", timeout: 30000 });
-  assert.equal(app.trunks.records.get(trunk.id).keys.accounts["cli-claude-code"], undefined, "a sign-in is never a Trunk's key");
+  const partner = (await call("/api/accounts")).body.pools.find((pool) => pool.pool === "cli-claude-code").accounts.find((account) => account.label === "Partner plan");
+  assert.equal(app.trunks.records.get(trunk.id).keys.accounts["cli-claude-code"], partner.id, "the sign-in is the Trunk's pick");
   assert.deepEqual(errors, []);
 });
 

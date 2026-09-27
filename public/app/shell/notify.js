@@ -19,13 +19,17 @@ const sessionTitle = (id) => { const s = E.sessions.find((x) => (x.sessionId ?? 
 const quiet = () => E.state?.onboarding?.popups === false || !!document.querySelector(".tour-layer, .ob9, .first, .lockscreen");
 const onScreen = (id) => S.view === "chat" && S.chat === id && !document.hidden;
 
+/* The face of the conversation that asks: its Trunk's or its room's; Branch's mark stays on the logo, so a question from
+   Branch's own conversation carries the bell. */
+const faceHere = (id) => { const face = chatFace(id); return face.kind === "main" ? `<span class="ico-tile">${ic("bell", "s")}</span>` : av(face, 30, id); };
+
 function show(w) {
   const id = w.open || w.sessionId;
   $(".notif")?.remove();
   const el = document.createElement("div");
   el.className = "notif";
   el.setAttribute("role", "status");
-  el.innerHTML = `${av(chatFace(id), 30, id)}<div><small>${t("window.shell.shell.branch-now")}</small><b>${esc(w.who || ownName(id) || sessionTitle(id))}</b><p>${esc(w.question ?? "")}</p></div><button class="icon-btn" type="button" aria-label="${t("window.flows.first.dismiss")}" data-act="notif-x" data-css="width:26px;height:26px">${ic("x", "s")}</button><div class="acts"><button class="btn pri sm" type="button" data-act="chat" data-id="${esc(id)}">${t("ov.open")}</button></div>`;
+  el.innerHTML = `${faceHere(id)}<div><small>${t("window.shell.shell.branch-now")}</small><b>${esc(w.who || ownName(id) || sessionTitle(id))}</b><p>${esc(w.question ?? "")}</p></div><button class="icon-btn" type="button" aria-label="${t("window.flows.first.dismiss")}" data-act="notif-x" data-css="width:26px;height:26px">${ic("x", "s")}</button><div class="acts"><button class="btn pri sm" type="button" data-act="chat" data-id="${esc(id)}">${t("ov.open")}</button></div>`;
   applyCss(el);
   greyOut(el);
   app().appendChild(el);

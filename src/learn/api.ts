@@ -3,6 +3,7 @@ import { errorText } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import type { Learn } from "./index.js";
 import { LearnOffError, learnLabel } from "./settings.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * mac7/learn: the routes behind the map and the tour, under /api/learn.
@@ -44,7 +45,7 @@ export async function learnApi(deps: LearnHttpDeps, path: string): Promise<unkno
     const status = error instanceof LearnOffError ? 409 : error instanceof ZodError ? 400
       : /not found|no longer saved|there is no|there are no/i.test(errorText(error)) ? 404 : 400;
     const message = error instanceof ZodError
-      ? (error.issues[0]?.message ?? "The request was not in the expected shape") : errorText(error);
+      ? validationText(error) : errorText(error);
     throw new LearnHttpError(status, deps.runtime.hideSecrets(message));
   }
 }

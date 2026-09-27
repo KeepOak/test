@@ -156,6 +156,13 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/safety-extras/wasm/run"),
     own("/api/sessions/:id/branch"), // pass 17: named paths, leaving a message out of context
     own("/api/sessions/:id/discard"),
+    own("/api/sessions/:id/pin"), // conversations like iMessage: pin, rename, archive, Recently Deleted (their own only)
+    own("/api/sessions/:id/rename"),
+    own("/api/sessions/:id/archive"),
+    own("/api/sessions/:id/delete"),
+    own("/api/sessions/:id/restore"),
+    own("/api/sessions/:id/delete-now"),
+    own("/api/sessions/put-away/empty"),
     own("/api/sessions/:id/duplicate"),
     own("/api/sessions/:id/left-out"),
     own("/api/sessions/:id/merge-note"),
@@ -289,6 +296,8 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/voice/dictation/listen", "the dictation card, thinned for a household person"),
   // Their own conversations and tasks, each found only under profiles.scope().
   read("/api/sessions", "the person's own conversations"),
+  read("/api/sessions/put-away", "the person's own archived conversations and Recently Deleted"),
+  read("/api/sessions/:id/delete-now", "what deleting one of the person's own conversations for good removes"),
   read("/api/sessions/:id", "one of the person's own conversations, or a private room's conversation they are a member of"),
   read("/api/sessions/:id/context", "what one of the person's own conversations holds"),
   read("/api/sessions/:id/export", "one of the person's own conversations written out"),
@@ -301,6 +310,7 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/runs/:id", "one of the person's own tasks"),
   read("/api/runs/:id/inspect", "Look inside one of the person's own tasks (Q259)"),
   read("/api/runs/:id/steps", "the steps of one of the person's own tasks (Q259)"),
+  read("/api/runs/:id/live", "the live steps of one of the person's own tasks, while it works"),
   read("/api/runs/:id/plan", "the plan of one of the person's own tasks"),
   read("/api/runs/:id/receipts", "the receipts of one of the person's own tasks"),
   read("/api/runs/:id/recording", "the recording of one of the person's own tasks"),
