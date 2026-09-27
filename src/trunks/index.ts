@@ -382,6 +382,8 @@ export class Trunks {
     this.refresh();
     return trunk;
   }
+  /** Told when a Trunk is removed, so what is kept for it elsewhere (its own browser profile) goes too. */
+  onRemoved: ((id: string) => void) | null = null;
   /** Removes the Trunk, its routines and its seats in rooms. Its conversations stay in history. */
   remove(id: string): { removed: boolean } {
     this.records.get(id);
@@ -392,9 +394,8 @@ export class Trunks {
       else this.rooms.remove(room.id);
     }
     const removed = this.records.remove(id);
-    // defaulttrunk: the default part passes to the next Trunk at once (src/trunks/defaults.ts), and every thread it had,
-    // its own chat included, goes to the default, kept in history.
     this.conversations.forget(id); // phase2/rooms
+    this.onRemoved?.(id); // its own browser profile goes with it (src/index.ts)
     this.refresh();
     this.settle();
     return { removed };

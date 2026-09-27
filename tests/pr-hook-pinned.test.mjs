@@ -198,6 +198,17 @@ test("from Branch's own source, a pull request naming a repository the contract 
     assert.deepEqual(d.opened, [], "no pull request was opened");
   });
 
+test("from Branch's own source, the push goes only to where origin pushed when the worktree was made; repointed, nothing is sent",
+  { skip: posixOnly }, async (t) => {
+    const { app, owner, worktree } = await sourceWorktree(t);
+    plain(worktree, "remote", "set-url", "--push", "origin", "git@github.com:mallory/widgets.git");
+    const d = hookDeps(app, owner);
+    await assert.rejects(pullRequestFromChanges(d.value, { ...ask("pinned"), targetRepository: "acme/widgets" }),
+      /sent only to acme\/widgets, where this worktree was made from, and origin sends to mallory\/widgets, so nothing is sent/);
+    assert.deepEqual(d.pushed, [], "nothing was sent");
+    assert.deepEqual(d.opened, [], "no pull request was opened");
+  });
+
 test("from Branch's own source, the new commit is read from its own branch, not from whatever HEAD points at by then",
   { skip: posixOnly }, async (t) => {
     const { app, owner, worktree, walked } = await sourceWorktree(t);

@@ -55,7 +55,12 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   // /var/run is a link to /run, so it is covered too. So no Windows drive, no WSL link back to
   // Windows, no per-user or system socket (dbus, snapd, the container daemon) and no other agent's
   // control socket or saved sign-in under the home is reachable from inside.
-  const { covered, restored } = await heldCover({ home: homedir(), programs: [program], searchPath: linuxPath, workspace: plan.workspace });
+  const { covered, restored, refusal } = await heldCover({ home: homedir(), programs: [program], args: plan.args, searchPath: linuxPath, workspace: plan.workspace });
+  if (refusal) {
+    await rm(temp, { recursive: true, force: true }).catch(() => undefined);
+    process.stderr.write(`${refusal}\n`);
+    return 1;
+  }
   let wall;
   try {
     wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry }), readOnly: restored },

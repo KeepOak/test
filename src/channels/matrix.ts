@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat } from "./router.js";
+import { matrixHtml } from "./progress-render.js";
 import { handle } from "./email.js";
 import { reconnectDelay } from "./ws-client.js";
 import { catchUpBatch, MarkKeeper, type ChannelMark } from "./catch-up.js"; // mac6/bucket-16
@@ -141,10 +142,9 @@ export class MatrixAdapter implements ChannelAdapter {
       messageId: handle(event.event_id ?? randomUUID(), "msg"),
     };
   }
-  /**
-   * "typing…" in the room for a few seconds. Only typing: this adapter keeps shortened message ids,
-   * so it has no way back to the event a reaction or an edit would have to name.
-   */
+  /** The events this adapter sent, by the short handle it gave them, so a message it sent can be edited (the newest 200). */
+  private readonly sent = new Map<string, string>();
+  /** "typing…" in the room for a few seconds. */
   async sendTyping(chatId: string): Promise<void> {
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/typing/${encodeURIComponent(this.options.userId)}`;
@@ -154,16 +154,43 @@ export class MatrixAdapter implements ChannelAdapter {
     });
     if (!response.ok) throw new Error(`Matrix refused the typing notice (${response.status})`);
   }
-  async send(chatId: string, text: string): Promise<string | undefined> {
+  async send(chatId: string, text: string, _replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
+    const eventId = await this.put(chatId, MatrixAdapter.content(text.slice(0, this.maxTextLength), format));
+    if (!eventId) return undefined;
+    const short = handle(eventId, "msg");
+    this.sent.set(short, eventId);
+    if (this.sent.size > 200) this.sent.delete(this.sent.keys().next().value!);
+    return short;
+  }
+  /**
+   * Replaces the words of a message this adapter sent, the Matrix way: a new event that says it replaces the old one
+   * (`m.replace`), which every client shows in the old one's place.
+   */
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+    const eventId = this.sent.get(messageId);
+    if (!eventId) throw new Error("Matrix: that message was not sent from here, so it cannot be edited");
+    const content = MatrixAdapter.content(text.slice(0, this.maxTextLength), format);
+    await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
+      "m.relates_to": { rel_type: "m.replace", event_id: eventId } });
+  }
+  /** Plain words, with the code as Matrix's HTML beside them when there is any. */
+  private static content(text: string, format?: MessageFormat): Record<string, unknown> {
+    return { msgtype: "m.text", body: text,
+      ...(format?.spans?.length ? { format: "org.matrix.custom.html", formatted_body: matrixHtml(text, format.spans) } : {}) };
+  }
+  private async put(chatId: string, content: Record<string, unknown>): Promise<string | undefined> {
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${randomUUID()}`;
     const response = await this.fetch(address, {
       method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ msgtype: "m.text", body: text.slice(0, this.maxTextLength) }),
-      redirect: "error", signal: AbortSignal.timeout(20000),
+      body: JSON.stringify(content), redirect: "error", signal: AbortSignal.timeout(20000),
     });
+    if (response.status === 429) {
+      const wait = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));
+      throw Object.assign(new Error("Matrix asked us to slow down"), { retryAfter: ((wait.success ? wait.data.retry_after_ms : undefined) ?? 1000) / 1000 });
+    }
     if (!response.ok) throw new Error(`Matrix refused the message (${response.status})`);
     const parsed = z.object({ event_id: z.string().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));
-    return parsed.success && parsed.data.event_id ? handle(parsed.data.event_id, "msg") : undefined;
+    return parsed.success ? parsed.data.event_id : undefined;
   }
 }

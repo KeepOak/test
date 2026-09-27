@@ -64,8 +64,8 @@ test("every memory edit and deletion keeps an exact earlier version that can be 
 test("with approval on, the model's memory changes wait as suggestions until the owner accepts or rejects them", async (t) => {
   const { app, root } = await fixture(t, [call("memory.put", { text: "Prefers short answers", source: "said so" }), say("noted")]);
   const api = await served(t, app, root);
-  assert.deepEqual(await api("memory/settings"), { review: false, requireApproval: false, consolidateDaily: false });
-  assert.deepEqual(await api("memory/settings", { review: false, requireApproval: true }), { review: false, requireApproval: true, consolidateDaily: false });
+  assert.deepEqual(await api("memory/settings"), { review: false, requireApproval: false });
+  assert.deepEqual(await api("memory/settings", { review: false, requireApproval: true }), { review: false, requireApproval: true });
   const run = await app.runtime.run({ prompt: "remember this" });
   assert.equal(run.status, "completed");
   assert.deepEqual(texts(app), [], "nothing was saved directly");

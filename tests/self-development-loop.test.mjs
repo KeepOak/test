@@ -44,6 +44,8 @@ function fakeGit(workspace) {
     if (line.includes("--show-toplevel")) return answer(`${cwd}\n${join(workspace, "branch-agent-source", ".git")}\n`);
     if (line.startsWith("symbolic-ref")) return answer("refs/heads/branch/self-fix\n");
     if (line.startsWith("rev-parse")) return answer(`${sha}\n`);
+    // origin sends to the fork the worktree was made from (the first repository its contract names).
+    if (line.startsWith("remote get-url")) return answer("git@github.com:alice/Branch-Agent.git\n");
     return answer("");
   };
 }
@@ -295,6 +297,18 @@ test("on Linux the held view is read from the disk: the programs found, and the 
     "node's own folder, its lib and the worktree's Git folder come back; never the rest of the prefix or another program's folder");
   const outside = await heldCover({ home, programs: [], searchPath: "", workspace: join(root, "elsewhere") });
   assert.deepEqual(outside.restored, [], "nothing is bound back that the cover does not hide");
+  assert.equal(view.refusal, null, "node from a version manager, run in the worktree, is fine");
+
+  // What cannot work behind the view is refused before anything runs, saying why and what works instead.
+  await mkdir(join(home, "tools"), { recursive: true });
+  for (const file of [join(home, "node"), join(home, "tools", "build.mjs"), join(workspace, "build.mjs"), join(root, "loose.mjs"),
+    join(prefix, "lib", "cli.js")]) await writeFile(file, "");
+  const refusal = async (programs, args) => (await heldCover({ home, programs, args, searchPath: "", workspace })).refusal;
+  assert.match(await refusal([join(home, "node")], []), new RegExp(`^${join(home, "node")} sits straight in your home folder, which a command held to its folder cannot see .*so it did not run\\. Install it under a folder of its own, such as ~/\\.local/bin \\(its bin and lib folders are then shown to the command\\), or use one installed outside your home\\.$`));
+  assert.match(await refusal(["/bin/sh"], ["-c", "x", join(home, "tools", "build.mjs")]), new RegExp(`^${join(home, "tools", "build.mjs")} is in ${home}, which a command held to its folder cannot see .*so it did not run\\. Move the file into the worktree and run it from there\\.$`));
+  assert.match(await refusal(["/bin/sh"], [join(root, "loose.mjs")]) ?? "", /is in \/tmp, which a command held to its folder cannot see/, "a fresh /tmp hides the rest of it too");
+  assert.equal(await refusal(["/bin/sh"], [join(workspace, "build.mjs"), "relative.mjs", "--flag"]), null, "a file in the worktree, or named from it, is fine");
+  assert.equal(await refusal([join(prefix, "bin", "node")], [join(prefix, "lib", "cli.js")]), null, "a file in a folder shown to the command is fine");
 });
 
 test("under WSL the wall covers /mnt and /run/WSL before the worktree is bound, and makes them read-only after", () => {

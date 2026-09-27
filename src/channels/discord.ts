@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { fenced } from "./progress-render.js";
+import type { MessageFormat } from "./router.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
 import { connectWebSocket, reconnectDelay, type WebSocketConnect, type WebSocketConnection } from "./ws-client.js";
 
@@ -171,10 +173,16 @@ export class DiscordAdapter implements ChannelAdapter {
     return bytes;
   }
   /** Sends one reply, waiting out any rate limit Discord has told us about. */
-  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+  /** Code spans as Markdown fences with their language, unless the fences would push the words past Discord's limit. */
+  private content(text: string, format?: MessageFormat): string {
+    const marked = format?.spans?.length ? fenced(text, format.spans, { tag: true }) : text;
+    return (marked.length <= this.maxTextLength ? marked : text).slice(0, this.maxTextLength);
+  }
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const wait = this.readyAt - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
-    const body = JSON.stringify({ content: text.slice(0, this.maxTextLength),
+    // flags 4096: SUPPRESS_NOTIFICATIONS, for a progress message; the reply after it is the one that notifies.
+    const body = JSON.stringify({ content: this.content(text, format), ...(format?.quiet ? { flags: 4096 } : {}),
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}) });
     const response = await this.fetch(`${this.base}/channels/${encodeURIComponent(chatId)}/messages`, {
       method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body, signal: AbortSignal.timeout(20000),
@@ -251,19 +259,21 @@ export class DiscordAdapter implements ChannelAdapter {
     if (previous && previous !== emoji) await this.rest("DELETE", `${message}/${encodeURIComponent(previous)}/@me`).catch(() => undefined);
     await this.rest("PUT", `${message}/${encodeURIComponent(emoji)}/@me`);
   }
-  async edit(chatId: string, messageId: string, text: string): Promise<void> {
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     await this.rest("PATCH", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`,
-      { content: text.slice(0, this.maxTextLength) });
+      { content: this.content(text, format) });
   }
   /** One small call for the live status; a rate limit is noted and reported as a failure. */
   private async rest(method: string, path: string, body?: unknown): Promise<void> {
-    if (this.readyAt > Date.now()) throw new Error("Discord asked us to slow down");
+    // Discord's own wait, carried on the error so the live status waits it out rather than counting it as a failure.
+    if (this.readyAt > Date.now()) throw Object.assign(new Error("Discord asked us to slow down"), { retryAfter: (this.readyAt - Date.now()) / 1000 });
     const response = await this.fetch(`${this.base}${path}`, {
       method, signal: AbortSignal.timeout(20000),
       headers: { ...this.headers(), ...(body === undefined ? {} : { "content-type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     this.noteLimits(response);
+    if (response.status === 429) throw Object.assign(new Error("Discord asked us to slow down"), { retryAfter: Math.max(0.5, (this.readyAt - Date.now()) / 1000) });
     if (!response.ok) throw new Error(`Discord refused ${method} ${path.split("/")[1] ?? ""} (${response.status})`);
   }
   /** Records how long Discord wants us to wait before the next call on this route. */
