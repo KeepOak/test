@@ -7,7 +7,6 @@
    - the waiting line, messages queued while a task works (GET /api/sessions/{id}/followups; reorder, remove and reword
      through POST /api/flows-boards/waiting/followups/move|remove|edit);
    - Room left and today's spend in the status bar (GET /api/sessions/{id}/context, GET /api/usage);
-   - choosing the active project from the sidebar (POST /api/projects/active).
    - Copy on a reply puts its words on the clipboard (the browser's own, no route).
    - parity B1: Try again (back to just before the words that asked, then the same words again), each row's "Sent at",
      a pin's time, Look inside's Read first and Tools offered with Copy the record, the Skills list for " /" and the
@@ -478,15 +477,6 @@ async function loadRoom(id) {
   if (got && M.sid === id) M.room = got;
 }
 
-/* ---------- the active project ---------- */
-async function chooseProject(el) {
-  try {
-    const active = await api("projects/active", { active: el.dataset.v });
-    S.activeProject = active.id;
-  } catch (error) { toast(error.message); }
-  renderNow();
-}
-
 /* ---------- loading ---------- */
 /* Everything above for one conversation, read when it opens and after each message. */
 const drawn = () => JSON.stringify([M.sid, M.pins, M.followUps, M.room, M.spend]);
@@ -521,7 +511,7 @@ export function initMessages(context) {
   X = context;
   addMoreItem((m) => (m.role === "assistant" ? everyStepItem(runFor(m)?.id) : "")); // pass 17: More › Every step behind this reply
   markLive(["copy15", "sw:rw-text", "sw:q15", "pin15", "pinjump15", "pinlist15", "u-edit", "rw-what", "rw-go", "undo", "inspect", "slash6-pick", "prompts-fill",
-    "mention-pick", "queue15", "qup15", "qrm15", "roommenu", "spendmenu", "project", "retry15", "insp-copy", "slash-pick", "tidyconv15"]);
+    "mention-pick", "queue15", "qup15", "qrm15", "roommenu", "spendmenu", "retry15", "insp-copy", "slash-pick", "tidyconv15"]);
   on("retry15", (el) => retry(el));
   on("insp-copy", () => copyRecord());
   on("slash-pick", (el) => pickSkill(el));
@@ -547,7 +537,6 @@ export function initMessages(context) {
   on("qrm15", (el) => moveQueued(el, "remove"));
   on("roommenu", (el) => openRoom(el));
   on("spendmenu", (el) => openPop(el, spendPop()));
-  on("project", (el) => chooseProject(el));
   document.addEventListener("keydown", listKeys, true);
   document.addEventListener("input", (e) => { if (e.target.id === "prompt") { M.slashI = 0; slashTyped(); mentionTyped(e.target); } });
   document.addEventListener("branch-prompts", () => { M.commands = null; });

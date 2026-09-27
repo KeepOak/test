@@ -1,29 +1,29 @@
 /* Settings › General, 1:1 with the prototype's page. Whether Branch starts with Windows and keeps working with the
    window closed are the engine's (GET /api/deployment autostart, daemon), shown and greyed: changing them changes this
-   computer's own start-up. The projects are the engine's (GET /api/projects answers { active, all }); every other
+   computer's own start-up. The projects are the engine's (places/project.js: GET /api/projects, each with its conversation
+   count, and Edit opens that project's instructions editor); every other
    row is drawn in place and greyed until its engine setting is wired. */
 import { esc, renderNow } from "../../core/dom.js";
-import { level, projectName } from "../../core/state.js";
+import { level, projectName, ownerHere } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { ctl, ctlSeg } from "../parts.js";
 import { startKey, startsWithWindows } from "../signin.js";
 import { t } from "../../../i18n.js";
+import { P, loadProjects as readProjects, conversationsWord } from "../../places/project.js"; // area projects: counts and the editor
 
-let projects = [];
 let deployment = null;
 
 async function loadProjects() {
   try {
-    const [p, d] = await Promise.all([api("projects"), api("deployment")]);
-    projects = p.all ?? [];
+    const [, d] = await Promise.all([ownerHere() ? readProjects() : null, api("deployment")]);
     deployment = d;
   } catch (error) { toast(error.message); }
   renderNow();
 }
 
 const FOLDER = '<svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"></path></svg>';
-const project = (p) => `<div class="prow"><span class="ico-tile">${FOLDER}</span><span class="grow"><b>${esc(projectName(p))}</b><small>${p.instructions ? t("window.settings.general.its-own-instructions") : ""}</small></span><button class="btn sm" type="button" data-act="toast" data-msg="Edit this project’s instructions.">${t("prompts.action.edit")}</button></div>`;
+const project = (p) => `<div class="prow"><span class="ico-tile">${FOLDER}</span><span class="grow"><b>${esc(projectName(p))}</b><small>${[conversationsWord(p.id), p.instructions ? t("window.settings.general.its-own-instructions") : ""].filter(Boolean).join(" · ")}</small></span><button class="btn sm" type="button" data-act="proj-edit" data-v="${esc(p.id)}">${t("prompts.action.edit")}</button></div>`;
 const num = (id, title, sub, unit) => `<div class="ctl"><b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" aria-label="${esc(title)}" data-sw="set"><small>${esc(unit)}</small></span><small>${esc(sub)}</small></div>`;
 
 function advanced() {
@@ -40,7 +40,7 @@ export function draw() {
   return `<h1>${t("settings.page.general")}</h1><p class="lede">${t("window.settings.general.how-branch-starts-and-behaves-on")}</p>
     ${starts && startsWithWindows(platform) ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
     <div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>
-    <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${projects.map(project).join("")}</div></div>
+    <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${ownerHere() ? P.all.map(project).join("") : ""}</div></div>
     <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2><div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div></div>
     ${lv >= 1 ? advanced() : ""}${lv >= 2 ? technical() : ""}`;
 }

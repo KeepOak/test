@@ -4,7 +4,7 @@
  * refuses it, and "Always allow" keeps the owner's standing rule where the engine keeps one (never in Ask first). A scripted model;
  * nothing reaches a provider.
  */
-import test from "node:test";
+import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -20,6 +20,12 @@ const onboarded = (server) => fetch(new URL("/api/onboarding", server.url), { me
   headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
 import { readPolicy, savePolicy } from "../dist/policy.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
+
+/* One browser for the file, launched once: each test opens its own page with browser.newPage, which is a fresh context
+   of its own (no cookie, storage or cache carried over), and closes it; only the launch is shared. */
+let browser;
+before(async () => { browser = await chromium.launch({ headless: true }); });
+after(async () => { await browser?.close(); });
 
 const scripted = { name: "scripted", async complete(request) {
   const last = request.messages.at(-1);
@@ -40,9 +46,9 @@ async function signedIn(t, mode = null) {
   if (mode) saveConversationModeSettings(app.store, app.runtime.owner, mode);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -108,13 +114,13 @@ test("add an account in Settings › Accounts: the engine keeps it and the key n
   app.runtime.models.configure(owner, { activePreset: "openai-work" });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
   const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     .then((response) => response.json());
   await call("/api/accounts/settings", { mode: "on" });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -147,9 +153,9 @@ test("Stop in Send's place stops the running task, and Send comes back", async (
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: waiting });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();

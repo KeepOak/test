@@ -145,6 +145,8 @@ export class Store {
       this.db.exec("ALTER TABLE messages ADD COLUMN created_at TEXT");
     this.db.exec(`CREATE TRIGGER IF NOT EXISTS message_time_insert AFTER INSERT ON messages WHEN new.created_at IS NULL BEGIN
         UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
+    // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
+    this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
     this.toolUsage = new ToolUsage(this.db);
@@ -212,6 +214,14 @@ export class Store {
   /** The recent conversations with what was last said in each, for picking one up on a phone. */
   recentSessions(owner: string, limit?: number) {
     return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500));
+  }
+  /** A project's conversations, newest first, in the same shape as recentSessions (src/session-library.ts projectOf). */
+  projectSessions(owner: string, project: string, limit = 100) {
+    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500), project);
+  }
+  /** How many conversations each project has, by project id. */
+  projectSessionCounts(owner: string): Record<string, number> {
+    return this.library.projectCounts(owner, this.hiddenSessions().slice(0, 500));
   }
   /**
    * phase2/rooms (integration review): conversations kept out of Recents and search. Set by
