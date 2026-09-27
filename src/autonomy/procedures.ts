@@ -247,6 +247,7 @@ export class SelfStarting {
 
   remove(id: string): { removed: boolean } {
     this.get(id);
+    this.deps.runner.cancel((key) => key === `procedure:${id}`);
     this.deps.store.delete("settings", this.deps.owner, prefix + id);
     this.deps.ledger.withdraw((entry) => entry.payload.procedureId === id);
     return { removed: true };

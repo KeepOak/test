@@ -58,6 +58,59 @@ test('switching off an active model turn cancels once and its late return cannot
   assert.equal(state.recent.length, 1, 'the late cancelled turn cannot settle the flow a second time');
 });
 
+test('removing a flow cancels its active model turn before deleting its state', async (t) => {
+  const { app, provider, api, pending } = await fixture(t);
+  let start, release, aborted = false, calls = 0;
+  const entered = new Promise((resolve) => { start = resolve; });
+  const held = new Promise((resolve) => { release = resolve; });
+  t.after(() => release());
+  provider.complete = async (request) => {
+    calls++;
+    request.signal?.addEventListener('abort', () => { aborted = true; }, { once: true });
+    start();
+    await held; // A model response may still arrive after its turn was cancelled.
+    return { content: 'Late answer', toolCalls: [] };
+  };
+  const { procedure } = await api('/api/autonomy/procedures', { name: 'Remove active flow', level: 'auto', start: { kind: 'manual' },
+    steps: [{ title: 'Working', prompt: 'Hold an isolated model turn.' }, { title: 'Later', prompt: 'Never start after removal.' }] });
+  await api(`/api/autonomy/procedures/${procedure.id}/run`, {});
+  await entered;
+  const runId = [...app.autonomy.runner.started].at(-1);
+  assert.equal(app.store.run(runId).status, 'running');
+  await api(`/api/autonomy/procedures/${procedure.id}/remove`, {});
+  try { assert.equal(aborted, true, 'removal must cancel the already dispatched model turn'); }
+  finally { release(); }
+  await app.autonomy.idle();
+  assert.equal(app.store.run(runId).status, 'cancelled');
+  assert.throws(() => app.autonomy.procedures.get(procedure.id), /no procedure/);
+  assert.equal((await pending()).some((entry) => entry.payload.procedureId === procedure.id), false);
+  assert.equal(calls, 1, 'the late answer cannot start the next step');
+});
+
+test('saved off mode refuses a stale yes and withdraws its questions on reopen', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'branch-inbox-off-reopen-'));
+  const prompts = [], options = { workspace: join(root, 'workspace'), dataDir: join(root, 'data'),
+    provider: { name: 'scripted', async complete() { prompts.push('ran'); return { content: 'Done.', toolCalls: [] }; } } };
+  let app = await createBranch(options);
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.autonomy.setMode('procedures', { mode: 'on' });
+  const flow = app.autonomy.procedures.create({ name: 'Torn switch', start: { kind: 'manual' }, level: 'ask-to-start',
+    steps: [{ title: 'Do work', prompt: 'Only after a new yes.' }] });
+  app.autonomy.procedures.trigger(flow.id, 'owner');
+  const old = app.autonomy.ledger.list('pending').find((entry) => entry.kind === 'start' && entry.payload.procedureId === flow.id);
+  assert.ok(old);
+  app.store.save('settings', app.runtime.owner, 'autonomy-procedures', { mode: 'off' }); // A saved switch before its cleanup finished.
+  assert.throws(() => app.autonomy.decide(old.id, true), /switched off/);
+  assert.equal(prompts.length, 0);
+  await app.close();
+  app = await createBranch(options);
+  assert.equal(app.autonomy.ledger.list('pending').some((entry) => entry.id === old.id), false);
+  assert.equal(app.autonomy.procedures.get(flow.id).running, null);
+  app.autonomy.setMode('procedures', { mode: 'on' });
+  assert.throws(() => app.autonomy.decide(old.id, true), /Nothing waits/);
+  assert.equal(prompts.length, 0);
+});
+
 test('answers are exact, fresh, owner scoped and revocable; rejected and stale questions execute nothing', async (t) => {
   const { app, server, prompts, api, call, make, pending, start } = await fixture(t);
   const first = await make('One'), second = await make('Two');

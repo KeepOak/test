@@ -15,7 +15,7 @@ import { checkReadiness, localProbe, needsFromMetadata, type Missing, type Needs
 import { lockedDown } from "../lockdown.js";
 import { ownersOwnTask } from "./origin.js";
 import { narrowed, Runner } from "./runner.js";
-import { autonomyMode, autonomyParts, autonomyTools, saveAutonomyMode, type AutonomyMode, type AutonomyPart } from "./settings.js";
+import { autonomyMode, autonomyParts, autonomyTools, requirePart, saveAutonomyMode, type AutonomyMode, type AutonomyPart } from "./settings.js";
 import { suggest, type Suggestion } from "./suggestions.js";
 import { registerAutonomyTools } from "./tools.js";
 import { ownerTimezone } from "../person-about.js"; // your-profile
@@ -77,6 +77,7 @@ export class Autonomy {
     this.loops = new Loops({ store, owner, runner: this.runner, now, transcript: (id) => this.transcript(id) });
     for (const part of autonomyParts) this.sync(part);
     this.procedures.recover();
+    if (this.mode("procedures") === "off") this.procedures.revokeQuestions();
     deps.registry.onRunFinished((context) => this.afterTask(context));
     byRuntime.set(runtime, this);
     registerPromptSource(runtime, this);
@@ -222,6 +223,7 @@ export class Autonomy {
     if (!waiting || waiting.status !== "pending") throw new Error("Nothing waits under that id.");
     if (yes && (waiting.kind === "start" || waiting.kind === "step")) {
       if (lockedDown(this.store, this.owner)) throw new Error("Lockdown is on, so this flow cannot continue.");
+      requirePart(this.store, this.owner, "procedures");
       this.procedures.requireQuestion(waiting);
     }
     // Made first, so a draft that no longer fits stays waiting with the reason instead of being lost.
