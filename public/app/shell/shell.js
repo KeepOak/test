@@ -28,6 +28,7 @@ import { K, loadKeys, pressed, binding, spoken, ariaKeys } from "./keys.js";
 import { M, machineName, loadMachineName } from "./machines.js";
 import { chatOwner } from "../flows/trunk.js";
 import { convItems, putAwayEntries, initPutAway } from "../chat/putaway.js"; // conversations like iMessage
+import { roomItems } from "../flows/roomwith.js"; // trunk-rooms-live: a room with another Trunk, from the row's menu
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
 import { init as initPeople } from "../flows/people.js"; // unhold/people: switching person, invites, roles
@@ -90,7 +91,8 @@ function row(s) {
   const trunk = trunkFor(s);
   const busy = runningIn(id);
   const waits = E.rooms.some((r) => r.sessionId === id && r.needsYou); // GET /api/trunks rooms[].needsYou: the prototype's p.attn
-  return `<div class="rw18"><button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}>
+  const drags = trunk && ownerHere() ? ` draggable="true" data-trunk="${esc(trunk.id)}"` : ""; // trunk-rooms-live: onto another Trunk (flows/roomwith.js)
+  return `<div class="rw18"><button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}${drags}>
     <span class="avw">${av(trunk ?? chatFace(id), 40, id)}</span>
     <b><span class="ellip14">${esc(ownName(id) || sessionTitle(s))}</span>${trunk?.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time>${esc(when(s.updatedAt ?? s.createdAt))}</time>
     ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(s.lastMessage ?? "")}</p>`}${unreadDot(s)}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
@@ -290,7 +292,7 @@ function rowMenu(e) {
   const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = s && trunkFor(s);
   const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"`) + unreadItem(row.dataset.id) + convItems(row.dataset.id);
   const tid = esc(tr?.id ?? "");
-  const trunk = tr ? mi("new-with", "plus", t("window.shell.shell.new-conversation-with-name", { name: esc(tr.name) }), "", `data-id="${tid}"`) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("autonomy.pause"), "", `data-id="${tid}"`) + mi("edit", "sliders", t("window.shell.shell.edit-trunk"), "", `data-id="${tid}"`) + "<hr>" + mi("remove", "trash", t("strip.menu.remove"), "", `data-id="${tid}"`) : "";
+  const trunk = tr ? mi("new-with", "plus", t("window.shell.shell.new-conversation-with-name", { name: esc(tr.name) }), "", `data-id="${tid}"`) + roomItems(tr.id) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("autonomy.pause"), "", `data-id="${tid}"`) + mi("edit", "sliders", t("window.shell.shell.edit-trunk"), "", `data-id="${tid}"`) + "<hr>" + mi("remove", "trash", t("strip.menu.remove"), "", `data-id="${tid}"`) : "";
   /* A room's own row ends with the prototype's "Leave and archive", greyed: the engine keeps no leaving or archiving of
      a room, only removing it for everyone (POST /api/trunks/rooms/<id>/remove). */
   const room = !tr && E.rooms.some((r) => r.sessionId === row.dataset.id) ? "<hr>" + mi("room-leave", "trash", t("window.shell.shell.leave-and-archive"), "", `data-id="${id}"`) : "";

@@ -20,7 +20,17 @@ import { allPaused } from "../flows/pause.js";
 import { t, language } from "../../i18n.js";
 
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
-const clock = (iso) => new Date(iso).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" });
+/* "6 pm", "6:40 pm": the owner's style for a time today; a weekday ("Tuesday") when it is further off. */
+const ampm = (d) => { const h = d.getHours() % 12 || 12, m = d.getMinutes(); return `${h}${m ? `:${String(m).padStart(2, "0")}` : ""} ${d.getHours() < 12 ? "am" : "pm"}`; };
+const clock = (iso) => { const d = new Date(iso); return Date.parse(iso) - Date.now() < 86_400_000 ? ampm(d) : d.toLocaleDateString(language(), { weekday: "long" }); };
+const resetWords = (iso) => (Date.parse(iso) - Date.now() < 86_400_000 ? t("terminal.usage.resetsAt", { time: clock(iso) }) : t("window.shell.usage.resets-time", { time: clock(iso) }));
+/* "measured 3 min ago", from the newest window's own time of measuring. */
+function measuredWords(r) {
+  const at = Math.max(...(r.windows ?? []).map((w) => Date.parse(w.measuredAt ?? "")).filter(Number.isFinite));
+  if (!Number.isFinite(at)) return "";
+  const min = Math.round((Date.now() - at) / 60000);
+  return t("glance.measuredAgo", { age: min < 2 ? t("glance.justNow") : min < 90 ? t("glance.minAgo", { count: min }) : t("glance.hAgo", { count: Math.round(min / 60) }) });
+}
 
 /* The share of a window left, 0 to 100, or null where the service gave no limit and remainder (money never is one).
    The list and the status bar's line both use it, so they never disagree. */
@@ -29,13 +39,17 @@ const pctLeft = (w) => (w.kind === "money" || !w.limit || w.remaining == null ? 
 function windowRow(w, estimated) {
   const pct = pctLeft(w);
   if (pct === null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null ? "" : esc(String(w.remaining))}</span></div>`;
-  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${w.resetAt ? ` · ${t("window.shell.usage.resets-time", { time: esc(clock(w.resetAt)) })}` : ""}</span></div>`;
+  const reset = w.resetAt && Date.parse(w.resetAt) > Date.now() ? ` · ${esc(resetWords(w.resetAt))}` : "";
+  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${reset}</span></div>`;
 }
 
+/* A sign-in never measured yet says so, and offers Measure now (POST /api/usage/limits/measure): one tiny real message. */
 function limitRow(r) {
+  const said = [measuredWords(r), r.windows?.[0]?.from ?? ""].filter(Boolean).join(", ");
+  const measure = r.signIn && !r.windows?.length ? `<small>${esc(t("glance.measureNote"))}</small><button class="btn sm" type="button" data-act="limmeasure" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "primary")}">${esc(t("glance.measureNow"))}</button>` : "";
   const body = r.windows?.length
-    ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(r.note)}</small>`
-    : `<small>${esc(r.note)}</small>`;
+    ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}${r.note ? ` ${esc(r.note)}` : ""}</small>`
+    : `<small>${esc(r.note)}</small>${measure}`;
   return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}</div></div>`;
 }
 
@@ -107,22 +121,26 @@ let glance = null, readFor = null, reading = false, again = false;
 function planOf(g) {
   const id = E.state?.activeModel?.presetId;
   if (!g?.available || g.settings?.ring === "hidden" || !id) return null;
-  const row = (g.rows ?? []).find((r) => r.connection === id && r.inUse);
+  const row = (g.rows ?? []).find((r) => (r.presets ?? [r.connection]).includes(id) && r.inUse);
+  if (!row) return null;
   let best = null;
-  for (const w of row?.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
-  return best && { name: row.connectionName, ...best };
+  for (const w of row.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
+  /* Nothing measured yet: the plan's name and an empty ring, never the model's name. */
+  if (!best && row.state === "not_published" && !row.signIn && !/No limit/.test(row.note ?? "")) return null;
+  return { name: row.connectionName, signIn: row.signIn, ...(best ?? { pct: null, w: null }) };
 }
 function ringSVG(pct, dashed) {
+  if (pct === null) return `<svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="9" fill="none" stroke="var(--line-2)" stroke-width="3"/></svg>`;
   const r = 9, c = 2 * Math.PI * r, col = pct < 15 ? "var(--warn)" : "var(--accent)";
   return `<svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="${r}" fill="none" stroke="var(--line-2)" stroke-width="3"/><circle class="ring-arc" cx="11" cy="11" r="${r}" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${dashed ? "2.5 2.5" : c}" ${dashed ? "" : `stroke-dashoffset="${c * (1 - pct / 100)}"`} transform="rotate(-90 11 11)"/></svg>`;
 }
-const hour = (iso) => { const d = new Date(iso); return d.toLocaleTimeString(language(), d.getMinutes() ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" }); };
 /** The button's inside: the ring and the line, or the model's name alone when there is no figure. */
 export function planMeter(label) {
   if (E.state && E.state !== readFor) { readFor = E.state; readGlance(); }
   const p = planOf(glance);
   if (!p) return `<span class="hide-sm">${esc(label)}</span>`;
-  const reset = p.w.resetAt && Date.parse(p.w.resetAt) > Date.now() ? t("terminal.usage.resetsAt", { time: hour(p.w.resetAt) }) : "";
+  if (p.pct === null) return `${ringSVG(null, false)}<span class="hide-sm">${esc(p.name)} · ${esc(p.signIn ? t("glance.measuring") : t("glance.noLimit"))}</span>`;
+  const reset = p.w.resetAt && Date.parse(p.w.resetAt) > Date.now() ? resetWords(p.w.resetAt) : "";
   const words = [esc(p.name), t("glance.left", { percent: p.pct }), esc(reset)].filter(Boolean).join(" · ");
   return `${ringSVG(p.pct, p.w.state === "estimated")}<span class="hide-sm">${words}</span>`;
 }
@@ -195,7 +213,7 @@ function startInBackground() {
 }
 
 export function initUsage() {
-  markLive(["usagepop", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
+  markLive(["usagepop", "limmeasure", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
   on("tasks10", (el) => openTasks(el));
   on("bg-new", () => startInBackground());
   on("ckpt-save", saveProgress);
@@ -203,5 +221,14 @@ export function initUsage() {
   checkLimits();
   setInterval(checkLimits, 20000);
   on("updmenu", (el) => openUpdates(el));
+  on("limmeasure", async (el) => {
+    el.disabled = true;
+    try { await api("usage/limits/measure", { connection: el.dataset.id, account: el.dataset.v }); }
+    catch (error) { toast(error.message); }
+    const g = await api("usage/glance").catch(() => null);
+    if (g) keep(g);
+    const pop = el.closest(".pop");
+    if (pop && g) { const at = document.querySelector('#statusbar [data-act="usagepop"]'); if (at) openPop(at, popHTML(g), { right: true, force: true }); }
+  });
   on("usagepop", async (el) => openPop(el, popHTML(await api("usage/glance").catch(() => null)), { right: true }));
 }
