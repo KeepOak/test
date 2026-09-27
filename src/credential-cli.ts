@@ -15,15 +15,15 @@ import { mapStrings, type SecretScrubber } from "./vault.js";
  * It is off until the owner turns it on, and it can only read: nothing here ever writes to, unlocks
  * or signs in to a vault. A locked or missing vault is a plain refusal, never a guess.
  */
-export const credentialServices = ["bitwarden", "1password"] as const;
+export const credentialServices = ["bitwarden", "1password", "windows"] as const;
 export type CredentialService = (typeof credentialServices)[number];
-const serviceNames: Record<CredentialService, string> = { bitwarden: "Bitwarden", "1password": "1Password" };
+export const serviceNames: Record<CredentialService, string> = { bitwarden: "Bitwarden", "1password": "1Password", windows: "Windows Credential Manager" };
 
 export const CredentialSettingsSchema = z.object({
   /** "Let Branch look up passwords in my password manager". Off until the owner turns it on. */
   enabled: z.boolean().default(false),
   /** Which password managers may be asked. Empty means none, even when the switch is on. */
-  services: z.array(z.enum(credentialServices)).max(2).default([]),
+  services: z.array(z.enum(credentialServices)).max(3).default([]),
   /** The Bitwarden command, when it is not simply `bw` on this computer's path. */
   bitwardenCommand: z.string().trim().max(500).default("bw"),
   /** The 1Password command, when it is not simply `op` on this computer's path. */
@@ -67,7 +67,7 @@ export function saveCredentialSettings(store: Store, owner: string, input: unkno
  * An item in a vault: letters, digits, spaces and the few punctuation marks item names use. A
  * 1Password reference may carry the vault and field too, as `Private/GitHub/password`.
  */
-const referenceText = "secret://(bitwarden|1password)/([A-Za-z0-9][A-Za-z0-9 ._@/-]{0,79})";
+const referenceText = "secret://(bitwarden|1password|windows)/([A-Za-z0-9][A-Za-z0-9 ._@/-]{0,79})";
 const anyCredentialReference = new RegExp(referenceText, "g");
 const wholeCredentialReference = new RegExp(`^${referenceText}$`);
 export interface CredentialRef {
@@ -113,9 +113,51 @@ export function commandFor(reference: CredentialRef, settings: CredentialSetting
   // It is refused here rather than quietly read as a password: a caller that asked for a code and
   // was handed a password would type the wrong secret into the wrong box.
   if (field === "totp")
-    throw new Error("Branch reads a one-time code from Bitwarden only. 1Password holds it at an address only you know.");
+    throw new Error(reference.service === "windows" ? "Branch reads a one-time code from Bitwarden only. Windows Credential Manager holds none."
+      : "Branch reads a one-time code from Bitwarden only. 1Password holds it at an address only you know.");
+  if (reference.service === "windows") return windowsCredentialCommand(reference.item);
   const path = reference.item.startsWith("op://") ? reference.item : `op://${reference.item}`;
   return { executable: settings.onePasswordCommand || "op", args: ["read", "--no-newline", path] };
+}
+
+/**
+ * Windows Credential Manager: one generic credential, read by its exact target name (what `cmdkey /generic:<name>` and
+ * the Credential Manager's "Windows Credentials" list call it) through Windows' own CredRead, in Windows PowerShell by
+ * its full path. Only reading: nothing is listed, written or deleted. The target name reaches the script only as
+ * base64 inside a quoted literal, and the whole script is passed encoded, so no name can be read as a command. The
+ * password is written to the program's own output, which only this process reads; a name with no credential exits 44.
+ */
+export function windowsCredentialScript(target: string): string {
+  const name = Buffer.from(target, "utf8").toString("base64");
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
+    "Add-Type -TypeDefinition @'",
+    "using System; using System.Runtime.InteropServices;",
+    "public static class BranchCredential {",
+    "  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct Credential { public int Flags; public int Type; public string TargetName; public string Comment;",
+    "    public long LastWritten; public int BlobSize; public IntPtr Blob; public int Persist; public int AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName; }",
+    "  [DllImport(\"advapi32.dll\", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredReadW(string target, int type, int flags, out IntPtr credential);",
+    "  [DllImport(\"advapi32.dll\")] static extern void CredFree(IntPtr credential);",
+    "  public static string Read(string target) {",
+    "    IntPtr found; if (!CredReadW(target, 1, 0, out found)) return null;",
+    "    try { var c = (Credential)Marshal.PtrToStructure(found, typeof(Credential)); var bytes = new byte[c.BlobSize]; if (c.BlobSize > 0) Marshal.Copy(c.Blob, bytes, 0, c.BlobSize);",
+    "      int zeros = 0; for (int i = 1; i < bytes.Length; i += 2) if (bytes[i] == 0) zeros++;",
+    "      bool wide = bytes.Length % 2 == 0 && bytes.Length > 0 && zeros * 2 >= bytes.Length / 2;",
+    "      return wide ? System.Text.Encoding.Unicode.GetString(bytes) : System.Text.Encoding.UTF8.GetString(bytes); }",
+    "    finally { CredFree(found); } } }",
+    "'@",
+    `$name = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${name}'))`,
+    "$value = [BranchCredential]::Read($name)",
+    "if ($null -eq $value) { [Console]::Error.WriteLine('not found'); exit 44 }",
+    "[Console]::Out.Write($value)",
+  ].join("\n");
+}
+export function windowsCredentialCommand(target: string, systemRoot: string = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows"): { executable: string; args: string[] } {
+  const encoded = Buffer.from(windowsCredentialScript(target), "utf16le").toString("base64");
+  return { executable: join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded] };
 }
 
 /** Only what a password manager needs to find its own vault; nothing else of the owner's is passed on. */
@@ -172,8 +214,8 @@ export function refusalFrom(reference: CredentialRef, outcome: CliOutcome, execu
   const said = `${outcome.stderr} ${outcome.stdout}`.trim();
   if (outcome.code !== 0 && locked.test(said))
     return `Your ${name} vault is locked, so Branch cannot read anything from it. Unlock it yourself, then ask again.`;
-  if (outcome.code !== 0 && absent.test(said))
-    return `There is nothing called "${reference.item}" in your ${name} vault.`;
+  if (outcome.code !== 0 && (absent.test(said) || (reference.service === "windows" && outcome.code === 44)))
+    return `There is nothing called "${reference.item}" in your ${reference.service === "windows" ? name : `${name} vault`}.`;
   if (outcome.code !== 0) return `${name} would not hand that over, and gave no reason Branch can pass on.`;
   if (!outcome.stdout.trim())
     return `${name} found "${reference.item}" but it has no ${reference.field === "totp" ? "one-time code" : "password"} saved on it.`;
@@ -186,6 +228,7 @@ export class CredentialResolver {
   constructor(
     private readonly store: Store, private readonly owner: string,
     private readonly scrubber: SecretScrubber, private readonly run: CliRunner = spawnCli,
+    private readonly platform: string = process.platform,
   ) {}
   settings(): CredentialSettings { return readCredentialSettings(this.store, this.owner); }
 
@@ -212,6 +255,8 @@ export class CredentialResolver {
       throw new Error(`Branch is not set up to read passwords from a password manager. Turn that on in Settings first.`);
     if (!settings.services.includes(reference.service))
       throw new Error(`Branch is not allowed to read from ${name}. Tick ${name} in Settings if that is what you want.`);
+    if (reference.service === "windows" && this.platform !== "win32")
+      throw new Error("Windows Credential Manager is part of Windows, and this Branch runs on another system, so it cannot read from it here.");
     const { executable, args } = commandFor(reference, settings);
     const outcome = await this.run(executable, args, settings.timeoutMs);
     const refusal = refusalFrom(reference, outcome, executable);
@@ -229,7 +274,7 @@ export class CredentialResolver {
   /** The name of the item only; the password itself never reaches this record. */
   private record(reference: CredentialRef, use: { runId?: string | undefined; purpose: string }, outcome: string): void {
     audit(this.store, this.owner, {
-      action: "secret.used", actor: `your ${serviceNames[reference.service]} vault`,
+      action: "secret.used", actor: reference.service === "windows" ? "your Windows Credential Manager" : `your ${serviceNames[reference.service]} vault`,
       subject: `${credentialReference(reference.service, reference.item)}${reference.field === "totp" ? " (one-time code)" : ""}`,
       reason: use.purpose.slice(0, 120), runId: use.runId ?? null, outcome,
     });
