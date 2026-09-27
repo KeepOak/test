@@ -2,7 +2,8 @@
    The engine reads the sentence (POST /api/schedules/propose {text}): what to do, when it repeats, and when it first
    runs. Every change on the card is read again by the engine ({edit}), so the first run and the cron line are always
    the engine's. Nothing is saved until "Confirm the schedule", which is the ordinary POST /api/schedules. "Who does it"
-   picks one of the first five Trunks, as the prototype draws (pressed again, nobody: the owner's own schedule); then Confirm makes it that Trunk's routine
+   is the assistant itself (the owner's own schedule, pressed at first) or one of the first five Trunks, as the prototype
+   draws (a Trunk pressed again goes back to the assistant); a Trunk makes Confirm that Trunk's routine
    (POST /api/trunks/<id>/routines), the same schedule run as the Trunk, which the engine refuses in words while Trunk
    routines are switched off. */
 
@@ -55,8 +56,11 @@ const everySoOften = (p) => !p.days && !!p.proposal.schedule.intervalMs;
 const ready = (p) => everySoOften(p) || (!!p.days && !!p.time);
 
 const seg = (k, v, label, pressed) => `<button type="button" data-act="ppset17d" data-k="${k}" data-v="${v}" aria-pressed="${pressed}">${label}</button>`;
+/* Who does it: the assistant itself (the owner's own schedule, by the assistant's own name) first, then the first five
+   Trunks (dogfood D15: the assistant was not offered, as if only a Trunk could do a routine). */
 function whoField() {
-  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
+  const self = E.state?.identity?.name ? seg("trunk", "", esc(E.state.identity.name), !P.trunk) : "";
+  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${self}${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
 }
 
 /* The card under the box, while a proposal is open. */
@@ -135,7 +139,7 @@ export function initScheduleCard() {
   on("ppset17d", (el) => {
     if (!P) return;
     const k = el.dataset.k;
-    if (k === "trunk") { keepWhat(); P.trunk = P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
+    if (k === "trunk") { keepWhat(); P.trunk = !el.dataset.v || P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
     P[k] = k === "day" ? +el.dataset.v : el.dataset.v;
     if (k === "days" && el.dataset.v === "weekly" && P.day == null) P.day = 5;
     reread();

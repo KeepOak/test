@@ -503,7 +503,7 @@ test("an update takes a safety copy first, keeps three, and stops when the copy 
   const taken = [];
   const install = join(root, "installed");
   await mkdir(install, { recursive: true });
-  const updater = (backup) => new Updater({
+  const updater = (backup) => new Updater({ lastReleaseWithoutProvenance: "2.0.0",
     repo: "x/y", currentVersion: "1.0.0", installDir: install, executableName: "Branch Agent.exe",
     assetName: "app.zip", scratchDir: join(root, `scratch-${taken.length}-${randomUUID()}`),
     fetch: fakeRelease(), extract: async (_archive, into) => {

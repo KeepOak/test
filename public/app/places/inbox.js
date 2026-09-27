@@ -37,6 +37,7 @@ import { initDemo17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
 import { offTile } from "./switch-on.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
+import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work: what is working or paused, with Pause, Resume, Stop
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 let asks = [];
@@ -74,7 +75,7 @@ function cutCard(a) {
   const name = (runById(a.runId)?.title ?? firstLine(runById(a.runId)?.prompt)) || a.question;
   return `<div class="cut15" role="status">${trunk ? av(trunk, 30) : `<span class="ico-tile">${ic("retry", "s")}</span>`}<span class="grow"><b>${t("window.places.inbox.pick-up-what-the-update-cut")}</b><small>${esc(name)}</small></span><button class="btn ghost sm" type="button" data-act="cutno15" data-id="${esc(a.runId)}">${t("window.places.inbox.leave-it")}</button><button class="btn pri sm" type="button" data-act="cutgo15" data-id="${esc(a.runId)}" data-sid="${esc(a.sessionId)}">${t("window.places.inbox.pick-it-up")}</button></div>`;
 }
-const cutCards = () => (E.state.attention ?? []).filter((a) => a.canContinue && !a.parentRunId).map(cutCard).join(""); // not a helper (FEATURES17C §4)
+const cutCards = () => (E.state.attention ?? []).filter((a) => a.canContinue && !a.parentRunId && !pausedIds().has(a.runId)).map(cutCard).join(""); // not a helper (FEATURES17C §4); a paused one is under long work
 
 function selfCard(r) {
   const stage = r.status === "approved" ? t("window.places.inbox.edits-approved-ready-to-publish") : t("flowsBoards.installs.waiting");
@@ -172,7 +173,7 @@ export function draw() {
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
 
   const count = waitingCount();
-  const body = cutCards() + (tab === "needs" ? needsBody() : tab === "finished" ? finishedTab() : tab === "history" ? historyTab() + receiptsSection() : tab === "later" ? laterTab() : "");
+  const body = workSection() + cutCards() + (tab === "needs" ? needsBody() : tab === "finished" ? finishedTab() : tab === "history" ? historyTab() + receiptsSection() : tab === "later" ? laterTab() : "");
   let html = `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place">
     ${recBar()}${updateCard()}
     <h1>${t("place.inbox")}</h1><p class="lede">${t("window.places.inbox.everything-a-trunk-is-waiting-on")}</p>
@@ -226,6 +227,7 @@ export async function after() {
     if (JSON.stringify(waiting) !== JSON.stringify(installs)) { installs = waiting; changed = true; }
     if (policy && !asksRead) { asksRead = true; changed = true; }
   }
+  if (await readWork().catch((error) => { sayOnce(error); return false; })) changed = true; // long-work
   const p17 = await readInbox17(tab);
   if (p17.error) sayOnce(p17.error);
   if (p17.changed) changed = true;

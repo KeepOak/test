@@ -58,6 +58,22 @@ export function steerMessage(note: string, from?: string): string {
   return from === undefined ? `${steerOpen}\n${note}\n${steerClose}` : `${steerChatOpen(from)}\n${note}\n${steerChatClose}`;
 }
 
+/** The owner's own words inside a steer the conversation keeps, or null for any other message (dogfood D23). */
+export function steerWords(content: string): string | null {
+  const text = content.trimEnd();
+  if (!text.startsWith(`${steerOpen}
+`) || !text.endsWith(steerClose)) return null;
+  return text.slice(steerOpen.length + 1, text.length - steerClose.length).trim();
+}
+
+/** A line of a conversation as a list shows it: a steer (whole, or cut short to a preview) as the owner's own words. */
+export function steerShown(text: string): string {
+  if (!text.startsWith(`${steerOpen}
+`)) return text;
+  const rest = text.slice(steerOpen.length + 1).trimEnd();
+  return (rest.endsWith(steerClose) ? rest.slice(0, rest.length - steerClose.length) : rest).trim();
+}
+
 /**
  * What the standing instructions say about the channel. Short on purpose: it is carried in every
  * task whether or not anybody steers one, so it earns its place by being three sentences.
