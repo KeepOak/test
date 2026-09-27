@@ -75,7 +75,7 @@ export function head() {
     <span class="tb-grow"></span>${status}${stageButtons(working)}
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
-    <button class="icon-btn" type="button" aria-label="${t("window.chat.head.more")}" data-act="chatmenu">${ic("more")}</button></div>`;
+    <button class="icon-btn" type="button" aria-label="${t("window.chat.head.more")}" aria-expanded="false" data-act="chatmenu">${ic("more")}</button></div>`;
 }
 
 /* The prototype's computer and browser buttons (its "calmer window" pass): each opens the stage full size (chat/stage.js's

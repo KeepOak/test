@@ -211,11 +211,15 @@ test("the connection button can be hidden in Settings, and nobody but the owner 
   await f.page.locator("#h-usage").check();
   await usageButton(f.page).waitFor({ state: "visible" });
   const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
+  /* The window starts again by itself when the person changes (public/app/main.js watchPerson); a reload of our own
+     raced that one and was aborted, so the window's own restart is what is waited for. */
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
   const seen = await fetch(new URL("/api/usage/glance", f.server.url), { headers: { authorization: `Bearer ${f.server.token}` } });
   assert.equal(seen.status, 200, "not an error");
   assert.deepEqual(await seen.json(), { available: false }, "and not a number");
-  await signedInAgain(f.page);
+  await restarted;
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   if (await usageButton(f.page).count()) {
     await usageButton(f.page).click();
     await f.page.locator(".pop").waitFor();

@@ -295,9 +295,13 @@ test("this computer's reduce-motion setting is honoured before anyone opens Appe
   const f = await fixture(t);
   // The level switch in Settings slides between its choices (.settings .set-level .seg::before, transition .28s).
   await openSettings(f.page);
-  const speed = () => f.page.locator(".settings .set-level .seg").first()
-    .evaluate((node) => Number.parseFloat(getComputedStyle(node, "::before").transitionDuration));
-  assert.ok((await speed()) > 0.1, "normally things move");
+  // Asked once the page has its styles and its drawn switch: read at once, a switch drawn a moment before its style
+  // pass (or replaced by the page's own re-read) answered no duration, and the control failed on a slow build machine.
+  const moves = await f.page.waitForFunction(() => {
+    const node = document.querySelector(".settings .set-level .seg");
+    return node && Number.parseFloat(getComputedStyle(node, "::before").transitionDuration) > 0.1;
+  }, null, { timeout: 5000 }).then(() => true, () => false);
+  assert.equal(moves, true, "normally things move");
   await f.page.emulateMedia({ reducedMotion: "reduce" });
   // The browser takes the new setting on its next style pass, so the page is asked once it reports it.
   await f.page.waitForFunction(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
