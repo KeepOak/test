@@ -166,11 +166,13 @@ test("in a Trunk's conversation a helper that is no saved specialist shows that 
   const question = app.runtime.approvals.questionFor(ann.chatSessionId);
   app.runtime.approve(question.sessionId, "allow", "session", question.fingerprint);
   const { done, parent } = await fanOut("compare the invoices for Ann", ann.chatSessionId);
-  // Neither helper is a saved specialist any more (the engine then names it by its id), so each is shown as Ann's helper.
+  // Neither helper is a saved specialist any more, so each is shown as Ann's helper.
   for (const id of ids) app.store.delete("specialists", app.store.profiles.scope(), id);
   await openChat(parent.sessionId);
   await page.waitForFunction(() => document.querySelectorAll(".hf18a .hfr18a .face18.hb18c .in18c.dim18").length === 2, null, { timeout: 15000 });
   assert.equal(await page.locator(".hf18a .hfr18a .face18.hb18c .b18c svg.i").count(), 2, "each carries the helper badge");
+  // Each is still named by the name kept when it started, never by its id.
+  assert.deepEqual((await page.locator(".hf18a .hfr18a .nm18 b").allInnerTexts()).sort(), ["alpha", "beta"]);
   assert.equal(await page.locator(MASCOT).count(), 0, "no helper face is the mascot");
   releaseAll();
   assert.equal((await done).status, "completed");

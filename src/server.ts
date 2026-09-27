@@ -60,7 +60,7 @@ import { localRuntimes } from "./local-runtimes.js";
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
 import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
-import { liveSteps } from "./live-steps.js"; // live steps: watch Branch think and work
+import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
@@ -4920,13 +4920,13 @@ function liveDeps(app: Branch) {
   return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
     scrub: (text: string) => app.runtime.hideSecrets(text) };
 }
-function helperNameOf(app: Branch): (agent: string) => string | null {
+/** A helper's name, never its raw id (QA Q049): the specialist's name while it is saved, else the name recorded when the
+    helper started (run.started agentName), else "A helper". A mode is named by the mode, else its slug. */
+function helperNameOf(app: Branch): (agent: string, recorded?: string) => string | null {
   const owner = app.runtime.owner;
-  return (agent) => {
+  return (agent, recorded) => {
     if (agent.startsWith("mode:")) { try { return app.interop.modes.find(agent.slice(5)).name; } catch { return agent.slice(5); } }
-    const saved = app.store.get("specialists", owner, agent)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
-    const name = saved?.definition?.name ?? saved?.name;
-    return typeof name === "string" && name ? name : agent;
+    return specialistName(app.store, owner, agent) ?? (recorded?.trim() || "A helper");
   };
 }
 /** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
