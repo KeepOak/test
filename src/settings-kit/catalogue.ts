@@ -36,7 +36,7 @@ import { localModelsMode, saveLocalModelsMode } from "../local-jobs.js";
 import { saveUsageReportSettings, usageReportSettings } from "../usage-report.js";
 import { RecordingSettingsSchema } from "../run-recording.js";
 import { PromptLibrarySettingsSchema } from "../prompt-library.js";
-import { commandSettings, commandsShipAs, saveCommandSettings } from "../commands/settings.js";
+import { commandSettings, windowShipsAs, saveCommandSettings } from "../commands/settings.js";
 import { flyCoreSettings } from "../fly-core/settings.js";
 import { GoalUndoSettingsSchema } from "../goal-mode.js";
 import { reflectionSettings } from "../reflection/settings.js";
@@ -442,9 +442,9 @@ const comfort: SettingSpec[] = [
     parsedBy("prompt-library", () => PromptLibrarySettingsSchema)),
   // Read as src/commands/settings.ts reads it, so a switch never saved shows how it ships.
   shipsAs(one("command-catalog", "The shared commands", "settings-kit.name.commands", "settings:general", "plain", {
-    read: (store, owner) => ({ ...commandSettings(store, owner) }),
-    write: (store, owner, patch) => { saveCommandSettings(store, owner, { ...commandSettings(store, owner), ...patch }); } }),
-  commandsShipAs),
+    read: (store, owner) => ({ ...commandSettings(store, owner, "window") }),
+    write: (store, owner, patch) => { saveCommandSettings(store, owner, { ...commandSettings(store, owner, "window"), ...patch }); } }),
+  windowShipsAs),
   shipsAs(one("asks-project-board", "Project boards", "settings-kit.name.project-board", "settings:general", "plain", askHooks("project-board")), askShips("project-board")),
   // Saved through the learning core's own switch (src/settings-kit/writers.ts), which also adds or takes away its tool.
   one("fly-core", "What Branch learns from experience", "settings-kit.name.fly-core", "library:memory", "plain",

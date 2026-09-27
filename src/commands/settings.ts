@@ -5,7 +5,8 @@ import { COMMANDS, type CatalogCommand, type Surface } from "./catalog.js";
 
 /**
  * The owner's three-way switch for the commands the shared table added (wave mac3, commands). It
- * ships off (`commandsShipAs`), except in the terminal (`terminalShipsAs`), and it never touches a command a surface already had:
+ * ships off (`commandsShipAs`), except in the terminal (`terminalShipsAs`) and this computer's window (`windowShipsAs`),
+ * and it never touches a command a surface already had:
  *
  *   off          each surface keeps exactly the commands it had before; anything else typed with
  *                a slash is what it always was there (a message, or "I do not know that one")
@@ -31,12 +32,17 @@ export const commandsShipAs: FeatureMode = "off";
 // The terminal view is typed at on this computer, and the redesign's terminal (design/redesign/prototype.html termRun)
 // answers /usage, /status, /health, /goal and the rest: there the switch, never saved, is on. A saved switch wins.
 export const terminalShipsAs: FeatureMode = "on";
+// The owner's rule (ships on; the lead's decision of 2026-09-27): the window is typed at by the owner too, like the
+// terminal, so /bg, /tokens and the rest work there as shipped. None of (a)–(f): a command is only what the owner typed,
+// and each one still asks under its own switch and the approval rules. The phone and the dashboard keep `commandsShipAs`.
+export const windowShipsAs: FeatureMode = "on";
+const shipsOn = (surface?: Surface): FeatureMode => (surface === "terminal" ? terminalShipsAs : surface === "window" ? windowShipsAs : commandsShipAs);
 
 type Reader = Pick<Store, "get">;
 /** The switch as saved; never saved is how it ships (on the surface asked about), and a saved record that cannot be read is off. */
 export function commandSettings(store: Reader, owner: string, surface?: Surface): CommandSettings {
   const found = store.get("settings", owner, settingKey);
-  if (!found) return { mode: surface === "terminal" ? terminalShipsAs : commandsShipAs };
+  if (!found) return { mode: shipsOn(surface) };
   const saved = CommandSettingsSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data : CommandSettingsSchema.parse({});
 }

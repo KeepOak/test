@@ -41,7 +41,7 @@ export interface CommandApiDeps {
 }
 
 function listFor(app: Branch, surface: z.infer<typeof WebSurface>) {
-  const mode = commandSettings(app.store, app.runtime.owner).mode;
+  const mode = commandSettings(app.store, app.runtime.owner, surface).mode;
   const commands = COMMANDS.filter((command) => available(command, surface, mode)).map((command) => ({
     name: command.name, aliases: aliasesOn(command, surface, mode === "off"), args: command.args, key: command.key, english: command.english,
     level: command.level, bareLooks: command.bareLooks === true, listed: listed(command, surface, mode),
@@ -87,7 +87,8 @@ export async function commandsApi(app: Branch, path: string, deps: CommandApiDep
     return run(app, deps, input);
   }
   if (path === "/api/commands/settings") {
-    if (method === "GET") return { ...commandSettings(app.store, app.runtime.owner), access: deps.access };
+    // Shown in the window's Settings › General, so a switch never saved reads as the window has it.
+    if (method === "GET") return { ...commandSettings(app.store, app.runtime.owner, "window"), access: deps.access };
     if (deps.access !== "full") throw new CommandApiError(403, "Only the key of this computer can change which commands are offered.");
     app.store.profiles.requireOwner("Which commands are offered");
     const input = await deps.readBody();
