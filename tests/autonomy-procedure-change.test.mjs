@@ -38,7 +38,7 @@ test("changed steps wait for the owner's yes, then replace the steps under the s
   const { app, call, api } = await fixture(t);
   const refused = await call("/api/autonomy/procedures/0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f/propose", { steps });
   assert.equal(refused.status, 409, "the part is off, so it is refused in one sentence");
-  await api("/api/autonomy/switch", { part: "procedures", mode: "on" });
+  await api("/api/autonomy/switch", { part: "procedures", mode: "on", confirmLoosening: true });
   const { procedure } = await api("/api/autonomy/procedures", { name: "Release notes", level: "auto", start: { kind: "manual" }, steps: steps.map((s) => ({ ...s, confirm: false })) });
   app.autonomy.procedures.trigger(procedure.id, "a test");
   await app.autonomy.idle();
@@ -75,7 +75,7 @@ test("changed steps wait for the owner's yes, then replace the steps under the s
 
 test("a change asked from steps that moved since, or while it runs, is refused and keeps waiting; a no blocks only that change", async (t) => {
   const { app, call, api } = await fixture(t);
-  await api("/api/autonomy/switch", { part: "procedures", mode: "on" });
+  await api("/api/autonomy/switch", { part: "procedures", mode: "on", confirmLoosening: true });
   const { procedure } = await api("/api/autonomy/procedures", { name: "Notes", level: "ask-to-start", start: { kind: "manual" }, steps });
   const one = [{ title: "One", prompt: "Do one thing." }], two = [{ title: "Two", prompt: "Do two things." }];
   assert.equal((await call(`/api/autonomy/procedures/${procedure.id}/propose`, { steps })).status, 400, "no change is refused");
