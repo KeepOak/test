@@ -218,6 +218,8 @@ export interface Provider {
    * its steps runs (src/providers/cli-agent.ts): the runtime's silence watchdog is not put on it.
    */
   readonly keepsOwnTime?: boolean;
+  /** The model this connection asks for, when it names one; a preset made from the connection alone takes this name. */
+  readonly model?: string;
   complete(request: CompletionRequest): Promise<Completion>;
   /** Optional audio endpoints (OpenAI-compatible transcription and speech); null if unavailable. */
   audio?(): { endpoint: string; apiKey: string } | null;
