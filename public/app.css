@@ -3864,3 +3864,11 @@ p.ic-t,div.ic-t{display:flex}
 /* area: parity B1 (chat and composer) */
 /* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
 @media (max-width:560px){.msg-acts .ts15{display:none}}
+
+/* area: parity B2 (side panel, stage and computers) */
+/* A tab per computer under the full-size view's top bar takes a row of its own. */
+.stage7.tabs-b2{grid-template-rows:auto auto minmax(0,1fr) auto}
+/* All screens: a computer the engine keeps no picture of shows the empty line on the panel's own fill. */
+.st7-screen.grid7:has(.st7-empty){background:var(--fill)}
+/* A file a task made, as it wrote it (the prototype's preview in the file dialog). */
+.made-b2{margin:0;font:12px/1.6 var(--mono);background:var(--fill);border-radius:10px;padding:12px;overflow:auto;white-space:pre-wrap}

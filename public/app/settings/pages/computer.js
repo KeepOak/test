@@ -11,7 +11,11 @@
    that Trunk; the approval preset is not touched. Borrowing your own browser stays greyed.
    Paired devices (GET /api/devices): "Stop lending" switches off everything a phone lends (POST
    /api/devices/<id>/switch, on: false, for each), and "Remove" unpairs a device after a confirm (POST
-   /api/devices/<id>/revoke; its key stops working at once). Both are the owner's alone in the engine. */
+   /api/devices/<id>/revoke; its key stops working at once). Both are the owner's alone in the engine.
+   Parity B2 (pane-stage-014): each computer card says whether it is ready (This computer always, the engine runs on it;
+   a paired one while it is connected, GET /api/devices `connected`, else Offline) and which Trunks may use it (each
+   Trunk's list, GET /api/trunks/<id>/computers; a Trunk with nothing saved may use every computer). The prototype's
+   sleep line needs this PC's power plan, which the engine does not read, so it is not drawn. */
 import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { markLive } from "../../core/features.js";
@@ -21,7 +25,7 @@ import { on } from "../../core/actions.js";
 import { onPaired } from "../../flows/pair.js";
 import { glyphSvg, hexOr } from "../../flows/name-device.js"; // finish-soon-a
 import { t } from "../../../i18n.js";
-import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17 } from "../../flows/computers17.js"; // pass 17 part D §9, §1
+import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17, viewOf } from "../../flows/computers17.js"; // pass 17 part D §9, §1
 import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
 import { computer17 } from "../p17-more.js";
 
@@ -97,10 +101,17 @@ const removeBtn = (d) => `<button class="btn ghost sm" type="button" data-act="d
 /* A computer named after pairing shows the glyph and colour chosen then (flows/name-device.js, GET /api/devices). */
 const lookTile = (d) => (d.glyph ? `<span class="ico-tile"${hexOr(d.color) ? ` data-css="color:${d.color}"` : ""}>${glyphSvg(d.glyph)}</span>` : "monitor");
 
+/* The Trunks that may use this computer, by their own lists; "" before the lists are read. */
+function usedBy(cid) {
+  const names = (E.trunks ?? []).filter((tr) => viewOf(tr.id)?.allowed.includes(cid)).map((tr) => tr.name).filter(Boolean);
+  return names.length ? `<span class="c7-users">${esc(t("window.settings.computer.used-by", { names: names.join(", ") }))}</span>` : "";
+}
+const readyPill = (ready) => `<span class="pill ${ready ? "ok" : "idle"}"><i></i>${ready ? t("strip.status.on") : t("window.shell.machines.offline")}</span>`;
+
 function computers() {
   const others = (D.devices?.devices ?? []).filter((d) => DESKTOP.includes(d.platform));
-  const mine = card("monitor", t("dashboard.computer.title"), t("window.settings.computer.your-windows-desktop"), `<span class="c7-reach">${t("window.settings.computer.your-screen-mouse-and-apps-it")}</span>`);
-  const theirs = others.length ? `<div class="grp8">${t("settings.card.remote-computers")}</div><div class="comps7">${others.map((d) => card(lookTile(d), esc(d.name), esc(PLATFORM[d.platform] ?? d.platform), "", removeBtn(d))).join("")}</div>` : "";
+  const mine = card("monitor", t("dashboard.computer.title"), t("window.settings.computer.your-windows-desktop"), `<span class="c7-reach">${t("window.settings.computer.your-screen-mouse-and-apps-it")}</span>${usedBy("this")}`, readyPill(true));
+  const theirs = others.length ? `<div class="grp8">${t("settings.card.remote-computers")}</div><div class="comps7">${others.map((d) => card(lookTile(d), esc(d.name), esc(PLATFORM[d.platform] ?? d.platform), usedBy(d.id), readyPill(d.connected === true) + removeBtn(d))).join("")}</div>` : "";
   const cloud = `<div class="grp8">${t("window.settings.computer.in-the-cloud")}</div><div class="comps7"><div class="comp7-card off7"><span class="ico-tile">${ic("globe", "s")}</span><span class="grow"><b>${t("window.settings.computer.keepoak-computer")}</b><small>${t("window.settings.computer.linux-in-the-cloud-stays-on")}</small><span class="c7-reach">${t("window.settings.computer.keeps-working-while-this-pc-sleeps")}</span></span><button class="btn sm" type="button" data-act="ko-start">${t("window.settings.computer.connect-keepoak-com")}</button></div></div>`;
   return `<div class="sec"><h2>${t("window.settings.computer.computers-they-may-use")}</h2><div class="grp8">${t("window.settings.computer.on-this-pc")}</div><div class="comps7">${mine}</div>${theirs}${cloud}${settingsCloudOffer()}
     <div class="acts" data-css="margin-top:10px"><button class="btn pri" type="button" data-act="comp-add">${ic("plus", "s")}${t("window.settings.computer.add-a-computer")}</button></div></div>`;
