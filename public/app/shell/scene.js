@@ -171,6 +171,7 @@ function wantPet() {
 }
 /* A mood for a while (the cheer's "yay", with a hop), then back to what it is doing. A redraw keeps both. */
 export function petMood(mood, ms, hop = 0) {
+  if (!petShown()) return; // no pet, nothing to cheer and nothing ticking
   P.moodNow = mood;
   P.moodUntil = Date.now() + ms;
   P.hopUntil = Date.now() + hop;
