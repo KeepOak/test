@@ -9,7 +9,7 @@ import { conversationCarrier, outsideSourceOf } from "./outside-origin.js"; // m
 import { personConversation } from "./household-approvals.js"; // Q261
 import { lockdownSettingsRefusal, tickToConfirm, withoutConfirm } from "./policy-change-guard.js";
 import {
-  ConversationModeSchema, clearConversationMode, conversationModeSettings, modeChoices, newConversationLooser, newConversationName,
+  ConversationModeSchema, clearConversationMode, conversationModeSettings, looserThan, modeChoices, newConversationLooser, newConversationName,
   nextConversationModeSettings, readConversationMode, saveConversationMode, saveConversationModeSettings, type ConversationMode,
   type ConversationModeSettings,
 } from "./conversation-mode.js";
@@ -133,6 +133,24 @@ export async function conversationModeApi(app: ModeApp, method: string, url: URL
   if (refused) throw new ConversationModeError(403, refused);
   pickConversationMode(app, choice.sessionId, choice.mode);
   return view(app, choice.sessionId);
+}
+
+/**
+ * Q013: what a conversation Branch opens by itself starts on (a new Trunk's own conversation, a room): the start the owner
+ * chose for new conversations (Ask first unless they picked another), never looser than their own setting in Settings ›
+ * Permissions, and never looser than Ask first under Lockdown, as the window's start is (`view`). Null when it follows
+ * the owner's setting: they chose "follow", or their setting is the stricter one.
+ */
+export function startingMode(app: ModeApp): ConversationMode | null {
+  const chosen = conversationModeSettings(app.store, app.runtime.owner).newConversation;
+  if (chosen === "follow") return null;
+  const capped = lockdownActive(app.store, app.runtime.owner) && looserThan(chosen, "ask-before-changes") ? "ask" : chosen;
+  return looserThan(capped, readPolicy(app.store, app.runtime.owner).preset) ? null : capped;
+}
+/** Q013: a conversation Branch opened by itself is given the same start as a new one in the window (`startingMode`). */
+export function startLikeNew(app: ModeApp, sessionId: string): void {
+  const mode = startingMode(app);
+  if (mode) pickConversationMode(app, sessionId, mode);
 }
 
 /** When the owner agrees a plan in a Plan conversation, it may now act: the conversation moves to Ask first. */

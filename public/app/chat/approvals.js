@@ -17,8 +17,10 @@ export const lockdownOn = () => L.on;
 /* Reads Lockdown from the engine and puts the window's look in step. Nothing is asked before sign-in. */
 export async function syncLockdown() {
   if (!E.state) return L.on;
+  const was = L.on;
   try { L.on = (await api("lockdown")).on === true; } catch (error) { console.warn(error.message); return L.on; }
   document.getElementById("app")?.classList.toggle("locked", L.on);
+  if (L.on !== was) render(); // what draws Lockdown's state (Overview's button, the mode) is drawn again
   return L.on;
 }
 

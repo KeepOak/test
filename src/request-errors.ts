@@ -6,8 +6,13 @@ const sentence = (message: string): string => {
   return `${plain}.`;
 };
 
-const fieldName = (path: PropertyKey[]): string => path.reduce<string>((name, part) =>
-  typeof part === "number" ? `${name}[${part}]` : name ? `${name}.${String(part)}` : String(part), "");
+/* A field's name only when it looks like one a schema declares: a key the request itself chose (a record's key, an
+   unknown field) can be anything, a pasted secret included, and is never repeated back. No digits: key-shaped values
+   carry them, the schemas' own field names do not. */
+const plainKey = (key: PropertyKey): boolean => typeof key === "string" && /^[A-Za-z_][A-Za-z_-]{0,31}$/.test(key);
+const fieldName = (path: PropertyKey[]): string => path.every((part) => typeof part === "number" || plainKey(part))
+  ? path.reduce<string>((name, part) => typeof part === "number" ? `${name}[${part}]` : name ? `${name}.${String(part)}` : String(part), "")
+  : "";
 
 export const isRequestShapeError = (error: unknown): error is z.ZodError => error instanceof z.ZodError;
 
@@ -26,7 +31,10 @@ function sizeText(issue: Issue, name: string, least: boolean): string {
 
 /** One issue in plain words: which field and what it needs. Never the value that was sent. */
 function issueText(issue: Issue): string {
-  if (issue.code === "unrecognized_keys") return `"${issue.keys[0] ?? "unknown"}" is not an accepted field.`;
+  if (issue.code === "unrecognized_keys") {
+    const key = issue.keys[0];
+    return key !== undefined && plainKey(key) ? `"${key}" is not an accepted field.` : "The request has a field that is not accepted.";
+  }
   const field = fieldName(issue.path), name = field ? `"${field}"` : "The request";
   if (!stock.test(issue.message)) return issue.message; // the schema's own sentence, as it wrote it
   if (issue.code === "too_small") return sizeText(issue, name, true);

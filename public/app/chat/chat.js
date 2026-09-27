@@ -342,9 +342,9 @@ export async function rereadOpen(force = false) {
   if (S.view !== "chat" || !id || C.sending) return false;
   const mark = openMark(id);
   if (!force && mark === C.mark) return false;
-  C.mark = mark;
   const got = await api("sessions/" + encodeURIComponent(id));
   if (C.sessionId !== id || C.sending) return false;
+  C.mark = mark; // only once the read succeeded, so a failed read is tried again on the next event
   C.messages = got.messages ?? C.messages;
   return true;
 }

@@ -58,6 +58,15 @@ test("validation failures read as sentences: the field and what it needs, never 
   assert.equal(validationText(z.object({ a: z.string() }).strict().safeParse({ a: "x", b: 1 }).error), '"b" is not an accepted field.');
   const own = z.object({ at: z.string().refine(() => false, "A daily time needs a timezone") });
   assert.equal(validationText(own.safeParse({ at: "x" }).error), "A daily time needs a timezone", "a schema's own sentence is kept");
+  // A key the request chose itself (an unknown field, a record's key) can be a pasted secret: never said back.
+  const secret = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c";
+  const unknown = validationText(z.object({ a: z.string() }).strict().safeParse({ a: "x", [secret]: 1 }).error);
+  assert.equal(unknown, "The request has a field that is not accepted.");
+  const keyed = validationText(z.object({ env: z.record(z.string(), z.string().max(3)) }).safeParse({ env: { [secret]: "too long" } }).error);
+  assert.doesNotMatch(keyed, /sk-live|too long/);
+  assert.match(keyed, /^The request needs at most 3 characters\.$/);
+  for (const value of [secret, { nested: secret }, [secret], 12345678901234])
+    assert.doesNotMatch(validationText(z.object({ token: z.number().int().max(10) }).safeParse({ token: value }).error), /sk-live|12345678901234/);
 });
 
 test("Q011: a blank group chat waits for a name and two Trunks, and the engine's refusal is in plain words", async (t) => {
@@ -108,16 +117,97 @@ test("Q006: engine stopped shows plain words and grey lights; back, it catches u
   assert.equal(await f.page.locator("#side .machine .dot.off").count(), 0, "and the light is on again");
 });
 
-test("Q013: Overview names what new conversations start on, and the owner's setting as that", async (t) => {
+/* The owner's report after a Beta update: a raw "Failed to fetch" toast while Branch restarted. The engine is really stopped
+   (closed, then started again on the same port and data), controls are pressed meanwhile, and no toast ever carries the
+   browser's words; back, the window carries on in the same page. An install the window started says nothing at all. */
+test("offline anywhere: a stopped engine never shows the browser's words; back, the same page carries on; an install is quiet", async (t) => {
+  const { chromium } = await import("playwright");
+  const root = await mkdtemp(join(tmpdir(), "qa-pass1-stop-"));
+  const dataDir = join(root, "data"), workspace = join(root, "workspace");
+  const up = { app: await createBranch({ workspace, dataDir, provider: slow }) };
+  up.server = await startServer(up.app, { dataDir, port: 0 });
+  t.after(async () => { await up.server?.close(); await up.app?.close(); await discardTemp(root); });
+  const port = Number(new URL(up.server.url).port), token = up.server.token;
+  const stop = async () => { const { server, app } = up; up.server = up.app = null; await server.close(); await app.close(); };
+  const start = async () => { up.app = await createBranch({ workspace, dataDir, provider: slow }); up.server = await startServer(up.app, { dataDir, port }); };
+  await fetch(new URL("/api/onboarding", up.server.url), { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+  await page.addInitScript(() => {
+    window.toastsSeen = [];
+    new MutationObserver(() => { for (const el of document.querySelectorAll(".toast")) window.toastsSeen.push(el.textContent); })
+      .observe(document, { childList: true, subtree: true, characterData: true });
+  });
+  await page.goto(up.server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await ready(page);
+  await page.evaluate(() => { window.samePage = true; });
+
+  await stop();
+  await page.locator("#offline18").waitFor({ timeout: 30000 });
+  for (const place of ["overview", "inbox", "automations", "library"]) {
+    await page.locator(`.side-nav [data-v="${place}"]`).click();
+    await page.waitForTimeout(400);
+  }
+  await page.locator('.side-nav [data-v="overview"]').click();
+  await page.locator('[data-act="lock"]').click().catch(() => undefined);
+  await page.locator('[data-act="pauseall"]').click().catch(() => undefined);
+  await page.waitForTimeout(1500);
+  const whileAway = await page.evaluate(() => window.toastsSeen);
+  assert.equal(whileAway.filter((words) => /fetch|NetworkError|Load failed|abort/i.test(words)).length, 0, whileAway.join(" | "));
+  assert.doesNotMatch(await page.locator("#app").innerText(), /Failed to fetch|NetworkError|Load failed/);
+
+  await start();
+  await page.locator("#offline18").waitFor({ state: "detached", timeout: 40000 });
+  const made = await up.app.runtime.run({ prompt: "Back after a real stop" });
+  assert.ok(made.sessionId);
+  await page.locator("#side").getByText("Back after a real stop").first().waitFor({ timeout: 30000 });
+  assert.equal(await page.evaluate(() => window.samePage), true, "no reload");
+
+  // An install the window started (core/api.js goingAway): the swap screen covers the restart, so nothing is said.
+  await page.evaluate(async () => (await import("/app/core/api.js")).goingAway());
+  const before = (await page.evaluate(() => window.toastsSeen)).length;
+  await stop();
+  await page.waitForTimeout(4000);
+  assert.equal(await page.locator("#offline18").count(), 0, "no offline notice during an install");
+  await start();
+  await page.waitForFunction(async () => (await import("/app/core/api.js")).link.up && !(await import("/app/core/api.js")).link.quiet, null, { timeout: 40000 });
+  const after = await page.evaluate(() => window.toastsSeen);
+  assert.equal(after.slice(before).filter((words) => /fetch|NetworkError|Load failed|abort|isn't running/i.test(words)).length, 0, after.join(" | "));
+  assert.equal(await page.evaluate(() => window.samePage), true);
+});
+
+test("Q013: new Trunks and rooms start on what new conversations start on, never looser; Overview names that one mode", async (t) => {
   const f = await windowFor(t);
+  const modeOf = async (sessionId) => (await f.call(`/api/conversation-mode?sessionId=${sessionId}`)).body.mode;
   const mode = (await f.call("/api/conversation-mode")).body;
   assert.equal(mode.newConversation, "ask");
+  const one = (await f.call("/api/trunks", { name: "Scout" })).body.trunk, two = (await f.call("/api/trunks", { name: "Ledger" })).body.trunk;
+  assert.equal(await modeOf(one.chatSessionId), "ask", "a new Trunk's own conversation starts on Ask first, as the chip says");
+  const room = (await f.call("/api/trunks/rooms", { name: "Price check", members: [one.id, two.id] })).body.room;
+  assert.equal(await modeOf(room.sessionId), "ask", "so does a new room");
+  for (const session of Object.values(room.memberSessions))
+    assert.equal(f.app.runtime.modeFollows(session), room.sessionId, "and each Trunk's side of the room is held to the room's mode");
+  // The owner's own setting is the ceiling: under Read only a new Trunk follows it (a mode of Ask first would be looser).
+  assert.equal((await f.call("/api/policy", { preset: "read-only" })).status, 200);
+  const three = (await f.call("/api/trunks", { name: "Quiet" })).body.trunk;
+  assert.equal(await modeOf(three.chatSessionId), null);
+  assert.equal((await f.call("/api/policy", { preset: "off", confirmLoosening: true })).status, 200);
+
   await ready(f.page);
   await f.page.locator('.side-nav [data-v="overview"]').click();
-  await f.page.waitForFunction(() => /New conversations start on/.test(document.querySelector(".ov-mode18")?.textContent ?? ""), null, { timeout: 15000 });
-  const words = await f.page.locator(".ov-mode18").innerText();
-  assert.match(words, /New conversations start on Ask first/);
-  assert.ok(words.includes(`still ${mode.following.label}`), words);
+  const tile = f.page.locator("section.tile", { has: f.page.locator('[data-act="setgo"][data-v="permissions"]') });
+  await f.page.waitForFunction(() => [...document.querySelectorAll("section.tile p")].some((p) => /^Mode: Ask first/.test(p.textContent.trim())), null, { timeout: 15000 });
+  const words = await tile.locator("p").first().innerText();
+  assert.doesNotMatch(words, /No approvals/, "one mode, the one everything new starts on");
+  const lock = tile.locator('[data-act="lock"]');
+  assert.equal(await lock.getAttribute("aria-pressed"), "false");
+  await lock.click();
+  await f.page.waitForFunction(() => document.querySelector('section.tile [data-act="lock"]')?.getAttribute("aria-pressed") === "true", null, { timeout: 15000 });
+  assert.equal((await lock.innerText()).trim(), "Turn Lockdown off");
+  assert.match(await tile.locator("p").first().innerText(), /^Mode: Lockdown/);
 });
 
 test("Q014: Ctrl K finds every place, Team included, and every Settings page", async (t) => {

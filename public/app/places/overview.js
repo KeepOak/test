@@ -89,19 +89,18 @@ function recentTile() {
   return `<section class="tile"><h2>${t("window.places.overview.recent-activity")}</h2>${rows}<div class="acts"><button class="btn sm" type="button" data-act="ptab" data-place="inbox" data-v="history">${t("window.places.overview.all-history")}</button></div></section>`;
 }
 
-/* The same truth the message box shows: what a new conversation starts on (the chip's own words), and, when that differs,
-   the owner's setting in Settings › Permissions, named as that. GET /api/conversation-mode: newConversation is null when
-   new conversations follow the owner's setting. */
-function modeLine() {
+/* One mode, as the prototype's tile names it: Lockdown while it is on; else what a new conversation, a new Trunk and a new
+   room start on (GET /api/conversation-mode newConversation, the chip's own words), or the owner's setting when they
+   follow it (newConversation null). Lockdown's button is the prototype's: "Turn Lockdown off" while it is on. */
+function modeName() {
+  if (lockdownOn()) return t("lockdown.label");
   const cm = conversationMode;
-  if (!cm) return "";
-  const setting = cm.following?.label ?? "";
-  const start = cm.newConversation ? modeLabel(cm.newConversation) : setting;
-  return start === setting ? t("mode.setting.savedMode", { mode: start }) : t("mode.note.line1", { start, setting });
+  return cm ? (cm.newConversation ? modeLabel(cm.newConversation) : cm.following?.label ?? "") : "";
 }
 
 function controlsTile() {
-  return `<section class="tile"><h2>${t("dashboard.area.controls")}</h2><p class="ov-mode18">${esc(modeLine())} <button class="link" type="button" data-act="setgo" data-v="permissions">${t("window.places.overview.change")}</button></p><div class="acts"><button class="btn bad sm" type="button" data-act="lock" aria-pressed="${lockdownOn()}">${t("lockdown.label")}</button><button class="btn sm" type="button" data-act="pauseall">${allPaused() ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")}</button></div></section>`;
+  const locked = lockdownOn();
+  return `<section class="tile"><h2>${t("dashboard.area.controls")}</h2><p>${t("window.places.overview.mode")} <b data-css="font-weight:600">${esc(modeName())}</b> · <button class="link" type="button" data-act="setgo" data-v="permissions">${t("window.places.overview.change")}</button></p><div class="acts"><button class="btn${locked ? "" : " bad"} sm" type="button" data-act="lock" aria-pressed="${locked}">${t(locked ? "dashboard.controls.lockdownOff" : "lockdown.label")}</button><button class="btn sm" type="button" data-act="pauseall">${allPaused() ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")}</button></div></section>`;
 }
 
 /* Everyone on this computer (GET /api/profiles: the owner, then each profile), as the prototype's tile lists them; the
