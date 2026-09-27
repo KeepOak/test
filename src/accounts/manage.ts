@@ -111,7 +111,9 @@ export async function addAccount(service: AccountsService, input: unknown) {
 export async function updateAccount(service: AccountsService, input: unknown) {
   const asked = UpdateSchema.parse(input);
   const settings = service.settings();
-  const pool = existingPool(settings, asked.pool);
+  // A connection whose list was never written down (only its first account, as GET /api/accounts shows it) is written
+  // down on its first change, the way adding an account does, so that first account can be switched off or renamed too.
+  const pool = settings.pools.find((entry) => entry.pool === asked.pool) ?? poolOf(settings, asked.pool, kindOf(service, asked.pool), new Date(service.now()));
   const account = accountIn(pool, asked.account);
   if (asked.label !== undefined) account.label = asked.label;
   if (asked.pinned !== undefined) account.pinned = asked.pinned;

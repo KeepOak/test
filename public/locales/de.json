@@ -9645,6 +9645,8 @@
   "window.why.tr-models": "Teams brauchen ein keepoak.com-Konto, und das ist noch nicht verfügbar.",
   "window.why.tr-skills": "Teams brauchen ein keepoak.com-Konto, und das ist noch nicht verfügbar.",
   "window.why.tr-sso": "Teams brauchen ein keepoak.com-Konto, und das ist noch nicht verfügbar.",
+  "window.why.p-inv-keepoak": "Teams brauchen ein keepoak.com-Konto, und das ist noch nicht verfügbar.",
+  "window.why.ob-brain-model": "Dieses Modell hat keine Konten zum Umschalten. Welches Modell antwortet, wählst du unter Einstellungen › Modelle.",
   "window.why.f15-keep-team-conversations": "Teams brauchen ein keepoak.com-Konto, und das ist noch nicht verfügbar.",
   "window.why.widget6": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: Das Snippet würde einen Zugangsschlüssel zu diesem Computer enthalten.",
   "window.why.keep-warm-no-claude": "Warm gehalten wird nur eine Claude-Verbindung mit API-Schlüssel, und es ist keine eingerichtet.",
