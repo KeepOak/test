@@ -9991,5 +9991,9 @@
   "window.chat.live.moved-limit-at": "Passé à « {to} » — « {from} » a atteint sa limite, renouvelée à {time}",
   "window.chat.live.moved-credit": "Passé à « {to} » — « {from} » n'a plus de crédit",
   "window.chat.live.moved-refused": "Passé à « {to} » — « {from} » a été refusé par le service",
-  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}"
+  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}",
+  "window.places.library17.import-spreadsheet": "Importer une feuille de calcul",
+  "window.places.library17.import-spreadsheet-hint": "Choisissez un fichier CSV, TSV, JSON ou Excel. Branch le garde dans la Bibliothèque et prépare une question SELECT que vous pouvez lancer.",
+  "window.places.library17.import-spreadsheet-limit": "Choisissez une feuille de calcul de moins de 8 Mo.",
+  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau."
 }

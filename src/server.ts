@@ -1328,7 +1328,8 @@ async function api(
   // p17: "Ask a spreadsheet" in Library › Documents, one read-only question over one of the owner's spreadsheets.
   if (path === "/api/data/ask" && request.method === "POST") {
     app.store.profiles.requireOwner("Asking a spreadsheet");
-    return askSpreadsheet({ documents: app.documents.list(app.runtime.owner), tables: app.dataTables }, await readBody(request));
+    return askSpreadsheet({ documents: app.documents.list(app.runtime.owner), tables: app.dataTables,
+      uploadedBytes: (id) => app.documents.uploadedBytes(app.runtime.owner, id) }, await readBody(request));
   }
   // FQ-collaboration: a comment pinned to a moment in a media file (video today), so it can be
   // reopened at the same position later.
