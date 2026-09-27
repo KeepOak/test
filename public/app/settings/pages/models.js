@@ -239,7 +239,8 @@ function companiesRow() {
   const only = X.savings?.values?.openrouter?.only ?? [];
   if (!ownerHere() || !X.savings?.openRouter || !(OR.open || only.length) || !OR.list) return "";
   const known = new Set(OR.list.map((c) => c.slug)), all = [...OR.list, ...only.filter((slug) => !known.has(slug)).map((slug) => ({ slug, name: slug }))];
-  return `<div class="ctl"><span class="chips8">${all.map((c) => `<button type="button" class="chip6" data-act="m-orco" data-v="${esc(c.slug)}" aria-pressed="${only.includes(c.slug)}">${esc(c.name)}</button>`).join("")}</span></div>`;
+  /* A row of its own across the whole card (no title column to share), and a long list scrolls inside it. */
+  return `<div class="ctl"><span class="chips8" role="group" aria-label="${esc(t("window.settings.models.only-ones-i-list"))}" data-css="grid-column:1 / -1;max-height:220px;overflow:auto">${all.map((c) => `<button type="button" class="chip6" data-act="m-orco" data-v="${esc(c.slug)}" aria-pressed="${only.includes(c.slug)}">${esc(c.name)}</button>`).join("")}</span></div>`;
 }
 function toggleCompany(slug) {
   const only = X.savings?.values?.openrouter?.only ?? [], next = only.includes(slug) ? only.filter((s) => s !== slug) : [...only, slug].slice(0, 16);

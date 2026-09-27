@@ -138,3 +138,39 @@ test("mixing: a hard task is asked of both picks and the hard one writes; easy t
   assert.equal(forgot.status, 200);
   assert.equal(app.runtime.models.presets.has("mixture-hard-questions"), false, "no mixture left pointing at a connection that is gone");
 });
+
+test("the window: Only ones I list opens OpenRouter's companies as chips across the card, and a chip saves the list", async (t) => {
+  const { newWindow } = await import("./new-window-places.mjs");
+  const { openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const presets = [{ id: "or", name: "OpenRouter · Qwen3.6 Coder 480B", provider: openRouterProvider(), model: "qwen/qwen3.6-coder" }];
+  const { app, page, errors } = await newWindow(t, { options: { presets }, width: 1280, height: 900 });
+  const { fetchImpl, calls } = fetcher();
+  app.companiesFetch = fetchImpl;
+  await openSettingsPage(page, "models");
+  await setLevel(page, "technical");
+  const only = page.locator('.set-col [data-act="m-orlist"]');
+  await only.waitFor({ timeout: 20000 });
+  assert.equal(calls.length, 0, "nothing is asked of OpenRouter until the list is opened");
+  await only.click();
+  const chips = page.locator('.set-col [data-act="m-orco"]');
+  await chips.nth(2).waitFor({ timeout: 20000 });
+  assert.deepEqual(await chips.allTextContents(), ["Anthropic", "Black Forest Labs", "Cerebras"], "plain slugs only, sorted");
+  await page.locator('.set-col [data-act="m-orco"][data-v="cerebras"]').click();
+  await page.locator('.set-col [data-act="m-orco"][data-v="cerebras"][aria-pressed="true"]').waitFor();
+  assert.deepEqual(openRouterRouting(app.store, app.runtime.owner), { only: ["cerebras"] }, "the chip saved the list");
+  for (const width of [900, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    const layout = await page.evaluate(() => {
+      const group = document.querySelector('.set-col .chips8[role="group"]'), row = group.closest(".ctl");
+      const box = (node) => node.getBoundingClientRect();
+      const picks = document.querySelector('.set-col [data-act="m-orlist"]').closest(".ctl");
+      const style = getComputedStyle(row), inner = box(row).width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      return { group: box(group).toJSON(), inner, picks: box(picks).toJSON(),
+        chips: [...group.querySelectorAll("button")].map((chip) => box(chip).toJSON()) };
+    });
+    assert.ok(layout.group.width >= layout.inner - 1, `${width}: the chips run across the whole row, not its title column (${Math.round(layout.group.width)} of ${Math.round(layout.inner)} px)`);
+    assert.ok(layout.group.top >= layout.picks.bottom - 0.5, `${width}: the chips sit below OpenRouter picks, never over it`);
+    for (const chip of layout.chips) assert.ok(chip.left >= layout.group.left - 0.5 && chip.right <= layout.group.right + 0.5, `${width}: each chip stays inside its row`);
+  }
+  assert.deepEqual(errors, []);
+});
