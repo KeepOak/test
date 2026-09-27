@@ -65,6 +65,56 @@ export async function browserBackedNames(read = (file) => readFile(join(ROOT, fi
   return [...names].sort();
 }
 
+/** How the product declares the shared tools' two targets (src/integrations/computer.ts), in any quotes. */
+const TWO_TARGETS = new RegExp("computerTargets\\s*=\\s*\\[[^\\]]*[" + String.fromCharCode(34, 39, 96) + "]window[" + String.fromCharCode(34, 39, 96) + "]");
+
+/**
+ * The tools that go to a web page **or** to a window on this computer, whichever their `at` says: the
+ * ones registered in the file that declares both targets. `at: "page"` runs the browser; `at: "window"`
+ * is the screen path and starts none. Read from the product, like the names, so another shared tool is
+ * covered the day it is written.
+ */
+export async function pageOrWindowNames(read = (file) => readFile(join(ROOT, file), "utf8"), files) {
+  const sources = await Promise.all((files ?? await productSources()).map((file) => read(file).catch(() => "")));
+  const names = new Set();
+  for (const source of sources) if (TWO_TARGETS.test(source))
+    for (const found of source.matchAll(NAME_DECLARATION)) names.add(found[1]);
+  return [...names].sort();
+}
+const PAGE_OR_WINDOW = await pageOrWindowNames();
+
+/**
+ * The rest of the call or object a tool's name was found in: from just after the name to the bracket
+ * that closes what holds it. Brackets inside strings are not counted. Capped, so a bracket that is
+ * never closed is not followed through the rest of the file.
+ */
+export function restOfCall(source, from) {
+  const quotes = String.fromCharCode(34, 39, 96);
+  let depth = 0, at = from;
+  const end = Math.min(source.length, from + 2000);
+  while (at < end) {
+    const one = source[at];
+    if (quotes.includes(one)) {
+      for (at++; at < end && source[at] !== one; at++) if (source[at] === "\\") at++;
+    } else if ("([{".includes(one)) depth++;
+    else if (")]}".includes(one)) { if (depth === 0) break; depth--; }
+    at++;
+  }
+  return source.slice(from, at);
+}
+
+/** `at: "window"` (or "page") as a key and a written value, also inside a JSON string with its quotes escaped. */
+const targetIs = (where) => {
+  const q = "[" + String.fromCharCode(34, 39, 96) + "]";
+  return new RegExp(`(?<![A-Za-z0-9_$])\\\\?${q}?at\\\\?${q}?\\s*:\\s*\\\\?${q}${where}\\\\?${q}`);
+};
+const AT_WINDOW = targetIs("window"), AT_PAGE = targetIs("page");
+/**
+ * A shared tool's call is browser use unless it is aimed at a window and only at a window. A target
+ * this cannot read (a variable, arguments built elsewhere) counts as browser use: it could be a page.
+ */
+export const onlyAWindow = (rest) => AT_WINDOW.test(rest) && !AT_PAGE.test(rest);
+
 /**
  * What the browser object itself can be asked to do, read off `BranchBrowser`. A written-out list of
  * method names left `annotate` and `extractShaped` unseen on the day they were added, and would have
@@ -176,7 +226,7 @@ export function receiversIn(source) {
  * took one line at a time could not see one. The line reported is the line the call starts on, which
  * is the line an excuse quotes.
  */
-export function callsitesIn(source, names, methods = [], receivers = receiversIn(source)) {
+export function callsitesIn(source, names, methods = [], receivers = receiversIn(source), pageOrWindow = PAGE_OR_WINDOW) {
   // Every character that is not a letter, a digit or an underscore is escaped one at a time. A
   // character class would do the same job in one line and is exactly the kind of line that arrives
   // here with a backslash missing.
@@ -188,8 +238,8 @@ export function callsitesIn(source, names, methods = [], receivers = receiversIn
   // between this file and a reader has to agree about how to escape them.
   const quote = "[" + String.fromCharCode(34, 39, 96) + "]";
   const patterns = [
-    new RegExp(`(?:execute|executeTool|call|run)${gap}\\(${gap}${quote}(?:${anyName})${quote}`, "g"),
-    new RegExp(`name:${gap}${quote}(?:${anyName})${quote}`, "g"),
+    new RegExp(`(?:execute|executeTool|call|run)${gap}\\(${gap}${quote}(${anyName})${quote}`, "g"),
+    new RegExp(`name:${gap}${quote}(${anyName})${quote}`, "g"),
     new RegExp(`\\b(?:${receivers.map(escaped).join("|") || "(?!)"})\\.(?:${anyMethod})${gap}\\(`, "g"),
   ];
   const lines = source.split(/\r?\n/);
@@ -205,7 +255,11 @@ export function callsitesIn(source, names, methods = [], receivers = receiversIn
   // about a line and a file may hold the same stand-in twice.
   const hit = new Set();
   for (const pattern of patterns)
-    for (const found of source.matchAll(pattern)) hit.add(lineAt(found.index));
+    for (const found of source.matchAll(pattern)) {
+      // A shared tool aimed at a window on this computer is the screen path: it starts no browser.
+      if (found[1] && pageOrWindow.includes(found[1]) && onlyAWindow(restOfCall(source, found.index + found[0].length))) continue;
+      hit.add(lineAt(found.index));
+    }
   return [...hit].sort((one, other) => one - other).map((index) => lines[index].trim());
 }
 
@@ -218,15 +272,6 @@ const EXCUSED = {
     why: "it registers a stand-in tool of its own called browser.click, whose execute returns { clicked: true }; no browser is involved",
     callsites: [
       "name: \"browser.click\", permission: \"browser.interact\", description: \"click\",",
-    ],
-  },
-  "tests/asks-verify.test.mjs": {
-    why: "these computer tools are aimed at a window on this computer (at: \"window\"), which is the desktop path, not the page one",
-    callsites: [
-      "await assert.rejects(registry.execute(\"computer.look\", { at: \"window\", window: \"Notes\" }, context), /turn|switch|off/i,",
-      "const looked = await registry.execute(\"computer.look\", { at: \"window\", window: \"Notes\" }, context);",
-      "await registry.execute(\"computer.press\", { at: \"window\", window: \"Notes\", name: \"Save\" }, context);",
-      "await registry.execute(\"computer.type\", { at: \"window\", window: \"Notes\", name: \"Body\", text: \"hello\" }, context);",
     ],
   },
   "tests/browser-flow-standing.test.mjs": {
@@ -303,6 +348,12 @@ const EXCUSED = {
       "await assert.rejects(browser.navigate(\"https://docs.rs/\", context), /not on the allowed list/);",
       "await assert.rejects(browser.navigate(\"https://user:pw@example.com/\", context), /not an allowed origin/);",
       "await assert.rejects(browser.navigate(nonsense, context), /not an allowed origin/, JSON.stringify(nonsense));",
+    ],
+  },
+  "tests/screen-guard.test.mjs": {
+    why: "every desktop.* and computer.* tool is swapped for a counting stand-in before the run starts (standIns), so this line's page-side computer.look is recorded and never reaches a browser; its window-side call is not browser use at all.",
+    callsites: [
+      "const { app, calls } = await scripted(t, [call(\"computer.look\", { at: \"window\", window: \"Chrome\" }, \"w1\"), call(\"computer.look\", { at: \"page\" }, \"g1\"), done]);",
     ],
   },
   "tests/tool-targets.test.mjs": {
@@ -602,6 +653,49 @@ test("the detector notices every way one of these tools can be made to run", asy
   assert.ok(methods.includes("annotate") && methods.includes("extractShaped") && methods.includes("navigate"),
     `the methods are read off BranchBrowser (${methods.length} of them)`);
   assert.equal(methods.includes("freeName"), false, "a private method is not something a test can call");
+});
+
+test("a shared computer.* tool aimed at a window is the screen, and every real browser use is still caught", async () => {
+  const names = await browserBackedNames(), methods = await browserMethods();
+  const seen = (source) => callsitesIn(source, names, methods).length;
+  assert.deepEqual(await pageOrWindowNames(), ["computer.look", "computer.press", "computer.type"],
+    "the shared tools are read from the file that declares both targets, and no browser.* tool is one");
+
+  // The screen side: aimed at a window, in every way a test writes it. None of these starts a browser.
+  assert.equal(seen('await registry.execute("computer.look", { at: "window", window: "Notes" }, context);'), 0, "through the registry");
+  assert.equal(seen('await registry.execute("computer.type", { at: "window", window: "Notes", name: "Body", text: "hi" }, context);'), 0,
+    "a name field beside the target is not a second target");
+  assert.equal(seen('call("computer.look", { at: "window", window: "Chrome" }, "w1")'), 0, "as a scripted model's call");
+  assert.equal(seen('({ id: "c1", name: "computer.press", arguments: JSON.stringify({ at: "window", window: "Notes", name: "OK" }) })'), 0,
+    "as a tool call with its arguments beside the name");
+  assert.equal(seen('({ id: "c1", name: "computer.look", arguments: "{\\"at\\":\\"window\\",\\"window\\":\\"Notes\\"}" })'), 0,
+    "and with its arguments already written as JSON");
+  assert.equal(seen(["await registry.execute(", '  "computer.look",', '  { at: "window", window: "Notes" },', "  context);"]
+    .join(String.fromCharCode(10))), 0, "and laid out over more than one line");
+
+  // The page side of the same tools is the browser, and anything this cannot read is taken to be.
+  assert.equal(seen('await registry.execute("computer.look", { at: "page" }, context);'), 1, "aimed at a page");
+  assert.equal(seen('await registry.execute("computer.press", { at: "page", window: "Chrome", name: "Buy" }, context);'), 1,
+    "aimed at a page, whatever else is written beside it");
+  assert.equal(seen('({ name: "computer.look", arguments: JSON.stringify({ at: "page" }) })'), 1, "as a tool call aimed at a page");
+  assert.equal(seen('await registry.execute("computer.look", input, context);'), 1, "a target in a variable could be a page");
+  assert.equal(seen('await registry.execute("computer.look", { at: where }, context);'), 1, "and so could an unwritten one");
+  assert.equal(seen('await registry.execute("computer.look", { at: "window", then: { at: "page" } }, context);'), 1,
+    "a call that names both is counted");
+  assert.equal(seen('await registry.execute("computer.look", { format: "window" }, context);'), 1,
+    "a key that only ends in at is not a target");
+  assert.equal(seen('call("computer.look", { at: "window", window: "Chrome" }, "w1"), call("computer.look", { at: "page" }, "g1")'), 1,
+    "a window call does not answer for the page call beside it on the same line");
+  const TWO_CALLS = ['await registry.execute("computer.look", { at: "window", window: "Notes" }, context);',
+    'await registry.execute("computer.look", { at: "page" }, context);'];
+  assert.deepEqual(callsitesIn(TWO_CALLS.join(String.fromCharCode(10)), names, methods), [TWO_CALLS[1]],
+    "and a page call after it is not read as part of the window call: each call is judged on its own arguments");
+
+  // A window target means nothing to a browser tool, and browser objects are untouched by any of this.
+  assert.equal(seen('await registry.execute("browser.navigate", { url, at: "window" }, context);'), 1, "a browser tool is always a browser");
+  assert.equal(seen('calls({ id: "c1", name: "browser.click", arguments: JSON.stringify({ at: "window" }) })'), 1, "and so is its tool call");
+  assert.equal(seen(['const driver = new BranchBrowser({});', 'await driver.navigate("https://example.org/", context);']
+    .join(String.fromCharCode(10))), 1, "and so is a browser the file makes and drives");
 });
 
 test("the files this was written for are in the group that gets a browser", async () => {
