@@ -9974,5 +9974,6 @@
   "window.chat.live.moved-limit-at": "Passé à « {to} » — « {from} » a atteint sa limite, renouvelée à {time}",
   "window.chat.live.moved-credit": "Passé à « {to} » — « {from} » n'a plus de crédit",
   "window.chat.live.moved-refused": "Passé à « {to} » — « {from} » a été refusé par le service",
-  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}"
+  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}",
+  "window.chat.stage.driving": "C’est vous qui pilotez · {name} est en pause"
 }

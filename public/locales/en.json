@@ -9973,5 +9973,6 @@
   "window.chat.live.moved-limit-at": "Moved to “{to}” — “{from}” hit its limit, resets {time}",
   "window.chat.live.moved-credit": "Moved to “{to}” — “{from}” is out of credit",
   "window.chat.live.moved-refused": "Moved to “{to}” — “{from}” was refused by the service",
-  "window.chat.live.moved-model": "Moved to “{to}” — “{from}” can't use {model}"
+  "window.chat.live.moved-model": "Moved to “{to}” — “{from}” can't use {model}",
+  "window.chat.stage.driving": "You’re driving · {name} is paused"
 }

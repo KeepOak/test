@@ -1205,6 +1205,8 @@ export const ROUTES = {
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
   "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
+  "/api/panels/screen/hand-back": "owner POST", // the owner hands this computer's screen back to the tasks
+  "/api/panels/screen/take-over": "owner POST", // the owner drives this computer's screen; tasks wait
   "/api/panels/browse": "owner POST", // parity-b2: the owner types an address into Branch's browser
   "/api/panels/browse/close": "owner POST", // parity-b2: and closes that window
   "/api/usage/glance": "look",
