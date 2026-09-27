@@ -37,7 +37,7 @@ function liveFace(run) {
   const trunk = E.trunks.find((tr) => tr.chatSessionId === run.sessionId), look = look17(trunk?.character);
   if (!look) return av(chatFace(run.sessionId), 34);
   const st = agentState(trunk) === "idle" ? "work" : agentState(trunk);
-  return `<span class="live-fig12">${figure17(look, st)}</span>`;
+  return `<span class="live-fig12">${figure17(look, st, "", 56)}</span>`;
 }
 
 function nowPart() {
