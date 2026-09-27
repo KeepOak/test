@@ -96,6 +96,8 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/learning-more/blocks/edit"),
     own("/api/learning-more/blocks/remove"),
     own("/api/learning-more/memory/label"),
+    // Seasons: a person reads, undoes and vetoes only their own nights of Rings (the scope is always theirs).
+    own("/api/seasons/morning/seen"), own("/api/seasons/rings/keep"), own("/api/seasons/rings/undo"), own("/api/seasons/rings/veto"),
     own("/api/local-models/details"),
     own("/api/local-models/offers"),
     own("/api/local-models/routing/preview"),
@@ -342,6 +344,8 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/memory/learned", "what was noticed about the person"),
   read("/api/memory/proposals", "facts proposed for the person to keep"),
   read("/api/memory/versions", "the earlier versions of one of the person's facts"),
+  read("/api/seasons", "the person's own nights of Rings and what they kept (src/seasons/api.ts reads profiles.scope())"),
+  read("/api/seasons/morning", "what the person's own last night kept"),
   read("/api/labels", "the person's own labels"),
   // Public catalogues and facts about the program: the same for everybody, with nothing of the owner's in them.
   read("/api/connections/catalog", "the connector catalogue"),

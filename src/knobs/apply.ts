@@ -103,6 +103,17 @@ export function maxModelRounds(store: Reader, owner: string, launch: { maxModelR
   return coding ? Math.max(launch.maxModelRounds, codingModelRounds) : launch.maxModelRounds;
 }
 
+/**
+ * Settings › Permissions › Messages per conversation per hour: why a new task may not start in this conversation now,
+ * or null. It counts the tasks the conversation started in the last hour.
+ */
+export function conversationRateRefusal(store: Reader & { sessionTasksSince(sessionId: string, since: string): number }, owner: string, sessionId: string, now = Date.now()): string | null {
+  const limit = readKnobs(store, owner, "limits").messagesPerConversationHour;
+  const count = store.sessionTasksSince(sessionId, new Date(now - 3_600_000).toISOString());
+  return count < limit ? null
+    : `This conversation has had ${limit} messages in the last hour, the most Settings › Permissions allows, so this one did not start. That stops a runaway loop; raise the figure there if you meant it.`;
+}
+
 /** mac7/coding-next: how long a model on this computer may take to start its reply, in milliseconds. */
 export function localFirstReplyMs(store: Reader, owner: string, launch: { localFirstReplyMs: number }): number {
   const seconds = readKnobs(store, owner, "limits").localFirstReplySeconds;
