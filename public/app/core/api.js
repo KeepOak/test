@@ -28,6 +28,11 @@ addEventListener("pagehide", () => { link.quiet = true; });
 /* A request that never reached the engine (it is not running, or is restarting): said in plain words, never the
    browser's own "Failed to fetch". */
 export const unreachable = (error) => Object.assign(new Error(t("window.shell.offline")), { offline: true, cause: error });
+/* A change that never reached the engine: said plainly that it was not done (Q063: Lockdown pressed while Branch was not
+   running must never look done), where a read says nothing and is asked again. */
+const notDone = (error) => Object.assign(new Error(t("window.shell.offline-not-done")), { offline: true, notDone: true, cause: error });
+/* Resolves once the engine answers again (at once when it is answering now). */
+export const whenBack = () => (link.up ? Promise.resolve() : new Promise((done) => waiting.add(done)));
 /* A read that failed on the network waits for the engine to answer again (at most a minute), then is asked once more. */
 const backAgain = () => new Promise((done) => { waiting.add(done); setTimeout(() => { waiting.delete(done); done(); }, 60_000); });
 
@@ -68,7 +73,7 @@ async function ask(path, body, method, signal, again) {
       await backAgain();
       if (link.up && !signal?.aborted) return ask(path, body, method, signal, false);
     }
-    throw unreachable(error);
+    throw verb === "GET" ? unreachable(error) : notDone(error);
   }
   setLink(true);
   const data = await response.json().catch(() => ({}));
@@ -84,7 +89,7 @@ async function ask(path, body, method, signal, again) {
 /* POST raw bytes (a recording, a file) with their own content type; answers the engine's JSON or throws its words. */
 export async function apiBytes(path, blob) {
   const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: { ...headers(false), "content-type": blob.type || "application/octet-stream" }, body: blob })
-    .catch((error) => { setLink(false); throw unreachable(error); });
+    .catch((error) => { setLink(false); throw notDone(error); });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(data.error || String(response.status)), { status: response.status });
   return data;

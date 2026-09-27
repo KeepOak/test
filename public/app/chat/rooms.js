@@ -13,7 +13,7 @@ import { esc } from "../core/dom.js";
 import { av } from "../core/ui.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
-import { t } from "../../i18n.js";
+import { t, plural } from "../../i18n.js";
 
 const R = { view: null, viewFor: null, answered: new Map() };
 
@@ -128,7 +128,7 @@ function groupedAsks(info, waiting, busy) {
   const rows = waiting.map((q) => groupRow(info, q, busy(q))).join("") + answered.map(([, a]) => doneRow(info, a)).join("");
   if (!waiting.length) { for (const [k] of answered) R.answered.delete(k); }
   const count = waiting.length + answered.length;
-  const title = count === 2 ? t("window.chat.room.two-need-you") : t("window.chat.room.need-you", { count });
+  const title = count === 2 ? t("window.chat.room.two-need-you") : plural(count, { one: "window.chat.room.need-you.one", other: "window.chat.room.need-you" });
   const pill = waiting.length ? `<span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span>` : `<span class="pill done ml"><i></i>${t("window.chat.room.answered")}</span>`;
   const all = waiting.length > 1 ? `<div class="acts"><button class="btn pri" type="button" data-act="g-all" data-room="${esc(room)}">${t("window.chat.room.yes-to-both")}</button></div>` : "";
   return `<div class="b"><div class="gut"></div><div><div class="card g-ask"><div class="card-h"><b>${esc(title)}</b>${pill}</div>${rows}${all}</div></div></div>`;

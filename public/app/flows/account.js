@@ -14,7 +14,7 @@ import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
 import { localPicker, initLocalPick, openLocalPicker } from "./localpick.js";
-import { SI, loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
+import { loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
 
 /* ---------- the engine's list, shared by Settings › Accounts and Models ---------- */
 export const A = { view: null, catalog: null };
@@ -168,19 +168,17 @@ function firstBody() {
   return `<div class="prow" data-css="border:0;padding:0 0 8px">${logo(W.pool, W.first, 36)}<span class="grow"><b>${esc(W.first)}</b><small>${esc(first?.label ?? "")}</small></span><span class="pill ok"><i></i>${t("layout.connected")}</span></div><p class="hint">${t("window.flows.acct.more-later")}</p>`;
 }
 
-const planName = () => (W.plan.kind === "chatgpt" ? "ChatGPT" : W.plan.kind === "gemini" ? "Gemini" : SI.view?.programs?.find((x) => x.id === W.plan.id)?.label ?? W.plan.id);
 const dots = (n) => `<div class="wiz-dots">${[1, 2, 3].map((i) => `<i class="${i <= n ? "wz" : ""}"></i>`).join("")}</div>`;
 
 export function draw() {
-  if (W.plan) return openDlg({ title: t("window.flows.acct.add-a", { name: planName() }), body: dots(2) + planBody(), foot: planFoot() });
-  if (W.first) return openDlg({ title: t("window.flows.acct.add-a", { name: W.first }), body: dots(3) + firstBody(),
+  if (W.plan) return openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(2) + planBody(), foot: planFoot() });
+  if (W.first) return openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(3) + firstBody(),
     foot: `<button class="btn pri" type="button" data-act="aa-fin">${t("window.flows.acct.done")}</button>` });
-  const p = poolById(W.pool);
   const body = W.step === 1 ? step1() : W.step === 2 ? step2() : step3();
   const foot = W.step === 1 ? `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`
     : W.step === 2 ? `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-key">${t("window.flows.acct.add-key")}</button>`
     : `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-done">${t("window.flows.acct.add-account")}</button>`;
-  openDlg({ title: W.step === 1 ? t("window.flows.acct.add-an-account") : t("window.flows.acct.add-a", { name: p?.name ?? W.service?.name ?? W.pool }), body: dots(W.step) + body, foot, wide: W.step === 1 });
+  openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(W.step) + body, foot, wide: W.step === 1 });
 }
 
 /* Step 1 draws from the engine's list and catalogue, read fresh each time the wizard opens. */

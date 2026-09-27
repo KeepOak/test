@@ -16,7 +16,7 @@ import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { extraTabs } from "./pane.js";
 import { addMoreItem } from "./more.js";
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 
 const B = { sid: null, paths: [], at: 0, pick: null, model: null, from: null };
 let X = { state: () => ({ sessionId: null, messages: [] }), sendText: async () => {}, reopen: async () => {} };
@@ -80,7 +80,7 @@ export function pathBar(sid) {
 
 /* ---------- the side panel's Branches tab ---------- */
 function row(p, depth) {
-  const small = [t("window.chat.branches.messages", { count: p.messages }), modelOf(p) || t("window.chat.branches.same-model-lower"), when(p.createdAt)].filter(Boolean).map(esc).join(" · ");
+  const small = [plural(p.messages, { one: "window.chat.branches.messages.one", other: "window.chat.branches.messages" }), modelOf(p) || t("window.chat.branches.same-model-lower"), when(p.createdAt)].filter(Boolean).map(esc).join(" · ");
   const end = p.sessionId === B.sid ? `<span class="pill done"><i></i>${t("window.chat.branches.here")}</span>` : `<button class="btn sm" type="button" data-act="brgo17c" data-v="${esc(p.sessionId)}">${t("household.switch")}</button>`;
   return `<div class="brr17c${depth ? " sub17c" : ""}" data-css="--d:${Math.min(depth, 6)}"><span class="brdot17c ${p.sessionId === B.sid ? "on17c" : ""}"></span><span class="grow"><b>${esc(nameOf(p))}</b><small>${small}</small><em>${esc(plain(p.lastAnswer).slice(0, 96))}</em></span>${end}</div>`;
 }
@@ -142,7 +142,7 @@ async function go(el) {
 
 function column(p) {
   const answer = p.lastAnswer ? text(p.lastAnswer) : `<p>${t("window.chat.branches.no-answer")}</p>`;
-  const small = [modelOf(p) || t("window.chat.branches.same-model-lower"), t("window.chat.branches.messages", { count: p.messages })].map(esc).join(" · ");
+  const small = [modelOf(p) || t("window.chat.branches.same-model-lower"), plural(p.messages, { one: "window.chat.branches.messages.one", other: "window.chat.branches.messages" })].map(esc).join(" · ");
   return `<section class="cmpc17c"><h3>${esc(nameOf(p))}</h3><small>${small}</small><div class="txt">${answer}</div><button class="btn sm" type="button" data-act="brgo17c" data-v="${esc(p.sessionId)}">${p.sessionId === B.sid ? t("window.chat.branches.keep-going") : t("window.chat.branches.continue")}</button></section>`;
 }
 function compare() {

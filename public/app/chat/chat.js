@@ -3,7 +3,7 @@
 
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
 import { S, E, refresh, trunkIntro } from "../core/state.js";
-import { api } from "../core/api.js";
+import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -501,8 +501,10 @@ async function sendPlain(prompt) {
   C.sending = true;
   watchThinking(true);
   renderNow();
+  let started = false;
   try {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : await startMode()) });
+    started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
@@ -510,7 +512,8 @@ async function sendPlain(prompt) {
     readNewReply(before, C.messages);
     await loadWaiting();
   } catch (error) {
-    C.messages.push({ role: "assistant", content: error.message });
+    if (error.offline && !started) keepForLater(prompt);
+    else C.messages.push({ role: "assistant", content: error.message });
   } finally {
     C.sending = false;
     watchThinking(false);
@@ -523,6 +526,19 @@ async function sendPlain(prompt) {
     $("#prompt")?.focus();
   }
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
+}
+
+/* Q063: a message the engine never got (Branch was not running) goes back in the box, and is sent once the engine
+   answers again, unless the person changed it or went elsewhere meanwhile. */
+function keepForLater(prompt) {
+  const sid = C.sessionId;
+  C.messages.pop();
+  S.drafts[sid ?? "new"] = prompt;
+  const box = $("#prompt");
+  if (box) box.value = prompt;
+  whenBack().then(() => {
+    if (C.sessionId === sid && !C.sending && ($("#prompt")?.value ?? "").trim() === prompt) return send();
+  }).catch((error) => toast(error.message));
 }
 
 /* A room answers in the background (each member in its own conversation): its conversation is read again each second
