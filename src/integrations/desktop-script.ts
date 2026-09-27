@@ -1,4 +1,5 @@
 import { accessSync, constants } from 'node:fs';
+import { assertRealScreenAllowed } from './real-screen-guard.js'; // dogfood follow-up
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -468,6 +469,7 @@ export class DesktopScriptRunner {
    */
   async run(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
     if (this.platform !== 'win32') return this.runPosix(action, payload, signal);
+    assertRealScreenAllowed(); // dogfood follow-up: never the real screen from a test without the opt-in
     const script = await this.scriptPath();
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
     const child = new ShellProcess({
@@ -497,7 +499,8 @@ export class DesktopScriptRunner {
     const locate = this.posix.locate ?? locateProgram;
     const problem = posixAvailability(this.platform, this.posix.env ?? process.env, locate);
     if (problem) throw new Error(problem);
-    const exec = this.posix.exec ?? runBounded;
+    // A program finder handed in by code (tests only; Branch itself never passes one) may point at a test's stand-in.
+    const exec = this.posix.exec ?? boundedRunner(this.posix.locate !== undefined);
     if (this.platform === 'darwin') {
       const folder = await this.privateFolder();
       const script = join(folder, 'branch-desktop.js');
@@ -509,8 +512,11 @@ export class DesktopScriptRunner {
   /** parity-b2 (smooth): the one program the owner's live view of this screen reads from on Windows, started on first use. */
   liveProcess(): LiveScreenProcess | null {
     if (this.platform !== 'win32') return null;
-    return new LiveScreenProcess(async () => ({ executable: this.executable,
-      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await this.scriptPath(), '-Action', 'live', '-Payload', 'e30='] }));
+    return new LiveScreenProcess(async () => {
+      assertRealScreenAllowed(); // dogfood follow-up: the real screen reader, never from a test without the opt-in
+      return { executable: this.executable,
+        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await this.scriptPath(), '-Action', 'live', '-Payload', 'e30='] };
+    });
   }
   private async privateFolder(): Promise<string> {
     this.folder ??= mkdtemp(join(tmpdir(), 'branch-desktop-'));
@@ -522,8 +528,13 @@ export class DesktopScriptRunner {
   }
 }
 
-/** A Mac or Linux program run through the same bounded runner, with only the search path passed on. */
-const runBounded: PosixExec = async (executable, args, signal) => {
+/**
+ * A Mac or Linux program run through the same bounded runner, with only the search path passed on. Dogfood follow-up:
+ * the real-screen guard is asked first; only when the program came from a finder handed in by code may a test's own
+ * stand-in in the temp folder run.
+ */
+const boundedRunner = (standIns: boolean): PosixExec => async (executable, args, signal) => {
+  assertRealScreenAllowed(standIns ? executable : undefined);
   const child = new ShellProcess({
     executable, args, cwd: tmpdir(),
     env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin', HOME: process.env.HOME ?? tmpdir(), TMPDIR: tmpdir(),

@@ -20,8 +20,6 @@ const maximumMessages = 1000, maximumBytes = 4 * 1024 * 1024;
  * here can read or delete a conversation's files.
  */
 export interface ConversationFiles {
-  /** The same bytes in another conversation's folder, under names that conversation chooses itself. */
-  copyInto(from: string, to: string, refs: readonly AttachmentRef[]): AttachmentRef[];
   /** Bytes that came from outside, written into a conversation's folder under names made here. */
   writeInto(to: string, files: readonly { ref: AttachmentRef; bytes: Buffer }[]): AttachmentRef[];
   /** One file a conversation holds, read back whole, for putting into an archive. */
@@ -30,24 +28,46 @@ export interface ConversationFiles {
   bytesHeld(sessionId: string): number | null;
   /** Throws away everything written for a copy whose database work did not go through. */
   discard(sessionId: string): void;
-  /** A duplicate's files copied ahead of its database work, off the engine thread, keeping the disk's reserve. */
+  /** A copy's files, copied ahead of its database work, off the engine thread, keeping the disk's reserve. */
   prepareCopies(from: string, to: string, refs: readonly AttachmentRef[]): Promise<AttachmentRef[]>;
-  /** Moves those copies into place and lists them, inside the duplicate's transaction. */
+  /** Moves those copies into place and lists them, inside the copy's transaction. */
   commitPrepared(to: string, made: AttachmentRef[]): AttachmentRef[];
 }
 /**
- * Gives every message in a copy its own references, by copying the files the originals name into the
- * new conversation's folder under names it chooses itself. A message naming files with nothing to
- * copy them stops the copy: a conversation full of cards that cannot open is worse than not making
- * it, and the owner is told which of the two happened.
+ * The files a conversation's messages name, one per file however many messages name it (copying per message wrote the
+ * bytes again for every mention, and left all but the last pointing at a file nothing named). One id described two
+ * different ways is refused: this cannot tell which description is true. `most` caps how many there may be.
  */
-export function withCopiedFiles(messages: Message[], from: string, to: string, files: ConversationFiles | null): Message[] {
-  if (!messages.some((message) => message.attachments?.length)) return messages;
-  if (!files)
-    throw new Error("This conversation has files attached, and this copy cannot be given its own copy of them");
-  return messages.map((message) => message.attachments?.length
-    ? { ...message, attachments: files.copyInto(from, to, message.attachments) }
-    : message);
+export function filesNamed(messages: readonly Message[], most = Infinity): AttachmentRef[] {
+  const once = new Map<string, AttachmentRef>();
+  for (const message of messages)
+    for (const ref of message.attachments ?? []) {
+      const first = once.get(ref.id);
+      if (first && (first.name !== ref.name || first.mediaType !== ref.mediaType || first.kind !== ref.kind || first.bytes !== ref.bytes))
+        throw new Error("This conversation describes one of its files in two different ways");
+      if (!first) once.set(ref.id, ref);
+    }
+  if (once.size > most) throw new Error(`A conversation carries up to ${most} files`);
+  return [...once.values()];
+}
+/** Each message naming the copy made for it, never an id the source chose. */
+export const bindFiles = (messages: readonly Message[], bound: ReadonlyMap<string, AttachmentRef>): Message[] => messages.map((message) => message.attachments?.length
+  ? { ...message, attachments: message.attachments.map((ref) => bound.get(ref.id)!) }
+  : message);
+/**
+ * A copy's own copy of every file its messages name, made before its database work: off the engine thread, in the new
+ * conversation's folder, under names it chooses itself. Messages naming files with nothing to copy them stop the copy:
+ * a conversation full of cards that cannot open is worse than not making it. Whatever was written is thrown away when
+ * the copy stops here; the caller moves the rest into place inside its transaction (`commit`) or throws it away.
+ */
+export async function copiedFiles(messages: readonly Message[], from: string, to: string, files: ConversationFiles | null, most = Infinity):
+  Promise<{ messages: Message[]; commit: () => void }> {
+  const wanted = filesNamed(messages, most);
+  if (!wanted.length) return { messages: [...messages], commit: () => undefined };
+  if (!files) throw new Error("This conversation has files attached, and this copy cannot be given its own copy of them");
+  let made: AttachmentRef[];
+  try { made = await files.prepareCopies(from, to, wanted); } catch (error) { files.discard(to); throw error; }
+  return { messages: bindFiles(messages, new Map(wanted.map((ref, at) => [ref.id, made[at]!] as const))), commit: () => { files.commitPrepared(to, made); } };
 }
 
 /** Conversation copies use new source IDs; workspace state is shared. */
@@ -63,7 +83,7 @@ export class SessionBranches {
    * that message, so the new path can answer it again without the words appearing twice. The branch
    * record still names the message it came off.
    */
-  branch(owner: string, input: BranchInput, agent?: string, before = false) {
+  async branch(owner: string, input: BranchInput, agent?: string, before = false) {
     const { sessionId: parentSessionId, messageId } = BranchSessionSchema.parse(input);
     this.requireOwner(owner, parentSessionId);
     if (agent && !canAccessSession(this.db, parentSessionId, agent))
@@ -81,21 +101,26 @@ export class SessionBranches {
     if (reconcileTranscript(rows.map(row => JSON.parse(String(row.body)) as Message), "branch check").added)
       throw new Error("The selected conversation contains unfinished tool requests");
     const sessionId = randomUUID(), createdAt = new Date().toISOString();
+    // The branch gets its own copy of every file, in its own folder, under its own names, copied off the engine thread
+    // before anything is written. Copying the parent's references instead would have put cards here that cannot open,
+    // and would have tied this conversation's files to the lifetime of the one it came off.
+    const copied = await copiedFiles(rows.map((row) => JSON.parse(String(row.body)) as Message), parentSessionId, sessionId, this.files());
     this.db.exec("BEGIN");
     try {
       this.db.prepare("INSERT INTO sessions(id,owner,created_at) VALUES(?,?,?)").run(sessionId, owner, createdAt);
       const insert = this.db.prepare("INSERT INTO messages(session_id,body,created_at) VALUES(?,?,?)");
-      // The branch gets its own copy of every file, in its own folder, under its own names. Copying
-      // the parent's references instead would have put cards here that cannot open, and would have
-      // tied this conversation's files to the lifetime of the one it came off.
-      const copied = withCopiedFiles(rows.map((row) => JSON.parse(String(row.body)) as Message),
-        parentSessionId, sessionId, this.files());
       // Each copied message keeps when it was first written.
-      copied.forEach((message, i) => insert.run(sessionId, JSON.stringify(message), rows[i]?.created_at == null ? null : String(rows[i]!.created_at)));
+      copied.messages.forEach((message, i) => insert.run(sessionId, JSON.stringify(message), rows[i]?.created_at == null ? null : String(rows[i]!.created_at)));
       this.db.prepare("INSERT INTO session_branches VALUES(?,?,?,?)")
         .run(sessionId, parentSessionId, messageId, createdAt);
+      copied.commit();
       this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      // The branch does not exist, so neither may its files.
+      this.files()?.discard(sessionId);
+      throw error;
+    }
     return { sessionId, parentSessionId, branchPointMessageId: messageId, copiedMessages: rows.length };
   }
   view(owner: string, input: string) {

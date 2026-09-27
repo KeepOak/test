@@ -1,4 +1,5 @@
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
+import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
 import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
@@ -400,9 +401,9 @@ export async function createBranch(options: {
   // A stop at the wrong moment must not turn a temporary conversation's files into permanent ones.
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
-  const sweeping = attachments.sweepTemporary().catch(() => 0);
-  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
-  void attachments.sweepIncoming();
+  // attach-3: files sent ahead of a message in an earlier run that were still waiting wait again (a restart between a
+  // paste and its message loses none); anything else left there can never be named again, and its bytes go.
+  const sweeping = Promise.all([attachments.sweepTemporary().catch(() => 0), attachments.sweepIncoming().catch(() => undefined)]);
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
@@ -730,6 +731,8 @@ export async function createBranch(options: {
   });
   // ---- Wave mac5 (local models) hook: off by default; see src/local-kit.ts. ----
   await startLocalModels({ store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir });
+  // Dogfood follow-up: a model's context window, read from what its service publishes, before the first request.
+  runtime.modelInfo = (preset) => readModelWindow(preset, web.policy);
   // ---- end wave mac5 hook ----
   // Pictures, speech and what a video's headers say. Every one of these refuses in plain words
   // when the connected model has no such service, and keeps what it makes beside the database.
