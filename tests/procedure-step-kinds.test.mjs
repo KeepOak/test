@@ -38,6 +38,49 @@ async function world(t, answer = () => "Done.") {
 }
 const auto = (name, steps, extra = {}) => ({ name, level: "auto", start: { kind: "manual" }, steps, ...extra });
 
+test("returning to an approved shape requires a fresh yes for the new version", async (t) => {
+  const { ledger, procedures, unattended, yes } = await world(t);
+  const steps = [{ kind: "loop", title: "Repeat", prompt: "Say hi.", times: 2 }];
+  const made = procedures.create(auto("Versioned", steps));
+  const first = unattended()[0];
+  yes(first);
+  for (const next of [[{ ...steps[0], times: 3 }], steps]) {
+    const q = procedures.proposeChange(made.id, { steps: next });
+    procedures.applyChange(ledger.get(q.id).payload);
+    ledger.settle(q.id, true);
+  }
+  const newest = unattended()[0];
+  assert.notEqual(newest.fingerprint, first.fingerprint);
+  assert.equal(procedures.trigger(made.id, "test").started, false);
+  assert.throws(() => procedures.allowUnattended(first.payload), /changed after/);
+  yes(newest);
+  assert.equal(procedures.get(made.id).version, 3);
+});
+
+test("a full ledger cannot leave a created or changed procedure behind after reporting failure", async (t) => {
+  const { ledger, procedures, unattended } = await world(t);
+  const plain = procedures.create(auto("Existing", [{ title: "Say", prompt: "Hi." }]));
+  const change = procedures.proposeChange(plain.id, { steps: [{ kind: "loop", title: "Repeat", prompt: "Hi.", times: 2 }] });
+  const before = procedures.get(plain.id);
+  while (ledger.pendingCount() < 20) ledger.ask({ kind: "order", from: "owner", fingerprint: `fill-${ledger.pendingCount()}`,
+    title: "Waiting", detail: "Waiting", payload: {} });
+  const count = procedures.list().length;
+  assert.throws(() => procedures.create(auto("Must not appear", [{ kind: "loop", title: "Repeat", prompt: "Hi.", times: 2 }])), /20 things/);
+  assert.equal(procedures.list().length, count);
+  assert.throws(() => procedures.applyChange(ledger.get(change.id).payload), /20 things/);
+  assert.deepEqual(procedures.get(plain.id), before);
+  assert.equal(unattended().length, 0);
+});
+
+test("proposals fingerprint behavior beyond prompt text", async (t) => {
+  const { ledger, procedures } = await world(t);
+  const first = procedures.propose(auto("Wait", [{ kind: "wait", title: "Pause", minutes: 5 }]));
+  const second = procedures.propose(auto("Wait", [{ kind: "wait", title: "Pause", minutes: 60 }]));
+  assert.equal(first.waiting, true);
+  assert.equal(second.waiting, true);
+  assert.notEqual(ledger.get(first.id).fingerprint, ledger.get(second.id).fingerprint);
+});
+
 test("the words a person writes for When and Wait are read into the engine's own form", () => {
   assert.deepEqual(parseWhen("5:00 PM", "Europe/London"), { kind: "daily", time: "17:00", timezone: "Europe/London" });
   assert.deepEqual(parseWhen("at 07:30", "UTC"), { kind: "daily", time: "07:30", timezone: "UTC" });

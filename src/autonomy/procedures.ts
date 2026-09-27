@@ -134,14 +134,14 @@ export class SelfStarting {
     const id = randomUUID(), procedure = this.settled(ProcedureSchema.parse(this.words(input)), id);
     if (this.list().length >= maxProcedures) throw new Error(`At most ${maxProcedures} procedures that start themselves.`);
     // Its Repeat, Split and gather and Run a flow steps are asked about on their own: this yes does not cover them.
-    return this.askIfUnattended(this.save({ id, procedure, status: "active", nextDueAt: nextDue(procedure.start, this.now), running: null,
-      stats: { completed: 0, failed: 0, cancelled: 0 }, recent: [], levelNote: "", createdAt: this.now.toISOString() }));
+    return this.deps.store.atomically(() => this.askIfUnattended(this.save({ id, procedure, status: "active", nextDueAt: nextDue(procedure.start, this.now), running: null,
+      stats: { completed: 0, failed: 0, cancelled: 0 }, recent: [], levelNote: "", createdAt: this.now.toISOString() })));
   }
 
   propose(input: unknown): { waiting: boolean; id?: string } {
     const procedure = this.settled(ProcedureSchema.parse(this.words(input)));
     const entry = this.deps.ledger.ask({ kind: "procedure", from: "assistant",
-      fingerprint: fingerprintOf("procedure", procedure.name.toLowerCase(), procedure.steps.map((s) => s.prompt)),
+      fingerprint: fingerprintOf("procedure", { ...procedure, name: procedure.name.toLowerCase() }),
       title: `Procedure: ${quoteLine(procedure.name, 80)}`,
       detail: [
         `${procedure.steps.length} step${procedure.steps.length === 1 ? "" : "s"}, starting ${startWords(procedure.start)}, level ${procedure.level}, at most ${procedure.perDay} times a day.`,
@@ -218,7 +218,7 @@ export class SelfStarting {
     // The steps it had are kept as the version before, so the owner can see them and go back to them.
     const version = state.version ?? 1, at = this.now.toISOString();
     const history = [...(state.history ?? []), { version, steps: state.procedure.steps, start: state.procedure.start, from: state.changedAt ?? state.createdAt }].slice(-keptVersions);
-    return this.askIfUnattended(this.save({ ...state, procedure, version: version + 1, changedAt: at, history, ...(moved ? { nextDueAt: nextDue(procedure.start, this.now) } : {}) }));
+    return this.deps.store.atomically(() => this.askIfUnattended(this.save({ ...state, procedure, version: version + 1, changedAt: at, history, ...(moved ? { nextDueAt: nextDue(procedure.start, this.now) } : {}) })));
   }
 
   /** The owner changes the level or pauses it. Raising to "auto" clears the note about going back. */
@@ -470,7 +470,7 @@ export class SelfStarting {
     const total = this.worstTurns(steps);
     lines.push(`In all, one run makes at most ${total} requests to a Trunk without asking you each time (no procedure may make more than ${maxUnattendedTurns}), and it runs at most ${state.procedure.perDay} times a day.`);
     const shape = steps.map(({ version: _pinned, ...step }) => step);
-    return { lines, total, pins, fingerprint: fingerprintOf("unattended", state.id, shape, pins, state.procedure.perDay, maxUnattendedTurns) };
+    return { lines, total, pins, fingerprint: fingerprintOf("unattended", state.id, state.version ?? 1, shape, pins, state.procedure.perDay, maxUnattendedTurns) };
   }
 
   /** Why it may not run its unattended steps now (asking the owner if nothing is asked yet), or null. */

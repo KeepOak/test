@@ -82,5 +82,30 @@ test("a person builds Repeat, If it says and Wait steps, approves them, and says
   const allowed = (await api("/api/autonomy/procedures")).procedures.find((p) => p.id === procedure.id);
   assert.ok(allowed.unattended?.fingerprint, "the yes reached the engine");
   assert.match((await api(`/api/autonomy/procedures/${procedure.id}/run`, {})).reason, /asked you first/, "now it only asks to start, as its level says");
+
+  // Names are not unique: saving a different step must preserve the exact sub-flow the owner chose.
+  const make = async (steps) => (await api("/api/autonomy/procedures", { name: "Duplicate", level: "auto", start: { kind: "manual" }, steps })).procedure;
+  const second = await make([{ title: "Second", prompt: "Second target." }]);
+  const first = await make([{ title: "First", prompt: "First target." }]);
+  const outer = await make([{ title: "Start", prompt: "Begin." }, { kind: "sub", title: "Chosen", flowId: second.id }]);
+  const change = async (prompt) => {
+    const q = await api(`/api/autonomy/procedures/${outer.id}/propose`, { steps: [{ title: "Start", prompt }, { kind: "sub", title: "Chosen", flowId: second.id }] });
+    await api("/api/autonomy/decide", { id: q.id, yes: true });
+  };
+  await change("Begin again.");
+  const latest = (await api("/api/autonomy/ledger")).entries.find((e) => e.kind === "unattended" && e.payload.procedureId === outer.id);
+  await page.reload();
+  await page.locator('.side-nav [data-act="view"][data-v="automations"]').first().click();
+  await page.locator('[data-act="ptab"][data-place="automations"][data-v="procedures"]').first().click();
+  await page.locator(`[data-act="flow"][data-id="${outer.id}"]`).click();
+  assert.equal(await page.locator('.dlg [data-act="flow-unatt"][data-v="yes"]').getAttribute("data-id"), latest.id,
+    "the newest question appears despite the older pending one");
+  await page.locator(".dlg #ft-0").fill("Begin with care.");
+  await page.locator('.dlg [data-act="flow-save"]').click();
+  await page.locator('.dlg [data-act="ppapprove17d"]').click();
+  await page.locator(".dlg .un-flow").waitFor();
+  const saved = (await api("/api/autonomy/procedures")).procedures.find((p) => p.id === outer.id);
+  assert.equal(saved.procedure.steps[1].flowId, second.id);
+  assert.notEqual(saved.procedure.steps[1].flowId, first.id);
   assert.deepEqual(errors, []);
 });

@@ -140,6 +140,7 @@ function engineStep(s) {
   if (s.kind === "if") return { kind: "if", title, contains: text, ...(s.yes.trim() ? { yes: s.yes.trim() } : {}), ...(s.no.trim() ? { no: s.no.trim() } : {}) };
   if (s.kind === "loop") return { kind: "loop", title, prompt: text, times: s.orig?.kind === "loop" ? s.orig.times : REPEAT, ...(s.orig?.kind === "loop" && s.orig.until ? { until: s.orig.until } : {}) };
   if (s.kind === "fan") return { kind: "fan", title, prompt: text };
+  if (s.kind === "sub" && same) return { kind: "sub", title, flowId: s.orig.flowId };
   const flow = known.find((p) => p.procedure.name.trim().toLowerCase() === text.toLowerCase() && p.id !== F?.record?.id);
   return { kind: "sub", title, ...(flow ? { flowId: flow.id } : {}) };
 }
@@ -190,7 +191,7 @@ function unattendedNote() {
 }
 async function readUnattended(id) {
   const { entries } = await api("autonomy/ledger");
-  return (entries ?? []).filter((e) => e.kind === "unattended" && e.payload?.procedureId === id).at(-1) ?? null;
+  return (entries ?? []).find((e) => e.kind === "unattended" && e.payload?.procedureId === id) ?? null;
 }
 async function answerUnattended(el) {
   if (sending) return;
