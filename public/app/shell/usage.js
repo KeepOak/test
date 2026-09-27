@@ -9,6 +9,7 @@
 import { $, esc, render, renderNow } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
+import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -43,9 +44,15 @@ function popHTML(g) {
     <div class="lim-foot">${month}<span class="tb-grow"></span><button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
 }
 
+/* The version popover: while update by itself holds a ready update, its title is "Update ready, installs when …" in the
+   engine's words and the owner's tasks holding it are listed, each opening its conversation; the last failure, in the
+   updater's or engine's words, is said under it (shell/autoupdate.js lastLook). */
 function updatePop(plan) {
   const version = E.state?.version ?? "";
-  return `<div class="pt">Branch ${esc(version)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+  const waiting = waitingLine(), problem = lastLook.problem?.message;
+  const tasks = waiting ? holdingTasks().filter((task) => task.name)
+    .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
+  return `<div class="pt">${esc(waiting ?? `Branch ${version}`)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
 }
 
 /* ---------- the save-progress offer ---------- */
@@ -181,6 +188,7 @@ export function initUsage() {
   on("ckpt-no", () => document.querySelector(".ckpt-q")?.remove());
   checkLimits();
   setInterval(checkLimits, 20000);
-  on("updmenu", async (el) => openPop(el, updatePop(await api("comfort/update-plan", {}).catch(() => null)), { right: true }));
+  // The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked.
+  on("updmenu", async (el) => openPop(el, updatePop(lastLook.plan ?? await api("comfort/update-plan", {}).catch((error) => ({ reason: error.message }))), { right: true }));
   on("usagepop", async (el) => openPop(el, popHTML(await api("usage/glance").catch(() => null)), { right: true }));
 }
