@@ -1,4 +1,12 @@
 {
+  "window.chat-route.title": "Wer hier antwortet",
+  "window.chat-route.hint": "Wähle einen Trunk für eine Chat-App oder einen Chat. In deinem gekoppelten direkten Chat kannst du /trunk verwenden.",
+  "window.chat-route.whole": "ganze App",
+  "window.chat-route.connect": "Verbinde zuerst eine Chat-App.",
+  "window.chat-route.where": "Wo",
+  "window.chat-route.inherit": "Auswahl der App übernehmen",
+  "window.chat-route.default": "Standard-Trunk",
+  "window.chat-route.fresh": "Eine neue Auswahl startet einen neuen Chatverlauf. Frühere Gespräche bleiben im Verlauf.",
   "window.chat-command.title": "Befehle aus deinem eigenen Chat",
   "window.chat-command.on": "Deine ausgewählten gekoppelten Konten können Befehle anfordern. Jeder genaue Befehl fragt zuerst.",
   "window.chat-command.off": "Aus. Befehle aus Chats warten auf Freigabe im Branch-Fenster.",

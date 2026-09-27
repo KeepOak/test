@@ -1,4 +1,12 @@
 {
+  "window.chat-route.title": "Qui répond ici",
+  "window.chat-route.hint": "Choisissez un Trunk pour une application ou une discussion. Dans votre discussion directe jumelée, utilisez /trunk.",
+  "window.chat-route.whole": "toute l’application",
+  "window.chat-route.connect": "Connectez d’abord une application de discussion.",
+  "window.chat-route.where": "Où",
+  "window.chat-route.inherit": "Suivre le choix de l’application",
+  "window.chat-route.default": "Trunk par défaut",
+  "window.chat-route.fresh": "Changer qui répond ouvre un nouveau fil. Les discussions précédentes restent dans l’historique.",
   "window.chat-command.title": "Commandes depuis votre discussion",
   "window.chat-command.on": "Vos comptes associés sélectionnés peuvent demander des commandes. Chaque commande exacte demande votre accord.",
   "window.chat-command.off": "Désactivé. Les commandes attendent votre accord dans la fenêtre de Branch.",

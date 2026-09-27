@@ -85,6 +85,7 @@ import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { linkChatThreads } from "./channels/threads.js"; // defaulttrunk
+import { bindingFor as channelBinding, dropTrunkRoutes } from "./channels/routes.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
@@ -1329,6 +1330,10 @@ export async function createBranch(options: {
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
   channels.defaultTrunk = () => trunks.ensureDefault()?.id ?? null;
+  channels.bindingFor = (channel, chatId) => channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "");
+  channels.routingTrunks = () => trunks.records.list().map(({ id, name, handle }) => ({ id, name, handle }));
+  const removedTrunk = trunks.onRemoved;
+  trunks.onRemoved = id => { removedTrunk?.(id); dropTrunkRoutes(store, runtime.owner, id); };
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
   // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.

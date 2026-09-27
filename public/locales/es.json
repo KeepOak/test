@@ -1,4 +1,12 @@
 {
+  "window.chat-route.title": "Quién responde aquí",
+  "window.chat-route.hint": "Elige un Trunk para una aplicación o un chat. En tu chat directo vinculado, usa /trunk.",
+  "window.chat-route.whole": "toda la aplicación",
+  "window.chat-route.connect": "Conecta primero una aplicación de chat.",
+  "window.chat-route.where": "Dónde",
+  "window.chat-route.inherit": "Seguir la elección de la aplicación",
+  "window.chat-route.default": "Trunk predeterminado",
+  "window.chat-route.fresh": "Cambiar quién responde inicia un hilo nuevo. Las conversaciones anteriores permanecen en el historial.",
   "window.chat-command.title": "Comandos desde tu chat",
   "window.chat-command.on": "Tus cuentas vinculadas seleccionadas pueden pedir comandos. Cada comando exacto pide aprobación.",
   "window.chat-command.off": "Desactivado. Los comandos esperan aprobación en la ventana de Branch.",

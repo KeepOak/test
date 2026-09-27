@@ -29,6 +29,7 @@ import { lockedDown } from "../lockdown.js";
 import { commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
+import { channelRoutes, saveChannelRoute, routeFor, ChannelRouteError } from "./routes.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -238,6 +239,7 @@ interface ChatTurnState extends ChatTurn {
   waiters: ((outcome: Outcome) => void)[];
   live: LiveStatus | null;
   reply: ReplyStream | null;
+  routingAtStart: string | null;
 }
 const chatKey = (message: InboundMessage): string => `${message.channel}\u0001${message.chatId}`;
 /** One turn gathers at most this many messages, and never more words than a task may start with. */
@@ -300,6 +302,7 @@ export class ChannelRouter {
    * `createBranch` connects it; on its own no chat is bound.
    */
   bindingFor: (channel: string, chatId: string) => string | null = () => null;
+  routingTrunks: () => { id: string; name: string; handle: string }[] = () => [];
   /** The Trunk a chat with no binding starts its thread with: the default Trunk. `createBranch` connects it. */
   defaultTrunk: () => string | null = () => null;
   /** Like trunkReach, for a Trunk a new thread is about to start with. */
@@ -309,6 +312,20 @@ export class ChannelRouter {
   /** The Trunk a chat's next new thread goes to. */
   chatTrunk(channel: string, chatId: string): string | null {
     return this.bindingFor(channel, chatId) ?? this.defaultTrunk();
+  }
+  routeSettings(input: unknown, actor = this.runtime.owner) {
+    return saveChannelRoute({ store: this.store, owner: this.runtime.owner,
+      kindOf: channel => this.adapters.get(channel)?.adapter.kind ?? null,
+      activeChatIds: channel => [...this.turns.values()].flatMap(turn => turn.messages[0]?.channel === channel ? [turn.messages[0].chatId] : []),
+      busy: (channel, chatId) => this.turns.has(`${channel}\u0001${chatId}`),
+      requireTrunk: (channel, trunkId) => {
+        if (!this.routingTrunks().some(trunk => trunk.id === trunkId)) throw new ChannelRouteError("Choose an existing Trunk.");
+        const refusal = this.trunkIdReach(channel, trunkId);
+        if (refusal) throw new ChannelRouteError(refusal);
+      } }, input, actor);
+  }
+  routing() {
+    return { routes: channelRoutes(this.store, this.runtime.owner), trunks: this.routingTrunks() };
   }
   // ---- end defaulttrunk ----
   /**
@@ -540,7 +557,11 @@ export class ChannelRouter {
   /** The conversation this chat is carrying on, when there is one. */
   private sessionFor(channel: string, chatId: string): string | undefined {
     const owner = this.runtime.owner;
-    const saved = this.store.get("settings", owner, `channel-session:${channel}:${chatId}`)?.data as { sessionId?: string } | undefined;
+    const saved = this.store.get("settings", owner, `channel-session:${channel}:${chatId}`)?.data as Partial<ChatThread> | undefined;
+    if (saved?.trunkId && !saved.linked && saved.trunkId !== this.chatTrunk(channel, chatId)) {
+      freshThread(this.store, owner, channel, chatId);
+      return undefined;
+    }
     return saved?.sessionId && this.store.ownsSession(owner, saved.sessionId) ? saved.sessionId : undefined;
   }
 
@@ -731,6 +752,8 @@ export class ChannelRouter {
   }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
+    const routing = !message.voice && /^\/trunk(?:@[a-z0-9_]+)?(?:\s+(.*))?\s*$/i.exec(message.text.trim());
+    if (routing) return { name: "trunk", argument: routing[1]?.trim() ?? "" };
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
@@ -811,6 +834,11 @@ export class ChannelRouter {
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
     const turn = this.turns.get(chatKey(message));
+    if (command.name === "trunk") {
+      const reply = this.routeCommand(message, command.argument);
+      await this.deliver(channel, chatId, reply, `route:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
+      return "replied";
+    }
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
@@ -829,6 +857,28 @@ export class ChannelRouter {
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
     return "replied";
+  }
+  private routeCommand(message: InboundMessage, argument: string): string {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const own = !!adapter && ownerCommandsHere({ ...ownerCommands(this.store, this.runtime.owner), on: true },
+      { ...message, kind: adapter.kind }, lockedDown(this.store, this.runtime.owner) || this.appLocked())
+      && this.pair(message.channel, message.senderId)?.status === "approved" && this.senderAllowed(message.channel, message.senderId);
+    if (!argument) {
+      const id = this.chatTrunk(message.channel, message.chatId), trunk = this.routingTrunks().find(one => one.id === id);
+      const bound = adapter ? routeFor(this.store, this.runtime.owner, message.channel, message.chatId, adapter.kind) : null;
+      const current = `${trunk?.name ?? "The default Trunk"} answers here${bound ? " (chosen for this chat)" : " (default)"}.`;
+      return own ? `${current}\nSend /trunk <name>, /trunk default, or /trunk inherit.\n${this.routingTrunks().map(one => `${one.name} (@${one.handle})`).join("\n")}` : current;
+    }
+    if (!own) return "Change who answers in Branch's window, or from an approved account in your own paired direct chat.";
+    const reserved = argument.toLowerCase();
+    const chosen = this.routingTrunks().filter(one => [one.id.toLowerCase(), one.name.toLowerCase(), one.handle.toLowerCase()]
+      .includes(reserved.replace(/^@/, "")));
+    if (!["default", "inherit"].includes(reserved) && chosen.length !== 1) return "Choose one Trunk by its exact name or @handle. Send /trunk to see the list.";
+    try {
+      this.routeSettings({ channel: message.channel, scope: message.chatId,
+        trunkId: reserved === "default" ? "default" : reserved === "inherit" ? null : chosen[0]!.id }, `paired owner on ${message.channel}`);
+      return "Saved who answers here. Your next message starts a fresh thread; the earlier conversation stays in history.";
+    } catch (error) { return error instanceof Error ? error.message : "Could not save who answers here."; }
   }
   /** Keeps the chat in the list of chats, but pointed at no conversation. */
   private forgetSession(channel: string, chatId: string): void {
@@ -907,7 +957,7 @@ export class ChannelRouter {
     const messages = followUp ? all.filter((m, index) => index === 0 || fitsTurn(all.slice(0, index), m)) : all;
     const notes = all.filter((m) => !messages.includes(m)).map((message) => ({ text: message.text, message }));
     const turn: ChatTurnState = { phase: "gathering", runId: null, startedAt: Date.now(), passed: 0, dropped: false,
-      messages, notes, waiters: [], live: null, reply: null };
+      messages, notes, waiters: [], live: null, reply: null, routingAtStart: null };
     turn.live = this.liveFor(first, () => turn.runId);
     turn.reply = this.replyFor(first);
     this.turns.set(key, turn);
@@ -948,6 +998,8 @@ export class ChannelRouter {
       const sessionId = this.sessionFor(message.channel, message.chatId);
       // defaulttrunk: a chat with no conversation yet starts its one thread with the Trunk it is routed to.
       const trunkId = sessionId ? null : this.chatTrunk(message.channel, message.chatId);
+      const linked = this.store.get("settings", this.runtime.owner, `channel-session:${message.channel}:${message.chatId}`)?.data as Partial<ChatThread> | undefined;
+      turn.routingAtStart = linked?.linked ? null : sessionId ? this.trunkOfConversation(sessionId) : trunkId;
       // R17-A (Trunks): a chat linked to a Trunk's conversation is answered only where that Trunk may reach.
       const trunkRefusal = sessionId ? this.trunkReach(message.channel, sessionId) : trunkId ? this.trunkIdReach(message.channel, trunkId) : null;
       if (trunkRefusal) {
@@ -1044,6 +1096,8 @@ export class ChannelRouter {
     saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
+    if (turn.routingAtStart && turn.routingAtStart !== this.chatTrunk(message.channel, message.chatId))
+      freshThread(this.store, this.runtime.owner, message.channel, message.chatId);
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
     // A task that stopped to ask goes out as a question with buttons, not as words to read.
