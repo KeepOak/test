@@ -5,13 +5,15 @@
    only on the owner's click; nothing here starts by itself:
      1. switch models on this computer on (POST /api/local-models/switch) when they are off;
      2. when Ollama is not installed, show the engine's own install plan (POST /api/local-models/one-button/plan), and on
-        the owner's second click install exactly that plan (POST /api/local-models/one-button { agreedPlan, name }), which
-        then starts the setup of the picked model; when the engine cannot install it, show its install page and carry on
-        once the engine finds the program;
-     3. otherwise start the setup (POST /api/local-models/setup { runtime, name }) and follow the engine's job (its bytes
-        and percent) until it is done, with Cancel (POST /api/local-models/setup/stop);
+        the owner's second click install exactly that plan (POST /api/local-models/one-button { agreedPlan, name, once }),
+        which then starts the setup of the picked model; `once` is the engine's to hold for that one install, so the page
+        never switches installing on; when the engine cannot install it, show its install page and carry on once the
+        engine finds the program;
+     3. otherwise start the setup (POST /api/local-models/setup { runtime, name }, with `found` for a model Ollama already
+        has, which is used as it is) and follow the engine's job (its bytes and percent) until it is done, with Cancel
+        (POST /api/local-models/setup/stop);
      4. select the connection the setup made for answering (POST /api/models, and the open conversation's model) and say
-        hello through it (POST /api/models/test { preset }).
+        hello through it (POST /api/models/test { preset }); never for a setup the owner cancelled.
    Every refusal is shown in the engine's own words. */
 
 import { esc, applyCss } from "../core/dom.js";
@@ -22,7 +24,7 @@ import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { t } from "../../i18n.js";
 
-const LP = { data: null, loading: false, phase: null, req: null, job: null, plan: null, error: "", force: false, hello: null, ready: null };
+const LP = { data: null, loading: false, phase: null, req: null, job: null, plan: null, error: "", force: false, hello: null, ready: null, cancelled: null };
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /* Bytes the way the engine counts them in its own sentences (1024³ to a GB), smaller units for small files. */
@@ -199,19 +201,21 @@ const tooBig = (message) => /won.t fit/i.test(message);
 
 async function begin(name, force = false) {
   if (!name) return;
-  Object.assign(LP, { req: { name, force }, job: null, plan: null, error: "", force: false, hello: null, ready: null, phase: "starting" });
+  /* A model Ollama already has is used as it is, never pulled from the registry again. */
+  const found = haveIt(name);
+  Object.assign(LP, { req: { name, force, found }, job: null, plan: null, error: "", force: false, hello: null, ready: null, cancelled: null, phase: "starting" });
   paint();
   try {
     await switchOn();
     const made = connectionFor(name);
     if (made) return select(made.id, name);
     if (!ollamaThere()) return showPlan();
-    await setup(name, force);
+    await setup(name, force, found);
   } catch (error) { fail(error.message, !force && tooBig(error.message)); }
 }
 
-async function setup(name, force) {
-  const job = await api("local-models/setup", { runtime: "ollama", name, ...(force ? { force: true } : {}) });
+async function setup(name, force, found = false) {
+  const job = await api("local-models/setup", { runtime: "ollama", name, ...(force ? { force: true } : {}), ...(found ? { found: true } : {}) });
   if (job.needsRuntime) return waitForRuntime(job.message);
   LP.job = job;
   LP.phase = "job";
@@ -224,7 +228,7 @@ async function setup(name, force) {
    profile, the engine's refusal is shown as it is and the picker waits for the program instead. */
 async function showPlan() {
   LP.plan = await api("local-models/one-button/plan", {});
-  if (LP.plan.alreadyInstalled) return setup(LP.req.name, LP.req.force);
+  if (LP.plan.alreadyInstalled) return setup(LP.req.name, LP.req.force, LP.req.found);
   if (LP.plan.install?.instead) return waitForRuntime(LP.plan.install.instead);
   if (LP.plan.refusal) {
     const locked = (await api("lockdown")).on === true;
@@ -235,36 +239,29 @@ async function showPlan() {
   paint();
 }
 
-/* The owner agreed to the plan on screen: installing is allowed for this install only, then set back as it was. */
+/* The owner agreed to the plan on screen: that yes counts for this one install only. The engine holds it (`once`) and
+   saves nothing, so installing is never switched on here and nothing is left on however the install ends. */
 async function install() {
   const plan = LP.plan, name = LP.req?.name;
   if (!plan?.install || !name) return;
-  const before = LP.data?.installMode ?? "off";
   LP.phase = "installing";
   LP.error = "";
   paint();
   try {
-    if (before === "off") await api("local-models/install/switch", { mode: "when-needed" });
-    const answer = await api("local-models/one-button", { agreedPlan: plan.install.fingerprint, name });
-    if (answer.needsAgreement) { await restoreInstall(before); LP.plan = { ...plan, install: answer.needsAgreement }; LP.phase = "plan"; toast(answer.message); paint(); return; }
-    await restoreInstall(before);
+    const answer = await api("local-models/one-button", { agreedPlan: plan.install.fingerprint, name, once: true });
+    if (answer.needsAgreement) { LP.plan = { ...plan, install: answer.needsAgreement }; LP.phase = "plan"; toast(answer.message); paint(); return; }
     await loadPick();
     if (!answer.job) return setup(name, LP.req?.force);
     Object.assign(LP, { job: answer.job, phase: "job" });
     paint();
     await follow(answer.job.id);
   } catch (error) {
-    await restoreInstall(before);
     /* The connection dropped while the engine was still installing: keep waiting for the program. */
     if (!error.status) return waitForRuntime("", "installing");
     /* The engine refused or the install failed: its words, its install page, and the picker carries on once the program
        is there, whoever installs it. */
     return waitForRuntime(error.message);
   }
-}
-
-async function restoreInstall(before) {
-  if (before === "off") await api("local-models/install/switch", { mode: "off" }).catch((error) => toast(error.message));
 }
 
 /* Nothing to install with: say why and where to get it, then carry on by itself once the engine finds the program. */
@@ -276,7 +273,7 @@ async function waitForRuntime(said = "", phase = "waiting") {
     await pause(3000);
     await loadPick();
     if (LP.req === req && ollamaThere()) {
-      try { return await setup(req.name, req.force); } catch (error) { return fail(error.message, !req.force && tooBig(error.message)); }
+      try { return await setup(req.name, req.force, req.found); } catch (error) { return fail(error.message, !req.force && tooBig(error.message)); }
     }
   }
 }
@@ -287,7 +284,8 @@ function openPage(el) {
   if (LP.req && (LP.phase === "plan" || LP.phase === "error")) waitForRuntime(LP.phase === "error" ? LP.error : "");
 }
 
-/* Follows the engine's job; a finished one is connected and selected, a failed or stopped one says why. */
+/* Follows the engine's job; a finished one is connected and selected, a failed or stopped one says why. One the owner
+   cancelled is never selected, even when it finished before the engine heard the Cancel: the choices come back instead. */
 async function follow(id) {
   while (LP.phase === "job" && LP.job?.id === id) {
     await pause(700);
@@ -298,7 +296,7 @@ async function follow(id) {
     if (!job || LP.job?.id !== id) return;
     LP.job = job;
     if (!job.finishedAt) { paint(); continue; }
-    if (job.stage === "done" && job.connectionId) return select(job.connectionId, LP.req?.name ?? job.label);
+    if (job.stage === "done" && job.connectionId) return LP.cancelled === id ? back() : select(job.connectionId, LP.req?.name ?? job.label);
     return fail(job.message);
   }
 }
@@ -318,12 +316,14 @@ async function select(id, name) {
 }
 
 async function cancel() {
-  if (!LP.job?.id) return;
-  try { await api("local-models/setup/stop", { id: LP.job.id }); } catch (error) { toast(error.message); }
+  const id = LP.job?.id;
+  if (!id) return;
+  LP.cancelled = id;
+  try { await api("local-models/setup/stop", { id }); } catch (error) { toast(error.message); }
 }
 
 function back() {
-  Object.assign(LP, { phase: null, req: null, job: null, plan: null, error: "", force: false, hello: null, ready: null });
+  Object.assign(LP, { phase: null, req: null, job: null, plan: null, error: "", force: false, hello: null, ready: null, cancelled: null });
   paint();
 }
 
@@ -336,7 +336,7 @@ export function openLocalPicker() {
 
 /* A host opening anew: a finished panel (done or failed) gives way to the choices again; a running one stays. */
 function clearFinished() {
-  Object.assign(LP, { phase: null, req: null, job: null, plan: null, error: "", force: false, hello: null, ready: null });
+  Object.assign(LP, { phase: null, req: null, job: null, plan: null, error: "", force: false, hello: null, ready: null, cancelled: null });
 }
 export function freshPick() {
   if (LP.phase === "done" || LP.phase === "error") clearFinished();

@@ -55,7 +55,7 @@ function liveRow(r, i) {
   const pill = waiting ? `<span class="pill work"><i></i>${t("dashboard.needs.title")}</span>` : `<span class="pill ok"><i></i>${t("window.shell.working")}</span>`;
   return `<div class="run6 ${waiting ? "wait6" : ""}"><div class="run-h">${person()}${pill}</div>
     <div class="run-b">${who}<span class="grow"><b>${esc(name)}</b><span>${esc(doing(r, session))}</span>${r.model ? `<small>${esc(r.model)}</small>` : ""}</span></div>
-    <div class="acts"><button class="btn sm" type="button" data-act="run-watch" data-i="${i}">${EYE}${t("window.places.team.watch")}</button><button class="btn ghost sm" type="button" data-act="toast">${t("window.places.team.ask-to-join")}</button></div></div>`;
+    <div class="acts"><button class="btn sm" type="button" data-act="run-watch" data-i="${i}" data-id="${esc(r.id)}">${EYE}${t("window.places.team.watch")}</button><button class="btn ghost sm" type="button" data-act="toast">${t("window.places.team.ask-to-join")}</button></div></div>`;
 }
 
 const liveRuns = () => E.state.runs?.filter((r) => r.status === "running" || r.status === "needs_input") || [];

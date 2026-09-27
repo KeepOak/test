@@ -5,6 +5,7 @@ import { ICONS } from "./icons.js";
 import { $, esc, applyCss, afterDraw } from "./dom.js";
 import { greyOut } from "./features.js";
 import { look17 } from "./art17.js";
+import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
 
 export const app = () => document.getElementById("app");
@@ -74,7 +75,8 @@ export function av(trunk, size = 40) {
   const still = f.lookStill || look17(f.character)?.still; // pass 17: the character the engine says it wears
   if (still) return `<span class="av look12${paused}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
   if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
-  return `<span class="av${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
+  /* The classic pebble: rendered in 3D and moving with what the Trunk does (core/pebble.js); flat at 24px and under. */
+  return pebbleFace(trunk, f, size, css, paused, SHAPE_NAMES.indexOf(f.shape), marks);
 }
 
 export const mi = (act, icon, text, extra = "", attrs = "") =>
