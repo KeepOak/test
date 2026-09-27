@@ -81,7 +81,9 @@ const until = async (fn, tries = 60) => { for (let i = 0; i < tries; i++) { cons
   const withMax = await until(async () => pairOf(await roomsNow(), kim.id, max.id)[0]);
   check("Enter makes the room with Max through the engine", !!withMax, withMax?.name);
 
-  // The toggle in the room with Lee.
+  // The toggle in the room with Lee. A redraw during a drag no longer ends it (core/dom.js); this pause is for the
+  // headless browser, whose drop can go missing when the drag starts while the room just made is still being opened.
+  await page.waitForTimeout(800);
   await row(kim).dragTo(row(lee));
   await page.locator('.pop [data-act="room-both"]').click();
   await until(async () => (await open()) === made.sessionId);
