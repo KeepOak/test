@@ -75,10 +75,12 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
     throw new AccountsApiError(409, "Several accounts per connection is switched off. Switch it on first.");
   try {
     const body = await host.readBody();
-    if (path !== "/api/accounts/update") return await change(service, body);
+    if (path !== "/api/accounts/update" && path !== "/api/accounts/settings") return await change(service, body);
     // A monthly cap raised or taken away needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+    // Switching several accounts off takes every cap away with it (the connection then answers on its own key).
     const { confirmLoosening, input } = withoutConfirm(body);
-    const refusal = looseningRefusal(capLooser(service, input), confirmLoosening, lockdownActive(service.deps.store, service.deps.owner));
+    const looser = path === "/api/accounts/settings" ? capsOffLooser(service, input) : capLooser(service, input);
+    const refusal = looseningRefusal(looser, confirmLoosening, lockdownActive(service.deps.store, service.deps.owner));
     if (refusal) throw new AccountsApiError(409, refusal);
     return await change(service, input);
   } catch (error) {
@@ -115,4 +117,12 @@ function capLooser(service: AccountsService, input: unknown): string | null {
   if (asked.monthlyCapUsd === null) return `${account?.label} would have no monthly cap`;
   return typeof asked.monthlyCapUsd === "number" && asked.monthlyCapUsd > was
     ? `${account?.label}'s monthly cap would go up from $${was} to $${asked.monthlyCapUsd}` : null;
+}
+
+/** Whether switching several accounts off would drop monthly caps that are kept now, in words, or null. */
+function capsOffLooser(service: AccountsService, input: unknown): string | null {
+  const asked = (input && typeof input === "object" ? input : {}) as { mode?: unknown };
+  if (asked.mode !== "off" || !service.on()) return null;
+  const capped = service.settings().pools.flatMap((pool) => pool.accounts).filter((account) => account.monthlyCapUsd !== null);
+  return capped.length ? `the monthly caps on ${capped.map((account) => account.label).join(", ")} would no longer be kept` : null;
 }

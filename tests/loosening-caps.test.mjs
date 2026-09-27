@@ -15,6 +15,7 @@
  *   M6  retention.ts retentionLooser: a rule switched off is not weighed (enabled ignored)     → "keeping"
  *   M7  safety-extras/api.ts: the stop release not weighed (looser null)                       → "emergency stop"
  *   M8  catalogue.ts: the retention `weigh` hook dropped (the settings kit keeps longer unasked) → "keeping"
+ *   M9  accounts/api.ts capsOffLooser answers null always (switching accounts off drops caps)   → "switching several accounts off"
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -140,6 +141,23 @@ for (const [name, r] of Object.entries(routes)) {
     assert.equal(await r.read(call), r.start, "none of them changed the owner's setting");
   });
 }
+
+test("account cap: switching several accounts off drops every cap, so it asks too; with no cap it does not", async (t) => {
+  const { app, call, lockdown } = await served(t);
+  routes["account cap"].setup(app);
+  const refused = await call("POST", "/api/accounts/settings", { mode: "off" });
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.equal(refused.body.error, `This makes Branch less careful: the monthly caps on First key would no longer be kept. ${tick}`);
+  await lockdown(true);
+  assert.equal((await call("POST", "/api/accounts/settings", { mode: "off", confirmLoosening: true })).body.error, lockdownWords);
+  await lockdown(false);
+  assert.equal((await call("GET", "/api/accounts")).body.mode, "on");
+  assert.equal((await call("POST", "/api/accounts/settings", { mode: "off", confirmLoosening: true })).status, 200);
+  assert.equal((await call("GET", "/api/accounts")).body.mode, "off");
+  assert.equal((await call("POST", "/api/accounts/settings", { mode: "on" })).status, 200, "switching on is never held");
+  assert.equal((await call("POST", "/api/accounts/update", { pool: POOL, account: "primary", monthlyCapUsd: null, confirmLoosening: true })).status, 200);
+  assert.equal((await call("POST", "/api/accounts/settings", { mode: "off" })).status, 200, "no cap kept: nothing to ask");
+});
 
 test("keeping: the settings kit weighs a longer keep the same way", async (t) => {
   const { call } = await served(t);
