@@ -1,6 +1,6 @@
 // Pause a Trunk and pause all, a room's answering rule and its own way of working together, and the owner's default way
 // Trunks work together: each control made live here is clicked and its change read back through the engine's GET route.
-// Pausing a Trunk that is working offers "let it finish" or "stop it now" (pause-go), so the engine needs a model that
+// Pausing a Trunk that is working offers "let it finish" or "stop it now" (pausedo17c), so the engine needs a model that
 // can be kept busy: this script serves a stand-in OpenAI-shaped model on STUB_PORT that answers at once, except a
 // message holding HOLD7501, which it answers only when the script lets it go (or the engine hangs up on it).
 // Run: start this script's stand-in first by starting the script, then the engine pointed at it, both fresh:
@@ -160,7 +160,7 @@ async function roomRules(page) {
   await dlg.locator('.dlg-f [data-act="dlg-close"]').click();
 }
 
-/* pause-go: pausing a working Trunk offers to let its task finish or stop it, and so does pausing all of them. */
+/* pausedo17c: pausing a working Trunk asks whether to let its task finish or stop it now, and so does pausing all of them. */
 async function working(page, b) {
   let { said, busy } = await keepBusy(b);
   check("a task as Trunk B is running (GET /api/trunks running)", !!busy);
@@ -170,9 +170,10 @@ async function working(page, b) {
   await page.waitForSelector("#side .machine");
   await page.locator('[data-act="view"][data-v="customize"]').click();
   await page.locator(`#main [data-act="pausetrunk"][data-id="${b.id}"]`).click();
-  const finish = page.locator('.dlg [data-act="pause-go"][data-now="0"]'), stop = page.locator('.dlg [data-act="pause-go"][data-now="1"]');
-  check("pausing a working Trunk offers both choices", (await finish.count()) === 1 && (await stop.count()) === 1 && !(await greyed(stop)));
-  await finish.click();
+  const finish = page.locator('.dlg #pz-after17c'), stop = page.locator('.dlg #pz-now17c'), go = page.locator('.dlg [data-act="pausedo17c"]');
+  check("pausing a working Trunk offers both choices", (await finish.count()) === 1 && (await stop.count()) === 1 && !(await greyed(stop)) && !(await greyed(go)));
+  check("When the current task ends is picked first", await finish.isChecked());
+  await go.click();
   check("Let them finish first: paused, and the task still runs", !!(await until(async () => { const t = await trunk(N.b); return t.paused && t.running > 0; })));
   letGo();
   const done = await said;
@@ -184,7 +185,8 @@ async function working(page, b) {
   await page.waitForSelector("#side .machine");
   await page.locator('[data-act="view"][data-v="customize"]').click();
   await page.locator(`#main [data-act="pausetrunk"][data-id="${b.id}"]`).click();
-  await page.locator('.dlg [data-act="pause-go"][data-now="1"]').click();
+  await page.locator('.dlg #pz-now17c').check();
+  await page.locator('.dlg [data-act="pausedo17c"]').click();
   const stopped = await said;
   check("Stop the current task: the task was cancelled", !!busy && stopped.status === "cancelled", JSON.stringify(stopped).slice(0, 160));
   check("and the Trunk is paused (GET /api/trunks)", (await trunk(N.b)).paused === true);
@@ -195,7 +197,8 @@ async function working(page, b) {
   await page.waitForSelector("#side .machine");
   await page.locator('[data-act="view"][data-v="overview"]').first().click();
   await page.locator('#main [data-act="pauseall"]').click();
-  await page.locator('.dlg [data-act="pause-go"][data-now="1"]').click();
+  await page.locator('.dlg #pz-now17c').check();
+  await page.locator('.dlg [data-act="pausedo17c"]').click();
   const all = await said;
   check("Pause all with a Trunk working, Stop the current task: cancelled, and every Trunk paused", all.status === "cancelled" && (await api("trunks")).trunks.every((t) => t.paused), JSON.stringify(all).slice(0, 160));
   await api("trunks/resume-all", {});
