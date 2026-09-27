@@ -111,6 +111,27 @@ test("parallel selectors accept exact account references and reject malformed re
     assert.throws(() => ParallelSchema.parse({ tasks: [{ specialist: "worker", prompt: "work", accountRef }] }));
 });
 
+test("delegation approvals name every selected specialist model and account", async (t) => {
+  const f = await fixture(t);
+  const context = f.app.runtime.context({});
+  const first = { specialist: "reviewer", prompt: "check", model: "alpha", accountRef: { pool: "alpha", account: "1234abcd" } };
+  const second = { specialist: "writer", prompt: "write", model: "beta", accountRef: { pool: "beta", account: "deadbeef" } };
+  const calls = [
+    ["delegate.handoff", { ...first, brief: "check" }],
+    ["delegate.parallel", { tasks: [first, second] }],
+    ["specialists.fanout", { tasks: [{ ...first, id: "first" }, { ...second, id: "second" }] }],
+  ];
+  for (const [tool, args] of calls) {
+    const target = f.app.registry.targetOf(tool, args, context);
+    assert.ok(target.includes("reviewer") && target.includes("alpha") && target.includes("1234abcd"), `${tool} lost its first route`);
+    if (tool !== "delegate.handoff") assert.ok(target.includes("writer") && target.includes("beta") && target.includes("deadbeef"), `${tool} lost its second route`);
+    const changed = structuredClone(args);
+    if (tool === "delegate.handoff") changed.accountRef.account = "deadbeef";
+    else changed.tasks[0].accountRef.account = "deadbeef";
+    assert.notEqual(f.app.registry.targetOf(tool, changed, context), target, `${tool} reused another account's approval target`);
+  }
+});
+
 test("background helpers outlive the parent signal and spend their own budget", async (t) => {
   const f = await fixture(t), parent = await f.app.runtime.run({ prompt: "parent" });
   const controller = new AbortController();

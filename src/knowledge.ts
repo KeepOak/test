@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { FanoutTaskSchema, ResultSchemaSchema, HelperSelectionSchema, type HelperSelection, type FanoutTask } from "./delegation.js";
+import { FanoutTaskSchema, ResultSchemaSchema, HelperSelectionSchema, helperRouteTarget, type HelperSelection, type FanoutTask } from "./delegation.js";
 import { CompletionCheckSchema, type CompletionCheck } from "./reliability.js";
 import { InputsSchema, ParametersSchema, bindInputs, placeholders, substitute, type InputValue } from "./recipes.js";
 import { mismatch } from "./delegation.js";
@@ -528,6 +528,7 @@ function registerSpecialists(
       "Run several specialist tasks: independent tasks run at the same time, tasks with dependsOn wait for those results and receive them. Results are merged under this task.",
     permission: "specialists.use",
     parameters: z.object({ tasks: z.array(FanoutTaskSchema.extend({ specialist: z.string().min(1).max(200) })).min(1).max(8) }).strict(),
+    target: (a) => helperRouteTarget(a.tasks),
     execute: async (a, c) => knowledge.fanout(c, a.tasks),
   });
 }
