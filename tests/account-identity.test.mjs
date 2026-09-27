@@ -14,6 +14,7 @@ import { checkProgram } from "../dist/accounts/sign-ins.js";
 import { claudeIdentity } from "../dist/accounts/identity.js";
 import { viewSession, viewAll } from "../dist/accounts/manage.js";
 import { underShortLivedKey } from "../dist/key-context.js";
+import { AccountPoolProvider } from "../dist/accounts/pool-provider.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 // `claude auth status` is documented JSON; these are fabricated safe identity values, never real credentials.
@@ -167,6 +168,59 @@ test("short-lived read contexts retain generic account metadata and never see or
   assert.equal(JSON.stringify(view).includes(official.orgId), false);
   assert.equal(calls.length, probes);
   assert.equal(service.identities.get("cli-claude-code/primary"), official.email, "the private cache survives without leaking to the caller");
+});
+
+test("warm owner identity is discarded if the profile changes during the later ChatGPT sign-in state read", async (t) => {
+  const { app, service, call } = await fixture(t);
+  service.deps.chatgpt = { status: async () => ({ signedIn: true, email: "owner@example.test" }) };
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "on", pools: [...service.settings().pools,
+    { pool: "chatgpt", kind: "chatgpt", accounts: [{ id: "primary", label: "Owner primary", createdAt: stamped },
+      { id: "cdef1234", label: "Owner extra", createdAt: stamped }] }] });
+  let reads = 0, release, started;
+  const began = new Promise((resolve) => { started = resolve; });
+  const held = new Promise((resolve) => { release = resolve; });
+  service.chatgptAccounts.auth = () => ({ status: async () => {
+    if (++reads === 2) { started(); await held; }
+    return { signedIn: true, email: "extra@example.test", lastError: null };
+  } });
+  await service.readIdentities();
+  reads = 0; // warm cache skips readIdentities; ensureChatGPTPresets is first, signInState is second.
+  const pending = call("/api/accounts");
+  await began;
+  const person = app.store.profiles.create({ name: "Later household fixture", pin: "1234" });
+  app.store.profiles.switch({ profileId: person.id, pin: "1234" });
+  release();
+  const result = await pending;
+  assert.equal(result.status, 200);
+  assert.equal(result.body.household, true);
+  assert.deepEqual(result.body.pools, []);
+  for (const privateValue of [official.email, official.orgId, "owner@example.test", "extra@example.test", "Owner extra", "cdef1234"])
+    assert.equal(JSON.stringify(result.body).includes(privateValue), false);
+});
+
+test("short-lived calls cannot select cached signed-out or duplicate accounts even though their public identity is redacted", async (t) => {
+  const { service, app } = await fixture(t);
+  await service.readIdentities();
+  const selected = [];
+  const provider = new AccountPoolProvider({ name: "unused-original", complete: async () => { throw new Error("unexpected original"); } }, {
+    owner: app.runtime.owner, pool: "cli-claude-code", model: "fixture", settings: () => service.usablePool("cli-claude-code"),
+    states: new Map(), cursor: { value: 0 }, now: Date.now,
+    providerFor: async (id) => ({ name: "fixture", complete: async () => { selected.push(id); return { content: "fixture", toolCalls: [] }; } }),
+    capReached: () => false, record: () => undefined, personIsNotOwner: () => false,
+    sessionChoice: () => null, rememberChoice: () => undefined,
+  });
+  for (const refused of ["abcd1234", "bcd12345"]) {
+    const settings = service.settings();
+    settings.pools[0].defaultAccount = refused;
+    saveAccountsSettings(app.store, app.runtime.owner, settings);
+    await underShortLivedKey(async () => {
+      const pool = service.usablePool("cli-claude-code");
+      assert.equal(pool.accounts.find((one) => one.id === refused).disabled, true);
+      assert.equal(JSON.stringify(pool).includes(official.email), false);
+      await provider.complete({ messages: [{ role: "user", content: "fixture" }], tools: [], signal: new AbortController().signal });
+    });
+  }
+  assert.deepEqual(selected, ["primary", "primary"], "only the confirmed distinct sign-in may answer");
 });
 
 test("Accounts and Models show verified email with custom label secondary, count only usable identities and retain Rename", async (t) => {

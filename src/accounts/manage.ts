@@ -277,6 +277,7 @@ export async function viewAll(service: AccountsService) {
     const view = viewPool(service, poolOf(draft, id, about.kind, new Date(service.now())));
     const signIn = about.kind === "chatgpt" ? await signInState(service, view.accounts.map((a) => a.id))
       : about.kind === "cli" ? { signedIn: Object.fromEntries(view.accounts.map((a) => [a.id, a.signedIn])), problems: Object.fromEntries(view.accounts.map((a) => [a.id, a.signInProblem])) } : null;
+    if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
     // mac7/account-pooling: the one-time notice is the owner's alone to read.
     const notice = !someoneElse(service) && settings.poolingNotices.includes(id)
       ? { key: "accounts.notice.own-plans", service: about.name, text: poolingNotice(about.name) } : null;
@@ -284,6 +285,7 @@ export async function viewAll(service: AccountsService) {
     const merged = about.kind === "chatgpt" && service.mergedInto.size ? { mergedInto: Object.fromEntries(service.mergedInto) } : {};
     pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
   }
+  if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
   return { mode: settings.mode, pools };
 }
 /**
@@ -305,8 +307,10 @@ function sharedWithPerson(service: AccountsService, seen: Map<string, { name: st
 async function signInState(service: AccountsService, ids: string[]) {
   const signedIn: Record<string, boolean> = {}, problems: Record<string, string | null> = {};
   for (const id of ids) {
+    if (someoneElse(service)) break;
     if (id === primaryAccount) { signedIn[id] = service.legacySignedIn; problems[id] = null; continue; }
     const status = await service.chatgptAccounts.auth(id).status();
+    if (someoneElse(service)) break;
     signedIn[id] = status.signedIn;
     problems[id] = status.lastError;
   }
