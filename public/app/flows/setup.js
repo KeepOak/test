@@ -30,6 +30,7 @@ import { W, D, bgChoice, sceneCards, pickScene, petCard, petChoices, petNow, pic
 import { startPairing, onPaired } from "./pair.js";
 import { toolsStep, initToolsStep } from "./setup-tools.js";
 import { media17 } from "../core/art17.js"; // Branch's idle loop, or its still when motion is reduced (prototype anim11)
+import { nameField } from "./profile.js"; // your-profile: the owner's name, asked once on the People step
 
 const STEPS = ["window.flows.setup.step-welcome", "window.flows.setup.step-where", "layout.modelTabs", "window.flows.setup.step-yours", "window.flows.setup.step-trunks", "window.flows.setup.step-reach", "dashboard.filter.tools",
   "window.flows.setup.step-keep", "people.admin.people", "window.flows.setup.step-more", "settings.card.health-check"];
@@ -212,7 +213,7 @@ function keep(o) {
 }
 
 function people() {
-  return `<h2 tabindex="-1">${t("window.flows.setup.anyone")}</h2><p>${t("window.flows.setup.anyone-lede")}</p><div class="provs">
+  return `<h2 tabindex="-1">${t("window.flows.setup.anyone")}</h2><p>${t("window.flows.setup.anyone-lede")}</p>${nameField()}<div class="provs">
     ${prov("ob-people-local", "people", "local", "users", t("window.flows.setup.someone"), t("window.flows.setup.someone-hint"), false)}
     ${prov("ob-people-invite", "people", "invite", "chat", t("window.flows.setup.teammate"), t("window.flows.setup.teammate-hint"), false)}
     ${prov("ob-people-keepoak", "people", "keepoak", "globe", t("window.flows.setup.team"), t("window.flows.setup.team-hint"), false)}</div>`;

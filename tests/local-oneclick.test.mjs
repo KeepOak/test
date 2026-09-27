@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { discardTemp } from "./temp-dir.mjs";
 import { Store } from "../dist/store.js";
 import { ModelRouter } from "../dist/models.js";
@@ -529,6 +530,190 @@ test("O5 the one button sets up the exact model the owner named, not a size from
   assert.equal(done.stage, "done", done.message);
   assert.equal(runtimes.calls.find((call) => call.path === "/api/pull").body.model, "llama3.1:8b");
   await assert.rejects(() => w.oneClick.buttonGo({ name: "../etc" }, { source: "owner" }), /Ollama would recognise/);
+});
+
+test("O6 a stop is heard while loading and while asking the small question: the setup stops and nothing is connected", async (t) => {
+  for (const [stage, held] of [["loading", "/api/generate"], ["connecting", "/api/chat"]]) {
+    const runtimes = fakeRuntimes();
+    const w = await world(t, { runtimes });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    t.after(() => release());
+    const slow = { ...w.deps, fetch: async (input, init) => {
+      if (new URL(String(input)).pathname === held) await gate;
+      return runtimes.fetch(input, init);
+    } };
+    const oneClick = new OneClick(slow);
+    const job = await oneClick.begin({ model: "llama3.2-3b", quant: "Q4_K_M" });
+    for (let i = 0; i < 200 && oneClick.jobs.get(job.id).stage !== stage; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(oneClick.jobs.get(job.id).stage, stage);
+    assert.deepEqual(oneClick.stop(job.id), { stopped: true });
+    const stopped = await settle(oneClick, job.id);
+    assert.equal(stopped.stage, "stopped", `${stage}: ${stopped.message}`);
+    // What was waited on finishes after the stop, and changes nothing.
+    release();
+    await new Promise((r) => setTimeout(r, 30));
+    const after = oneClick.jobs.get(job.id);
+    assert.equal(after.stage, "stopped", `${stage}: still stopped`);
+    assert.equal(after.connectionId, null, `${stage}: no connection on the job`);
+    assert.deepEqual(savedLocalConnections(w.store, "owner"), [], `${stage}: no connection was made`);
+  }
+});
+
+test("O6b a stop heard while the model is being sized: it is never brought into memory afterwards", async (t) => {
+  const runtimes = fakeRuntimes();
+  const w = await world(t, { runtimes });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.after(() => release());
+  const slow = { ...w.deps, fetch: async (input, init) => {
+    if (new URL(String(input)).pathname === "/api/create") await gate;
+    return runtimes.fetch(input, init);
+  } };
+  const oneClick = new OneClick(slow);
+  const job = await oneClick.begin({ model: "llama3.2-3b", quant: "Q4_K_M" });
+  for (let i = 0; i < 200 && oneClick.jobs.get(job.id).stage !== "loading"; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(oneClick.jobs.get(job.id).stage, "loading");
+  assert.deepEqual(oneClick.stop(job.id), { stopped: true });
+  assert.equal((await settle(oneClick, job.id)).stage, "stopped");
+  release();
+  for (let i = 0; i < 200 && !runtimes.calls.some((call) => call.path === "/api/create"); i++) await new Promise((r) => setTimeout(r, 5));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(runtimes.calls.some((call) => call.path === "/api/create"), "the sizing that was under way finished");
+  assert.equal(runtimes.calls.filter((call) => call.path === "/api/generate").length, 0, "nothing was loaded after the stop");
+  assert.equal(oneClick.jobs.get(job.id).stage, "stopped");
+});
+
+test("O7 a model Ollama already has is used as it is: nothing is pulled again", async (t) => {
+  const runtimes = fakeRuntimes();
+  runtimes.state.models.push({ name: "mine:latest", size: 2 * GB, details: { family: "llama" }, capabilities: ["completion", "tools"] });
+  const w = await world(t, { runtimes });
+  const job = await w.oneClick.begin({ runtime: "ollama", name: "mine:latest", found: true });
+  const done = await settle(w.oneClick, job.id);
+  assert.equal(done.stage, "done", done.message);
+  assert.ok(!runtimes.calls.some((call) => call.path === "/api/pull"), "it was not fetched from the registry");
+  assert.equal(runtimes.calls.find((call) => call.path === "/api/create").body.from, "mine:latest", "the model on this computer was sized and used");
+  assert.equal(savedLocalConnections(w.store, "owner")[0].id, done.connectionId);
+  const gone = await w.oneClick.begin({ runtime: "ollama", name: "gone:latest", found: true });
+  const failed = await settle(w.oneClick, gone.id);
+  assert.equal(failed.stage, "failed");
+  assert.match(failed.message, /no longer in Ollama/);
+  assert.ok(!runtimes.calls.some((call) => call.path === "/api/pull"), "a model that is gone is not fetched either");
+});
+
+// ------------------------------------------------------------------ the window's picker (public/app/flows/localpick.js)
+
+/* The real localpick.js, copied next to stand-ins for the window's core modules, so its own lines run in Node. */
+const pickerStubs = {
+  "app/core/dom.js": "export const esc = (s) => String(s ?? \"\"); export const applyCss = () => {};",
+  "app/core/ui.js": "export const ic = () => \"\"; export const toast = (m) => globalThis.__lp?.toasts.push(m); export const openDlg = () => {};",
+  "app/core/state.js": "export const S = {}; export const E = {}; export const refresh = async () => {};",
+  "app/core/api.js": "export const api = async (path, body) => globalThis.__lp.api(path, body);",
+  "app/core/actions.js": "export const on = (name, fn) => { globalThis.__lp.acts[name] = fn; };",
+  "app/core/features.js": "export const markLive = () => {}; export const greyOut = () => {};",
+  "i18n.js": "export const t = (key) => key;",
+};
+let openPages = 0;
+async function pickerPage(t, answer) {
+  const root = await scratch("localpick");
+  await mkdir(join(root, "app", "flows"), { recursive: true });
+  await mkdir(join(root, "app", "core"), { recursive: true });
+  await writeFile(join(root, "app", "flows", "localpick.js"), await readFile(new URL("../public/app/flows/localpick.js", import.meta.url)));
+  for (const [file, code] of Object.entries(pickerStubs)) await writeFile(join(root, file), code);
+  const calls = [];
+  if (!openPages++) globalThis.document = { querySelectorAll: () => [], dispatchEvent: () => true };
+  const lp = { acts: {}, toasts: [], api: async (path, body) => { calls.push({ path, body }); return answer(path, body); } };
+  globalThis.__lp = lp;
+  // A test that ends early (a failed assertion) still ends the page's own waiting, so the file never hangs.
+  t.after(async () => {
+    lp.acts["lp-back"]?.();
+    if (!--openPages) delete globalThis.document;
+    if (globalThis.__lp === lp) delete globalThis.__lp;
+    await discardTemp(root);
+  });
+  const page = await import(pathToFileURL(join(root, "app", "flows", "localpick.js")).href);
+  page.initLocalPick();
+  await page.loadPick();
+  return { calls, press: (act, v) => lp.acts[act]({ dataset: { v } }), sent: (path) => calls.filter((call) => call.path === path) };
+}
+const until = async (check, what) => {
+  for (let i = 0; i < 400; i++) { if (check()) return; await new Promise((r) => setTimeout(r, 10)); }
+  throw new Error(`never happened: ${what}`);
+};
+const pickerData = (over = {}) => ({
+  mode: "when-needed", installMode: "off", recommendations: [], suggested: null,
+  ollama: { installed: true, models: [] }, lmStudio: { models: [] },
+  oneClick: { runtimes: [{ id: "ollama", name: "Ollama", installed: true, installPage: "https://ollama.com/download" }], connections: [], setups: [] },
+  ...over,
+});
+
+test("P1 the window's Install sends the owner's yes for that one install, and never switches installing on", async (t) => {
+  const fingerprint = "a".repeat(32);
+  const data = pickerData({ ollama: { installed: false, models: [] },
+    oneClick: { runtimes: [{ id: "ollama", name: "Ollama", installed: false, installPage: "https://ollama.com/download" }], connections: [], setups: [] } });
+  const finished = { id: "job-1", stage: "failed", message: "It did not work.", finishedAt: "2026-09-26T10:00:00Z" };
+  const p = await pickerPage(t, (path) => {
+    if (path === "local-models") return { ...data, oneClick: { ...data.oneClick, setups: [finished] } };
+    if (path === "local-models/one-button/plan") return { name: "Ollama", alreadyInstalled: false, install: { fingerprint }, refusal: "Branch is not set up to install a program that runs models." };
+    if (path === "lockdown") return { on: false };
+    if (path === "local-models/one-button") return { done: false, job: { id: "job-1", stage: "checking" } };
+    throw Object.assign(new Error(`unexpected ${path}`), { status: 400 });
+  });
+  p.press("lp-pick", "llama3.2:3b");
+  await until(() => p.sent("local-models/one-button/plan").length === 1, "the plan was asked for");
+  await new Promise((r) => setTimeout(r, 20));
+  p.press("lp-install");
+  await until(() => p.sent("local-models").length >= 3, "the job was followed to its end");
+  assert.deepEqual(p.sent("local-models/one-button").map((call) => call.body), [{ agreedPlan: fingerprint, name: "llama3.2:3b", once: true }]);
+  assert.deepEqual(p.sent("local-models/install/switch"), [], "the page never switches installing on, so a closed tab cannot leave it on");
+});
+
+test("P2 Cancel is final in the window: a setup the owner cancelled is never made the answering model", async (t) => {
+  for (const cancelled of [true, false]) {
+    let job = { id: "job-2", stage: "loading", message: "Loading it…", finishedAt: null, connectionId: null };
+    const p = await pickerPage(t, (path) => {
+      if (path === "local-models") return pickerData({ oneClick: { ...pickerData().oneClick, setups: [job] } });
+      if (path === "local-models/setup") return { ...job, stage: "checking" };
+      if (path === "local-models/setup/stop") return { stopped: false };
+      if (path === "models") return { ok: true };
+      if (path === "models/test") return { ok: true, ms: 100, reply: "OK" };
+      throw Object.assign(new Error(`unexpected ${path}`), { status: 400 });
+    });
+    p.press("lp-pick", "llama3.2:3b");
+    await until(() => p.sent("local-models/setup").length === 1, "the setup started");
+    await new Promise((r) => setTimeout(r, 20));
+    if (cancelled) {
+      p.press("lp-cancel");
+      await until(() => p.sent("local-models/setup/stop").length === 1, "Cancel reached the engine");
+      assert.deepEqual(p.sent("local-models/setup/stop")[0].body, { id: "job-2" });
+    }
+    // The engine ends the job done anyway (the stop came too late for it).
+    job = { ...job, stage: "done", message: "Ready.", finishedAt: "2026-09-26T10:00:00Z", connectionId: "local-ollama-llama3-2-3b-branch8k" };
+    const polls = p.sent("local-models").length;
+    await until(() => p.sent("local-models").length > polls, "the finished job was seen");
+    await new Promise((r) => setTimeout(r, 100));
+    if (cancelled) assert.deepEqual(p.sent("models"), [], "the cancelled model is not selected");
+    else assert.deepEqual(p.sent("models").map((call) => call.body), [{ activePreset: "local-ollama-llama3-2-3b-branch8k" }], "without Cancel it is selected, as before");
+  }
+});
+
+test("P3 Use this on a model Ollama already has uses it as it is; a model not found is still downloaded", async (t) => {
+  const data = pickerData({ ollama: { installed: true, models: [{ name: "mine:latest", size: 2 * GB }] } });
+  const ended = { id: "job-3", stage: "failed", message: "It did not work.", finishedAt: "2026-09-26T10:00:00Z" };
+  const p = await pickerPage(t, (path) => {
+    if (path === "local-models") return { ...data, oneClick: { ...data.oneClick, setups: [ended] } };
+    if (path === "local-models/setup") return { id: "job-3", stage: "checking" };
+    throw Object.assign(new Error(`unexpected ${path}`), { status: 400 });
+  });
+  p.press("lp-use", "mine:latest");
+  await until(() => p.sent("local-models/setup").length === 1, "the setup started");
+  assert.deepEqual(p.sent("local-models/setup")[0].body, { runtime: "ollama", name: "mine:latest", found: true });
+  await until(() => p.sent("local-models").length >= 2, "the job was followed to its end");
+  p.press("lp-back");
+  p.press("lp-pick", "llama3.2:3b");
+  await until(() => p.sent("local-models/setup").length === 2, "the second setup started");
+  assert.deepEqual(p.sent("local-models/setup")[1].body, { runtime: "ollama", name: "llama3.2:3b" });
+  await until(() => p.sent("local-models").length >= 3, "the second job was followed to its end");
 });
 
 test("O3 one click with LM Studio uses its download job, then loads with the fitted room", async (t) => {

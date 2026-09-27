@@ -32,6 +32,7 @@ import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
 import { planBlock, loadPlan, failedLine } from "./runview.js";
+import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
 import { initMore } from "./more.js";
@@ -123,7 +124,7 @@ function thread() {
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).concat(roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint))));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
-  return marks.start + rows.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + asks.join("") + typing;
+  return marks.start + rows.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + asks.join("") + typing;
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the
