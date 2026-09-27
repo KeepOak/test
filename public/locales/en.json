@@ -1,4 +1,9 @@
 {
+  "seasons.branch-arrived": "The reviewed change is installed — finish my task",
+  "seasons.connector-approve": "Approve this connector",
+  "seasons.next-rung": "Try a held tool instead",
+  "seasons.branch-review": "Ask for a Branch change to review",
+  "seasons.budding-order": "Existing tools → connector with your OK → tested held tool → a Branch change you review. Then the original task finishes.",
   "seasons.morning": "What I learned last night",
   "seasons.waiting": "{count} suggestions waiting for your review",
   "seasons.night-summary": "Read {read} tasks · Kept {kept} facts · {waiting} awaiting review",

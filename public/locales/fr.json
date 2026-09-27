@@ -1,4 +1,9 @@
 {
+  "seasons.branch-arrived": "La modification approuvée est installée — terminer ma tâche",
+  "seasons.connector-approve": "Approuver ce connecteur",
+  "seasons.next-rung": "Essayer plutôt un outil isolé",
+  "seasons.branch-review": "Demander une modification de Branch à examiner",
+  "seasons.budding-order": "Outils existants → connecteur avec votre accord → outil isolé testé → modification de Branch à examiner. Puis la tâche initiale se termine.",
   "seasons.morning": "Ce que j’ai appris cette nuit",
   "seasons.waiting": "{count} suggestions attendent votre avis",
   "seasons.night-summary": "{read} tâches lues · {kept} faits retenus · {waiting} à vérifier",

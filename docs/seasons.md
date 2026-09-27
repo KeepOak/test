@@ -100,3 +100,35 @@ reviews as a pull request.
 | Automatic rollback on regression | `Gardener.recheck` |
 | Graft, prune, re-root and undo, never a delete | `Gardener.graft`, `prune`, `reroot`, `undo` |
 | Owner's garden only | `src/seasons/api.ts`, `typedBy(…, null)` |
+
+## Budding
+
+`seasons.bud` preserves an owner's original request and tries the cheapest rung first:
+
+1. Compose existing tools under the task's current permissions. Success finishes the original request and plants a
+   waiting Gardener seed; it does not adopt a skill.
+2. If composition fails, offer matching MCP connectors with their prerequisites. Each installation needs the owner's
+   approval in **Library → Seasons**. Command servers also retain the existing exact program-launch approval.
+   A connected approved server hot reloads its tools and takes up the preserved task once, adding only that server's
+   tool permissions. Credentials are configured through the existing tool-server flow.
+3. After an unsuitable connector is declined, `seasons.build_tool` tests a held JavaScript tool against explicit
+   input/expected fixtures before registration. It inherits no extra file, network or credential permissions; nested
+   scripts and held capabilities are refused. A passing tool is registered as a deferred plugin tool and the original
+   request continues. The ordinary wall and approval gates still apply to every execution.
+4. When the held rung cannot work, the owner can file a Branch change for review. The existing source-change contract
+   and PR review workflow remain responsible for preparing and publishing the change. An approved request is taken up
+   after an installed version change and the owner's per-item acknowledgement that this reviewed change was installed;
+   an unrelated version change alone cannot resume it. `seasons.finish_bud` then uses current normal permissions.
+
+Windows currently has no trustworthy file/network wall for JavaScript tool scripts. Budding preserves the reason,
+runs no held code there, and offers the Branch review rung. A missing connector address is an external configuration
+prerequisite shown with the instruction to configure it in Customize → Tool servers.
+
+Capability requests and tested source live in private tables excluded from backup import. Restarts restore tested
+tools only where a held wall is supported. The scheduler reads only waiting requests, not completed source history.
+Lockdown and household profiles cannot build or approve capabilities. Learning stays cheap: successful capabilities
+become drafts that the overnight Gardener evaluates; the foreground does not run extra adoption reasoning.
+
+`tests/seasons-budding.test.mjs` exercises the ladder with a stand-in held executor, including failed fixtures,
+permission boundaries, connector hot reload, once-only continuation, Windows refusal and owner decisions.
+`tests/safety-extras-scripts.test.mjs` exercises the underlying script wall and mediated tool calls.
