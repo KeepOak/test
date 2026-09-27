@@ -11,7 +11,7 @@ import { text } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
-import { recBar, initRec } from "./rec.js";
+import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
@@ -281,7 +281,7 @@ export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => sto
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
 
 export function draw() {
-  return `${lockBanner()}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
