@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { _electron } from "playwright";
-import { connected, desktopOptions, heardNothingOfUse, mainLines, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, heardNothingOfUse, noTaskWorking, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
 
 const BLOCK_MS = 3000;
 /** The window's main process's event-loop delay, 99th percentile, while the engine is blocked. */
@@ -46,7 +46,6 @@ test("the window stays responsive while the engine is busy, and the engine comes
   const model = await modelServer();
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const electron = await _electron.launch(options);
-  const lines = mainLines(electron);
   let squatter;
   try {
     const page = await electron.firstWindow();
@@ -148,10 +147,12 @@ test("the window stays responsive while the engine is busy, and the engine comes
     assert.equal((await signedState(page)).status, 200, "the window's signed requests work with the new engine");
     await connected(page);
     const windowKey = (await readFile(join(options.env.BRANCH_DATA_DIR, "session-token"), "utf8")).trim();
-    const onTheirWay = await heardNothingOfUse(squatter.heard, { windowKey, origin, refused: () => lines });
-    t.diagnostic(`requests already on their way that reached the program on the port: ${onTheirWay}`);
+    const onTheirWay = await heardNothingOfUse(squatter.heard, { windowKey, origin });
+    t.diagnostic(`task sockets that reached the program on the port, with nothing sent on them: ${onTheirWay}`);
   } finally {
     await squatter?.close();
+    // Quitting with a task still working asks the owner in a dialog, which would show on the screen: none is left working.
+    await noTaskWorking(electron).catch((error) => t.diagnostic(`tasks left working: ${error.message}`));
     await electron.close();
   }
 });

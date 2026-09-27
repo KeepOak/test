@@ -79,6 +79,9 @@ import { builtFrom } from "./build-identity.js";
 // The window's key goes only to an engine that proved it is the engine (src/engine-proof.ts, src/desktop/engine-gate.ts).
 import { askHeader, proveOnce, sessionKey } from "../engine-proof.js";
 import { AnswerCheck } from "./answer-check.js";
+import { EngineClient, startingAgain, webResponse } from "./engine-client.js";
+import { EnginePage } from "./engine-page.js";
+import { Readable } from "node:stream";
 import { EngineGate, type EngineAccess } from "./engine-gate.js";
 import { RequestHold } from "./request-hold.js";
 import { readRunning, type Attachment } from "../install/running.js";
@@ -162,6 +165,8 @@ function protectWindow(
    * free and another program could take it, so every request there is held (and none carries the key) until then.
    */
   access: EngineAccess,
+  /** Every http request of the window's goes through this, on a connection proved to reach the engine. */
+  client: EngineClient,
 ): void {
   const session = win.webContents.session;
   // attach-anything: a file the page itself hands over (a file somebody attached, saved from the conversation) is let
@@ -185,6 +190,25 @@ function protectWindow(
     if (!sameAppOrigin(details.url, origin)) { callback({ cancel: true }); return; }
     hold.when((go) => callback({ cancel: !go }));
   });
+  // The window's http requests (its page, its files, its /api/ calls) are sent by main, not by the page's own network
+  // code: main proves the connection reaches this engine's process before it sends a request or its body there, signs
+  // /api/ requests with the session key, and takes only answers the engine marked (src/desktop/engine-client.ts).
+  session.protocol.handle("http", async (request) => {
+    if (!sameAppOrigin(request.url, origin)) return new Response(null, { status: 403 });
+    const url = new URL(request.url);
+    try {
+      const answer = await client.send({ method: request.method, path: `${url.pathname}${url.search}`,
+        headers: Object.fromEntries(request.headers.entries()),
+        body: request.body ? Readable.fromWeb(request.body as import("node:stream/web").ReadableStream) : null,
+        sign: url.pathname.startsWith("/api/") });
+      return webResponse(answer, request.method);
+    } catch (error) {
+      console.error(`Window request to the engine: ${(error as Error).message}`);
+      return new Response(JSON.stringify({ error: startingAgain }), { status: 503, headers: { "content-type": "application/json" } });
+    }
+  });
+  // A task's socket (ws://) is the one request the page's own network code still sends: it is signed and its answer
+  // checked for the engine's mark below, and nothing is sent on it before that answer is taken.
   // Remembered once: a request can still arrive after the window is gone, and a destroyed
   // window throws on any property access ("Object has been destroyed").
   const contentsId = win.webContents.id;
@@ -213,7 +237,7 @@ function protectWindow(
 }
 
 async function createWindow(
-  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, access: EngineAccess,
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, access: EngineAccess, client: EngineClient,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -259,17 +283,12 @@ async function createWindow(
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
   const mic = new TalkLiveMic(url, window.webContents.id);
-  protectWindow(window, url, key, mic, access);
+  protectWindow(window, url, key, mic, access, client);
   // A page that went away while the engine was not there (its load was held too long) is opened again once it is back.
   const shown = window;
-  let wasLost = false;
-  access.onLost(() => { wasLost = true; });
-  access.onReady(() => {
-    if (!wasLost) return; // the first proof: the window's own first load is on its way
-    wasLost = false;
-    if (!shown.isDestroyed() && new URL(shown.webContents.getURL() || "about:blank").origin !== url)
-      void shown.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message));
-  });
+  const pageRecovery = new EnginePage(access,
+    () => !shown.isDestroyed() && new URL(shown.webContents.getURL() || "about:blank").origin !== url,
+    () => { void shown.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message)); });
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
   // attach-anything: the clipboard's files go to the page only just after a paste the person made here: the keys,
@@ -301,10 +320,10 @@ async function createWindow(
   setAppMenu({ ...pasteItem(true), ...(process.platform === "darwin" ? {} : { registerAccelerator: false }) }, help);
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
-  registerClipboardFilesIpc(window, url, key, pasteGate);
-  registerShowInFolderIpc(window, url, key);
+  registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
+  registerShowInFolderIpc(window, url, key, undefined, client.fetch);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: async () => updateReadiness(url, key()) });
+    { ...update, readiness: async () => updateReadiness(url, key(), client.fetch) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
   tellWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) }).tell;
@@ -313,7 +332,7 @@ async function createWindow(
     quitReason = "restart";
     app.quit();
   });
-  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: async () => quickAskKeys(url, key()),
+  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: async () => quickAskKeys(url, key(), client.fetch),
     log: (line) => console.error(line) });
   // Redesign phase 1 (integration review): Windows ending the session never waits for the quit question.
   window.on("query-session-end", () => { quitReason = "system"; });
@@ -330,7 +349,9 @@ async function createWindow(
   // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
   // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
   await window.loadURL(`${url}/?desktop=1`).catch((error: unknown) => {
-    if ((error as { code?: unknown }).code !== "ERR_ABORTED") throw error;
+    if ((error as { code?: unknown }).code === "ERR_ABORTED") return;
+    console.error("Window:", (error as Error).message);
+    pageRecovery.failed();
   });
   createTray();
 }
@@ -435,18 +456,20 @@ async function start(): Promise<void> {
   if (running && runningKey) {
     const gate = joinedGate(dataDir, running.url, runningKey);
     const key = gatedKey(gate, runningKey);
+    const client = new EngineClient({ origin: running.url, access: gate, windowKey: runningKey });
     return createWindow(running.url, key, settings, {
-      backup: async () => requestUpdateBackup(running.url, key()),
+      backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
       stopDaemon: async () => {
-        const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true });
+        // Its close goes through the proved connection too: the window key is never sent to its address.
+        const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true, fetch: client.fetch });
         if (report.pid !== null && !report.stopped) throw new UpdateDeferredError(report.message);
         return report.pid;
       },
-      canary: desktopCanary(dataDir, async () => engineSnapshot(running.url, key())), // mac3/never-break
+      canary: desktopCanary(dataDir, async () => engineSnapshot(running.url, key(), client.fetch)), // mac3/never-break
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
       currentCommit: commit,
-    }, gate);
+    }, gate, client);
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
   const live = await liveAtStart(liveAppRoot(), (line) => console.error(line));
@@ -460,23 +483,24 @@ async function start(): Promise<void> {
   gate.start();
   if (testHooksOn()) (globalThis as { branchEngineGateForTests?: EngineGate }).branchEngineGateForTests = gate;
   const key = gatedKey(gate, () => engine?.token ?? "");
+  const client = new EngineClient({ origin: url, access: gate, windowKey: () => engine?.token ?? "" });
   // hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts).
   const hot = liveHooks({ appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
     run: () => realRun(process.platform, join(betaBuildDir(dataDir), "live-build.log")), host: () => engine, forkLive: forkEngine,
-    snapshot: async () => engineSnapshot(url, key()), backup: async () => requestUpdateBackup(url, key()),
+    snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
     tellWindow: (update) => tellWindow(update), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
     log: (line) => console.error(line) });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
   await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
-    backup: async () => requestUpdateBackup(url, key()),
+    backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
     // mac3/never-break: the new version is tried on a copy of this data before it is used.
-    canary: desktopCanary(dataDir, async () => engineSnapshot(url, key())),
+    canary: desktopCanary(dataDir, async () => engineSnapshot(url, key(), client.fetch)),
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: runningChange(live.state, commit),
     live: hot,
-  }, gate).catch(async (error: unknown) => {
+  }, gate, client).catch(async (error: unknown) => {
     await engine?.stop();
     throw error;
   });
@@ -595,10 +619,23 @@ function pictureCover(parent: BrowserWindow): Cover {
 }
 
 /** The background engine, when one is running here and proves itself (src/engine-proof.ts). */
-function joinBackground(dataDir: string): Promise<Attachment | null> {
-  return attachToRunning(dataDir, {
-    prove: async (address, key) => { const boot = await proveOnce(address, key); return boot ? sessionKey(key, boot) : null; },
+async function joinBackground(dataDir: string): Promise<Attachment | null> {
+  // Its first question goes through a connection proved for the engine process that answered the proof.
+  let client = null as EngineClient | null;
+  const joined = await attachToRunning(dataDir, {
+    prove: async (address, key) => {
+      const boot = await proveOnce(address, key);
+      if (!boot) return null;
+      client = new EngineClient({ origin: address, access: { boot: () => boot }, windowKey: () => key });
+      return sessionKey(key, boot);
+    },
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      if (!client) throw new Error(startingAgain);
+      return client.fetch(input, init);
+    }) as typeof fetch,
   });
+  client?.close();
+  return joined;
 }
 
 /**
@@ -727,8 +764,8 @@ function desktopCanary(dataDir: string, snapshot: () => Promise<string>) {
     fromVersion: app.getVersion(), target: installedAppRoot(app.isPackaged, process.platform, process.execPath), snapshot });
 }
 /** mac3/never-break: asks the background engine, which holds the database, for a copy of it. */
-async function engineSnapshot(url: string, token: string): Promise<string> {
-  const response = await fetch(`${url}/api/never-break/snapshot`, { method: "POST",
+async function engineSnapshot(url: string, token: string, call: typeof fetch): Promise<string> {
+  const response = await call(`${url}/api/never-break/snapshot`, { method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(120000) });
   const body = await response.json().catch(() => null) as { folder?: unknown; error?: unknown } | null;
   if (!response.ok || typeof body?.folder !== "string") throw new Error(typeof body?.error === "string" ? body.error : "The background engine did not make a copy of your work.");

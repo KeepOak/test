@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { request as httpRequest, type IncomingMessage } from "node:http";
+import type { ServerResponse } from "node:http";
+import { connect, type Socket } from "node:net";
 
 /**
  * Proving that the program at an engine's address is that engine, before the window's key is sent there.
@@ -35,6 +36,13 @@ export const answerHeader = "x-branch-answer";
 
 /** A fresh value naming one engine's process: its session key and its marks hold only while that process runs. */
 export const newBoot = (): string => randomBytes(16).toString("hex");
+
+/** Whether `supplied` is exactly `wanted`, compared in constant time. */
+export function sameKey(supplied: unknown, wanted: string): boolean {
+  if (typeof supplied !== "string") return false;
+  const given = Buffer.from(supplied), expected = Buffer.from(wanted);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
 
 const mac = (key: string, text: string): string => createHmac("sha256", key).update(text).digest("hex");
 const sameHex = (a: string, b: string): boolean => a.length === b.length && timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
@@ -104,7 +112,7 @@ export function markHolds(mark: unknown, key: string, ask: string, port: number,
 export const newAsk = (): string => randomBytes(16).toString("hex");
 
 /** The loopback address and port of an engine's origin, or null for anything else (a key never goes elsewhere). */
-function loopbackPort(origin: string): number | null {
+export function loopbackPort(origin: string): number | null {
   try {
     const url = new URL(origin);
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port) return null;
@@ -119,6 +127,111 @@ function parsed(line: string): { proof?: unknown; boot?: unknown } {
   } catch { return {}; }
 }
 
+/* ---------- the engine's side: the door the proof is asked at ---------- */
+
+/**
+ * How many keyless proofs are answered and how many held connections are kept: a program on this computer that asks
+ * again and again is told to wait (429) instead of using the engine up. A proof is one short answer; holding the
+ * connection after it is only for the desktop window, which asks with its session key.
+ */
+export class ProofDoor {
+  private readonly recent: number[] = [];
+  private readonly held = new Set<ServerResponse>();
+  constructor(private readonly perSecond = 64, private readonly mostHeld = 32, private readonly now: () => number = Date.now) {}
+
+  /** Whether one more keyless proof is answered now. */
+  mayAnswer(): boolean {
+    const at = this.now();
+    while (this.recent.length && this.recent[0]! <= at - 1000) this.recent.shift();
+    if (this.recent.length >= this.perSecond) return false;
+    this.recent.push(at);
+    return true;
+  }
+
+  get holding(): number { return this.held.size; }
+
+  /** Keeps `response` open as a held connection, when there is room for one more. */
+  hold(response: ServerResponse): boolean {
+    if (this.held.size >= this.mostHeld) return false;
+    this.held.add(response);
+    response.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+    response.write("\n");
+    const alive = setInterval(() => response.write("\n"), 20000);
+    alive.unref();
+    response.once("close", () => { clearInterval(alive); this.held.delete(response); });
+    return true;
+  }
+}
+
+/** A short answer with its length, so the asker's connection stays open for what it sends next. */
+export function answerShort(response: ServerResponse, status: number, value: unknown): void {
+  const body = `${JSON.stringify(value)}\n`;
+  response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff",
+    "content-length": String(Buffer.byteLength(body)) });
+  response.end(body);
+}
+
+/* ---------- the asker's side: a connection proved to reach the engine ---------- */
+
+/** One answer read straight off `socket`: its status and headers, and with `withBody` its body (it must give a length). */
+function readAnswer(socket: Socket, withBody: boolean, limit = 8192): Promise<{ status: number; headers: Map<string, string>; body: string }> {
+  return new Promise((resolve, reject) => {
+    let seen = Buffer.alloc(0);
+    const stop = (error: Error | null, value?: { status: number; headers: Map<string, string>; body: string }) => {
+      socket.off("data", onData); socket.off("error", onEnd); socket.off("close", onEnd);
+      if (error) reject(error); else resolve(value!);
+    };
+    const onEnd = () => stop(new Error("The connection ended before an answer."));
+    const onData = (chunk: Buffer) => {
+      seen = Buffer.concat([seen, chunk]);
+      if (seen.length > limit) { stop(new Error("The answer was too long.")); return; }
+      const end = seen.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      const [statusLine, ...lines] = seen.subarray(0, end).toString("latin1").split("\r\n");
+      const status = Number(/^HTTP\/1\.1 (\d{3}) /.exec(statusLine ?? "")?.[1] ?? 0);
+      const headers = new Map(lines.map((line) => [line.slice(0, line.indexOf(":")).trim().toLowerCase(), line.slice(line.indexOf(":") + 1).trim()]));
+      if (!withBody) { stop(null, { status, headers, body: "" }); return; }
+      const length = Number(headers.get("content-length") ?? NaN);
+      if (!Number.isInteger(length) || length < 0 || headers.has("transfer-encoding")) { stop(new Error("The answer did not say its length.")); return; }
+      const rest = seen.subarray(end + 4);
+      if (rest.length < length) return;
+      if (rest.length > length) { stop(new Error("More came than was asked for.")); return; }
+      stop(null, { status, headers, body: rest.toString("utf8") });
+    };
+    socket.on("data", onData);
+    socket.once("error", onEnd);
+    socket.once("close", onEnd);
+  });
+}
+
+/**
+ * Opens a connection to 127.0.0.1:`port` and asks, on it and with no key, for the engine's proof. Resolves with the
+ * connection once the answer holds for `key`, with the engine process it names; nothing else is ever sent on a
+ * connection before that, so what is sent after it reaches the engine or nothing (a connection, once made, goes to the
+ * process that took it, and ends with it).
+ */
+export function provenSocket(port: number, key: string, timeoutMs = 5000): Promise<{ socket: Socket; boot: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1");
+    socket.setNoDelay(true);
+    const late = setTimeout(() => socket.destroy(new Error("No answer in time.")), timeoutMs);
+    late.unref?.();
+    const fail = (error: Error) => { clearTimeout(late); socket.destroy(); reject(error); };
+    socket.once("error", fail);
+    socket.once("connect", () => {
+      const challenge = newChallenge();
+      socket.write(`GET ${proofPath}?challenge=${challenge} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAccept: application/json\r\n\r\n`);
+      readAnswer(socket, true).then((answer) => {
+        const said = parsed(answer.body.trim());
+        if (answer.status !== 200 || !proofHolds(said.proof, key, challenge, port, said.boot)) { fail(new Error(`Not Branch's engine (${answer.status}).`)); return; }
+        clearTimeout(late);
+        socket.off("error", fail);
+        resolve({ socket, boot: said.boot as string });
+      }, fail);
+    });
+  });
+}
+
 export interface ProofWatch {
   /** Resolves with the engine's process (its boot) once the program at the address has proved it is the engine, or null. */
   proved: Promise<string | null>;
@@ -128,9 +241,9 @@ export interface ProofWatch {
 }
 
 /**
- * Asks the program at `origin` to prove it is the engine holding `key`, and keeps that one connection open: the engine
- * holds its answer open, so the moment the engine's process ends, the connection ends with it and `ended` resolves.
- * Nothing here carries the key: only the challenge goes out.
+ * Asks the program at `origin` to prove it is the engine holding `key`, then, on that same proved connection and with
+ * the session key for the engine's process, asks it to hold the connection open: the moment the engine's process ends,
+ * the connection ends with it and `ended` resolves. The window key itself is never sent.
  */
 export function watchEngine(origin: string, key: string, timeoutMs = 5000): ProofWatch {
   const port = loopbackPort(origin);
@@ -138,40 +251,34 @@ export function watchEngine(origin: string, key: string, timeoutMs = 5000): Proo
   let finish!: () => void;
   const proved = new Promise<string | null>((resolve) => { settle = resolve; });
   const ended = new Promise<void>((resolve) => { finish = resolve; });
-  let answered = false;
+  let closed = false;
+  let current: Socket | null = null;
   if (port === null) { settle(null); return { proved, ended, close: () => undefined }; }
-  const challenge = newChallenge();
-  const asked = httpRequest({ host: "127.0.0.1", port, method: "GET", agent: false,
-    path: `${proofPath}?challenge=${challenge}&hold=1`, headers: { accept: "application/json" } });
-  const timer = setTimeout(() => { if (!answered) asked.destroy(new Error("No answer in time")); }, timeoutMs);
-  timer.unref?.();
-  const done = () => { clearTimeout(timer); if (!answered) settle(null); else finish(); };
-  asked.on("error", done);
-  asked.on("close", done);
-  asked.on("response", (response: IncomingMessage) => {
-    if (response.statusCode !== 200) { response.resume(); asked.destroy(); return; }
-    let line = "";
-    response.setEncoding("utf8");
-    response.on("data", (chunk: string) => {
-      if (answered) return; // the engine's keep-alive newlines
-      line += chunk;
-      if (line.length > 512) { asked.destroy(); return; }
-      const end = line.indexOf("\n");
-      if (end < 0) return;
-      const said = parsed(line.slice(0, end));
-      if (!proofHolds(said.proof, key, challenge, port, said.boot)) { asked.destroy(); return; }
-      answered = true;
-      clearTimeout(timer);
-      settle(said.boot as string);
-    });
-    response.on("error", done);
-  });
-  asked.end();
-  return { proved, ended, close: () => asked.destroy() };
+  void provenSocket(port, key, timeoutMs).then(({ socket, boot }) => {
+    current = socket;
+    if (closed) { socket.destroy(); settle(null); return; }
+    const late = setTimeout(() => socket.destroy(), timeoutMs);
+    late.unref?.();
+    socket.write(`GET ${proofPath}?hold=1 HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAuthorization: Bearer ${sessionKey(key, boot)}\r\n\r\n`);
+    readAnswer(socket, false).then((answer) => {
+      clearTimeout(late);
+      if (answer.status !== 200) { socket.destroy(); settle(null); return; }
+      socket.on("data", () => undefined); // the engine's keep-alive newlines
+      socket.once("close", () => finish());
+      socket.on("error", () => undefined);
+      settle(boot);
+    }, () => { clearTimeout(late); socket.destroy(); settle(null); });
+  }, () => settle(null));
+  return { proved, ended, close: () => { closed = true; current?.destroy(); } };
 }
 
-/** Asks once, without holding the connection: the boot of the engine holding `key` at `origin`, or null when it is not. */
+/** Asks once, and closes the connection: the boot of the engine holding `key` at `origin`, or null when it is not. */
 export async function proveOnce(origin: string, key: string, timeoutMs = 5000): Promise<string | null> {
-  const watch = watchEngine(origin, key, timeoutMs);
-  try { return await watch.proved; } finally { watch.close(); }
+  const port = loopbackPort(origin);
+  if (port === null) return null;
+  try {
+    const { socket, boot } = await provenSocket(port, key, timeoutMs);
+    socket.destroy();
+    return boot;
+  } catch { return null; }
 }

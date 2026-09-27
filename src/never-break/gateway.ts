@@ -5,7 +5,7 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import { connect } from "node:net";
 import type { Duplex } from "node:stream";
 import { clearRunning, sessionTokenFileName, writeRunning } from "../install/running.js";
-import { answerHeader, answerProof, askHeader, isSessionKey, markFor, newBoot, proofPath, sessionKey } from "../engine-proof.js";
+import { answerHeader, answerProof, answerShort, askHeader, atWindowAddress, isSessionKey, markFor, newBoot, ProofDoor, proofPath, sessionKey } from "../engine-proof.js";
 import { contractsMeet, gatewayContract, WorkerReadySchema, type WorkerReady } from "./contract.js";
 import { loadGatewayConfig, promoteGood, restoreGood, sameAsGood, type GatewayConfig } from "./gateway-config.js";
 import { clearCrashes, markExited, markRunning, recordCrash } from "./gateway-state.js";
@@ -61,6 +61,8 @@ export class Gateway {
   private readonly waiters = new Set<(port: number | null) => void>();
   /** This gateway's process, for the desktop window's proof, session key and marks (src/engine-proof.ts). */
   private readonly boot = newBoot();
+  /** How many keyless proofs are answered, and how many window connections are held open. */
+  private readonly proofDoor = new ProofDoor();
   /** The address of a worker that refused a connection, so it is not tried again before it is replaced. */
   private deadPort: number | null = null;
   /** Connections carried through as upgrades, closed when the gateway stops. */
@@ -276,14 +278,18 @@ export class Gateway {
   private proof(request: IncomingMessage, response: ServerResponse): void {
     const key = this.windowKey();
     const search = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
-    const answer = key ? answerProof(search, key, { port: request.socket?.localPort, address: request.socket?.localAddress }, this.boot) : null;
+    const local = { port: request.socket?.localPort, address: request.socket?.localAddress };
+    // Held open only for the desktop window, on the connection it has just proved, with its session key.
+    if (search.get("hold") === "1") {
+      const supplied = /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "";
+      if (!key || atWindowAddress(local) === null || !isSessionKey(supplied, key, this.boot)) return plain(response, 404, "Not found");
+      if (!this.proofDoor.hold(response)) answerShort(response, 429, { error: "Too many held connections." });
+      return;
+    }
+    if (!this.proofDoor.mayAnswer()) return answerShort(response, 429, { error: "Too many questions; ask again in a moment." });
+    const answer = key ? answerProof(search, key, local, this.boot) : null;
     if (!answer) return plain(response, 404, "Not found");
-    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
-    response.write(`${JSON.stringify(answer)}\n`);
-    if (search.get("hold") !== "1") { response.end(); return; }
-    const alive = setInterval(() => response.write("\n"), 20000);
-    alive.unref();
-    response.once("close", () => clearInterval(alive));
+    answerShort(response, 200, answer);
   }
 
   /**

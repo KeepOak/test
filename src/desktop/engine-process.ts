@@ -32,7 +32,7 @@ const UseWindowSchema = z.object({ appRoot: z.string().min(1).max(4096), inUse: 
 /** This engine's own copy of a window file (named as under public/), to tell what a live build changed. */
 const ownWindowFile = (name: string): Promise<Buffer | null> => readFile(new URL(`../../public/${name}`, import.meta.url)).catch(() => null);
 import { keepRunningThroughErrors } from "./engine-errors.js";
-import { newChallenge, proofPath } from "../engine-proof.js";
+import { engineHealthy } from "./engine-health.js";
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 
 interface Port {
@@ -79,15 +79,8 @@ keepRunningThroughErrors(process, {
 });
 
 /** The engine answers from its database and its server, as the window would reach it. */
-function healthOf(branch: Branch, url: string): () => Promise<boolean> {
-  return async () => {
-    try { branch.store.sqlite.prepare("SELECT 1").get(); } catch { return false; }
-    try {
-      const answer = await fetch(`${url}${proofPath}?challenge=${newChallenge()}`, { signal: AbortSignal.timeout(5000) });
-      await answer.text();
-      return answer.ok;
-    } catch { return false; }
-  };
+function healthOf(branch: Branch, url: string, key: () => string): () => Promise<boolean> {
+  return () => engineHealthy(() => { branch.store.sqlite.prepare("SELECT 1").get(); }, url, key());
 }
 
 /** Test builds only (main sets `testHooks` for an unpackaged copy started to be tested): ways to make trouble on purpose. */
@@ -211,16 +204,18 @@ async function start(config: EngineConfig): Promise<void> {
     branch.issues = integrations.hosted.issues ?? null;
     // Q45 leaf 0: the same port as last time when it is free, so the page's own stored choices survive a restart.
     const portFile = join(config.dataDir, "local-port.json");
+    let healthKey = "";
     const server = await startServer(branch, {
       dataDir: config.dataDir, port: config.port ?? await rememberedPort(portFile), anyPortIfTaken: config.port === undefined, presence: "app", presencePid: config.appPid,
       executable: config.executable, installRoot: config.installRoot,
       ...(config.loginItem ? { loginItem: remoteLoginItem(config.loginItem) } : {}),
       quit: () => { void link.call("quit").catch(() => undefined); },
-      onWindowKey: (token) => post({ kind: "key", token }),
+      onWindowKey: (token) => { healthKey = token; post({ kind: "key", token }); },
     });
     rememberPort(portFile, server.url);
     serverClose = server.close;
-    healthy = healthOf(branch, server.url);
+    healthKey = server.token;
+    healthy = healthOf(branch, server.url, () => healthKey);
     post({ kind: "ready", url: server.url, token: server.token });
     // Main keeps the last count of working tasks, so a Quit still asks while the engine is too busy to answer at once.
     let told = -1;
