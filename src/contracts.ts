@@ -122,11 +122,6 @@ export interface Message {
    */
   attachments?: AttachmentRef[];
   /**
-   * What Branch could read out of this message's files (words, a transcript), for the model only. The
-   * window never shows it as the person's words; the model is given it after the message itself.
-   */
-  read?: string;
-  /**
    * A message the engine wrote itself rather than the person: "trunk-intro" is the ask that has a new
    * Trunk introduce itself in its own conversation, which the window does not draw as the owner's words.
    */

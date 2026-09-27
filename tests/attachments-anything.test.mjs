@@ -226,3 +226,42 @@ test("the rest of a long file is one tool call away, only in its own conversatio
   const other = await post("/api/run", { prompt: "Elsewhere" });
   await assert.rejects(tool.execute({ id: ref.id, from: 0 }, { runId: other.body.id, owner: "local" }), /not attached to this conversation/);
 });
+
+test("what was read out of a file goes to the model only: never with the message, its export, or a script's key", async (t) => {
+  const { underShortLivedKey } = await import("../dist/key-context.js");
+  const { app, server, headers, upload, post, seen } = await branch(t);
+  const sent = await upload("report.pdf", "application/pdf", pdf());
+  const run = await post("/api/run", { prompt: "Summarise it", uploads: [sent.body.upload] });
+  assert.equal(run.status, 200);
+  assert.match(lastUser(seen).content, /Quarterly figures rose/, "the model had the words");
+  const sessionId = run.body.sessionId;
+  const everywhere = [
+    JSON.stringify(app.store.messages(sessionId)),
+    JSON.stringify(app.store.exportSession(app.runtime.owner, sessionId)),
+    JSON.stringify(underShortLivedKey(() => app.store.exportSession(app.runtime.owner, sessionId))),
+    await (await fetch(`${server.url}/api/sessions/${sessionId}`, { headers })).text(),
+  ];
+  for (const [at, text] of everywhere.entries()) assert.doesNotMatch(text, /Quarterly figures rose/, `way out ${at} carries no words of the file`);
+  const next = await post("/api/run", { prompt: "And again", sessionId });
+  assert.equal(next.status, 200);
+  assert.match(seen.at(-1).find((one) => one.role === "user" && /Summarise it/.test(one.content)).content, /Quarterly figures rose/,
+    "the next turn's model still has them");
+  const deleted = await fetch(`${server.url}/api/sessions/${sessionId}`, { method: "DELETE", headers });
+  if (deleted.ok) assert.equal(app.store.sqlite.prepare("SELECT COUNT(*) AS n FROM message_reads WHERE session_id=?").get(sessionId).n, 0,
+    "and they go when the conversation does");
+});
+
+test("files sent side by side share one person's room, so they cannot fill the disk together", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-stream-"));
+  t.after(() => discardTemp(root));
+  const store = new Attachments(root);
+  const limits = { file: 4 * 1024 * 1024, waiting: 6 * 1024 * 1024 };
+  async function* slow() { for (let i = 0; i < 16; i++) { yield Buffer.alloc(256 * 1024, 3); await new Promise((done) => setTimeout(done, 5)); } }
+  const results = await Promise.allSettled([1, 2, 3].map((n) => store.stage("local", { name: `part${n}.bin`, mediaType: "application/octet-stream" }, slow(), limits)));
+  const kept = results.filter((one) => one.status === "fulfilled").length;
+  assert.ok(kept <= 1, `at most one 4 MB file fits a 6 MB room at once (${kept} kept)`);
+  assert.match(results.find((one) => one.status === "rejected").reason.message, /does not fit/);
+  // Another person's room is their own.
+  const theirs = await store.stage("profile:other", { name: "theirs.bin", mediaType: "application/octet-stream" }, slow(), limits);
+  assert.equal(theirs.bytes, 4 * 1024 * 1024);
+});

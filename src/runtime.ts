@@ -1178,9 +1178,9 @@ ${run.output.slice(0, 6000)}`;
         role: "user",
         content: options.prompt + picturesNote(options.images) + attachmentsNote(attached),
         ...(attached.length ? { attachments: attached } : {}),
-        ...(read ? { read } : {}),
         ...(options.system ? { system: options.system } : {}),
       });
+      if (read) this.store.saveRead(run.sessionId, userMessageId, read);
       options.onUserMessageId?.(userMessageId);
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });

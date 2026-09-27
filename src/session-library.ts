@@ -49,8 +49,6 @@ const StoredMessageSchema = z.object({
    * are taken off again just below.
    */
   attachments: z.array(AttachmentRefSchema).max(maximumAttachmentsPerTurn + maximumUploadsPerTurn).optional(),
-  /** What Branch read out of the message's files for the model (src/contracts.ts Message.read). */
-  read: z.string().max(200000).optional(),
   /** The engine's own ask (src/contracts.ts Message.system), so a Trunk's conversation still copies. */
   system: z.literal("trunk-intro").optional(),
 }).strict().superRefine((message, context) => {

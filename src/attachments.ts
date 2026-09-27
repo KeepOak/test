@@ -221,6 +221,8 @@ export class Attachments {
    */
   private readonly incoming = new Map<string, StagedFile>();
   private get incomingFolder(): string { return join(this.root, ".incoming"); }
+  /** Bytes still arriving, per sender, so files sent side by side count against the same room. */
+  private readonly arriving = new Map<string, number>();
 
   /**
    * Streams one file to disk as it arrives: counted as it goes, stopped the moment it passes the limit,
@@ -235,20 +237,26 @@ export class Attachments {
     const name = cleanName(input.name);
     const waiting = [...this.incoming.values()].filter((one) => one.who === who);
     if (waiting.length >= maximumUploadsPerTurn * 2) throw new Error("Too many files are waiting to be sent. Send or take some off first.");
-    const already = waiting.reduce((sum, one) => sum + one.bytes, 0);
+    const already = waiting.reduce((sum, one) => sum + one.bytes, 0) + (this.arriving.get(who) ?? 0);
     const room = Math.min(limits.file, limits.waiting - already);
-    const tooBig = () => new Error(room < limits.file
+    let bytes = 0;
+    const tooBig = () => new Error(Math.max(bytes, input.length ?? 0) <= limits.file
       ? `${name} does not fit: files waiting to be sent can add up to ${sizeWords(limits.waiting)}. Send or take some off first.`
       : `${name} is too big: one file can be up to ${sizeWords(limits.file)}.`);
     if (input.length != null && input.length > room) throw tooBig();
     await mkdir(this.incomingFolder, { recursive: true, mode: 0o700 });
     const id = randomBytes(12).toString("hex");
     const path = join(this.incomingFolder, id);
-    let bytes = 0;
+    const arriving = this.arriving, incoming = this.incoming;
+    // Measured again with every piece, so files sent side by side cannot each find the whole room free.
+    const over = () => bytes > limits.file || [...incoming.values()].filter((one) => one.who === who)
+      .reduce((sum, one) => sum + one.bytes, arriving.get(who) ?? 0) > limits.waiting;
     const counter = new Transform({
       transform(chunk: Buffer | string, _encoding, done) {
-        bytes += Buffer.byteLength(chunk);
-        done(bytes > room ? tooBig() : null, chunk);
+        const size = Buffer.byteLength(chunk);
+        bytes += size;
+        arriving.set(who, (arriving.get(who) ?? 0) + size);
+        done(bytes > room || over() ? tooBig() : null, chunk);
       },
     });
     try {
@@ -257,6 +265,9 @@ export class Attachments {
     } catch (error) {
       await rm(path, { force: true }).catch(() => undefined);
       throw error;
+    } finally {
+      const left = (arriving.get(who) ?? 0) - bytes;
+      if (left > 0) arriving.set(who, left); else arriving.delete(who);
     }
     const mediaType = typeFor(input.mediaType, name);
     const staged: StagedFile = { id, who, path, name, mediaType, kind: kindOf(mediaType, name), bytes };
