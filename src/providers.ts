@@ -86,10 +86,18 @@ const anthropicResponse = z.object({
 });
 export const wireName = (name: string): string =>
   "branch_" + createHash("sha256").update(name).digest("hex").slice(0, 24);
+/**
+ * The tool a call names. A model often calls a tool by the name it reads in the tool search's answer ("Call
+ * documents.add now") instead of the wire name it was offered under (dogfood D24, the Librarian Trunk's
+ * "Could not proceed?"); that exact name is accepted too, but only for a tool this very request offered or one the
+ * task's own catalog says it may call (`callable`), so a call still reaches nothing the task was not given.
+ */
 function originalName(wire: string, request: CompletionRequest): string {
-  const tool = request.tools.find((t) => wireName(t.name) === wire);
-  if (!tool) throw new Error("Provider returned an unknown tool");
-  return tool.name;
+  const tool = request.tools.find((t) => wireName(t.name) === wire) ?? request.tools.find((t) => t.name === wire);
+  if (tool) return tool.name;
+  // A tool the search found for this task that this round's section left out, by the name the search gave it.
+  if (request.callable?.(wire)) return wire;
+  throw new Error(`The model asked for an unknown tool ("${wire.slice(0, 80)}"), one this task was not offered`);
 }
 /**
  * The rule every provider address follows: HTTPS, or plain HTTP only on this computer or the owner's own network (QA

@@ -368,6 +368,8 @@ export interface RunOptions {
   conversationMode?: ConversationMode;
   /** Dogfood B26: the thinking level a conversation begun by this message keeps (the model menu before a first message). */
   conversationReasoning?: ReasoningEffort;
+  /** Dogfood D14: the project a conversation begun by this message is filed under; absent, the active project. */
+  conversationProject?: string;
   /** The `traceparent` header of the request that asked for this task, so one trace crosses agents. */
   traceparent?: string | null;
   /** Internal: the working style of the specialist carrying out this run. */
@@ -1091,7 +1093,8 @@ ${run.output.slice(0, 6000)}`;
     });
     if (options.sessionId && this.activeSessions.has(options.sessionId))
       throw new Error("Session already has an active run");
-    const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false);
+    const project = !options.sessionId && options.conversationProject ? this.store.projects.of(this.owner, options.conversationProject).id : undefined;
+    const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false, "web", project);
     // Redesign phase 1: only a conversation begun here is given a mode; one that exists keeps what it had.
     if (!options.sessionId && options.conversationMode) this.startMode(run.sessionId, options.conversationMode);
     // Dogfood B26: the level picked before the first message is this conversation's own, as one picked in it would be.
@@ -1576,7 +1579,7 @@ ${run.output.slice(0, 6000)}`;
     // A routing profile (wave 7) is the owner's own named set of choices. It is asked first, and
     // whichever rule fired is written down so the inspector can say why this model and not another.
     // Wave 8: a project may name the way of working its own tasks start from.
-    const defaults = this.store.projects.defaults(owner);
+    const defaults = this.store.projects.defaults(owner, run.project); // dogfood D14: the task's own project
     const byProfile = routeByProfile(this.store, this.models, owner, "chat", defaults.profile);
     if (byProfile.preset) {
       this.store.event(run.id, "model.routed", { preset: byProfile.preset, kind: "profile", reason: byProfile.reason, project: defaults.projectId });
@@ -2070,7 +2073,7 @@ ${run.output.slice(0, 6000)}`;
           // this out by being refused.
           cannotRunInstructions(codeRunSettings(this.store, context.owner).enabled, run.prompt) +
           steerNote +
-          identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
+          identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner, run.project) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
           autonomyPrompt(this, context) + // r17-b: standing orders and "from now on" instructions (src/autonomy/hooks.ts)
           patternNote(this.teamPattern(run.sessionId)), // eng-trunk-controls: how Trunks work together, when the owner chose
       },
@@ -2227,7 +2230,7 @@ ${run.output.slice(0, 6000)}`;
     const tools = this.registry.descriptions(context.permissions);
     const available = [...new Set(tools.map((tool) => this.registry.groupOf(tool.name)))];
     const recent = messages.filter((m) => m.role !== "system").slice(-4).map((m) => m.content);
-    const project = this.store.projects.active(context.owner);
+    const project = this.store.projects.of(context.owner, run.project);
     const signals = { prompt: run.prompt, recent, project: `${project.name} ${project.instructions}` };
     const guessed = rankGroups(signals, available, 3);
     // A specialist's style says which toolboxes its work always needs, so it never spends a round
@@ -2575,7 +2578,9 @@ ${run.output.slice(0, 6000)}`;
       this.models.requests.record(preset.id);
       // mac2/leak-guard: the copy that is sent has key-shaped values hidden; `messages` stays as it was.
       // mac7/r17-g: the sent copy is also tidied (orphaned results, missing ones, repeats) when the owner asks.
+      const catalog = this.catalogs.get(context.runId);
       const request = { messages: this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages)), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
+        ...(catalog && tools.length ? { callable: (name: string) => catalog.callable(name) } : {}), // dogfood D24
         ...knobs.serviceTierFor(this.store, this.owner), // R17-S12
         ...savings.requestExtras(this.store, this.owner, preset, !context.permissions.size), // R17-045 / R17-046
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };

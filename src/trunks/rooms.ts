@@ -17,6 +17,7 @@ import {
 import { TeamPatternSchema, type TeamPattern } from "../team-pattern.js"; // eng-trunk-controls
 import { lockedDown, lockdownRefusal, onLockdownChange } from "../lockdown.js"; // a2a-rooms
 import { agentBadge, maxAgentReply, maxRoomAgents, outsideMembers, reasonText, refusedStates, seatName, type OutsideAgents } from "./room-outside.js"; // a2a-rooms
+import { defaultProjectId } from "../projects.js"; // dogfood D14
 
 /**
  * R17-009 (T-09): rooms where two to six Trunks and the owner talk in one transcript.
@@ -200,7 +201,8 @@ export class TrunkRooms {
   }
   private conversation(title: string): string {
     const { store, owner } = this.deps;
-    const run = store.createRun(owner, title);
+    // Dogfood D14: a room belongs to no project, so a project opened last never lends its instructions to the room.
+    const run = store.createRun(owner, title, undefined, false, "web", defaultProjectId);
     store.markAside(run.id); // overview: the room's opening row, set aside in GET /api/state
     store.finish(run.id, "completed", "Opened");
     return run.sessionId;

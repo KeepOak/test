@@ -10,6 +10,7 @@ import type { ConversationFiles } from "./sessions.js";
 import { participation } from "./history.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { ensureMarks, inBinWords, notInBin, notPutAway } from "./conversation-actions.js";
+import { steerShown } from "./steer.js"; // dogfood D23
 
 /** What a conversation's words may come to in an archive. */
 export const maximumArchiveBytes = 4 * 1024 * 1024;
@@ -217,7 +218,8 @@ export class SessionLibrary {
     return {
       sessions: rows.map((row) => ({
         sessionId: String(row.id), createdAt: String(row.created_at), messageCount: Number(row.message_count),
-        opening: String(row.opening ?? ""), lastMessage: String(row.latest ?? ""),
+        // Dogfood D23: a steer reads as the owner's own words here too, never the marker the model was given it in.
+        opening: steerShown(String(row.opening ?? "")), lastMessage: steerShown(String(row.latest ?? "")),
         lastSpeaker: row.latest_role === null ? "" : String(row.latest_role),
         ...(row.pin_order == null ? {} : { pinned: true }), ...(row.title ? { title: String(row.title) } : {}),
       })),

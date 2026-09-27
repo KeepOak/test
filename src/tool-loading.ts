@@ -201,6 +201,12 @@ export class ToolLoader {
   }
   nextRound(): void { this.round++; this.version++; }
   noteUse(name: string): void { this.usedAt.set(name, this.round); this.version++; }
+  /**
+   * Dogfood D24: whether a call by this exact name may be taken although this round's tool section left the tool out
+   * (the budget's ceiling moved a searched tool down to a line). Only a tool this task may use is in the index at all,
+   * and one the owner switched off is never callable, so this reaches nothing the task was not already given.
+   */
+  callable(name: string): boolean { return !!this.index.entry(name) && !this.hidden.has(name); }
   groups(): CatalogGroup[] {
     return [...this.counts].map(([group, tools]) => ({ group, tools, expanded: this.isOpen(group) }));
   }

@@ -147,6 +147,11 @@ export interface ToolDescription {
 export interface CompletionRequest {
   messages: Message[];
   tools: ToolDescription[];
+  /**
+   * Dogfood D24: a tool this task may use that this round's section left out, callable by its own name (the name the
+   * tool search's answer gave). Absent: only the tools in `tools` are.
+   */
+  callable?: (name: string) => boolean;
   signal: AbortSignal;
   maxTokens: number;
   /** Requested reasoning effort; adapters map it to their own parameter or ignore it. */
@@ -487,6 +492,8 @@ export const RunInputSchema = z
     mode: z.enum(["ask", "plan", "auto", "full"]).optional(),
     /** Dogfood B26: how hard a conversation this message starts thinks (its own level, kept with it; src/models.ts). */
     reasoning: z.enum(["low", "medium", "high"]).optional(),
+    /** Dogfood D14: the project a conversation this message starts is filed under (a project's id); absent, the active one. */
+    project: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "Project ids use lowercase letters, digits and dashes").optional(),
   })
   .strict();
 /** The same message without its pictures, for storing and for measuring how full the context is. */
