@@ -24,6 +24,19 @@
  *   M17 settings.json not scrubbed (a saved secret's value goes in)                          → "export (follow-up): the owner's own"
  *   M18 a second export for the same person allowed while the first is being made            → "export (follow-up): one at a time"
  *   M19 the outside service's facts left out of memory.json and the count                    → "export (follow-up): one at a time"
+ *   M20 no overall cap on exports                                                            → "no more than two exports"
+ *   M21 a purge inside Delete everything commits on its own (no savepoint)                   → "a failure part way"
+ *   M22 a purge's file removal not held until the commit                                     → "a failure part way"
+ *   M23 Delete everything's purge not run as one transaction                                 → "a failure part way"
+ *   M24 unfinished deletes not resumed when the server starts                                → "the next start finishes it"
+ *   M25 the outside step sent under Lockdown                                                 → "Lockdown holds it"
+ *   M26 a journaled delete sent to whatever service is set up now                            → "never sent to a different service"
+ *   M27 secure_delete left off for the purge                                                 → "nothing of what was deleted"
+ *   M28 the update safety copies step skipped                                                → "nothing of what was deleted"
+ *   M29 the memory history not started again                                                 → "the memory notes and the history"
+ *   M31 the files step skipped                                                               → "a journal cut short"
+ *   M32 the full-text indexes not merged again after the purge (words stay in their pages)   → "nothing of what was deleted"
+ *   (VACUUM after scrubbing a copy survives on its own: the copy's secure_delete already overwrites what is deleted.)
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -43,6 +56,7 @@ import { saveTraceExportSettings } from "../dist/tracing-export.js";
 import { folderFor } from "../dist/attachments.js";
 import { audit } from "../dist/audit.js";
 import { resumeUnfinishedDeletes } from "../dist/your-data.js";
+import { openJournal } from "../dist/your-data-forgood.js";
 import { writeUpdateBackup } from "../dist/install/update-backup.js";
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
@@ -614,10 +628,26 @@ test("delete (for good): nothing of what was deleted is left in the data folder 
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.equal(done.body.problem, undefined, JSON.stringify(done.body));
   const everything = rawUnder(dataDir);
-  for (const marker of ["zqowner-prompt", "zqowner-fact"]) assert.ok(!everything.includes(marker), `${marker} is gone from every file`);
+  for (const marker of ["zqowner-prompt", "zqowner-fact", "zqowner"]) assert.ok(!everything.includes(marker), `${marker} is gone from every file`);
   assert.ok(done.body.removed.some((line) => /^4 update safety copies, made again without them\.$/.test(line)), JSON.stringify(done.body.removed));
   const copy = rawUnder(copies);
   assert.match(copy, /zqsam-prompt/, "Sam's conversation stays in the copies");
   assert.match(copy, /zq-owner-setting-kept/, "and the owner's settings");
   assert.equal(readdirSync(copies).length, 4, "every copy keeps its name");
+});
+
+test("delete (for good): a journal cut short after the commit removes the files at the next resume", async (t) => {
+  const { app } = await served(t);
+  const scope = app.runtime.owner, session = randomUUID(), run = randomUUID();
+  const files = join(app.store.folder, "attachments", folderFor(session)), taskFiles = join(app.store.folder, "artifacts", run);
+  mkdirSync(files, { recursive: true });
+  writeFileSync(join(files, "zq.txt"), "zq");
+  mkdirSync(taskFiles, { recursive: true });
+  writeFileSync(join(taskFiles, "zq.txt"), "zq");
+  openJournal(app, { scope, sessions: [session], runIds: [run], outside: null, history: false }, []);
+  await resumeUnfinishedDeletes(app);
+  assert.ok(!existsSync(files), "the conversation's files");
+  assert.ok(!existsSync(taskFiles), "and its task's files");
+  assert.equal(journalRows(app), 1);
+  assert.equal(app.store.sqlite.prepare("SELECT finished FROM your_data_deletes").get().finished, 1, "the journal is finished");
 });

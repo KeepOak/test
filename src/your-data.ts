@@ -10,7 +10,7 @@ import type { createBranch } from "./index.js";
 import { lockdownActive } from "./lockdown.js";
 import { memoryHistorySettings } from "./memory-git.js";
 import { memoryProviderSettings } from "./memory-provider.js";
-import { finish, openJournal, unfinished, unfinishedSentence, type Journal } from "./your-data-forgood.js";
+import { finish, openJournal, optimizeWordIndexes, unfinished, unfinishedSentence, type Journal } from "./your-data-forgood.js";
 import type { MemoryRecord } from "./memory.js";
 import { staysOnThisComputer } from "./backup.js";
 import { hiddenMarker, redactLeaksIn } from "./leak-guard.js";
@@ -398,7 +398,9 @@ async function deleteEverything(app: Branch, confirm: string) {
   let outside: Awaited<ReturnType<Branch["memory"]["backend"]["everythingOutside"]>>;
   try { outside = await app.memory.backend.everythingOutside(scope); }
   catch (error) { throw new HttpError(409, errorWords(error)); }
-  const history = app.memoryHistory.settings(scope).mode !== "off" || scope === owner;
+  // The memory history is one folder, the owner's: only the owner's delete starts it again, or it would wipe theirs.
+  const history = scope === owner;
+  const theirHistory = !history && app.memoryHistory.settings(scope).mode !== "off";
   let done: { journal: Journal; conversations: number; memory: number };
   try { done = app.store.atomically(() => purge(app, scope, sessions, outside, history)); }
   catch (error) {
@@ -410,7 +412,8 @@ async function deleteEverything(app: Branch, confirm: string) {
     ...(outside && journal.outside?.pending.length ? { notRemoved: journal.outside.pending.length } : {}),
     ...(waiting.length ? { waiting, problem: waiting.join(" ") } : {}),
     kept: app.store.profiles.isOwner()
-      ? "Your keys, connections and settings stay, and so does the record that this was deleted." : "The record that this was deleted stays." };
+      ? "Your keys, connections and settings stay, and so does the record that this was deleted."
+      : `The record that this was deleted stays.${theirHistory ? " So do earlier versions in the owner's history of what is remembered, which may hold what you remembered while yours was on." : ""}` };
 }
 
 /** The database half, run inside one transaction by the caller: purge, marks, journal and record together. */
@@ -436,7 +439,7 @@ function purge(app: Branch, scope: string, sessions: string[], outside: { url: s
       const changes = Number(db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
       if (table === "memory") memory += changes;
     }
-    if (tableExists(app, "memory_search")) db.exec("INSERT INTO memory_search(memory_search) VALUES('optimize')");
+    optimizeWordIndexes(db); // a deleted message's or fact's words leave the search indexes' own pages now
     // Facts on an outside service are marked forgotten here, now, so none is read back whatever the service does later.
     if (outside) app.memory.backend.markAllForgotten(scope, outside.ids);
     const removed = [`${conversations === 1 ? "One conversation with its" : `${conversations} conversations with their`} files, recordings and receipts, and ${memory === 1 ? "one remembered fact" : `${memory} remembered facts`}.`];

@@ -137,9 +137,10 @@ async function rewriteNotes(app: Branch, journal: Journal): Promise<Outcome> {
 
 async function rewriteHistory(app: Branch, journal: Journal): Promise<Outcome> {
   if (!journal.history || !await app.memoryHistory.kept()) return {};
-  const remote = app.memoryHistory.settings(journal.scope).remote;
+  const settings = app.memoryHistory.settings(journal.scope), remote = settings.mode === "off" ? undefined : settings.remote;
   const push = !!remote && !locked(app);
   const { pushed } = await app.memoryHistory.rewrite(journal.scope, push);
+  if (settings.mode === "off") return { removed: "The history of what is remembered, removed from this computer." };
   const here = "The history of what is remembered, started again without them";
   if (remote && !pushed) return { removed: `${here} on this computer.`, waiting: `Lockdown is on, so the copy of that history at ${hostOf(remote)} is replaced once it is off.` };
   return { removed: pushed ? `${here}, here and at ${hostOf(remote!)}. That service may still keep old versions it no longer shows.` : `${here}.` };
@@ -181,8 +182,9 @@ export function scrubDatabase(path: string, scope: string): { sessions: string[]
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]).map((row) => row.name);
     const has = (name: string) => tables.includes(name);
     const columns = (name: string) => (db.prepare(`PRAGMA table_info("${name}")`).all() as { name: string }[]).map((row) => row.name);
-    const sessions = has("sessions") ? (db.prepare("SELECT id FROM sessions WHERE owner=?").all(scope) as { id: string }[]).map((row) => row.id) : [];
-    const runs = has("tasks") ? (db.prepare(`SELECT id FROM tasks WHERE owner=? OR session_id IN (SELECT value FROM json_each(?))`)
+    const owned = (name: string) => has(name) && columns(name).includes("owner");
+    const sessions = owned("sessions") ? (db.prepare("SELECT id FROM sessions WHERE owner=?").all(scope) as { id: string }[]).map((row) => row.id) : [];
+    const runs = owned("tasks") ? (db.prepare(`SELECT id FROM tasks WHERE owner=? OR session_id IN (SELECT value FROM json_each(?))`)
       .all(scope, JSON.stringify(sessions)) as { id: string }[]).map((row) => row.id) : [];
     db.exec("PRAGMA secure_delete=ON");
     db.exec("BEGIN");
@@ -196,13 +198,22 @@ export function scrubDatabase(path: string, scope: string): { sessions: string[]
       }
       if (has("memory_search") && has("memory_terms"))
         db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=?)").run(scope);
-      for (const name of personTables) if (has(name)) db.prepare(`DELETE FROM "${name}" WHERE owner=?`).run(scope);
+      for (const name of personTables) if (has(name) && columns(name).includes("owner")) db.prepare(`DELETE FROM "${name}" WHERE owner=?`).run(scope);
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
-    if (has("memory_search")) db.exec("INSERT INTO memory_search(memory_search) VALUES('optimize')");
+    optimizeWordIndexes(db);
     db.exec("VACUUM");
     return { sessions, runs };
   } finally { db.close(); }
+}
+
+/**
+ * Every full-text index (conversation search, the memory word index and the rest) is merged again: a deleted row's words
+ * otherwise stay in the index's own pages until the next merge, whenever that is.
+ */
+export function optimizeWordIndexes(db: { prepare: DatabaseSync["prepare"]; exec: DatabaseSync["exec"] }): void {
+  const names = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE 'CREATE VIRTUAL TABLE%fts5%'").all() as { name: string }[]).map((row) => row.name);
+  for (const name of names) db.exec(`INSERT INTO "${name}"("${name}") VALUES('optimize')`);
 }
 
 /** A row archive (before-*.json): the same rows left out, written to a new file that then takes the old one's place. */
