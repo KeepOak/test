@@ -135,6 +135,7 @@ test("the computer card: Stopped with Carry on for a paused task, which resumes 
   assert.match(await card.locator(".pill").innerText(), /Stopped/);
   await until(() => card.locator(".comp7-thumb img.shot7").count().then((n) => n > 0));
   assert.equal(await card.locator('[data-act="stage"][data-v="computer"]').count(), 1, "the picture opens the computer full size");
+  assert.equal(await page.locator('#main [data-act="lw-resume"]').count(), 1, "one Carry on, no second Resume for the same task");
   await card.locator('[data-act="lw-resume"]').click();
   assert.ok(await until(async () => app.store.runs(app.runtime.owner).some((r) => r.sessionId === seeded.sid && r.id !== seeded.run && r.status === "completed")), "Carry on resumed it (POST /api/runs/<id>/resume)");
   assert.ok(await until(async () => /Done/.test(await card.locator(".pill").innerText())), "the card follows: Done");

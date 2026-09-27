@@ -49,7 +49,7 @@ import { startWith, openConversation } from "./chat.js";
 
 const G = { kind: null, pip: null, dock: true, grid: false, browsed: null, asked: null, sid: null, messages: [], plan: null, at: 0, desk: null, said: "", drawn: {} };
 const SHOT = new Map(); // picture path → its bytes as a blob: address ("" while loading or after the engine refused it)
-const CARD = { pic: "", deskFor: undefined }; // the computer card's picture, and the conversation the desktop was read for
+const CARD = { pic: "", deskFor: undefined, resumes: null }; // the card's picture, the conversation the desktop was read for, and the task its Carry on resumes
 const STOPPABLE = new Set(["running", "needs_input", "interrupted"]);
 
 /* Whoever the conversation is: its Trunk, its room, or the assistant (Branch's own); the words the view is named with. */
@@ -104,6 +104,7 @@ async function fetchShot(path) {
     toast(error.message);
   }
   drawStage();
+  if (path === CARD.pic) render(); // the computer card lives in the conversation, drawn with it
 }
 function shotUrl(path) {
   if (!path) return "";
@@ -285,12 +286,17 @@ function cardActs(state, run) {
   return "";
 }
 const PILL = { working: ["work", "strip.status.working"], yours: ["you", "window.chat.stage.you-control"], done: ["done", "panels.state.done"], stopped: ["idle", "panels.state.stopped"] };
-/** The computer card, from the conversation's own messages (chat.js hands them in). */
+/** The task the computer card's Carry on resumes, so the conversation draws no second Resume for it (chat.js). */
+export const cardResumes = () => CARD.resumes;
+/** The computer card, from the conversation's own messages (chat.js hands them in). You have control only while this
+    conversation's own task works: the shared desktop held for another conversation's task says nothing here. */
 export function computerCard(messages) {
+  CARD.resumes = null;
   if (!S.chat || G.kind === "computer" || !usedComputer(messages ?? [])) { CARD.pic = ""; return ""; }
   if (CARD.deskFor !== S.chat && E.profiles?.isOwner !== false) readDesk(S.chat);
-  const run = runsHere()[0], state = holder() === "user" ? "yours" : CARD_STATE[run?.status];
+  const run = runsHere()[0], state = holder() === "user" && run?.status === "running" ? "yours" : CARD_STATE[run?.status];
   if (!state) return "";
+  if (state === "stopped" && run.status === "interrupted") CARD.resumes = run.id;
   const st = comps(), comp = st ? computerNamed(st.using) : null;
   const named = comp ? `${ic(comp.icon ?? "monitor", "s")}${esc(comp.name)}` : `${ic("monitor", "s")}${t("window.chat.stage.computer-of", { name: esc(owner()) })}`;
   const tag = (st?.list.length ?? 0) > 1 ? `<span class="tag6">${t("window.chat.stage.on-computers", { count: st.list.length })}</span>` : "";
