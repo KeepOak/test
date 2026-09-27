@@ -9629,7 +9629,6 @@
   "window.why.d17-hookaddr": "Reste désactivé ici jusqu'à un examen de sécurité à part : chaque adresse contient le mot secret de son application de messagerie.",
   "window.why.d17-voiceapprove": "Reste désactivé ici jusqu'à un examen de sécurité à part : dire oui à voix haute rend l'approbation plus facile.",
   "window.why.doc-new": "Branch ne garde un document qu’à partir d’un fichier ou d’un texte terminé ; il n’a pas de document vierge où écrire. Demandez à un Trunk d’en écrire un, ou enregistrez un rapport depuis Interroger un tableur.",
-  "window.why.made-open": "Branch ne peut pas ouvrir un fichier dans son application depuis la fenêtre.",
   "window.why.docedit17": "Une modification exacte est faite par un Trunk à votre demande dans une conversation ; cette fenêtre n’a pas d’endroit pour dire quoi changer. Comparer montre les différences.",
   "window.why.d17-learnfolder-go": "La visite est affichée ici ; pour la suivre avec un Trunk, demandez une visite du dossier dans une conversation.",
   "window.why.d17-pages-go": "Un article a besoin d’un sujet, et cette liste n’a pas d’endroit pour le saisir. Demandez-le dans une conversation.",

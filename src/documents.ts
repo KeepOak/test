@@ -85,9 +85,7 @@ export function joinPassages(passages: readonly string[]): string {
     let shared = 0;
     for (let size = Math.min(next.length, text.length, chunkOverlap + chunkSize); size > 0; size--)
       if (text.endsWith(next.slice(0, size))) { shared = size; break; }
-    text += shared ? next.slice(shared) : `
-
-${next}`;
+    text += shared ? next.slice(shared) : `\n\n${next}`;
   }
   return text;
 }

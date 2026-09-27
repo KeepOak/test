@@ -33,7 +33,12 @@ const VIEWS = new Set(["/api/voice/wake", "/api/voice/dictation", "/api/voice/di
   // privacy: Settings › Your data answers each person with their own counts and their own export (src/your-data.ts).
   "/api/your-data", "/api/your-data/export/:id", "/api/your-data/export/:id/file"]);
 /** Asked of the owner only through the rule, never over HTTP: they quit, restart, restore or remove Branch. */
-const NOT_PRESSED_AS_OWNER = /quit|close|restart|remove-branch|restore|daemon|autostart|updates?\//;
+/* Pressed as the owner, these would quit, restart, restore or remove Branch, or (panels/screen, the live view of this
+   computer's screen) start reading the real screen and stream it for as long as the request stays open: a stream that
+   never ends, so the test waited on it for good. Each is refused to a household person all the same (tests above). */
+const NOT_PRESSED_AS_OWNER = /quit|close|restart|remove-branch|restore|daemon|autostart|updates?\/|panels\/screen/;
+/* One route that never answers fails the test by name instead of hanging the file. */
+const ANSWER_WITHIN_MS = 20000;
 
 /** Every change and secret read the table gives to the owner alone, as "METHOD path". */
 function ownerOnly() {
@@ -120,9 +125,10 @@ async function served(t) {
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const call = (method, path, body) => fetch(server.url + path, {
-    method, headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
+    signal: AbortSignal.timeout(ANSWER_WITHIN_MS), method, headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
     ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-  }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
+  }).then(async (response) => ({ status: response.status, body: await response.json().catch((error) => { if (error.name === "TimeoutError") throw error; return {}; }) }))
+    .catch((error) => { throw error.name === "TimeoutError" ? new Error(`${method} ${path} did not answer within ${ANSWER_WITHIN_MS / 1000} s`) : error; });
   const sam = (await call("POST", "/api/profiles", { name: "Sam", pin: "2468" })).body;
   const toSam = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: sam.id, pin: "2468" })).status, 200);
   const back = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);

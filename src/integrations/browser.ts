@@ -422,9 +422,14 @@ export class BranchBrowser {
    * selector given, what it is called, the words on it, then its number. The way that worked is
    * written into the task's trace.
    */
-  async act(input: HealTarget & { action: 'click' | 'fill' | 'check'; value?: string | undefined }, context: ToolContext) {
+  async act(input: HealTarget & { action: 'click' | 'fill' | 'check' | 'press'; value?: string | undefined }, context: ToolContext) {
     const entry = this.entry(context);
     if (input.action === 'click') entry.pressed = true; // mac7/vault-autofill
+    // Dogfood D4: a key on the page itself (Escape on a cookie wall), in Branch's own browser and nowhere else.
+    if (input.action === 'press') {
+      const key = pageKey(input.value);
+      return this.operation(context, async page => { await page.keyboard.press(key); return { url: page.url(), action: 'press', key }; });
+    }
     return this.operation(context, async page => {
       const found = await healResolve(page, input, 2000,
         { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) });
@@ -856,6 +861,14 @@ function requireIndex(index: number | undefined): number {
   return index;
 }
 
+/** Dogfood D4: the keys browser.act may press on a page. Anything else (a shortcut that could reach the browser itself) is refused. */
+const pageKeys = ['Escape', 'Enter', 'Tab', 'Space', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'] as const;
+export function pageKey(value: string | undefined): string {
+  const asked = String(value ?? '').trim().toLowerCase();
+  const found = pageKeys.find((key) => key.toLowerCase() === asked || (asked === 'esc' && key === 'Escape'));
+  if (!found) throw new Error(`Name one key to press in value: ${pageKeys.join(', ')}.`);
+  return found === 'Space' ? ' ' : found;
+}
 export function registerBrowser(registry: ToolRegistry, browser: BranchBrowser): void {
   registry.onRunFinished(context => browser.closeRun(context));
   const host = (_a: unknown, c: ToolContext) => browser.hostFor(c);
@@ -925,8 +938,8 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
     description: 'Pull data off the page in the exact shape you name: a field list, each with where to read it and whether it is words, a number, a yes/no, a date or an address. Anything that does not fit is refused by name rather than guessed at.',
     parameters: ExtractSchemaSchema, execute: (a, c) => browser.extractShaped(a, c) });
   registry.register({ name: 'browser.act', permission: 'browser.interact',
-    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. This may submit data or perform an external action.',
-    parameters: z.object({ action: z.enum(['click', 'fill', 'check']),
+    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. action "press" presses one key on the page itself, named in value (Escape closes most cookie walls). This may submit data or perform an external action.',
+    parameters: z.object({ action: z.enum(['click', 'fill', 'check', 'press']),
       selector: z.string().min(1).max(300).optional(), name: z.string().min(1).max(300).optional(),
       mark: z.number().int().min(1).max(500).optional(), value: z.string().max(4000).optional() }).strict(),
     execute: (a, c) => browser.act(a, c), target: host });

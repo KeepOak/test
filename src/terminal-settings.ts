@@ -136,7 +136,7 @@ function pageRows(app: PlaceApp, words: Words, page: string, sub: string, state:
       return [...permissionRows(app), { title: `${words.t("lockdown.label", "Lockdown")}: ${switchWord(words, lock ? "on" : "off")}`, detail, command: `/lockdown ${lock ? "off" : "on"}`, tone: lock ? "bad" : undefined }];
     }
     case "general": return [
-      ...app.store.projects.list(owner).map((project) => ({ title: project.name, ...(project.id === app.store.projects.active(owner).id ? { detail: words.t("terminal.settings.activeProject", "the project in use") } : {}) })),
+      ...app.store.projects.list(owner).map((project) => ({ title: project.name, ...(project.id === app.store.projects.chosen(owner).id ? { detail: words.t("terminal.settings.activeProject", "the project in use") } : {}) })),
       here];
     case "usage": return [{ title: words.t("terminal.settings.tasks", "{count} tasks on record", { count: app.store.runs(owner).length }), detail: "branch backup <file>" }, here];
     case "self": return [{ title: words.t("terminal.settings.doctor", "Check that everything works"), detail: "branch doctor" }, here];

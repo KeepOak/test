@@ -382,7 +382,10 @@ test("on loads a feature's tools from the start, off keeps the screen tools out 
   await tiered.runtime.run({ prompt: "hello there" });
   assert.ok(!seen.at(-1).some((name) => name.startsWith("desktop.")), "off: no screen tool travels");
   saveDesktopSettings(tiered.store, tiered.runtime.owner, { mode: "on" });
+  // Dogfood D4: "on" loads them from the first round of a task the owner started for the screen, and only there.
   await tiered.runtime.run({ prompt: "hello there" });
+  assert.ok(!seen.at(-1).some((name) => name.startsWith("desktop.")), "on: a task not about the screen still carries no screen tool");
+  await tiered.runtime.run({ prompt: "list the windows on my screen" });
   assert.ok(seen.at(-1).includes("desktop.windows"), `on: the screen tools travel from the first round (${seen.at(-1).join(", ")})`);
 });
 

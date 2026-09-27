@@ -316,14 +316,22 @@ export async function runForCurrentPerson(app: Branch, options: RunOptions): Pro
   if (options.sessionId && !app.store.ownsSession(scope, options.sessionId))
     throw new Error("Conversation not found");
   if (options.sessionId) app.store.reassignSession(options.sessionId, app.runtime.owner);
+  // The task, once it exists: a task that throws instead of ending is handed back all the same, helpers and all.
+  let started: Run | null = null;
+  const onStarted = (run: Run) => { started = run; options.onStarted?.(run); };
   try {
     // bucket 19 (integration review): the task writes down whose conversation is lent (src/people/lending.ts).
-    const run = await app.runtime.run({ ...options, lentTo: scope });
-    app.store.reassignSession(run.sessionId, scope);
-    for (const sessionId of helperSessions(app, run.id)) app.store.reassignSession(sessionId, scope);
+    const run = await app.runtime.run({ ...options, lentTo: scope, onStarted });
+    handBack(app, run, scope);
     return run;
   } catch (error) {
     if (options.sessionId) app.store.reassignSession(options.sessionId, scope);
+    if (started) handBack(app, started, scope);
     throw error;
   }
+}
+/** A person's task's conversation, and its helpers' own, back under their name. */
+function handBack(app: Branch, run: Run, scope: string): void {
+  app.store.reassignSession(run.sessionId, scope);
+  for (const sessionId of helperSessions(app, run.id)) app.store.reassignSession(sessionId, scope);
 }

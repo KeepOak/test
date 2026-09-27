@@ -50,7 +50,8 @@ export function tokenReport(runtime: Runtime, sessionId: string, owner = runtime
   // The conversation's own model and prices: a household profile's choices, not the owner's.
   const choice = runtime.models.plan(owner, sessionId).choice;
   const conversation = !last || last.folded ? stored : Math.max(n(budget!.messages) - n(budget!.system), stored);
-  const instructions = n(budget?.system), tools = n(budget?.catalog), limit = n(budget?.limit) || 20000;
+  // dogfood D22: before a task has measured it, the room is the conversation's own model's, never a fixed 20,000.
+  const instructions = n(budget?.system), tools = n(budget?.catalog), limit = n(budget?.limit) || runtime.contextWindowFor(runtime.models.presets.get(choice.presetId));
   const input = instructions + tools + Math.max(0, conversation);
   const { overrides } = pricingSettings(runtime.store, owner);
   return {

@@ -42,7 +42,8 @@ async function fixture(t, answer) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
-  saveKnobs(app.store, app.runtime.owner, "compaction", { compactAtPercent: 20, keepRecentMessages: 6 });
+  // dogfood D22: the room is the model's own now (a hosted one has far more); this conversation is held to the 20,000 it was written for.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { compactAtPercent: 20, keepRecentMessages: 6, contextWindowTokens: 20000 });
   const post = async (path, body) => {
     const response = await fetch(`${server.url}/api/${path}`, { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
     const json = await response.json();

@@ -9628,7 +9628,6 @@
   "window.why.d17-hookaddr": "Sigue desactivado aquí hasta una revisión de seguridad aparte: cada dirección lleva la palabra secreta de su aplicación de chat.",
   "window.why.d17-voiceapprove": "Sigue desactivado aquí hasta una revisión de seguridad aparte: decir sí en voz alta facilita aprobar.",
   "window.why.doc-new": "Branch solo guarda un documento a partir de un archivo o de un texto terminado; no tiene un documento en blanco para escribir. Pide a un Trunk que escriba uno o guarda un informe desde Preguntar a una hoja de cálculo.",
-  "window.why.made-open": "Branch no puede abrir un archivo en su propia app desde la ventana.",
   "window.why.docedit17": "Una edición exacta la hace un Trunk a partir de tu petición en una conversación; este cuadro no tiene dónde decir qué cambiar. Comparar muestra las diferencias.",
   "window.why.d17-learnfolder-go": "El recorrido se muestra aquí; para hacerlo con un Trunk, pide un recorrido por la carpeta en una conversación.",
   "window.why.d17-pages-go": "Un artículo necesita un tema, y esta lista no tiene dónde escribirlo. Pídelo en una conversación.",

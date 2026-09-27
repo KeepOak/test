@@ -69,16 +69,19 @@ test("a yes in the window to the owner's own task carries it on, and the banner 
   assert.deepEqual(await f.waitingIn(first.sessionId), [], "nothing waits any more");
 });
 
-test("a no ends the wait: the banner clears and nothing carries on", async (t) => {
+// Dogfood D5: a No used to end the turn with no words at all. It now ends the wait and the task that asked carries on,
+// told of the No, to its reply; what was refused is never done.
+test("a no ends the wait, the banner clears, and the task replies without doing what was refused", async (t) => {
   const f = await fixture(t);
   t.after(() => discardTemp(f.root));
   const first = await f.app.runtime.run({ prompt: "write b.txt" });
   const asked = f.app.runtime.approvals.questionFor(first.sessionId);
-  assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "deny", remember: "session", fingerprint: asked.fingerprint, carryOn: true })).status, 200);
+  assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "deny", remember: "never", fingerprint: asked.fingerprint, carryOn: true })).status, 200);
   assert.deepEqual(await f.waitingIn(first.sessionId), []);
-  assert.equal(f.app.store.run(first.id).status, "cancelled");
-  assert.equal(f.runsIn(first.sessionId).length, 1, "nothing carried on");
-  assert.equal(existsSync(join(f.root, "workspace", "b.txt")), false);
+  assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"), "the task that asked carried on and finished");
+  assert.deepEqual(f.runsIn(first.sessionId).map((run) => run.id), [first.id], "no second task started");
+  assert.equal(existsSync(join(f.root, "workspace", "b.txt")), false, "what was refused was not done");
+  assert.deepEqual(await f.waitingIn(first.sessionId), [], "and nothing was asked again");
 });
 
 test("a yes to a task that came from elsewhere ends its wait but never carries it on as the owner's", async (t) => {
@@ -259,7 +262,7 @@ test("the answer says what it did to the task: carrying on, still waiting, or se
   f.app.store.finish(f.app.store.createRun(f.app.runtime.owner, "tidy my notes", older.run.sessionId).id, "needs_input", "Shall I?");
   assert.equal((await older.answer()).body.task, "still-waiting", "a newer task there: nothing started, and it says so");
   const no = await ask("write w3.txt", "deny");
-  assert.equal((await no.answer()).body.task, "settled");
+  assert.equal((await no.answer()).body.task, "carrying-on", "dogfood D5: a no carries the task on to its reply");
 });
 
 test("a carry-on refused as it starts leaves the task waiting and writes down why (the monthly budget)", async (t) => {
