@@ -20,7 +20,8 @@ async function cpu(session) {
 }
 
 const moving = (page) => page.evaluate(() => ({
-  videosPlaying: [...document.querySelectorAll("video")].filter((v) => !v.paused).length,
+  videosAwake: [...document.querySelectorAll("video")].filter((v) => !v.paused && !/sleep/.test(v.src)).length,
+  videosAsleep: [...document.querySelectorAll("video")].filter((v) => !v.paused && /sleep/.test(v.src)).length,
   pebblesDrawing: document.querySelectorAll(".av.pbl.pbl-live").length,
   cssRunning: document.getAnimations().filter((a) => a.playState === "running").length,
   asleep: document.documentElement.className.match(/\b(doze18|still18)\b/)?.[1] ?? "awake",
