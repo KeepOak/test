@@ -1,6 +1,6 @@
 /**
- * Bucket 19: where the two new kinds of key may go. Both lists fail closed: an address not written
- * here is refused, including any added later.
+ * Bucket 19: where the new kinds of key may go. Every list fails closed: an address not written
+ * down is refused, including any added later.
  *
  * - A person's key reaches only the person's own page (`/api/people/me…`, their conversations and
  *   what was shared with them). Everything else in Branch reads the owner's records, so none of it
@@ -11,38 +11,8 @@
  *   and nothing else of the owner's.
  */
 const idPattern = "[a-f0-9-]{36}";
-interface Door { method: "GET" | "POST"; pattern: RegExp }
-const door = (method: Door["method"], path: string): Door => ({ method, pattern: new RegExp(`^${path}$`) });
-
-export const personDoors: readonly Door[] = [
-  door("GET", "/api/people/me"),
-  door("POST", "/api/people/me/sign-out"),
-  door("POST", "/api/people/me/pin"),
-  door("GET", "/api/people/me/passkeys"),
-  door("POST", "/api/people/me/passkeys/(begin|finish)"),
-  door("POST", "/api/people/me/passkeys/remove"),
-  door("GET", "/api/people/conversations"),
-  door("POST", "/api/people/conversations"),
-  door("GET", `/api/people/conversations/${idPattern}`),
-  door("POST", `/api/people/conversations/${idPattern}/message`),
-];
-const setupDoors: readonly Door[] = [
-  door("GET", "/api/people/me"),
-  door("POST", "/api/people/me/sign-out"),
-  door("POST", "/api/people/me/pin"),
-  door("GET", "/api/people/me/passkeys"),
-  door("POST", "/api/people/me/passkeys/(begin|finish)"),
-];
-
-export const personKeyRefusal = "A person's sign-in reaches only their own page. Everything else is the owner's.";
-export const setupKeyRefusal = "This short sign-in may only set a new PIN or register a passkey. Then sign in again.";
-
-/** Why a person's key may not use this address, or null. */
-export function personDoorRefusal(method: string | undefined, path: string, setupOnly: boolean): string | null {
-  const doors = setupOnly ? setupDoors : personDoors;
-  if (doors.some((each) => each.method === (method ?? "GET") && each.pattern.test(path))) return null;
-  return setupOnly ? setupKeyRefusal : personKeyRefusal;
-}
+// Where a person's key and a set-up key reach is decided in src/caller-policy.ts, with every other check about the caller.
+export { personDoors, personDoorRefusal, personKeyRefusal, setupKeyRefusal } from "../caller-policy.js";
 
 export const boundKeyRefusal = "This key only reaches the conversation it was handed over with.";
 
