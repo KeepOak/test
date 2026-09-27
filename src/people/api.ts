@@ -152,7 +152,7 @@ function handoffView(app: Branch): unknown {
 }
 
 function visible(app: Branch, messages: Message[]): { role: string; content: string }[] {
-  return messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-200)
+  return messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch").slice(-200)
     .map((m) => ({ role: m.role, content: app.runtime.hideSecrets(String(m.content)).slice(0, 20000) }));
 }
 

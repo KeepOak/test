@@ -170,6 +170,14 @@ export function describeToolCall(name: string, args: unknown): string {
     case "git.push": return "Sending work to the server";
     case "git.pull": return "Bringing down work from the server";
     case "user.ask": return "Asking you a question";
+    // Dogfood E2: the owner read "Using device.run" and "Using settings.change" in questions; each now says what it does.
+    case "device.run": return `Running ${short(a.executable ?? "a program")} on ${a.device ? short(a.device) : "your paired device"}`;
+    case "settings.change": return "Changing Branch's own settings";
+    case "settings.loosen": return "Making Branch less careful in its own settings";
+    case "settings.undo": return "Undoing a change to Branch's own settings";
+    case "settings.list": case "settings.find": case "settings.why": return "Looking through Branch's own settings";
+    case "tools.search": case "tools.describe": case "tools.open": return "Looking for the right tool";
+    case "checklist.write": return "Updating its checklist";
     case "agents.ask": return `Asking ${short(a.agent)}, an assistant elsewhere`;
     case "agents.remote": return a.action === "list" ? "Listing assistants elsewhere" : "Changing the list of assistants elsewhere";
     case "specialists.delegate": return `Asking the ${short(a.id)} specialist`;

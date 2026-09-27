@@ -208,7 +208,12 @@ async function createWindow(
   });
   // "Start quietly in the corner of the taskbar" keeps the window hidden until the tray icon is used.
   window.once("ready-to-show", () => { if (!startsMinimized(process.argv)) window?.show(); });
-  await window.loadURL(`${url}/?desktop=1`);
+  // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the
+  // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
+  // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
+  await window.loadURL(`${url}/?desktop=1`).catch((error: unknown) => {
+    if ((error as { code?: unknown }).code !== "ERR_ABORTED") throw error;
+  });
   createTray();
 }
 

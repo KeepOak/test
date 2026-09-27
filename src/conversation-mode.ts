@@ -42,7 +42,7 @@ const modePreset: Record<ConversationMode, Exclude<PolicyPresetName, "custom">> 
 };
 /** How loose each mode and each of the owner's presets is, strictest first. */
 const modeRank: Record<ConversationMode, number> = { plan: 0, ask: 1, auto: 2, full: 3 };
-const presetRank: Record<PolicyPresetName, number> = { "read-only": 0, "ask-before-changes": 1, custom: 1, workspace: 2, off: 3 };
+const presetRank: Record<PolicyPresetName, number> = { "read-only": 0, careful: 1, "ask-before-changes": 1, custom: 1, workspace: 2, off: 3 };
 /** True when the mode would let through more than the owner's own setting does. */
 export const looserThan = (mode: ConversationMode, preset: PolicyPresetName): boolean => modeRank[mode] > presetRank[preset];
 

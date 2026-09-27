@@ -581,16 +581,17 @@ test("putting back a safety copy replaces what is there; an ordinary restore sti
   t.after(async () => { await app.close(); await discardTemp(root); });
   const owner = app.runtime.owner;
   await app.runtime.run({ prompt: "say hello" }); // a real conversation, so this copy is not empty
-  app.store.save("settings", owner, "before-update", { kept: true });
+  // Q230: kinds of setting a backup carries (an owner's notes), so a replace really owns them; an unknown id is held instead.
+  app.store.save("settings", owner, "reach-note:before-update", { kept: true });
   const snapshot = app.store.backup(app.version);
-  app.store.save("settings", owner, "after-update", { kept: false });
-  assert.ok(app.store.get("settings", owner, "after-update"));
+  app.store.save("settings", owner, "reach-note:after-update", { kept: false });
+  assert.ok(app.store.get("settings", owner, "reach-note:after-update"));
   assert.throws(() => app.store.restore(snapshot), /already has conversations|fresh install/,
     "a plain restore still refuses to write over work that is already here");
   const result = app.store.restore(snapshot, { replaceExisting: true });
   assert.ok(result.rows > 0);
-  assert.ok(app.store.get("settings", owner, "before-update"), "the older saved work is back");
-  assert.equal(app.store.get("settings", owner, "after-update"), undefined, "what came after is gone");
+  assert.ok(app.store.get("settings", owner, "reach-note:before-update"), "the older saved work is back");
+  assert.equal(app.store.get("settings", owner, "reach-note:after-update"), undefined, "what came after is gone");
 });
 
 // ---------------------------------------------------------------- P6: setting-up help
