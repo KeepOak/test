@@ -112,7 +112,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // R17-A: the owner's Trunks; talking to one starts a task, so a bare /trunk only looks
   entry("trunk", ["trunks"], "[name] [message]", "your Trunks; with a name and a message, talk to one", [...W, "terminal"], "run", { bareLooks: true }),
   // mac6/accounts: which account the model answers through; switching is the owner's, so not in chat apps
-  entry("account", ["accounts"], "[name|default name|separate name|not-separate name]", "which account the model uses; with a name, switch this conversation to it", [...W, "terminal", "dashboard"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/accounts/switch" } }),
+  entry("account", ["accounts"], "[name|default name]", "which account the model uses; with a name, switch this conversation to it", [...W, "terminal", "dashboard"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/accounts/switch" } }),
   // ---- r17-b: repeating in a conversation, sub-goals, background tasks, handing on, suggested automations (src/autonomy/commands.ts) ----
   entry("loop", ["proactive"], "[every] <10m> <what to do> [--times n] [--until when]", "ask the same thing again in this conversation every so often; status, pause, resume or stop", [...W, "terminal"], "owner", { bareLooks: true }),
   entry("heartbeat", ["hb"], "every <30m> <what to watch>", "a quiet check on this conversation that speaks up only with news; status, pause, resume or stop", [...W, "terminal"], "owner", { bareLooks: true }),

@@ -13,7 +13,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
-import { addAccount, setMode, updateAccount, updatePool } from "../dist/accounts/manage.js";
+import { addAccount, setMode, updatePool } from "../dist/accounts/manage.js";
 import { asPerson } from "../dist/people/context.js";
 
 const POOL = "openai-test";
@@ -183,7 +183,6 @@ test("trunks-use-subscriptions: a Trunk's plan limit stops it with moving on off
   setMode(service, { mode: "on" });
   const second = (await addAccount(service, { pool: "cli-claude-code", label: "Second" })).accounts.at(-1).id;
   const work = (await addAccount(service, { pool: "cli-claude-code", label: "Work" })).accounts.at(-1).id;
-  await updateAccount(service, { pool: "cli-claude-code", account: work, keptSeparate: true });
   // long-work: sharing ships on, so it is switched off here first, before the Trunk's first words pick an account.
   updatePool(service, { pool: "cli-claude-code", autoSwitch: false });
   const ed = app.trunks.create({ name: "Ed" });

@@ -23,7 +23,7 @@ import { stateLines } from "../dist/live-steps.js";
 
 const at = "2026-09-27T10:00:00.000Z";
 const acct = (id, extra = {}) => ({
-  id, label: extra.label ?? id, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, keptSeparate: false, createdAt: at, ...extra,
+  id, label: extra.label ?? id, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, createdAt: at, ...extra,
 });
 const http = (status, code, retryAfterMs) => new ProviderHttpError(status, retryAfterMs, code);
 const ok = (who) => ({ content: `from ${who}`, toolCalls: [] });
@@ -186,4 +186,18 @@ test("R9 a real task on Claude Code: the owner's plan runs out, the next of thei
   const stopped = await app.runtime.run({ prompt: "again" });
   assert.equal(stopped.status, "failed", "with the switch off it stops, as before");
   assert.deepEqual(seen, ["primary"]);
+});
+
+test("R10 the kept-separate mark is gone: an older list that still carries it reads whole, and /api/accounts/update refuses it", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-pools-mark-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const service = accountsServiceFor(app.runtime.models);
+  app.store.save("settings", app.runtime.owner, "accounts", { mode: "on", poolingRule: 2, poolingNotices: [], pools: [{ pool: "cli-claude-code", kind: "cli",
+    strategy: "priority", autoSwitch: true, defaultAccount: null, accounts: [{ ...acct("primary"), keptSeparate: false }, { ...acct("aaaaaaaa", { label: "Work" }), keptSeparate: true }] }] });
+  const list = service.settings();
+  assert.equal(list.mode, "on", "not taken for a damaged record");
+  assert.deepEqual(list.pools[0].accounts.map((a) => [a.label, "keptSeparate" in a]), [["primary", false], ["Work", false]]);
+  const { updateAccount } = await import("../dist/accounts/manage.js");
+  await assert.rejects(updateAccount(service, { pool: "cli-claude-code", account: "aaaaaaaa", keptSeparate: true }), /keptSeparate|Unrecognized/i);
 });

@@ -36,11 +36,6 @@ export const AccountSchema = z.object({
   monthlyCapUsd: z.number().min(0).max(100_000).nullable().default(null),
   /** Whether people sharing this computer may use it. Only an API key can be shared. */
   shared: z.boolean().default(false),
-  /**
-   * mac7/account-pooling: sign-in accounts only. The owner's mark that an account belongs to someone else or to work.
-   * Since 2026-09-27 every account of a list may take the work when another runs out, so the mark is a label only.
-   */
-  keptSeparate: z.boolean().default(false),
   /** Extra API keys only: the address (scheme, host, port) the key was added for; it is sent nowhere else. */
   address: z.string().max(300).optional(),
   createdAt: z.string().max(40),
@@ -107,11 +102,30 @@ export const poolingNotice = (service: string): string =>
   `Branch moves the work to your next ${service} account by itself when one runs out. Switching doesn't merge plans: each account's own terms apply. Switch it off in Settings › Accounts.`;
 type Reader = Pick<Store, "get">;
 
+/**
+ * A list saved before 2026-09-27 may still carry each account's old "kept separate" mark, which no longer exists (the
+ * account pools move work between all of a list's accounts, so the mark had no effect). It is dropped on reading, so
+ * such a list is never taken for a damaged one.
+ */
+function withoutOldMarks(data: unknown): unknown {
+  if (!data || typeof data !== "object" || !Array.isArray((data as { pools?: unknown }).pools)) return data;
+  const pools = (data as { pools: unknown[] }).pools.map((pool) => {
+    if (!pool || typeof pool !== "object" || !Array.isArray((pool as { accounts?: unknown }).accounts)) return pool;
+    const accounts = (pool as { accounts: unknown[] }).accounts.map((account) => {
+      if (!account || typeof account !== "object" || !("keptSeparate" in account)) return account;
+      const { keptSeparate: _dropped, ...rest } = account as Record<string, unknown>;
+      return rest;
+    });
+    return { ...pool, accounts };
+  });
+  return { ...data, pools };
+}
+
 /** The list as saved, or null when nothing is saved or what is saved is damaged. */
 export function savedAccountsSettings(store: Reader, owner: string): AccountsSettings | null {
   const found = store.get("settings", owner, settingKey);
   if (!found) return null;
-  const saved = AccountsSettingsSchema.safeParse(found.data ?? {});
+  const saved = AccountsSettingsSchema.safeParse(withoutOldMarks(found.data ?? {}));
   return saved.success ? saved.data : null;
 }
 /**
