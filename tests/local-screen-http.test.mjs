@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createBranch } from '../dist/index.js';
 import { startServer } from '../dist/server.js';
 import { discardTemp } from './temp-dir.mjs';
 import { installScreenStandIn } from './local-screen-fixture.mjs';
 
 async function world(t) {
-  const root = await mkdtemp('C:/Users/bishi/AppData/Local/Temp/Codex-session-files/local-screen-http-');
+  const root = await mkdtemp(join(process.platform === 'win32' ? 'C:/Users/bishi/AppData/Local/Temp/Codex-session-files' : tmpdir(), 'local-screen-http-'));
   const app = await createBranch({ workspace: join(root, 'work'), dataDir: join(root, 'data'), provider: { name: 'scripted', async complete() { return { content: 'ok', toolCalls: [] }; } } });
   const seen = installScreenStandIn(app), sid = app.store.createSession(app.runtime.owner);
   const server = await startServer(app, { dataDir: join(root, 'data'), port: 0, host: '127.0.0.1' });

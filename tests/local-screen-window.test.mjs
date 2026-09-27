@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { newWindow } from './new-window-places.mjs';
 import { installScreenStandIn } from './local-screen-fixture.mjs';
 
-const TEMP = 'C:/Users/bishi/AppData/Local/Temp/Codex-session-files/';
+const TEMP = process.platform === 'win32' ? 'C:/Users/bishi/AppData/Local/Temp/Codex-session-files' : tmpdir();
 test('owner chooses an external application, sees its frame, manually types/clicks/scrolls, and closing releases it', async t => {
   let seen, sid;
-  const root = await mkdtemp(TEMP + 'local-screen-window-');
+  const root = await mkdtemp(join(TEMP, 'local-screen-window-'));
   const w = await newWindow(t, { root, seed(app) {
     seen = installScreenStandIn(app);
     const run = app.store.createRun(app.runtime.owner, 'Native window test'); sid = run.sessionId;
