@@ -266,6 +266,10 @@ const readOnlyPermissions = new Set([
   "boards.read", "widgets.read", "installs.read",
 ]);
 export const isReadOnlyPermission = (permission: string): boolean => readOnlyPermissions.has(permission);
+/** Reads that reach past this computer or into the owner's other conversations: never given by a file (src/trunks/share.ts) or a restore. */
+export const notFromAFile = new Set(["web.read", "browser.read", "research.read", "history.read"]);
+/** Every permission that only looks, as a list (a restored Trunk is cut down to these, src/trunks/restored.ts). */
+export const readOnlyPermissionList = (): string[] => [...readOnlyPermissions];
 
 /** What a call would touch, in the form rules match against: a path, a command, or a host. */
 export function policyTarget(tool: string, args: unknown): string {

@@ -68,7 +68,7 @@ export function draw() {
 
 /* When one runs out, both the engine's own settings. The design's line under "Move to the next account" ("only between
    accounts you own…") is left out: the engine does the opposite for sign-ins (it never moves work between the owner's
-   own plans, only to an account kept separate; src/accounts/pool.ts rotationSet).
+   own plans; that rule was replaced on 2026-09-27 by the account pools below).
    Move to the next account (owner decision 2026-09-27, Hermes Agent's credential pools): each list's own switch
    (GET /api/accounts pools[].autoSwitch; POST /api/accounts/pool { pool, autoSwitch } for every list), on while every
    list is; with no connection holding two accounts it has nothing to move between, so it is greyed with that reason

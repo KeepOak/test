@@ -12,11 +12,18 @@ import type { RateLimitReading } from "../rate-limit-headers.js";
  * (ChatGPT's plan windows, counted as "plan") is left alone: those refill over hours or days, and the plan meter and
  * the account order already handle them.
  *
- * One wait is never longer than `maxWaitMs`, well under the silence the runtime allows a model before it calls the
- * connection stuck (reliability.modelStallMs, 60 s as shipped), so slowing down never looks like a dead connection.
+ * One wait is never longer than `maxWaitMs`, and a queue of them never reaches past `maxQueueMs`, well under the silence
+ * the runtime allows a model before it calls the connection stuck (reliability.modelStallMs, 60 s as shipped), so
+ * slowing down never looks like a dead connection.
  */
 export const paceBelow = 0.1;
 export const maxWaitMs = 15_000;
+/**
+ * Requests that leave together (sub-tasks at once) are queued one wait apart, each keeping its own start, for at most
+ * this long ahead, still under the silence the runtime allows a model (60 s). Past it, the rest leave at its end and the
+ * service's own refusal (and the next key) handles them.
+ */
+export const maxQueueMs = 40_000;
 
 export function paceDelay(reading: RateLimitReading | null, now: number): number {
   if (!reading) return 0;

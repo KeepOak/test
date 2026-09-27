@@ -33,7 +33,6 @@ export const UpdateSchema = z.object({
   monthlyCapUsd: z.number().min(0).max(100_000).nullable().optional(),
   shared: z.boolean().optional(),
   /** Sign-in accounts only: this account belongs to someone else or to work (mac7/account-pooling). */
-  keptSeparate: z.boolean().optional(),
   move: z.enum(["up", "down"]).optional(),
   /** Replaces an API key in place. */
   key: z.string().min(8).max(4096).optional(),
@@ -123,20 +122,10 @@ export async function updateAccount(service: AccountsService, input: unknown) {
     if (asked.shared && pool.kind !== "api-key") throw new Error("A sign-in account belongs to one person and cannot be shared. Share an API key instead.");
     account.shared = asked.shared;
   }
-  if (asked.keptSeparate !== undefined) markSeparate(service, pool, account, asked.keptSeparate);
   if (asked.move) moveAccount(pool, asked.account, asked.move);
   if (asked.key !== undefined) await replaceKey(service, pool, asked.account, asked.key);
   save(service, settings);
   return viewPool(service, pool);
-}
-/**
- * mac7/account-pooling: only an account that belongs to someone else or to work may share work with
- * the owner's own plan. API keys are pay-per-use and share work anyway, so the mark is for sign-ins.
- */
-function markSeparate(service: AccountsService, pool: Pool, account: Pool["accounts"][number], keptSeparate: boolean): void {
-  if (pool.kind === "api-key") throw new Error("API keys already share work between them; kept separate is for sign-in accounts.");
-  account.keptSeparate = keptSeparate;
-  note(service, `${account.label} (${pool.pool})`, "An account was marked as belonging to someone else or to work (kept separate), or unmarked", keptSeparate ? "kept separate" : "own");
 }
 function moveAccount(pool: Pool, account: string, direction: "up" | "down"): void {
   const index = pool.accounts.findIndex((entry) => entry.id === account);
@@ -335,6 +324,6 @@ export function viewSession(service: AccountsService, sessionId: string) {
   return {
     on: true, pool: pool.pool, kind: pool.kind, account: active.id, label: active.label,
     chosenHere: chosen !== null,
-    accounts: visible.filter((account) => !account.disabled).map((account) => ({ id: account.id, label: account.label, keptSeparate: account.keptSeparate })),
+    accounts: visible.filter((account) => !account.disabled).map((account) => ({ id: account.id, label: account.label })),
   };
 }

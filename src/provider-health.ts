@@ -1,6 +1,6 @@
 import { errorText } from "./contracts.js";
 import { readRateLimit, type RateLimitReading } from "./rate-limit-headers.js";
-import { maxWaitMs, paceDelay, pause } from "./model-savings/pacing.js";
+import { maxQueueMs, paceDelay, pause } from "./model-savings/pacing.js";
 
 /**
  * How each model connection has actually been behaving: when it last answered, how long it took,
@@ -103,11 +103,17 @@ export class ProviderHealth {
   private async paceFor(id: string, key: string, signal?: AbortSignal | null): Promise<void> {
     const now = this.now(), delay = this.pacing?.() ? paceDelay(this.allowance.get(key) ?? null, now) : 0;
     if (delay <= 0) { this.lastStart.set(key, now); return; }
-    const start = Math.min(now + maxWaitMs, Math.max(now, (this.lastStart.get(key) ?? 0) + delay));
+    // Each keeps its own start, one wait after the one before it, so requests leaving together never leave together.
+    const start = Math.min(now + maxQueueMs, Math.max(now, (this.lastStart.get(key) ?? 0) + delay));
     this.lastStart.set(key, start);
     if (start <= now) return;
     await this.sleep(start - now, signal);
     this.put({ ...this.get(id), pacedMs: start - now, pacedAt: new Date(now).toISOString() });
+  }
+  /** A key that was replaced or removed starts with no allowance heard and no queue: the old key's never slows it. */
+  forgetPacing(key: string): void {
+    this.allowance.delete(key);
+    this.lastStart.delete(key);
   }
   /**
    * A fetch that writes down what happened on every call made through it. The connection's own
