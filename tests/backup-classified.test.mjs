@@ -181,9 +181,9 @@ const computedExamples = {
     "model-savings-mixtures", "handoffs:x", "openapi-service:w", "profile-role:p", "personal-email-settings", "plan-act:project:p",
     "plan-act:session:s", "pinned-skill:s", "skill-package:k", "skill-candidate:k:1", "trunks-messages", "trunks-routines",
     "flowboards-recipe-checks:p", "tool-meaning-search", "people-shares", "policy", "desktop-control", "wake-word",
-    "live-dictation", "routing", "model-profiles", "models", "governance", "person-about:owner"],
+    "live-dictation", "routing", "model-profiles", "models", "governance", "person-about:owner", "person-picture:owner"],
   travels: ["channel-usage:telegram:1", "delight-achievements", "prompt-library-items", "reflection-cursor:s",
-    "reflection-note:p", "skill-install-log", "tool_catalog_health", "ask-first", "person-picture:owner"],
+    "reflection-note:p", "skill-install-log", "tool_catalog_health", "ask-first"],
 };
 const travels = (id) => id in travelsWithBackup || Object.keys(travelsWithBackup).some((key) => key.endsWith(":") && id.startsWith(key));
 

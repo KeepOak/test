@@ -222,8 +222,12 @@ test("A6 a household person with nothing shared sees no owner accounts and no co
   // /api/profiles is the window noticing a profile switch every 2 s (#326), not the owner's data. GET /api/lock is the
   // App lock watcher (shell/applock.js watchLock) asking every 2 s whether this computer's window is locked: the
   // device's lock state, not the owner's records. Only that exact path is let through, never /api/lockdown or /api/lock/*.
-  assert.deepEqual(asked.filter((path) => path.startsWith("/api/") && path !== "/api/lock" && !/^\/api\/(accounts|state|activity|events|profiles)/.test(path)), [],
+  // GET /api/delight is the window's background and pet (shell/scene.js) read again after a refresh; the engine answers a
+  // household person with nothing from it (src/delight.ts), which is checked below. Only that exact path, never /api/delight/*.
+  const shell = new Set(["/api/lock", "/api/delight"]);
+  assert.deepEqual(asked.filter((path) => path.startsWith("/api/") && !shell.has(path) && !/^\/api\/(accounts|state|activity|events|profiles)/.test(path)), [],
     "opening the page asks for nothing but the accounts (no Trunks)");
+  assert.deepEqual((await call("/api/delight")).body, { available: false }, "the pet and background read tells Sam nothing of the owner's");
   assert.equal(await page.locator('.set-col [data-act="addacct"]:not([aria-disabled="true"])').count(), 0,
     "adding an account is the owner's: the engine refuses it for Sam");
   assert.deepEqual(errors, []);

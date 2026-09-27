@@ -29,7 +29,7 @@ async function fixture(t, { width = 1440, height = 950, reducedMotion = "no-pref
   const root = await mkdtemp(join(tmpdir(), "branch-delight-ui-"));
   const model = slowModel();
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model.provider });
-  before?.(app, app.runtime.owner);
+  await before?.(app, app.runtime.owner);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { model.release(); await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
@@ -237,6 +237,41 @@ test("Keep things still shows the card without falling leaves", async (t) => {
   assert.deepEqual(f.errors, []);
 });
 
+test("a past kept from when achievements shipped off shows as earned, each with its day, and none of it pops up", async (t) => {
+  // The owner's install kept { achievements: { on: false } } from before Q251 and the window has no switch to undo it:
+  // days of tasks, and the page drew only "Keep achievements quiet". That "off" was never chosen, so it reads as on.
+  const f = await fixture(t, {
+    init: () => {
+      window.__pops = [];
+      new MutationObserver((changes) => { for (const c of changes) for (const n of c.addedNodes) {
+        if (n.nodeType === 1 && (n.classList.contains("ach-toast") || n.classList.contains("ach-big"))) window.__pops.push(n.textContent);
+      } }).observe(document, { childList: true, subtree: true });
+    },
+    before: async (app, owner) => {
+      app.store.save("settings", owner, "delight", {
+        pets: { on: false, kind: "squirrel", name: "Hazel", talks: true, tips: true }, achievements: { on: false, quiet: false },
+        look: { style: "pixel" }, background: { on: false, scrim: 60, fit: "fill" },
+      });
+      for (let i = 0; i < 5; i++) await app.runtime.run({ prompt: `before the update ${i}` });
+    },
+  });
+  await openSettingsPage(f.page, "achievements");
+  await f.page.locator(".set-col .achs").waitFor();
+  const view = await f.call("/api/delight/achievements?lang=en");
+  const past = view.list.filter((a) => a.got && a.id.startsWith("tasks:")).map((a) => a.name);
+  assert.ok(past.length >= 2, "the tasks done before the update are earned");
+  for (const name of past) {
+    const card = f.page.locator(".set-col .achs .ach:not(.locked)", { has: f.page.locator("b", { hasText: new RegExp(`^${name}$`) }) });
+    assert.equal(await card.count(), 1, `${name} is drawn earned`);
+    assert.match(await card.getAttribute("title"), /^Bronze · .*\d/, `${name} says its tier and the day it was earned`);
+  }
+  assert.match(await f.page.locator(".set-col .lede").innerText(), new RegExp(`${view.earned} of 505 unlocked`));
+  await f.page.waitForTimeout(12000); // a look of the window's own, at least
+  const pops = await f.page.evaluate(() => window.__pops);
+  assert.deepEqual(pops.filter((text) => past.some((name) => text.includes(` · ${name} · `))), [], "the past arrives without a pop-up");
+  assert.deepEqual(f.errors, []);
+});
+
 test("the achievements page lists all 505 and keeps the high ones secret", async (t) => {
   // Redesign: Settings › Achievements (settings/pages/achievements.js) in place of the old sheet: the whole list at
   // once, filtered by the engine's kinds; a locked Godly one has no name or words until it is earned.
@@ -397,4 +432,36 @@ test("following the computer's light or dark is noticed, and a flag is told once
   const view = await f.call("/api/delight/achievements");
   assert.ok(view.list.find((a) => a.id === "noticed:flag:follow-system:1").got, "Follow the sun can really be earned");
   assert.deepEqual(f.errors, []);
+});
+
+/* The cheer when a task finishes is a pop-up: with "Show tips and pop-ups" off there is none. */
+test("a finished task is cheered only while tips and pop-ups are on", async (t) => {
+  for (const popups of [true, false]) {
+    const f = await fixture(t);
+    await f.call("/api/onboarding", { popups });
+    await f.page.reload();
+    await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+    /** The next GET /api/state the window reads whose runs show one with `status`, listened for before anything happens. */
+    const windowSees = (status) => f.page.waitForResponse(async (response) => {
+      if (!response.url().includes("/api/state")) return false;
+      const runs = (await response.json().catch(() => ({}))).runs ?? [];
+      return runs.some((run) => run.prompt === "Sort the Downloads folder" && run.status === status);
+    }, { timeout: 60000 });
+    const running = windowSees("running");
+    const finished = f.app.runtime.run({ prompt: "Sort the Downloads folder" });
+    await running;
+    // The window draws once the rest of that look (the people list is read last) has come back (core/state.js refresh).
+    let lastState = Promise.resolve(false);
+    const looked = new Promise((done) => f.page.on("response", (response) => {
+      if (response.url().includes("/api/state")) lastState = response.json().then((state) =>
+        (state.runs ?? []).some((run) => run.prompt === "Sort the Downloads folder" && run.status === "completed"), () => false);
+      else if (response.url().includes("/api/profiles")) void lastState.then((completed) => { if (completed) done(); });
+    }));
+    f.model.release();
+    await finished;
+    await looked;
+    await f.page.waitForTimeout(500);
+    assert.equal(await f.page.locator(".cheer11").count(), popups ? 1 : 0, popups ? "control: the finished task is cheered" : "no cheer card while tips and pop-ups are off");
+    assert.deepEqual(f.errors, []);
+  }
 });

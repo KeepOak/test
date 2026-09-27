@@ -14,11 +14,16 @@ import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAu
 import { t, language } from "../../i18n.js";
 import { faceOf, nameOf } from "./inbox17.js";
 import { say } from "../core/words.js";
+import { offTile, initSwitchOn } from "./switch-on.js";
 
 let heartbeat = null;
 let board = null;
 let boardProblem = "";
 let prompts = null;
+/* stress test B006: whether procedures that start themselves are switched on (GET /api/autonomy modes.procedures); a
+   trigger is kept as one, so while it is off the Triggers tab says so with its switch. */
+let proceduresMode = null;
+let autonomyLabel = "";
 
 /* The design's idea catalogue: [group, title, what it does, the words put in the Scheduled box]. Window text; nothing is
    saved until the person presses Add. */
@@ -51,7 +56,7 @@ function boardCard(c) {
 }
 function boardTab() {
   const hint = `<p class="hint" data-css="margin:4px 0 10px">${t("window.places.automations.work-that-takes-more-than-one")}</p>`;
-  if (!board) return `<div class="x15" data-tab15="board">${hint}${boardProblem ? `<p class="hint">${esc(boardProblem)}</p>` : ""}</div>`;
+  if (!board) return `<div class="x15" data-tab15="board">${hint}${boardProblem ? offTile("board", boardProblem) || `<p class="hint">${esc(boardProblem)}</p>` : ""}</div>`;
   const cols = LANES.map(([k, label]) => {
     const cards = board.lanes?.[k] ?? [];
     return `<section class="col15" data-col15="${k}" aria-label="${say(label)}"><h3>${say(label)}<span>${cards.length}</span></h3>${cards.map(boardCard).join("") || `<p class="c-empty15">${t("window.places.automations.nothing-here")}</p>`}</section>`;
@@ -130,6 +135,14 @@ function autoRow(p) {
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.procedure.name)}${pill}</b><small>${esc(small)}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}" data-v="auto">${t("ov.open")}</button></div>`;
 }
 
+/* B002: Add is drawn pressable only while the box has words (a redraw keeps what was typed). */
+const boxEmpty = () => (document.getElementById("nl-in")?.value.trim() ? "" : " disabled");
+const promptsOff = () => prompts?.settings?.mode === "off";
+async function modeOfProcedures() {
+  const a = await api("autonomy");
+  return { mode: a.modes?.procedures ?? null, label: a.labels?.procedures ?? "" };
+}
+
 export function draw() {
   const tab = S.tabs.automations || "scheduled";
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
@@ -144,20 +157,20 @@ export function draw() {
 
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add">${t("asks.runtimes.add")}</button></form>${propCard()}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
     <div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>
   <div class="sec ideas15"><div class="sec-h15"><h2>${t("window.places.automations.ideas")}</h2><button type="button" class="link15" data-act="ideas15">${t("window.places.automations.see-all-count", { count: IDEAS.length })}</button></div><div class="idea-row15">${IDEAS.slice(0, 3).map(ideaCard).join('')}</div></div>${ordersSection()}${onItsOwnSection()}`;
 
     markLive(schedules.map((_, i) => `sw:auto-scheduled-${i}`));
   } else if (tab === "procedures") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.saved-step-by-step-routines-including")}</p>
-    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : "disabled"}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button></div>
+    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : `disabled data-tip="${esc(t("window.switch-on.needs-trunk"))}"`}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button></div>
     <div class="rows" data-css="margin-top:8px">${autoProcedures.map(autoRow).join('')}${procedures.map(procedureRow).join('')}</div>
-  <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p><div class="rows">${(prompts?.prompts ?? []).map(promptRow).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new">${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
+  <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p>${promptsOff() ? offTile("prompts", t("window.switch-on.off", { label: t("prompts.card.title") })) : ""}<div class="rows">${(prompts?.prompts ?? []).map(promptRow).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new"${promptsOff() ? ` disabled data-tip="${esc(t("window.switch-on.off", { label: t("prompts.card.title") }))}"` : ""}>${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
 
   } else if (tab === "triggers") {
-    html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-pdf-lands"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add">${t("asks.runtimes.add")}</button></form>${trigCard()}
+    html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>${proceduresMode === "off" ? offTile("procedures", t("window.switch-on.off", { label: autonomyLabel }), t("window.switch-on.triggers-why")) : ""}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-pdf-lands"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${trigCard()}
     <div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : av({ kind: "main" }, 34)}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
 
     markLive(triggers.map((_, i) => `sw:auto-triggers-${i}`));
@@ -189,6 +202,14 @@ export async function after() {
     if (JSON.stringify(fresh) !== JSON.stringify(board) || problem !== boardProblem) {
       board = fresh;
       boardProblem = problem;
+      renderNow();
+    }
+  } else if (tab === "triggers") {
+    let modes = null;
+    try { modes = await modeOfProcedures(); } catch (error) { toast(error.message); }
+    if (modes && (modes.mode !== proceduresMode || modes.label !== autonomyLabel)) {
+      proceduresMode = modes.mode;
+      autonomyLabel = modes.label;
       renderNow();
     }
   } else if (tab === "procedures") {
@@ -257,6 +278,13 @@ async function removeLine(text) {
 
 export function init() {
   initAutomations17();
+  initSwitchOn();
+  /* B002: Add waits for words: it is pressable once the box has some (typed, or put there from an idea). */
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "nl-in") return;
+    const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
+    if (add) add.disabled = !e.target.value.trim();
+  });
   markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run"]);
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
@@ -272,7 +300,7 @@ export function init() {
     S.tabs.automations = "scheduled";
     renderNow();
     const box = $("#nl-in");
-    if (box) { box.value = say(IDEAS[+el.dataset.i]?.[3] ?? ""); box.focus(); }
+    if (box) { box.value = say(IDEAS[+el.dataset.i]?.[3] ?? ""); box.dispatchEvent(new Event("input", { bubbles: true })); box.focus(); }
   });
   initDrag();
   /* Run now on a procedure that starts itself; the engine says why when it did not start (asked first, already running). */

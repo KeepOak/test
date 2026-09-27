@@ -1,32 +1,33 @@
-// `npm test`: every test file, with browser and desktop-app files run one at a time.
+// `npm test`: every test file, each in its own `node --test` process, several at a time.
 //
-// Each desktop file starts Electron, the engine, its database and a window. Three of them at once on
-// a four-processor Windows build machine took longer than two minutes just to say "Connected": in one
-// run a file that got there needed 167 seconds while two others started beside it ran out of time.
-// Nothing in the app was wrong, so the files are no longer started side by side. Browser files have
-// the same constraint: three Chromium windows can make a stable control stop answering for minutes.
-// Ordinary non-browser files still run three at a time.
+// Each file runs as `node --test --test-concurrency=1 <file>` (as scripts/review.mjs does since #412): the browser
+// and engine tests start their servers on port 0 in their own temporary folders, so files do not share a port or a
+// data folder. Ordinary files run BRANCH_TEST_CONCURRENCY's first number at a time (default 3), browser files its
+// second (default 1) beside them, and desktop-app files one at a time: three Electron windows at once on a
+// four-processor build machine once took over two minutes just to say "Connected". The longest files start first.
 //
-// `npm test -- --shard=2/6` runs the second of six shares. The build machines run one share each at
-// the same time, so the whole suite no longer waits on one machine: on Windows it took 63 minutes. The shares are packed by how long each file took last time it was measured
-// (tests/test-weights.json), not by counting files, because one file runs for seven minutes and
-// hundreds finish in under a second. Every file lands in exactly one share; tests/run-tests.test.mjs
-// holds that. With no --shard, every file runs here, as before.
+// `--lane=linux|windows|macos` picks one system's part of the suite (see lanes() below): each file runs once, on
+// Linux, unless it holds tests only another system can run. `--shard=2/6` then runs the second of six shares of
+// that part, packed by how long each file took in the last measured Checks run (tests/shard-weights.json). Every file of a lane
+// lands in exactly one share; tests/run-tests.test.mjs holds that. With neither flag every file runs here.
 //
-// BRANCH_TEST_TIMINGS=<file> also writes how long each file took, which is where the weights come from.
-// `--files-from=selected-tests.json` runs an explicit selector-produced subset and refuses any path
-// that is not part of the discovered suite. It cannot be combined with sharding.
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+// BRANCH_TEST_FILE_TIMEOUT=<seconds> ends a file that runs longer, and everything it started, and names it: one file
+// that never exited once held a build machine for an hour. BRANCH_TEST_TIMINGS=<file> writes each file's seconds,
+// which is where the weights come from (scripts/test-weights.mjs). `--list` prints the files and runs nothing.
+// `--files-from=selected-tests.json` runs an explicit selector-produced subset and refuses any path that is not part
+// of the discovered suite. It cannot be combined with sharding.
+import { spawn, spawnSync } from "node:child_process";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const folders = ["tests", join("packages", "sdk", "test")];
 const desktop = (file) => /^tests[\\/]desktop[^\\/]*\.test\.mjs$/.test(file);
 const browserImport = /^\s*(?:import\b[^\n]*from\s+["']playwright["']|(?:const|let|var)\b[^\n]*import\(["']playwright["']\))/m;
 const here = fileURLToPath(new URL(".", import.meta.url));
-const weightsFile = join(here, "..", "tests", "test-weights.json");
+const weightsFile = join(here, "..", "tests", "shard-weights.json");
 const posix = (file) => file.replace(/\\/g, "/");
+export const LANES = { linux: "linux", windows: "win32", macos: "darwin" };
 
 /** Test files in a stable order, split by how much real browser machinery each starts. */
 export function testGroups(list = (folder) => readdirSync(folder), read = (file) => readFileSync(file, "utf8")) {
@@ -39,14 +40,50 @@ export function testGroups(list = (folder) => readdirSync(folder), read = (file)
 
 /**
  * Only the named groups ("shared,browser,desktop"), the others left empty, so the shares are packed from what runs.
- * A train's Windows shares leave the browser files to Linux and macOS (BRANCH_TEST_GROUPS=shared,desktop); the full
- * set still runs on Windows for the integration trunk before a release. No list means every group.
+ * No list means every group.
  */
 export function onlyGroups(groups, list) {
   if (!list) return groups;
   const wanted = new Set(list.split(",").map((name) => name.trim()).filter(Boolean));
   for (const name of wanted) if (!(name in groups)) throw new Error(`Unknown test group "${name}": expected shared, browser or desktop`);
   return Object.fromEntries(Object.entries(groups).map(([name, files]) => [name, wanted.has(name) ? files : []]));
+}
+
+/**
+ * Whether a file holds a test only this system (`win32` or `darwin`) runs: one that skips or returns everywhere
+ * else. Written `process.platform !== "win32"`, or through a name given to `process.platform === "win32"` and then
+ * negated (`const windows = process.platform === "win32"; … skip: !windows`). A file that only skips ON that system
+ * is not counted: Linux runs those tests.
+ */
+export function onlyOn(source, platform) {
+  const quoted = `["']${platform}["']`;
+  if (new RegExp(`process\\.platform\\s*!==?\\s*${quoted}`).test(source)) return true;
+  const alias = new RegExp(`(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*process\\.platform\\s*===?\\s*${quoted}\\s*;`, "g");
+  return [...source.matchAll(alias)].some(([, name]) => new RegExp(`!\\s*${name.replace(/\$/g, "\\$")}\\b`).test(source));
+}
+
+/**
+ * Which files each system's lane runs. Linux runs every file but the desktop app's; Windows runs the desktop app's,
+ * the Windows helpers, the uninstall and console files and every file with a Windows-only test; macOS every file
+ * with a macOS-only test. So a test runs on each system that can run it at most once, and every test somewhere.
+ */
+export function lanes(groups, read = (file) => readFileSync(file, "utf8")) {
+  const windowsByName = /^tests\/(?:windows-[^/]*|[^/]*uninstall[^/]*|[^/]*console[^/]*)\.test\.mjs$/;
+  const pick = (test) => Object.fromEntries(Object.entries(groups).map(([name, files]) => [name, files.filter(test)]));
+  return {
+    linux: pick((file) => !desktop(file)),
+    windows: pick((file) => desktop(file) || windowsByName.test(posix(file)) || onlyOn(read(file), "win32")),
+    macos: pick((file) => onlyOn(read(file), "darwin")),
+  };
+}
+
+/** `--lane=windows` → that lane's groups; no flag → every file. */
+export function laneGroups(argv, groups, read) {
+  const flag = argv.find((arg) => arg.startsWith("--lane="));
+  if (!flag) return { lane: null, groups };
+  const lane = flag.slice("--lane=".length);
+  if (!(lane in LANES)) throw new Error(`Bad ${flag}: expected --lane=linux, windows or macos`);
+  return { lane, groups: lanes(groups, read)[lane] };
 }
 
 /** The measured seconds per file for this kind of computer, or an empty map. */
@@ -58,14 +95,16 @@ export function loadWeights(platform = process.platform, read = () => readFileSy
   }
 }
 
-/**
- * Pack the files into `total` shares of about equal time: longest first, each to the lightest share.
- * A file never measured (a new one) counts as the median, so it is not all piled onto one share.
- */
-export function shards(files, total, weights = {}) {
+/** A file's measured seconds, or the median of the measured ones for a file never measured (a new one). */
+function costOf(weights) {
   const known = Object.values(weights).sort((a, b) => a - b);
   const fallback = known.length ? known[Math.floor(known.length / 2)] : 1;
-  const cost = (file) => weights[posix(file)] ?? fallback;
+  return (file) => weights[posix(file)] ?? fallback;
+}
+
+/** Pack the files into `total` shares of about equal time: longest first, each to the lightest share. */
+export function shards(files, total, weights = {}) {
+  const cost = costOf(weights);
   const order = [...files].sort((a, b) => cost(b) - cost(a) || (posix(a) < posix(b) ? -1 : 1));
   const shares = Array.from({ length: total }, () => ({ files: [], load: 0 }));
   for (const file of order) {
@@ -73,14 +112,13 @@ export function shards(files, total, weights = {}) {
     lightest.files.push(file);
     lightest.load += cost(file);
   }
-  // Keep each share in the usual file order, so its output reads like a normal run.
+  // Keep each share in the usual file order, so its list reads like a normal run.
   return shares.map((share) => files.filter((file) => share.files.includes(file)));
 }
 
 /**
- * One build machine's files. The files that run three at a time and the ones that run one at a time are packed
- * apart, so every share gets an even part of each: packed together, one share drew most of the one-at-a-time
- * browser files, whose minutes add up end to end, and ran past its limit while the others finished early (Q38).
+ * One build machine's files. The ordinary files and the one-at-a-time ones are packed apart, so every share gets an
+ * even part of each: packed together, one share drew most of the browser files and ran past its limit (Q38).
  */
 export function shareFiles(groups, index, total, weights = {}) {
   return [...shards(groups.shared, total, weights)[index], ...shards([...groups.browser, ...groups.desktop], total, weights)[index]];
@@ -101,7 +139,7 @@ export function parseShard(argv) {
 export function parseFilesFrom(argv, groups, read = (file) => readFileSync(file, "utf8")) {
   const flag = argv.find((arg) => arg.startsWith("--files-from="));
   if (!flag) return null;
-  if (argv.some((arg) => arg.startsWith("--shard="))) throw new Error("--files-from and --shard cannot be combined");
+  if (argv.some((arg) => arg.startsWith("--shard=") || arg.startsWith("--lane="))) throw new Error("--files-from cannot be combined with --shard or --lane");
   const file = flag.slice("--files-from=".length);
   const parsed = JSON.parse(read(file));
   if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) {
@@ -117,63 +155,150 @@ export function parseFilesFrom(argv, groups, read = (file) => readFileSync(file,
   });
 }
 
-function run(files, concurrency, timingsFile) {
-  if (!files.length) return 0;
-  const reporters = timingsFile
-    ? ["--test-reporter=spec", "--test-reporter-destination=stdout",
-      `--test-reporter=${pathToFileURL(join(here, "test-timings.mjs")).href}`, `--test-reporter-destination=${timingsFile}`]
-    : [];
-  const result = spawnSync(process.execPath, ["--test", `--test-concurrency=${concurrency}`, ...reporters, ...files], { stdio: "inherit" });
-  return testProcessStatus(result, files);
-}
-
 /** Turn an otherwise silent worker death into a named, actionable CI failure. */
 export function testProcessStatus(result, files, report = console.error) {
   if (typeof result.status === "number") return result.status;
   const reason = result.error
     ? `could not start: ${result.error.message}`
-    : result.signal
-      ? `was terminated by ${result.signal}`
-      : "ended without an exit status or signal";
+    : result.timedOut
+      ? `ran past its ${result.timedOut} s limit and was ended, with everything it started`
+      : result.signal
+        ? `was terminated by ${result.signal}`
+        : "ended without an exit status or signal";
   report(`[test-runner] The test worker ${reason}. Assigned files:\n${files.map(posix).join("\n")}`);
   return 1;
 }
 
-export function mergeTimings(target, parts) {
-  const merged = {};
-  for (const part of parts.filter((file) => existsSync(file))) {
-    // A run that was interrupted leaves its timings half written. They are left out, with a note, so the
-    // step still reports the tests' own result instead of failing here.
-    try { Object.assign(merged, JSON.parse(readFileSync(part, "utf8"))); }
-    catch { console.error(`[test-runner] The timings in ${posix(part)} could not be read and were left out.`); }
-    rmSync(part);
-  }
-  writeFileSync(target, `${JSON.stringify(merged, null, 2)}\n`);
+const live = new Set();
+
+/**
+ * End a file's process and everything it started. On macOS and Linux each file leads its own process group, so the
+ * group is ended even after the file itself has exited. On Windows the tree is found through the running process
+ * only, so it is ended only while that process still runs (a finished process's number may already be another's).
+ */
+function endTree(child, running) {
+  if (process.platform !== "win32") try { process.kill(-child.pid, "SIGKILL"); } catch { /* the group is gone */ }
+  else if (running) spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const argv = process.argv.slice(2);
-  const { index, total } = parseShard(argv);
-  const groups = onlyGroups(testGroups(), process.env.BRANCH_TEST_GROUPS);
-  const explicit = parseFilesFrom(argv, groups);
-  const mine = new Set(explicit ?? shareFiles(groups, index, total, loadWeights()));
-  // A machine that must leave some files to another (the owner's own computer never runs the desktop or
-  // uninstall tests) names them in BRANCH_TEST_EXCLUDE; the machine that takes them names them in BRANCH_TEST_ONLY.
-  const pattern = (name) => (process.env[name] ? new RegExp(process.env[name]) : null);
-  const exclude = pattern("BRANCH_TEST_EXCLUDE"), only = pattern("BRANCH_TEST_ONLY");
-  const keep = (file) => mine.has(file) && !exclude?.test(posix(file)) && (!only || only.test(posix(file)));
-  const shared = groups.shared.filter(keep);
-  const browsers = groups.browser.filter(keep);
-  const apps = groups.desktop.filter(keep);
-  console.log(explicit
-    ? `Selected ${shared.length + browsers.length + apps.length} of ${groups.shared.length + groups.browser.length + groups.desktop.length} test files.`
-    : `Share ${index + 1} of ${total}: ${shared.length + browsers.length + apps.length} of ${groups.shared.length + groups.browser.length + groups.desktop.length} test files.`);
-  const timings = process.env.BRANCH_TEST_TIMINGS;
-  const parts = timings ? [`${timings}.shared`, `${timings}.browser`, `${timings}.desktop`] : [];
-  // Every group always runs, so one red run reports every failure.
-  // A bigger machine runs more files at once (BRANCH_TEST_CONCURRENCY="shared,browser"); the default suits a hosted runner.
-  const [sharedAtOnce, browsersAtOnce] = (process.env.BRANCH_TEST_CONCURRENCY ?? "3,1").split(",").map(Number);
-  const statuses = [run(shared, sharedAtOnce || 3, parts[0]), run(browsers, browsersAtOnce || 1, parts[1]), run(apps, 1, parts[2])];
-  if (timings) mergeTimings(timings, parts);
-  process.exitCode = statuses.some((status) => status !== 0) ? 1 : 0;
+
+/** This process's environment without the marker `node --test` leaves for its own workers, so a file run from inside
+ * a test still runs as a test file of its own. */
+function ownEnv() {
+  const { NODE_TEST_CONTEXT: _, ...env } = process.env;
+  return env;
 }
+
+/**
+ * Run one file in its own `node --test` process and resolve with its status, output and seconds. The output is held
+ * and printed whole, so files running side by side do not interleave. It resolves when the file's own process exits,
+ * not when every program it started lets go of the output: whatever it left running is ended then.
+ */
+export function runFile(file, { limit = 0, spawnTest = spawn, now = Date.now } = {}) {
+  const started = now();
+  const child = spawnTest(process.execPath, ["--test", "--test-concurrency=1", "--test-reporter=spec", file],
+    { stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32", env: ownEnv() });
+  const chunks = [];
+  live.add(child);
+  child.stdout?.on("data", (chunk) => chunks.push(chunk));
+  child.stderr?.on("data", (chunk) => chunks.push(chunk));
+  return new Promise((done) => {
+    let timedOut = 0, finished = false;
+    const timer = limit ? setTimeout(() => { timedOut = limit; endTree(child, true); }, limit * 1000) : null;
+    const finish = (result) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      live.delete(child);
+      endTree(child, false);
+      const status = timedOut ? null : result.status;
+      done({ file, ...result, status, timedOut, output: Buffer.concat(chunks).toString("utf8"), seconds: (now() - started) / 1000 });
+    };
+    child.on("error", (error) => finish({ status: null, signal: null, error }));
+    // Give the output a moment to drain after the exit, but never wait on a pipe a left-behind program still holds.
+    child.on("exit", (status, signal) => setTimeout(() => finish({ status, signal }), 2000));
+    child.on("close", (status, signal) => finish({ status, signal }));
+  });
+}
+
+/**
+ * Run files side by side: up to `limits[kind]` of each kind at once, the longest first. `kindOf` names a file's kind
+ * (shared, browser or desktop). Resolves with every file's result in the order they finished.
+ */
+export async function runPool(files, { kindOf, limits, cost = () => 0, runOne = runFile, onDone = () => {} }) {
+  const waiting = [...files].sort((a, b) => cost(b) - cost(a));
+  const running = new Map(Object.keys(limits).map((kind) => [kind, 0]));
+  const results = [];
+  await new Promise((allDone) => {
+    const next = () => {
+      if (!waiting.length && [...running.values()].every((count) => count === 0)) return allDone();
+      for (let index = 0; index < waiting.length; index++) {
+        const kind = kindOf(waiting[index]);
+        if (running.get(kind) >= limits[kind]) continue;
+        const [file] = waiting.splice(index--, 1);
+        running.set(kind, running.get(kind) + 1);
+        runOne(file).then((result) => {
+          running.set(kind, running.get(kind) - 1);
+          results.push(result);
+          onDone(result);
+          next();
+        });
+      }
+    };
+    next();
+  });
+  return results;
+}
+
+/** Print one finished file's output under a header, and name it again if it failed. */
+function report(result) {
+  const status = testProcessStatus(result, [result.file], () => {});
+  console.log(`\n── ${posix(result.file)} · ${result.seconds.toFixed(1)} s · ${status === 0 ? "passed" : "FAILED"}`);
+  process.stdout.write(result.output);
+  if (status !== 0) testProcessStatus(result, [result.file]);
+}
+
+function chooseFiles(argv) {
+  const all = testGroups();
+  const explicit = parseFilesFrom(argv, all);
+  const { lane, groups: laned } = laneGroups(argv, all);
+  const groups = onlyGroups(laned, process.env.BRANCH_TEST_GROUPS);
+  const { index, total } = parseShard(argv);
+  const weights = loadWeights(lane ? LANES[lane] : process.platform);
+  const mine = new Set(explicit ?? shareFiles(groups, index, total, weights));
+  const pickFrom = (list) => list.filter((file) => mine.has(file));
+  const chosen = { shared: pickFrom(groups.shared), browser: pickFrom(groups.browser), desktop: pickFrom(groups.desktop) };
+  const count = chosen.shared.length + chosen.browser.length + chosen.desktop.length;
+  const everything = all.shared.length + all.browser.length + all.desktop.length;
+  console.log(explicit ? `Selected ${count} of ${everything} test files.`
+    : `${lane ? `Lane ${lane}, share` : "Share"} ${index + 1} of ${total}: ${count} of ${everything} test files.`);
+  return { chosen, weights };
+}
+
+async function main() {
+  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
+    for (const child of live) endTree(child, true);
+    process.exit(130);
+  });
+  const argv = process.argv.slice(2);
+  const { chosen, weights } = chooseFiles(argv);
+  const files = [...chosen.shared, ...chosen.browser, ...chosen.desktop];
+  if (argv.includes("--list")) return void console.log(files.map(posix).join("\n"));
+  const kind = new Map(Object.entries(chosen).flatMap(([name, list]) => list.map((file) => [file, name])));
+  const [shared, browser] = (process.env.BRANCH_TEST_CONCURRENCY ?? "3,1").split(",").map(Number);
+  const limit = Number(process.env.BRANCH_TEST_FILE_TIMEOUT) || 0;
+  const results = await runPool(files, {
+    kindOf: (file) => kind.get(file), limits: { shared: shared || 3, browser: browser || 1, desktop: 1 },
+    cost: costOf(weights), runOne: (file) => runFile(file, { limit }), onDone: report,
+  });
+  const failed = results.filter((result) => testProcessStatus(result, [result.file], () => {}) !== 0);
+  if (process.env.BRANCH_TEST_TIMINGS) {
+    const timings = Object.fromEntries(results.map((r) => [posix(r.file), Math.round(r.seconds * 1000) / 1000]).sort());
+    writeFileSync(process.env.BRANCH_TEST_TIMINGS, `${JSON.stringify(timings, null, 2)}\n`);
+  }
+  console.log(`\n${results.length - failed.length} of ${results.length} test files passed.`);
+  if (failed.length) console.log(`Failed:\n${failed.map((r) => `  ${posix(r.file)}${r.timedOut ? " (ran past its limit)" : ""}`).join("\n")}`);
+  process.exitCode = failed.length ? 1 : 0;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

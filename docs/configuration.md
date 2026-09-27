@@ -3056,7 +3056,9 @@ which counts as look-only, so a check-in answers without asking even under "Ask 
 sends its text to `deliverTo` (a chat) or to the activity list. If the tool is not used, a reply of
 exactly `NOTHING_NEW` counts as quiet, and any other reply is sent as the news.
 With `secondOpinion` on, one short extra question decides whether the news is worth interrupting you;
-if that question cannot be asked or read, the news is sent. Each check-in is recorded (quiet, notified,
+if that question cannot be asked or read, the news is sent. With `quietWeekends` on (off by default),
+Saturdays and Sundays in `timezone` pass without a check-in; a stuck Trunk is still said from its own task.
+Each check-in is recorded (quiet, notified,
 held back, failed) in the setting `heartbeat-state`. News from a check-in is announced to webhooks
 listening for `heartbeat.notify` (`runId`, `via`, `delivered`; the words themselves are not sent). A
 short-lived key may read `/api/heartbeat` but not change, switch or start the check-in.
@@ -4833,7 +4835,7 @@ from `public/assets/branch-mascot.png`.
 - `Branch-Agent-ios-simulator.zip` — the same app for the iOS Simulator
   (`xcrun simctl install booted App.app`).
 
-`.github/workflows/mobile.yml` builds both on pull requests that touch the phone apps and keeps
+`.github/workflows/mobile.yml` builds both for a release tag, or when run by hand, and keeps
 the files for seven days. It publishes nothing.
 
 **Putting it on a phone.** Nothing here is uploaded anywhere; each route is a step the owner takes.
@@ -10006,6 +10008,15 @@ cannot be read as "nothing inside that folder was touched".
 
 On Windows both answer with the plain sentence pointing at *Add or remove programs* or
 `Uninstall Branch Agent.cmd /quiet`, because that is how Windows removes a program.
+
+**In the window, in plain steps.** Settings › Updates & about › Remove Branch does not remove anything itself. It
+shows two choices, the safe one first: *Keep my conversations and settings* (on Windows, Open Add or remove programs,
+then Branch Agent › Uninstall) and *Also delete my conversations and files*, in the warning colour. Each has the exact
+line to paste, with a Copy button, taken from `GET /api/deployment` `uninstall` (`keep`, `deleteData`,
+`settingsLink`): on Windows `cmd /c "<program folder>\Uninstall Branch Agent.cmd" /quiet [--delete-data]`, which
+works in Terminal, PowerShell, Command Prompt and the Run box; on a Mac or Linux `'<home>/.local/bin/branch' uninstall
+[--delete-data]`. It is null when this copy has no uninstaller or `branch` command an installer put in place. The desktop
+app opens `ms-settings:appsfeatures` by that exact address only; in a browser the step is said in words.
 
 **Which version this is.** The Updates card (Settings → Updates & about) says in plain words what is
 running and whether a newer one exists — "Running 0.18.0, newest is 0.18.1", or "Running 0.18.0,

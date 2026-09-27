@@ -205,8 +205,8 @@ test("the models Branch downloaded are neither copied before an update nor moved
   assert.equal(await exists(join(done.aside, "models")), false, "and are not moved aside");
 });
 
-/* A paired phone carries the owner's own key, so the key cannot tell it from the window: the paired door is what is
-   refused (src/server.ts pairedDoorRequests). The same request with the same key on this computer's door is the control. */
+/* A paired phone holds a key of its own, never the window's (aae58bdb); what is refused is the paired door (src/server.ts
+   pairedDoorRequests). The same request with the window's key on this computer's door is the control. */
 async function pairedPhone(t) {
   const { start } = await fresh(t);
   const one = await start();
@@ -221,7 +221,7 @@ async function pairedPhone(t) {
   const headers = { authorization: `Bearer ${session.token}`, "x-branch-device": session.deviceId, "x-branch-device-key": session.deviceKey, "content-type": "application/json" };
   const phone = (method, path, body) => fetch(base + path, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) })
     .then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
-  assert.equal(session.token, one.server.token, "the phone holds the owner's own key");
+  assert.notEqual(session.token, one.server.token, "the phone holds a key of its own, not the window's");
   return { ...one, phone };
 }
 
@@ -233,7 +233,7 @@ test("a paired phone cannot choose the channel, put the card back over it, or to
   assert.match(moved.body.error, /update channel is chosen only in the app window on this computer, not from a paired phone/);
   assert.equal(readComfort(app.store, owner, "notify").releaseChannel, "stable");
   assert.equal((await phone("POST", "/api/comfort", { card: "notify", values: { sound: "chime" } })).status, 200, "control: the phone keeps its other notification choices");
-  assert.equal((await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: "beta" } })).status, 200, "control: the same key in the window");
+  assert.equal((await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: "beta" } })).status, 200, "control: the window");
   assert.equal((await phone("POST", "/api/comfort", { card: "notify", reset: true })).status, 403, "putting the card back would choose the channel too");
   assert.equal((await phone("POST", "/api/comfort", { card: "notify", values: { releaseChannel: "beta", sound: "knock" } })).status, 403, "naming the channel at all");
   assert.equal(readComfort(app.store, owner, "notify").releaseChannel, "beta");

@@ -230,7 +230,7 @@ test("Settings › Updates: the switch installs, and the status card says the fa
   const lastLook = { plan: null, status: null, wait: null, problem: null };
   const context = createContext({
     E: { profiles: { isOwner: true }, state: { version: "0.19.5" } }, level: () => "simple", esc: (s) => String(s), render: () => undefined,
-    markLive: () => undefined, toast: () => undefined, updates17: () => "", t: words,
+    markLive: () => undefined, toast: () => undefined, updates17: () => "", t: words, ic: () => "", waiting: async () => null,
     channelSection: () => "", initChannel: () => undefined, loadChannel: async () => undefined,
     lastLook, waitingLine: () => (lastLook.plan?.until ? words("window.updates.ready-installs-when", { until: lastLook.plan.until }) : null),
     holdingTasks: () => [{ sessionId: "s-1", state: "working", name: "Tidy the notes" }],
@@ -374,4 +374,24 @@ test("beta: a copy already ahead of Beta's newest change is not invited to go ba
 test("the desktop names a deferral, so the window hears a wait and not a failure", async () => {
   const { UpdateDeferredError } = await import("../dist/desktop/updater.js");
   assert.equal(String(new UpdateDeferredError("The update channel was just changed.")), "UpdateDeferredError: The update channel was just changed.");
+});
+
+/* Codex P2 on #441: an engine outage is said once while it lasts; once the engine answers again, the next outage is
+   said too, even in the same words. */
+test("an engine that stops answering again after it came back is said again", async (t) => {
+  const e = await engine(t, { autoUpdate: "install", releaseChannel: "stable" });
+  const u = updater("v0.19.6");
+  u.desktop.updateStatus = async () => ({ phase: "current", message: "You have the newest version.", release: null });
+  u.desktop.checkForUpdates = async () => ({ phase: "current", message: "You have the newest version.", release: null });
+  const w = await window17({ desktop: u.desktop, api: e.api });
+  w.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: "stable" } }) + ")");
+  await w.advance(10);
+  e.refuse.on = true;
+  await w.advance(2 * 60_000);
+  assert.deepEqual(w.toasts, ["The engine is not answering."], "said once while it lasts");
+  e.refuse.on = false;
+  await w.advance(60_000);
+  e.refuse.on = true;
+  await w.advance(60_000);
+  assert.deepEqual(w.toasts, ["The engine is not answering.", "The engine is not answering."], "the second outage is said too");
 });

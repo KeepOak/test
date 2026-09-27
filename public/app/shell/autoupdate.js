@@ -49,9 +49,18 @@ function tell(words) {
   told = words;
   toast(words);
 }
+/* What was said while the engine could not be asked. Once it answers again that outage is over, so the next one is
+   said too, even in the same words. */
+let outage = null;
+function engineDown(words) { tell(words); outage = words; }
+function engineUp() {
+  if (outage !== null && told === outage) told = null;
+  outage = null;
+}
 
 async function ask(facts) {
   const plan = await api("comfort/update-plan", facts);
+  engineUp();
   lastLook.plan = plan;
   lastLook.problem = plan.problem ?? null;
   return plan;
@@ -62,7 +71,7 @@ async function report(words, facts = {}) {
   const said = words || String(t("window.updates.failed"));
   lastLook.problem = { message: said, at: new Date().toISOString() };
   let plan;
-  try { plan = await ask({ ...facts, problem: said.slice(0, 600) }); } catch (error) { console.warn(error.message); tell(said); return; }
+  try { plan = await ask({ ...facts, problem: said.slice(0, 600) }); } catch (error) { console.warn(error.message); engineDown(said); return; }
   lastLook.problem = plan.problem ?? lastLook.problem;
   if (plan.tellProblem || plan.failed) { told = null; tell([said, plan.failed].filter(Boolean).join(" ")); }
 }
@@ -143,7 +152,7 @@ function followComfort() {
   if (!window.branchDesktop || !E.state || E.state === seenState || reading || E.profiles?.isOwner === false) return;
   seenState = E.state;
   reading = api("comfort")
-    .then((view) => { retries = 0; heard(view?.values ?? null); }, (error) => { tell(ownWords(error)); readAgainSoon(); })
+    .then((view) => { retries = 0; engineUp(); heard(view?.values ?? null); }, (error) => { engineDown(ownWords(error)); readAgainSoon(); })
     .finally(() => { reading = null; });
 }
 

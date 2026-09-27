@@ -17,6 +17,7 @@ import { face, TEMPLATES, TEMPLATE_WORDS } from "../flows/trunk.js";
 import { specLine, toolsSection, codingAgentsSection, initCustomize17 } from "./customize17.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { dashTile, readDash } from "./dashsw.js"; // parity B6: Dashboard in the browser
 import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./learn17d.js"; // pass 17 part D §3
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
 
@@ -239,7 +240,7 @@ function everywhereTab() {
     ${tile("globe", "keepoak.com", t("window.places.customize.connect-your-account-to-reach-branch"), "", "web")}
     <div class="tile"><div class="th"><span class="ico-tile">${ic('chat', 's')}</span><b>${t("dashboard.links.chats")}</b></div><p>${t("window.places.customize.telegram-whatsapp-discord-slack-talk-to")}</p><div class="acts">${devices ? dot(connected.length > 0) : ""}<button class="btn sm ml" type="button" data-act="ptab" data-place="customize" data-v="channels">${t("place.customize.channels")}</button></div></div>
     <div class="tile"><div class="th"><span class="ico-tile">${ic('doc', 's')}</span><b>${t("window.places.customize.a-page-of-your-own")}</b></div><p>${t("window.places.customize.a-small-box-on-your-own")}</p><div class="acts"><button class="btn sm" type="button" data-act="widget6">${t("window.places.customize.get-the-snippet")}</button></div></div>
-    </div></div>`;
+    ${dashTile()}</div></div>`;
 }
 
 const DRAW = { trunks: trunksTab, tools: toolsTab, specialists: specialistsTab, channels: channelsTab, everywhere: everywhereTab };
@@ -298,9 +299,10 @@ export async function after() {
     connected = listOf(live, "channels");
   }
   else if (tab === "everywhere") {
-    const [live, dev] = await Promise.all([read("channels"), owners("devices")]);
+    const [live, dev, dash] = await Promise.all([read("channels"), owners("devices"), readDash()]);
     connected = listOf(live, "channels");
     devices = dev ? listOf(dev, "devices") : null;
+    if (dash) renderNow(); // parity B6: the dashboard's switch (places/dashsw.js)
   }
   else if (tab === "specialists" && !nodesRead) { nodesRead = true; nodes = listOf(await owners("asks/nodes"), "nodes"); }
   if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes, devices]))) renderNow();

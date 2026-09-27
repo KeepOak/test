@@ -14,6 +14,7 @@ import { init as initShare } from "./share.js";
 import { looks17, look17, NEW17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
@@ -64,6 +65,19 @@ function draftFace(tr, change = {}) {
   return { ...face(tr), name: d.name, color: d.colour ?? face(tr).color, shape: d.shape ?? face(tr).shape, eyes: d.eyes, motion: d.motion, ...change };
 }
 
+/* What the face is, in av()'s own order (core/ui.js): its photo, else its character, else its emoji, else the classic
+   pebble. The Look tab shows only what that face is drawn with: the pebble takes its colour, shape, eyes and how it moves;
+   an emoji or a photo sits on the pebble's colour and shape and moves with it, with no eyes; a character acts out what the
+   Trunk is doing and takes only the colour of the glow behind it (app.css .av.look12). What is not shown keeps its value. */
+const USES = { pebble: ["colour", "shape", "moves", "eyes"], character: ["colour"], emoji: ["colour", "shape", "moves"], photo: ["colour", "shape", "moves"] };
+function kindOf(tr) {
+  const f = face(tr);
+  if (f.photo) return "photo";
+  if (f.lookStill || look17(f.character)) return "character";
+  return f.emoji ? "emoji" : "pebble";
+}
+const uses = (tr, what) => USES[kindOf(tr)].includes(what);
+
 function lookTab(tr, d) {
   const swatches = COLOURS.map((c) => `<button class="swatch" type="button" data-css="background:${c}" aria-label="${t("window.flows.trunk.colour-c", { c })}" aria-pressed="${hex(c) === d.colour}" data-act="st-colour" data-v="${c}"></button>`).join("");
   /* Each shape drawn as av() draws it: the pebble in the Trunk's own colour, still, with no photo, character or emoji over it. */
@@ -71,16 +85,17 @@ function lookTab(tr, d) {
   const shapes = SHAPE_NAMES.map((sh, i) => `<button class="shape" type="button" aria-label="${t("window.flows.trunk.shape-n", { n: i + 1 })}" aria-pressed="${sh === d.shape}" data-act="st-shape" data-v="${i}">${av(draftFace(tr, { ...bare, shape: sh }), 30)}</button>`).join("");
   const moves = MOTIONS.map(([v, l]) => `<button type="button" data-act="st-anim" data-v="${v}" aria-pressed="${d.motion === v}">${t(l)}</button>`).join("");
   const eyes = EYES.map(([v, l]) => `<button type="button" data-act="st-eyes" data-v="${v}" aria-pressed="${d.eyes === v}">${t(l)}</button>`).join("");
+  const row = (what, html) => (uses(tr, what) ? html : "");
   return `<div class="split" data-css="grid-template-columns:1fr 1fr"><div class="field"><label for="st-name">${t("accounts.field.name")}</label><input class="inp" id="st-name" value="${esc(d.name)}"></div><div class="field"><label for="st-role">${t("window.flows.trunk.for")}</label><input class="inp" id="st-role" value="${esc(d.title)}"></div></div>
-    <div class="field"><label>${t("studio.colour")}</label><div class="swatches">${swatches}</div></div>
-    <div class="field"><label>${t("studio.shape")}</label><div class="shapes">${shapes}</div></div>
-    <div class="split" data-css="grid-template-columns:1fr 1fr">${photoField(tr)}<div class="field"><label>${t("window.flows.trunk.moves")}</label><span class="seg">${moves}</span></div></div>
-    <div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`;
+    ${row("colour", `<div class="field"><label>${t("studio.colour")}</label><div class="swatches">${swatches}</div></div>`)}
+    ${row("shape", `<div class="field"><label>${t("studio.shape")}</label><div class="shapes">${shapes}</div></div>`)}
+    <div class="split" data-css="grid-template-columns:1fr 1fr">${photoField(tr)}${row("moves", `<div class="field"><label>${t("window.flows.trunk.moves")}</label><span class="seg">${moves}</span></div>`)}</div>
+    ${row("eyes", `<div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`)}`;
 }
 
 /* ---------- a photo instead of a face: POST /api/trunks/{id}/avatar, which keeps a PNG, JPEG or WebP under about 290 KB
-   and refuses anything else with its own words. Saved at once, as the character and the emoji are; Remove gives the
-   face made from the name back ({ kind: "face" }). ---------- */
+   and refuses anything else with its own words. Saved at once, as the character and the emoji are; Remove, or choosing a
+   character or an emoji, gives the face made from the name back ({ kind: "face" }). ---------- */
 const PHOTO_BYTES = 290 * 1024;
 function photoField(tr) {
   const photo = face(tr).photo;
@@ -110,10 +125,12 @@ function pickPhoto() {
   input.addEventListener("change", () => sendPhoto(input.files?.[0]));
   input.click();
 }
+/* The photo is taken off the face (the face made from the name comes back) through the route that removes it. */
+const dropPhoto = (id) => api(`trunks/${encodeURIComponent(id)}/avatar`, { kind: "face", locked: false });
 async function removePhoto() {
   keepFields();
   try {
-    await api(`trunks/${encodeURIComponent(ed.id)}/avatar`, { kind: "face", locked: false });
+    await dropPhoto(ed.id);
     await refresh();
     if (ed) drawEditor();
   } catch (error) { toast(error.message); }
@@ -127,7 +144,7 @@ function lookPicker(tr) {
   const cur = tr.character ?? "classic";
   const pebble = `<button type="button" class="look-c12" data-act="look-set" data-id="${esc(tr.id)}" data-v="classic" aria-pressed="${cur === "classic"}"><span class="peb-demo12">${av({ ...draftFace(tr), photo: null, character: null, emoji: face(tr).emoji }, 56)}</span><b>${t("window.flows.trunk.pebble")}</b></button>`;
   const cards = looks17().map((l) => `<button type="button" class="look-c12${NEW17.has(l.id) ? " new17e" : ""}" data-act="look-set" data-id="${esc(tr.id)}" data-v="${esc(l.id)}" aria-pressed="${cur === l.id}"><img src="${esc(l.still)}" alt="" loading="lazy" draggable="false" data-hov="${esc(l.states.idle ?? "")}"><b>${esc(l.name)}</b></button>`).join("");
-  return `<div class="sec"><h2>${t("window.flows.setup.looks")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.moves-hint")}</p>
+  return `<div class="sec"><h2>${t("window.flows.setup.looks")}</h2>${kindOf(tr) === "character" ? `<p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.moves-hint")}</p>` : ""}
     <div class="looks12 looks-tl">${pebble}${cards}</div></div>`;
 }
 async function setCharacter(el) {
@@ -136,6 +153,8 @@ async function setCharacter(el) {
   if (ed) keepFields();
   try {
     await api(`trunks/${encodeURIComponent(tr.id)}`, { character: v === "classic" ? null : v });
+    /* A photo is drawn over any character, so choosing one takes the photo off: the card chosen is the face drawn. */
+    if (v !== "classic" && face(tr).photo) await dropPhoto(tr.id);
     await refresh();
     if (ed?.id === tr.id) drawEditor();
     toast(v === "classic" ? t("window.flows.trunk.back-pebble") : t("window.flows.trunk.looks-like", { name: tr.name, look: look17(v)?.name }));
@@ -150,20 +169,21 @@ function emojiRow(tr) {
 const ctl = (id, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" id="${id}" aria-label="${esc(title)}" data-sw="set"><small>${esc(sub)}</small></div>`;
 const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg">${esc(o)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
 
-/* Which model: the engine's own presets (GET /api/state models.presets, by their names), saved at once as the Trunk's
-   model (POST /api/trunks/{id} model, a preset id). Choosing the one it has again gives it back to the conversation's
-   model (""). With no presets set up there is nothing to choose, so none is drawn. */
+/* Which model: the engine's own presets (GET /api/state models.presets, by their names) in the window's ordinary select,
+   saved at once as the Trunk's model (POST /api/trunks/{id} model, a preset id); Default ("") follows the conversation's
+   model. A connection that answers through a sign-in is drawn greyed (a Trunk never uses one), with the reason and the
+   way to add one it can use underneath (places/switch-on.js); so is the row with none a Trunk can use. */
 function modelSeg(tr) {
-  const presets = E.state?.models?.presets ?? [];
-  const opts = presets.map((p) => `<button type="button" data-act="tm-model" data-id="${esc(tr.id)}" data-v="${esc(p.id)}" aria-pressed="${tr.model === p.id}">${esc(p.name)}</button>`).join("");
-  return `<div class="ctl"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.trunk.which-model")}">${opts}</span></span><small>${t("window.flows.trunk.which-model-hint")}</small></div>`;
+  const models = E.state?.models, presets = models?.presets ?? [];
+  const opts = presets.map((p) => `<option value="${esc(p.id)}" ${tr.model === p.id ? "selected" : ""} ${trunkCanUse(p) ? "" : "disabled"}>${esc(p.name)}</option>`).join("");
+  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><select class="inp" id="tm-model-sel" data-id="${esc(tr.id)}" aria-label="${t("window.flows.trunk.which-model")}"><option value="" ${tr.model ? "" : "selected"}>${t("voice.default")}</option>${opts}</select></span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
 }
 async function setModel(el) {
   const tr = trunkById(el.dataset.id);
   if (!tr) return;
   keepFields();
   try {
-    await api(`trunks/${encodeURIComponent(tr.id)}`, { model: tr.model === el.dataset.v ? "" : el.dataset.v });
+    await api(`trunks/${encodeURIComponent(tr.id)}`, { model: el.value });
     await refresh();
     if (ed?.id === tr.id) drawEditor();
   } catch (error) { toast(error.message); }
@@ -226,6 +246,8 @@ async function setEmoji(v) {
   const tr = trunkById(ed.id);
   try {
     await api(`trunks/${encodeURIComponent(ed.id)}`, { look: { ...lookOf(tr), ...(v ? { face: "emoji", emoji: v } : { face: "pattern", emoji: "" }) }, ...(v ? { character: null } : {}) });
+    /* A photo is drawn over an emoji too, so choosing one takes the photo off, as choosing a character does. */
+    if (v && face(tr).photo) await dropPhoto(ed.id);
     await refresh();
     drawEditor();
   } catch (error) { toast(error.message); }
@@ -233,9 +255,11 @@ async function setEmoji(v) {
 
 function shuffle() {
   keepFields();
-  ed.d.colour = hex(COLOURS[Math.floor(Math.random() * COLOURS.length)]);
-  ed.d.shape = SHAPE_NAMES[Math.floor(Math.random() * SHAPE_NAMES.length)];
-  ed.d.eyes = EYES[Math.floor(Math.random() * EYES.length)][0];
+  /* Only what the face shows is shuffled; what is not shown keeps its value. */
+  const tr = trunkById(ed.id);
+  if (uses(tr, "colour")) ed.d.colour = hex(COLOURS[Math.floor(Math.random() * COLOURS.length)]);
+  if (uses(tr, "shape")) ed.d.shape = SHAPE_NAMES[Math.floor(Math.random() * SHAPE_NAMES.length)];
+  if (uses(tr, "eyes")) ed.d.eyes = EYES[Math.floor(Math.random() * EYES.length)][0];
   drawEditor();
 }
 
@@ -453,8 +477,8 @@ export function init() {
   on("st-eyes", (el) => { keepFields(); ed.d.eyes = el.dataset.v; drawEditor(); });
   on("st-photo", () => pickPhoto());
   on("st-photo-x", () => removePhoto());
-  on("tm-model", (el) => setModel(el));
-  markLive(["st-eyes", "st-photo", "st-photo-x", "tm-model"]);
+  document.addEventListener("change", (e) => { if (e.target.id === "tm-model-sel") setModel(e.target); });
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));

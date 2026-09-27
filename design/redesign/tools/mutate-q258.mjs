@@ -12,9 +12,9 @@ const M = [
   ["S4 household memoryProposals: no own-task filter", "dist/household-state.js", ".filter((proposal) => own.has(proposal.runId)),", ","],
   ["S5 household background: no own-task filter", "dist/household-state.js", ".filter((result) => own.has(result.parentRunId)),", ","],
   ["S6 collab: household gets the owner's calendar", "dist/collab-server.js", "calendar: { settings: null, countries: [] } };", "calendar: { settings: app.calendar.settings(owner), countries: [] } };"],
-  ["T1 /status: count every waiting question", "dist/commands/status.js", ".filter((asked) => !atWindow(call.surface) || mayAnswerHere(store, asked))", ".filter(() => true)"], // Q259: atWindow moved to commands/household
+  ["T1 /status: count every waiting question", "dist/commands/status.js", ".filter((asked) => !followsProfile(call.surface) || mayAnswerHere(store, asked))", ".filter(() => true)"], // Q259: atWindow moved to commands/household
   ["T2 /status: list every working task", "dist/commands/status.js", "runsHere(store, owner, call.surface).filter((run) => run.status === \"running\")", "store.runs(owner).filter((run) => run.status === \"running\")"], // Q259: runsHere, as /stop
-  ["T3 /status: a chat app counts as the window", "dist/commands/household.js", "export const atWindow = (surface) => surface === \"window\" || surface === \"phone\" || surface === \"dashboard\";", "export const atWindow = (surface) => true;"],
+  ["T3 /status: a chat app counts as the window", "dist/commands/household.js", "export const followsProfile = (surface) => surface === \"window\" || surface === \"phone\" || surface === \"dashboard\" || surface === \"terminal\";", "export const followsProfile = (surface) => true;"],
   ["P1 /preset: every change counts as confirmed", "dist/terminal-commands.js", "after, word === \"confirm\", runtime.registry", "after, true, runtime.registry"],
   ["P2 /preset: the refusal throw removed", "dist/terminal-commands.js", "    if (refusal)\n        throw new Error(refusal);\n", ""],
   ["R1 rooms answer: no-fingerprint check removed", "dist/trunks/rooms.js", "if (value.fingerprint === undefined && asked?.fingerprint)", "if (false)"],

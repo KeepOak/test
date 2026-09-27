@@ -8,19 +8,21 @@ import type { Surface } from "./catalog.js";
  * Q259: what a typed command may touch when a household person is at the window.
  *
  * The window, the phone and the dashboard send commands through POST /api/commands/run, and while the window is
- * switched to somebody else's profile (or a person is signed in) that person is who is typing. A chat app and the
- * terminal are the owner's, whatever the window is switched to, and keep acting as the owner (as /status does, Q258).
+ * switched to somebody else's profile (or a person is signed in) that person is who is typing. The terminal follows the
+ * same profile, as its places do (src/terminal-place-data.ts). A chat app is the owner's, whatever the window is
+ * switched to, and keeps acting as the owner (as /status does, Q258).
  *
  * At the window the rule fails closed, like src/household-routes.ts: a command is refused to a household person in
  * the one sentence `Profiles.requireOwner` says unless it is listed below as one that only works on their own
  * things (their conversation, their tasks, what is remembered for them) or only moves the window. A command added
  * later is the owner's until somebody lists it here.
  */
-export const atWindow = (surface: Surface): boolean => surface === "window" || surface === "phone" || surface === "dashboard";
+export const followsProfile = (surface: Surface): boolean =>
+  surface === "window" || surface === "phone" || surface === "dashboard" || surface === "terminal";
 
-/** True when the person typing is a household person at the window, not the owner. */
+/** True when the person typing is a household person at the window or the terminal, not the owner. */
 export function householdHere(store: Store, surface: Surface): boolean {
-  return atWindow(surface) && !store.profiles.isOwner();
+  return followsProfile(surface) && !store.profiles.isOwner();
 }
 
 type Allowed = "any" | "bare";
@@ -59,7 +61,7 @@ export function mayUseConversation(store: Store, owner: string, surface: Surface
 }
 
 /**
- * The tasks the person typing may see and stop, newest first. The owner (and a chat app or the terminal): every
+ * The tasks the person typing may see and stop, newest first. The owner (and a chat app): every
  * task of the owner's, as before. A household person at the window: only the tasks started for them in their own
  * conversations. Anything else is left out, so its id reads exactly like an id that does not exist.
  */
