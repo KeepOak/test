@@ -4,6 +4,7 @@ import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
 import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
 import { mkdir } from "node:fs/promises";
+import { diagnose } from "./diagnostic-log.js"; // attach-4
 import { currentTaskRun, currentTool } from "./task-scope.js"; // mac7/walk-rules
 import { allowAll, byFullAddress, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import { existsSync, readdirSync, rmSync } from "node:fs";
@@ -402,9 +403,12 @@ export async function createBranch(options: {
   // A stop at the wrong moment must not turn a temporary conversation's files into permanent ones.
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
-  // attach-3: files sent ahead of a message in an earlier run that were still waiting wait again (a restart between a
-  // paste and its message loses none); anything else left there can never be named again, and its bytes go.
-  const sweeping = Promise.all([attachments.sweepTemporary().catch(() => 0), attachments.sweepIncoming().catch(() => undefined)]);
+  // attach-3, attach-4: files sent ahead of a message in an earlier run that were still waiting wait again (a restart
+  // between a paste and its message loses none), before any message can name them; anything else left there can never
+  // be named again, and its bytes go, however long that takes (a file a message is moving is held from it).
+  await attachments.restoreIncoming().catch((error: unknown) => diagnose("attachments", "error",
+    "Files waiting to be sent could not be read back", { fields: { reason: error instanceof Error ? error.message : String(error) } }));
+  const sweeping = Promise.all([attachments.sweepTemporary().catch(() => 0), attachments.clearIncoming().catch(() => undefined)]);
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
