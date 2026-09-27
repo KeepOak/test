@@ -1,4 +1,5 @@
 import type { Event, RunStatus } from "./contracts.js";
+import { unnamedModels } from "./providers.js";
 
 /**
  * mac7/empty-completion: a task that finished having produced nothing is not a success.
@@ -52,7 +53,8 @@ export function produced(events: readonly Event[]): Produced {
     const reported = (event.data.reported as { output?: unknown } | null | undefined)?.output;
     if (typeof reported === "number" && reported > 0) what.reportedOutput = (what.reportedOutput ?? 0) + reported;
     const named = event.data.model;
-    if (typeof named === "string" && named) what.model = named;
+    // A preset made from a connection that named no model is called "configured": that is no model's name to say.
+    if (typeof named === "string" && named && !unnamedModels.has(named)) what.model = named;
   }
   return what;
 }

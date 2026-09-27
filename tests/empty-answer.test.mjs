@@ -221,6 +221,21 @@ test("the guard reads only what the task recorded", () => {
   assert.match(producedNothing("completed", "", { toolCalls: 0, reasoningChars: 0, model: "qwen2.5:7b", reportedOutput: 53 }),
     /^The model \(qwen2\.5:7b\) wrote a reply, but the model service passed none of it on/);
   assert.equal(produced([{ kind: "model.completed", data: { reported: { input: 2997, output: 53 } } }]).reportedOutput, 53);
+  // qa-fixes-4: "configured" is what a preset is called when no model was named for it, never a model's name.
+  // Mutation: keep every name in produced → "The model (configured)", red.
+  const unnamed = produced([{ kind: "model.completed", data: { model: "configured", reported: { output: 53 } } }]);
+  assert.equal(unnamed.model, null);
+  assert.match(producedNothing("completed", "", unnamed), /^The model wrote a reply, but the model service passed none of it on/);
+});
+
+test("a connection handed in without a preset is named by the model it asks for", async (t) => {
+  // qa-fixes-4: the empty-reply sentence said "(configured)" for qwen2.5:7b. Mutation: drop `provider.model` in defaultPreset → red.
+  const provider = new OpenAIProvider({ endpoint: "http://127.0.0.1:9/v1", model: "qwen2.5:7b", apiKey: "local" });
+  const root = await mkdtemp(join(tmpdir(), "branch-named-model-"));
+  const app = await createBranch({ workspace: join(root, "ws"), dataDir: join(root, "data"), provider });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  assert.equal(app.runtime.models.default.model, "qwen2.5:7b");
+  assert.equal(new OllamaProvider({ endpoint: "http://127.0.0.1:9", model: "llama3.2" }).model, "llama3.2");
 });
 
 test("a manual tool action that returns nothing is not read as an empty success", async (t) => {

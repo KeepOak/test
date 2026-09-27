@@ -21,7 +21,11 @@ async function call(p, body) {
   return { status: r.status, body: await r.json().catch(() => ({})) };
 }
 const lock = async () => (await call("lock")).body;
-const settle = (page, ms = 700) => page.waitForTimeout(ms);
+/* Until the engine says so (checked every 100 ms, for up to 10 s): no fixed wait decides a result. */
+async function until(check) {
+  for (let i = 0; i < 100; i++) { if (await check()) return true; await new Promise((done) => setTimeout(done, 100)); }
+  return false;
+}
 /* Every toast the window shows, however briefly (a reload can take one away within milliseconds). */
 const toasts = [];
 function watchToasts(context) {
@@ -34,13 +38,22 @@ async function signIn(page) {
   await page.goto(BASE + "/");
   await page.getByLabel("Session token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await settle(page, 1500);
+  // The window drawn, or (with "Always") its lock screen.
+  await page.locator('[data-act="owner"]:visible, .lockscreen:visible').first().waitFor({ timeout: 15000 });
 }
+/* Settings by its gear, not Ctrl+,: a shortcut pressed while a reloaded window is still starting is lost (the "Always"
+   step's old flake), where a click waits for the drawn button and goes through the window's own click handling. */
 async function openPermissions(page) {
-  if (!(await page.locator(".settings").count())) { await page.keyboard.press("Control+,"); await page.locator(".settings").waitFor(); }
+  if (!(await page.locator(".settings").count())) {
+    await page.locator('.owner-row [data-act="view"][data-v="settings"]').click();
+    await page.locator(".settings").waitFor({ timeout: 10000 });
+  }
   await page.locator('[data-act="setlevel"][data-v="technical"]').first().click();
   await page.locator('[data-act="setpage"][data-v="permissions"]').first().click();
-  await settle(page, 1200);
+  // Drawn from the engine: the segment pressed is the one GET /api/lock says, so a click next means what it says.
+  const now = await lock();
+  const pressed = !now.pinSet ? "off" : now.lockOnOpen ? "pin" : "quiet";
+  await until(async () => (await seg(page, pressed).getAttribute("aria-pressed", { timeout: 500 }).catch(() => null)) === "true");
 }
 /* Settings is a page of its own: its "Back to" button returns to the window, where the owner's menu is. */
 async function closeSettings(page) {
@@ -72,7 +85,8 @@ async function setPin(page) {
   await seg(page, "quiet").click();
   await page.locator("#pin-new-b17").fill(PIN);
   await page.locator('[data-act="applocksetb17"]').click();
-  await settle(page, 1200);
+  await until(async () => { const got = await lock(); return got.pinSet && got.idleMinutes === 15; });
+  await page.locator(".ctl", { hasText: "App lock" }).filter({ hasText: "Locks after 15 quiet minutes" }).waitFor({ timeout: 10000 }).then(() => true, () => false);
   const now = await lock();
   check("After 15 min sets the PIN and the quiet minutes", now.pinSet && now.idleMinutes === 15 && !now.lockOnOpen, JSON.stringify(now));
   check("the row reads the engine's minutes", (await page.locator(".ctl", { hasText: "App lock" }).textContent()).includes("Locks after 15 quiet minutes"));
@@ -101,21 +115,23 @@ async function changePin(page) {
   await page.locator("#pin-cur-b17").fill(PIN);
   await page.locator("#pin-new-b17").fill(PIN2);
   await page.locator('[data-act="applockchgokb17"]').click();
-  await settle(page, 1200);
-  check("Change closes its dialog", !(await page.locator(".scrim .dlg").count()));
+  check("Change closes its dialog", await page.locator(".scrim .dlg").waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false));
+  // The PINs are tried with the window away: open, its own watch could see the lock in between and reload the window a
+  // moment later, in the middle of the next step (the "Always" step's old flake).
+  await page.goto("about:blank");
   await call("lock", {});
   const old = await call("lock/unlock", { pin: PIN }), fresh = await call("lock/unlock", { pin: PIN2 });
   check("after Change the old PIN is refused and the new one unlocks", old.status === 403 && fresh.status === 200, `${old.status} ${fresh.status}`);
-  await page.reload();
+  await page.goto(BASE + "/");
   await page.locator("#main").waitFor({ state: "visible", timeout: 10000 });
 }
 
 async function always(page, context) {
   await openPermissions(page);
   await seg(page, "pin").click();
-  await settle(page, 1200);
-  check("Always saves lock-on-open", (await lock()).lockOnOpen === true);
-  check("Always reads the prototype's words", (await page.locator(".ctl", { hasText: "App lock" }).textContent()).includes("Asks for your PIN every time it opens."));
+  check("Always saves lock-on-open", await until(async () => (await lock()).lockOnOpen === true));
+  check("Always reads the prototype's words", await page.locator(".ctl", { hasText: "App lock" }).filter({ hasText: "Asks for your PIN every time it opens." })
+    .waitFor({ timeout: 10000 }).then(() => true, () => false));
   const fresh = await context.newPage();
   const errors = [];
   fresh.on("pageerror", (e) => errors.push(e.message));
@@ -140,7 +156,7 @@ async function removePin(page) {
   check("Off with a wrong PIN is refused in the engine's words", (await toastText(page)).includes("That PIN is not right") && (await lock()).pinSet === true);
   await page.locator("#pin-cur-b17").fill(PIN2);
   await page.locator('[data-act="applockoffb17"]').click();
-  await settle(page, 1200);
+  await until(async () => { const got = await lock(); return got.pinSet === false && got.lockOnOpen === false; });
   const off = await lock();
   check("Off with the PIN removes it, and Always with it", off.pinSet === false && off.lockOnOpen === false, JSON.stringify(off));
   check("Off says so in the prototype's words", (await toastText(page)).includes("App lock off."));
