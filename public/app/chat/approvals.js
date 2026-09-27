@@ -31,7 +31,9 @@ export async function setLockdown(on) {
 export function initApprovals() {
   markLive(["lock"]);
   on("lock", async (el) => setLockdown(el.closest(".lock-banner") ? false : !(await syncLockdown())));
-  // The first draw after sign-in reads it once; after that, every ten seconds, and straight after each switch.
+  // The first draw after sign-in reads it once; after that, every ten seconds while the tab is shown, as soon as it is
+  // shown again, and straight after each switch.
   onRender(() => { if (E.state && !L.read) { L.read = true; syncLockdown(); } });
-  setInterval(syncLockdown, 10000);
+  setInterval(() => { if (!document.hidden) syncLockdown(); }, 10000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) syncLockdown(); });
 }

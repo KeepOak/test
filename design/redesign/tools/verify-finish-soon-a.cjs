@@ -374,11 +374,11 @@ async function recipeStale(page, api, app, recipe, step) {
   await page.locator('.dlg [data-act="dlg-close"]').first().click().catch(() => {});
 }
 
-async function agentRemove(page, api, agentName) {
+async function agentRemove(page, api, agentName, agentId) {
   await place(page, "customize");
   await tab(page, "customize", "tools");
   await page.locator('[data-act="t9-kind"][data-v="agents"]').click();
-  await page.locator(`[data-act="t9-sel"][data-v="${agentName}"]`).click();
+  await page.locator(`[data-act="t9-sel"][data-v="${agentId}"]`).click(); // an agent is listed by its id
   const rm = page.locator('.t9-detail [data-act="tool-rm"]');
   check("another agent's Remove is live", !(await rm.getAttribute("class")).includes("soon") && (await rm.getAttribute("aria-disabled")) !== "true", "its Remove is not greyed (Check for updates is not this branch's)");
   await page.locator('.t9-detail [data-act="tool-rm"]').click();
@@ -441,7 +441,7 @@ async function scriptedEngine(browser, stamp, errors) {
     await recipeScripted(page, api, recipe);
     await recipeSameSteps(page, api, sameRecipe);
     await recipeStale(page, api, app, staleRecipe, step);
-    await agentRemove(page, api, agentName);
+    await agentRemove(page, api, agentName, agentId);
     await pluginRemove(page, api);
   } finally {
     await page.close();

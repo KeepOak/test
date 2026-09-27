@@ -111,10 +111,11 @@ export class Store {
             // mac7/smoke-fixes (B4): the sentence now says what does work, instead of leaving the
             // terminal looking broken while the window is open.
             + "These work against the Branch that is already open, from any terminal: branch status, branch doctor, branch token, "
-            + "branch trace, branch schedule, and the places that only look (memory, usage, sessions, inbox, library, "
+            + "branch trace, branch schedule, branch approve, branch lockdown, branch permissions, branch theme, branch model, "
+            + "branch gateway, and the places that only look (memory, usage, sessions, inbox, library, "
             + "settings, places, tools, skills, projects, snapshots, channels, mcp, customize, automations). "
-            + "Anything that writes to the saved work — backup, restore, security audit, activity verify, theme, model use, "
-            + "lockdown, permissions — needs that Branch closed first: close it and try again.",
+            + "Anything else that writes to the saved work — backup, restore, security audit, activity verify — "
+            + "needs that Branch closed first: close it and try again.",
         );
       throw e;
     }

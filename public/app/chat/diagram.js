@@ -6,7 +6,7 @@
    (GET /api/artifacts); with no such task among the engine's recent ones it stays greyed. */
 
 import { esc, render } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -37,13 +37,15 @@ async function readKept() {
 const cardSource = (el) => el.closest("[data-dia17c]")?.querySelector("pre")?.textContent ?? "";
 
 function saveButton(run, source) {
+  /* Q262: the file would be kept in the owner's Library, so a household person is not offered Save at all. */
+  if (!ownerHere()) return "";
   if (!run) return `<button class="btn sm" type="button" data-act="toast">${t("window.diagram.save-to-library")}</button>`;
   return `<button class="btn sm" type="button" data-act="diasave17c" data-run="${esc(run)}">${kept(run, source) ? t("window.diagram.in-library") : t("window.diagram.save-to-library")}</button>`;
 }
 
 /* The card for a mermaid block. */
 export function diagramCard(source) {
-  if (!D.asked) { D.asked = true; readKept(); }
+  if (!D.asked && ownerHere()) { D.asked = true; readKept(); }
   const run = runOf(source);
   return `<div class="card dia17c" data-dia17c="1"><div class="card-h">${ic("dia17c", "s")}<span class="pill idle ml">${t("window.chat.dia.diagram")}</span></div>
     <pre>${esc(source)}</pre>

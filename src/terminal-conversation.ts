@@ -63,7 +63,7 @@ export class Conversation {
     this.transcript.length = 0;
     this.steps = [];
     if (sessionId) for (const turn of this.runtime.store.messages(sessionId))
-      if (turn.role === "user" || turn.role === "assistant") this.say(turn.role === "user" ? "you" : "assistant", turn.content);
+      if ((turn.role === "user" || turn.role === "assistant") && turn.from !== "branch") this.say(turn.role === "user" ? "you" : "assistant", turn.content);
     this.changed("line");
   }
   /** Words of context used and money spent in this conversation, as the window's meter says it. */
