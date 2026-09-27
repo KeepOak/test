@@ -28,7 +28,7 @@ async function dataPage(t, width) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0; // what failed before the key was given is the login page's business
   const open = async () => {
     await page.locator("body.sg-ready").waitFor();
@@ -50,8 +50,35 @@ const everything = (page, on) => page.evaluate(async (value) => {
 const heads = (page) => page.evaluate(() => [...document.querySelectorAll("#lx-page-data .sg-head")].filter((head) => head.checkVisibility())
   .map((head) => head.querySelector("h3")?.textContent.trim()));
 
+/* ---------- the new window (public/app/**) ---------- */
+async function openData(page) {
+  await page.locator('#side [data-act="view"][data-v="settings"]').click();
+  await page.locator('[data-act="setpage"][data-v="usage"]').click();
+  await page.getByRole("heading", { name: "Data & usage", exact: true }).waitFor();
+}
+async function newDataPage(t) {
+  const root = await mkdtemp(join(tmpdir(), "branch-save-progress-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((response) => response.json());
+  await call("/api/onboarding", { done: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openData(page);
+  return { page, errors, call };
+}
+
+// Redesign: replaced by the new window (the old sample's sections and Show everything; the prototype keeps the switch inside
+// "What each connection has left" on Settings › Data & usage, checked below).
 for (const width of [1440, 400]) for (const on of [false, true]) {
-  test(`DG-055 at ${width} px with Show everything ${on ? "on" : "off"}, saving progress is its own section after the allowances`, async (t) => {
+  test.skip(`DG-055 at ${width} px with Show everything ${on ? "on" : "off"}, saving progress is its own section after the allowances`, async (t) => {
     const { page, errors } = await dataPage(t, width);
     await everything(page, on);
     await page.evaluate(() => globalThis.branchSettingsLevel.set("regular"));
@@ -65,22 +92,30 @@ for (const width of [1440, 400]) for (const on of [false, true]) {
   });
 }
 
+/* Redesign: the prototype's Settings › Data & usage keeps "Offer to save progress at 95%" (#u-ckpt) under "What each
+   connection has left" (design/redesign/prototype.html, the usage page).
+   WINDOW BUG: public/app/settings/pages/usage.js:96 draws that section as a heading only (LIMITS_EMPTY): no rows, no ring
+   switch and no save-progress switch, live or greyed. */
 test("DG-055 the switch still saves the question at 95%, and it comes back after a reload", async (t) => {
-  const { page, errors, call, open } = await dataPage(t, 1440);
+  const { page, errors, call } = await newDataPage(t);
   const before = (await call("/api/usage/glance/settings")).settings.saveProgress;
+  const box = page.getByRole("checkbox", { name: "Offer to save progress at 95%", exact: true });
+  await box.waitFor({ state: "visible", timeout: 10000 });
+  assert.notEqual(await box.getAttribute("aria-disabled"), "true", "the switch is live");
   const saved = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/usage/glance/settings");
-  await page.locator("#glance-save-progress").click();
+  await box.click();
   assert.equal((await saved).ok(), true);
   const after = (await call("/api/usage/glance/settings")).settings.saveProgress;
   assert.notEqual(after, before);
   await page.reload();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await open();
-  assert.equal(await page.locator("#glance-save-progress").isChecked(), after === "ask");
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openData(page);
+  assert.equal(await page.getByRole("checkbox", { name: "Offer to save progress at 95%", exact: true }).isChecked(), after === "ask");
   assert.deepEqual(errors, []);
 });
 
-test("DG-055 the section's heading is French in French", async (t) => {
+// Redesign: Coming soon (sw:lang, the Language select in Settings › Appearance), checked at fc541c24.
+test.skip("DG-055 the section's heading is French in French", async (t) => {
   const { page, errors } = await dataPage(t, 1440);
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
   const word = await page.evaluate(async () => (await import("/i18n.js")).t("settingsGrown.bucket.data.save"));

@@ -26,7 +26,7 @@ async function settings(t, width) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0; // what failed before the key was given is the login page's business
   await page.locator("body.sg-ready").waitFor();
   await page.keyboard.press("ControlOrMeta+Comma");
@@ -43,7 +43,9 @@ const look = (node) => {
 };
 
 for (const width of [1440, 860, 390]) {
-  test(`DG-173 at ${width} px the page links are the sample's weight, line and padding, in both lights`, async (t) => {
+  // Redesign: replaced by the new window (the page links are the prototype's .set-nav .nav, with its own size, spacing and
+  // weight; /appearance.js is gone with the old window).
+  test.skip(`DG-173 at ${width} px the page links are the sample's weight, line and padding, in both lights`, async (t) => {
     const { page, errors } = await settings(t, width);
     for (const appearance of ["forest", "daylight"]) {
       await page.evaluate(async (value) => {

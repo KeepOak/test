@@ -23,6 +23,7 @@ export async function fixture(t, options = {}) {
   const workspace = join(root, "workspace"), dataDir = join(root, "private");
   await mkdir(workspace, { recursive: true });
   const app = await createBranch({ workspace, dataDir, ...options });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about the code tools, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, workspace, root };
 }

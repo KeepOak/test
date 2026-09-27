@@ -13,11 +13,15 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveLook } from "../dist/terminal-theme.js";
-import { openSettings } from "./places.mjs";
+import { openSettings } from "./places.mjs"; // the old window's helper, for the skipped bodies only
 import { readFileSync } from "node:fs";
 
 const FRENCH = JSON.parse(readFileSync(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
 
+/* Redesign: Settings › Appearance in the new window (settings/pages/appearance.js) is prototype.html's page: Light or
+   dark, Theme (the one worn, Browse, Accent colour, More contrast), Agents, Background, Reading (Conversation width,
+   Text size), The pet, What's shown (Keep things still) and Language. Its rows and words replace the old Theme card's;
+   what the controls do is checked: contrast reaches the terminal both ways, and the conversation width is saved. */
 async function appearance(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-theme-card-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
@@ -29,13 +33,14 @@ async function appearance(t) {
     ...(body ? { body: JSON.stringify(body) } : {}),
   }).then((response) => response.json());
   await call("/api/onboarding", { done: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const open = async () => {
-    await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-    await openSettings(page, "appearance");
-    await page.locator("#lx-contrast .segmented-option").first().waitFor();
+    await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+    await page.locator('#side [data-act="view"][data-v="settings"]').click();
+    await page.locator('[data-act="setpage"][data-v="appearance"]').click();
+    await page.locator("#a-contrast").waitFor();
   };
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
@@ -44,13 +49,53 @@ async function appearance(t) {
   await open();
   return { app, page, errors, call, open };
 }
+const sections = (page) => page.$$eval(".set-col .sec > h2", (nodes) => nodes.map((node) => node.textContent));
+
+test("DG-166/DG-040: Appearance has the prototype's sections, in its order", async (t) => {
+  const { page, errors } = await appearance(t);
+  assert.deepEqual(await sections(page), ["Light or dark", "Theme", "Agents", "Background", "Reading", "The pet", "What’s shown", "Language"]);
+  assert.deepEqual(await page.getByRole("group", { name: "Conversation width", exact: true }).getByRole("button").allInnerTexts(), ["Comfortable", "Wide", "Full"]);
+  assert.deepEqual(errors, []);
+});
+
+test("DG-166: More contrast reaches the terminal, and comes back from it", async (t) => {
+  const { app, page, errors, call } = await appearance(t);
+  const box = page.getByRole("checkbox", { name: "More contrast", exact: true });
+  assert.equal(await box.isChecked(), false);
+  await box.check();
+  let look = await call("/api/look");
+  for (let tries = 0; tries < 50 && look.contrast !== "more"; tries += 1) look = await page.waitForTimeout(100).then(() => call("/api/look"));
+  assert.equal(look.contrast, "more", "the window's choice is written for the terminal");
+  /* The terminal writes the look itself (the window's own route always says it came from the window). */
+  await saveLook(app.store, app.runtime.owner, { contrast: "standard", changedBy: "terminal" });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForFunction(() => document.getElementById("a-contrast")?.checked === false, null, { timeout: 10000 })
+    .catch(() => assert.fail("the terminal's change comes back to the open window"));
+  assert.deepEqual(errors, []);
+});
+
+test("DG-166: Conversation width is saved, and comes back after a reload", async (t) => {
+  const { page, errors, open, call } = await appearance(t);
+  await page.getByRole("group", { name: "Conversation width", exact: true }).getByRole("button", { name: "Full", exact: true }).click();
+  let prefs = (await call("/api/state")).preferences;
+  for (let tries = 0; tries < 50 && prefs.conversationWidth !== "full"; tries += 1) prefs = await page.waitForTimeout(100).then(() => call("/api/state").then((s) => s.preferences));
+  assert.equal(prefs.conversationWidth, "full");
+  await page.reload();
+  await open();
+  assert.equal(await page.getByRole("group", { name: "Conversation width", exact: true }).getByRole("button", { name: "Full", exact: true }).getAttribute("aria-pressed"), "true");
+  assert.deepEqual(errors, []);
+});
+
+/* The old window's card, for the skipped bodies below. */
 const rows = (page) => page.$$eval("#lx-page-appearance .lx-look > *", (nodes) => nodes.map((node) =>
   node.matches(".lx-look-row") ? node.querySelector(".lx-look-label").textContent
     : node.matches(".lx-theme-tools") ? "(search)" : node.matches(".lx-gallery") ? "(themes)" : null).filter(Boolean));
 const shown = (page, host) => page.$$eval(`#${host} .segmented-option`, (nodes) => nodes.map((node) => node.textContent));
 const pressed = (page, host) => page.$eval(`#${host} [aria-pressed="true"]`, (node) => node.textContent);
 
-test("DG-166/DG-040: the Theme card has the sample's rows, words and notes, in the sample's order", async (t) => {
+// Redesign: replaced by the new window (prototype.html's Appearance sections and words, checked live above; its French
+// is Coming soon, sw:lang).
+test.skip("DG-166/DG-040: the Theme card has the sample's rows, words and notes, in the sample's order", async (t) => {
   const { page, errors } = await appearance(t);
   assert.deepEqual(await rows(page), ["Day or night", "(search)", "(themes)", "Season", "Contrast", "Conversation width",
     "Keep things still (no sliding or spinning)"]);
@@ -70,22 +115,9 @@ test("DG-166/DG-040: the Theme card has the sample's rows, words and notes, in t
   assert.deepEqual(errors, []);
 });
 
-test("DG-166: Contrast is two choices that still reach the terminal, and come back from it", async (t) => {
-  const { app, page, errors, call } = await appearance(t);
-  assert.equal(await pressed(page, "lx-contrast"), "Standard");
-  await page.locator("#lx-contrast").getByRole("button", { name: "High contrast", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('#lx-contrast [aria-pressed="true"]')?.textContent === "High contrast");
-  let look = await call("/api/look");
-  for (let tries = 0; tries < 50 && look.contrast !== "more"; tries += 1) look = await page.waitForTimeout(100).then(() => call("/api/look"));
-  assert.equal(look.contrast, "more", "the window's choice is written for the terminal");
-  /* The terminal writes the look itself (the window's own route always says it came from the window). */
-  await saveLook(app.store, app.runtime.owner, { contrast: "standard", changedBy: "terminal" });
-  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await page.waitForFunction(() => document.querySelector('#lx-contrast [aria-pressed="true"]')?.textContent === "Standard");
-  assert.deepEqual(errors, []);
-});
-
-test("DG-166: Conversation width and Keep things still are this card's own controls, saved, and nowhere else", async (t) => {
+// Redesign: Coming soon (sw:a-still, "Keep things still"), checked at e5b8a610; Conversation width is checked live
+// above.
+test.skip("DG-166: Conversation width and Keep things still are this card's own controls, saved, and nowhere else", async (t) => {
   const { page, errors, open } = await appearance(t);
   assert.equal(await page.locator("#panels-onscreen .panels-width-row").count(), 0, "What's on screen no longer has its own width row");
   assert.equal(await page.locator("#appearance-motion").count(), 1);

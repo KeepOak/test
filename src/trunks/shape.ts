@@ -81,7 +81,9 @@ export function shapeFor(trunk: Trunk, roster: readonly Trunk[], options: {
     // A reviewing style takes away everything that writes, exactly as it does for a specialist.
     // Direct messages exist only in a Trunk's own conversation, never in a room or a routine.
     permissions: styledPermissions(trunk.style, trunkPermissions(trunk, options.available, options.caller))
-      .filter((permission) => options.messaging || permission !== "trunks.message"),
+      .filter((permission) => options.messaging || permission !== "trunks.message")
+      // Only Branch proposes a new Trunk (src/trunks/propose.ts); a Trunk never does.
+      .filter((permission) => permission !== "trunks.propose"),
     ...(trunk.model && !options.sessionModel ? { model: trunk.model } : {}),
     ...(trunk.reasoning ? { reasoning: trunk.reasoning } : {}),
     ...(trunk.style !== "default" ? { style: trunk.style } : {}),

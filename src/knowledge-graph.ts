@@ -41,6 +41,11 @@ export const GraphSchema = z.object({
   /** One hop is what is directly mentioned with it; two also brings back their own neighbours. */
   depth: z.number().int().min(1).max(2).default(1),
 }).strict();
+/** p17 "Ask the map": which map, and how many of its most-mentioned names to offer. */
+export const GraphNamesSchema = z.object({
+  collection: z.string().trim().min(1).max(120),
+  limit: z.number().int().min(1).max(40).default(12),
+}).strict();
 
 const extractInstructions =
   "You are reading one passage from somebody's own files. Reply with JSON only: "
@@ -211,6 +216,20 @@ export class KnowledgeGraph {
     return this.db.prepare(`SELECT name, kind, mentions FROM kb_entities WHERE owner=? AND collection=?
       AND entity_id IN (${holes}) ORDER BY mentions DESC LIMIT ?`).all(owner, collection, ...keys, neighbourLimit)
       .map((row) => ({ name: String(row.name), kind: String(row.kind), mentions: Number(row.mentions) }));
+  }
+
+  /**
+   * p17 "Ask the map": the names a map mentions most, to start a question from. Only a name with at least one link the
+   * walk rules let the owner see is offered, so a name read only from a refused file is never shown.
+   */
+  names(owner: string, input: unknown): { collection: string; names: GraphEntity[] } {
+    const { collection, limit } = GraphNamesSchema.parse(input);
+    const current = this.bases.one(owner, collection);
+    const rows = this.db.prepare(`SELECT entity_id, name, kind, mentions FROM kb_entities WHERE owner=? AND collection=?
+      ORDER BY mentions DESC, name LIMIT ?`).all(owner, current.id, limit * 5);
+    const names = rows.filter((row) => this.linksOf(owner, current.id, String(row.entity_id)).length > 0).slice(0, limit)
+      .map((row) => ({ name: String(row.name), kind: String(row.kind), mentions: Number(row.mentions) }));
+    return { collection: current.id, names };
   }
 
   /** The passages behind everything the map links to a name: the hop a retriever makes. */

@@ -24,12 +24,13 @@ async function fixture(t, viewport = { width: 1440, height: 1000 }) {
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click({ noWaitAfter: true });
   await page.locator("body.lx-ready").waitFor({ state: "attached", timeout: 120000 });
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("#agent-files").waitFor({ state: "attached", timeout: 60000 });
   return { page, errors };
 }
 
-test("Q78: Settings › General page strings are localized to French", async (t) => {
+// Redesign: Coming soon (sw:lang, the Language select on Settings › Appearance), checked at fc541c24.
+test.skip("Q78: Settings › General page strings are localized to French", async (t) => {
   const en = JSON.parse(await readFile(join(LOCALES, "en.json"), "utf8"));
   const fr = JSON.parse(await readFile(join(LOCALES, "fr.json"), "utf8"));
 

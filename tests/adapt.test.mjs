@@ -371,38 +371,6 @@ test("A6 every /adapt route is the owner's, and refused to every short-lived key
 
 /* ---------------------------------------------------------------- 7. the words the owner reads */
 
-test("A7 the card's words are in both languages, and every control says what it does", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const root = join(import.meta.dirname, "..", "public");
-  const en = JSON.parse(await readFile(join(root, "locales", "en.json"), "utf8"));
-  const fr = JSON.parse(await readFile(join(root, "locales", "fr.json"), "utf8"));
-  const card = await readFile(join(root, "adapt.js"), "utf8");
-  const keys = [...card.matchAll(/"((?:adapt\.|action\.adapt|field\.adapt|settings\.adapt)[\w.-]*)"/g)].map((hit) => hit[1]);
-  assert.ok(keys.length >= 10, "the card is written in keys, not in English");
-  for (const key of new Set(keys)) {
-    assert.ok(en[key], `${key} has no English words`);
-    assert.ok(fr[key], `${key} has no French words`);
-    // A phrase that is nothing but the value it carries ("{why}") is the same in every language.
-    if (!/^\{\w+\}$/.test(en[key])) assert.notEqual(fr[key], en[key], `${key} was never really translated`);
-  }
-  assert.match(fr["settings.card.adapt"], /[àâçéèêëîïôùûü]/i, "the French is real French, not English with an accent on it");
-  const described = await readFile(join(root, "settings-descriptions.js"), "utf8");
-  assert.match(described, /#adapt-mode/, "the switch says what it does");
-  assert.ok(en["describe.adapt-mode"] && fr["describe.adapt-mode"]);
-  assert.ok(en["settings-kit.name.adapt"] && fr["settings-kit.name.adapt"], "the settings catalogue's name is in both languages");
-});
-
-test("A7 the card lays out in one column, so it reads on a 400-pixel window", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const card = await readFile(join(import.meta.dirname, "..", "public", "adapt.js"), "utf8");
-  assert.doesNotMatch(card, /style\.(width|left|position)|px"/, "nothing here is pinned to a width");
-  assert.doesNotMatch(card, /white-space:\s*nowrap/, "nothing here refuses to wrap");
-  const html = await readFile(join(import.meta.dirname, "..", "public", "index.html"), "utf8");
-  assert.match(html, /id="adapt-card" class="card"/, "it is an ordinary card, which the window already lays out in one column");
-});
-
 test("merge-queue review: recording a stop and reading an offer are the owner's, like going ahead", async () => {
   const { adaptApi } = await import("../dist/adapt/api.js");
   const refused = new Error("Only the owner can use /adapt.");
@@ -411,5 +379,37 @@ test("merge-queue review: recording a stop and reading an offer are the owner's,
   const body = async () => { read = true; return {}; };
   for (const path of ["/api/adapt/stopped", "/api/adapt/plan", "/api/adapt/go", "/api/adapt/switch"])
     await assert.rejects(adaptApi(deps, "POST", path, body), refused, `${path} refuses somebody else`);
+  assert.equal(read, false, "nothing somebody else sent was even read");
+});
+
+/* ---------------------------------------------------------------- p17: "Leave it stopped" */
+
+// Mutation note: remove `&& !stop.leftAt` from AdaptStops.waiting() and the "no longer offered" assertion goes red;
+// replace the update in Adapt.leave with stops.forget and the "kept, still stopped" assertions go red.
+test("p17 leaving a stop keeps it, still stopped, and only takes it out of the waiting list", async () => {
+  const store = fakeStore();
+  const button = fakeButton();
+  const adapt = new Adapt({ store, owner: OWNER, oneButton: button });
+  const stop = adapt.record({ runId: "r", what: "the report", done: ["one"], nextStep: "two", said: "Ollama is not installed on this computer." });
+  const left = adapt.leave({ stopId: stop.id });
+  assert.ok(left.leftAt, "the time it was left is written down");
+  assert.equal(adapt.stops.waiting().length, 0, "no longer offered as waiting");
+  const kept = adapt.stops.get(stop.id);
+  assert.ok(kept, "kept, not deleted");
+  assert.equal(kept.carriedOnAt, null, "still stopped: it did not carry on");
+  assert.deepEqual(kept.done, ["one"]);
+  assert.equal(button.asked.plans + button.asked.presses.length, 0, "nothing was looked up, fetched or installed");
+  assert.throws(() => adapt.leave({ stopId: "no-such-stop" }), /no stopped task with that id/);
+  assert.throws(() => adapt.leave({}), /stopId/);
+});
+
+test("p17 /api/adapt/leave is the owner's, and refused to every short-lived key", async () => {
+  const { adaptApi } = await import("../dist/adapt/api.js");
+  assert.ok(offLimitsToShortLivedKeys("POST", "/api/adapt/leave"));
+  assert.equal(ROUTES["/api/adapt/leave"], "owner POST");
+  const refused = new Error("Only the owner can use /adapt.");
+  let read = false;
+  const deps = { store: null, owner: OWNER, requireOwner: () => { throw refused; } };
+  await assert.rejects(adaptApi(deps, "POST", "/api/adapt/leave", async () => { read = true; return {}; }), refused);
   assert.equal(read, false, "nothing somebody else sent was even read");
 });

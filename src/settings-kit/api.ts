@@ -148,7 +148,7 @@ function undo(deps: SettingsKitDeps, input: unknown) {
   } catch (error) { throw error instanceof UndoRefused ? new SettingsKitError(error.status, error.message) : error; }
 }
 
-/** Q48/Q49: the newest change records first, and "why is this on?" for one setting. */
+/** Q48/Q49: the newest change records first, and "why is this on?" for one setting ("/api/settings-kit/why/<key>.<field>"). */
 function history(deps: SettingsKitDeps) {
   return { records: settingsHistory(deps.store, deps.owner).slice(-50).reverse() };
 }

@@ -531,47 +531,45 @@ test("L19 a person presses Dictate, sees the words appear, and the microphone cl
   const { app, root, store, owner } = await fixture(t);
   saveDictationSettings(store, owner, { mode: "on", silenceSeconds: 30 });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
+  await call("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
 
-  // The control is there, because the switch says "on" and this computer has a speech program.
-  const dictate = page.locator("#voice-dictate");
+  /* Redesign: the prototype's Dictate is the microphone button in the composer (data-act="dict"); while it listens the
+     composer shows "Listening… speak naturally" with Done (data-act="dict-done"). FEATURE-AUDIT dict/dict-done: the
+     engine's dictation (POST /api/voice/dictation/listen, the words from GET /api/voice/dictation).
+     WINDOW BUG: public/app/chat/dictate.js records in the browser (getUserMedia + MediaRecorder) and posts
+     /api/voice/transcribe; it never opens the engine's dictation, and draws no listening row. */
+  const dictate = page.locator('#composer [data-act="dict"]');
   await dictate.waitFor({ state: "visible", timeout: 15000 });
-  assert.equal(await dictate.getAttribute("aria-pressed"), "false", "it should not start pressed");
+  assert.notEqual(await dictate.getAttribute("aria-disabled"), "true", "Dictate is live");
   assert.equal(app.dictation.open, false, "a microphone was open before anybody pressed anything");
 
   await dictate.click();
-  await page.waitForFunction(() => document.getElementById("voice-dictate").getAttribute("aria-pressed") === "true",
-    null, { timeout: 15000 });
+  // The listening row is on for exactly as long as the microphone is.
+  await page.locator(".dict").filter({ hasText: "Listening" }).waitFor({ timeout: 15000 });
   assert.equal(app.dictation.open, true, "pressing Dictate did not open the microphone");
-  // The line under the box is on for exactly as long as the microphone is.
-  await page.locator("#voice-dictate-status").filter({ hasText: /microphone is open/i }).waitFor({ timeout: 15000 });
 
-  // The fake speech program says something, and the words turn up in the message box as provisional.
+  // The fake speech program says something, and the words turn up in the message box.
   speaking.say("hello from the other side");
-  await page.waitForFunction(() => document.getElementById("prompt").value.includes("hello from the other side"),
+  await page.waitForFunction(() => document.getElementById("prompt")?.value.includes("hello from the other side"),
     null, { timeout: 15000 });
-  assert.equal(await page.locator("#prompt").evaluate((box) => box.classList.contains("dictating")), true,
-    "words still being heard were not shown as provisional");
 
   // Nothing was sent: the words sit in the box and the conversation is still empty.
-  assert.equal(await page.locator("#conversation").evaluate((node) => node.children.length), 0,
-    "dictation sent the message instead of filling the box");
+  assert.equal(app.store.runs(owner).length, 0, "dictation sent the message instead of filling the box");
 
-  // Pressing again stops it, and the microphone closes with it.
-  await dictate.click();
-  await page.waitForFunction(() => document.getElementById("voice-dictate").getAttribute("aria-pressed") === "false",
-    null, { timeout: 15000 });
+  // Done stops it, and the microphone closes with it.
+  await page.locator('[data-act="dict-done"]').click();
+  await page.locator(".dict").waitFor({ state: "detached", timeout: 15000 });
   assert.equal(app.dictation.open, false, "the microphone was still open after the person stopped");
-  await page.waitForFunction(() => document.getElementById("voice-dictate-status").hidden === true,
-    null, { timeout: 15000 });
   assert.equal(await page.locator("#prompt").inputValue(), "hello from the other side",
     "the words the person spoke were lost when they stopped");
   assert.deepEqual(errors, []);

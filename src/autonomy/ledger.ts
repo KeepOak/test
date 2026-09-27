@@ -25,8 +25,8 @@ export interface LedgerEntry {
   detail: string;
   payload: Record<string, unknown>;
   status: EntryStatus;
-  /** Who asked: a suggestion, the assistant, or a procedure. */
-  from: "suggestion" | "assistant" | "procedure" | "order";
+  /** Who asked: a suggestion, the assistant, a procedure, or the owner proposing a change to their own. */
+  from: "suggestion" | "assistant" | "procedure" | "order" | "owner";
   createdAt: string;
   decidedAt: string | null;
 }
@@ -34,7 +34,7 @@ export interface LedgerEntry {
 const EntrySchema = z.object({
   id: z.string(), kind: z.enum(entryKinds), fingerprint: z.string(), title: z.string(), detail: z.string(),
   payload: z.record(z.string(), z.unknown()), status: z.enum(["pending", "accepted", "dismissed"]),
-  from: z.enum(["suggestion", "assistant", "procedure", "order"]), createdAt: z.string(), decidedAt: z.string().nullable(),
+  from: z.enum(["suggestion", "assistant", "procedure", "order", "owner"]), createdAt: z.string(), decidedAt: z.string().nullable(),
 }).strict();
 const BookSchema = z.object({ entries: z.array(EntrySchema).default([]), refused: z.array(z.string()).default([]) }).strict();
 type Book = z.infer<typeof BookSchema>;

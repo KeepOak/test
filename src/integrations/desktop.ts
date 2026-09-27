@@ -1,3 +1,4 @@
+import { noteAppOpened } from '../desktop-app-ask.js'; // unhold-control
 import { randomUUID } from 'node:crypto';
 import { readFile, rm } from 'node:fs/promises';
 import { z } from 'zod';
@@ -240,6 +241,8 @@ export class DesktopControl {
     const answer = await this.runner.run('open', path ? { path } : { app: input.app }, signal);
     const processId = Number(answer.processId ?? 0);
     this.record(context, 'desktop.open', input.app ?? input.path ?? '', { processId });
+    // unhold-control: the program has started for this Trunk, so "Ask before opening an app it hasn't used" asks it no more.
+    if (input.app) noteAppOpened(this.store, context.owner, context.trunk, input.app);
     return {
       opened: input.app ?? input.path ?? '', processId,
       confirmed: processId > 0,

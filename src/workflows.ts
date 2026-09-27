@@ -10,6 +10,7 @@ import { errorText } from "./contracts.js";
 import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { argumentFingerprint } from "./runtime.js";
 import { outsideTask } from "./tool-gate.js"; // mac7/lockdown-fix
+import { insideModelCall, underModelCall } from "./task-scope.js"; // Q250
 import type { ToolContext } from "./contracts.js";
 import type { PolicyRemember, RunSource } from "./policy.js";
 
@@ -159,6 +160,8 @@ export class Workflows {
       ...(typeof existing?.startedFrom === "string" ? { startedFrom: existing.startedFrom } : {}),
       // Q114/Q119: nor the Trunk whose work it is, so saving the steps again never hands the rest to someone else.
       ...(whose ? { startedBy: whose } : {}),
+      // Q250: nor that a model's own call set a paused run going.
+      ...(existing?.byModel === true ? { byModel: true } : {}),
     });
     return this.view(owner, id);
   }
@@ -303,9 +306,11 @@ export class Workflows {
     const limit = this.limitFor(owner, id, fresh, within); // mac7/lockdown-fix
     const held = this.heldSource(owner, id, fresh, source); // mac7/outside-resume
     const startedBy = this.startedBy(owner, id); // Q114/Q119
+    // Q250: a run a model's own call set going stays held to read-before-edit when a timer or a yes carries it on later.
+    const byModel = insideModelCall() || (!fresh && (this.store.get("workflows", owner, id)?.data as { byModel?: unknown } | undefined)?.byModel === true);
     const carryOn = async (): Promise<WorkflowView> => {
       current = this.setStatus(owner, id, { status: "running", error: null, question: null, pausedFrom: null, pendingApproval: null, taskLimit: limit,
-        startedFrom: held, startedBy, ...(fresh ? { cursor: 0 } : {}) });
+        startedFrom: held, startedBy, byModel, ...(fresh ? { cursor: 0 } : {}) });
       for (let index = current.cursor; index < current.steps.length; index++) {
         // Q121 (NAS 7af12b6): a Trunk removed while its workflow works stops it before the next step, as each step used to ask.
         if (startedBy && !this.runtime.trunkKeysFor(startedBy))
@@ -320,7 +325,8 @@ export class Workflows {
     };
     // Q114: the whole carry-on runs as the Trunk that started it, so a refusal (another Trunk, or one that is
     // gone) comes before anything is marked running, and the workflow is left exactly as it stopped.
-    return startedBy ? this.runtime.asTrunkWork(startedBy, carryOn) : carryOn();
+    const go = byModel ? () => underModelCall(id, carryOn) : carryOn;
+    return startedBy ? this.runtime.asTrunkWork(startedBy, go) : go();
   }
   private async step(owner: string, id: string, index: number, step: WorkflowStep, view: WorkflowView, source: RunSource, chain: readonly string[] = [], limit: string[] | null = null):
     Promise<{ halt: boolean; cursor?: number; patch?: Record<string, unknown> }> {
@@ -376,8 +382,7 @@ export class Workflows {
     { halt: boolean; cursor: number; patch: Record<string, unknown> } {
     this.writeStep(owner, id, index, step, { status: "waiting", attempts, output: asked.message });
     const pendingApproval: WorkflowApproval = {
-      tool: asked.tool, target: asked.target, label: asked.label, source, remember: asked.remember,
-      ...(asked.fingerprint === undefined ? {} : { fingerprint: asked.fingerprint }),
+      tool: asked.tool, target: asked.target, label: asked.label, source, remember: asked.remember, fingerprint: asked.fingerprint,
     };
     return { halt: true, cursor: index, patch: { status: "waiting_approval", question: asked.message, pendingApproval } };
   }
@@ -401,7 +406,7 @@ export class Workflows {
       // does mid-conversation: allowed, asked about, or refused in the same words.
       // The exact bytes of this step's arguments. Everything downstream — the question the owner
       // sees, the yes they give, the retry after it — is bound to this one fingerprint.
-      const fingerprint = argumentFingerprint(JSON.stringify(step.args ?? {}));
+      const fingerprint = argumentFingerprint(step.tool!, JSON.stringify(step.args ?? {}));
       const outside = outsideTask(this.runtime, step.tool!, context); // mac7/lockdown-fix: before any question
       if (outside) throw Object.assign(new PolicyRefusedError(step.tool!, step.name), { message: outside });
       const check = this.runtime.checkPolicy(step.tool!, step.args ?? {}, context, fingerprint);

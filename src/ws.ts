@@ -48,6 +48,17 @@ export function tokenFromProtocol(request: IncomingMessage, token: string): bool
   const supplied = offered[0] === "bearer" ? offered[1] ?? "" : "";
   return supplied.length === token.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
 }
+/**
+ * A task's socket (/api/runs/<id>/ws): the key as the socket's second protocol, from a browser, or as the Authorization
+ * header on the socket's opening request, which is how the desktop app signs it, as it signs every /api/ request of its
+ * window (the page there holds no key).
+ */
+export function tokenFromSocket(request: IncomingMessage, token: string): boolean {
+  if (tokenFromProtocol(request, token)) return true;
+  const supplied = Buffer.from(/^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "");
+  const wanted = Buffer.from(token);
+  return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
+}
 
 /**
  * What something on the server side of a run socket may write down it. Sound never goes through
@@ -77,13 +88,23 @@ export interface RunSocketHooks {
 /** Integration review (mac7/nodes): the most a run socket holds of a message still arriving. */
 const runSocketBuffer = 4 * 1024 * 1024;
 
-export async function serveRunSocket(store: Store, runId: string, request: IncomingMessage, socket: Duplex, options: { pollMs?: number; maxMs?: number; pingMs?: number; idleMs?: number } & RunSocketHooks = {}): Promise<void> {
+/**
+ * Q254: whose run the socket was opened on (`owner`) and whose records the window shows now
+ * (`scopeNow`, profiles.scope()). Once they differ, nothing more goes down the socket or up into
+ * the run, and the socket ends with {kind: "end", reason: "profile"}.
+ */
+export interface RunSocketScope { owner?: string; scopeNow?: () => string }
+
+export async function serveRunSocket(store: Store, runId: string, request: IncomingMessage, socket: Duplex, options: { pollMs?: number; maxMs?: number; pingMs?: number; idleMs?: number } & RunSocketHooks & RunSocketScope = {}): Promise<void> {
   const key = String(request.headers["sec-websocket-key"] ?? "");
   socket.write(["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade", `Sec-WebSocket-Accept: ${acceptKey(key)}`, "Sec-WebSocket-Protocol: bearer", "", ""].join("\r\n"));
   let open = true, pending = Buffer.alloc(0), heard = Date.now();
+  const inScope = (): boolean => options.scopeNow === undefined || options.scopeNow() === options.owner;
+  // A live conversation's sound and lines are written here straight away, between polls, so they
+  // are held to the same scope as the run's events.
   const reply: RunSocketWriter = {
-    text: (value) => { if (open) socket.write(frame(value)); },
-    binary: (payload) => { if (open) socket.write(binaryFrame(payload)); },
+    text: (value) => { if (open && inScope()) socket.write(frame(value)); },
+    binary: (payload) => { if (open && inScope()) socket.write(binaryFrame(payload)); },
     open: () => open,
   };
   socket.on("data", (chunk: Buffer) => {
@@ -96,7 +117,7 @@ export async function serveRunSocket(store: Store, runId: string, request: Incom
       else if (decoded.opcode === 0x9) { if (decoded.payload.length <= 125) socket.write(Buffer.concat([Buffer.from([0x8a, decoded.payload.length]), decoded.payload])); }
       // A text or binary frame from the browser: a live conversation's sound, or a line typed while
       // it is talking. Nothing here reads them itself; whoever asked for the hook does.
-      else if (decoded.opcode === 0x1 || decoded.opcode === 0x2)
+      else if ((decoded.opcode === 0x1 || decoded.opcode === 0x2) && inScope())
         try { options.onClientFrame?.(decoded.payload, decoded.opcode === 0x2, reply); } catch { /* one bad frame does not end the socket */ }
     }
   });
@@ -115,20 +136,28 @@ export async function serveRunSocket(store: Store, runId: string, request: Incom
   ping.unref();
   options.onOpen?.(reply);
   try {
-    await pollRun(store, runId, socket, () => open, options);
+    await pollRun(store, runId, socket, () => open, inScope, options);
   } finally {
     clearInterval(ping);
   }
   if (open) { shut(); socket.end(Buffer.from([0x88, 0x00])); }
 }
 
-async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () => boolean, options: { pollMs?: number; maxMs?: number } & RunSocketHooks): Promise<void> {
+async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () => boolean, inScope: () => boolean, options: { pollMs?: number; maxMs?: number } & RunSocketHooks): Promise<void> {
   const deadline = Date.now() + (options.maxMs ?? 150000);
   let last = 0;
+  // Q254: nothing about the run, not even its status, goes to whoever the window has moved to. The
+  // caller then closes the socket, which also stops a live conversation (onClose).
+  const moved = (): void => { socket.write(frame(JSON.stringify({ kind: "end", reason: "profile" }))); };
   // mac7/ci-flakes-2: the app closing shuts the database while a socket can still be open; the loop
   // then stops at its next turn instead of reading a closed database (everything below is synchronous).
+  // Q254: the scope is checked inside the loop, so a live conversation holding the socket past its
+  // deadline is still let go once the window switches profile.
   while (isOpen() && store.isOpen && (Date.now() < deadline || options.liveOpen?.() === true)) {
+    if (!inScope()) return moved();
     for (const event of store.events(runId).filter((e) => e.id > last)) {
+      // Checked before every event, not only once a poll.
+      if (!inScope()) return moved();
       socket.write(frame(JSON.stringify({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt })));
       last = event.id;
     }

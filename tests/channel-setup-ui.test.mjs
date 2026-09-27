@@ -13,16 +13,18 @@ import { openPlace } from "./places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
-async function signedIn(t) {
+async function signedIn(t, viewport = { width: 1280, height: 800 }) {
   const root = await mkdtemp(join(tmpdir(), "branch-connect-ui-"));
   const dataDir = join(root, "data");
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir });
   const server = await startServer(app, { dataDir, port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
+  await call("/api/onboarding", { done: true });
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const page = await browser.newPage({ viewport, serviceWorkers: "block" });
   // The page picks the install line from userAgentData first and only then from the older
   // navigator.platform, so a stub that sets just the latter left the viewer as whatever the
   // machine running the tests happened to be: a Mac passed, Linux read its own Flatpak line.
@@ -32,59 +34,114 @@ async function signedIn(t) {
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  // Nothing in these tests may leave this computer: any request the window makes elsewhere is stopped and noted.
+  const outside = [];
+  await page.route((url) => !["127.0.0.1", "localhost"].includes(url.hostname), (route) => { outside.push(route.request().url()); return route.abort(); });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  return { page, errors };
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  return { page, errors, outside, call };
 }
+
+/** Customize › Channels, the way a person gets there; on a narrow window the list is slid open first. */
+async function openChannels(page) {
+  if (!(await page.locator("#app.side-open").count()) && (await page.evaluate(() => innerWidth <= 760))) await page.locator('[data-act="side"]').first().click();
+  await page.locator('#side [data-act="view"][data-v="customize"]').click();
+  await page.locator('#main [data-act="ptab"][data-place="customize"][data-v="channels"]').click();
+  await page.locator('[data-act="ch-open"]').first().waitFor();
+}
+/** Opens one chat app's wizard from its tile. */
+async function openWizard(page, id) {
+  await page.locator(`[data-act="ch-open"][data-v="${id}"]`).click();
+  await page.locator(".dlg .chw-steps12").waitFor();
+}
+const closeWizard = async (page) => { await page.locator('.dlg [data-act="dlg-close"]').first().click(); await page.locator(".dlg").waitFor({ state: "detached" }); };
+const next = (page) => page.locator('.dlg [data-act="chw-next"]').click();
 
 const tooWide = (page, selector) => page.evaluate((selector) => [...document.querySelectorAll(`${selector} *`)]
   .filter((node) => node.getClientRects().length && !node.closest(".sr-only") && (node.getBoundingClientRect().right > document.documentElement.clientWidth + 1 || node.scrollWidth > node.clientWidth + 1))
   .map((node) => `${node.tagName} ${node.textContent.slice(0, 30)}`), selector);
 
-test("the Set up card sits in Settings › Chat apps & devices, ships off, and shows the command and the codes", async (t) => {
-  const { page, errors } = await signedIn(t);
-  await openPlace(page, "settings:channels");
-  const card = page.locator("#channel-setup-card");
-  await card.locator("#channel-setup-panel-card").waitFor();
-  assert.equal(await card.getAttribute("data-home"), "settings:channels");
-  assert.equal(await card.locator(".settings-card-title").count(), 1);
-  assert.equal(await card.locator("button:not(.quiet-button, .sg-more)").count(), 1, "one filled button");
-  assert.equal(await page.locator("#channel-setup-mode").inputValue(), "off");
-  assert.equal(await page.locator("#channel-setup-app").inputValue(), "telegram");
-  assert.equal(await page.locator("#channel-setup-app option").count(), 55);
-  assert.match(await card.textContent(), /branch connect telegram[\s\S]*brew install --cask telegram[\s\S]*Get the app on iPhone[\s\S]*Make the bot[\s\S]*\/newbot/);
-  assert.equal(await card.locator(".channel-setup-codes canvas").count(), 3);
-  assert.equal(await page.locator("#channel-setup-open-card").getAttribute("href"), "https://t.me/BotFather?text=%2Fnewbot");
-  assert.equal(await page.locator("#channel-setup-save-card").isDisabled(), true, "saving is off until switched on");
-  assert.equal(await page.locator("#channel-setup-card-TELEGRAM_BOT_TOKEN").getAttribute("type"), "password");
+/* Redesign: the Set up card in Settings is replaced by the prototype's chat-app wizard (public/app/flows/chat.js), opened
+   from each app's tile in Customize › Channels: Create, Paste, Check, Pair, Save. The card's install command lines, the
+   iPhone/Android codes and the off/when-needed select are not in the prototype (one code, "Or scan to do this on your
+   phone"; setting an app up here is asking for it, so the window switches guided setup on as it checks). What is still
+   proved: every app is offered, guided setup ships off, the bot page and the square code, a secret is a password field,
+   a server that is not https:// is refused by the engine, and a refused paste is never shown back or kept. */
+test("the chat-app wizard: every app, ships off, the bot page and the code, and a refused paste is not shown back", async (t) => {
+  const { page, errors, outside, call } = await signedIn(t);
+  assert.equal((await call("/api/channel-setup")).mode, "off", "guided setup ships off");
+  await openChannels(page);
+  assert.equal(await page.locator('[data-act="ch-open"]').count(), 55);
+  await openWizard(page, "telegram");
+  const dlg = page.locator(".dlg");
+  assert.equal(await dlg.locator(".dlg-h h2").textContent(), "Set up Telegram");
+  assert.match(await dlg.textContent(), /BotFather opens with \/newbot/);
+  assert.equal(await dlg.getByRole("link", { name: /Open Telegram/ }).getAttribute("href"), "https://t.me/BotFather?text=%2Fnewbot");
+  assert.equal(await dlg.locator(".chw-qr12 svg").count(), 1, "the square code to do it on a phone");
+  await next(page);
+  assert.equal(await page.locator('[data-chf="TELEGRAM_BOT_TOKEN"]').getAttribute("type"), "password");
+  await closeWizard(page);
 
-  await page.locator("#channel-setup-app").selectOption("slack");
-  await page.locator("#channel-setup-panel-card[data-app=slack]").waitFor();
-  assert.match(await page.locator("#channel-setup-open-card").getAttribute("href"), /^https:\/\/api\.slack\.com\/apps\?new_app=1&manifest_json=/);
-  assert.equal(await card.locator(".channel-setup-codes canvas").count(), 3, "Slack's plain page still gets a code");
+  await openWizard(page, "slack");
+  assert.match(await dlg.getByRole("link", { name: /Open Slack/ }).getAttribute("href"), /^https:\/\/api\.slack\.com\/apps\?new_app=1&manifest_json=/);
+  assert.equal(await dlg.locator(".chw-qr12 svg").count(), 1, "Slack's plain page still gets a code");
+  await closeWizard(page);
 
-  await page.locator("#channel-setup-app").selectOption("mastodon");
-  await page.locator("#channel-setup-panel-card[data-app=mastodon]").waitFor();
-  assert.equal(await page.locator("#channel-setup-open-card").isHidden(), true, "no page until the server is typed");
-  await page.locator("#channel-setup-card-server").fill("https://social.example");
-  assert.equal(await page.locator("#channel-setup-open-card").getAttribute("href"), "https://social.example/settings/applications/new");
-  await page.locator("#channel-setup-card-server").fill("javascript:alert(1)");
-  assert.equal(await page.locator("#channel-setup-open-card").isHidden(), true);
+  await openWizard(page, "mastodon");
+  assert.equal(await dlg.locator(".chw-create12 a.btn.pri").count(), 0, "no page until the server is typed");
+  await next(page);
+  await page.locator('[data-chf="server"]').fill("javascript:alert(1)");
+  await page.locator('[data-chf="MASTODON_ACCESS_TOKEN"]').fill("abc");
+  await next(page);
+  await dlg.getByText("did not accept it").waitFor();
+  assert.match(await dlg.textContent(), /must (be a full address starting with|start with) https:\/\//);
+  assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
+  await closeWizard(page);
 
-  await page.locator("#channel-setup-mode").selectOption("when-needed");
-  await page.waitForFunction(() => document.getElementById("channel-setup-save-card")?.disabled === false);
-  await page.locator("#channel-setup-app").selectOption("telegram");
-  await page.locator("#channel-setup-panel-card[data-app=telegram]").waitFor();
-  await page.locator("#channel-setup-card-TELEGRAM_BOT_TOKEN").fill("not-a-token");
-  await page.locator("#channel-setup-save-card").click();
-  await card.locator("[role=status]", { hasText: "does not look right" }).waitFor();
-  assert.ok(!(await card.textContent()).includes("not-a-token"), "a refused paste is not shown back");
+  await openWizard(page, "telegram");
+  await next(page);
+  await page.locator('[data-chf="TELEGRAM_BOT_TOKEN"]').fill("not-a-token");
+  const checked = page.waitForResponse((r) => r.url().includes("/api/channel-setup/telegram/check"));
+  await next(page);
+  assert.equal((await checked).status(), 400, "the engine refuses it before asking Telegram");
+  await dlg.getByText("does not look right").waitFor();
+  assert.ok(!(await page.content()).includes("not-a-token"), "a refused paste is not shown back");
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll("input")].some((i) => i.value.includes("not-a-token"))), false);
+  assert.equal(((await call("/api/channels")).channels ?? []).some((c) => c.id === "telegram" || c.kind === "telegram"), false, "nothing was switched on");
+  assert.deepEqual(outside, [], "nothing left this computer");
   assert.deepEqual(errors, []);
 });
 
-test("each More chat apps row and the Telegram card open the same panel, and it reads in French at 400 px", async (t) => {
+/* Redesign: the "More chat apps" rows and the separate Telegram card are replaced by the one grid of tiles in
+   Customize › Channels (public/app/places/customize.js channelsTab); each tile opens the same wizard. */
+test("each chat app's tile opens its own wizard, and the wizard fits 400 px, Slack's long lines too", async (t) => {
+  const { page, errors, outside } = await signedIn(t);
+  await openChannels(page);
+  await page.locator('[data-act="ch-fam"][data-v="parity"]').click();
+  await openWizard(page, "mastodon");
+  assert.equal(await page.locator(".dlg .dlg-h h2").textContent(), "Set up Mastodon");
+  await closeWizard(page);
+  await page.locator('[data-act="ch-fam"][data-v="all"]').click();
+  await openWizard(page, "telegram");
+  assert.equal(await page.locator(".dlg .dlg-h h2").textContent(), "Set up Telegram");
+  await closeWizard(page);
+
+  await page.setViewportSize({ width: 400, height: 800 });
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "attached", timeout: 120000 });
+  await openChannels(page);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+  await openWizard(page, "slack");
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+  assert.deepEqual(await tooWide(page, ".dlg"), [], "Slack's long lines wrap");
+  assert.deepEqual(outside, []);
+  assert.deepEqual(errors, []);
+});
+
+// Redesign: Coming soon (sw:lang, the Language select in Settings › Appearance), checked at fc541c24.
+test.skip("each More chat apps row and the Telegram card open the same panel, and it reads in French at 400 px", async (t) => {
   const { page, errors } = await signedIn(t);
   await openPlace(page, "settings:channels");
   const row = page.locator("#channels-more-list details").filter({ hasText: "Mastodon" }).first();

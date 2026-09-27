@@ -23,6 +23,8 @@
     "data/channels.json",
     "data/local-models.json",
     "data/channel-setup.json",
+    "data/release-notes.json",
+    "data/mcp-catalogue.json",
     "data/add-ons",
     "data/evaluation",
     "data/tool-evaluations",
@@ -31,12 +33,11 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "tsc && node scripts/copy-fonts.mjs && node scripts/copy-suites.mjs && node scripts/copy-data.mjs",
+    "build": "node scripts/build-ts.mjs && node scripts/copy-fonts.mjs && node scripts/copy-suites.mjs && node scripts/copy-data.mjs",
     "pretest": "node -e \"require('electron')\"",
     "test": "npm run build && node scripts/run-tests.mjs",
     "start": "npm run build && node dist/cli.js start",
     "chat": "npm run build && node dist/cli.js chat",
-    "demo": "npm run build && node dist/cli.js demo",
     "doctor": "npm run build && node dist/cli.js doctor",
     "desktop": "npm run build && electron .",
     "package:desktop": "npm run build && node scripts/dependency-notices.mjs && node scripts/package-desktop.mjs",

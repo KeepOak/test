@@ -44,7 +44,13 @@ const requiredTables = [
  */
 const appendOnlyTables = ["self_development_contracts"] as const;
 const appendOnly = (table: string): boolean => (appendOnlyTables as readonly string[]).includes(table);
-export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables] as const;
+/**
+ * Pass 17: which messages are left out of what the model sees, and the names and models of a
+ * conversation's paths. An archive from before them may leave them out. Without the first, a
+ * restore would send a message the owner left out to the model again.
+ */
+const conversationTables = ["session_left_out", "conversation_paths"] as const;
+export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({
   ...Object.fromEntries(requiredTables.map((table) => [table, z.array(RowSchema)])) as Record<(typeof requiredTables)[number], z.ZodArray<typeof RowSchema>>,
@@ -52,6 +58,7 @@ const TablesSchema = z.object({
   ...Object.fromEntries(appendOnlyTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof appendOnlyTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
   // The wiki's pages and their history (src/wiki.ts). A backup from before the wiki has none.
   ...Object.fromEntries(wikiTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof wikiTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
+  ...Object.fromEntries(conversationTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof conversationTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
 }).strict();
 export const BackupArchiveSchema = z.object({
   format: z.literal("branch-agent-backup"),
@@ -151,7 +158,10 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   "channel-mark:", "channel-position:", "channel-replay:", "webhook-address:", "mcp-oauth:", "flow-run-trunk:",
   "settings-kit-file-undo-", "trunk-watch:", "cache:", "session-carry:",
   // NAS dc50a36: the memory a conversation's next turn reads, kept for that conversation here.
-  "memory-snapshot:"];
+  "memory-snapshot:",
+  // The programs each Trunk has opened on this computer (src/desktop-app-ask.ts): the record stands in for the owner's
+  // yes to opening them again, so a file must never write one.
+  "desktop-apps-used:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
@@ -224,7 +234,10 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // programs, reach other assistants or outside services, or choose where the words go), a conversation's mode, goal,
   // checklist, pinned skill and autonomy, a procedure's recipe checks, and a specialist's handoff list.
   "coding-", "interop-", "learning-more-", "trunks-", "model-savings-", "conversation-mode:", "goal:", "coding-checklist:",
-  "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:"];
+  "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:",
+  // What each person here is called (src/person-about.ts): the owner's name is weighed against the household's names,
+  // which they sign in by, so a file does not rename anybody by itself.
+  "person-about:"];
 /**
  * Q230 (NAS a1291bd): the settings ids and prefixes that travel in a backup and are put in place by a restore, each
  * with why any value a file carries is harmless. tests/backup-classified.test.mjs fails for an id src reads that is in
@@ -271,6 +284,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "trunk-seen": "unread badge counts",
   "usage-glance": "display and offers only",
   "usage-report": "a local report never sent",
+  "person-picture:": "a person's picture, drawn on their own tile only",
 };
 /**
  * NAS dfb2136: naming the ids by hand kept missing some, so every setting the catalogue itself marks as taking a

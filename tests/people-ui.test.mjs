@@ -1,7 +1,8 @@
 /**
- * Bucket 19: the owner's "Signing in from other devices" card (public/people-admin.js) and the page
- * a person signs in on (public/people.html), opened the way a person opens them. Headless browser
- * only; a scripted provider stands in for every model.
+ * Bucket 19: the owner's "Signing in from other devices" switch and the page a person signs in on (public/people.html),
+ * opened the way a person opens them. Headless browser only; a scripted provider stands in for every model.
+ * Redesign: the switch is Team › Signing in in the new window (prototype.html signinTab, "Let people sign in from their
+ * own device"), reached from Settings › People › "Signing in from other devices".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -12,7 +13,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { openPlace } from "./places.mjs";
+import { signIn, openSettings, placeRoot } from "./new-window-places.mjs";
 
 async function fixture(t, width = 1440) {
   const scratch = join(tmpdir(), "claude-session-files");
@@ -21,6 +22,12 @@ async function fixture(t, width = 1440) {
   const provider = { name: "scripted", async complete() { return { content: "Hello from Branch.", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const httpCall = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await httpCall("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
   const page = await browser.newPage({ viewport: { width, height: 1000 } });
@@ -30,51 +37,31 @@ async function fixture(t, width = 1440) {
   return { app, server, browser, page, errors, width };
 }
 
-async function connect({ page, server }) {
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await page.locator("#people-signin-admin").waitFor({ state: "attached", timeout: 15000 });
+/* Settings › People › "Signing in from other devices" opens Team › Signing in. */
+async function signingIn({ page, server }) {
+  await signIn(page, server);
+  await openSettings(page, "people");
+  await page.locator('[data-act="p-open-team"][data-v="signin"]').click();
+  await page.locator('#main .place [data-act="ptab"][data-v="signin"][aria-selected="true"]').waitFor({ timeout: 10000 });
+  return placeRoot(page);
 }
+const signInSwitch = (place) => place.getByRole("group", { name: "Let people sign in from their own device", exact: true });
 
-test("P1 the card is in Settings → General, starts off, has one filled button, and saves the switch", async (t) => {
+// Team › Signing in is live since #353.
+test("P1 the switch is in Team › Signing in, starts off, and saves", async (t) => {
   const f = await fixture(t);
-  await connect(f);
-  const card = f.page.locator("#people-signin-admin");
-  await openPlace(f.page, "settings:general");
-  await card.waitFor({ state: "visible", timeout: 10000 });
-  assert.equal(await card.locator("h2").innerText(), "Signing in from other devices");
-  assert.equal(await card.locator("#people-admin-mode").inputValue(), "off");
-  assert.equal(await card.locator("button:not(.quiet-button):not(.sg-more)").count(), 1, "one filled button"); // "N more" can end the card (DG-199)
-  assert.equal(await card.locator("[data-person] strong").innerText(), "Ada");
-  await card.locator("#people-admin-mode").selectOption("on");
-  await card.locator("#people-admin-save").click();
-  await f.page.waitForFunction(() => document.querySelector("#people-admin-mode")?.value === "on");
+  const place = await signingIn(f);
+  // WINDOW BUG: public/app/places/team.js draw() draws Team › Signing in as an empty .runs6; the prototype draws the switch.
+  const seg = signInSwitch(place);
+  await seg.waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await seg.getByRole("button", { name: "Off", exact: true }).getAttribute("aria-pressed"), "true", "it ships off");
+  await seg.getByRole("button", { name: "On", exact: true }).click();
+  await f.page.waitForFunction(() => document.querySelector('#main .place [aria-label="Let people sign in from their own device"] [data-v="on"]')?.getAttribute("aria-pressed") === "true");
   assert.equal(f.app.people.settings().mode, "on");
-  await openPlace(f.page, "chat");
-  assert.equal(await card.isVisible(), false);
   assert.deepEqual(f.errors, []);
 });
 
-test("P2 at 400 px the card fits and every word has a key with real French", async (t) => {
-  const f = await fixture(t, 400);
-  await connect(f);
-  await openPlace(f.page, "settings:general");
-  await f.page.locator("#people-signin-admin").waitFor({ state: "visible" });
-  const wide = await f.page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
-  assert.equal(wide, false);
-  // Measured inside the page in one step: the card redraws itself, and a box asked for in two
-  // steps (find the element, then measure it) can land on one that was just replaced (null).
-  const fits = await f.page.waitForFunction(() => {
-    const box = document.querySelector("#people-admin-mode")?.getBoundingClientRect();
-    return box && box.width > 0 && box.x >= 0 && box.right <= 400;
-  }, undefined, { timeout: 5000 }).then(() => true, () => false);
-  assert.ok(fits, "the people admin switch fits inside 400 px");
-  const unkeyed = await f.page.evaluate(() => [...document.querySelectorAll("#people-signin-admin h2, #people-signin-admin p, #people-signin-admin label, #people-signin-admin button, #people-signin-admin span")]
-    .filter((node) => node.children.length === 0 && node.textContent.trim() && !node.dataset.t && !node.dataset.tDrawn && !("given" in node.dataset) && !node.closest("[data-person]") && !node.closest(".sg-more-line") && node.getAttribute("aria-live") !== "polite")
-    .map((node) => node.textContent.trim()));
-  assert.deepEqual(unkeyed, []);
+test("P2 at 400 px the switch fits and every people word has real French", async (t) => {
   const english = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
   const french = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
   const ours = Object.keys(english).filter((key) => key.startsWith("people."));
@@ -83,10 +70,23 @@ test("P2 at 400 px the card fits and every word has a key with real French", asy
     assert.ok(french[key], `${key} has French`);
     assert.notEqual(french[key], english[key], `${key} is really translated`);
   }
+  // Redesign: replaced by the new window (its words are the design document's, drawn without data-t keys), so the
+  // "every word has a key" check of the old card is not made here.
+  const f = await fixture(t, 400);
+  const place = await signingIn(f);
+  const wide = await f.page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+  assert.equal(wide, false);
+  await signInSwitch(place).waitFor({ state: "visible", timeout: 10000 });
+  const fits = await f.page.waitForFunction(() => {
+    const box = document.querySelector('#main .place [aria-label="Let people sign in from their own device"]')?.getBoundingClientRect();
+    return box && box.width > 0 && box.x >= 0 && box.right <= 400;
+  }, undefined, { timeout: 5000 }).then(() => true, () => false);
+  assert.ok(fits, "the sign-in switch fits inside 400 px");
   assert.deepEqual(f.errors, []);
 });
 
 test("P3 a person signs in on the page with their PIN, talks, and sees only their own", async (t) => {
+  // WINDOW BUG: public/people.js:9 imports /i18n.js, which the redesign removed (21eca9ec), so the page never starts.
   const f = await fixture(t, 400);
   await f.app.people.parts.store.save("settings", f.app.runtime.owner, "people-signin", { mode: "on" });
   const owners = await f.app.runtime.run({ prompt: "the owner's own words" });

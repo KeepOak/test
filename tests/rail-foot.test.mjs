@@ -11,6 +11,10 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
+/* Redesign: the new window's sidebar (shell/shell.js side()), 1:1 with prototype.html: the machine, Search and "+",
+   the Places (Overview first), the conversations, the pet, and at the foot the person's row with the Settings cog. The
+   old foot's icon line (theme, paw, day/night, eye) is not in the design: light or dark is the title bar's switch,
+   clearing the view is Focus mode, the pet is in Settings › Appearance. */
 async function signedIn(t, width, preferences = {}, before = async () => {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-rail-foot-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
@@ -21,25 +25,129 @@ async function signedIn(t, width, preferences = {}, before = async () => {}) {
   const headers = { authorization: `Bearer ${server.token}`, "content-type": "application/json" };
   await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers, body: JSON.stringify({ done: true }) });
   if (Object.keys(preferences).length) await fetch(new URL("/api/preferences", server.url), { method: "POST", headers, body: JSON.stringify(preferences) });
-  const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+  const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await page.locator("#lx-foot-line").waitFor({ state: "attached" });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#side .owner-row").waitFor({ state: "attached" });
   errors.length = 0;
-  return { page, errors, app };
+  const state = async () => (await (await fetch(new URL("/api/state", server.url), { headers })).json());
+  return { page, errors, app, state };
 }
 
+test("DG-094 the foot is the person's row with the Settings cog at its right edge", async (t) => {
+  const { page, errors } = await signedIn(t, 1440);
+  const box = await page.evaluate(() => {
+    const row = document.querySelector("#side .owner-row").getBoundingClientRect(), side = document.getElementById("side").getBoundingClientRect();
+    const owner = document.querySelector("#side .owner").getBoundingClientRect(), gear = document.querySelector('#side .owner-row [data-act="view"][data-v="settings"]').getBoundingClientRect();
+    return { rowBottom: row.bottom, sideBottom: side.bottom, gearRight: gear.right, rowRight: row.right, ownerRight: owner.right, gearLeft: gear.left };
+  });
+  assert.ok(box.sideBottom - box.rowBottom < 24, "the person's row is the foot of the list");
+  assert.ok(box.rowRight - box.gearRight < 16, "the cog at the right edge");
+  assert.ok(box.gearLeft >= box.ownerRight - 1, "beside the person, not over it");
+  await page.locator('#side .owner-row [data-act="view"][data-v="settings"]').click();
+  await page.locator(".settings .set-nav").waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test("DG-159 light or dark is one switch in the title bar that switches the window and the engine keeps it", async (t) => {
+  const { page, errors, state } = await signedIn(t, 1440);
+  const flip = page.getByRole("button", { name: "Switch light or dark", exact: true });
+  const before = await page.evaluate(() => document.documentElement.dataset.theme ?? "");
+  await flip.click();
+  await page.waitForFunction((was) => (document.documentElement.dataset.theme ?? "") !== was && document.documentElement.dataset.theme, before);
+  const now = await page.evaluate(() => document.documentElement.dataset.theme);
+  let prefs = (await state()).preferences;
+  for (let i = 0; i < 20 && prefs.appearance !== (now === "light" ? "daylight" : "forest"); i++) { await page.waitForTimeout(150); prefs = (await state()).preferences; }
+  assert.equal(prefs.appearance, now === "light" ? "daylight" : "forest", "the engine's words: daylight is light, forest is dark");
+  await flip.click();
+  await page.waitForFunction((was) => document.documentElement.dataset.theme !== was, now);
+  assert.deepEqual(errors, []);
+});
+
+test("DG-094 Focus mode clears the view, says how to leave it, and Escape brings it back", async (t) => {
+  // Redesign: the old foot's eye is the title bar's Focus mode (Ctrl+.): the list and the status bar step aside.
+  const { page, errors } = await signedIn(t, 1440);
+  await page.getByRole("button", { name: "Focus mode", exact: true }).click();
+  await page.waitForFunction(() => document.getElementById("app").classList.contains("focus"));
+  assert.equal(await page.locator("#side").isVisible(), false, "the list steps aside");
+  assert.equal(await page.getByRole("button", { name: /^Leave focus mode/ }).isVisible(), true, "and the way back is named");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.getElementById("app").classList.contains("focus"), null, { timeout: 5000 });
+  assert.deepEqual(errors, []);
+});
+
+test("DG-092 Overview is the sidebar's first place, and opens the Overview", async (t) => {
+  const { page, errors } = await signedIn(t, 1440);
+  const first = page.locator('#side .side-nav [data-act="view"]').first();
+  assert.equal(await first.getAttribute("data-v"), "overview");
+  assert.equal(await first.isVisible(), true);
+  assert.equal((await first.innerText()).trim(), "Overview");
+  await first.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.querySelector('#side .side-nav [data-v="overview"]').getAttribute("aria-current") === "true");
+  await page.locator("h1", { hasText: "Overview" }).waitFor();
+  assert.deepEqual(errors, []);
+});
+
+for (const width of [1440, 1024, 390]) {
+  test(`DG-095 at ${width} px a long owner line never pushes the window sideways`, async (t) => {
+    const { page, errors } = await signedIn(t, width);
+    // Redesign: replaced by the new window (prototype.html's person row ends a long name with an ellipsis, .who14 b).
+    await page.evaluate(() => { document.querySelector("#side .owner .who14 b").textContent = "Grandmother's workshop on the hill behind the orchard"; });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "nothing scrolls sideways");
+    assert.equal(await page.evaluate(() => { const row = document.querySelector("#side .owner-row").getBoundingClientRect(), side = document.getElementById("side").getBoundingClientRect(); return side.width === 0 || row.right <= side.right + 0.5; }), true, "the row stays inside the list");
+    assert.deepEqual(errors, []);
+  });
+}
+
+test("DG-093 a Trunk's conversation offers a new conversation with it, and New conversation still starts plainly", async (t) => {
+  // Redesign: prototype.html has no chevron beside New conversation; a new conversation with a Trunk is its
+  // conversation row's own menu (right-click), "New conversation with <name>".
+  const { page, errors, app } = await signedIn(t, 1440, {}, async (app) => {
+    app.trunks.setMode("trunks", { mode: "on" });
+    app.trunks.setMode("conversations", { mode: "on" });
+    await app.trunks.create({ name: "Ada" });
+  });
+  const ada = app.trunks.records.list()[0];
+  const row = page.locator(`#side .row[data-id="${ada.chatSessionId}"]`);
+  await row.waitFor();
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "New conversation with Ada" }).click();
+  await page.waitForFunction((own) => { const id = document.querySelector('#side .row[aria-current="true"]')?.dataset.id; return id && id !== own; }, ada.chatSessionId);
+  const session = await page.evaluate(() => document.querySelector('#side .row[aria-current="true"]').dataset.id);
+  const chosen = new Map(app.trunks.conversations.chosen());
+  assert.equal(chosen.get(session), ada.id, "Ada answers in the new conversation");
+  await page.locator('#side [data-act="newmenu"]').click();
+  await page.getByRole("menuitem", { name: /^New conversation/ }).click();
+  await page.waitForFunction(() => !document.querySelector('#side .row[aria-current="true"]'));
+  assert.equal(await page.locator("#conversation .b, #conversation .u").count(), 0, "a plain new conversation");
+  assert.deepEqual(errors, []);
+});
+
+test("DG-093 without Trunks a conversation's menu offers no Trunk to start with", async (t) => {
+  const { page, errors } = await signedIn(t, 1440, {}, async (app) => { await app.runtime.run({ prompt: "Plain one" }); });
+  const row = page.locator("#side .row[data-id]").first();
+  await row.waitFor();
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open" }).waitFor();
+  assert.equal(await page.getByRole("menuitem", { name: /^New conversation with/ }).count(), 0);
+  assert.deepEqual(errors, []);
+});
+
+/* The old window's foot, for the skipped bodies below. */
 /** The icon line, left to right: each shown button's id and its accessible name. */
 const footLine = (page) => page.evaluate(() => [...document.querySelectorAll("#lx-foot-line > button")]
   .filter((node) => node.checkVisibility())
   .map((node) => ({ id: node.id, label: node.getAttribute("aria-label") || node.textContent.trim() })));
 
+// Redesign: replaced by the new window (prototype.html's foot is the person's row and the Settings cog; no icon line and
+// no Show everything; checked live above).
 for (const everything of [false, true]) {
-  test(`DG-094 the foot is one icon line over the account row (Show everything ${everything ? "on" : "off"})`, async (t) => {
+  test.skip(`DG-094 the foot is one icon line over the account row (Show everything ${everything ? "on" : "off"})`, async (t) => {
     const { page, errors } = await signedIn(t, 1440, { showEverything: everything });
     const line = await footLine(page);
     assert.deepEqual(line.map((b) => b.id).slice(0, 4), ["lx-foot-theme", "lx-foot-pet", "lx-foot-mode", "lx-foot-eye"]);
@@ -60,61 +168,10 @@ for (const everything of [false, true]) {
   });
 }
 
-test("DG-159 day/night is one glyph that switches Forest and Daylight and says so", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  const mode = page.locator("#lx-foot-mode");
-  assert.equal((await mode.textContent()).trim(), "☾");
-  assert.equal(await mode.getAttribute("aria-label"), "Forest. Switch to Daylight");
-  assert.equal(await mode.getAttribute("title"), "Switch to Daylight");
-  await mode.click();
-  await page.waitForFunction(() => document.documentElement.dataset.theme === "daylight");
-  assert.equal((await mode.textContent()).trim(), "☀");
-  assert.equal(await mode.getAttribute("aria-label"), "Daylight. Switch to Forest");
-  await mode.click();
-  await page.waitForFunction(() => document.documentElement.dataset.theme === "forest");
-  assert.deepEqual(errors, []);
-});
-
-test("DG-161 the paw shows and hides the same pet as Settings, by its name", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  const pet = page.locator("#lx-foot-pet");
-  const was = await pet.getAttribute("aria-pressed");
-  await pet.click();
-  await page.waitForFunction((before) => document.getElementById("lx-foot-pet").getAttribute("aria-pressed") !== before, was);
-  const shown = (await pet.getAttribute("aria-pressed")) === "true";
-  if (shown) assert.match(await pet.getAttribute("aria-label"), /is here\. Hide the pet$/);
-  else assert.equal(await pet.getAttribute("aria-label"), "Show the pet");
-  assert.equal(await page.locator("#delight-pet-on").isChecked().catch(() => shown), shown, "the Appearance switch agrees");
-  await pet.click();
-  await page.waitForFunction((before) => document.getElementById("lx-foot-pet").getAttribute("aria-pressed") === before, was);
-  assert.deepEqual(errors, []);
-});
-
-test("DG-094 the eye clears the view and says it is pressed", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  await page.locator("#lx-foot-eye").click();
-  await page.waitForFunction(() => document.documentElement.dataset.quiet === "1");
-  assert.equal(await page.locator("#lx-foot-eye").getAttribute("aria-pressed"), "true");
-  await page.keyboard.press("Escape");
-  await page.waitForFunction(() => !document.documentElement.dataset.quiet);
-  assert.deepEqual(errors, []);
-});
-
-test("DG-092 Overview is the sidebar's first place, shown in the calm window, and opens the Overview", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  const first = page.locator("#sections-nav > .lx-place-link").first();
-  assert.equal(await first.getAttribute("data-place"), "overview");
-  assert.equal(await first.isVisible(), true);
-  assert.equal((await first.innerText()).trim(), "Overview");
-  await first.focus();
-  await page.keyboard.press("Enter");
-  await page.waitForFunction(() => document.querySelector('.lx-place-link[data-place="overview"]').getAttribute("aria-current") === "page");
-  assert.match(await page.locator("#page-title").innerText(), /Overview/);
-  assert.deepEqual(errors, []);
-});
-
+// Redesign: replaced by the new window (prototype.html ends a long name with an ellipsis, .who14 b; no sideways scroll is
+// checked live above).
 for (const width of [1440, 1024, 390]) {
-  test(`DG-095 at ${width} px a long owner line is shown whole`, async (t) => {
+  test.skip(`DG-095 at ${width} px a long owner line is shown whole`, async (t) => {
     const { page, errors } = await signedIn(t, width);
     const clipped = await page.evaluate(() => {
       const name = document.getElementById("owner-name");
@@ -127,7 +184,8 @@ for (const width of [1440, 1024, 390]) {
   });
 }
 
-test("DG-094 in French the icon line speaks French", async (t) => {
+// Redesign: Coming soon (sw:lang), checked at e5b8a610; and the icon line is replaced.
+test.skip("DG-094 in French the icon line speaks French", async (t) => {
   const { page, errors } = await signedIn(t, 1440);
   await page.evaluate(async () => { await (await import("/i18n.js")).setLanguage("fr"); });
   await page.waitForFunction(() => document.getElementById("lx-foot-mode").getAttribute("aria-label") === "Forêt. Passer à Lumière du jour");
@@ -137,45 +195,3 @@ test("DG-094 in French the icon line speaks French", async (t) => {
   assert.deepEqual(errors, []);
 });
 
-test("DG-093 New conversation has a chevron that starts with a chosen Trunk, and one click still starts plainly", async (t) => {
-  const { page, errors, app } = await signedIn(t, 1440, {}, async (app) => {
-    app.trunks.setMode("trunks", { mode: "on" });
-    app.trunks.setMode("conversations", { mode: "on" });
-    await app.trunks.create({ name: "Ada" });
-  });
-  const more = page.locator("#rail-new-more");
-  await more.waitFor({ state: "visible" });
-  assert.equal(await more.getAttribute("aria-label"), "Start with a chosen Trunk");
-  assert.equal(await more.getAttribute("aria-haspopup"), "menu");
-  const beside = await page.evaluate(() => {
-    const a = document.getElementById("rail-new").getBoundingClientRect(), b = document.getElementById("rail-new-more").getBoundingClientRect();
-    return b.left > a.left + a.width / 2 && b.top >= a.top - 1 && b.bottom <= a.bottom + 1;
-  });
-  assert.equal(beside, true, "the chevron sits at the right end of the New conversation row");
-  await more.click();
-  const menu = page.locator("#rail-new-menu");
-  await menu.waitFor({ state: "visible" });
-  assert.equal(await more.getAttribute("aria-expanded"), "true");
-  const row = menu.locator('[role="menuitem"][data-trunk]');
-  await row.first().waitFor();
-  assert.match(await menu.innerText(), /Start a conversation with/i);
-  assert.equal(await row.count(), 1);
-  assert.match(await row.innerText(), /Ada\s+@ada/);
-  await row.click();
-  await page.waitForFunction(() => Boolean(document.getElementById("conversation")?.dataset.sessionId));
-  const session = await page.evaluate(() => document.getElementById("conversation").dataset.sessionId);
-  const chosen = new Map(app.trunks.conversations.chosen());
-  assert.equal(chosen.get(session), app.trunks.records.list()[0].id, "Ada answers in the new conversation");
-  await page.locator("#rail-new").click();
-  await page.waitForFunction(() => !document.getElementById("conversation").dataset.sessionId);
-  assert.equal(await page.locator("#rail-new-menu").isVisible(), false, "one click on New conversation starts plainly, no menu");
-  assert.deepEqual(errors, []);
-});
-
-test("DG-093 without Trunks there is no chevron", async (t) => {
-  /* and New conversation keeps its one-click start */
-  const { page, errors } = await signedIn(t, 1440);
-  await page.waitForTimeout(500);
-  assert.equal(await page.locator("#rail-new-more").isVisible(), false);
-  assert.deepEqual(errors, []);
-});

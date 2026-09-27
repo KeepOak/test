@@ -1,6 +1,11 @@
-/* Redesign phase 2, shell (the window): the Trunks strip, Branch's own menu on a face, the Add a
-   Trunk studio with its one tab strip, Overview and People, "Who is using Branch", the faces on
-   replies, the 3D stand-in, and a household person seeing none of the owner's. Headless, 127.0.0.1. */
+/* Redesign phase 2, shell (the window): Branch's own menu on a Trunk, changing a Trunk's look after it is made, adding
+   a Trunk, Overview and People, "Who is using Branch", the faces on replies, a household person seeing none of the
+   owner's, and pairing. Headless, 127.0.0.1.
+   Redesign: pointed at the new window (public/app, design/redesign/prototype.html pass 17). The old Trunks strip is
+   gone: a Trunk's conversation is a row with its face in the sidebar's list (shell/shell.js row(), core/ui.js av()),
+   the computers are the switcher at the top of the sidebar (shell/machines.js), and the Add a Trunk studio is the
+   prototype's "New Trunk" and its editor (flows/trunk.js). Switching person and pairing are held for separate
+   security review, so the window draws them greyed, and these tests say so. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -12,8 +17,11 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 const scripted = { name: "scripted", async complete() { return { content: "Here it is.", toolCalls: [] }; } };
-const MODULES = ["faces.js", "strip.js", "studio.js", "pairing.js", "overview.js", "people-place.js"];
-const PREFIXES = ["strip.", "studio.", "pair.", "ov.", "household.", "shellLook.", "place.overview", "place.household"];
+const PROTOTYPE = new URL("../design/redesign/prototype.html", import.meta.url);
+/* The shell's own modules in the new window. */
+const MODULES = ["shell/shell.js", "shell/machines.js", "places/overview.js", "places/team.js", "settings/pages/people.js", "flows/trunk.js", "flows/computers.js", "chat/rooms.js"];
+/* The prototype's eight Trunk colours (prototype.html COLOURS). */
+const COLOURS = ["#2f8c86", "#d8612a", "#8a5aa8", "#5e8c4a", "#4f6fa8", "#c9982e", "#b84a6b", "#56616b"];
 
 async function fixture(t, { width = 1440, height = 950 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-p2-shell-ui-"));
@@ -26,110 +34,124 @@ async function fixture(t, { width = 1440, height = 950 } = {}) {
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }).then((response) => response.json());
+  // Onboarding is marked done through the engine, and the update question answered, so neither covers the window.
   await call("/api/onboarding", { done: true });
   await call("/api/deployment/suggestion", { id: "updates", answer: "never" }).catch(() => undefined);
   const page = await (await browser.newContext({ viewport: { width, height } })).newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  // A style the page's rules refuse, or a face drawn with a broken path, shows up here.
-  // (settings-describe.js and settings-kit.js already make CSP complaints of their own on trunk; those are not this work's.)
+  // A style the page's rules refuse shows up here.
   page.on("console", (message) => {
-    const mine = /\/(faces|strip|studio|pairing|overview|people-place|trunks)\.js/.test(message.location().url ?? "");
-    if (message.type() === "error" && (mine || /attribute d:/.test(message.text()))) errors.push(message.text().slice(0, 200));
+    if (message.type() === "error" && /Content Security Policy|attribute d:/.test(message.text())) errors.push(message.text().slice(0, 200));
   });
   const open = async () => {
     await page.goto(server.url);
     await page.getByLabel("Session token", { exact: true }).fill(server.token);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-    await page.locator("body.lx-ready").waitFor({ state: "attached" });
-    /* The strip is drawn once the Trunks have arrived. ci-flakes-3 gave it 15 s, then 60 s; a Windows
-       build machine went past 60 s too (run 35484288929), and the same test has taken 153 s in full on
-       that shard while passing. It now has the 120 s the window itself gets, just above. */
-    await page.locator("#trunk-strip .strip-brand").waitFor({ state: "visible", timeout: 120000 });
+    await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+    await page.locator('#side .nav[data-v="overview"]').waitFor({ state: "attached", timeout: 120000 });
   };
-  const refresh = () => page.evaluate(async () => (await import("/strip.js")).refresh());
-  return { app, server, call, page, errors, open, refresh };
+  return { app, server, call, page, errors, open };
 }
 async function withTrunk(f, name = "Scout", look = { face: "letters", letters: "SC", colour: 3, shape: "leaf" }) {
   await f.call("/api/trunks/switch", { part: "trunks", mode: "on" });
   const { trunk } = await f.call("/api/trunks", { name, title: "Watches prices", description: "" });
   await f.call(`/api/trunks/${trunk.id}`, { look });
+  await f.app.trunks.introduced();
   return trunk;
 }
-const trunkFace = (page, id) => page.locator(`#trunk-strip [data-strip-id="trunk:${id}"] .strip-face`);
-/** No word on screen is still its key: every key the shell draws is in the language file. */
-async function untranslated(page) {
-  return page.evaluate(() => [...document.querySelectorAll("[data-t]")].filter((node) => node.checkVisibility() && node.textContent.trim() === node.dataset.t).map((node) => node.dataset.t));
+const row = (page, trunk) => page.locator(`#side .row[data-id="${trunk.chatSessionId}"]`);
+async function place(page, name, tab) {
+  await page.locator(`#side .nav[data-v="${name}"]`).click();
+  await page.locator("#main .place h1").first().waitFor();
+  if (tab) {
+    await page.locator(`.tab[data-act="ptab"][data-place="${name}"][data-v="${tab}"]`).click();
+    await page.waitForFunction(({ name, tab }) => document.querySelector(`.tab[data-place="${name}"][data-v="${tab}"]`)?.getAttribute("aria-selected") === "true", { name, tab });
+  }
+}
+async function settingsPage(page, id) {
+  await page.locator('#side [data-act="view"][data-v="settings"]').first().click();
+  await page.locator(`.set-nav [data-act="setpage"][data-v="${id}"]`).click();
+  await page.waitForFunction((id) => document.querySelector(`.set-nav [data-v="${id}"]`)?.getAttribute("aria-current") === "true", id);
+}
+const greyed = async (locator) => ({
+  disabled: await locator.getAttribute("aria-disabled"),
+  soon: await locator.evaluate((node) => node.classList.contains("soon")),
+  tip: await locator.getAttribute("data-tip"),
+});
+const GREY = { disabled: "true", soon: true, tip: "Coming soon" };
+const live = async (locator) => { const g = await greyed(locator); return g.disabled !== "true" && !g.soon; };
+/* The words as written (textContent): a heading styled in capitals is still the prototype's own words. */
+const texts = (locator) => locator.evaluateAll((nodes) => nodes.map((node) => node.textContent.trim()).filter(Boolean));
+async function notInPrototype(words) {
+  const prototype = await readFile(PROTOTYPE, "utf8");
+  return [...new Set(words)].filter((word) => !prototype.includes(word));
+}
+/* The prototype's Settings › Appearance › Language offers Français, and the design says every screen switches with it
+   (BRANCH-DESIGN-INTENT.md, stand-in notes: "translate every screen"). */
+async function chooseFrench(f) {
+  await f.page.keyboard.press("Escape");
+  await settingsPage(f.page, "appearance");
+  await f.page.locator("#lang").selectOption("fr");
+  await f.page.waitForFunction(() => document.documentElement.lang === "fr");
+  assert.equal((await f.call("/api/look")).language, "fr", "the engine keeps the choice");
+  await f.page.locator(".set-back").click();
+}
+/* Words the locale files keep the same in French (a name such as "Trunks"): those may read the same in both. */
+async function stillEnglish(english, french) {
+  const read = async (code) => JSON.parse(await readFile(new URL(`../public/locales/${code}.json`, import.meta.url), "utf8"));
+  const [en, fr] = [await read("en"), await read("fr")];
+  const same = new Set(Object.keys(en).filter((key) => typeof en[key] === "string" && en[key] === fr[key]).map((key) => en[key]));
+  assert.equal(french.length, english.length, "the same places, the same words");
+  return english.filter((word, i) => word === french[i] && !same.has(word));
+}
+/* The shell's words, found by what each control does: the person menu, Team › People and the computer switcher. */
+async function shellWords(page) {
+  await page.locator('#side [data-act="owner"]').click();
+  const menu = page.locator(".pop");
+  await menu.locator('[data-act="switchto"], [data-act="yp-open"]').first().waitFor(); // your-profile: your own tile opens Your profile
+  const words = [...await texts(menu.locator(".ph")), ...await texts(menu.locator(".mi-t")), ...await texts(menu.locator(".row-in > span:first-child, .seg button"))];
+  await page.keyboard.press("Escape");
+  await place(page, "team", "people");
+  await page.locator(".t9-item").first().waitFor();
+  words.push(...await page.locator("#main .place h1, #main .place .lede, #main .tabs .tab").evaluateAll((nodes) => nodes.map((node) => node.firstChild.textContent.trim())));
+  await page.locator('#side [data-act="machines"]').click();
+  await page.locator('.pop [data-act="addcomp"]').waitFor();
+  words.push(...await texts(page.locator(".pop .ph, .pop .mi-t")));
+  await page.keyboard.press("Escape");
+  return words.filter((word) => word && !/Ada|Sam/.test(word));
 }
 
-test("the shell's modules write no colour and build no markup from text, and every word is in English and real French", async () => {
-  for (const file of [...MODULES, "trunks.js"]) {
-    const source = await readFile(new URL(`../public/${file}`, import.meta.url), "utf8");
-    assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i, `${file} writes no colour`);
-    assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|outerHTML/, `${file} builds nothing from text`);
+test("the shell's modules write no inline style or handler and build no markup from text, and every word is in English and real French", async (t) => {
+  for (const file of MODULES) {
+    const source = await readFile(new URL(`../public/app/${file}`, import.meta.url), "utf8");
+    // Redesign: colours reach the page only through data-css (applyCss) and hex-checked values, never an inline style.
+    assert.doesNotMatch(source, /\sstyle="|\son[a-z]+="/i, `${file} writes no inline style or handler (the page's rules refuse both)`);
   }
-  const en = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
-  const fr = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
-  const mine = Object.keys(en).filter((key) => PREFIXES.some((prefix) => key.startsWith(prefix)));
-  assert.ok(mine.length > 200);
-  for (const key of mine) {
-    assert.ok(fr[key], `${key} has French`);
-    assert.notEqual(fr[key], en[key], `${key} is really translated`);
-  }
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  for (const tag of ['<script src="/strip.js" type="module">', '<link rel="stylesheet" href="/faces.css" />', '<link rel="stylesheet" href="/strip.css" />'])
-    assert.ok(html.includes(tag), tag);
-});
-
-test("the strip sits at the left edge with this computer and each Trunk's own face, and opens a Trunk's conversation", async (t) => {
   const f = await fixture(t);
-  const trunk = await withTrunk(f);
+  const trunk = await withTrunk(f, "<i>Ada</i>");
+  await f.call("/api/profiles", { name: "<b>Sam</b>", pin: "1234" });
   await f.open();
-  const strip = await f.page.locator("#trunk-strip").boundingBox();
-  assert.ok(strip.x < 20 && strip.width < 90 && strip.height > 800, "a narrow strip down the left edge");
-  const rail = await f.page.locator("#conversation-rail").boundingBox();
-  assert.ok(rail.x >= strip.x + strip.width, "the sidebar starts after it, nothing covered");
-  assert.equal(await f.page.locator('#trunk-strip [data-strip-id="here"]').getAttribute("aria-current"), "true");
-  const face = trunkFace(f.page, trunk.id);
-  assert.match(await face.getAttribute("aria-label"), /^Scout, Trunk, /);
-  assert.equal(await face.locator(".fc-letters").getAttribute("data-text"), "SC", "its own letters");
-  assert.equal(await face.locator(".face").evaluate((node) => node.style.getPropertyValue("--c")), "var(--series-3)", "its own colour, a token");
-  assert.match(await face.locator(".face").evaluate((node) => node.style.getPropertyValue("--m")), /data:image\/svg\+xml/, "its own shape");
-  await face.click();
-  await f.page.waitForFunction((id) => document.getElementById("conversation").dataset.sessionId === id, trunk.chatSessionId);
-  await f.page.waitForFunction((id) => document.querySelector(`#trunk-strip [data-strip-id="trunk:${id}"]`)?.getAttribute("aria-current") === "true", trunk.id);
-  await trunkFace(f.page, trunk.id).focus();
-  await f.refresh();
-  assert.equal(await f.page.evaluate((id) => document.activeElement?.closest("[data-strip-id]")?.dataset.stripId, trunk.id), `trunk:${trunk.id}`, "a redraw keeps the keyboard where it was");
-  await f.call("/api/shell-look", { strip: "off" });
-  await f.refresh();
-  assert.equal(await f.page.locator("#trunk-strip").count(), 0, "switched off, the strip is gone");
-  assert.equal(await f.page.evaluate(() => document.body.classList.contains("lx-strip")), false, "and the window has its space back");
+  // A name with markup in it is shown as its words, wherever the shell draws it.
+  await row(f.page, trunk).waitFor();
+  await place(f.page, "customize", "trunks");
+  await f.page.locator("#main .prow b").filter({ hasText: "<i>Ada</i>" }).waitFor();
+  await f.page.locator('#side [data-act="owner"]').click();
+  const menu = f.page.locator(".pop");
+  await menu.locator('[data-act="switchto"]').filter({ hasText: "<b>Sam</b>" }).waitFor();
+  await f.page.keyboard.press("Escape");
+  await place(f.page, "team", "people");
+  await f.page.locator(".t9-item b").filter({ hasText: "<b>Sam</b>" }).waitFor();
+  assert.equal(await f.page.evaluate(() => [...document.querySelectorAll("#app i, #app b b")].filter((node) => ["Ada", "Sam"].includes(node.textContent)).length), 0, "no markup was built from a name");
+  // Every word is the prototype's, in English; then Français (Settings › Appearance › Language).
+  const english = await shellWords(f.page);
+  assert.ok(english.length > 20, `${english.length} words`);
+  assert.deepEqual(await notInPrototype(english), [], "every word is the prototype's");
   assert.deepEqual(f.errors, []);
-});
-
-/* phase2/everywhere (integration): on a phone the places bar holds the foot, so the strip is a row across the
-   top, under the notch, as in the approved phone frame; a tablet keeps it as a row at the foot. */
-test("on a phone the strip is a row across the top, a tablet's a row at the foot; neither covers the message box or scrolls the page sideways", async (t) => {
-  const f = await fixture(t, { width: 390, height: 844 });
-  await withTrunk(f);
-  await f.open();
-  const strip = await f.page.locator("#trunk-strip").boundingBox();
-  assert.ok(strip.y < 20 && strip.width > 350, "a row across the top");
-  const head = await f.page.locator("header").first().boundingBox();
-  assert.ok(strip.y + strip.height <= head.y, "above the title bar, covering nothing");
-  const prompt = await f.page.locator("#prompt").boundingBox(), places = await f.page.locator("#ew-places").boundingBox();
-  assert.ok(prompt.y + prompt.height <= places.y, "the message box stays above the places bar at the foot");
-  assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
-  assert.ok(await f.page.locator("#send").isVisible());
-  await f.page.setViewportSize({ width: 740, height: 1180 });
-  await f.page.waitForTimeout(100);
-  const tablet = await f.page.locator("#trunk-strip").boundingBox(), tabletPrompt = await f.page.locator("#prompt").boundingBox();
-  assert.ok(tablet.y > 1100 && tablet.width > 700, "a tablet: a row at the foot");
-  assert.ok(tabletPrompt.y + tabletPrompt.height <= tablet.y, "the message box stays above it");
-  assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
+  await chooseFrench(f);
+  const french = await shellWords(f.page);
   assert.deepEqual(f.errors, []);
+  assert.deepEqual(await stillEnglish(english, french), [], "window bug: the person menu, Team › People and the computer switcher stay in English after choosing Français");
 });
 
 test("right-click on a Trunk opens Branch's own menu, never the browser's, and its order, pin and hiding are real", async (t) => {
@@ -137,20 +159,25 @@ test("right-click on a Trunk opens Branch's own menu, never the browser's, and i
   const scout = await withTrunk(f, "Scout");
   const ledger = await withTrunk(f, "Ledger", { face: "emoji", emoji: "📒", colour: 7, shape: "shield" });
   await f.open();
-  const prevented = await trunkFace(f.page, scout.id).evaluate((node) => !node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 200 })));
+  await row(f.page, scout).waitFor();
+  const prevented = await row(f.page, scout).evaluate((node) => !node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 300 })));
   assert.equal(prevented, true, "the browser's menu does not open");
-  await f.page.locator("#strip-menu").waitFor({ state: "visible" });
-  await f.page.locator("#strip-menu").getByRole("menuitem", { name: "Move down" }).click();
-  const order = async () => f.page.locator('#trunk-strip [data-strip-id^="trunk:"]').evaluateAll((nodes) => nodes.map((node) => node.dataset.stripId));
-  await f.page.waitForFunction((id) => document.querySelectorAll('#trunk-strip [data-strip-id^="trunk:"]')[1]?.dataset.stripId === `trunk:${id}`, scout.id);
-  assert.deepEqual(await order(), [`trunk:${ledger.id}`, `trunk:${scout.id}`]);
-  await trunkFace(f.page, scout.id).click({ button: "right" });
-  await f.page.locator("#strip-menu").getByRole("menuitem", { name: "Hide from the strip and sidebar" }).click();
-  await f.page.waitForFunction((id) => !document.querySelector(`#trunk-strip [data-strip-id="trunk:${id}"]`), scout.id);
-  assert.equal((await f.call(`/api/trunks/${scout.id}`)).trunk.hidden, true);
-  await trunkFace(f.page, ledger.id).click({ button: "right" });
+  const menu = f.page.locator(".pop[role=menu]");
+  await menu.waitFor({ state: "visible" });
+  assert.equal(await menu.getAttribute("aria-label"), "Scout", "the menu is named for its Trunk");
+  const items = await menu.getByRole("menuitem").allInnerTexts();
+  for (const item of ["Open", "Pin to top", "Rename", "New conversation with Scout", "Pause", "Edit Trunk…", "Remove…"]) assert.ok(items.some((words) => words.includes(item)), item);
+  // Redesign: the strip's order and hiding are the prototype's Pin to top (see the Undo test below) and Pause.
+  await menu.getByRole("menuitem", { name: "Pause" }).click();
+  await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"] .paused`), scout.chatSessionId);
+  assert.equal((await f.call("/api/trunks")).trunks.find((trunk) => trunk.id === scout.id).paused, true, "the engine paused it");
+  // The keyboard opens the same kind of menu, for that Trunk.
+  await row(f.page, ledger).focus();
+  await f.page.keyboard.press("Shift+F10");
+  await menu.waitFor({ state: "visible" });
+  assert.equal(await menu.getAttribute("aria-label"), "Ledger");
   await f.page.keyboard.press("Escape");
-  await f.page.locator("#strip-menu").waitFor({ state: "detached" });
+  await menu.waitFor({ state: "detached" });
   assert.deepEqual(f.errors, []);
 });
 
@@ -158,66 +185,67 @@ test("Change look… edits a Trunk after it is made: face, emoji, colour, shape 
   const f = await fixture(t);
   const trunk = await withTrunk(f);
   await f.open();
-  await trunkFace(f.page, trunk.id).click({ button: "right" });
-  await f.page.getByRole("menuitem", { name: "Change look…" }).click();
-  const dialog = f.page.locator("#studio");
-  await dialog.getByRole("heading", { name: "Change Scout" }).waitFor();
-  assert.equal(await dialog.locator(".studio-tabs").count(), 0, "changing one has no Add tabs");
-  await dialog.getByRole("button", { name: "Emoji", exact: true }).click();
-  await dialog.locator('.studio-emoji-pick[data-emoji="🦉"]').click();
-  await dialog.getByRole("button", { name: "Colour #FF6B8A" }).click();
-  await dialog.getByRole("button", { name: "Hexagon" }).click();
+  await row(f.page, trunk).click({ button: "right" });
+  await f.page.locator(".pop").getByRole("menuitem", { name: "Edit Trunk…" }).click();
+  const dialog = f.page.locator(".dlg");
+  await dialog.getByRole("heading", { name: "Edit Scout" }).waitFor();
+  // The prototype saves an emoji face at once.
+  await dialog.locator('[data-act="emo15"][data-v="🦉"]').click();
+  await f.page.waitForFunction(() => document.querySelector('.dlg [data-act="emo15"][data-v="🦉"]')?.getAttribute("aria-checked") === "true");
+  await dialog.getByRole("button", { name: "Colour #B84A6B" }).click();
+  await dialog.getByRole("button", { name: "Shape 5" }).click();
   await dialog.getByRole("button", { name: "Breathe" }).click();
-  assert.equal(await dialog.locator("#studio-preview .studio-big .fc-emoji").getAttribute("data-text"), "🦉", "the preview follows");
-  assert.deepEqual(await untranslated(f.page), []);
+  assert.equal(await dialog.locator(".editor .big .av i").innerText(), "🦉", "the preview follows");
+  assert.equal(await dialog.getByRole("button", { name: "Shape 5" }).getAttribute("aria-pressed"), "true");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await dialog.waitFor({ state: "detached" });
-  const { look, chosenColour } = (await f.call(`/api/trunks/${trunk.id}`)).trunk;
-  assert.deepEqual([look.face, look.emoji, look.colour, chosenColour, look.shape, look.motion], ["emoji", "🦉", null, "#ff6b8a", "hexagon", "breathe"]);
-  await f.page.waitForFunction((id) => document.querySelector(`#trunk-strip [data-strip-id="trunk:${id}"] .fc-emoji`)?.dataset.text === "🦉", trunk.id);
+  const { look, chosenColour } = (await f.call("/api/trunks")).trunks.find((entry) => entry.id === trunk.id);
+  assert.deepEqual([look.face, look.emoji, chosenColour, look.shape, look.motion], ["emoji", "🦉", "#b84a6b", "shield", "breathe"]);
   assert.deepEqual(f.errors, []);
+  // The prototype draws a Trunk's own face wherever it is (rowHtml: av(c), with its colour --c and its shape --r).
+  await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"] .av i`)?.textContent === "🦉", trunk.chatSessionId, { timeout: 5000 }).catch(() => undefined);
+  const drawn = await row(f.page, trunk).locator(".av").evaluate((node) => ({ emoji: node.querySelector("i")?.textContent ?? "", colour: node.style.getPropertyValue("--c"), shaped: node.style.getPropertyValue("--r") !== "" }));
+  assert.deepEqual(drawn, { emoji: "🦉", colour: "#b84a6b", shaped: true }, "window bug: the sidebar row draws the engine's Trunk record with av(), which reads no emoji, chosen colour or shape");
 });
 
 test("Add a Trunk: switched off it says so and offers the switch; the tab strip stays and pairing has a Back", async (t) => {
   const f = await fixture(t);
+  await f.call("/api/trunks/switch", { part: "trunks", mode: "off" });
   await f.open();
-  await f.page.locator("#trunk-strip .strip-add").click();
-  const dialog = f.page.locator("#studio");
-  await dialog.getByText("Trunks are switched off.").waitFor();
-  await dialog.getByRole("button", { name: "Switch Trunks on" }).click();
-  await dialog.locator("#studio-name").fill("Gardener");
-  await dialog.getByRole("button", { name: "Letters", exact: true }).click();
-  await dialog.getByRole("button", { name: "Pebble" }).click();
-  await dialog.getByRole("tab", { name: "Another computer" }).click();
-  assert.equal(await dialog.getByRole("tab", { name: "Another computer" }).getAttribute("aria-selected"), "true", "the same dialog, the same tabs");
-  await dialog.locator('.pair-card[data-mode="invite"]').click();
-  await dialog.getByRole("button", { name: "Switch it on" }).click();
-  await dialog.locator("#pair-number").waitFor();
-  assert.match(await dialog.locator("#pair-number").innerText(), /^\d{3} \d{3}$/);
-  assert.match(await dialog.locator("#pair-link").innerText(), /\/devices\/pair\?offer=/);
-  assert.ok(await dialog.getByText(/only answers on this computer itself/).isVisible(), "an address only this computer can reach is said plainly");
+  // Redesign: the prototype's + menu makes "Trunk N" at once and has no switch; with Trunks off the engine refuses, and
+  // the window says so in the engine's words.
+  await f.page.locator('#side [data-act="newmenu"]').click();
+  await f.page.locator(".pop").getByRole("menuitem", { name: "New Trunk" }).click();
+  await f.page.locator(".toast").waitFor();
+  const refusal = (await f.call("/api/trunks", { name: "Trunk 1" })).error;
+  assert.ok(refusal, "the engine refuses while Trunks are off");
+  assert.equal((await f.page.locator(".toast").innerText()).trim(), refusal, "the engine's refusal is said in its own words");
+  assert.equal((await f.call("/api/trunks")).trunks.length, 0, "nothing was made");
+  await f.call("/api/trunks/switch", { part: "trunks", mode: "on" });
+  await f.page.locator('#side [data-act="newmenu"]').click();
+  await f.page.locator(".pop").getByRole("menuitem", { name: "New Trunk" }).click();
+  let made;
+  for (let i = 0; i < 100 && !made; i++) { made = (await f.call("/api/trunks")).trunks[0]; if (!made) await f.page.waitForTimeout(50); }
+  assert.equal(made?.name, "Trunk 1", "the prototype's Trunk N");
+  await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", made.chatSessionId);
+  // Pairing: the prototype's "Add a computer or phone" keeps one dialog and one tab strip.
+  await f.page.locator('#side [data-act="machines"]').click();
+  await f.page.locator(".pop").getByRole("menuitem", { name: "Add a computer or phone…" }).click();
+  const dialog = f.page.locator(".dlg");
+  await dialog.getByRole("heading", { name: "Add a computer or phone" }).waitFor();
+  assert.deepEqual(await texts(dialog.locator(".tab")), ["On your network", "With a code", "Your phone"]);
+  await dialog.locator('.tab[data-v="code"]').click();
+  await f.page.waitForFunction(() => document.querySelector('.dlg .tab[data-v="code"]')?.getAttribute("aria-selected") === "true");
+  assert.equal(await f.page.locator(".dlg").count(), 1, "the same dialog, the same tabs");
+  await dialog.locator('.tab[data-v="phone"]').click();
+  await f.page.waitForFunction(() => document.querySelector('.dlg .tab[data-v="phone"]')?.getAttribute("aria-selected") === "true");
+  // Pairing is live since #351 (the owner, 2026-09-26: security-held controls are built for real, through the engine's guards).
+  assert.equal(await live(dialog.getByRole("button", { name: "Show the phone code" })), true, "Show the phone code is live");
+  // Redesign: the prototype's dialog has no Back; its tabs go back and forth, and Close leaves it.
+  await dialog.locator('.tab[data-v="network"]').click();
+  await f.page.waitForFunction(() => document.querySelector('.dlg .tab[data-v="network"]')?.getAttribute("aria-selected") === "true");
   await dialog.getByRole("button", { name: "Close" }).click();
-  await dialog.getByText("Stop pairing?").waitFor();
-  await dialog.getByRole("button", { name: "Keep pairing" }).click();
-  await dialog.getByRole("button", { name: "Back" }).click();
-  await dialog.locator('.pair-card[data-mode="join"]').waitFor();
-  await dialog.locator('.pair-card[data-mode="join"]').click();
-  await dialog.locator("#join-link").waitFor();
-  await dialog.getByRole("tab", { name: "Your phone" }).click();
-  await dialog.locator(".devices-qr").waitFor();
-  await dialog.getByRole("tab", { name: "A new Trunk" }).click();
-  await dialog.getByText("Stop pairing?").waitFor();
-  assert.equal(await dialog.getByRole("tab", { name: "Your phone" }).getAttribute("aria-selected"), "true", "leaving an open invitation asks first");
-  await dialog.getByRole("button", { name: "Stop pairing" }).click();
-  await dialog.locator("#studio-name").waitFor();
-  assert.deepEqual(await untranslated(f.page), []);
-  await dialog.locator("#studio-name").fill("Gardener");
-  await dialog.getByRole("button", { name: "Create the Trunk" }).click();
   await dialog.waitFor({ state: "detached" });
-  const made = (await f.call("/api/trunks")).trunks.find((entry) => entry.name === "Gardener");
-  assert.ok(made, "the Trunk is made");
-  assert.deepEqual([made.look.face, made.look.shape], ["letters", "pebble"], "with the look chosen before visiting the other tabs");
-  await f.page.waitForFunction((id) => document.getElementById("conversation").dataset.sessionId === id, made.chatSessionId);
   assert.deepEqual(f.errors, []);
 });
 
@@ -225,156 +253,125 @@ test("Overview and People are real, with faces; Who is using Branch lists everyo
   const f = await fixture(t);
   await f.call("/api/profiles", { name: "Amara", pin: "4321" });
   await f.open();
-  await f.page.locator("#trunk-strip .strip-brand").click();
-  await f.page.locator(".ov-page").getByRole("heading", { name: "This computer" }).waitFor();
-  assert.ok(await f.page.locator(".ov-page").getByText("Who uses it").isVisible());
-  assert.ok(await f.page.locator(".ov-page .ov-row").filter({ hasText: "Amara" }).isVisible());
-  await f.page.locator("#strip-people").click();
-  const menu = f.page.locator("#who-menu");
-  await menu.getByText("Who is using Branch").waitFor();
-  assert.deepEqual(await menu.locator(".who-row b").allInnerTexts(), ["The owner", "Amara"]);
-  assert.equal(await menu.locator('.who-row[data-profile="owner"]').getAttribute("aria-checked"), "true");
-  await menu.getByRole("button", { name: "People…" }).click();
-  await f.page.locator('.person-card[data-person]').nth(1).waitFor();
-  assert.equal(await f.page.locator('.person-card[data-person] .face').count(), 2, "everyone has a face");
-  assert.deepEqual(await untranslated(f.page), []);
+  const owner = (await f.call("/api/profiles")).roleLabels.owner.label;
+  // Who is using Branch: the person menu lists everyone on this computer.
+  await f.page.locator('#side [data-act="owner"]').click();
+  const menu = f.page.locator(".pop");
+  assert.deepEqual(await texts(menu.locator(".ph").first()), ["Who is using Branch"]);
+  // your-profile: your own tile opens Your profile; everybody else's switches to them.
+  assert.deepEqual(await menu.locator('[data-act="switchto"], [data-act="yp-open"]').evaluateAll((nodes) => nodes.map((node) => [node.dataset.act, node.lastChild.textContent])), [["yp-open", owner], ["switchto", "Amara"]]);
+  // Redesign: switching person and Add (invites) are live since the un-hold (#353); the owner sees Add.
+  assert.equal(await live(menu.locator('[data-act="switchto"]').first()), true, "switching to Amara is live");
+  assert.equal(await live(menu.locator('[data-act="yp-open"]')), true, "your own tile is live: it opens Your profile");
+  assert.equal(await live(menu.locator('[data-act="invite"]')), true, "Add is live for the owner");
+  await f.page.keyboard.press("Escape");
+  // People: Team › People, everyone with a face.
+  await place(f.page, "team", "people");
+  assert.equal(await f.page.locator("#main .place h1").innerText(), "People");
+  const people = f.page.locator('#main .t9-item[data-act="p-sel"]');
+  await people.nth(1).waitFor();
+  assert.deepEqual(await people.evaluateAll((nodes) => nodes.map((node) => node.querySelector("b").textContent.replace(/ · you$/, ""))), [owner, "Amara"]);
+  assert.equal(await f.page.locator('#main .t9-item[data-act="p-sel"] .tav6').count(), 2, "everyone has a face");
+  await people.nth(1).click();
+  await f.page.locator(".pcard10 .t9-dh b").filter({ hasText: "Amara" }).waitFor();
+  assert.equal(await live(f.page.locator('.pcard10 [data-act="p-switch"]')), true, "switching person is live (#353)");
+  // Overview: real, and the prototype's "Who is using Branch" tile lists everyone on this computer (people2).
+  await place(f.page, "overview");
+  assert.equal(await f.page.locator("#main .place h1").innerText(), "Overview");
+  const tile = f.page.locator("#main .tile").filter({ has: f.page.getByRole("heading", { name: "Who is using Branch" }) });
+  await tile.waitFor();
   assert.deepEqual(f.errors, []);
+  assert.deepEqual(await tile.locator(".me + span").allInnerTexts(), [owner, "Amara"], "window bug: Overview's Who is using Branch shows only the person here, not everyone");
 });
 
 test("a household person sees this computer and the people, and nothing of the owner's", async (t) => {
   const f = await fixture(t);
-  await withTrunk(f);
+  const scout = await withTrunk(f);
   const person = await f.call("/api/profiles", { name: "Sam", pin: "1234" });
   await f.call("/api/profiles/switch", { profileId: person.id, pin: "1234" });
   await f.open();
-  await f.page.waitForFunction(() => document.documentElement.dataset.household === "on");
-  await f.refresh();
-  assert.deepEqual(await f.page.locator("#trunk-strip [data-strip-id]").evaluateAll((nodes) => nodes.map((node) => node.dataset.stripId)), ["here"]);
-  assert.equal(await f.page.locator("#trunk-strip .strip-add, #trunk-strip .strip-more").count(), 0, "no adding, no menus");
-  await f.page.locator("#strip-people").click();
-  await f.page.getByRole("button", { name: "People…" }).click();
-  await f.page.locator(".people-page").waitFor();
-  assert.deepEqual(await f.page.locator(".person-card").evaluateAll((nodes) => nodes.map((node) => node.dataset.person)), ["owner", person.id], "only their own card beside the owner's");
-  assert.ok(await f.page.getByRole("button", { name: "Back to the owner" }).isVisible());
-  assert.equal(await f.page.locator(".person-add").count(), 0);
-  await f.page.evaluate(() => {
-    globalThis.profileMarkerAtOwnerEvent = null;
-    document.addEventListener("branch-profile", (event) => {
-      if (event.detail?.owner === true) globalThis.profileMarkerAtOwnerEvent = {
-        marker: document.documentElement.dataset.household,
-        eventGeneration: event.detail.profileGeneration,
-        markerGeneration: Number(document.documentElement.dataset.profileGeneration),
-      };
-    }, { once: true });
-  });
-  await f.page.getByRole("button", { name: "Back to the owner" }).click();
-  await f.page.waitForFunction(() => globalThis.profileMarkerAtOwnerEvent !== null);
-  const markerAtEvent = await f.page.evaluate(() => globalThis.profileMarkerAtOwnerEvent);
-  assert.equal(markerAtEvent.marker, "off", "the canonical owner marker changes before owner-only listeners run");
-  assert.ok(markerAtEvent.eventGeneration > 0);
-  assert.equal(markerAtEvent.eventGeneration, markerAtEvent.markerGeneration,
-    "the event and document carry one canonical profile generation");
-  await f.page.locator("#rail-view-trunks").waitFor({ state: "visible" });
-  await f.page.locator("#rail-view-trunks").click();
-  await f.page.locator("#rail-trunks-actions").waitFor({ state: "visible" });
-  assert.equal(await f.page.locator("#rail-trunks-actions").getAttribute("hidden"), null,
-    "returning from the startup household profile restores the owner's Trunks without a reload");
-  const repeatedOwner = await f.page.evaluate(async () => {
-    const { noteWindowProfile } = await import("/app.js");
-    let eventGeneration = null;
-    document.addEventListener("branch-profile", (event) => { eventGeneration = event.detail.profileGeneration; }, { once: true });
-    const before = Number(document.documentElement.dataset.profileGeneration);
-    noteWindowProfile(true, { force: true });
-    return { before, eventGeneration, after: Number(document.documentElement.dataset.profileGeneration) };
-  });
-  assert.deepEqual(repeatedOwner, {
-    before: markerAtEvent.markerGeneration,
-    eventGeneration: markerAtEvent.markerGeneration + 1,
-    after: markerAtEvent.markerGeneration + 1,
-  }, "a profile-to-profile switch still tells every profile-specific screen to refresh");
+  await f.page.locator('#side [data-act="owner"] .who14 b').filter({ hasText: "Sam" }).waitFor();
+  assert.ok(await f.page.locator('#side [data-act="machines"]').isVisible(), "this computer");
+  assert.equal(await row(f.page, scout).count(), 0, "none of the owner's conversations");
+  await place(f.page, "customize", "trunks");
+  assert.equal(await f.page.locator('#main .prow [data-act="edit"]').count(), 0, "none of the owner's Trunks");
+  await place(f.page, "team", "people");
+  const people = f.page.locator('#main .t9-item[data-act="p-sel"]');
+  await people.nth(1).waitFor();
+  const ids = await people.evaluateAll((nodes) => nodes.map((node) => node.dataset.v));
+  assert.equal(ids[0], "owner");
+  assert.ok(ids.includes(person.id), "their own card beside the owner's");
+  assert.equal(await people.filter({ hasText: "Sam · you" }).count(), 1, "their own is marked as theirs");
+  // Redesign: adding people (invites) is the owner's, so it is not drawn for a household person at all; going back to
+  // the owner is live since the un-hold (#353), behind the owner's PIN.
+  assert.equal(await f.page.locator('[data-act="p-invite"]').count(), 0, "no Invite for a household person");
+  await f.page.locator('#side [data-act="owner"]').click();
+  assert.equal(await f.page.locator('.pop [data-act="invite"]').count(), 0, "no Add in the person menu either");
+  assert.equal(await live(f.page.locator('.pop [data-act="switchto"][data-v=""]')), true, "Back to the owner is live");
+  await f.page.keyboard.press("Escape");
   assert.deepEqual(f.errors, []);
 });
 
 test("a stale household strip response cannot hide the restored owner's Trunks", async (t) => {
   const f = await fixture(t);
-  await withTrunk(f);
+  const scout = await withTrunk(f);
+  const person = await f.call("/api/profiles", { name: "Sam", pin: "1234" });
+  await f.call("/api/profiles/switch", { profileId: person.id, pin: "1234" });
   await f.open();
-  await f.page.locator("#rail-view-trunks").click();
-  assert.equal(await f.page.locator("#rail-trunks-actions").getAttribute("hidden"), null);
-  const state = await f.page.evaluate(() => {
-    document.documentElement.dataset.household = "on";
-    document.dispatchEvent(new CustomEvent("branch-profile", { detail: { owner: false } }));
-    document.documentElement.dataset.household = "off";
-    document.dispatchEvent(new CustomEvent("branch-profile", { detail: { owner: true } }));
-    document.dispatchEvent(new CustomEvent("branch-strip", {
-      detail: { profiles: { isOwner: false }, profileGeneration: 1 },
-    }));
-    document.dispatchEvent(new CustomEvent("branch-strip", {
-      detail: { profiles: { isOwner: true }, profileGeneration: 2 },
-    }));
-    return {
-      trunksTabHidden: document.getElementById("rail-view-trunks").hidden,
-      trunksActionsHidden: document.getElementById("rail-trunks-actions").hidden,
-    };
-  });
-  assert.deepEqual(state, { trunksTabHidden: false, trunksActionsHidden: false });
-  const caughtUp = await f.page.evaluate(() => {
-    document.documentElement.dataset.household = "on";
-    document.documentElement.dataset.profileGeneration = "40";
-    document.dispatchEvent(new CustomEvent("branch-profile", {
-      detail: { owner: false, profileGeneration: 40 },
-    }));
-    document.documentElement.dataset.household = "off";
-    document.documentElement.dataset.profileGeneration = "41";
-    document.dispatchEvent(new CustomEvent("branch-profile", {
-      detail: { owner: true, profileGeneration: 41 },
-    }));
-    document.dispatchEvent(new CustomEvent("branch-strip", {
-      detail: { profiles: { isOwner: true }, profileGeneration: 41 },
-    }));
-    return document.getElementById("rail-view-trunks").hidden;
-  });
-  assert.equal(caughtUp, false, "a listener that missed older profile events accepts the canonical generation");
+  await f.page.locator('#side [data-act="owner"] .who14 b').filter({ hasText: "Sam" }).waitFor();
+  assert.equal(await row(f.page, scout).count(), 0);
+  // Redesign: the new window has no strip events; when the person changes (switched at the computer, here through the
+  // engine, since switching from the window is held for review) it starts again from nothing, so nothing of the
+  // household view can linger.
+  await f.page.evaluate(() => { globalThis.__householdView = true; });
+  await f.call("/api/profiles/switch", { profileId: null });
+  await f.page.waitForFunction(() => globalThis.__householdView !== true, undefined, { timeout: 15000 });
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await row(f.page, scout).waitFor({ timeout: 30000 });
+  const owner = (await f.call("/api/profiles")).roleLabels.owner.label;
+  assert.equal(await f.page.locator('#side [data-act="owner"] .who14 b').innerText(), owner);
+  await place(f.page, "customize", "trunks");
+  assert.equal(await f.page.locator(`#main .prow [data-act="edit"][data-id="${scout.id}"]`).count(), 1, "the owner's Trunks are back without anyone reloading");
   assert.deepEqual(f.errors, []);
 });
 
 test("replies show the assistant's own face, and a Trunk set to 3D is a 3D stand-in only while 3D faces are on", async (t) => {
   const f = await fixture(t);
-  const trunk = await withTrunk(f, "Scout", { face: "drawn", colour: 2, shape: "acorn", depth: "3d" });
-  await f.call("/api/conversation-mode/settings", { newConversation: "follow" }).catch(() => undefined);
+  const trunk = await withTrunk(f, "Scout", { face: "emoji", emoji: "🦊", depth: "3d" });
   await f.open();
-  assert.equal(await trunkFace(f.page, trunk.id).locator(".face.is3d").count(), 0, "3D faces ship off");
-  await f.call("/api/shell-look", { faces3d: "on" });
-  await f.refresh();
-  assert.equal(await trunkFace(f.page, trunk.id).locator(".face.is3d .depth .slab").count(), 6, "on, it is a thick tile");
+  // Branch's own assistant: its own face on a reply in a new conversation, before the words.
   await f.page.locator("#prompt").fill("Say hello.");
-  await f.page.locator("#send").click();
-  const face = f.page.locator("#conversation .message.assistant > .message-face[data-assistant]").first();
-  await face.waitFor({ timeout: 15000 });
-  assert.equal(await face.evaluate((node) => node.nextElementSibling.tagName), "SMALL", "the face sits before the name");
-  assert.equal(await f.page.locator('#conversation img[src*="keepoak-mark"]').count(), 0, "not Branch's logo");
+  await f.page.locator("#prompt").press("Enter");
+  const plain = f.page.locator("#main .b").filter({ hasText: "Here it is." }).first();
+  await plain.waitFor({ timeout: 15000 });
+  // The owner (2026-09-26): Branch's face is its own animated character, its loop or, with motion reduced, its still.
+  assert.equal(await plain.locator('.gut .av.fig17r :is(video[src^="/art/anim-"], img[src^="/art/branch-"])').count(), 1, "Branch's own face");
+  // A Trunk's reply carries the Trunk's own face, not Branch's.
+  await row(f.page, trunk).click();
+  await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", trunk.chatSessionId);
+  const reply = f.page.locator("#main .b").filter({ has: f.page.locator(".gut .av") }).first();
+  await reply.waitFor({ timeout: 15000 });
+  assert.equal(await reply.locator('.gut :is(.av.brand, .av.fig17r)').count(), 0, "not Branch's face");
+  // Redesign: the prototype has no 3D faces (its av() draws the pebble, an emoji or a photo), so a Trunk set to 3D is
+  // drawn as its ordinary face.
+  assert.equal(await f.page.locator("#app .is3d").count(), 0);
   assert.deepEqual(f.errors, []);
+  assert.equal(await reply.locator(".gut .av i").count(), 1, "window bug: a Trunk's reply is signed with av() of the engine's record, which reads no emoji, so its chosen face is lost");
 });
 
 test("every name gives a face with one of the eight colours: a Trunk its pixel pattern, the assistant a whole mouth", async (t) => {
   const f = await fixture(t);
+  const trunks = [];
+  for (const name of ["Name 0 A", "Name 1 B", "Name 2 C", "Name 3 D", "Name 4 E", "Name 5 F"]) trunks.push(await withTrunk(f, name, { face: "pattern" }));
   await f.open();
-  const broken = await f.page.evaluate(async () => {
-    const { assistantSpec, face, trunkSpec } = await import("/faces.js");
-    const bad = [];
-    for (let n = 0; n < 300; n++) {
-      const name = `Name ${n} ${String.fromCharCode(65 + (n % 26))}`;
-      // DG-108: a Trunk's face made from its name is the pixel pattern; the assistant keeps its drawn face.
-      const trunk = trunkSpec({ name }), pixels = face(trunk, 28).querySelector("canvas.fc-pattern");
-      if (!/^var\(--series-[1-8]\)$/.test(trunk.colour) || !pixels) bad.push(`${name}: ${trunk.colour} no pattern`);
-      const spec = assistantSpec(name), drawn = face(spec, 28);
-      const mouth = drawn.querySelector(".fc-mouth")?.getAttribute("d") ?? "";
-      if (!/^var\(--series-[1-8]\)$/.test(spec.colour) || !/^M\d/.test(mouth)) bad.push(`${name}: ${spec.colour} ${mouth}`);
-    }
-    return bad;
-  });
-  assert.deepEqual(broken, []);
+  // Redesign (the owner's decision, #390): the conversation's header, now in the title-bar row, carries no face, so the
+  // assistant's brand face (av({kind:'main'})) is not drawn there; it signs the assistant's replies (the test above).
+  await f.page.locator(".titlebar .head").waitFor();
+  assert.equal(await f.page.locator(".titlebar .av").count(), 0, "no face in the conversation's header, Branch's own included");
+  for (const trunk of trunks) await row(f.page, trunk).waitFor();
+  const colours = await f.page.evaluate((ids) => ids.map((id) => document.querySelector(`#side .row[data-id="${id}"] .av`).style.getPropertyValue("--c").toLowerCase()), trunks.map((trunk) => trunk.chatSessionId));
   assert.deepEqual(f.errors, []);
+  assert.deepEqual(colours.filter((colour) => !COLOURS.includes(colour)), [], "window bug: the sidebar row draws every Trunk in #2F6F5E, not one of the prototype's eight colours");
 });
 
 test("a computer asking to join shows in the strip with a turning ring, and is let in, named and finished from there", async (t) => {
@@ -386,81 +383,76 @@ test("a computer asking to join shows in the strip with a turning ring, and is l
   const publicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64");
   book.redeem({ offer: offer.id, code: offer.code, name: "Studio Mac", platform: "darwin", publicKey, offers: ["notify"] }, "127.0.0.1");
   await f.open();
-  const asking = f.page.locator('#trunk-strip [data-strip-id^="asking:"]');
-  await asking.waitFor();
-  assert.equal(await asking.locator(".face.st-pairing .ring").count(), 1, "the pairing ring");
-  assert.match(await asking.locator(".strip-face").getAttribute("aria-label"), /^Studio Mac, Mac computer, Asking to join$/);
-  await asking.locator(".strip-face").click();
-  const dialog = f.page.locator("#studio");
-  await dialog.getByText("Studio Mac (Mac computer) asks to join.").waitFor();
-  assert.equal(await dialog.getByRole("tab", { name: "Another computer" }).getAttribute("aria-selected"), "true");
-  // mac7/residuals: "Let it in" waits until the owner ticks that the codes match.
-  assert.equal(await dialog.getByRole("button", { name: "Let it in" }).isDisabled(), true, "not before the codes are compared");
-  // Integration: ticked from the keyboard (a real check box with its label), and the route is told so.
-  await dialog.getByLabel("The code matches").focus();
-  await f.page.keyboard.press("Space");
-  assert.equal(await dialog.getByLabel("The code matches").isChecked(), true, "Space ticks it");
-  await dialog.getByRole("button", { name: "Let it in" }).click();
-  await dialog.locator("#pair-name").fill("Studio");
-  await dialog.getByRole("button", { name: "Next" }).click();
-  await dialog.getByText("What Branch may do on it.", { exact: false }).waitFor();
-  await dialog.getByRole("button", { name: "Back" }).click();
-  await dialog.locator("#pair-name").waitFor();
-  await dialog.getByRole("button", { name: "Next" }).click();
-  await dialog.getByRole("button", { name: "Finish" }).click();
-  await dialog.waitFor({ state: "detached" });
-  await f.page.locator(".ov-page").getByRole("heading", { name: "Studio" }).waitFor();
-  assert.equal((await f.call("/api/devices")).devices[0].name, "Studio", "renamed as it was named");
-  assert.equal(await f.page.locator('#trunk-strip [data-strip-id^="asking:"]').count(), 0);
+  // Pairing is live since #351: the window draws the prototype's ways in (the switcher's Add a computer or phone,
+  // Settings › Computer's Add a computer), and still never lets an asking computer in by itself; only the owner's
+  // "Let it in", after ticking that the check codes match, does (tests/unhold-pairing.test.mjs).
+  await f.page.locator('#side [data-act="machines"]').click();
+  const switcher = f.page.locator(".pop");
+  await switcher.getByText("Talk to the assistant on…").waitFor();
+  assert.equal(await switcher.getByText("Studio Mac").count(), 0, "the asking computer is not offered from the window");
+  await switcher.getByRole("menuitem", { name: "Add a computer or phone…" }).click();
+  await f.page.locator('.dlg .tab[data-v="phone"]').click();
+  assert.equal(await live(f.page.locator(".dlg").getByRole("button", { name: "Show the phone code" })), true, "Show the phone code is live");
+  await f.page.locator(".dlg").getByRole("button", { name: "Close" }).click();
+  await settingsPage(f.page, "computer");
+  await f.page.locator('[data-act="comp-add"]').click();
+  const kinds = f.page.locator(".dlg");
+  await kinds.getByRole("heading", { name: "Add a computer" }).waitFor();
+  assert.equal(await live(kinds.locator('[data-act="comp-add-go"][data-v="pair"]')), true, "Another computer with Branch is live");
+  await kinds.getByRole("button", { name: "Cancel" }).click();
+  const devices = await f.call("/api/devices");
+  assert.deepEqual([devices.requests[0].status, devices.devices.length], ["waiting", 0], "the request still waits for the owner at the computer");
   assert.deepEqual(f.errors, []);
 });
 
 test("in French every word of the strip and the studio follows at once, and no icon is lost", async (t) => {
   const f = await fixture(t);
   await withTrunk(f);
-  await f.call("/api/devices/mode", { mode: "when-needed" });
   await f.open();
-  await f.page.locator("#trunk-strip .strip-add").click();
-  const dialog = f.page.locator("#studio");
-  await dialog.getByRole("tab", { name: "Another computer" }).click();
-  await dialog.locator('.pair-card[data-mode="invite"]').click();
-  await dialog.locator("#pair-number").waitFor();
-  await f.page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
-  await dialog.getByRole("tab", { name: "Un autre ordinateur" }).waitFor();
-  await dialog.locator("#pair-number").waitFor();
-  assert.equal(await dialog.locator(".pair-copy svg").count(), 1, "the copy icon stays");
-  assert.equal(await dialog.locator(".pair-copy").innerText(), "Copier");
-  assert.match(await dialog.locator("#pair-clock").innerText(), /^Fonctionne une fois/);
-  assert.equal(await f.page.locator("#trunk-strip .strip-add").getAttribute("aria-label"), "Ajouter un Trunk ou associer un ordinateur");
-  assert.match(await f.page.locator('#trunk-strip [data-strip-id="here"] .strip-face').getAttribute("aria-label"), /^Cet ordinateur, /);
-  assert.deepEqual(await untranslated(f.page), []);
+  // Redesign: the strip and the studio are the prototype's + menu (New Trunk) and its Add a computer or phone dialog.
+  const studioWords = async () => {
+    await f.page.locator('#side [data-act="newmenu"]').click();
+    await f.page.locator('.pop [data-act="new-trunk"]').waitFor();
+    const words = await texts(f.page.locator(".pop .mi-t"));
+    assert.equal(await f.page.locator(".pop .mi .ico svg").count(), await f.page.locator(".pop .mi .ico").count(), "every item keeps its icon");
+    await f.page.keyboard.press("Escape");
+    await f.page.locator('#side [data-act="machines"]').click();
+    await f.page.locator('.pop [data-act="addcomp"]').click();
+    const dialog = f.page.locator(".dlg");
+    await dialog.locator('.tab[data-v="phone"]').waitFor();
+    words.push(...await texts(dialog.locator(".dlg-h h2, .tab")));
+    assert.equal(await dialog.locator('.dlg-h [data-act="dlg-close"] svg').count(), 1, "the close icon stays");
+    await dialog.locator('.dlg-h [data-act="dlg-close"]').click();
+    await dialog.waitFor({ state: "detached" });
+    return words;
+  };
+  const english = await studioWords();
+  assert.deepEqual(await notInPrototype(english), [], "every word is the prototype's");
   assert.deepEqual(f.errors, []);
+  await chooseFrench(f);
+  const french = await studioWords();
+  assert.deepEqual(f.errors, []);
+  assert.deepEqual(await stillEnglish(english, french), [], "window bug: the + menu and Add a computer or phone stay in English after choosing Français");
 });
 
 /* ---------------------------------------------------------------- integration review */
 
 test("integration review: faces are painted in real colours under the page's style rules, in the strip and the sidebar roster", async (t) => {
   const f = await fixture(t);
-  for (const name of ["Scout", "Ledger", "Quill", "Harbour", "Moss", "Tally"]) await withTrunk(f, name, { face: "drawn" });
+  const trunks = [];
+  for (const name of ["Scout", "Ledger", "Quill", "Harbour", "Moss", "Tally"]) trunks.push(await withTrunk(f, name, { face: "pattern" }));
+  await f.call(`/api/trunks/${trunks[0].id}`, { chosenColour: "#b84a6b" });
   await f.open();
-  const painted = await f.page.evaluate(async () => {
-    const { face, trunkSpec } = await import("/faces.js");
-    const { avatar } = await import("/trunks.js");
-    const boxes = [...document.querySelectorAll("#trunk-strip .face .fc")];
-    for (let n = 0; n < 40; n++) {
-      for (const drawn of [face(trunkSpec({ name: `Face ${n}` }), 28), avatar({ name: `Face ${n}` }, 28)]) {
-        document.body.append(drawn);
-        boxes.push(drawn.querySelector(".fc"));
-      }
-    }
-    const colours = boxes.map((box) => getComputedStyle(box).backgroundColor);
-    for (const box of boxes) if (!box.closest("#trunk-strip")) box.closest(".face")?.remove();
-    return colours;
-  });
-  assert.ok(painted.length > 80);
+  for (const trunk of trunks) await row(f.page, trunk).waitFor();
+  await place(f.page, "customize", "trunks");
+  await f.page.locator("#main .prow .av").nth(5).waitFor();
+  const painted = await f.page.evaluate(() => [...document.querySelectorAll("#side .row .av .peb, #side .row .av.pbl .pbl-c, #main .prow .av .peb, #main .prow .av.pbl .pbl-c")].map((peb) => getComputedStyle(peb).backgroundColor));
+  assert.ok(painted.length >= 12, `${painted.length} faces`);
   const bad = painted.filter((colour) => /^rgba?\(0, 0, 0(, 0)?\)$/.test(colour) || colour === "transparent");
   assert.deepEqual(bad, [], "no black or empty face: the colour reaches the page through its style rules");
+  const chosen = await f.page.evaluate((id) => getComputedStyle(document.querySelector(`#side .row[data-id="${id}"] .av .peb, #side .row[data-id="${id}"] .av.pbl .pbl-c`)).backgroundColor, trunks[0].chatSessionId);
   assert.deepEqual(f.errors, []);
+  assert.equal(chosen, "rgb(184, 74, 107)", "window bug: the sidebar row paints a Trunk's chosen colour as #2F6F5E (av() of the engine's record reads no chosenColour)");
 });
 
 test("integration review: dropping a Trunk three places down moves it there, and Hide has an Undo", async (t) => {
@@ -468,52 +460,35 @@ test("integration review: dropping a Trunk three places down moves it there, and
   const trunks = [];
   for (const name of ["Alpha", "Bravo", "Charlie", "Delta"]) trunks.push(await withTrunk(f, name, { face: "letters" }));
   await f.open();
-  const order = () => f.page.locator('#trunk-strip [data-strip-id^="trunk:"]').evaluateAll((nodes) => nodes.map((node) => node.querySelector(".strip-face").getAttribute("aria-label").split(",")[0]));
-  assert.deepEqual(await order(), ["Alpha", "Bravo", "Charlie", "Delta"]);
-  await f.page.evaluate(async (id) => (await import("/strip.js")).moveTrunk(id, 3), trunks[0].id);
-  await f.page.waitForFunction(() => document.querySelector('#trunk-strip [data-strip-id^="trunk:"]:last-of-type .strip-face')?.getAttribute("aria-label").startsWith("Alpha"));
-  assert.deepEqual(await order(), ["Bravo", "Charlie", "Delta", "Alpha"], "moved, not swapped with Delta");
-  await trunkFace(f.page, trunks[1].id).click({ button: "right" });
-  await f.page.locator("#strip-menu").getByRole("menuitem", { name: "Hide from the strip and sidebar" }).click();
-  await f.page.waitForFunction((id) => !document.querySelector(`#trunk-strip [data-strip-id="trunk:${id}"]`), trunks[1].id);
-  await f.page.locator("#toast .strip-undo").click();
-  await trunkFace(f.page, trunks[1].id).waitFor({ state: "visible" });
-  assert.equal((await f.call(`/api/trunks/${trunks[1].id}`)).trunk.hidden, false, "Undo shows it again");
+  for (const trunk of trunks) await row(f.page, trunk).waitFor();
+  // Redesign: the prototype orders the list by Pin to top (its Pinned group above Recent); Unpin is the way back.
+  const order = () => f.page.evaluate(() => [...document.querySelectorAll("#side .list > .lh:not(.lh-btn), #side .list > .row")].map((node) => node.classList.contains("lh") ? node.firstChild.textContent.trim() : node.dataset.id));
+  const delta = trunks[3];
+  assert.equal((await order()).includes("Pinned"), false, "nothing pinned yet");
+  await row(f.page, delta).click({ button: "right" });
+  await f.page.locator(".pop").getByRole("menuitem", { name: "Pin to top" }).click();
+  await f.page.waitForFunction(() => [...document.querySelectorAll("#side .list > .lh")].some((node) => node.firstChild.textContent.trim() === "Pinned"));
+  assert.deepEqual((await order()).slice(0, 3), ["Pinned", delta.chatSessionId, "Recent"], "it moved to the top");
+  assert.equal((await f.call("/api/trunks")).trunks.find((trunk) => trunk.id === delta.id).pinned, true, "the engine keeps it there");
+  await row(f.page, delta).click({ button: "right" });
+  await f.page.locator(".pop").getByRole("menuitem", { name: "Unpin" }).click();
+  await f.page.waitForFunction(() => ![...document.querySelectorAll("#side .list > .lh")].some((node) => node.firstChild.textContent.trim() === "Pinned"));
+  assert.equal((await f.call("/api/trunks")).trunks.find((trunk) => trunk.id === delta.id).pinned, false, "Unpin puts it back");
+  assert.ok((await order()).includes(delta.chatSessionId));
   assert.deepEqual(f.errors, []);
-});
-
-test("integration review: switched off on the server, a fresh window keeps no gap where the strip would be", async (t) => {
-  const f = await fixture(t);
-  await f.call("/api/shell-look", { strip: "off" });
-  await f.page.goto(f.server.url);
-  await f.page.getByLabel("Session token", { exact: true }).fill(f.server.token);
-  await f.page.getByRole("button", { name: "Connect", exact: true }).click();
-  await f.page.locator("body.lx-ready").waitFor({ state: "attached" });
-  // layout.js marks lx-ready as the page loads, before the key is taken (ci-flakes-3).
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await f.page.waitForFunction(() => !document.getElementById("trunk-strip"), undefined, { timeout: 15000 });
-  await f.page.waitForTimeout(500);
-  const left = await f.page.locator("#conversation-rail").boundingBox();
-  assert.ok(left.x < 30, `the sidebar starts at the edge again (${left.x})`);
-  assert.equal(await f.page.evaluate(() => document.body.classList.contains("lx-strip")), false);
-  await f.page.addInitScript(() => new MutationObserver(() => { if (document.body?.classList.contains("lx-strip")) globalThis.__stripSeen = true; })
-    .observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["class"] }));
-  await f.page.reload();
-  await f.page.locator("body.lx-ready").waitFor({ state: "attached" });
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await f.page.waitForTimeout(2500);
-  assert.equal(await f.page.evaluate(() => globalThis.__stripSeen === true), false, "and the next load never draws or reserves it, not even for a moment");
 });
 
 test("integration review: an open dropdown stays open through the window's three-second refresh", async (t) => {
   const f = await fixture(t);
   await f.open();
-  const { openSettingFor } = await import("./places.mjs");
-  await openSettingFor(f.page, "#policy-preset");
-  await f.page.waitForFunction(() => document.getElementById("policy-preset").options.length >= 4);
-  await f.page.locator("#policy-preset").click();
-  await f.page.locator("#glass-list").waitFor({ state: "visible" });
-  await f.page.waitForTimeout(7000); // at least two refreshes
-  assert.equal(await f.page.locator("#glass-list").isVisible(), true, "the list is still open");
+  await f.page.locator('#side [data-act="owner"]').click();
+  const menu = f.page.locator(".pop");
+  await menu.getByText("Who is using Branch").waitFor();
+  // Redesign: the window refreshes when the engine says something changed (its event stream), not on a timer; a new
+  // Trunk is such a change, and its row appearing proves the window was drawn again while the menu was open.
+  const trunk = await withTrunk(f, "Scout");
+  await row(f.page, trunk).waitFor({ timeout: 30000 });
+  assert.equal(await menu.isVisible(), true, "the menu is still open");
+  assert.equal(await menu.getByText("Who is using Branch").count(), 1, "and still the same menu");
   assert.deepEqual(f.errors, []);
 });

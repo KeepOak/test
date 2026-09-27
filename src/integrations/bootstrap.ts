@@ -188,7 +188,11 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
   /** Told which sections of the integrations file this load left out (none when it was used), for the launch-file card. */
   leftOut?: (sections: readonly LaunchSection[]) => void;
   /** Things to let go of when Branch locks itself, such as a browser of the owner's it had borrowed. */
-  onLock?: (release: () => Promise<unknown>) => void }
+  onLock?: (release: () => Promise<unknown>) => void;
+  /** The owner's own MCP servers, kept in the store (src/mcp-own-servers.ts); started with the launch file's. */
+  ownMcp?: { startSaved(launchIds: readonly string[]): Promise<void>; closeAll(): Promise<void> };
+  /** The command-line tools the owner allowed (src/own-clis.ts), handed to the shell for each command. */
+  ownClis?: { attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[]): void } }
 
 /** Sending work to a server is off until the owner turns it on; GitHub needs a saved token too. */
 export const GitConfigSchema = z.object({
@@ -290,8 +294,12 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
     if (errors.length) throw new Error(`Failed to close ${errors.length} integration(s)`);
   };
   const config = await readConfig(path, env, channels);
-  if (!config) return { close, count: 0, hosted };
+  // The owner's own servers start whether or not there is a launch file, after its network settings, and their ids
+  // never take one of the file's. The app closes them itself (OwnMcpServers.closeAll), so they are not counted here.
+  const own = channels?.ownMcp;
+  if (!config) { if (own) await own.startSaved([]); return { close, count: 0, hosted }; }
   if (config.web) channels?.web?.configure(config.web);
+  if (own) await own.startSaved(config.mcp.map(server => McpConfigSchema.parse(server).id));
   const policy = channels?.web?.policy;
   if (new Set(config.mcp.map(server => server.id)).size !== config.mcp.length)
     throw new Error('MCP server IDs must be unique');
@@ -348,6 +356,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       if (tunedStore && tunedOwner) created.tuning = () => commandTuning(tunedStore, tunedOwner, env);
       await created.ready();
       registerShell(registry, created); closers.push(() => created.close());
+      channels?.ownClis?.attach(created, Object.keys(config.shell.executables));
       // A command line the owner can keep open, from the very same list of programs. It is closed
       // with everything else here, so nothing it started outlives the app.
       const store = channels?.store as Store | undefined;
@@ -389,7 +398,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
  * A server on demand that has never been connected has no list to show, so it is connected now —
  * once — rather than being silently missing.
  */
-async function startMcp(
+export async function startMcp(
   registry: ToolRegistry, server: unknown, env: NodeJS.ProcessEnv,
   policy: NetworkPolicy | undefined, host: McpHost | undefined,
 ): Promise<(() => Promise<void>) | null> {
@@ -437,7 +446,9 @@ export interface McpHost {
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
-    acquire(runId: string, id: string): Promise<{ close(): Promise<void> }> };
+    acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
+    /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */
+    forget?(id: string): Promise<void> };
 }
 
 type ChannelConfig = z.infer<typeof ChannelConfigSchema>;

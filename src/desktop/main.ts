@@ -16,11 +16,14 @@ import { fileURLToPath } from "node:url";
 import { resolveDataLocation } from "../install/layout.js";
 import { attachToRunning } from "../install/running.js";
 import { writeUpdateBackup } from "../install/update-backup.js";
+import { takeDataCopy } from "../install/data-copy.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
+import { macLoginItem } from "./login-item.js";
 import { createBranch } from "../index.js";
+import { realDeviceNetwork } from "../devices/network.js"; // find-computers: the owner's installed app finds computers too
 import { defaultPreset, providerFromEnv } from "../providers.js";
 import { startServer } from "../server.js";
 import { loadIntegrations } from "../integrations/bootstrap.js";
@@ -37,7 +40,7 @@ import { registerConversationExportIpc } from "./conversation-export-ipc.js";
 // 0.18.1: "Branch stopped responding — Restart" relaunches the app, and with it the local server.
 import { ipcMain } from "electron";
 import { registerRestartIpc } from "./restart-ipc.js";
-import { minimumSize, openingFor, readWindowState, writeWindowState } from "./window-state.js";
+import { minimumSize, openingFor, readWindowState, restoreBounds, writeWindowState } from "./window-state.js";
 import { overlayFor, registerWindowLookIpc } from "./window-chrome-ipc.js";
 import { registerEditMenu } from "./context-menu.js";
 import { recordDesktopCrash, type SpanStore } from "../tracing.js";
@@ -47,15 +50,20 @@ import { electronBannerWindow } from "./banner-window.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
 import { snapshotData, updateCanary } from "../never-break/canary.js";
 import { appEntryName } from "./release-assets.js";
-// mac7/app-icon: the right size of the KeepOak mark for the window, the menu bar and the dock.
+// mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
 // mac7/safe-rollback: what an update changes is written down before the hand-over moves anything.
 import { recordActivation } from "../install/headless-update.js";
-// mac7/win-icon: the taskbar shows the KeepOak mark, not Electron's atom.
+// mac7/win-icon: the taskbar shows the mascot, not Electron's atom.
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
 import { asksBeforeQuit, quitChoice, quitQuestion, runningTaskCount, type QuitReason } from "./quit-guard.js";
-import { signedHeaders } from "./signed-headers.js";
+import { sameAppOrigin, signedHeaders, windowKeyReader } from "./signed-headers.js";
+// Talk live: the microphone, only for a call the owner started (src/desktop/talk-live-mic.ts).
+import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
+// Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
+import { globalShortcut } from "electron";
+import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -68,8 +76,10 @@ let runningNow: () => number = () => 0;
 let joinedBackground = false;
 let askingToQuit = false;
 
-function markPath(): string {
-  return fileURLToPath(new URL("../../public/assets/keepoak-mark.png", import.meta.url));
+/** Branch's mascot: the whole of it for the window, its face for the small tray (scripts/make-icons.mjs). */
+function markPath(small = false): string {
+  const file = small ? "branch-face.png" : "branch-mascot.png";
+  return fileURLToPath(new URL(`../../public/assets/${file}`, import.meta.url));
 }
 
 /**
@@ -87,7 +97,9 @@ function branchIcon(): NativeImage {
  * macOS a template image so the system colours it for a light or a dark menu bar (see icon-sizes.ts).
  */
 function trayIcon(): NativeImage {
-  const source = nativeImage.createFromPath(markPath());
+  // A template image is drawn from its outline alone: the whole mascot's branches and orbs make one
+  // that reads, where the face crop would be a plain round blob.
+  const source = nativeImage.createFromPath(markPath(!isTemplateTrayIcon(process.platform)));
   const side = trayIconSize(process.platform);
   const image = source.resize({ width: side, height: side, quality: "best" });
   for (const scale of trayIconScales(process.platform)) {
@@ -103,20 +115,24 @@ function trayIcon(): NativeImage {
 function protectWindow(
   win: BrowserWindow,
   origin: string,
-  token: string,
+  /** The window's key as it is now: removing a phone that was handed it replaces it. */
+  key: () => string,
+  mic: TalkLiveMic,
 ): void {
   const session = win.webContents.session;
   session.on("will-download", (event) => event.preventDefault());
-  session.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
+  // Every permission is refused, except the microphone for a Talk live call the owner has just started.
+  session.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(mic.take(contents.id, permission, details as { requestingUrl?: string; mediaTypes?: string[] })),
   );
   session.setPermissionCheckHandler(() => false);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event, target) => {
     if (new URL(target).origin !== origin) event.preventDefault();
   });
+  // A task's socket (ws://) is at the window's own address too, so it is let through and signed like /api/ requests.
   session.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: new URL(details.url).origin !== origin });
+    callback({ cancel: !sameAppOrigin(details.url, origin) });
   });
   // Remembered once: a request can still arrive after the window is gone, and a destroyed
   // window throws on any property access ("Object has been destroyed").
@@ -124,14 +140,14 @@ function protectWindow(
   session.webRequest.onBeforeSendHeaders((details, callback) => {
     const signed =
       details.webContentsId === contentsId &&
-      new URL(details.url).origin === origin &&
+      sameAppOrigin(details.url, origin) &&
       new URL(details.url).pathname.startsWith("/api/");
-    callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, token) : { ...details.requestHeaders } });
+    callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, key()) : { ...details.requestHeaders } });
   });
 }
 
 async function createWindow(
-  url: string, token: string, settings: DesktopSettings, update: UpdateHooks,
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -158,7 +174,9 @@ async function createWindow(
       partition: "persist:branch-agent",
     },
   });
-  // DG-177: the first launch fills the screen; later ones open the way the owner left the window.
+  // DG-177: the first launch fills the screen; later ones open the way the owner left the window. The size is put
+  // back before maximising and before anything is remembered, so un-maximising returns to it.
+  if (opening.bounds) restoreBounds(window, opening.bounds);
   if (opening.maximized) window.maximize();
   const remember = () => {
     if (window && !window.isDestroyed() && !window.isMinimized())
@@ -172,19 +190,23 @@ async function createWindow(
   window.on("resize", soon);
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
-  protectWindow(window, url, token);
+  const mic = new TalkLiveMic(url, window.webContents.id);
+  protectWindow(window, url, key, mic);
+  registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template));
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: () => updateReadiness(url, token) });
+    { ...update, readiness: () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   registerRestartIpc(ipcMain, window, url, () => {
     app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
     quitReason = "restart";
     app.quit();
   });
+  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: () => quickAskKeys(url, key()),
+    log: (line) => console.error(line) });
   // Redesign phase 1 (integration review): Windows ending the session never waits for the quit question.
   window.on("query-session-end", () => { quitReason = "system"; });
   window.on("session-end", () => { quitReason = "system"; });
@@ -270,7 +292,7 @@ function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
 
 /**
  * mac7/win-icon: points this copy's Start-menu and desktop shortcuts, and its Add or remove programs
- * entry, at the KeepOak mark and the app ID (src/install/windows-identity.ts). An update only swaps
+ * entry, at the mascot and the app ID (src/install/windows-identity.ts). An update only swaps
  * the program folder, so this runs at every start; it writes nothing when all is already right.
  */
 async function refreshWindowsShortcuts(): Promise<void> {
@@ -293,15 +315,17 @@ async function start(): Promise<void> {
   // Joining an engine means that engine owns the saved work and holds the program files open, so the
   // safety copy is asked of it and it is closed before an update swaps anything.
   joinedBackground = Boolean(running);
-  if (running)
-    return createWindow(running.url, running.token, settings, {
-      backup: () => requestUpdateBackup(running.url, running.token),
+  // The background engine saves a new key when a phone that was handed it is removed; it is read again each time.
+  const runningKey = running ? windowKeyReader(dataDir, running.token) : null;
+  if (running && runningKey)
+    return createWindow(running.url, runningKey, settings, {
+      backup: () => requestUpdateBackup(running.url, runningKey()),
       stopDaemon: async () => {
         const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true });
         if (report.pid !== null && !report.stopped) throw new UpdateDeferredError(report.message);
         return report.pid;
       },
-      canary: desktopCanary(dataDir, () => engineSnapshot(running.url, running.token)), // mac3/never-break
+      canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
       ...desktopRecord(dataDir), // mac7/safe-rollback
     });
   const chatgpt = new ChatGPTAuth(new FileTokenVault(join(base, "chatgpt-auth.json"), {
@@ -312,12 +336,13 @@ async function start(): Promise<void> {
   const branch = await createBranch({
     dataDir,
     workspace,
-    presets: [defaultPreset(desktopProvider(settings), settings.summary().model || undefined)],
+    presets: desktopPresets(settings),
     chatgpt,
     bannerWindow: electronBannerWindow({
       create: (options) => new BrowserWindow(options),
       workArea: () => screen.getPrimaryDisplay().workArea,
     }),
+    findComputers: realDeviceNetwork(), // find-computers: same parts and rules as `branch start` (src/devices/network.ts)
   });
   watchDesktopCrashes(branch);
   runningNow = () => runningTaskCount(branch.store);
@@ -354,13 +379,19 @@ async function start(): Promise<void> {
       dataDir, port: await rememberedPort(portFile), anyPortIfTaken: true, presence: "app",
       executable: app.isPackaged ? process.execPath : null,
       installRoot: installedAppRoot(app.isPackaged, process.platform, process.execPath),
+      // "Start when you log in" on a Mac is the app's own login item; Windows keeps its per-person sign-in list.
+      ...(app.isPackaged && process.platform === "darwin" ? { loginItem: macLoginItem(app) } : {}),
       quit: () => { quitReason = "command"; app.quit(); }, // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below)
     });
     rememberPort(portFile, server.url);
     serverClose = server.close;
-    await createWindow(server.url, server.token, settings, {
+    await createWindow(server.url, () => server.token, settings, {
+      // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
       backup: () =>
-        writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version).then(() => undefined),
+        writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version)
+          .then(() => takeDataCopy({ dataDir, version: branch.version,
+            open: { "branch.sqlite": branch.store.sqlite, "journal.sqlite": branch.neverBreak.journal.database } }))
+          .then(() => undefined),
       // mac3/never-break: the new version is tried on a copy of this data before it is used.
       canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
       ...desktopRecord(dataDir), // mac7/safe-rollback
@@ -456,8 +487,13 @@ function desktopProvider(settings: DesktopSettings) {
     return providerFromEnv(settings.environment());
   } catch {
     settings.reportConnectionIssue();
-    return providerFromEnv({ BRANCH_PROVIDER: "demo" });
+    return null;
   }
+}
+/** The saved connection as the one preset, or none: then every message is refused in plain words until a model is set up. */
+function desktopPresets(settings: DesktopSettings) {
+  const provider = desktopProvider(settings);
+  return provider ? [defaultPreset(provider, settings.summary().model || undefined)] : [];
 }
 
 app.setName("Branch Agent");
@@ -476,6 +512,7 @@ else {
     window?.focus();
   });
   app.on("activate", () => window?.show());
+  app.on("will-quit", () => globalShortcut.unregisterAll()); // pass 17: quick-ask keys go with the app
   app.on("before-quit", (event) => {
     if (quitting) return;
     event.preventDefault();

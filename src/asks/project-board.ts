@@ -93,13 +93,14 @@ export class ProjectBoards {
 
 export function registerProjectBoard(registry: ToolRegistry, boards: ProjectBoards): void {
   registry.register({
-    name: "project.board", permission: "projects.read",
+    // Ships-on sweep (2026-09-26): a project's flows and schedules belong with schedules, keeping the memory box inside its budget.
+    name: "project.board", group: "schedules", permission: "projects.read",
     description: "Show one project's board: the flows, schedules and triggers put under it, and the tasks done under it. With no project, the active one.",
     parameters: z.object({ project: z.string().trim().min(1).max(64).optional() }).strict(),
     execute: async (input) => boards.board(input.project),
   });
   registry.register({
-    name: "project.assign", permission: "projects.manage",
+    name: "project.assign", group: "schedules", permission: "projects.manage",
     description: "Put a saved flow, a schedule or a trigger under a project, so it shows on that project's board. Nothing about the thing itself changes.",
     parameters: AssignSchema,
     execute: async (input) => boards.assign(input),

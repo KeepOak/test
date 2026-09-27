@@ -331,6 +331,8 @@ const groupWords: Record<string, readonly string[]> = {
   skills: ["skill", "skills", "plugin", "plugins", "recipe", "how-to"],
   settings: ["setting", "settings", "preference", "model", "cost", "spending", "password", "secret", "permission"],
   services: ["api", "service", "endpoint", "integration", "notion", "operation", "openapi"],
+  // bugfix-9: "Make me a Trunk: …" opens the Trunks box, so Branch is offered trunk.propose (src/trunks/propose.ts).
+  trunks: ["trunk", "trunks"],
 };
 
 export interface RelevanceSignals {

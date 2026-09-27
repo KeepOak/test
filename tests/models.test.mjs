@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, OpenAIProvider, AnthropicProvider, presetsFromEnv, ModelRouter } from "../dist/index.js";
+import { createBranch, OpenAIProvider, AnthropicProvider, presetsFromEnv, ModelRouter, noModelWords } from "../dist/index.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { startServer } from "../dist/server.js";
 
@@ -41,7 +41,10 @@ test("named presets: each task uses the selected preset's provider and model", a
   assert.deepEqual([alpha.calls, beta.calls], [1, 1]);
   assert.throws(() => app.runtime.models.configure("local", { activePreset: "gamma" }), /Unknown model preset/);
   assert.throws(() => app.runtime.models.configure("local", { fallbackOrder: ["beta", "beta"] }), /twice/);
-  assert.throws(() => new ModelRouter(app.store, []), /At least one/);
+  // No presets is allowed: no model is set up, and the stand-in that refuses is never listed.
+  const empty = new ModelRouter(app.store, []);
+  assert.equal(empty.configured, false);
+  assert.equal(empty.presets.size, 0);
 });
 
 test("session override switches the model for one conversation and reports the model actually used", async (t) => {
@@ -179,5 +182,29 @@ test("presets come from BRANCH_MODEL_PRESETS with keys read from named variables
     { id: "x", name: "X", provider: "openai", endpoint: "https://api.example.com/v1", model: "m", apiKeyEnv: "MISSING" }]) }),
     /BRANCH_API_KEY is required/);
   const single = presetsFromEnv({ BRANCH_PROVIDER: "demo" });
-  assert.deepEqual(single.map((preset) => [preset.id, preset.name]), [["default", "Offline demonstration"]]);
+  assert.deepEqual(single.map((preset) => [preset.id, preset.name]), [["default", "Test fixture"]]);
+  // With no model named there are no presets at all: nothing falls back to the fixture.
+  assert.deepEqual(presetsFromEnv({}), []);
 });
+
+test("with no model set up nothing is listed and every task is refused in plain words", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-no-model-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), presets: [] });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const models = app.runtime.models;
+  assert.equal(models.configured, false);
+  assert.deepEqual(models.summary("local").presets, []);
+  const run = await app.runtime.run({ prompt: "hello" });
+  assert.equal(run.status, "failed");
+  assert.equal(run.output, noModelWords);
+  assert.equal(finishedSetup(app), false, "a refusal is not a first answer");
+  // A real connection added later answers at once, and removing it leaves no model again rather than failing.
+  models.register({ id: "real", name: "Real", model: "m", provider: { name: "stub", complete: async () => ({ content: "hi", toolCalls: [] }) } });
+  assert.equal(models.configured, true);
+  const answered = await app.runtime.run({ prompt: "hello again" });
+  assert.equal(answered.status, "completed");
+  assert.equal(finishedSetup(app), true, "the first real answer finishes setup");
+  assert.equal(models.remove("real"), true);
+  assert.equal(models.configured, false);
+});
+const finishedSetup = (app) => app.store.get("settings", app.runtime.owner, "onboarding")?.data?.done === true;

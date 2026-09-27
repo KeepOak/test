@@ -19,6 +19,7 @@ async function fixture(t, steps = [say("ok")]) {
   const root = await mkdtemp(join(tmpdir(), "branch-recipes-"));
   const provider = scripted(steps);
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about recipes, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, root, provider, context: app.runtime.context() };
 }

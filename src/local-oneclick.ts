@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { posix, win32 } from "node:path";
+import { audit } from "./audit.js";
 import { errorText } from "./contracts.js";
 import { findVariant, ollamaDownloadBytes, variantBytes, type CatalogueEntry, type CatalogueVariant } from "./local-catalogue.js";
 import { registerLocalConnection, smokeTest, type LocalConnectionDeps } from "./local-connections.js";
@@ -11,8 +12,8 @@ import { LmStudioClient, OllamaClient, OpenAiServerClient, lmStudioModelName, lo
 import { localRuntimeFetch } from "./local-policy.js";
 import { detectTools, installPlan, isInstallable, planSize, runInstall, type InstallPlan, type InstallableRunner } from "./local-install.js";
 import {
-  ButtonGoSchema, ButtonPlanSchema, installGuard, needsAgreementNote, notInstalledNote, planChangedNote, sizeChoices,
-  systemWideAllowed,
+  ButtonGoSchema, ButtonPlanSchema, installGuard, needsAgreementNote, notInstalledNote, oneButtonMode, onceGuard, planChangedNote,
+  sizeChoices, systemWideAllowed,
   type ButtonGo, type PressContext, type SizeChoice,
 } from "./local-one-button.js";
 
@@ -76,6 +77,8 @@ interface Resolved {
   variant: CatalogueVariant | null;
   bytes: number | null;
   context: number;
+  /** Already in Ollama on this computer: used as it is, nothing is downloaded. */
+  found?: boolean;
 }
 
 export class OneClick {
@@ -127,6 +130,7 @@ export class OneClick {
   /** What exactly to fetch, and with how much room for words. Refuses what will not fit. */
   private async resolve(request: SetupRequest, runtime: RuntimeId): Promise<Resolved> {
     const room = await this.deps.room();
+    if ("found" in request && request.found) return this.resolveFound(request.name, runtime, room, request.force);
     if ("model" in request) {
       const { entry, variant } = findVariant(request.model, request.quant);
       const bytes = variantBytes(variant, runtime);
@@ -147,31 +151,56 @@ export class OneClick {
     if (report?.fit === "no" && !force) throw new Error(report.note);
     return { runtime, label: source, source, entry: null, variant: null, bytes, context: 8192 };
   }
+  /** A model already in Ollama here: judged on its size on this disk, with nothing asked of the internet. */
+  private async resolveFound(name: string, runtime: RuntimeId, room: MachineRoom, force: boolean): Promise<Resolved> {
+    if (runtime !== "ollama") throw new Error("Only a model Ollama already has can be used as it is.");
+    const plain = localModelName.parse(name);
+    const size = (await this.ollama.list().catch(() => [])).find((model) => model.name === plain)?.size ?? 0;
+    const report = size ? judgeFit(room, size, { layers: 32, kvHeads: 8, headDim: 128 }, 8192) : null;
+    if (report?.fit === "no" && !force) throw new Error(report.note);
+    return { runtime, label: plain, source: plain, entry: null, variant: null, bytes: null, context: 8192, found: true };
+  }
 
+  /**
+   * The setup itself. A stop is heard at every stage, not only while downloading: each wait gives
+   * way to it, and once it is heard nothing more is written to the job but "stopped", so a load or a
+   * small question that finishes afterwards neither connects the model nor marks the setup done.
+   */
   private async run(id: string, resolved: Resolved, signal: AbortSignal): Promise<void> {
-    const step = (change: Partial<SetupJob>) => this.jobs.update(id, change);
+    const step = (change: Partial<SetupJob>) => { if (!signal.aborted) this.jobs.update(id, change); };
     try {
       await this.checkDisk(resolved);
-      if (resolved.runtime === "ollama" || resolved.runtime === "lm-studio") await this.ensureRunning(resolved, step);
-      step({ stage: "downloading", message: "Downloading…" });
-      let shown = -1;
-      const local = await this.fetchModel(resolved, signal, (completed, total) => {
-        const percent = total ? Math.min(99, Math.floor((completed / total) * 100)) : 0;
-        if (percent !== shown) { shown = percent; step({ completed, total, percent }); }
-      });
+      if (resolved.runtime === "ollama" || resolved.runtime === "lm-studio") await untilStopped(this.ensureRunning(resolved, step, signal), signal);
+      const local = resolved.found ? await untilStopped(this.foundModel(resolved), signal) : await this.download(resolved, signal, step);
       signal.throwIfAborted();
       step({ stage: "loading", message: "Loading it with room for about " + Math.round(resolved.context / 1000) + ",000 words…", percent: 100 });
-      const model = await this.load(resolved, local, step);
+      const model = await untilStopped(this.load(resolved, local, step, signal), signal);
       step({ stage: "connecting", message: "Asking it a small question…" });
-      const record = await registerLocalConnection({ ...this.deps, endpoint: (runtime) => this.deps.launcher.baseUrl(runtime) }, { runtime: resolved.runtime, model, contextLength: resolved.context, label: resolved.label }, this.deps.test ?? smokeTest);
+      const test = this.deps.test ?? smokeTest;
+      const record = await registerLocalConnection({ ...this.deps, endpoint: (runtime) => this.deps.launcher.baseUrl(runtime) }, { runtime: resolved.runtime, model, contextLength: resolved.context, label: resolved.label },
+        (provider) => untilStopped(test(provider), signal));
       step({ stage: "done", connectionId: record.id, finishedAt: this.now(), message: `Ready: ${record.name}.` });
     } catch (error) {
       // Closing Branch is not the owner stopping it: leave the setup open so it resumes next time.
-      if (this.closing) { step({ message: "Waiting for Branch to open again…" }); return; }
+      if (this.closing) { this.jobs.update(id, { message: "Waiting for Branch to open again…" }); return; }
       const stopped = signal.aborted;
-      step({ stage: stopped ? "stopped" : "failed", finishedAt: this.now(),
+      this.jobs.update(id, { stage: stopped ? "stopped" : "failed", finishedAt: this.now(),
         message: stopped ? "Stopped. Click again to carry on from where it was." : errorText(error).slice(0, 400) });
     }
+  }
+  private async download(resolved: Resolved, signal: AbortSignal, step: (change: Partial<SetupJob>) => void): Promise<string> {
+    step({ stage: "downloading", message: "Downloading…" });
+    let shown = -1;
+    return this.fetchModel(resolved, signal, (completed, total) => {
+      const percent = total ? Math.min(99, Math.floor((completed / total) * 100)) : 0;
+      if (percent !== shown) { shown = percent; step({ completed, total, percent }); }
+    });
+  }
+  /** A model Ollama already has is used as it is: it is looked for, never pulled from the registry. */
+  private async foundModel(resolved: Resolved): Promise<string> {
+    if (!(await this.ollama.list()).some((model) => model.name === resolved.source))
+      throw new Error(`${resolved.source} is no longer in Ollama on this computer, so nothing was set up.`);
+    return resolved.source;
   }
 
   private async checkDisk(resolved: Resolved): Promise<void> {
@@ -200,17 +229,18 @@ export class OneClick {
     if (!(await this.isUp(runtime))) await this.deps.launcher.start(runtime);
   }
   /** Starts Ollama or LM Studio when it is installed and not answering, then waits for it. */
-  private async ensureRunning(resolved: Resolved, step: (change: Partial<SetupJob>) => unknown): Promise<void> {
+  private async ensureRunning(resolved: Resolved, step: (change: Partial<SetupJob>) => unknown, signal?: AbortSignal): Promise<void> {
     const runtime = resolved.runtime as "ollama" | "lm-studio";
     const up = () => this.isUp(runtime);
     if (await up()) return;
     step({ stage: "starting", message: `Starting ${runtimeInfo[resolved.runtime].name}…` });
     const started = await this.deps.launcher.start(resolved.runtime);
     if (!started.started) throw new Error(started.message);
-    await this.waitFor(up, `${runtimeInfo[resolved.runtime].name} did not start within a minute`);
+    await this.waitFor(up, `${runtimeInfo[resolved.runtime].name} did not start within a minute`, 60, signal);
   }
-  private async waitFor(check: () => Promise<boolean>, failure: string, seconds = 60): Promise<void> {
+  private async waitFor(check: () => Promise<boolean>, failure: string, seconds = 60, signal?: AbortSignal): Promise<void> {
     for (let tried = 0; tried < seconds; tried++) {
+      signal?.throwIfAborted();
       if (await check().catch(() => false)) return;
       await this.sleep(1000);
     }
@@ -266,15 +296,18 @@ export class OneClick {
   }
 
   /** Brings the model into memory with its room for words; returns the name the connection uses. */
-  private async load(resolved: Resolved, local: string, step: (change: Partial<SetupJob>) => unknown): Promise<string> {
+  private async load(resolved: Resolved, local: string, step: (change: Partial<SetupJob>) => unknown, signal?: AbortSignal): Promise<string> {
     switch (resolved.runtime) {
       case "ollama": {
         const sized = await this.ollama.sized(local, resolved.context);
+        // A stop heard while sizing: the model is not brought into memory after it.
+        signal?.throwIfAborted();
         await this.ollama.warm(sized.model, resolved.context);
         return sized.model;
       }
       case "lm-studio": {
         const key = await this.lmStudioKey(resolved);
+        signal?.throwIfAborted();
         return (await this.lmStudio.load(key, resolved.context)).loaded;
       }
       default: {
@@ -284,7 +317,7 @@ export class OneClick {
         const base = this.deps.launcher.baseUrl(resolved.runtime);
         if (!base) throw new Error(`${runtimeInfo[resolved.runtime].name} did not start`);
         const server = new OpenAiServerClient(base, localRuntimeFetch(this.deps.policy, this.deps.fetch ?? globalThis.fetch, base));
-        await this.waitFor(async () => (await server.models()) !== null, `${runtimeInfo[resolved.runtime].name} did not answer within two minutes`, 120);
+        await this.waitFor(async () => (await server.models()) !== null, `${runtimeInfo[resolved.runtime].name} did not answer within two minutes`, 120, signal);
         return local;
       }
     }
@@ -342,12 +375,17 @@ export class OneClick {
    */
   async buttonGo(input: unknown, context: PressContext): Promise<OneButtonAnswer> {
     const wanted = ButtonGoSchema.parse(input ?? {});
-    const refusal = installGuard(this.deps.store, this.deps.owner, context);
+    const refusal = onceGuard(this.deps.store, this.deps.owner, context, wanted);
     if (refusal) throw new Error(refusal);
     const view = await this.buttonPlan({ ...(wanted.runner ? { runner: wanted.runner } : {}), ...(wanted.systemWide ? { systemWide: true } : {}) }, context);
     if (!view.alreadyInstalled) {
       const outcome = await this.install(view.install, wanted);
       if (outcome) return outcome;
+    }
+    // The owner named the exact model: that one is set up, not a size from Branch's own list.
+    if (wanted.name) {
+      const job = await this.begin({ runtime: view.runner, name: wanted.name });
+      return { done: false, runner: view.runner, message: `Setting up ${wanted.name}…`, chose: null, ...("id" in job ? { job } : { job: null }) };
     }
     const pick = this.pickSize(view.choices, wanted.size);
     if (!pick) throw new Error("Branch's list has no model that fits this computer and can use tools.");
@@ -362,6 +400,11 @@ export class OneClick {
     if (wanted.agreedPlan !== plan.fingerprint)
       return { done: false, runner: plan.runner, message: wanted.agreedPlan ? planChangedNote : needsAgreementNote(plan.name),
         needsAgreement: plan, job: null, chose: null };
+    if (wanted.once && oneButtonMode(this.deps.store, this.deps.owner) === "off")
+      audit(this.deps.store, this.deps.owner, {
+        action: "policy.changed", actor: this.deps.owner, subject: "whether Branch may install a program that runs models",
+        reason: `Allowed for this one install of ${plan.name}, which the owner agreed to in the app window. Nothing was switched on.`, outcome: "allowed",
+      });
     const outcome = await runInstall(plan, {
       at: this.deps.launcher.at, run: this.deps.launcher.program, exists: this.deps.launcher.fileExists,
       library: this.deps.library, scratchDir: this.installFolder(), dataDir: this.deps.dataDir,
@@ -408,6 +451,16 @@ export class OneClick {
     this.closing = true;
     for (const controller of this.running.values()) controller.abort(new Error("Branch is closing"));
   }
+}
+
+/** Waits for the work, unless the owner stops the setup first; the work is then no longer waited for. */
+function untilStopped<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { work.catch(() => undefined); return Promise.reject(signal.reason); }
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(signal.reason);
+    signal.addEventListener("abort", stop, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
 }
 
 function sourceFor(variant: CatalogueVariant, runtime: RuntimeId): string {

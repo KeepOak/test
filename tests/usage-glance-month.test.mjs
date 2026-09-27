@@ -38,7 +38,9 @@ test("the glance carries this month's estimated spend, and counts unpriced tasks
   assert.ok(priced.cost > 0);
 });
 
-test("the list's foot reads This month: about $… beside Open Usage, in English and French", async (t) => {
+/* The new window: the status bar's usage popover (the prototype's "What each connection has left") ends with this month's
+   spend beside Open Usage, from the same ledger; with nothing priced it says no sum at all, never $0. */
+test("the usage popover's foot says This month: $… beside Open Usage, and never $0 when nothing is priced", async (t) => {
   const { chromium } = await import("playwright");
   const f = await fixture(t);
   await f.call("/api/onboarding", { done: true });
@@ -50,7 +52,41 @@ test("the list's foot reads This month: about $… beside Open Usage, in English
   await page.goto(f.server.url);
   await page.getByLabel("Session token", { exact: true }).fill(f.server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  const foot = page.locator(".lim-foot");
+  const openList = async () => {
+    await page.locator('[data-act="usagepop"]').click();
+    await foot.waitFor({ state: "visible" });
+  };
+  await openList();
+  assert.doesNotMatch(await foot.innerText(), /\$0\.00|This month/, "nothing priced: no sum, never $0");
+  await page.keyboard.press("Escape");
+  await foot.waitFor({ state: "detached" });
+  await f.app.runtime.run({ prompt: "No price" });
+  await f.call("/api/pricing", { overrides: { demo: { input: 1000, output: 1000 } } });
+  await openList();
+  const month = foot.locator("span", { hasText: "This month:" });
+  assert.match(await month.innerText(), /^This month: \$\d+\.\d\d$/);
+  const [sum, button] = await Promise.all([month.boundingBox(), foot.getByRole("button", { name: "Open Usage", exact: true }).boundingBox()]);
+  assert.ok(sum.x < button.x && Math.abs((sum.y + sum.height / 2) - (button.y + button.height / 2)) < 4, "one line: the sum left, Open Usage right");
+  assert.deepEqual(errors, []);
+});
+
+// Redesign: replaced by the new window (the prototype's foot says "This month: $…" and nothing when nothing is priced,
+// re-pointed above; /usage-ring and branchUsageGlance are gone), and French waits on sw:lang, Coming soon, checked at fc541c24.
+test.skip("the list's foot reads This month: about $… beside Open Usage, in English and French", async (t) => {
+  const { chromium } = await import("playwright");
+  const f = await fixture(t);
+  await f.call("/api/onboarding", { done: true });
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(f.server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(f.server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   const foot = page.locator("#usage-pop .glance-foot");
   const openList = async () => {
     await page.evaluate(() => globalThis.branchUsageGlance.refresh());

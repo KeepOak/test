@@ -14,8 +14,14 @@ import {
 } from "../dist/index.js";
 import { locateGit } from "../dist/integrations/git-run.js";
 import { startServer } from "../dist/server.js";
-import { parseGoalLine, stripModel, formatElapsed, showsGoalButton, MODES } from "../public/goal.js";
-import { userEntries, isUndoThat, describeRewind } from "../public/rewind.js";
+/* The old window's goal.js and rewind.js went with it (#291). Their pure page helpers are tested only while they exist;
+   the new window's goal strip and rewind are proved against the engine by design/redesign/tools/verify-places.cjs and
+   verify-conv-messages.cjs. Everything the engine does here keeps running. */
+const oldWindow = await Promise.all([import("../public/goal.js"), import("../public/rewind.js")]).catch(() => null);
+const oldGone = oldWindow ? false : "the old window's goal.js and rewind.js were removed with it (#291); the new window is verified against the engine instead";
+const { parseGoalLine, stripModel, formatElapsed } = oldWindow?.[0] ?? {};
+const { isUndoThat } = oldWindow?.[1] ?? {};
+const userEntries = (view) => (view?.messages ?? []).filter((m) => m.role === "user").map((m) => ({ messageId: m.messageId, content: m.content }));
 
 const locale = async (name) => JSON.parse(await readFile(new URL(`../public/locales/${name}.json`, import.meta.url), "utf8"));
 const translator = (words) => (key, values = {}) => {
@@ -296,8 +302,7 @@ test("without git: files come back from the per-file copies and the answer says 
   const result = await app.rewinds.rewind("local", sessionId, { messageId: users[1].messageId, restore: "files" });
   assert.equal(result.files.method, "copies");
   assert.match(result.files.note, /Git is not installed/);
-  assert.equal(describeRewind(result, en), `Went back (files put back: 1; files removed: 1). ${result.files.note}`);
-  assert.match(describeRewind(result, fr), /^Retour effectué \(fichiers remis : 1; fichiers retirés : 1\)\. Git is not installed/);
+  // The old window's sentence for this result (describeRewind) went with it; the new window shows the engine's own note.
   assert.equal(await readFile(join(workspace, "notes.txt"), "utf8"), "one");
   assert.equal(await exists(join(workspace, "made.txt")), false);
   await app.rewinds.unrevert("local", sessionId);
@@ -307,7 +312,7 @@ test("without git: files come back from the per-file copies and the answer says 
 
 /* ---------- goal mode ---------- */
 
-test("the goal command is read the same way on the page and in the app", () => {
+test("the goal command is read the same way on the page and in the app", { skip: oldGone }, () => {
   for (const [line, wanted] of [
     ["/goal make the tests pass --max 3", { objective: "make the tests pass", maxRounds: 3 }],
     ["/GOAL  tidy the notes", { objective: "tidy the notes", maxRounds: 6 }],
@@ -326,7 +331,7 @@ test("the goal command is read the same way on the page and in the app", () => {
   assert.match(en(empty.error, empty.values), /Say what the goal is/);
 });
 
-test("the strip shows rounds, score, what is missing, time and the right buttons, in either language", () => {
+test("the strip shows rounds, score, what is missing, time and the right buttons, in either language", { skip: oldGone }, () => {
   const goal = { objective: "Tidy", status: "working", round: 2, maxRounds: 6, score: 0.456, missing: ["tests"], elapsedMs: 65_000, reason: "" };
   const model = stripModel(goal, en);
   assert.equal(model.heading, "Working toward the goal");
@@ -565,10 +570,7 @@ test("switches: everything ships off; off takes no snapshot and refuses a goal",
   assert.equal(await readFile(join(workspace, "notes.txt"), "utf8"), "two");
   await assert.rejects(app.goals.start({ objective: "Anything" }), /Goal mode is off/);
   assert.throws(() => saveGoalUndoSettings(app.store, "local", { snapshots: "always" }));
-  assert.deepEqual(MODES, ["off", "when-needed", "on"]);
-  assert.equal(showsGoalButton({ goal: "on" }), true);
-  assert.equal(showsGoalButton({ goal: "when-needed" }), false);
-  assert.equal(showsGoalButton({ goal: "off" }), false);
+  // The old window's goal-button helpers (MODES, showsGoalButton) went with it (#291).
 });
 
 test("switches: snapshots when needed are taken just before a task's first change, once", noGit, async (t) => {

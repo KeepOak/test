@@ -27,6 +27,7 @@ test("a nudge after an empty reply reaches the model but is never shown as the o
   const provider = { name: "scripted", async complete(request) { seen.push(request.messages.at(-1)); return replies[Math.min(seen.length, 3) - 1]; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
   const run = await app.runtime.run({ prompt });
@@ -34,21 +35,27 @@ test("a nudge after an empty reply reaches the model but is never shown as the o
   const stored = app.store.workingMessages(run.sessionId).rows.map((row) => row.message).filter((message) => message.role === "user");
   assert.deepEqual(stored.map((message) => message.from ?? "owner"), ["owner", "branch"], "the nudge is kept, marked as Branch's");
 
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await page.getByText(prompt).first().click();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).first().click();
   await page.getByText("I listed the folder; it is empty.").first().waitFor({ timeout: 30000 });
-  const mine = await page.locator("#conversation .message.user").allInnerTexts();
+  // The new window draws the owner's words as #conversation .u (public/app/chat/chat.js user()).
+  const mine = await page.locator("#conversation .u").allInnerTexts();
   assert.equal(mine.length, 1, `only the owner's own message is shown as theirs (${mine.join(" | ")})`);
   assert.doesNotMatch(await page.locator("#conversation").innerText(), /Your last reply was empty/);
-  // NAS's Q206 review: Edit matches the drawn bubbles to the owner's messages, so a nudge must not be counted there either.
-  await page.locator("#conversation .message.user button[data-t=\"rewind.edit\"]").first().click();
-  await page.locator("#conversation .message.user .rewind-editor").waitFor({ timeout: 15000 });
+  // The reply after a nudge is still matched to the task the owner's words started (public/app/chat/messages.js runFor).
+  const reply = page.locator("#conversation .b").filter({ hasText: "I listed the folder; it is empty." }).last();
+  await reply.locator(`[data-act="inspect"][data-run="${run.id}"]`).waitFor({ state: "attached", timeout: 15000 });
+  // NAS's Q206 review: Edit opens on the owner's own message (the new window matches it by message id).
+  await page.locator("#conversation .u").first().hover();
+  await page.locator('#conversation .u [data-act="u-edit"]').first().click();
+  await page.locator("#rw-text").waitFor({ timeout: 15000 });
+  assert.equal(await page.locator("#rw-text").inputValue(), prompt);
   assert.deepEqual(errors, []);
 });
 

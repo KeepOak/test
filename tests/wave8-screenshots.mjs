@@ -108,7 +108,7 @@ for (const theme of THEMES) {
 
     await page.getByLabel("Session token", { exact: true }).fill(server.token);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+    await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
     await setTheme(page, theme);
 
     /* 2. First run: the welcome card, before a model is chosen, and once one is picked. */
@@ -121,7 +121,7 @@ for (const theme of THEMES) {
 
     /* A fresh load so the rail, its chips and every card are drawn from what exists. */
     await page.reload();
-    await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+    await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
     await setTheme(page, theme);
     await page.waitForTimeout(600);
 

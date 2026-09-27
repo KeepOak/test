@@ -118,7 +118,10 @@ test("R17-029: Calendar and Drive, with the owner's words quoted inside Drive's 
 
 test("R17-029: switched off, the connector refuses before anything is fetched", async () => {
   const web = fakeWeb([]);
-  await assert.rejects(new GoogleConnector(fakeStore(), "local", web.fetch, signedIn()).events({}), /switched off/);
+  // The owner's rule (ships on, 2026-09-26): the connector ships "when needed", so it is switched off here.
+  const store = fakeStore();
+  on(store, "google", "off");
+  await assert.rejects(new GoogleConnector(store, "local", web.fetch, signedIn()).events({}), /switched off/);
   assert.equal(web.seen.length, 0);
 });
 

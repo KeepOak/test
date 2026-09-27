@@ -28,7 +28,9 @@ const shown = (page) => page.evaluate(() => [...document.querySelectorAll("#lx-p
   .filter((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
   .map((node) => node.textContent.trim()));
 
-test("Chat apps & devices: the sample's sections and counts, at every width, both levels and in French", async (t) => {
+// Redesign: replaced by the new window (the prototype's Settings has no "Chat apps & devices" page: chat apps are set up
+// from Customize and the flows, and their switches are rows on Settings › Gateway, Coming soon (sw:f15-*), checked at fc541c24).
+test.skip("Chat apps & devices: the sample's sections and counts, at every width, both levels and in French", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-channels-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
@@ -43,7 +45,7 @@ test("Chat apps & devices: the sample's sections and counts, at every width, bot
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   await page.evaluate(() => globalThis.branchLayout.go("settings:channels"));
   await page.locator("#lx-page-channels #channel-setup-card #channel-core-switches").waitFor({ state: "attached", timeout: 20000 });

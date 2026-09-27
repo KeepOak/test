@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -319,14 +319,70 @@ async function readFirstFixture(t, steps, mode = "on") {
 const fileText = async (workspace, name) => (await import("node:fs/promises")).readFile(join(workspace, name), "utf8");
 const edit = (find, replace) => call("files.edit", { path: "a.txt", find, replace });
 
-test("1 read-first ships off: an edit to an unread file goes through as before", async (t) => {
+// The owner's rule (Q250, 2026-09-26): read-first is a stricter guard, so it ships on; switched off, an edit goes through.
+test("1 read-first ships on, and switched off an edit to an unread file goes through as before", async (t) => {
   const { codingMode } = await import("../dist/coding/settings.js");
   const { app, workspace } = await readFirstFixture(t, [edit("one", "two"), say("done")], "off");
-  assert.equal(codingMode({ get: () => undefined }, "local", "read-first"), "off");
+  assert.equal(codingMode({ get: () => undefined }, "local", "read-first"), "on", "on for a fresh install");
+  assert.equal(codingMode({ get: () => ({ data: { mode: "sideways" } }) }, "local", "read-first"), "off", "a damaged record reads as off");
   const run = await app.runtime.run({ prompt: "change it" });
   assert.equal(toolMessages(app, run)[0].ok, true);
   assert.equal(await fileText(workspace, "a.txt"), "two\n");
 });
+
+test("1 read-first on (Q250): a saved recipe's step and a manual action are not held", async (t) => {
+  const { app, workspace } = await readFirstFixture(t, [say("done")]);
+  const context = app.runtime.context();
+  // A verified recipe that overwrites a file that is already there: each replay writes it, from the second run on too.
+  const recipe = app.knowledge.proposeProcedure(context, { name: "write a", preconditions: [],
+    steps: [{ tool: "files.write", args: { path: "a.txt", content: "from the recipe\n" }, expected: { path: "a.txt", bytes: 16 } }] });
+  assert.equal((await app.knowledge.verifyProcedure(context, recipe.id)).data.status, "verified");
+  assert.equal(await fileText(workspace, "a.txt"), "from the recipe\n");
+  await writeFile(join(workspace, "a.txt"), "changed since\n");
+  await app.knowledge.replayProcedure(context, recipe.id);
+  assert.equal(await fileText(workspace, "a.txt"), "from the recipe\n", "the replay wrote over a file it never read");
+  // A manual action (a workflow's step, a button in the window) is one call and a task of its own.
+  await app.runtime.executeTool("files.write", { path: "a.txt", content: "by hand\n" }, { mode: "owner" });
+  assert.equal(await fileText(workspace, "a.txt"), "by hand\n");
+});
+
+test("1 read-first on (Q250): a recipe or workflow the model runs itself is held, so it is no way round the guard", async (t) => {
+  const recipeId = "0b1c2d3e-4f50-4617-8829-3a4b5c6d7e80", flowId = "1c2d3e4f-5061-4728-893a-4b5c6d7e8f90";
+  const write = { tool: "files.write", args: { path: "a.txt", content: "blind\n" } };
+  const { app, workspace } = await readFirstFixture(t, [
+    call("procedures.propose", { id: recipeId, name: "blind write", preconditions: [], steps: [{ ...write, expected: { path: "a.txt", bytes: 6 } }] }),
+    call("procedures.verify", { id: recipeId }),
+    call("workflows.create", { id: flowId, name: "blind write", steps: [{ name: "write", kind: "tool", ...write }] }),
+    call("workflows.run", { id: flowId }),
+    say("done")]);
+  const run = await app.runtime.run({ prompt: "change it" });
+  const answers = toolMessages(app, run);
+  assert.equal(answers[1].ok, false, JSON.stringify(answers[1]));
+  assert.match(answers[1].error, /read "a\.txt" with files\.read first/, "the recipe's step is held under the model's own task");
+  assert.match(JSON.stringify(answers[3]), /read \\"a\.txt\\" with files\.read first/, "and so is the workflow's step it started");
+  assert.equal(await fileText(workspace, "a.txt"), "one\n", "nothing was written round the guard");
+});
+
+test("1 read-first on (Q250): a workflow the model set going stays held when the owner's yes carries it on later", async (t) => {
+  const flowId = "2d3e4f50-6172-4839-9a4b-5c6d7e8f9a01", ownFlowId = "3e4f5061-7283-494a-8b5c-6d7e8f9a0b12";
+  const steps = [{ name: "ask", kind: "approval", question: "Go on?" },
+    { name: "write", kind: "tool", tool: "files.write", args: { path: "a.txt", content: "blind\n" } }];
+  const { app, workspace } = await readFirstFixture(t, [
+    call("workflows.create", { id: flowId, name: "later", steps }), call("workflows.run", { id: flowId }), say("done")]);
+  await app.runtime.run({ prompt: "set it going" });
+  assert.equal(app.workflows.view("local", flowId).status, "waiting_approval", "it stops at the owner's question");
+  // The owner's yes carries it on, outside any model's call.
+  const resumed = await app.workflows.resume("local", flowId);
+  assert.equal(resumed.status, "failed");
+  assert.match(String(resumed.error), /read "a\.txt" with files\.read first/);
+  assert.equal(await fileText(workspace, "a.txt"), "one\n", "the write after the wait is still held");
+  // The owner's own workflow with the same steps is not held.
+  app.workflows.create("local", { id: ownFlowId, name: "mine", steps });
+  await app.workflows.run("local", ownFlowId);
+  assert.equal((await app.workflows.resume("local", ownFlowId)).status, "completed");
+  assert.equal(await fileText(workspace, "a.txt"), "blind\n");
+});
+
 
 test("1 read-first on: an unread file is refused, in a sentence that says to read it first", async (t) => {
   const { app, workspace } = await readFirstFixture(t, [
@@ -583,7 +639,7 @@ test("review 2 the question shows the call as it will run, without the ignored k
   assert.equal(run.status, "needs_input");
   const [question] = asked(app, run);
   assert.deepEqual(JSON.parse(question.data.bytes), { path: "keep.txt", content: "new" });
-  assert.equal(question.data.fingerprint, argumentFingerprint(JSON.stringify(sent)));
+  assert.equal(question.data.fingerprint, argumentFingerprint("files.write", JSON.stringify(sent)));
 });
 
 test("review 4 a plain yes with no choice made is Once; carrying a workflow on never writes a standing rule", async (t) => {

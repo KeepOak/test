@@ -1,0 +1,121 @@
+[
+  {
+    "id": "mossfrog",
+    "name": "Moss frog",
+    "description": "A round little frog with a soft moss-green back and a tiny leaf on its head",
+    "still": "assets/pets/mossfrog.webp",
+    "walk": "assets/pets/mossfrog-walk.webm"
+  },
+  {
+    "id": "leafhog",
+    "name": "Leaf hog",
+    "description": "A hedgehog whose spines are small overlapping green-and-copper leaves",
+    "still": "assets/pets/leafhog.webp",
+    "walk": "assets/pets/leafhog-walk.webm"
+  },
+  {
+    "id": "fennec",
+    "name": "Fennec",
+    "description": "A fennec fox kit with huge ears, sandy fur, fluffy tail",
+    "still": "assets/pets/fennec.webp",
+    "walk": "assets/pets/fennec-walk.webm"
+  },
+  {
+    "id": "otter",
+    "name": "Otter",
+    "description": "A baby river otter, brown and cream, holding a small pebble",
+    "still": "assets/pets/otter.webp",
+    "walk": "assets/pets/otter-walk.webm"
+  },
+  {
+    "id": "capybara",
+    "name": "Capybara",
+    "description": "A calm round capybara with a tiny orange flower on its head",
+    "still": "assets/pets/capybara.webp",
+    "walk": "assets/pets/capybara-walk.webm"
+  },
+  {
+    "id": "cloverbun",
+    "name": "Clover bun",
+    "description": "A small cream bunny whose ears are shaped like clover leaves",
+    "still": "assets/pets/cloverbun.webp",
+    "walk": "assets/pets/cloverbun-walk.webm"
+  },
+  {
+    "id": "owlet",
+    "name": "Owlet",
+    "description": "A fluffy round owl chick, brown and cream, big amber eyes",
+    "still": "assets/pets/owlet.webp",
+    "walk": "assets/pets/owlet-walk.webm"
+  },
+  {
+    "id": "shellsnail",
+    "name": "Shell snail",
+    "description": "A friendly snail whose shell is a brown-capped mushroom",
+    "still": "assets/pets/shellsnail.webp",
+    "walk": "assets/pets/shellsnail-walk.webm"
+  },
+  {
+    "id": "jelly",
+    "name": "Jelly",
+    "description": "A small glowing teal-blue lantern jellyfish that floats and bobs",
+    "still": "assets/pets/jelly.webp",
+    "walk": "assets/pets/jelly-walk.webm"
+  },
+  {
+    "id": "cloudsheep",
+    "name": "Cloud sheep",
+    "description": "A lamb whose wool is a fluffy white cloud, grey face",
+    "still": "assets/pets/cloudsheep.webp",
+    "walk": "assets/pets/cloudsheep-walk.webm"
+  },
+  {
+    "id": "pebblecrab",
+    "name": "Pebble crab",
+    "description": "A little crab with a smooth grey pebble shell, orange claws",
+    "still": "assets/pets/pebblecrab.webp",
+    "walk": "assets/pets/pebblecrab-walk.webm"
+  },
+  {
+    "id": "caterpillar",
+    "name": "Caterpillar",
+    "description": "A chubby green leaf caterpillar with tiny feet",
+    "still": "assets/pets/caterpillar.webp",
+    "walk": "assets/pets/caterpillar-walk.webm"
+  },
+  {
+    "id": "sprigdragon",
+    "name": "Sprig dragon",
+    "description": "A tiny green baby dragon with leaf-shaped wings",
+    "still": "assets/pets/sprigdragon.webp",
+    "walk": "assets/pets/sprigdragon-walk.webm"
+  },
+  {
+    "id": "turtle",
+    "name": "Turtle",
+    "description": "A baby turtle with a mossy shell and a sprout on top",
+    "still": "assets/pets/turtle.webp",
+    "walk": "assets/pets/turtle-walk.webm"
+  },
+  {
+    "id": "penguin",
+    "name": "Penguin",
+    "description": "A fluffy grey penguin chick",
+    "still": "assets/pets/penguin.webp",
+    "walk": "assets/pets/penguin-walk.webm"
+  },
+  {
+    "id": "puppy",
+    "name": "Puppy",
+    "description": "A short-legged fluffy tan puppy with floppy ears",
+    "still": "assets/pets/puppy.webp",
+    "walk": "assets/pets/puppy-walk.webm"
+  },
+  {
+    "id": "kitten",
+    "name": "Kitten",
+    "description": "A small orange-and-cream tabby kitten",
+    "still": "assets/pets/kitten.webp",
+    "walk": "assets/pets/kitten-walk.webm"
+  }
+]

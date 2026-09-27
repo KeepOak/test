@@ -28,10 +28,78 @@ async function signedIn(t, width) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0; // what failed before the key was given is the login page's business
   return { page, errors };
 }
+
+/* The new window: the prototype's three-way (Off · When needed · On) is a segmented group of three buttons. Settings ›
+   Gateway's is live: pressing a segment saves the real setting, and it comes back pressed after a reload; it fits its
+   row at 1440, 860 and 400 wide. A three-way that is Coming soon is dimmed and a press on it changes nothing. */
+const gatewayGroup = (page) => page.locator(".set-col").getByRole("group", { name: "Gateway", exact: true });
+async function signInAgainIfAsked(page, server) {
+  const box = page.getByLabel("Session token", { exact: true });
+  await Promise.race([box.waitFor({ state: "visible" }), page.locator("#app #side").waitFor({ state: "visible" })]);
+  if (await box.isVisible()) {
+    await box.fill(server.token);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+  }
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+}
+
+test("DG-169 pressing a segment saves the real setting, and it comes back pressed after a reload (new window)", async (t) => {
+  const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  const { page, errors, call, server } = await settingsWindow(t, { name: "three-way" });
+  await openSettingsPage(page, "gateway");
+  assert.equal(await gatewayGroup(page).locator('[aria-pressed="true"]').count(), 1, "one position pressed");
+  await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true }).click();
+  for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode !== "when-needed"; tries++) await page.waitForTimeout(100);
+  assert.equal((await call("/api/never-break")).mode, "when-needed", "saved");
+  await page.reload();
+  await signInAgainIfAsked(page, server);
+  await openSettingsPage(page, "gateway");
+  await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true, pressed: true }).waitFor({ timeout: 10000 });
+  assert.equal(await gatewayGroup(page).locator('[aria-pressed="true"]').count(), 1);
+  assert.deepEqual(errors, []);
+});
+
+for (const width of [1440, 860, 400]) {
+  test(`DG-169 at ${width} px the Gateway three-way fits its row and answers a press (new window)`, async (t) => {
+    const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+    const { page, errors, call } = await settingsWindow(t, { name: "three-way", width, height: 900 });
+    await openSettingsPage(page, "gateway");
+    const fits = await gatewayGroup(page).evaluate((group) => {
+      const box = group.getBoundingClientRect(), row = group.closest(".ctl").getBoundingClientRect();
+      return { inside: box.left >= row.left - 0.5 && box.right <= row.right + 0.5, words: group.querySelectorAll("button").length };
+    });
+    assert.deepEqual(fits, { inside: true, words: 3 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), "nothing scrolls sideways");
+    await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true }).click();
+    for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode !== "when-needed"; tries++) await page.waitForTimeout(100);
+    assert.equal((await call("/api/never-break")).mode, "when-needed");
+    await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true, pressed: true }).waitFor();
+    assert.deepEqual(errors, []);
+  });
+}
+
+test("DG-169 a three-way that is Coming soon is dimmed, and a press on it changes nothing (new window)", async (t) => {
+  const { settingsWindow, openSettingsPage, isSoon } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "three-way" });
+  await openSettingsPage(page, "permissions");
+  await page.locator(".set-col details.adv > summary").click();
+  const group = page.locator(".set-col").getByRole("group", { name: "When tools are loaded", exact: true });
+  const option = group.getByRole("button", { name: "When needed", exact: true });
+  await option.waitFor();
+  assert.equal(await isSoon(option), true, "greyed out, Coming soon");
+  assert.equal(await option.evaluate((node) => getComputedStyle(node).opacity), "0.45");
+  const posts = [];
+  page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+  await option.click({ force: true });
+  await page.waitForTimeout(500);
+  assert.equal(await group.locator('[aria-pressed="true"]').count(), 0, "nothing was pressed");
+  assert.deepEqual(posts, [], "nothing was sent");
+  assert.deepEqual(errors, []);
+});
 
 const segment = (page, id, value) => page.locator(`.segmented-control:has(> #${id}) .segmented-option[data-v="${value}"]`);
 const state = (page, id) => page.evaluate((one) => {
@@ -40,36 +108,9 @@ const state = (page, id) => page.evaluate((one) => {
 }, id);
 const saved = (page) => page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.startsWith("/api/"));
 
-/* Three modules that build their own select: one saving on change, two with a Save button of their own. */
-const SWITCHES = [
-  { id: "security-audit-mode", page: "permissions" },
-  { id: "context-switch-agents", page: "general", save: 'section:has(#context-switch-agents) > button[data-t="action.save"]' },
-  { id: "goal-undo-snapshots", page: "data", save: "#goal-undo-form button:not([type=button])" },
-];
-
-test("DG-169 pressing a segment saves the real setting, and it comes back pressed after a reload", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  for (const one of SWITCHES) {
-    await openSettings(page, one.page);
-    assert.deepEqual((await state(page, one.id)).pressed.length, 1, `${one.id}: one position pressed`);
-    const answer = one.save ? null : saved(page);
-    await segment(page, one.id, "when-needed").click();
-    assert.deepEqual(await state(page, one.id), { value: "when-needed", pressed: ["when-needed"] }, `${one.id}: the press moves the value`);
-    if (one.save) { const done = saved(page); await page.locator(one.save).click(); assert.equal((await done).ok(), true); }
-    else assert.equal((await answer).ok(), true, `${one.id}: saved`);
-  }
-  await page.reload();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  for (const one of SWITCHES) {
-    await openSettings(page, one.page);
-    await page.waitForFunction((id) => document.getElementById(id)?.value === "when-needed", one.id, { timeout: 10000 }).catch(() => undefined);
-    assert.deepEqual(await state(page, one.id), { value: "when-needed", pressed: ["when-needed"] }, `${one.id}: saved and shown after a reload`);
-  }
-  assert.deepEqual(errors, []);
-});
-
 for (const width of [1440, 860, 400]) {
-  test(`DG-169 at ${width} px the dressed three-ways fit their card and answer a press`, async (t) => {
+  // Redesign: replaced by the new window (no dressed selects; the security check's switches are gone; re-pointed above).
+  test.skip(`DG-169 at ${width} px the dressed three-ways fit their card and answer a press`, async (t) => {
     const { page, errors } = await signedIn(t, width);
     await openSettings(page, "permissions");
     const fits = await page.evaluate(() => [...document.querySelectorAll(".segmented-control[data-dressed]")].filter((group) => group.checkVisibility())
@@ -88,25 +129,8 @@ for (const width of [1440, 860, 400]) {
   });
 }
 
-test("DG-169 a module that swaps its select for a new one gets one control, not a second inside the first", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  await openSettings(page, "permissions");
-  const after = await page.evaluate(async () => {
-    const old = document.getElementById("security-audit-mode"), fresh = document.createElement("select");
-    for (const value of ["off", "on", "when-needed"]) fresh.append(Object.assign(document.createElement("option"), { value, textContent: value }));
-    fresh.value = "on";
-    old.replaceWith(fresh);
-    fresh.id = "security-audit-mode";
-    await new Promise((done) => requestAnimationFrame(() => setTimeout(done, 50)));
-    const groups = document.querySelectorAll(".segmented-control:has(#security-audit-mode)");
-    return { groups: groups.length, nested: document.querySelectorAll(".segmented-control .segmented-control").length,
-      segments: [...groups].at(-1)?.querySelectorAll(":scope > .segmented-option").length, pressed: [...groups].at(-1)?.querySelector("[aria-pressed=true]")?.dataset.v };
-  });
-  assert.deepEqual(after, { groups: 1, nested: 0, segments: 3, pressed: "on" });
-  assert.deepEqual(errors, []);
-});
-
-test("DG-169 a switched-off source dims its segments, and a press on one changes nothing", async (t) => {
+// Redesign: replaced by the new window (no select source; a Coming soon three-way is re-pointed above).
+test.skip("DG-169 a switched-off source dims its segments, and a press on one changes nothing", async (t) => {
   const { page, errors } = await signedIn(t, 1440);
   await openSettings(page, "permissions");
   await page.evaluate(() => { document.getElementById("security-malware-mode").disabled = true; });

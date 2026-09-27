@@ -10,6 +10,8 @@ import { memoryProvider, saveMemoryProvider } from "./apply.js";
 import { refusedEnvironmentName } from "./environment.js";
 import { launchFileView, saveLaunchFile } from "./launch-file.js";
 import { contextLimit } from "../runtime.js";
+import { lockdownActive } from "../lockdown.js";
+import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 import { byCard, recordedWrite } from "../settings-kit/recorded-write.js";
 
 /**
@@ -106,10 +108,24 @@ function checkValues(app: KnobsApp, card: KnobCard, values: Record<string, unkno
   }
 }
 
+/** What a save does to the task spend cap that lets a task spend more, in words, or null when it does not. */
+function spendCapLooser(store: Store, owner: string, input: z.infer<typeof SaveSchema>): string | null {
+  if (input.card !== "limits") return null;
+  const was = allKnobs(store, owner).limits.spendCapDollars;
+  if (was === null) return null;
+  const asked = input.reset ? null : input.values && "spendCapDollars" in input.values ? input.values.spendCapDollars : was;
+  if (asked === null) return "a task would have no spend cap";
+  return typeof asked === "number" && asked > was ? `a task's spend cap would go up from $${was} to $${asked}` : null;
+}
+
 function save(app: KnobsApp, body: unknown) {
-  const input = SaveSchema.parse(body);
+  const { confirmLoosening, input: asked } = withoutConfirm(body);
+  const input = SaveSchema.parse(asked);
   const { store, runtime: { owner } } = app;
   requireOwnerHere(store, "These settings");
+  // A task's spend cap raised or taken away needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+  const refusal = looseningRefusal(spendCapLooser(store, owner, input), confirmLoosening, lockdownActive(store, owner));
+  if (refusal) throw new KnobsApiError(409, refusal);
   const write = (): void => {
     if (input.reset) {
       resetKnobs(store, owner, input.card);

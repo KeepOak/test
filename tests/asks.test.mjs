@@ -72,6 +72,12 @@ async function fixture(t) {
 
 test("every smaller ask ships off: no tools in the catalog, and a plain refusal", async (t) => {
   const { app, api, call } = await fixture(t);
+  // The owner's rule (ships on, 2026-09-26): only these ship off, each for a reason in src/asks/settings.ts or
+  // outside that sweep; the rest ship "when needed". What "off" does is tested by switching every part off.
+  const shipsOff = ["source-sync", "hindsight", "app-blocks", "forecasts", "leads",
+    "answer-engine", "article-writer", "analytics", "nodes", "app-server", "runtimes"];
+  assert.deepEqual((await api("/api/asks")).modes, Object.fromEntries(askParts.map((part) => [part, shipsOff.includes(part) ? "off" : "when-needed"])));
+  for (const part of askParts) await api("/api/asks/switch", { part, mode: "off" });
   const { modes } = await api("/api/asks");
   assert.deepEqual(Object.values(modes), askParts.map(() => "off"));
   for (const part of askParts) for (const tool of askTools[part])
@@ -91,6 +97,8 @@ test("the three positions differ: on loads a part's tools from the start, when n
   const { app, api } = await fixture(t);
   const owner = app.runtime.owner;
   const tiers = () => switchedToolTiers(app.store, owner, app.registry.names());
+  // The owner's rule (ships on, 2026-09-26): project boards ship "when needed", so "off" is tested by switching it off.
+  await api("/api/asks/switch", { part: "project-board", mode: "off" });
   // Off, the tools are not even registered; were a copy of the name present, it would be hidden too.
   assert.equal(app.registry.names().includes("project.board"), false);
   assert.ok(switchedToolTiers(app.store, owner, askTools["project-board"]).hidden.includes("project.board"), "off: not advertised");
@@ -103,7 +111,11 @@ test("the three positions differ: on loads a part's tools from the start, when n
   assert.match(loaded.reason, /switched on/);
 
   // The beat that refreshes live pages runs only while that part is not off.
-  assert.equal(app.asks.surfaces.running, false, "a fresh install schedules nothing");
+  // The owner's rule (ships on, 2026-09-26): live pages ship "when needed", so a fresh install runs the beat, which
+  // asks nothing until the owner pins a page; switched off, it stops.
+  assert.equal(app.asks.surfaces.running, true, "a fresh install runs the (empty) beat");
+  await api("/api/asks/switch", { part: "live-surfaces", mode: "off" });
+  assert.equal(app.asks.surfaces.running, false, "switched off, nothing is scheduled");
   await api("/api/asks/switch", { part: "live-surfaces", mode: "when-needed" });
   assert.equal(app.asks.surfaces.running, true);
   await api("/api/asks/switch", { part: "live-surfaces", mode: "off" });
@@ -161,6 +173,8 @@ test("A2375 the intent pipeline runs the owner's stages in order, and a tie deci
   assert.match(routedPrompt(decision, "error crash"), /^Run the saved flow "triage" for this request\.\n\nerror crash$/);
 
   const { api, call, provider: appModel } = await fixture(t);
+  // The owner's rule (ships on, 2026-09-26): the pipeline ships "when needed", so "off" is tested by switching it off.
+  await api("/api/asks/switch", { part: "intent-pipeline", mode: "off" });
   assert.equal((await call("/api/asks/intents/decide", { request: "x" })).status, 409);
   await api("/api/asks/switch", { part: "intent-pipeline", mode: "when-needed" });
   await api("/api/asks/intents", { stages: ["words", "model"], intents: pipeline.intents });
@@ -228,6 +242,8 @@ test("A0355 an answer kept as a page can be reopened, updated and handed on as a
   const { app, api, call } = await fixture(t);
   app.asks.answers.web = fakeWeb(oakPages);
   await api("/api/asks/switch", { part: "answer-engine", mode: "when-needed" });
+  // The owner's rule (ships on, 2026-09-26): keeping pages ships "when needed"; switched off, the answer is not kept.
+  await api("/api/asks/switch", { part: "answer-pages", mode: "off" });
   let answer = await api("/api/asks/answer", { question: "How old do oaks get?", keep: true });
   assert.equal(answer.pageId, null, "keeping pages is its own switch, still off");
   await api("/api/asks/switch", { part: "answer-pages", mode: "when-needed" });

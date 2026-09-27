@@ -10,8 +10,9 @@ import { recoverAfterRestart } from "./resume.js";
 /**
  * The check a new version must pass before it replaces the old one. It runs as that new version,
  * on a copy of the owner's data (so its format changes are tried on the copy), and it needs no
- * network: it opens the saved work, answers on its address, does a task with the offline model,
- * loads every chat adapter, lets the timed jobs tick, and picks up an interrupted task.
+ * network: it opens the saved work, answers on its address, runs a task on the copy (answered by a scripted
+ * test stand-in, never offered as a model, so no model service is asked), loads every chat adapter, lets the
+ * timed jobs tick, and picks up an interrupted task.
  */
 import type { SelfTestCheck, SelfTestReport } from "./canary.js";
 export type { SelfTestCheck, SelfTestReport } from "./canary.js";
@@ -52,7 +53,7 @@ export function quietCopy(app: Pick<Branch, "store" | "runtime">): void {
 
 async function checksOn(app: Branch, dataDir: string, checks: SelfTestCheck[]): Promise<void> {
   quietCopy(app);
-  await check(checks, "does a task with the offline model", async () => {
+  await check(checks, "runs a task on a copy of your data", async () => {
     const run = await app.runtime.run({ prompt: "Self-test: say hello.", onTextDelta: () => undefined });
     if (run.status !== "completed") throw new Error(`the task ended ${run.status}: ${run.output.slice(0, 200)}`);
     return "a task finished";

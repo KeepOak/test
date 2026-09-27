@@ -60,6 +60,12 @@ export const PolicyRuleSchema = z
      * workspace, which is what every rule written before this behaves as.
      */
     paths: z.array(z.string().trim().min(1).max(200)).max(8).optional(),
+    /**
+     * Redesign ("Always allow for <Trunk>"): the one Trunk this yes is for. An allow with it covers only work that Trunk
+     * is doing; a refusal or an "ask first" with it still holds for everyone. Left out, the rule covers every Trunk and
+     * the owner's own conversations, as every rule written before this does.
+     */
+    trunk: z.string().min(1).max(100).optional(),
   })
   .strict();
 export type PolicyRule = z.infer<typeof PolicyRuleSchema>;
@@ -287,10 +293,15 @@ export interface PolicyRequest {
    * for the whole call still counts for each thing in it.
    */
   callTarget?: string | undefined;
+  /** Redesign: the Trunk doing the work, when a Trunk is; a rule for one Trunk covers only that Trunk's work. */
+  trunk?: string | undefined;
 }
 export interface PolicyOutcome { decision: PolicyDecision; rule: PolicyRule | null }
 /** Whether one rule covers this call: the tool, what it would touch, and the thing it is about. */
 function ruleCovers(rule: PolicyRule, request: PolicyRequest): boolean {
+  // Mac mini's review of #285: a Trunk only ever narrows a yes. A refusal or an "ask first" that names a Trunk holds for
+  // everyone, so a path that judges a call without knowing its Trunk can never skip one.
+  if (rule.trunk !== undefined && rule.decision === "allow" && rule.trunk !== request.trunk) return false;
   if (rule.applies === "changes" && request.readOnly) return false;
   if (rule.applies === "reads" && !request.readOnly) return false;
   if (!globMatches(rule.tool, request.tool)) return false;
@@ -411,15 +422,18 @@ export function readPolicy(store: Store, owner: string): Policy {
  * Saves a preset, a hand-edited rule list, or new limits; anything left out keeps its current value.
  * A preset on its own keeps the owner's refusals in front of its lines (`presetMoved`).
  */
-export function savePolicy(store: Store, owner: string, input: unknown, reason = "The approval settings were saved"): Policy {
+/** Q257: the policy a save of `input` would leave, worked out without saving, so a change can be weighed first. */
+export function nextPolicy(current: Policy, input: unknown): Policy {
   const value = PolicyInputSchema.parse(input ?? {});
-  const current = readPolicy(store, owner);
-  const next: Policy = {
+  return {
     preset: value.preset ?? (value.rules ? "custom" : current.preset),
     rules: value.rules ?? (value.preset ? presetMoved(current, value.preset) : current.rules),
     limits: PolicyLimitsSchema.parse({ ...current.limits, ...value.limits }),
     unmatchedCommands: value.unmatchedCommands ?? current.unmatchedCommands,
   };
+}
+export function savePolicy(store: Store, owner: string, input: unknown, reason = "The approval settings were saved"): Policy {
+  const next = nextPolicy(readPolicy(store, owner), input);
   writePolicy(store, owner, next);
   audit(store, owner, { action: "policy.changed", actor: owner, subject: `${next.preset}, ${next.rules.length} rules`, reason, outcome: "saved" });
   return next;

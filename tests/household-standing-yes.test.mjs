@@ -62,6 +62,7 @@ test("a household window is not offered Yes, always; the owner's window is", asy
   const { app, root, sam } = await fixture(t);
   // New conversations follow the owner's rules, not Ask first (which keeps no standing yes for anybody, Q59).
   saveConversationModeSettings(app.store, app.runtime.owner, { newConversation: "follow" });
+  app.store.save("settings", app.runtime.owner, "onboarding", { done: true }); // setup opens on the first draw otherwise (flows/flows.js); not what this is about
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); });
@@ -78,16 +79,17 @@ test("a household window is not offered Yes, always; the owner's window is", asy
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   if (await page.locator("#first-run").isVisible()) await page.locator("#first-run-done").click().catch(() => undefined);
-  const mine = await ask("owner.txt"); assert.ok(mine.includes("Yes, always"), `control: the owner is offered a standing yes: ${mine}`);
+  // The redesigned window's card: the tool's verb (once), "Always allow" (the standing yes) and "Don't allow".
+  const mine = await ask("owner.txt"); assert.ok(mine.includes("Always allow"), `control: the owner is offered a standing yes: ${mine}`);
   app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
   await page.reload();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await page.waitForFunction(() => document.documentElement.dataset.household === "on", null, { timeout: 10000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  // The redesigned window reads who is here (GET /api/profiles) with its first state, before it draws anything.
   const offered = await ask("sam.txt");
-  assert.ok(offered.includes("Yes, just now"), `Sam can still say yes: ${offered}`);
-  assert.equal(offered.includes("Yes, always"), false, `Sam is not offered a standing yes: ${offered}`);
+  assert.ok(offered.includes("Change it"), `Sam can still say yes: ${offered}`);
+  assert.equal(offered.includes("Always allow"), false, `Sam is not offered a standing yes: ${offered}`);
   assert.deepEqual(errors, []);
 });
 

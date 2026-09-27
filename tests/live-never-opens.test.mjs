@@ -10,13 +10,13 @@ import { startServer } from "../dist/server.js";
 import { acceptKey, readFrame } from "../dist/ws.js";
 import { busyTaskCount } from "../dist/comfort/auto-update.js";
 import { runningTaskCount } from "../dist/desktop/quit-guard.js";
-import { signedHeaders } from "../dist/desktop/signed-headers.js";
+import { chromium } from "playwright";
 
 /**
  * Talk live makes a task first and opens the conversation on that task's socket afterwards. When the
  * socket never opens a conversation, the task must still end, or it holds "update by itself" and the
  * quit question until Branch restarts. Nothing here reaches the internet: the live service is a small
- * local stand-in, and the page runs in node with the few browser pieces it touches stubbed.
+ * local stand-in, and the page is the new window in headless Chromium with fake media and a socket that never opens.
  */
 const settle = (ms) => new Promise((done) => setTimeout(done, ms));
 const until = async (check, what, limit = 10000) => {
@@ -181,67 +181,58 @@ test("Stop ends a live conversation's task that never connected, and still needs
   assert.equal(runningTaskCount(app.store), 0);
 });
 
-/* ---------- the page: public/voice-live.js in node, as the desktop window runs it ---------- */
+/* ---------- the page: the new window's Talk live (public/app/chat/talklive.js), in headless Chromium ---------- */
 
-/** The browser pieces voice-live.js touches, as in the desktop: the stand-in key, and a socket that never opens. */
-function desktopPage(t, server) {
-  const saved = {};
-  for (const name of ["document", "location", "sessionStorage", "localStorage", "fetch", "WebSocket", "toast"])
-    saved[name] = Object.getOwnPropertyDescriptor(globalThis, name);
-  t.after(() => {
-    for (const [name, descriptor] of Object.entries(saved)) {
-      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-      else delete globalThis[name];
-    }
-  });
-  const realFetch = globalThis.fetch;
-  const button = { dataset: {}, hidden: true, title: "", textContent: "", addEventListener() {} };
-  const elements = { "voice-live": button, "voice-live-status": { hidden: true, textContent: "" } };
-  const page = { button, toasts: [], sockets: [] };
-  const set = (name, value) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
-  set("document", {
-    readyState: "complete", documentElement: {},
-    getElementById: (id) => elements[id] ?? null, querySelectorAll: () => [],
-    addEventListener() {}, dispatchEvent: () => true,
-  });
-  set("location", new URL(`${server.url}/?desktop=1`));
-  set("sessionStorage", { getItem: (key) => (key === "branch-token" ? "desktop-window" : null) });
-  set("localStorage", { getItem: () => null, setItem() {} });
-  // The desktop signs the window's own /api/ requests with the app's key, whatever the page wrote.
-  set("fetch", (path, init = {}) => {
-    const { cache: _ignored, ...rest } = init;
-    const own = String(path).startsWith("/api/");
-    return realFetch(new URL(String(path), server.url), own ? { ...rest, headers: signedHeaders(rest.headers ?? {}, server.token) } : rest);
-  });
-  // The window's socket does not get through: it fails, then closes, a moment after it is made.
-  set("WebSocket", class extends EventTarget {
-    constructor(url, protocols) {
-      super();
-      this.readyState = 0;
-      page.sockets.push({ url, protocols });
-      setTimeout(() => { this.readyState = 3; this.dispatchEvent(new Event("error")); this.dispatchEvent(new Event("close")); }, 5);
-    }
-    send() { throw new Error("This socket is not open"); }
-    close() { this.readyState = 3; }
-  });
-  set("toast", (message) => page.toasts.push(message));
-  return page;
-}
+/** Until `check` (run in the page) answers something, or the limit passes. */
+const pageUntil = async (page, check, what, limit = 10000) => {
+  const deadline = Date.now() + limit;
+  for (;;) {
+    const found = await check().catch(() => null);
+    if (found !== undefined && found !== null && found !== false) return found;
+    if (Date.now() >= deadline) throw new Error(`waited ${limit}ms and never saw ${what}`);
+    await settle(50);
+  }
+};
 
 test("when the live socket never opens, the page stops the task it made and says why", async (t) => {
-  const { app, server } = await served(t);
+  const { app, server, call } = await served(t);
   livePreset(app, "ws://127.0.0.1:9/realtime");
   app.live.connectWaitMs = 10 * 60_000; // only the page can end it within this test
-  const page = desktopPage(t, server);
-  const { initLanguage } = await import("../public/i18n.js");
-  await initLanguage();
-  await import("../public/voice-live.js");
-  await until(() => page.button.hidden === false, "Talk live offered in the desktop window");
+  assert.equal((await call("POST", "/api/onboarding", { done: true })).status, 200);
+  const browser = await chromium.launch({ headless: true, args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  // The window's socket does not get through: it fails, then closes, a moment after it is made. The microphone is counted.
+  await page.addInitScript(() => {
+    window.__sockets = []; window.__mic = 0;
+    const media = navigator.mediaDevices, ask = media.getUserMedia.bind(media);
+    media.getUserMedia = async (c) => { window.__mic += 1; return ask(c); };
+    window.WebSocket = class extends EventTarget {
+      constructor(url, protocols) {
+        super();
+        this.readyState = 0;
+        window.__sockets.push({ url, protocols });
+        setTimeout(() => { this.readyState = 3; this.dispatchEvent(new Event("error")); this.dispatchEvent(new Event("close")); }, 5);
+      }
+      send() { throw new Error("This socket is not open"); }
+      close() { this.readyState = 3; }
+    };
+  });
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#prompt").waitFor({ timeout: 120000 });
+  const button = page.locator(".composer [data-act='voice']");
+  assert.equal(await button.getAttribute("aria-disabled"), null, "Talk live is offered in the composer");
 
-  await globalThis.branchLive.press();
-  const [runId] = liveTasks(app);
+  await button.click();
+  const runId = await until(() => liveTasks(app)[0], "the press make its task");
+  await until(() => app.store.run(runId).status !== "running", "the page stop the task");
   assert.equal(liveTasks(app).length, 1, "one press made one task");
-  assert.deepEqual(page.sockets, [{ url: `${server.url.replace(/^http/, "ws")}/api/runs/${runId}/ws`, protocols: ["bearer", "desktop-window"] }]);
+  const sockets = await page.evaluate(() => window.__sockets);
+  assert.deepEqual(sockets, [{ url: `${server.url.replace(/^http/, "ws")}/api/runs/${runId}/ws`, protocols: ["bearer", server.token] }]);
   assert.equal(app.store.run(runId).status, "cancelled", "the page stopped the task its socket could not reach");
   assert.equal(app.store.run(runId).output, "Stopped before the live conversation connected.");
   assert.equal(busyTaskCount(app.store), 0, "so it holds no update");
@@ -250,7 +241,49 @@ test("when the live socket never opens, the page stops the task it made and says
   const en = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
   const fr = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
   assert.equal(en["voiceLive.neverConnected"], "The live conversation could not connect, so it was stopped.");
-  assert.deepEqual(page.toasts, [en["voiceLive.neverConnected"]], "the owner is told why, in the window's language");
+  await pageUntil(page, async () => (await page.locator(".toast").innerText()) === en["voiceLive.neverConnected"], "the owner told why");
   assert.ok(fr["voiceLive.neverConnected"] && fr["voiceLive.neverConnected"] !== en["voiceLive.neverConnected"], "and it is in French too");
-  assert.equal(globalThis.branchLiveState(), "idle", "Talk live is ready to be pressed again");
+  assert.equal(await page.locator("#app > .voice").count(), 0, "the live view is gone");
+  assert.equal(await button.getAttribute("aria-disabled"), null, "Talk live is ready to be pressed again");
+  assert.equal(await page.evaluate(() => window.__mic), 0, "and the microphone was never asked for");
+  assert.deepEqual(errors, []);
+});
+
+test("pressing Talk live twice while the engine is still answering makes one task, not two", async (t) => {
+  const { app, server, call } = await served(t);
+  livePreset(app, "ws://127.0.0.1:9/realtime");
+  app.live.connectWaitMs = 10 * 60_000;
+  assert.equal((await call("POST", "/api/onboarding", { done: true })).status, 200);
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  // The same socket that never gets through, so the one task the press made is stopped by the page.
+  await page.addInitScript(() => {
+    window.WebSocket = class extends EventTarget {
+      constructor() {
+        super();
+        this.readyState = 0;
+        setTimeout(() => { this.readyState = 3; this.dispatchEvent(new Event("close")); }, 5);
+      }
+      send() { throw new Error("This socket is not open"); }
+      close() { this.readyState = 3; }
+    };
+  });
+  let asked = 0;
+  await page.route("**/api/voice/live", async (route) => { asked += 1; await settle(600); await route.continue(); });
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#prompt").waitFor({ timeout: 120000 });
+
+  // Both presses in one turn, so the second lands while the first is still waiting on the engine.
+  await page.evaluate(() => { const button = document.querySelector(".composer [data-act='voice']"); button.click(); button.click(); });
+  const runId = await until(() => liveTasks(app)[0], "the press make its task");
+  await until(() => app.store.run(runId).status !== "running", "the page stop the task");
+  await settle(1000);
+  assert.equal(asked, 1, "the engine was asked once");
+  assert.equal(liveTasks(app).length, 1, "two presses made one task");
+  assert.deepEqual(errors, []);
 });

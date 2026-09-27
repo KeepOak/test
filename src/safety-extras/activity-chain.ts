@@ -87,6 +87,11 @@ export class ActivityChain {
     return this.db.prepare("SELECT * FROM activity_chain WHERE owner=? ORDER BY seq DESC LIMIT ?").all(owner, Math.min(Math.max(limit, 1), 1000))
       .map(toEntry);
   }
+  /** Pass 17 (Timeline): one task's entries, oldest first, so each of its steps can show its own link. */
+  forRun(owner: string, runId: string): ChainEntry[] {
+    return this.db.prepare("SELECT * FROM activity_chain WHERE owner=? AND run_id=? ORDER BY seq LIMIT 1000").all(owner, runId)
+      .map((row) => toEntry(row as Record<string, unknown>));
+  }
   /** Walks the whole chain and says whether it is unbroken, and where it first is not. */
   verify(owner: string, expectedTip?: string): ChainCheck {
     let prev = genesisHash, count = 0;

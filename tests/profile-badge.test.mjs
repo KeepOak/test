@@ -8,9 +8,43 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { closeSettings, openPlace } from "./places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+
+/* The new window: the person button at the foot of the list says whose profile the window is on. Here the engine
+   switches, before the window opens and then back while it is open; switching from the window itself (the person menu's
+   people, data-act "switchto", live since unhold/people) is the owner's-PIN test further down. */
+const onSam = (app) => {
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
+};
+test("the person button says whose profile it is, and says the owner again once switched back", async (t) => {
+  const { settingsWindow } = await import("./settings-window.mjs");
+  const { app, page, errors, call } = await settingsWindow(t, { name: "profile-badge", before: onSam });
+  await page.locator(".owner .who14", { hasText: "Sam" }).waitFor({ timeout: 15000 });
+  assert.equal((await page.locator(".owner .me").innerText()).trim(), "S");
+  await call("/api/profiles/switch", { profileId: null });
+  assert.equal(app.store.profiles.isOwner(), true);
+  await page.waitForFunction(() => !/Sam/.test(document.querySelector(".owner .who14")?.textContent ?? ""), undefined, { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
+/* On somebody else's profile the window never asks for the owner's chat apps or locker, however long Settings is open. */
+test("on somebody else's profile the window does not ask for the owner's chat apps or locker", async (t) => {
+  const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  const { app, page, errors, call } = await settingsWindow(t, { name: "profile-badge", before: onSam });
+  assert.equal(app.store.profiles.isOwner(), false, "the window is on Sam's profile");
+  const asked = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/^\/api\/(channels|channel-setup|secrets)(\/|$)/.test(path)) asked.push(path);
+  });
+  for (const one of ["gateway", "secrets", "general"]) await openSettingsPage(page, one);
+  await page.waitForTimeout(7000);
+  assert.deepEqual(asked, [], "the window asked for the owner's chat apps and locker");
+  assert.deepEqual(errors, [], "an expected refusal surfaced as a page error");
+  await call("/api/profiles/switch", { profileId: null });
+});
 
 const shots = process.env.BRANCH_TEST_SHOTS; // headless screenshots, only when a folder is named
 
@@ -36,14 +70,16 @@ async function fixture(t, everything) {
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("body.lx-ready").waitFor({ state: "attached" });
   // layout.js marks lx-ready as the page loads, before the key is taken: the window is open once #workspace shows.
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.waitForFunction((on) => document.documentElement.dataset.everything === (on ? "on" : "off"), everything);
   return { app, call, page, errors, sam };
 }
 
 for (const everything of [false, true]) {
   const layout = everything ? "full" : "calm";
-  test(`${layout} window: the title bar says whose profile it is, and switches back`, async (t) => {
+  // Redesign: the title-bar badge is replaced by the person button, re-pointed above; the person menu's way back
+  // (switchto) is re-pointed below.
+  test.skip(`${layout} window: the title bar says whose profile it is, and switches back`, async (t) => {
     const f = await fixture(t, everything);
     const badge = f.page.locator("#profile-badge");
     assert.equal(await badge.isVisible(), false, "nothing shows while the window is the owner's");
@@ -59,52 +95,25 @@ for (const everything of [false, true]) {
   });
 }
 
-test("with the owner's PIN set, the title bar's way back asks for it", async (t) => {
-  const f = await fixture(t, false);
-  await f.call("/api/profiles/owner-pin", { pin: "9753" });
-  await f.call("/api/profiles/switch", { profileId: f.sam.id, pin: "2468" });
-  const badge = f.page.locator("#profile-badge");
-  await badge.waitFor({ state: "visible", timeout: 15000 });
-  const pin = badge.getByLabel("The owner's PIN");
-  await pin.fill("0000");
-  await badge.getByRole("button", { name: "Switch back" }).click();
-  await f.page.getByText("That PIN is not right").first().waitFor({ state: "visible" });
-  assert.equal(f.app.store.profiles.isOwner(), false, "a wrong PIN let the window back to the owner");
-  if (shots) await f.page.screenshot({ path: join(shots, "profile-badge-pin.png") });
-  await pin.fill("9753");
-  await badge.getByRole("button", { name: "Switch back" }).click();
-  await badge.waitFor({ state: "hidden", timeout: 15000 });
-  assert.equal(f.app.store.profiles.isOwner(), true);
+/* unhold/people: the person menu's way back to the owner (switchto) asks for the owner's PIN once it is set, and a wrong
+   one leaves the window on Sam. */
+test("with the owner's PIN set, the person menu's way back asks for it", async (t) => {
+  const { settingsWindow } = await import("./settings-window.mjs");
+  const before = (app) => { app.store.profiles.setOwnerPin({ pin: "9753" }); onSam(app); };
+  const { app, page, errors } = await settingsWindow(t, { name: "profile-badge-pin", before });
+  await page.locator(".owner .who14", { hasText: "Sam" }).waitFor({ timeout: 15000 });
+  await page.locator('#side [data-act="owner"]').click();
+  await page.locator('.pop [data-act="switchto"][data-v=""]').click();
+  await page.getByRole("dialog", { name: "The owner’s PIN" }).waitFor();
+  await page.locator("#pin-try").fill("0000");
+  await page.locator('[data-act="pin-ok"]').click();
+  await page.getByText("That PIN is not right").first().waitFor({ state: "visible" });
+  assert.equal(app.store.profiles.isOwner(), false, "a wrong PIN let the window back to the owner");
+  assert.equal(await page.locator("#pin-try").inputValue(), "", "the PIN is not left in its field");
+  await page.locator("#pin-try").fill("9753");
+  await page.locator('[data-act="pin-ok"]').click();
+  await page.waitForFunction(() => !/Sam/.test(document.querySelector(".owner .who14")?.textContent ?? ""), undefined, { timeout: 15000 });
+  assert.equal(app.store.profiles.isOwner(), true);
+  assert.deepEqual(errors, []);
 });
 
-test("on somebody else's profile the window stops asking for the owner's chat apps, and asks again once back", async (t) => {
-  const f = await fixture(t, false);
-  const asked = [];
-  f.page.on("request", (request) => {
-    const path = new URL(request.url()).pathname;
-    if (/^\/api\/(channels|channel-setup|secrets)(\/|$)/.test(path)) asked.push(path);
-  });
-  const said = [];
-  f.page.on("console", (message) => { if (message.type() === "error") said.push(message.text()); });
-  /* The owner opens the chat apps, so their cards and the Telegram panel are on the page. */
-  await openPlace(f.page, "settings:channels");
-  await f.page.locator("#channel-setup-card .settings-card-title").waitFor({ state: "visible", timeout: 15000 });
-  await closeSettings(f.page);
-
-  await f.call("/api/profiles/switch", { profileId: f.sam.id, pin: "2468" });
-  await f.page.locator("#profile-badge").waitFor({ state: "visible", timeout: 15000 });
-  asked.length = 0;
-  /* Settings opened again, and two of the window's own three-second refreshes. */
-  await openPlace(f.page, "settings:channels");
-  await f.page.waitForTimeout(7000);
-  assert.deepEqual(asked, [], "the window kept asking for the owner's chat apps and locker");
-  assert.equal(await f.page.locator("#channel-setup-card .settings-card-title").count(), 0, "the owner's chat-app setup stayed on the page");
-  await closeSettings(f.page);
-
-  await f.page.locator("#profile-badge").getByRole("button", { name: "Switch back" }).click();
-  await f.page.locator("#profile-badge").waitFor({ state: "hidden", timeout: 15000 });
-  await f.page.waitForFunction(() => document.querySelector("#channel-setup-card .settings-card-title"), null, { timeout: 15000 });
-  assert.ok(asked.some((path) => path.startsWith("/api/channel-setup")), "the chat-app setup was not loaded again");
-  assert.deepEqual(f.errors, [], "an expected refusal surfaced as a page error");
-  assert.deepEqual(said.filter((line) => /belongs to the owner/.test(line)), []);
-});

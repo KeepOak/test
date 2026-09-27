@@ -2,9 +2,9 @@
    the workspace), and the KeepOak theme, season and contrast this browser remembers (the same local
    storage keys public/layout.js writes). The theme's colours reach Branch's token names through
    /theme-bridge.js, the same module the window uses. */
-import { applyAppearance } from "/appearance.js";
-import { DEFAULT_THEME, solid, themeById, tokensFor, wearTokens } from "/theme-bridge.js";
-import { paint as paintGrove, seasonToday } from "/grove.js";
+import { applyAppearance } from "/dashboard/appearance.js";
+import { DEFAULT_THEME, solid, themeById, tokensFor, wearTokens } from "/dashboard/theme-bridge.js";
+import { paint as paintGrove, seasonToday } from "/dashboard/grove.js";
 
 const root = document.documentElement;
 const remembered = (key) => { try { return localStorage.getItem(key); } catch { return null; } };

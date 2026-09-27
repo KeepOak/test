@@ -27,7 +27,7 @@ Files: package.json, tsconfig.json, src/core/, src/storage/, src/providers/, src
 
 - [x] Write behavioral tests for a multi-step tool task, persisted sessions, permissions, cancellation and budget exhaustion.
 - [x] Implement typed messages/tools and runtime validation, SQLite persistence and an audit event log.
-- [x] Implement a bounded tool-calling loop with configurable model providers and a deterministic offline demonstration.
+- [x] Implement a bounded tool-calling loop with configurable model providers and a deterministic scripted fixture for tests.
 - [x] Implement confined workspace file tools, memory retrieval, persisted specialist definitions and restricted delegation.
 - [x] Track specialist proposals, evaluation evidence, owner-authorized promotion and rollback; reuse only within granted scope.
 - [x] Implement versioned procedures with preconditions, explicit verification and replay; record provenance and distinguish proposals from verified procedures.

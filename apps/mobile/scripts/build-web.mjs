@@ -1,10 +1,12 @@
 /**
- * Puts the phone app's page together in www/: the app's own screens (web/), and the pieces of
- * Branch's window they reuse, copied from public/ so the phone always carries the current design
- * (tokens, the 44 themes, the oak, the words, the fonts and the mark). Run by `npm run web` and by
+ * Puts the phone app's page together in www/: the app's own screens (web/, which also keeps its own
+ * copies of the theme bridge, the icons and the words code it used to take from the old window, removed in
+ * #291, and web/phone-locales, the words only the phone says), the app's version (app-version.json, from
+ * package.json, for Settings › Version), and the pieces of Branch it still reuses, copied from public/ so
+ * the phone carries the current tokens, the 44 themes, the language files, the fonts and the mark. Run by `npm run web` and by
  * scripts/package-mobile.mjs. The root project must have been built once (npm run build) for fonts.
  */
-import { cp, mkdir, readdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,10 +16,9 @@ const repo = join(app, "..", "..");
 const out = join(app, "www");
 /** Files from Branch's window that the phone screens use, as [from public/, to www/]. */
 export const REUSED = [
-  ["tokens.css", "tokens.css"], ["style.css", "style.css"], ["theme-catalogue.js", "theme-catalogue.js"],
-  ["theme-bridge.js", "theme-bridge.js"],
-  ["grove.js", "grove.js"], ["i18n.js", "i18n.js"], ["locales", "locales"], ["fonts", "fonts"],
-  ["assets/keepoak-mark.png", "assets/keepoak-mark.png"],
+  ["tokens.css", "tokens.css"], ["theme-catalogue.js", "theme-catalogue.js"],
+  ["locales", "locales"], ["fonts", "fonts"],
+  ["assets/icon-192.png", "assets/icon-192.png"], ["assets/keepoak-mark.png", "assets/keepoak-mark.png"],
 ];
 
 export async function buildWeb() {
@@ -27,6 +28,8 @@ export async function buildWeb() {
   await mkdir(join(out, "assets"), { recursive: true });
   for (const name of await readdir(join(app, "web"))) await cp(join(app, "web", name), join(out, name), { recursive: true });
   for (const [from, to] of REUSED) await cp(join(repo, "public", from), join(out, to), { recursive: true });
+  const { version } = JSON.parse(await readFile(join(app, "package.json"), "utf8"));
+  await writeFile(join(out, "app-version.json"), JSON.stringify({ version }));
   await mkdir(join(out, "vendor"), { recursive: true });
   await cp(join(app, "node_modules", "jsqr", "dist", "jsQR.js"), join(out, "vendor", "jsqr.js"));
   await cp(join(app, "node_modules", "jsqr", "LICENSE"), join(out, "vendor", "jsqr-LICENSE.txt"));

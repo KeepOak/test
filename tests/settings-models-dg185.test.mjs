@@ -32,7 +32,7 @@ async function modelsPage(t, width) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   return { page, errors };
 }
@@ -58,8 +58,40 @@ const seen = (page) => page.evaluate(() => {
   };
 });
 
+/* The new window: Settings › Models opens on its Connections tab under the page title; Advanced adds the prototype's
+   sections, in order, each headed once; the five tabs stay, at 1440 and 400 px. */
 for (const width of [1440, 400]) {
-  test(`DG-185 at ${width}: Models › Connection has the sample's sections, each headed once, at Regular and Advanced`, async (t) => {
+  test(`DG-185 at ${width}: Models opens on Connections, with the prototype's sections at each level, each headed once`, async (t) => {
+    const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+    const { page, errors } = await settingsWindow(t, { name: "models-dg185", width, height: 900 });
+    await openSettingsPage(page, "models");
+    const heads = () => page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
+      all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+    await setLevel(page, "regular");
+    await page.locator('.set-col [role="tab"][aria-selected="true"]', { hasText: "Connections" }).waitFor();
+    assert.deepEqual(await heads(), ["Models"]);
+    assert.equal(await page.locator('.set-col [role="tab"]').count(), 5, "the Models tabs stay");
+    await setLevel(page, "advanced");
+    const advanced = await heads();
+    // Pass 17 adds "Mixtures and savings" at Advanced (whereB17("models", 1, ...)), and its part D adds "Decision models"
+    // after it (addSettings15('models', 1, ...)).
+    assert.deepEqual(advanced, ["Models", "Budgets", "Models for smaller jobs", "Compare models", "Mixtures and savings", "Decision models"]);
+    await setLevel(page, "technical");
+    const technical = await heads();
+    // The prototype draws the FINE15 rows first, then pass 17's (whereB17): Technical adds "Retries and timeouts" and
+    // "Per connection" among the FINE15 rows, and "Connections, technical" after "Mixtures and savings"; part D's two
+    // sections come last, in the order they were added (addSettings15('models', 1 | 2, ...)).
+    assert.deepEqual(technical, ["Models", "Budgets", "Models for smaller jobs", "Compare models", "Retries and timeouts", "Per connection", "Mixtures and savings", "Connections, technical", "Decision models", "Decision models, technical"]);
+    assert.equal(new Set(technical).size, technical.length, "no heading is drawn twice");
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${width} px fits`);
+    assert.deepEqual(errors, []);
+  });
+}
+
+for (const width of [1440, 400]) {
+  // Redesign: replaced by the new window (the prototype's Connections tab has no ChatGPT, connection-check or services
+  // sections and no "N more" lines; its sections are re-pointed above).
+  test.skip(`DG-185 at ${width}: Models › Connection has the sample's sections, each headed once, at Regular and Advanced`, async (t) => {
     const { page, errors } = await modelsPage(t, width);
     await openModels(page);
     /* On the desktop app the model connection card is on show; the browser hides it until the app fills it in. */
@@ -86,7 +118,8 @@ for (const width of [1440, 400]) {
   });
 }
 
-test("DG-185: the Connection tab's sections have French words, and search still names the cards", async (t) => {
+// Redesign: Coming soon (sw:lang), checked at fc541c24; search is tests/settings-search-head.test.mjs.
+test.skip("DG-185: the Connection tab's sections have French words, and search still names the cards", async (t) => {
   const { page, errors } = await modelsPage(t, 1440);
   await openModels(page);
   await page.locator('.lx-settings-link[data-page="appearance"]').click();

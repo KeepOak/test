@@ -41,6 +41,7 @@ async function fixture(t, provider, mode = "on") {
   const root = await mkdtemp(join(tmpdir(), "branch-fly-core-"));
   const open = () => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const app = await open();
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about the learning core, not reading first
   if (mode !== "off") app.learningCore.configure({ mode });
   const state = { app };
   t.after(async () => { await state.app.close(); await discardTemp(root); });

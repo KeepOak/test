@@ -34,6 +34,12 @@ export const targetlessTools: Readonly<Record<string, string>> = {
   "procedures.propose": "Proposing only saves the recipe. `preconditions[].path` is read later, by files.verify, when the recipe is verified or replayed.",
   "specialists.propose": "Proposing only saves the specialist. `evaluation.checks[].path` is read later, by files.verify, when it is evaluated.",
   "specialists.delegate": "`checks.files` is what the specialist's answer must account for. Every tool the specialist itself runs is judged on its own, with fewer permissions.",
+  // Ships-on sweep (2026-09-26): these now ship listed, so the target guard reads them on a fresh install.
+  "gcal.events": "`from` and `to` are times bounding a read of the owner's own calendar, not places.",
+  "outlook.events": "`from` and `to` are times bounding a read of the owner's own calendar, not places.",
+  "notebook.read": "`from` and `to` are cell numbers. The notebook itself is `path`, which the rules read as they do for files.read.",
+  "project.board": "`project` is a project's name. The project's folder is judged when something opens it.",
+  "answer.page": "`sources[].url` are the addresses an answer cites, written into the page for a person to read; nothing is fetched.",
 };
 /**
  * Q76: a target a kept rule would read as a pattern, so a standing yes on it would cover far more than

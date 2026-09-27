@@ -15,6 +15,8 @@ import {
   readPolicy, savePolicy, resourceOf, PolicyRuleSchema,
 } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+/** Q257: the fingerprint of the question the window shows for a conversation; a bare answer is refused. */
+const shownFingerprint = (app, sessionId) => app.runtime.approvals.questionFor(sessionId)?.fingerprint;
 
 const say = (content) => () => ({ content, toolCalls: [] });
 const calls = (...toolCalls) => () => ({ content: "", toolCalls });
@@ -132,7 +134,7 @@ test("'Yes, always' to git status allows git status --short and still asks about
   const ran = fakeShell(app);
   const paused = (await api("POST", "/api/run", { prompt: "check the repo" })).body;
   assert.equal(paused.status, "needs_input", "a command nobody ruled on is asked about");
-  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "always" });
+  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "always" });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
   const policy = readPolicy(app.store, app.runtime.owner);
   assert.deepEqual(policy.rules[0].resource, { kind: "command", pattern: "git status" });
@@ -234,7 +236,7 @@ test("when needed: a tool that only reads goes past a rule for changes, never pa
   assert.equal(reviewer.calls, 1, "a refusal is not looked at again");
 
   // A rule the owner wrote for everything still stands.
-  await api("POST", "/api/policy", { rules: [{ tool: "notes.*", applies: "any", decision: "ask" }] });
+  await api("POST", "/api/policy", { rules: [{ tool: "notes.*", applies: "any", decision: "ask" }], confirmLoosening: true }); // Q257: from read-only this loosens
   worker.reset();
   assert.equal((await api("POST", "/api/run", { prompt: "and again" })).body.status, "needs_input");
   await api("POST", "/api/policy", { rules: [{ tool: "notes.*", applies: "any", decision: "deny" }] });
@@ -374,7 +376,7 @@ test("a task the owner did not start never has a tool called read-only by the se
   const call = lookup("l9", "q");
   for (const [source, expected] of [["trigger", "ask"], ["owner", "allow"]]) {
     const context = app.runtime.context({ runId: run.id, source });
-    const fingerprint = argumentFingerprint(call.arguments);
+    const fingerprint = argumentFingerprint(call.name, call.arguments);
     const check = app.runtime.checkPolicy(call.name, JSON.parse(call.arguments), context, fingerprint);
     assert.equal(check.decision, "ask", source);
     const after = await reviewCall(app.runtime, check, { call, args: JSON.parse(call.arguments), context, fingerprint });
@@ -402,42 +404,8 @@ test("the settings screen reads and saves the second look, and a short-lived key
   assert.equal(refused.status, 401);
   assert.match((await refused.json()).error, /cannot change the safety check/);
   assert.equal((await api("GET", "/api/approval-reviewer")).body.mode, "when-needed");
-  assert.equal((await fetch(server.url + "/approval-reviewer.js")).status, 200);
-});
-
-test("the card sits on the Permissions page, ships off, saves, and fits a narrow window", async (t) => {
-  const { chromium } = await import("playwright");
-  const { openPlace } = await import("./places.mjs");
-  const { api, server } = await reviewed(t, [say("ok")], () => verdict(true, "fine"));
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  for (const width of [1280, 400]) {
-    const page = await browser.newPage({ viewport: { width, height: 800 } });
-    await page.goto(server.url);
-    await page.getByLabel("Session token", { exact: true }).fill(server.token);
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-    await openPlace(page, "settings:permissions");
-    const card = page.locator("#approval-reviewer-card");
-    await card.waitFor({ state: "visible" });
-    assert.equal(await card.getAttribute("data-home"), "settings:permissions");
-    assert.ok(await page.evaluate(() => Boolean(document.getElementById("approval-reviewer-card").closest("#lx-page-permissions"))));
-    assert.equal(await card.locator("h3.settings-card-title").textContent(), "A second look before approvals"); // DG-008 (69ffcef1): card titles are level three
-    await page.waitForFunction(() => document.querySelector("#approval-reviewer-connection option[value='reviewer']"));
-    assert.equal(await page.getByLabel("Second look", { exact: true }).inputValue(), "off");
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no sideways scroll at ${width}`);
-    if (width === 1280) {
-      await page.getByLabel("Second look", { exact: true }).selectOption("when-needed");
-      await page.getByLabel("Which connection looks", { exact: true }).selectOption("reviewer");
-      await page.getByLabel("Your rules, in your own words", { exact: true }).fill("Never delete invoices.");
-      await card.getByRole("button", { name: "Save this setting" }).click();
-      await page.locator("#approval-reviewer-status", { hasText: "Saved." }).waitFor();
-      const saved = (await api("GET", "/api/approval-reviewer")).body;
-      assert.deepEqual([saved.mode, saved.preset, saved.rules], ["when-needed", "reviewer", "Never delete invoices."]);
-      await api("POST", "/api/approval-reviewer", { mode: "off" });
-    }
-    await page.close();
-  }
+  // Redesign: replaced by the new window (the old window's /approval-reviewer.js is gone with it; the prototype has no
+  // second-look card). Was: assert.equal((await fetch(server.url + "/approval-reviewer.js")).status, 200);
 });
 
 /* ------------------------------------------------ integration review: trying to get past a yes */

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Store } from "./store.js";
 import { addOnLabels, addOnMode, addOnTools, type AddOnPart } from "./add-ons/settings.js"; // bucket-15
 import { askToolFeatures } from "./asks/settings.js"; // mac6/bucket-23
+import { interopShipsOn, type InteropPart } from "./interop/settings.js"; // ships-on sweep
 import { lockdownOverrides } from "./lockdown.js"; // mac7/lockdown-fix
 import { deviceTools } from "./devices/capabilities.js"; // mac7/nodes
 import { autonomyToolFeatures } from "./autonomy/settings.js"; // r17-b
@@ -15,7 +16,8 @@ import { learningToolFeatures } from "./learning-more/settings.js"; // R17-F
 import { learnToolFeatures } from "./learn/settings.js"; // mac7/learn
 
 /**
- * The owner's three-way switch for a feature: off, when needed, or on. Every one ships off.
+ * The owner's three-way switch for a feature: off, when needed, or on. Each ships as its own
+ * settings file says (most off; the owner's rule of 2026-09-26 ships the harmless ones "when needed").
  *
  *   off          the feature refuses in one plain sentence, and its tools are not advertised
  *   when-needed  the feature works, and its tools stay a line in the index (or a search away),
@@ -89,17 +91,21 @@ export const pageNotesTools = ["browser.notes"] as const;
 
 type Reader = Pick<Store, "get">;
 /** mac4/bucket-20: each interop part with tools — its settings record, why it is loaded, and its tools. */
-export const interopToolFeatures: readonly (readonly [string, string, readonly string[]])[] = [
-  ["interop-modes", "ways of working are switched on", ["mode.list", "mode.task"]],
-  ["interop-project-routing", "choosing the project for a request is switched on", ["project.route"]],
-  ["interop-fleet", "looking after several assistants is switched on", ["fleet.status", "fleet.send", "fleet.stop"]],
-  ["interop-handoff", "handing a conversation on is switched on", ["conversation.handoff"]],
-  ["interop-flow-search", "finding a better flow is switched on", ["flow.search"]],
-  ["interop-agent-market", "sharing assistants is switched on", ["assistant.market"]],
+const shipped = (part: InteropPart): FeatureMode => interopShipsOn[part] ?? "off";
+export const interopToolFeatures: readonly (readonly [string, string, readonly string[], FeatureMode])[] = [
+  ["interop-modes", "ways of working are switched on", ["mode.list", "mode.task"], shipped("modes")],
+  ["interop-project-routing", "choosing the project for a request is switched on", ["project.route"], shipped("project-routing")],
+  ["interop-fleet", "looking after several assistants is switched on", ["fleet.status", "fleet.send", "fleet.stop"], shipped("fleet")],
+  ["interop-handoff", "handing a conversation on is switched on", ["conversation.handoff"], shipped("handoff")],
+  ["interop-flow-search", "finding a better flow is switched on", ["flow.search"], shipped("flow-search")],
+  ["interop-agent-market", "sharing assistants is switched on", ["assistant.market"], shipped("agent-market")],
 ];
-const savedMode = (store: Reader, owner: string, key: string, field: "mode" | "systemVoice" = "mode"): FeatureMode => {
+/** `ships` is what a feature is while nothing was ever saved for it; a saved record it cannot read is off. */
+const savedMode = (store: Reader, owner: string, key: string, field: "mode" | "systemVoice" = "mode", ships: FeatureMode = "off"): FeatureMode => {
   if (lockdownOverrides(store, owner, key)) return "off"; // mac7/lockdown-fix: Lockdown wins over a saved mode
-  const data = (store.get("settings", owner, key)?.data ?? {}) as Record<string, unknown>;
+  const found = store.get("settings", owner, key);
+  if (!found) return ships;
+  const data = (found.data ?? {}) as Record<string, unknown>;
   const mode = FeatureModeSchema.safeParse(data[field]);
   if (mode.success) return mode.data;
   return field === "mode" && data.enabled === true ? "when-needed" : "off";
@@ -123,21 +129,21 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // w911 (A2144) hook: page notes.
   { reason: "page notes are switched on", tools: pageNotesTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "page-notes") },
   // ── mac4/bucket-20: talking to other agents and tools (src/interop/settings.ts keeps these lists). ──
-  ...interopToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...interopToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── mac6/bucket-23: the smaller asks (src/asks/settings.ts keeps these lists). ──
-  ...askToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...askToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // mac7/nodes: the owner's other devices (src/devices/); the mode is kept in the devices record.
   { reason: "using your other devices is switched on", tools: deviceTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "devices-book") },
   // ── r17-b: suggestions, standing orders, procedures, readiness, instructions (src/autonomy/settings.ts keeps these lists). ──
-  ...autonomyToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...autonomyToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── R17-A: Trunks (src/trunks/settings.ts keeps these lists). ──
-  ...trunkToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...trunkToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── mac7/r17-d: coding polish (src/coding/settings.ts keeps these lists). ──
-  ...codingToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...codingToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── R17-C: files, voice, devices and personal connectors (src/personal/settings.ts keeps these lists). ──
-  ...personalToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...personalToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── r17-i: reach and platform (src/reach/settings.ts keeps these lists). ──
-  ...reachToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...reachToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── mac7/r17-g: the safety extras (src/safety-extras/settings.ts keeps these lists). ──
   ...safetyToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
   // ── r17-h: flows and boards (src/flows-boards/settings.ts keeps these lists). ──

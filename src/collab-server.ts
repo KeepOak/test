@@ -8,6 +8,7 @@ import { audit } from "./audit.js";
 import { labelTargets } from "./labels.js";
 import { PolicyRememberSchema } from "./policy.js";
 import { roleLabels } from "./profile-roles.js";
+import { aboutOf, faceOf, forgetAbout, personAboutApi, refuseTakenName } from "./person-about.js"; // your-profile
 import { ownerMember, publishGitPatch, reservedKinds } from "./collab-events.js";
 
 /**
@@ -33,11 +34,12 @@ export function collabState(app: Branch): unknown {
   const roles = profiles.isOwner() ? held : held.filter((entry) => entry.profileId === profiles.active()?.id);
   const person = { active: profiles.active(), all: profiles.list(), isOwner: profiles.isOwner(), ownerPin: profiles.ownerPinOn(), roles, roleLabels };
   // Shared copies, saved workflows, the waiting line and days off are the owner's, so a screen
-  // opened under somebody else's profile shows their labels and nothing of the owner's.
+  // opened under somebody else's profile shows their labels and nothing of the owner's. Q258: that includes the
+  // owner's days off, time zone and quiet hours (GET /api/state collab.calendar).
   if (!profiles.isOwner())
     return { profile: person, labels: app.store.labels.catalog(scope), shares: [], workflows: [],
       queue: { waiting: [], recent: [], settings: app.runQueue.settings(owner) },
-      calendar: { settings: app.calendar.settings(owner), countries: [] } };
+      calendar: { settings: null, countries: [] } };
   return {
     profile: person,
     labels: app.store.labels.catalog(scope),
@@ -194,7 +196,13 @@ async function profilesApi(app: Branch, request: IncomingMessage, path: string, 
           ? entry
           : { profileId: entry.profileId, grant: entry.grant })
       : allRoles;
-    return { profiles: profiles.list(), active: profiles.active(), isOwner: profiles.isOwner(), ownerPin: profiles.ownerPinOn(),
+    // your-profile: everybody's chosen face (the picture only as a stamp), and the owner's own name once they give one.
+    const owner = app.runtime.owner;
+    return { profiles: profiles.list().map((profile) => ({ ...profile, avatar: faceOf(app.store, owner, profile.id) })),
+      active: profiles.active(), isOwner: profiles.isOwner(), ownerPin: profiles.ownerPinOn(),
+      owner: { name: aboutOf(app, "owner").name, avatar: faceOf(app.store, owner, "owner"),
+        // The time zone the window proposes schedules in; only the owner's own window is told it.
+        ...(profiles.isOwner() ? { timezone: aboutOf(app, "owner").timezone } : {}) },
       // Batch 26 (wave 8): what each person may have Branch do, for the card beside their name.
       roles, roleLabels };
   }
@@ -204,8 +212,15 @@ async function profilesApi(app: Branch, request: IncomingMessage, path: string, 
     // never left behind as an Adult by a second call that failed.
     const { role, ...person } = (await body() ?? {}) as { role?: unknown };
     const chosen = NewPersonRoleSchema.parse(role);
+    const named = (person as { name?: unknown }).name;
+    if (typeof named === "string") refuseTakenName(app, named, null); // your-profile: never the owner's own name either
     const made = profiles.create(person);
     if (chosen !== "adult") app.runtime.roles.save(made.id, { role: chosen });
+    // unhold/people: who was added and as what is written down; the PIN never is.
+    audit(app.store, app.runtime.owner, {
+      action: "policy.changed", actor: app.runtime.owner, subject: `${made.name}'s profile`,
+      reason: `The owner added somebody to this computer as ${roleLabels[chosen].label}`, outcome: "added",
+    });
     return made;
   }
   if (request.method === "POST" && path === "/api/profiles/switch") {
@@ -233,17 +248,33 @@ async function profilesApi(app: Branch, request: IncomingMessage, path: string, 
   const role = new RegExp(`^/api/profiles/(${idPattern})/role$`).exec(path);
   if (role && request.method === "POST") {
     profiles.requireOwner("Deciding what somebody here may do");
-    return app.runtime.roles.save(role[1]!, await body());
+    const saved = app.runtime.roles.save(role[1]!, await body());
+    // unhold/people: what somebody here may do is written down each time the owner changes it.
+    const name = profiles.list().find((profile) => profile.id === role[1])?.name ?? "somebody";
+    audit(app.store, app.runtime.owner, {
+      action: "policy.changed", actor: app.runtime.owner, subject: `${name}'s role`,
+      reason: `The owner set what ${name} may do: ${roleLabels[saved.role].label}`, outcome: "saved",
+    });
+    return saved;
   }
   if (role && request.method === "GET") return app.runtime.roles.get(role[1]!);
   const remove = new RegExp(`^/api/profiles/(${idPattern})/remove$`).exec(path);
   if (remove && request.method === "POST") {
     profiles.requireOwner("Removing somebody from this computer");
     await body();
+    const name = profiles.list().find((profile) => profile.id === remove[1])?.name;
     const removed = profiles.remove(remove[1]!);
+    if (removed.removed) audit(app.store, app.runtime.owner, { // unhold/people
+      action: "policy.changed", actor: app.runtime.owner, subject: `${name}'s profile`,
+      reason: "The owner removed somebody from this computer", outcome: "removed",
+    });
     if (removed.removed) app.people.forgetProfile(remove[1]!); // bucket 19: their sign-ins, passkeys and shares go too
+    if (removed.removed) forgetAbout(app.store, app.runtime.owner, remove[1]!); // your-profile: their name and face too
     return removed;
   }
+  // your-profile: each person's own name, picture and (the owner's) time zone (src/person-about.ts).
+  const about = await personAboutApi(app, request, path, body);
+  if (about !== undefined) return about;
   return notCollab;
 }
 

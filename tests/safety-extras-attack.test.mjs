@@ -23,6 +23,8 @@ import { rm } from "node:fs/promises";
 import { scriptWall, ToolScripts } from "../dist/safety-extras/tool-scripts.js";
 import { spawn } from "node:child_process";
 import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gateway-config.js";
+/** Q257: the fingerprint of the question the window shows for a conversation; a bare answer is refused. */
+const shownFingerprint = (app, sessionId) => app.runtime.approvals.questionFor(sessionId)?.fingerprint;
 
 const say = (content) => () => ({ content, toolCalls: [] });
 
@@ -44,7 +46,7 @@ async function served(t, steps = [say("Done.")]) {
       ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  await api("POST", "/api/policy", { preset: "off", unmatchedCommands: "allow" });
+  await api("POST", "/api/policy", { preset: "off", unmatchedCommands: "allow", confirmLoosening: true }); // Q257: a loosening needs the owner's yes
   return { app, api, ran, root };
 }
 
@@ -62,8 +64,8 @@ test("codes: wrong codes are limited, so a code cannot be guessed, and even the 
   await api("POST", "/api/safety-extras/stop", { tools: ["shell.*"] });
   const right = next();
   const wrong = right === "000000" ? "111111" : "000000";
-  for (let i = 0; i < 5; i++) assert.equal((await api("POST", "/api/safety-extras/stop/release", { code: wrong })).status, 401);
-  const locked = await api("POST", "/api/safety-extras/stop/release", { code: right });
+  for (let i = 0; i < 5; i++) assert.equal((await api("POST", "/api/safety-extras/stop/release", { code: wrong, confirmLoosening: true })).status, 401);
+  const locked = await api("POST", "/api/safety-extras/stop/release", { code: right, confirmLoosening: true });
   assert.equal(locked.status, 401, "the right code is refused while wrong ones are being tried");
   assert.match(locked.body.error, /wrong codes/);
   assert.equal((await api("GET", "/api/safety-extras")).body.stop.engaged, true);
@@ -101,13 +103,13 @@ test("codes: switching them off, removing or replacing the app, or changing the 
 
 test("codes: a code typed without the fingerprint still counts for the question that is waiting", async (t) => {
   const shell = () => ({ content: "", toolCalls: [{ id: "c1", name: "shell.execute", arguments: JSON.stringify({ executable: "git", args: ["status"] }) }] });
-  const { api, ran } = await served(t, [shell, shell, say("done")]);
+  const { app, api, ran } = await served(t, [shell, shell, say("done")]);
   const { next } = await enrol(api);
   const paused = (await api("POST", "/api/run", { prompt: "check" })).body;
   assert.equal(paused.status, "needs_input", paused.output);
   const confirmed = await api("POST", "/api/safety-extras/codes/confirm", { sessionId: paused.sessionId, code: next() });
   assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
-  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "session" });
+  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "session" });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
   assert.equal((await api("POST", "/api/run", { prompt: "go on", sessionId: paused.sessionId })).body.status, "completed");
   assert.deepEqual(ran, ["git"]);

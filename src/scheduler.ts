@@ -44,7 +44,10 @@ export const ScheduleSchema = z
     webhook: z.boolean().optional(),
     /** Wave 6: what to do when the due moment lands on a holiday, a weekend or a day off. */
     daysOff: z.enum(["run", "skip", "shift"]).default("run"),
-    permissions: z.array(z.string().max(100)).max(50).optional(),
+    // Ships-on sweep (2026-09-26): an accepted automation whose blueprint names no permissions takes all the owner
+    // holds, narrowed (src/autonomy/index.ts), and with the ships-on parts listed that is past 50; the list is still
+    // only ever names from the tool catalogue.
+    permissions: z.array(z.string().max(100)).max(200).optional(),
     /** A short program, approved by the owner, that runs first and says whether to wake the assistant. */
     gate: GateScriptSchema.optional(),
     /** always: send every result; changes: only when something changed or needs the owner. Checks default to changes. */

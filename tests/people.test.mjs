@@ -55,6 +55,9 @@ test("B19-1 it ships off: no sign-in page answers and a person's key does nothin
   assert.equal((await f.owner("GET", "/api/people/settings")).body.settings.mode, "off");
   assert.equal((await f.call("GET", "/api/people/sign-in")).status, 404);
   assert.equal((await f.call("POST", "/api/people/sign-in/start", { body: { name: "Ada" } })).status, 404);
+  // The owner's rule (ships on, 2026-09-26): the page also serves a conversation handed on, which ships "when
+  // needed" (interop), so that switch is put off here to see what people-off alone does.
+  f.app.store.save("settings", f.app.runtime.owner, "interop-handoff", { mode: "off" });
   assert.equal((await fetch(`${f.server.url}/people`)).status, 404, "the page itself is not served either");
   const { key } = f.app.people.keys.issue(f.ada.id, 60, "pin", "test");
   const refused = await f.call("GET", "/api/people/me", { key });
@@ -273,6 +276,8 @@ test("B19-11 a key handed to another device reaches that one conversation and no
   assert.equal((await f.call("POST", "/api/run", { key, body: { prompt: "go on", sessionId: mine.sessionId } })).status, 200);
   assert.equal((await f.call("POST", `/api/sessions/${other.sessionId}/followups`, { key, body: { prompt: "x" } })).status, 401);
   // An ordinary run key is not held, and cannot read the handover view.
+  // The owner's rule (ships on, 2026-09-26): handing on ships off; it is switched off explicitly for "both off".
+  f.app.store.save("settings", f.app.runtime.owner, "interop-handoff", { mode: "off" });
   assert.equal((await fetch(`${f.server.url}/people`)).status, 404, "with both switches off");
   f.app.store.save("settings", f.app.runtime.owner, "interop-handoff", { mode: "on" });
   assert.equal((await fetch(`${f.server.url}/people`)).status, 200, "handing a conversation over serves the page");

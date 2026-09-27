@@ -20,6 +20,7 @@ async function fixture(t, options = {}) {
     workspace, dataDir: join(root, "data"),
     presets: [{ id: "alpha", name: "Alpha", provider, model: "a" }],
   });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about targets, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   await mkdir(join(workspace, "src"), { recursive: true });
   await mkdir(join(workspace, "finance"), { recursive: true });

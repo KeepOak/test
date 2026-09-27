@@ -117,7 +117,7 @@ export class Learn {
     const narrated = applyNarration(steps, answer);
     return {
       subject: built.subject, of: built.of, steps: narrated.steps, language,
-      how: `${steps.length} stop(s), worked out from the map on this computer; one model call wrote the words in ${language === "fr" ? "French" : "English"}.`,
+      how: `${steps.length} stop(s), worked out from the map on this computer; one model call wrote the words in ${language === "fr" ? "French" : language === "es" ? "Spanish" : "English"}.`,
       limits: [...built.limits, ...narrated.limits], modelCalls: narrated.modelCalls,
     };
   }

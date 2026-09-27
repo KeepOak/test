@@ -1,12 +1,11 @@
 import { test } from "node:test";
-import { openSettingFor } from "./places.mjs";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { _electron } from "playwright";
-import { connected, desktopOptions } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, onboarded, send } from "./fixtures/desktop-options.mjs";
 import { DesktopSettings } from "../dist/desktop/settings.js";
 
 test("desktop settings reject key reuse across destinations and unavailable encryption", async () => {
@@ -54,6 +53,16 @@ async function fixtureProvider() {
   return { server, requests, endpoint: `http://127.0.0.1:${server.address().port}/v1` };
 }
 
+/* Redesign: the old window drew the desktop's own model-connection form (provider, web address, model, API key,
+   "Save model connection") over window.branchDesktop.modelSettings / saveModelSettings. The new window has no such
+   form: the prototype has Settings › Models › Connections instead, whose keys go to the engine's own locker
+   (POST /api/accounts/add), not to this native store. The native store and its guarded IPC are still what the desktop
+   app starts the engine from, so they are driven here from the page, exactly as a form in it would call them, and every
+   check on them is kept: the key is encrypted on disk, never handed back, the IPC stays narrow and refuses any other
+   window, and the saved connection is used after a restart, through the new window's composer. */
+const saveConnection = (page, settings) => page.evaluate((settings) =>
+  window.branchDesktop.saveModelSettings(settings).then((summary) => ({ summary }), (error) => ({ error: error.message })), settings);
+
 /**
  * On Linux an Electron app started by Playwright can never reach a keyring: Playwright's launcher
  * always adds --password-store=basic (playwright-core/lib/server/electron/loader.js), and a bare
@@ -61,13 +70,11 @@ async function fixtureProvider() {
  * plain text, and that refusal is what is checked there. The encrypted path is proved on Windows
  * and macOS, and the storage rules by the unit test above on every system.
  */
-async function refusesWithoutKeyStore(t, page, home) {
+async function refusesWithoutKeyStore(t, page, home, connection) {
   const summary = await page.evaluate(() => window.branchDesktop.modelSettings());
   if (summary.canStoreKey) return false;
   assert.equal(process.platform, "linux", "only Linux may lack device key protection");
-  await page.getByText("Device key protection is unavailable. Configure the provider in the launch environment.").waitFor();
-  await page.getByRole("button", { name: "Save model connection", exact: true }).click();
-  await page.locator("#toast").filter({ hasText: "Device key storage is unavailable" }).waitFor();
+  assert.match((await saveConnection(page, connection)).error ?? "", /unavailable/);
   const disk = await readFile(join(home, "model-settings.json"), "utf8").catch(() => "");
   assert.equal(disk.includes("fixture-device-key-82743"), false);
   t.skip("no usable keyring under Playwright on Linux: checked that the key is refused, not stored");
@@ -80,32 +87,29 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
   const { home, options } = await desktopOptions();
   delete options.env.BRANCH_PROVIDER;
   const provider = await fixtureProvider();
+  const connection = { provider: "openai", endpoint: provider.endpoint, model: "fixture-model", apiKey: "fixture-device-key-82743" };
   let electron;
   try {
     electron = await _electron.launch(options);
     const firstChild = electron.process();
     const page = await electron.firstWindow();
     page.setDefaultTimeout(10000);
-    await connected(page);
-    await openSettingFor(page, "#model-provider");
-    await page.locator("#model-provider").selectOption("openai");
-    await page.getByLabel("Web address of the service", { exact: true }).fill(provider.endpoint);
-    await page.getByLabel("Model identifier", { exact: true }).fill("fixture-model");
-    await page.getByLabel("API key", { exact: true }).fill("fixture-device-key-82743");
-    if (await refusesWithoutKeyStore(t, page, home)) return;
-    await page.getByRole("button", { name: "Save model connection", exact: true }).click();
-    await page.getByText("Connection saved. Quit from the tray and reopen Branch Agent to apply it.").waitFor();
+    await onboarded(page);
+    if (await refusesWithoutKeyStore(t, page, home, connection)) return;
+    const { summary: saved, error } = await saveConnection(page, connection);
+    assert.equal(error, undefined);
+    assert.equal(saved.hasKey, true);
     const disk = await readFile(join(home, "model-settings.json"), "utf8");
     assert.equal(disk.includes("fixture-device-key-82743"), false);
+    assert.ok(JSON.parse(disk).encryptedKey, "the key is kept, encrypted by the device");
     const summary = await page.evaluate(() => window.branchDesktop.modelSettings());
     assert.equal(summary.hasKey, true);
     assert.equal("encryptedKey" in summary, false);
     assert.equal("apiKey" in summary, false);
-    assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "");
-    await page.screenshot({ path: join(home, "model-settings.png"), fullPage: true });
-    console.log(`Model settings screenshot: ${join(home, "model-settings.png")}`);
+    assert.equal((await page.content()).includes("fixture-device-key-82743"), false);
+    // The preload's whole surface (src/desktop/preload.cts), which now also carries the quick-ask pair and the live-talk microphone (#376).
     assert.deepEqual(await page.evaluate(() => Object.keys(window.branchDesktop).sort()),
-      ["checkForUpdates", "exportBackup", "exportConversation", "exportMemory", "installUpdate", "modelSettings", "openExternal", "restartBranch", "saveModelSettings", "updateStatus", "windowLook"]);
+      ["checkForUpdates", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "talkLiveMic", "updateStatus", "windowLook"]);
     await verifyOtherWindowDenied(electron, page.url());
     await electron.close();
     assert.equal(firstChild.exitCode, 0);
@@ -114,9 +118,8 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     const restarted = await electron.firstWindow();
     restarted.setDefaultTimeout(10000);
     await connected(restarted);
-    await restarted.getByLabel("Your message", { exact: true }).fill("Test the saved model connection.");
-    await restarted.getByRole("button", { name: "Send", exact: true }).click();
-    await restarted.locator(".message.assistant").filter({ hasText: "Saved connection is working." }).waitFor({ timeout: 30000 });
+    await send(restarted, "Test the saved model connection.");
+    await restarted.locator("#conversation .b").filter({ hasText: "Saved connection is working." }).waitFor({ timeout: 30000 });
     assert.equal(provider.requests.length, 1);
     assert.equal(provider.requests[0].authorization, "Bearer fixture-device-key-82743");
     assert.equal(JSON.stringify(provider.requests[0].body).includes("fixture-device-key-82743"), false);
@@ -142,6 +145,9 @@ async function verifyOtherWindowDenied(electron, url) {
     const result = await other.evaluate(() =>
       window.branchDesktop.modelSettings().then(() => "allowed", (error) => error.message));
     assert.match(result, /access denied/);
+    const save = await other.evaluate(() =>
+      window.branchDesktop.saveModelSettings({ provider: "demo", endpoint: "", model: "", apiKey: "" }).then(() => "allowed", (error) => error.message));
+    assert.match(save, /access denied/);
   } finally {
     await electron.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.destroy(), id);
   }
@@ -162,14 +168,15 @@ test("native settings remain usable after a corrupt file or undecryptable key", 
     const electron = await _electron.launch(options);
     try {
       const page = await electron.firstWindow();
-      await connected(page);
-      await openSettingFor(page, "#model-provider");
-      await page.locator("#model-settings-note").filter({ hasText: /could not/ }).waitFor();
-      await page.locator("#model-provider").selectOption("demo");
-      assert.equal(await page.locator("#model-settings-form").evaluate((form) => form.checkValidity()), true);
-      await page.getByRole("button", { name: "Save model connection", exact: true }).click();
-      await page.getByText("Connection saved. Quit from the tray and reopen Branch Agent to apply it.").waitFor();
+      // The window still opens and reaches Branch (the engine falls back to the offline demonstration).
+      await onboarded(page);
+      // Redesign: the old form showed this as its note (#model-settings-note); the new window has no such form (see above).
+      assert.match((await page.evaluate(() => window.branchDesktop.modelSettings())).issue ?? "", /could not/);
+      const { summary, error } = await saveConnection(page, { provider: "demo", endpoint: "", model: "", apiKey: "" });
+      assert.equal(error, undefined);
+      assert.equal(summary.provider, "demo");
       assert.equal(JSON.parse(await readFile(path, "utf8")).provider, "demo");
     } finally { await electron.close(); }
   }
 });
+

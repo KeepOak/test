@@ -132,6 +132,19 @@ export class TrunkConversations {
     return this.info(sessionId);
   }
 
+  /**
+   * Pass 17: a path branched off a conversation is answered by whoever answered there, signed the
+   * same way; a Trunk's own chat hands its paths to that Trunk as ordinary conversations with it.
+   */
+  carryTo(fromId: string, toId: string): void {
+    const kind = this.kind(fromId), trunkId = this.trunkIdOf(fromId, kind), now = new Date().toISOString();
+    const choice: Choice | null = kind === "trunk" ? { ...this.saved(fromId)!, sessionId: toId, updatedAt: now }
+      : kind === "trunk-chat" && trunkId ? { sessionId: toId, trunkId, authors: [{ from: 0, trunkId }], updatedAt: now } : null;
+    if (!choice) return;
+    this.deps.store.save("governance", this.deps.owner, key(toId), { ...choice });
+    this.deps.changed();
+  }
+
   /** A new conversation with a Trunk, before anything is said in it. */
   start(input: unknown, open: (title: string) => string): { sessionId: string } {
     const { trunkId } = ConversationStartSchema.parse(input);

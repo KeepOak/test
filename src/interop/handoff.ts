@@ -84,6 +84,8 @@ export function registerHandoffTool(registry: ToolRegistry, parts: HandoffParts)
   registry.register({
     name: "conversation.handoff", group: "memory", permission: "sessions.handoff",
     description: "Carry this conversation on in a terminal, or hand it to an assistant elsewhere with what was said so far.",
+    // Ships-on sweep (2026-09-26): the rules judge a hand-off by where the conversation goes.
+    target: (args) => (args.to === "assistant" ? `hand this conversation to ${args.agent ?? "an assistant"}` : "carry this conversation on in a terminal"),
     parameters: z.object({
       to: z.enum(["terminal", "assistant"]),
       agent: z.string().trim().min(1).max(200).optional(),

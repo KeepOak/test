@@ -188,7 +188,9 @@ test("both real adapters say they can be shown a picture and send it in their ow
 });
 
 test("real provider configuration is explicit and has no credential fallback", () => {
-  assert.equal(providerFromEnv({}).name, "offline-demo-fixture");
+  // Nothing named means no model is set up: there is no provider, never a made-up one.
+  assert.equal(providerFromEnv({}), null);
+  assert.throws(() => providerFromEnv({ BRANCH_PROVIDER: "offline" }), /BRANCH_PROVIDER must be openai or anthropic/);
   assert.throws(
     () => providerFromEnv({ BRANCH_PROVIDER: "openai" }),
     /BRANCH_/,

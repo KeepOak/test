@@ -27,6 +27,9 @@ import type { WorkspaceFiles } from "./files.js";
 import { UsageStore } from "./usage.js";
 // Wave 6 (collaboration and workflows): labels and project notes, share links, household profiles.
 import { Labels } from "./labels.js";
+import { LeftOutMessages } from "./left-out.js";
+import { ReadMarks } from "./read-marks.js";
+import { ConversationPaths } from "./conversation-paths.js";
 import { MediaComments } from "./media-comments.js";
 import { ShareLinks } from "./conversation-share.js";
 import { Profiles } from "./profiles.js";
@@ -52,6 +55,10 @@ export class Store {
   private readonly library: SessionLibrary;
   readonly summaries: SessionSummaries;
   readonly working: WorkingSessions;
+  /** Pass 17: messages left out of what the model sees, read marks, and named paths of a conversation. */
+  readonly leftOut: LeftOutMessages;
+  readonly readMarks: ReadMarks;
+  readonly paths: ConversationPaths;
   private readonly memories: MemoryFacts;
   readonly review: MemoryReview;
   private governanceStore: SkillGovernance | undefined;
@@ -104,10 +111,11 @@ export class Store {
             // mac7/smoke-fixes (B4): the sentence now says what does work, instead of leaving the
             // terminal looking broken while the window is open.
             + "These work against the Branch that is already open, from any terminal: branch status, branch doctor, branch token, "
-            + "branch trace, branch schedule, and the places that only look (memory, usage, sessions, inbox, library, "
+            + "branch trace, branch schedule, branch approve, branch lockdown, branch permissions, branch theme, branch model, "
+            + "branch gateway, and the places that only look (memory, usage, sessions, inbox, library, "
             + "settings, places, tools, skills, projects, snapshots, channels, mcp, customize, automations). "
-            + "Anything that writes to the saved work — backup, restore, security audit, activity verify, theme, model use, "
-            + "lockdown, permissions — needs that Branch closed first: close it and try again.",
+            + "Anything else that writes to the saved work — backup, restore, security audit, activity verify — "
+            + "needs that Branch closed first: close it and try again.",
         );
       throw e;
     }
@@ -131,6 +139,14 @@ export class Store {
     // Wave 8: which project a task was done under, so the figures can be counted per project.
     if (!this.db.prepare("PRAGMA table_info(tasks)").all().some((row) => row.name === "project"))
       this.db.exec("ALTER TABLE tasks ADD COLUMN project TEXT NOT NULL DEFAULT 'default'");
+    // Parity B1: when each message was written, for the conversation's day stamps and "Sent at". Rows from before this
+    // have none; every insert (a reply, a branch, an import) is stamped by the trigger unless it carries its own time.
+    if (!this.db.prepare("PRAGMA table_info(messages)").all().some((row) => row.name === "created_at"))
+      this.db.exec("ALTER TABLE messages ADD COLUMN created_at TEXT");
+    this.db.exec(`CREATE TRIGGER IF NOT EXISTS message_time_insert AFTER INSERT ON messages WHEN new.created_at IS NULL BEGIN
+        UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
+    // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
+    this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
     this.toolUsage = new ToolUsage(this.db);
@@ -148,6 +164,9 @@ export class Store {
     this.library = new SessionLibrary(this.db, () => this.files);
     this.summaries = new SessionSummaries(this.db);
     this.working = new WorkingSessions(this.db);
+    this.leftOut = new LeftOutMessages(this.db);
+    this.readMarks = new ReadMarks(this.db);
+    this.paths = new ConversationPaths(this.db);
     this.recoverInterruptedRuns();
     this.interruptSchedules();
     this.interruptWorkflows();
@@ -180,11 +199,13 @@ export class Store {
       this.closed = true;
     }
   }
-  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string) {
-    return this.branches.branch(owner, input, agent);
+  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false) {
+    return this.branches.branch(owner, input, agent, before);
   }
   sessionView(owner: string, sessionId: string) {
-    return { ...this.branches.view(owner, sessionId), imported: this.library.imported(sessionId), temporary: this.sessionTemporary(sessionId) };
+    const view = this.branches.view(owner, sessionId), out = this.leftOut.ids(sessionId);
+    const messages = out.size ? view.messages.map((m) => (out.has(m.messageId) ? { ...m, leftOut: true } : m)) : view.messages;
+    return { ...view, messages, imported: this.library.imported(sessionId), temporary: this.sessionTemporary(sessionId) };
   }
   /** `agent` narrows the list to the conversations that agent took part in (src/history.ts); unset for the owner. */
   searchSessions(owner: string, input: unknown, agent?: string) {
@@ -193,6 +214,14 @@ export class Store {
   /** The recent conversations with what was last said in each, for picking one up on a phone. */
   recentSessions(owner: string, limit?: number) {
     return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500));
+  }
+  /** A project's conversations, newest first, in the same shape as recentSessions (src/session-library.ts projectOf). */
+  projectSessions(owner: string, project: string, limit = 100) {
+    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500), project);
+  }
+  /** How many conversations each project has, by project id. */
+  projectSessionCounts(owner: string): Record<string, number> {
+    return this.library.projectCounts(owner, this.hiddenSessions().slice(0, 500));
   }
   /**
    * phase2/rooms (integration review): conversations kept out of Recents and search. Set by
@@ -301,8 +330,8 @@ export class Store {
   }
   /** phase2/delight: counts of the owner's own finished work, for achievements (src/achievement-tallies.ts).
    *  `scan` carries the events already counted and is moved on by at most one batch. */
-  achievementTallies(owner: string, scan: EventScan): { tallies: AchievementTallies; caughtUp: boolean } {
-    return achievementTallies(this.db, owner, scan);
+  achievementTallies(owner: string, scan: EventScan, aside: readonly string[] = []): { tallies: AchievementTallies; caughtUp: boolean } {
+    return achievementTallies(this.db, owner, scan, aside);
   }
   /** Workspace file history and snapshots for the given workspace. */
   openWorkspaceHistory(files: WorkspaceFiles, owner: string): WorkspaceHistory {
@@ -333,6 +362,25 @@ export class Store {
   sessionTemporary(sessionId: string): boolean {
     return Number(this.db.prepare("SELECT temporary FROM sessions WHERE id=?").get(sessionId)?.temporary ?? 0) === 1;
   }
+  /** Overview: marks a task the engine started on its own (a conversation's opening row, a Trunk's introduction, reading
+      a schedule, a learning pass), so GET /api/state can set it aside by where it came from, never by its words. */
+  markAside(runId: string, options: { recent?: false } = {}): void {
+    this.event(runId, "run.aside", options);
+  }
+  /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
+  keptFromRecent(runId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.aside' AND json_extract(data,'$.recent')=0").get(runId);
+  }
+  /** Overview (GET /api/state): of these tasks, the ones the engine marked as its own (markAside), the ones another task
+      started (a helper, or a learning pass: "run.started" names a parent) and the ones in a temporary conversation (a
+      small decision, a temporary chat), in two queries for the whole list. */
+  engineOwnRuns(ids: readonly string[]): Set<string> {
+    const list = JSON.stringify(ids), rows = [
+      ...this.db.prepare("SELECT DISTINCT run_id AS id FROM events WHERE (kind='run.aside' OR (kind='run.started' AND json_extract(data,'$.parentRunId') IS NOT NULL)) AND run_id IN (SELECT value FROM json_each(?))").all(list),
+      ...this.db.prepare("SELECT t.id AS id FROM tasks t JOIN sessions s ON s.id=t.session_id WHERE s.temporary=1 AND t.id IN (SELECT value FROM json_each(?))").all(list),
+    ];
+    return new Set(rows.map((row) => String(row.id)));
+  }
   /** Removes a temporary conversation and everything recorded for it; nothing of it remains searchable. */
   discardSession(owner: string, sessionId: string): { discarded: boolean; messages: number } {
     if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
@@ -357,6 +405,11 @@ export class Store {
       const messages = this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId).changes;
       this.db.prepare("DELETE FROM compactions WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM session_pins WHERE session_id=?").run(sessionId);
+      this.db.prepare("DELETE FROM session_left_out WHERE session_id=?").run(sessionId);
+      this.readMarks.forgetSession(sessionId);
+      this.paths.forgetSession(sessionId);
+      // Pass 17: a path, or the conversation paths came off, can be thrown away; what came off it stands alone.
+      this.db.prepare("DELETE FROM session_branches WHERE session_id=? OR parent_session_id=?").run(sessionId, sessionId);
       this.db.prepare("DELETE FROM session_summaries WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM session_work WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM sessions WHERE id=?").run(sessionId);
@@ -438,10 +491,11 @@ export class Store {
       .get(owner, sessionId);
     return row ? this.toRun(row) : undefined;
   }
-  finish(id: string, status: RunStatus, output: string): Run {
+  finish(id: string, status: RunStatus, output: string, options: { mend?: boolean } = {}): Run {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");
-    const added = this.reconcileMessages(run.sessionId, status);
+    // unhold-control: a run that wrote nothing into its conversation (a command pressed by hand) leaves the transcript alone.
+    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status);
     if (added) this.event(id, "session.reconciled", { added, reason: status });
     // NAS 3fd7700: where the conversation stood when this task stopped to ask, so a yes carries it on only while
     // nothing else (a heartbeat's note, a Trunk routine's report) has been written there since.
@@ -454,10 +508,10 @@ export class Store {
       for (const listener of this.runFinishedListeners) try { listener(id, status); } catch { /* never fails a finish */ }
     return this.run(id)!;
   }
-  message(sessionId: string, message: Message, sourceId?: number): number {
+  message(sessionId: string, message: Message, sourceId?: number, createdAt?: string | null): number {
     const result = this.db
-      .prepare("INSERT INTO messages(session_id,body,source_id) VALUES(?,?,?)")
-      .run(sessionId, JSON.stringify(message), sourceId ?? null);
+      .prepare("INSERT INTO messages(session_id,body,source_id,created_at) VALUES(?,?,?,?)")
+      .run(sessionId, JSON.stringify(message), sourceId ?? null, createdAt ?? null);
     return Number(result.lastInsertRowid);
   }
   /**
@@ -469,8 +523,10 @@ export class Store {
     const after = compaction ? Number(compaction.through_id) : 0;
     const pinned = [...this.summaries.pinnedMessageIds(sessionId)];
     const keep = pinned.length ? ` OR id IN (${pinned.map(() => "?").join(",")})` : "";
-    const rows = this.db.prepare(`SELECT id, body FROM messages WHERE session_id=? AND (id>?${keep}) ORDER BY id`)
-      .all(sessionId, after, ...pinned)
+    // Pass 17: a message the owner left out of context stays in the conversation but is never sent.
+    const rows = this.db.prepare(`SELECT id, body FROM messages WHERE session_id=? AND (id>?${keep})
+        AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id`)
+      .all(sessionId, after, ...pinned, sessionId)
       .map((row) => ({ id: Number(row.id), message: JSON.parse(String(row.body)) as Message }));
     return { summary: compaction ? String(compaction.summary) : null, rows };
   }
@@ -502,14 +558,16 @@ export class Store {
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
   reconcileMessages(sessionId: string, reason: string): number {
-    const rows = this.db.prepare("SELECT body,source_id FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
+    const rows = this.db.prepare("SELECT body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
+    // A repaired transcript keeps when each message was first written.
+    const times = new Map([...sources.keys()].map((message, i) => [message, rows[i]!.created_at == null ? null : String(rows[i]!.created_at)]));
     const repaired = reconcileTranscript([...sources.keys()], reason);
     if (!repaired.added) return 0;
     this.db.exec("BEGIN");
     try {
       this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId);
-      for (const message of repaired.messages) this.message(sessionId, message, sources.get(message));
+      for (const message of repaired.messages) this.message(sessionId, message, sources.get(message), times.get(message));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -740,6 +798,8 @@ export class Store {
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
   restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
+  purgeArchivedMemory(owner: string, seen: number) { return this.memories.purgeArchive(owner, seen); }
   /** Keeps a note made while doing one job, so finishing that job no longer clears it. */
   promoteMemory(owner: string, id: string) { return this.memories.promote(owner, id); }
   /** Clears the notes one job made for itself; notes the owner asked to keep are left alone. */

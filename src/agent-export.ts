@@ -50,6 +50,8 @@ export interface ExportOptions {
   memory?: boolean;
   /** Take personal details out of remembered facts on the way out. */
   redact?: (text: string) => string;
+  /** p17 (whole-agent export from the window): only these sections; every section when left out. */
+  sections?: readonly AgentSection[];
 }
 
 /** Everything one section holds, as the text that goes into the file. */
@@ -65,8 +67,9 @@ function sectionData(store: Store, owner: string, section: AgentSection, options
     return { items: skills.length, text: JSON.stringify(skills), summary: `${skills.length} skill${skills.length === 1 ? "" : "s"}` };
   }
   if (section === "memory") {
-    const exported = store.exportMemory(owner) as { facts?: unknown[] } | unknown[];
-    const facts = Array.isArray(exported) ? exported : (exported.facts ?? []);
+    // p17: the memory archive keeps its facts under "records" (src/memory.ts); "facts" read nothing.
+    const exported = store.exportMemory(owner) as { records?: unknown[]; facts?: unknown[] } | unknown[];
+    const facts = Array.isArray(exported) ? exported : (exported.records ?? exported.facts ?? []);
     const text = options.redact ? options.redact(JSON.stringify(facts)) : JSON.stringify(facts);
     return { items: facts.length, text, summary: `${facts.length} remembered fact${facts.length === 1 ? "" : "s"}` };
   }
@@ -76,12 +79,24 @@ function sectionData(store: Store, owner: string, section: AgentSection, options
   return { items: found.length, text: JSON.stringify(found), summary: `${found.length} saved ${what} setting${found.length === 1 ? "" : "s"}` };
 }
 
+/**
+ * p17 (whole-agent export from the window): what each section would hold, counted and named the way
+ * the file's manifest names it, without writing a file or a record. Memory is counted, not read out.
+ */
+export function agentSummary(store: Store, owner: string): { name: AgentSection; items: number; summary: string }[] {
+  return agentSections.map((section) => {
+    const { items, summary } = sectionData(store, owner, section, {});
+    return { name: section, items, summary };
+  });
+}
+
 /** Writes the one file. The locker is never touched, so no secret can be inside it. */
 export function exportAgent(store: Store, owner: string, appVersion: string, options: ExportOptions = {}): { bytes: Buffer; manifest: AgentManifest } {
   const entries: [string, string][] = [];
   const sections: AgentManifest["sections"] = [];
   for (const section of agentSections) {
     if (section === "memory" && !options.memory) continue;
+    if (options.sections && !options.sections.includes(section)) continue;
     const collected = sectionData(store, owner, section, options);
     const { items, summary } = collected;
     const text = store.secrets.scrubber.text(collected.text);
@@ -153,8 +168,9 @@ function bringIn(store: Store, owner: string, section: AgentSection, parsed: unk
   }
   if (section === "skills") return bringInSkills(store, owner, rows);
   if (section === "memory") {
-    const result = store.importMemory(owner, { facts: rows }) as { added?: number } | undefined;
-    return { section, brought: Number(result?.added ?? rows.length), note: "added to what is already remembered" };
+    // p17: the facts go back in as the memory archive they came out of (src/memory.ts parseMemoryArchive).
+    const result = store.importMemory(owner, { format: "branch-agent-memory", version: 1, exportedAt: new Date().toISOString(), records: rows }) as { imported?: number } | undefined;
+    return { section, brought: Number(result?.imported ?? rows.length), note: "added to what is already remembered" };
   }
   // Q48: "When to check with me" is a Settings setting, so replacing it is written down like any change.
   recordedWrite(store, owner, origin, ["policy"], () => {

@@ -10,7 +10,7 @@ import type {
   ToolCall,
 } from "./contracts.js";
 import { anthropicBatchApi, openaiBatchApi } from "./provider-batch.js";
-import { DemoProvider } from "./demo.js";
+import { DemoProvider, demoProviderName } from "./demo.js";
 import { rejectedHttpResponse } from "./provider-retry.js";
 import { AnthropicStream, OpenAIStream, readEventStream, thinkingText } from "./provider-stream.js";
 import type { ModelPreset } from "./models.js";
@@ -557,13 +557,19 @@ export function restoreToolNames(completion: Completion, request: CompletionRequ
     toolCalls: completion.toolCalls.map((call) => ({ ...call, name: originalName(call.name, request) })),
   };
 }
+/**
+ * The connection named by BRANCH_PROVIDER, or null when none is named: then no model is set up, and the model router
+ * refuses every request in plain words until one is added (src/no-model.ts). "demo" is the scripted test fixture
+ * (src/demo.ts); only a test names it, and nothing ever falls back to it.
+ */
 export function providerFromEnv(
   env: NodeJS.ProcessEnv = process.env,
-): Provider {
-  const kind = env.BRANCH_PROVIDER ?? "demo";
+): Provider | null {
+  const kind = env.BRANCH_PROVIDER;
+  if (!kind) return null;
   if (kind === "demo") return new DemoProvider();
   if (kind !== "openai" && kind !== "anthropic")
-    throw new Error("BRANCH_PROVIDER must be demo, openai, or anthropic");
+    throw new Error("BRANCH_PROVIDER must be openai or anthropic");
   const required = [
     "BRANCH_ENDPOINT",
     "BRANCH_MODEL",
@@ -593,23 +599,26 @@ const presetEnvSchema = z.array(z.object({
 /**
  * Named presets from BRANCH_MODEL_PRESETS (JSON). Keys are read from the named environment variable
  * and never stored. The first entry is the default. Without the variable, the single configured
- * provider becomes the only preset.
+ * provider becomes the only preset, and with none configured there are no presets at all.
  */
 export function presetsFromEnv(env: NodeJS.ProcessEnv = process.env): ModelPreset[] {
-  if (!env.BRANCH_MODEL_PRESETS) return [defaultPreset(providerFromEnv(env), env.BRANCH_MODEL)];
+  if (!env.BRANCH_MODEL_PRESETS) {
+    const provider = providerFromEnv(env);
+    return provider ? [defaultPreset(provider, env.BRANCH_MODEL)] : [];
+  }
   let parsed: unknown;
   try { parsed = JSON.parse(env.BRANCH_MODEL_PRESETS); } catch { throw new Error("BRANCH_MODEL_PRESETS must be JSON"); }
   return presetEnvSchema.parse(parsed).map((entry) => {
     const provider = providerFromEnv({
       BRANCH_PROVIDER: entry.provider, BRANCH_ENDPOINT: entry.endpoint, BRANCH_MODEL: entry.model,
       BRANCH_API_KEY: entry.apiKeyEnv ? env[entry.apiKeyEnv] : undefined,
-    });
+    })!;
     return { id: entry.id, name: entry.name, provider, model: entry.model ?? "demo",
       ...(entry.reasoning ? { reasoning: entry.reasoning } : {}) };
   });
 }
 export function defaultPreset(provider: Provider, model?: string): ModelPreset {
-  const demo = provider.name === "offline-demo-fixture";
-  return { id: "default", name: demo ? "Offline demonstration" : "Default connection",
-    provider, model: model ?? (demo ? "demo" : "configured") };
+  const fixture = provider.name === demoProviderName;
+  return { id: "default", name: fixture ? "Test fixture" : "Default connection",
+    provider, model: model ?? (fixture ? "demo" : "configured") };
 }

@@ -385,7 +385,7 @@
 {"id":"retention-export","home":"settings:data","type":"switch","label":"Hand back a saved copy first","defaultRaw":true,"gated":false,"source":"public/index.html:1511"},
 {"id":"goal-undo-goal","home":"settings:data","type":"three-way","label":"Keep working until a goal is met (/goal)","defaultRaw":"off","gated":false,"source":"public/goal.js:207"},
 {"id":"goal-undo-snapshots","home":"settings:data","type":"three-way","label":"Record the files before a task, for going back","defaultRaw":"off","gated":false,"source":"public/goal.js:208"},
-{"id":"move-in-mode","home":"settings:data","type":"three-way","label":"Looking at other assistants' folders","defaultRaw":"off","gated":false,"source":"public/move-in.js:59"},
+{"id":"move-in-mode","home":"settings:data","type":"three-way","label":"Looking at other assistants' folders","defaultRaw":"when-needed","gated":false,"source":"public/move-in.js:59"},
 {"id":"usage-report-mode","home":"settings:data","type":"three-way","label":"Usage report","defaultRaw":"off","gated":false,"source":"public/usage-report.js:110"},
 {"id":"usage-report-range","home":"settings:data","type":"select","label":"How far back","defaultRaw":"30d","gated":false,"source":"public/usage-report.js:67"},
 {"id":"asks-switch-analytics","home":"settings:data","type":"three-way","label":"Counting how Branch is used","defaultRaw":"off","gated":false,"source":"public/asks.js:126"},

@@ -427,11 +427,13 @@ test("the book of sign-ins is the owner's alone: a short-lived key may neither r
 
 test("every word on the card has real French, and the reference explains the setting in plain words", async () => {
   const here = join(import.meta.dirname, "..", "public");
-  const card = await readFile(join(here, "vault-autofill.js"), "utf8");
+  // Redesign: the card is the new window's Settings › Saved sign-ins page (public/app/settings/pages/secrets.js); its
+  // words are t() keys, with the two password managers still named by their vault-autofill keys.
+  const card = await readFile(join(here, "app", "settings", "pages", "secrets.js"), "utf8");
   const en = JSON.parse(await readFile(join(here, "locales", "en.json"), "utf8"));
   const fr = JSON.parse(await readFile(join(here, "locales", "fr.json"), "utf8"));
-  const keys = [...card.matchAll(/"(vault-autofill\.[a-z0-9.-]+)"/g)].map((hit) => hit[1]);
-  assert.ok(keys.length > 10, "the card says what it means through keys");
+  const keys = [...card.matchAll(/\bt\("([a-z0-9.-]+)"/g), ...card.matchAll(/"(vault-autofill\.[a-z0-9.-]+)"/g)].map((hit) => hit[1]);
+  assert.ok(new Set(keys).size >= 8, "the card says what it means through keys");
   // The two password managers are called what they are called; every other word is really translated.
   const brands = ["vault-autofill.service.bitwarden", "vault-autofill.service.1password"];
   assert.deepEqual([...new Set(keys)].filter((key) => !en[key] || !fr[key] || (en[key] === fr[key] && !brands.includes(key))), []);

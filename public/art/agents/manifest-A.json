@@ -1,0 +1,92 @@
+[
+ {
+  "id": "ember",
+  "name": "Ember",
+  "description": "A fox kit whose fur is layered copper-and-amber autumn leaves, tail tip glowing like an ember.",
+  "still": "assets/agents/ember/still.webp",
+  "states": {
+   "idle": "assets/agents/ember/idle.webm",
+   "think": "assets/agents/ember/think.webm",
+   "work": "assets/agents/ember/work.webm",
+   "search": "assets/agents/ember/search.webm",
+   "read": "assets/agents/ember/read.webm",
+   "talk": "assets/agents/ember/talk.webm",
+   "wait": "assets/agents/ember/wait.webm",
+   "yay": "assets/agents/ember/yay.webm",
+   "oops": "assets/agents/ember/oops.webm",
+   "sleep": "assets/agents/ember/sleep.webm"
+  }
+ },
+ {
+  "id": "tock",
+  "name": "Tock",
+  "description": "A round clockwork owl of polished brass and walnut, with softly glowing glass-lens eyes.",
+  "still": "assets/agents/tock/still.webp",
+  "states": {
+   "idle": "assets/agents/tock/idle.webm",
+   "think": "assets/agents/tock/think.webm",
+   "work": "assets/agents/tock/work.webm",
+   "search": "assets/agents/tock/search.webm",
+   "read": "assets/agents/tock/read.webm",
+   "talk": "assets/agents/tock/talk.webm",
+   "wait": "assets/agents/tock/wait.webm",
+   "yay": "assets/agents/tock/yay.webm",
+   "oops": "assets/agents/tock/oops.webm",
+   "sleep": "assets/agents/tock/sleep.webm"
+  }
+ },
+ {
+  "id": "kite",
+  "name": "Kite",
+  "description": "A cheerful paper crane folded from map paper printed with faint blue routes.",
+  "still": "assets/agents/kite/still.webp",
+  "states": {
+   "idle": "assets/agents/kite/idle.webm",
+   "think": "assets/agents/kite/think.webm",
+   "work": "assets/agents/kite/work.webm",
+   "search": "assets/agents/kite/search.webm",
+   "read": "assets/agents/kite/read.webm",
+   "talk": "assets/agents/kite/talk.webm",
+   "wait": "assets/agents/kite/wait.webm",
+   "yay": "assets/agents/kite/yay.webm",
+   "oops": "assets/agents/kite/oops.webm",
+   "sleep": "assets/agents/kite/sleep.webm"
+  }
+ },
+ {
+  "id": "morel",
+  "name": "Morel",
+  "description": "A small mushroom scholar with a honeycomb cap, round spectacles and a leaf scarf.",
+  "still": "assets/agents/morel/still.webp",
+  "states": {
+   "idle": "assets/agents/morel/idle.webm",
+   "think": "assets/agents/morel/think.webm",
+   "work": "assets/agents/morel/work.webm",
+   "search": "assets/agents/morel/search.webm",
+   "read": "assets/agents/morel/read.webm",
+   "talk": "assets/agents/morel/talk.webm",
+   "wait": "assets/agents/morel/wait.webm",
+   "yay": "assets/agents/morel/yay.webm",
+   "oops": "assets/agents/morel/oops.webm",
+   "sleep": "assets/agents/morel/sleep.webm"
+  }
+ },
+ {
+  "id": "pebble",
+  "name": "Pebble",
+  "description": "A smooth river-stone golem with moss tufts and faint glowing teal runes.",
+  "still": "assets/agents/pebble/still.webp",
+  "states": {
+   "idle": "assets/agents/pebble/idle.webm",
+   "think": "assets/agents/pebble/think.webm",
+   "work": "assets/agents/pebble/work.webm",
+   "search": "assets/agents/pebble/search.webm",
+   "read": "assets/agents/pebble/read.webm",
+   "talk": "assets/agents/pebble/talk.webm",
+   "wait": "assets/agents/pebble/wait.webm",
+   "yay": "assets/agents/pebble/yay.webm",
+   "oops": "assets/agents/pebble/oops.webm",
+   "sleep": "assets/agents/pebble/sleep.webm"
+  }
+ }
+]

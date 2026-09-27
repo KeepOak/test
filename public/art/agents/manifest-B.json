@@ -1,0 +1,92 @@
+[
+ {
+  "id": "wisp",
+  "name": "Wisp",
+  "description": "A fluffy cloud spirit with a small golden spark floating above its head.",
+  "still": "assets/agents/wisp/still.webp",
+  "states": {
+   "idle": "assets/agents/wisp/idle.webm",
+   "think": "assets/agents/wisp/think.webm",
+   "work": "assets/agents/wisp/work.webm",
+   "search": "assets/agents/wisp/search.webm",
+   "read": "assets/agents/wisp/read.webm",
+   "talk": "assets/agents/wisp/talk.webm",
+   "wait": "assets/agents/wisp/wait.webm",
+   "yay": "assets/agents/wisp/yay.webm",
+   "oops": "assets/agents/wisp/oops.webm",
+   "sleep": "assets/agents/wisp/sleep.webm"
+  }
+ },
+ {
+  "id": "lumen",
+  "name": "Lumen",
+  "description": "A lantern moth whose warm amber wings glow softly from within.",
+  "still": "assets/agents/lumen/still.webp",
+  "states": {
+   "idle": "assets/agents/lumen/idle.webm",
+   "think": "assets/agents/lumen/think.webm",
+   "work": "assets/agents/lumen/work.webm",
+   "search": "assets/agents/lumen/search.webm",
+   "read": "assets/agents/lumen/read.webm",
+   "talk": "assets/agents/lumen/talk.webm",
+   "wait": "assets/agents/lumen/wait.webm",
+   "yay": "assets/agents/lumen/yay.webm",
+   "oops": "assets/agents/lumen/oops.webm",
+   "sleep": "assets/agents/lumen/sleep.webm"
+  }
+ },
+ {
+  "id": "tide",
+  "name": "Tide",
+  "description": "A teal water newt with frilly aqua gills and a gentle smile.",
+  "still": "assets/agents/tide/still.webp",
+  "states": {
+   "idle": "assets/agents/tide/idle.webm",
+   "think": "assets/agents/tide/think.webm",
+   "work": "assets/agents/tide/work.webm",
+   "search": "assets/agents/tide/search.webm",
+   "read": "assets/agents/tide/read.webm",
+   "talk": "assets/agents/tide/talk.webm",
+   "wait": "assets/agents/tide/wait.webm",
+   "yay": "assets/agents/tide/yay.webm",
+   "oops": "assets/agents/tide/oops.webm",
+   "sleep": "assets/agents/tide/sleep.webm"
+  }
+ },
+ {
+  "id": "juniper",
+  "name": "Juniper",
+  "description": "A frosty pale-blue fawn with little evergreen antlers.",
+  "still": "assets/agents/juniper/still.webp",
+  "states": {
+   "idle": "assets/agents/juniper/idle.webm",
+   "think": "assets/agents/juniper/think.webm",
+   "work": "assets/agents/juniper/work.webm",
+   "search": "assets/agents/juniper/search.webm",
+   "read": "assets/agents/juniper/read.webm",
+   "talk": "assets/agents/juniper/talk.webm",
+   "wait": "assets/agents/juniper/wait.webm",
+   "yay": "assets/agents/juniper/yay.webm",
+   "oops": "assets/agents/juniper/oops.webm",
+   "sleep": "assets/agents/juniper/sleep.webm"
+  }
+ },
+ {
+  "id": "bolt",
+  "name": "Bolt",
+  "description": "A tiny tin-can robot with warm lamp eyes and a sprout on its head.",
+  "still": "assets/agents/bolt/still.webp",
+  "states": {
+   "idle": "assets/agents/bolt/idle.webm",
+   "think": "assets/agents/bolt/think.webm",
+   "work": "assets/agents/bolt/work.webm",
+   "search": "assets/agents/bolt/search.webm",
+   "read": "assets/agents/bolt/read.webm",
+   "talk": "assets/agents/bolt/talk.webm",
+   "wait": "assets/agents/bolt/wait.webm",
+   "yay": "assets/agents/bolt/yay.webm",
+   "oops": "assets/agents/bolt/oops.webm",
+   "sleep": "assets/agents/bolt/sleep.webm"
+  }
+ }
+]

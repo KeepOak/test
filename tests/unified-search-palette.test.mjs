@@ -21,6 +21,7 @@ async function fixture(t) {
   const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) }); // the first-run card (#323) is not what this is about
   const browser = await chromium.launch({ headless: true });
   t.after(async () => {
     await browser.close();
@@ -50,86 +51,69 @@ async function fixture(t) {
     reason: "Palette fixture for unified search", outcome: "saved",
   });
 
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   return { app, page, errors, word, sessionId: run.sessionId, quietId: quiet.sessionId, workflow };
 }
 
+/* Redesign: in the new window the engine's search (GET /api/search) is reached from the sidebar's Search box
+   (shell/search.js, 1:1 with prototype.html): Chats and Trunks by title, Messages by the words inside a conversation
+   (the engine's conversation results), Past sessions and Files. Ctrl K's palette (shell/palette.js) finds actions,
+   conversation titles, places and settings pages only, as the prototype's does. */
 async function searchFor(page, word) {
-  await page.keyboard.press("ControlOrMeta+K");
-  await page.locator("#cmd-input").waitFor({ state: "visible" });
-  await page.locator("#cmd-input").fill(word);
+  await page.locator("#side-q").fill(word);
+  await page.locator(".list.searching9").waitFor({ state: "visible" });
 }
+const messageRow = (page, id) => page.locator(`#side [data-act="sr-msg"][data-id="${id}"]`);
 
 test("a conversation result opens the conversation", async (t) => {
   const { page, errors, word, sessionId } = await fixture(t);
   await searchFor(page, word);
-  // "Notes mentioning …" is the fixture message itself, so this is unambiguously the row for it —
-  // whether the palette found it locally (the rail's own recent list) or through /api/search.
-  const item = page.locator(".cmd-item", { hasText: "Notes mentioning" });
+  // "Notes mentioning …" is the fixture message itself, found by its words through /api/search.
+  const item = messageRow(page, sessionId);
   await item.waitFor({ state: "visible", timeout: 10000 });
+  assert.match(await item.innerText(), /Notes mentioning/);
   await item.click();
-  await page.locator("#cmd-input").waitFor({ state: "hidden" });
-  await page.waitForFunction((w) => document.getElementById("thread-name")?.textContent?.includes(w), word);
-  assert.ok((await page.locator("#thread-name").textContent()).includes(word));
-  assert.equal(await page.evaluate(() => document.getElementById("conversation").dataset.sessionId), sessionId);
+  await page.locator("#conversation").getByText(`Notes mentioning ${word} here.`).first().waitFor({ timeout: 10000 });
+  await page.locator("#side-q").fill("");
+  await page.waitForFunction((id) => document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id === id, sessionId);
   assert.deepEqual(errors, []);
 });
 
-test("a workflow result opens Automations, where the workflow is listed", async (t) => {
-  const { page, word, workflow } = await fixture(t);
-  await searchFor(page, word);
-  const item = page.locator(".cmd-item", { hasText: "Workflow" });
-  await item.waitFor({ state: "visible", timeout: 10000 });
-  await item.click();
-  await page.locator("#cmd-input").waitFor({ state: "hidden" });
-  await page.locator(".collab-card strong", { hasText: workflow.name }).waitFor({ state: "visible", timeout: 10000 });
-});
-
-test("a repository (audit) result opens Usage, where the record is listed", async (t) => {
-  const { page, word } = await fixture(t);
-  await searchFor(page, word);
-  const item = page.locator(".cmd-item", { hasText: "What it was allowed to do" });
-  await item.waitFor({ state: "visible", timeout: 10000 });
-  await item.click();
-  await page.locator("#cmd-input").waitFor({ state: "hidden" });
-  await page.getByText(`export touching ${word}`).first().waitFor({ state: "visible", timeout: 10000 });
-});
-
 test("a one-letter query never reaches the remote search, but the full word does", async (t) => {
-  const { page, word } = await fixture(t);
-  // The workflow and the audit entry are never in any local, already-loaded list — the only way
-  // the palette can find either is a round trip to /api/search, so they are the clean signal for
-  // whether that round trip happened yet.
-  await page.keyboard.press("ControlOrMeta+K");
-  await page.locator("#cmd-input").waitFor({ state: "visible" });
-  await page.locator("#cmd-input").fill(word[0]);
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator(".cmd-item", { hasText: "Workflow" }).count(), 0, "one letter is too short to search remotely");
-  await page.locator("#cmd-input").fill(word);
-  await page.locator(".cmd-item", { hasText: "Workflow" }).waitFor({ state: "visible", timeout: 10000 });
+  const { page, word, quietId } = await fixture(t);
+  const asked = [];
+  page.on("request", (request) => { const url = new URL(request.url()); if (url.pathname === "/api/search") asked.push(url.searchParams.get("q")); });
+  await page.locator("#side-q").fill(word[0]);
+  await page.waitForTimeout(600);
+  const early = [...asked];
+  await page.locator("#side-q").fill(word);
+  await messageRow(page, quietId).waitFor({ state: "visible", timeout: 10000 });
+  assert.ok(asked.includes(word), "the full word is searched");
+  assert.deepEqual(early, [], "one letter is too short to search remotely");
 });
 
 test("a recent conversation whose title lacks the word is still found by its words, and opens", async (t) => {
   const { page, errors, word, quietId } = await fixture(t);
   await searchFor(page, word);
-  const item = page.locator(".cmd-item", { hasText: `Conversation ${quietId.slice(0, 8)}` }).first();
+  const item = messageRow(page, quietId);
   await item.waitFor({ state: "visible", timeout: 10000 });
-  assert.equal(await page.locator(".cmd-item", { hasText: "Plan the trip" }).count(), 0, "its title did not match locally");
+  assert.equal(await page.locator('#side [data-act="chat"]', { hasText: "Plan the trip" }).count(), 0, "its title did not match locally");
   await item.click();
-  await page.locator("#cmd-input").waitFor({ state: "hidden" });
-  await page.waitForFunction((id) => document.getElementById("conversation").dataset.sessionId === id, quietId);
+  await page.locator("#conversation").getByText(`Pack the ${word} adapter first.`).first().waitFor({ timeout: 10000 });
+  await page.locator("#side-q").fill("");
+  await page.waitForFunction((id) => document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id === id, quietId);
   assert.deepEqual(errors, []);
 });
 
-test("the palette lists a conversation once even if the search answers with two rows for it", async (t) => {
+test("the search lists a conversation once even if the engine answers with two rows for it", async (t) => {
   const { page, word, quietId } = await fixture(t);
-  // The server already groups by conversation; this feeds the palette a repeated row directly, so
+  // The server already groups by conversation; this feeds the window a repeated row directly, so
   // its own de-duplication is what is being checked.
   const row = { kind: "conversation", title: `Conversation ${quietId.slice(0, 8)}`,
     snippet: `Pack the ${word} adapter first.`, link: `/api/sessions/${quietId}` };
@@ -137,8 +121,21 @@ test("the palette lists a conversation once even if the search answers with two 
     status: 200, contentType: "application/json", body: JSON.stringify({ results: [row, { ...row }] }),
   }));
   await searchFor(page, word);
-  const item = page.locator(".cmd-item", { hasText: `Conversation ${quietId.slice(0, 8)}` });
+  const item = messageRow(page, quietId);
   await item.first().waitFor({ state: "visible", timeout: 10000 });
   await page.waitForTimeout(300);
   assert.equal(await item.count(), 1);
+});
+
+test("Ctrl K's palette finds a conversation by its title and opens it", async (t) => {
+  const { page, errors, sessionId } = await fixture(t);
+  await page.keyboard.press("ControlOrMeta+K");
+  await page.locator("#pal-in").waitFor({ state: "visible" });
+  await page.locator("#pal-in").fill("Notes mentioning");
+  const item = page.locator('#pal-list [data-act="pal"]', { hasText: "Notes mentioning" }); // a conversation is named by its opening words
+  await item.waitFor({ state: "visible", timeout: 10000 });
+  await item.click();
+  await page.locator("#pal-in").waitFor({ state: "detached" });
+  await page.waitForFunction((id) => document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id === id, sessionId);
+  assert.deepEqual(errors, []);
 });

@@ -1,5 +1,4 @@
 import test from "node:test";
-import { showEverything } from "./places.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { Duplex } from "node:stream";
@@ -19,7 +18,6 @@ import { saveVoiceSettings, voiceSettings } from "../dist/voice.js";
 import { addPolicyRule } from "../dist/policy.js";
 import { chromium } from "playwright";
 import { startServer } from "../dist/server.js";
-import { toPcm16, readAudioFrame as readAudioFrameInBrowser } from "../public/voice-live.js";
 
 /**
  * Nothing here opens a microphone, plays a sound, or reaches the internet. Both services are
@@ -748,9 +746,10 @@ test("the note on the Voice screen now says what a live conversation needs", () 
   assert.match(realtimeNote, /hold the Talk button/i, "and what to do on a connection that cannot");
 });
 
-/* ---------- V3: the browser's own half ---------- */
+/* ---------- V3: the browser's own half (the new window's public/app/chat/talklive.js) ---------- */
 
-test("the browser's sound and the server's sound are the same sound", () => {
+test("the browser's sound and the server's sound are the same sound", async () => {
+  const { toPcm16, readAudioFrame: readAudioFrameInBrowser } = await import("../public/app/chat/talksound.js");
   // What the microphone hands the browser, turned into the whole numbers both services want.
   assert.deepEqual([...toPcm16(new Float32Array([0, 1, -1, 0.5]))], [0, 32767, -32768, 16383]);
   assert.deepEqual([...toPcm16(new Float32Array([4, -4]))], [32767, -32768], "anything too loud is clipped, not wrapped");
@@ -763,14 +762,19 @@ test("the browser's sound and the server's sound are the same sound", () => {
   assert.deepEqual([...read.pcm16], [5, -5, 300], "the browser's reader and the server's writer agree");
 });
 
-test("the Talk live button appears only on a connection that can hold a live conversation", async (t) => {
+/* The prototype draws Talk live in the composer at all times (data-act="voice"); pressing it asks the engine, which answers
+   in its own words on a connection that cannot hold a live conversation. Fake media only: Chromium's generated tone. */
+test("Talk live opens only on a connection that can hold a live conversation, and asks for the microphone only then", async (t) => {
   const service = await fakeSocketService(t);
   const scratch = join(tmpdir(), "Codex-session-files");
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, "branch-live-ui-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
-  const browser = await chromium.launch({ headless: true });
+  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
+  await call("/api/onboarding", { done: true });
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  const browser = await chromium.launch({ headless: true, args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
   t.after(async () => {
     await browser.close(); await server.close(); await app.close();
     await discardTemp(root);
@@ -780,36 +784,108 @@ test("the Talk live button appears only on a connection that can hold a live con
   // from before the first byte of the page is read.
   await page.addInitScript(() => {
     globalThis.branchMicrophoneAsks = 0;
-    const media = navigator.mediaDevices ?? {};
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: { ...media, getUserMedia: async () => { globalThis.branchMicrophoneAsks += 1; throw new Error("no microphone in a test"); } },
-    });
+    const media = navigator.mediaDevices, ask = media.getUserMedia.bind(media);
+    media.getUserMedia = async (c) => { globalThis.branchMicrophoneAsks += 1; return ask(c); };
   });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  /* Since 0.18.1 the calm window shows the voice buttons once voice is switched on. */
-  await showEverything(page, { showVoice: true });
+  await page.locator("#prompt").waitFor({ timeout: 120000 });
+  const button = page.locator(".composer [data-act='voice']");
+  const liveTasks = () => app.store.sqlite.prepare("SELECT id FROM tasks WHERE prompt='A live conversation'").all().length;
 
-  // The connection this app starts with cannot hold one, so there is no button to press.
-  assert.equal(await page.locator("#voice-live").isHidden(), true, "no button on a connection that cannot");
-  assert.equal(await page.locator("#voice-talk").isVisible(), true, "hold-to-talk is still there");
+  // The connection this app starts with cannot hold one: the press shows the engine's own words and makes nothing.
+  assert.equal(await button.getAttribute("aria-disabled"), null, "Talk live is drawn live, as the prototype draws it");
+  const cannot = (await call("/api/voice/plan")).live.reason;
+  await button.click();
+  await page.locator(".toast", { hasText: cannot }).waitFor({ timeout: 10000 });
+  assert.equal(liveTasks(), 0, "no task is made on a connection that cannot");
+  assert.equal(await page.locator("#app > .voice").count(), 0, "and the live view does not open");
 
-  // Connect one that can, ask the screen again, and the button appears with its reason on it.
+  // Connect one that can, press again, and the live view opens with the engine's plan on it.
   livePreset(app, "live-openai", "openai", service.endpoint);
-  const shown = await page.evaluate(async () => {
-    const module = await import("/voice-live.js");
-    await module.refreshLiveButton();
-    const button = document.getElementById("voice-live");
-    return { hidden: button.hidden, title: button.title, label: button.textContent };
-  });
-  assert.equal(shown.hidden, false, "the live variant of the button appears");
-  assert.equal(shown.label, "Talk live");
-  assert.match(shown.title, /stops itself after 10 minutes/, "and says what it will cost before you press it");
   assert.equal(await page.evaluate(() => globalThis.branchMicrophoneAsks), 0,
-    "and loading the page, connecting and showing the button asked for the microphone not once");
+    "loading the page, connecting and a refused press asked for the microphone not once");
+  await button.click();
+  const view = page.locator("#app > .voice");
+  await view.and(page.locator("[data-state='listening']")).waitFor({ timeout: 20000 });
+  assert.match(await view.locator(".hint").innerText(), /stops itself after 10 minutes/, "it says what it will cost");
+  assert.equal(liveTasks(), 1);
+  assert.equal(await page.evaluate(() => globalThis.branchMicrophoneAsks), 1, "the microphone is asked for once the conversation is open");
+  await view.locator("[data-act='v-end']").click();
+  await view.waitFor({ state: "detached", timeout: 10000 });
+});
+
+/* A call's microphone belongs to that call: one still opening when its call ends is let go the moment it opens, never
+   feeds a later call, and a refusal for an ended call does not end the one going now. Fake media only. */
+test("a microphone that opens after its call ended is let go at once and never feeds a later call", async (t) => {
+  const service = await fakeSocketService(t);
+  const scratch = join(tmpdir(), "Codex-session-files");
+  await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(join(scratch, "branch-live-mic-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const call = (path, body) => fetch(new URL(path, server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+  await call("/api/onboarding", { done: true });
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  livePreset(app, "live-openai", "openai", service.endpoint);
+  const browser = await chromium.launch({ headless: true, args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
+  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  // Every ask for the microphone waits until the test lets it open (or refuses it); every sound block sent up is
+  // counted against the socket it went down.
+  await page.addInitScript(() => {
+    const media = navigator.mediaDevices, ask = media.getUserMedia.bind(media);
+    globalThis.micAsks = []; globalThis.micStreams = []; globalThis.soundUp = {};
+    media.getUserMedia = (c) => new Promise((resolve, reject) => globalThis.micAsks.push({
+      open: () => ask(c).then((stream) => { globalThis.micStreams.push(stream); resolve(stream); }, reject),
+      refuse: () => reject(new DOMException("Refused for the test.", "NotAllowedError")),
+    }));
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (data) {
+      if (typeof data !== "string") globalThis.soundUp[this.url] = (globalThis.soundUp[this.url] ?? 0) + 1;
+      return send.call(this, data);
+    };
+  });
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#prompt").waitFor({ timeout: 120000 });
+  const button = page.locator(".composer [data-act='voice']");
+  const view = page.locator("#app > .voice");
+  const asks = () => page.evaluate(() => globalThis.micAsks.length);
+  const live = () => page.evaluate(() => globalThis.micStreams.map((s) => s.getTracks().filter((track) => track.readyState === "live").length));
+  const soundUp = () => page.evaluate(() => globalThis.soundUp);
+  const startCall = async (n) => {
+    await button.click();
+    await view.and(page.locator("[data-state='listening']")).waitFor({ timeout: 20000 });
+    await page.waitForFunction((n) => globalThis.micAsks.length === n, n, { timeout: 10000 });
+  };
+  const endCall = async () => { await view.locator("[data-act='v-end']").click(); await view.waitFor({ state: "detached", timeout: 10000 }); };
+
+  // Calls A and B end while their microphones are still being asked for; call C is the one going.
+  await startCall(1); await endCall();
+  await startCall(2); await endCall();
+  await startCall(3);
+  // A's microphone opens now: it is let go at once, and nothing goes up C's socket.
+  await page.evaluate(() => globalThis.micAsks[0].open());
+  await page.waitForFunction(() => globalThis.micStreams.length === 1, null, { timeout: 10000 });
+  await settle(600);
+  assert.deepEqual(await live(), [0], "the ended call's microphone is let go the moment it opens");
+  assert.deepEqual(await soundUp(), {}, "and it sent nothing, not even into the call going now");
+  // B's is refused: that says nothing about C, which carries on.
+  await page.evaluate(() => globalThis.micAsks[1].refuse());
+  await settle(300);
+  assert.equal(await view.getAttribute("data-state"), "listening", "a refusal for an ended call does not end this one");
+  // C's own microphone opens and its sound goes up C's socket only.
+  await page.evaluate(() => globalThis.micAsks[2].open());
+  await page.waitForFunction(() => Object.keys(globalThis.soundUp).length > 0, null, { timeout: 10000 });
+  const callC = app.store.sqlite.prepare("SELECT id FROM tasks WHERE prompt='A live conversation' ORDER BY rowid DESC LIMIT 1").get().id;
+  assert.deepEqual(Object.keys(await soundUp()).map((url) => url.includes(callC)), [true], "one socket, the call's own");
+  assert.deepEqual(await live(), [0, 1]);
+  await endCall();
+  assert.deepEqual(await live(), [0, 0], "ending the call lets every microphone go");
+  assert.equal(await asks(), 3);
 });
 
 /* ---------- Bucket 17: a picture shown while talking (realtime multimodal) ---------- */

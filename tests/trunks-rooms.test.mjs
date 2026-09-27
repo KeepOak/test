@@ -111,6 +111,7 @@ test("a room of Trunks: each answers as itself, @mentions pull others in, and @y
   const k = app.trunks.create({ name: "Kim" });
   const l = app.trunks.create({ name: "Lee" });
   await app.trunks.introduced();
+  app.trunks.setMode("rooms", { mode: "off" }); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   assert.throws(() => app.trunks.require("rooms"), /Rooms where Trunks talk together is switched off/);
   app.trunks.setMode("rooms", { mode: "on" });
   assert.throws(() => app.trunks.rooms.create({ name: "Solo", members: [k.id] }));

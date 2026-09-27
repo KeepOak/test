@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pub = join(root, "public");
+const appDir = join(pub, "app");
 
 /**
  * Text a person reads must go through the locale files, or a French speaker sees English. A sentence
@@ -25,10 +26,8 @@ const pub = join(root, "public");
  * A file offends by default. The only way out is NOT_YET below, which costs a written reason.
  */
 const NOT_YET = {
-  "app.js": "Its status lines are left for a separate PR: this file is in open work on the rooms and health checks.",
-  "shell.js": "Its status lines are left for a separate PR: this file is in open work on the Grown-Up design.",
-  "update-screen.js": "The updater's own screen. Left to whoever owns the updater and release code, not changed in passing.",
-  "widget.js": "Runs on the owner's own web pages, away from the app, where the language files cannot be loaded.",
+  "main.js": "Its status lines are left for a separate PR: this file is in open work on the rooms and health checks.",
+  "views.js": "Its status lines are left for a separate PR: this file is in open work on the Grown-Up design.",
 };
 
 const LIT = String.raw`(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\`(?:[^\`\\]|\\.)*\`)`;
@@ -61,11 +60,21 @@ function sentencesIn(source) {
   return found;
 }
 
+async function* walkDir(dir) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      yield* walkDir(join(dir, entry.name));
+    } else if (entry.name.endsWith(".js")) {
+      yield { name: join(entry.parentPath || dir, entry.name).slice(appDir.length + 1), path: join(dir, entry.name) };
+    }
+  }
+}
+
 async function offenders() {
   const found = [];
-  for (const name of (await readdir(pub)).filter((file) => file.endsWith(".js"))) {
-    if (Object.hasOwn(NOT_YET, name)) continue;
-    for (const line of sentencesIn(await readFile(join(pub, name), "utf8"))) found.push(`${name}: ${line}`);
+  for await (const file of walkDir(appDir)) {
+    if (Object.hasOwn(NOT_YET, file.name)) continue;
+    for (const line of sentencesIn(await readFile(file.path, "utf8"))) found.push(`${file.name}: ${line}`);
   }
   return found.sort();
 }
@@ -109,11 +118,21 @@ test("every file excused from translating has a written reason", () => {
 });
 
 /** The files this guard made translate, whose keys are checked below. */
-const TRANSLATED = ["docs-3.js", "docs-memory-2.js", "learn.js", "collab.js", "other.js", "specialist-styles.js",
-  "activity-log.js", "diagnostics.js", "model-profiles.js", "mcp-workbench.js", "charts.js", "markdown.js",
-  "sandbox-remote.js", "flows.js", "labels-ui.js", "flow-editor.js", "context-files.js", "knowledge.js", "media.js", "misc.js",
-  "tool-catalog.js", "usage.js", "voice-live.js", "automations.js", "browser.js", "deployment.js", "mcp.js",
-  "approvals.js", "documents.js", "memory-tidy.js", "self-improving.js"];
+const TRANSLATED = [
+  "chat/approvals.js", "chat/chart.js", "chat/chat.js", "chat/checkpoints.js", "chat/diagram.js",
+  "chat/find.js", "chat/goal.js", "chat/goto.js", "chat/markdown.js", "chat/media.js",
+  "chat/more.js", "chat/quick.js", "chat/remember.js", "chat/rooms.js", "chat/teach.js",
+  "flows/flow-editor.js", "flows/flows.js", "flows/pair.js", "flows/pause.js", "flows/trunk.js",
+  "places/automations.js", "places/customize.js", "places/inbox.js", "places/library.js",
+  "places/overview.js", "places/project.js", "places/team.js",
+  "settings/pages/accounts.js", "settings/pages/achievements.js", "settings/pages/advanced.js",
+  "settings/pages/appearance.js", "settings/pages/computer.js", "settings/pages/developer.js",
+  "settings/pages/general.js", "settings/pages/instructions.js", "settings/pages/models.js",
+  "settings/pages/notifications.js", "settings/pages/people.js", "settings/pages/permissions.js",
+  "settings/pages/secrets.js", "settings/pages/self.js", "settings/pages/updates.js",
+  "settings/pages/usage.js", "settings/pages/voice.js", "settings/settings.js",
+  "shell/celebrate.js", "shell/extras.js", "shell/shell.js", "shell/usage.js"
+];
 
 /** The keys page scripts use must exist in both languages, and French must really be French. */
 test("every key a page script looks up is in English and in French", async () => {
@@ -121,7 +140,7 @@ test("every key a page script looks up is in English and in French", async () =>
   const fr = JSON.parse(await readFile(join(pub, "locales", "fr.json"), "utf8"));
   const problems = [];
   for (const name of TRANSLATED) {
-    const source = await readFile(join(pub, name), "utf8");
+    const source = await readFile(join(appDir, name), "utf8");
     for (const [, key] of source.matchAll(/\bt\("([\w.-]+)"/g)) {
       if (typeof en[key] !== "string") problems.push(`${name}: ${key} has no English`);
       else if (typeof fr[key] !== "string") problems.push(`${name}: ${key} has no French`);

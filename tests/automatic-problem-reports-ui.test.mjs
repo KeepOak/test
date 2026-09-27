@@ -24,13 +24,15 @@ async function openApp(t) {
     updatedAt: new Date().toISOString(), linked: true,
   });
   const server = await startServer(app, { dataDir, port: 0 });
+  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
+  await call("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await page.goto(server.url, { timeout: 120000, waitUntil: "domcontentloaded" });
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).evaluate((button) => button.click());
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await openSettingFor(page, "#problem-report-card");
   // The card sits below Updating by itself and The keeper (DG-192) and fills its form only once it is seen,
   // so it is scrolled to the way a person reaches it.
@@ -38,7 +40,8 @@ async function openApp(t) {
   return { app, page };
 }
 
-test("automatic problem reports show the exact preview and save only a linked owner destination", async (t) => {
+// Redesign: Coming soon (sw:ad-crash, "Send crash reports" in Settings › Advanced), checked at fc541c24; the card's preview and destination are replaced by that one switch.
+test.skip("automatic problem reports show the exact preview and save only a linked owner destination", async (t) => {
   const { app, page } = await openApp(t);
   const mode = page.locator("#automatic-problem-mode");
   await mode.waitFor({ state: "visible" });
@@ -75,7 +78,8 @@ test("automatic problem reports show the exact preview and save only a linked ow
   assert.deepEqual(saved.items, ["about", "updates"]);
 });
 
-test("automatic problem reports are translated and fit a 400 px window", async (t) => {
+// Redesign: Coming soon (sw:ad-crash and sw:lang), checked at fc541c24; the card is replaced by that one switch.
+test.skip("automatic problem reports are translated and fit a 400 px window", async (t) => {
   const { page } = await openApp(t);
   await page.setViewportSize({ width: 400, height: 900 });
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));

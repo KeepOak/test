@@ -198,7 +198,11 @@ jobs:
           python-version: '3.12'
       - run: npm ci
       - run: python -m unittest discover -s experiments -p 'test_*.py'
-      - run: npm run demo
+      - run: npm run build
+      # One task end to end through the tests' scripted fixture, named explicitly: Branch never offers it.
+      - run: node dist/cli.js run "Write, read and verify the fixture file."
+        env:
+          BRANCH_PROVIDER: demo
       # Every system builds its download; Macs also build the Intel copy from the same runner.
       - run: npm run package:desktop -- --release
       - if: runner.os == 'macOS'

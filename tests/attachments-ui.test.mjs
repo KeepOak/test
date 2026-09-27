@@ -7,6 +7,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { signIn } from "./new-window-places.mjs";
 
 /**
  * The other half of attachments: in the window itself, a document is attached to a message instead of
@@ -31,29 +32,49 @@ async function windowWithBranch(t) {
   closing.push(() => app.close());
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   closing.push(() => server.close());
+  const call = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await call("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   closing.push(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.addInitScript((token) => sessionStorage.setItem("branch-token", token), server.token);
-  await page.goto(server.url, { waitUntil: "domcontentloaded" });
-  return { app, page, root, errors };
+  await signIn(page, server);
+  return { app, page, root, errors, server };
 }
+
+/* Redesign: the new window attaches through the message box's + menu, "Attach files" (data-act="attach"), which opens the
+   system file picker; what waits to go shows as chips in #attached (public/app/chat/plus.js). */
+async function attach(page, ...files) {
+  await page.locator('[data-act="plusmenu"]').click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.locator('.pop [data-act="attach"]').click();
+  await (await chooser).setFiles(files);
+}
+const chips = (page) => page.locator("#attached .file");
+async function sendIt(page, words) {
+  await page.locator("#prompt").fill(words);
+  await page.locator("#send").click();
+}
+/** The conversation open in the side list. */
+const openChat = (page) => page.waitForFunction(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id).then((h) => h.jsonValue());
 
 test("in the window: a document goes with the message, and the conversation keeps it", async (t) => {
   const { app, page, root, errors } = await windowWithBranch(t);
   const file = join(root, "roof.md");
   await writeFile(file, "# Roof\n\nFixed on Tuesday.\n", "utf8");
 
-  await page.locator("#composer-media-file").setInputFiles(file);
-  await page.locator("#composer-attachments").getByText("roof.md").waitFor({ timeout: 10000 });
+  await attach(page, file);
+  await chips(page).getByText("roof.md").waitFor({ timeout: 10000 });
 
-  await page.locator("#prompt").fill("What does this say?");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.getByText("Read it.").first().waitFor({ timeout: 20000 });
+  await sendIt(page, "What does this say?");
+  await page.locator("#conversation").getByText("Read it.").first().waitFor({ timeout: 20000 });
 
-  const sessionId = await page.locator("#conversation").getAttribute("data-session-id");
+  const sessionId = await openChat(page);
   assert.ok(sessionId, "the message started a conversation");
   const message = app.store.messages(sessionId).find((one) => one.role === "user");
   assert.equal(message.attachments?.length, 1, "the document went with the message");
@@ -67,76 +88,19 @@ test("in the window: a document goes with the message, and the conversation keep
   assert.deepEqual(errors, []);
 });
 
-test("reopening the conversation shows the file, and the visible control fetches the real bytes", async (t) => {
-  const { app, page, root, errors } = await windowWithBranch(t);
-  const file = join(root, "roof.md");
-  const words = "# Roof\n\nFixed on Tuesday, by Sam.\n";
-  await writeFile(file, words, "utf8");
-
-  await page.locator("#composer-media-file").setInputFiles(file);
-  await page.locator("#composer-attachments").getByText("roof.md").waitFor({ timeout: 10000 });
-  await page.locator("#prompt").fill("What does this say?");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.getByText("Read it.").first().waitFor({ timeout: 20000 });
-  const sessionId = await page.locator("#conversation").getAttribute("data-session-id");
-
-  // Reload the window and open the saved conversation again — the way a person comes back to it.
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.evaluate(async (id) => {
-    const app = await import("/app.js");
-    await app.openConversation(id);
-  }, sessionId);
-  await page.locator(`[data-attachment]`).first().waitFor({ timeout: 20000 });
-
-  // The card is really there, with the file's own name and size.
-  const card = page.locator("[data-attachment]").first();
-  await card.getByText("roof.md").waitFor();
-  assert.match(await card.textContent(), /document/, "it says what kind of file it is");
-
-  // And the visible control hands back the real bytes, fetched with the window's own key.
-  const got = await page.evaluate(async () => {
-    const id = document.querySelector("[data-attachment]").dataset.attachment;
-    const session = document.getElementById("conversation").dataset.sessionId;
-    const answer = await fetch(`/api/attachments/file?session=${session}&id=${id}`, {
-      headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") },
-    });
-    return { status: answer.status, text: await answer.text() };
-  });
-  assert.equal(got.status, 200);
-  assert.equal(got.text, words, "byte for byte what was attached");
-  assert.deepEqual(errors, []);
-  void app;
-});
-
 test("in the window: two films that each fit are refused together, before either is read", async (t) => {
   const { page, errors } = await windowWithBranch(t);
 
-  // Both are inside the 32 MB a film may be; together they are past what one message may carry. The
-  // page must say so before it reads the second one, not leave the server to refuse the upload.
-  const outcome = await page.evaluate(async () => {
-    const said = [];
-    const toast = globalThis.toast;
-    globalThis.toast = (message) => { said.push(String(message)); };
-    const film = (name) => new File([new Uint8Array(17 * 1024 * 1024)], name, { type: "video/mp4" });
-    const picker = document.getElementById("composer-media-file");
-    const put = (file) => {
-      const carrier = new DataTransfer();
-      carrier.items.add(file);
-      picker.files = carrier.files;
-      picker.dispatchEvent(new Event("change", { bubbles: true }));
-    };
-    put(film("first.mp4"));
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    put(film("second.mp4"));
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    globalThis.toast = toast;
-    return { said, chips: [...document.querySelectorAll("#composer-attachments .attachment")].map((one) => one.textContent) };
-  });
-
-  assert.equal(outcome.chips.filter((one) => one.includes("second.mp4")).length, 0,
-    `the second film is not on the message (${outcome.chips.join(" | ")})`);
-  assert.ok(outcome.said.some((one) => /add up to 32 MB/.test(one)),
-    `and the page says why, in words a person can act on (${outcome.said.join(" | ")})`);
+  // Both are inside the 32 MB a film may be; together they are past what one message may carry. The page must say so before
+  // it reads the second one, not leave the server to refuse the upload.
+  const film = (name) => ({ name, mimeType: "video/mp4", buffer: Buffer.alloc(17 * 1024 * 1024) });
+  await attach(page, film("first.mp4"));
+  await chips(page).getByText("first.mp4").waitFor({ timeout: 20000 });
+  await attach(page, film("second.mp4"));
+  const said = await page.locator(".toast").innerText({ timeout: 20000 });
+  const shown = await chips(page).allInnerTexts();
+  assert.equal(shown.filter((one) => one.includes("second.mp4")).length, 0, `the second film is not on the message (${shown.join(" | ")})`);
+  assert.match(said, /32 MB/, `and the page says why, in words a person can act on (${said})`);
   assert.deepEqual(errors, []);
 });
 
@@ -145,13 +109,12 @@ test("in the window: the chips are cleared once the message is sent", async (t) 
   const file = join(root, "notes.txt");
   await writeFile(file, "a note", "utf8");
 
-  await page.locator("#composer-media-file").setInputFiles(file);
-  await page.locator("#composer-attachments").getByText("notes.txt").waitFor({ timeout: 10000 });
-  await page.locator("#prompt").fill("Keep this.");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.getByText("Read it.").first().waitFor({ timeout: 20000 });
+  await attach(page, file);
+  await chips(page).getByText("notes.txt").waitFor({ timeout: 10000 });
+  await sendIt(page, "Keep this.");
+  await page.locator("#conversation").getByText("Read it.").first().waitFor({ timeout: 20000 });
 
-  await page.locator("#composer-attachments").waitFor({ state: "hidden", timeout: 10000 });
+  await chips(page).first().waitFor({ state: "detached", timeout: 10000 });
   assert.deepEqual(errors, []);
 });
 
@@ -166,41 +129,35 @@ test("what was said is shown exactly once, whether or not a file came with it", 
   await writeFile(file, "# Roof" + "\n\n" + "Fixed on Tuesday." + "\n", "utf8");
 
   // An ordinary message, nothing attached. This is the one that was rendered twice.
-  await page.locator("#prompt").fill("Tell me about the roof.");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.getByText("Read it.").first().waitFor({ timeout: 20000 });
-  const sessionId = await page.locator("#conversation").getAttribute("data-session-id");
-  const plain = await page.locator(".message.user").first().textContent();
+  await sendIt(page, "Tell me about the roof.");
+  await page.locator("#conversation").getByText("Read it.").first().waitFor({ timeout: 20000 });
+  const sessionId = await openChat(page);
+  const plain = await page.locator("#conversation .u").first().textContent();
   assert.equal(plain.split("Tell me about the roof.").length - 1, 1,
     `an ordinary message says what was said once, not twice (${plain})`);
 
-  // And a message that does carry a file keeps both: the words, once, and the card.
-  // A file cannot be put on the next message while the assistant is still working — the page says so
-  // in as many words (public/media.js) — and the reply appears on the screen a moment before the rest
-  // of the turn finishes. So wait for the attach button to come back, which is what a person sees.
-  await page.waitForFunction(() => !document.getElementById("composer-media")?.disabled, null, { timeout: 20000 });
-  await page.locator("#composer-media-file").setInputFiles(file);
-  await page.locator("#composer-attachments").getByText("roof.md").waitFor({ timeout: 10000 });
-  await page.locator("#prompt").fill("And what does this say?");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.locator("[data-attachment]").first().waitFor({ timeout: 20000 });
-  const withFile = await page.locator(".message.user").last().textContent();
+  // And a message that does carry a file keeps its words, once.
+  await page.waitForFunction(() => !document.querySelector("#conversation .typing"), null, { timeout: 20000 });
+  await attach(page, file);
+  await chips(page).getByText("roof.md").waitFor({ timeout: 10000 });
+  await sendIt(page, "And what does this say?");
+  await page.waitForFunction(() => document.querySelectorAll("#conversation .u").length === 2 && !document.querySelector("#conversation .typing"), null, { timeout: 20000 });
+  const withFile = await page.locator("#conversation .u").last().textContent();
   assert.equal(withFile.split("And what does this say?").length - 1, 1,
     `a message with a file says what was said once (${withFile})`);
-  assert.match(withFile, /roof\.md/, "and the card is there beside the words");
+  // Redesign: replaced by the new window (prototype.html draws no card for a document beside a message's words), so the
+  // card is not looked for; the file went with the message:
+  assert.equal(app.store.messages(sessionId).findLast((one) => one.role === "user").attachments?.[0]?.name, "roof.md");
 
-  // A reply that carries a file must not lose its words either. Put one in the conversation the way
-  // the store holds it, then reopen the conversation the way a person comes back to it.
+  // A reply that carries a file must not lose its words either. Put one in the conversation the way the store holds it,
+  // then reopen the conversation the way a person comes back to it.
   const ref = app.store.messages(sessionId).findLast((one) => one.role === "user").attachments[0];
   app.store.message(sessionId, { role: "assistant", content: "Here it is again.", attachments: [ref] });
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.evaluate(async (id) => {
-    const app = await import("/app.js");
-    await app.openConversation(id);
-  }, sessionId);
-  const reply = page.locator(".message.assistant").last();
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator(`#side .list [data-act="chat"][data-id="${sessionId}"]`).click();
+  const reply = page.locator("#conversation .b").last();
   await reply.getByText("Here it is again.").waitFor({ timeout: 20000 });
-  assert.match(await reply.textContent(), /roof\.md/, "the reply keeps its words and its card");
   assert.deepEqual(errors, []);
 });
 
@@ -209,51 +166,45 @@ test("a picture goes with the message once: the page does not also send it to be
   const file = join(root, "dot.png");
   await writeFile(file, onePixelPng);
 
-  await page.locator("#composer-media-file").setInputFiles(file);
-  await page.locator("#composer-attachments").getByText("dot.png").waitFor({ timeout: 10000 });
+  await attach(page, file);
+  await chips(page).getByText("dot.png").waitFor({ timeout: 10000 });
 
-  // The page has two lists: what the model should look at, and what the message carries. A picture a
-  // person attached belongs in the second only — the server derives the model's copy from it. Sending
-  // it in both doubled its bytes, and four legal pictures came to more than a message may weigh.
-  const sent = await page.evaluate(() => ({
-    toLookAt: globalThis.branchAttachments().map((one) => one.name),
-    carried: globalThis.branchAttachedFiles().map((one) => one.name),
-  }));
-  assert.deepEqual(sent.toLookAt, [], "the picture is not sent a second time to be looked at");
-  assert.deepEqual(sent.carried, ["dot.png"], "it travels once, with the message");
+  // A picture a person attached travels once, with the message; the server derives the model's copy from it. Sending it
+  // twice doubled its bytes, and four legal pictures came to more than a message may weigh. Redesign: read from what the
+  // new window really sends (POST /api/run), not from the old page's two lists.
+  const posted = page.waitForRequest((request) => request.url().endsWith("/api/run") && request.method() === "POST");
+  await sendIt(page, "What is this?");
+  const body = (await posted).postDataJSON();
+  assert.deepEqual((body.attachments ?? []).map((one) => one.name), ["dot.png"], "it travels once, with the message");
+  assert.equal(JSON.stringify(body).split(body.attachments[0].data).length - 1, 1, "the picture's bytes are not sent a second time to be looked at");
   assert.deepEqual(errors, []);
 });
 
 test("a temporary conversation's file opens from its own card, like any other", async (t) => {
-  const { app, page, root, errors } = await windowWithBranch(t);
+  const { app, page, root, errors, server } = await windowWithBranch(t);
   const file = join(root, "dot.png");
   await writeFile(file, onePixelPng);
 
-  // Started as temporary, so its files are kept in the temporary folder. Nothing the page sends says
-  // which folder to read from — the conversation itself decides (src/attachments.ts).
-  // Temporary is one of the controls the calm window keeps out of sight; a person who wants it has
-  // the full window on, so the test asks for the same window rather than reaching past the page.
-  // There it is chosen from the message box's + menu (DG-175), as a person chooses it.
-  await page.evaluate(async () => {
-    const { applyAppearance, currentAppearance } = await import("/appearance.js");
-    applyAppearance({ ...currentAppearance(), showEverything: true });
-  });
-  await page.locator("#lx-plus").click();
-  await page.locator("#lx-plus-menu").getByRole("menuitem", { name: /^Temporary/ }).click();
-  await page.waitForFunction(() => document.getElementById("temporary-toggle").checked);
-  await page.locator("#composer-media-file").setInputFiles(file);
-  await page.locator("#composer-attachments").getByText("dot.png").waitFor({ timeout: 10000 });
-  await page.locator("#prompt").fill("Keep this for now.");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.locator("[data-attachment]").first().waitFor({ timeout: 20000 });
+  // Started as temporary, so its files are kept in the temporary folder. Nothing the page sends says which folder to read
+  // from — the conversation itself decides (src/attachments.ts). Temporary is chosen in the message box's + menu.
+  await page.locator('[data-act="plusmenu"]').click();
+  await page.locator(".pop #pm-temp").check();
+  await page.keyboard.press("Escape");
+  await attach(page, file);
+  await chips(page).getByText("dot.png").waitFor({ timeout: 10000 });
+  const ran = page.waitForResponse((response) => response.url().endsWith("/api/run") && response.request().method() === "POST");
+  await sendIt(page, "Keep this for now.");
+  // A temporary conversation is not listed in the side list; the engine's answer names it.
+  const sessionId = (await (await ran).json()).sessionId;
+  // The scripted model cannot look at pictures, so the task ends there; the message and its file are kept all the same.
+  await page.waitForFunction(() => document.querySelector("#conversation .u") && !document.querySelector("#conversation .typing"), null, { timeout: 20000 });
 
-  const sessionId = await page.locator("#conversation").getAttribute("data-session-id");
   assert.equal(app.store.sessionTemporary(sessionId), true, "this really is a temporary conversation");
-
-  // The visible control, pressed as a person presses it.
-  await page.locator("[data-attachment] button").first().click();
-  const shown = page.locator("[data-attachment] img").first();
-  await shown.waitFor({ timeout: 20000 });
-  assert.match(await shown.getAttribute("src"), /^blob:/, "the bytes came back and are on the page");
+  // Redesign: replaced by the new window (prototype.html draws no card for a picture beside a message's words, so there is
+  // no card to press); the file is kept with the temporary conversation and reads back byte for byte.
+  const ref = app.store.messages(sessionId).find((one) => one.role === "user").attachments[0];
+  const kept = await fetch(new URL(`/api/attachments/file?session=${sessionId}&id=${ref.id}`, server.url), { headers: { authorization: `Bearer ${server.token}` } });
+  assert.equal(kept.status, 200);
+  assert.deepEqual(Buffer.from(await kept.arrayBuffer()), onePixelPng);
   assert.deepEqual(errors, []);
 });

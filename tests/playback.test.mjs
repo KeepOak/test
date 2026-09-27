@@ -9,9 +9,13 @@ import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { writeWav } from "../dist/media-audio.js";
+import { signIn, attachFiles } from "./new-window-places.mjs";
 
 /** FQ-surfaces.playback: an attached sound or video file plays inline in the conversation client,
- *  instead of only being turned into words (audio) or still pictures (video) — see public/playback.js. */
+ *  instead of only being turned into words (audio) or still pictures (video) — see public/playback.js.
+ *  Redesign: in the new window a file is attached from the + menu's "Attach files" and waits as a file chip in #attached
+ *  (prototype.html's composer chip); once sent, a sound or video file plays in the conversation from its own card
+ *  (.media15, public/app/chat/media.js), drawn beside the message that carried it. */
 
 /** One second of silence at 8 kHz, mono, 16-bit, so nothing here depends on a real recording. */
 const silentWav = () => writeWav({ channels: 1, sampleRate: 8000, bitsPerSample: 16, blockAlign: 2 }, Buffer.alloc(16000));
@@ -37,28 +41,40 @@ async function fixture(t) {
 async function openWorkspace(t, page, server) {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  // The first-run card (#323) takes every click; these tests are about playback, so first run is marked done.
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
+  await signIn(page, server);
   return errors;
 }
+const chip = (page) => page.locator("#attached .file");
+/** The player card beside the user message at `index` (the card is the .u.umedia15 drawn right after that message). */
+const playersAfter = (page) => page.evaluate(() => [...document.querySelectorAll("#conversation > *, #conversation .u")]
+  .filter((node) => node.matches(".u")).map((node) => ({ media: node.classList.contains("umedia15"), text: node.textContent,
+    kind: node.querySelector(".media15")?.classList.contains("video") ? "video" : node.querySelector(".media15") ? "audio" : "" })));
 
 test("an attached sound file gets a playable chip on the message box, and it can be taken off again", async (t) => {
   const { app, root } = await fixture(t);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const httpCall = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await httpCall("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = await openWorkspace(t, page, server);
 
-  await page.setInputFiles("#composer-media-file", { name: "note.wav", mimeType: "audio/wav", buffer: silentWav() });
-  await page.waitForSelector("#composer-clips .clip-chip audio");
-  assert.equal(await page.locator("#composer-clips .clip-chip").count(), 1);
-  assert.equal(await page.locator("#composer-clips .clip-chip audio").getAttribute("src"), await page.evaluate(() => document.querySelector("#composer-clips audio").src));
+  await attachFiles(page, [{ name: "note.wav", mimeType: "audio/wav", buffer: silentWav() }]);
+  await chip(page).first().waitFor();
+  assert.equal(await chip(page).count(), 1);
+  assert.match(await chip(page).innerText(), /note\.wav/);
+  // Redesign: replaced by the new window (prototype.html's composer chip is the file's name and size, not a player; the
+  // file plays once it is sent, below).
 
-  await page.click("#composer-clips .clip-chip button");
-  assert.equal(await page.locator("#composer-clips .clip-chip").count(), 0, "the chip can be taken off again, same as a picture chip");
+  await chip(page).first().click();
+  assert.equal(await chip(page).count(), 0, "the chip can be taken off again, same as a picture chip");
   assert.deepEqual(errors, []);
 });
 
@@ -70,14 +86,15 @@ test("a sound file attached to a sent message plays inline in the conversation, 
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, permissions: [] });
   const errors = await openWorkspace(t, page, server);
 
-  await page.setInputFiles("#composer-media-file", { name: "note.wav", mimeType: "audio/wav", buffer: silentWav() });
-  await page.waitForSelector("#composer-clips .clip-chip audio");
+  await attachFiles(page, [{ name: "note.wav", mimeType: "audio/wav", buffer: silentWav() }]);
+  await chip(page).first().waitFor();
 
   await page.fill("#prompt", "here is a note");
   await page.click("#send");
-  await page.waitForSelector(".message.user .message-clips audio");
-  assert.equal(await page.locator(".message.user .message-clips audio").count(), 1, "the message bubble itself carries the player");
-  assert.equal(await page.locator("#composer-clips .clip-chip").count(), 0, "the composer chip is cleared once the file has moved into the sent message");
+  await page.locator("#conversation .umedia15 .media15.audio").waitFor({ timeout: 30000 });
+  assert.equal(await page.locator("#conversation .media15.audio").count(), 1, "the sent message carries the player");
+  assert.equal(await page.locator("#conversation .media15 [data-act=\"mplay15\"]").first().getAttribute("aria-label"), "Play note.wav");
+  assert.equal(await chip(page).count(), 0, "the composer chip is cleared once the file has moved into the sent message");
   assert.deepEqual(errors, []);
 });
 
@@ -86,12 +103,14 @@ test("a sound file attached to a sent message plays inline in the conversation, 
 async function sendAndAwaitRedraw(page, words, userMessages) {
   await page.fill("#prompt", words);
   await page.click("#send");
-  await page.waitForFunction((count) => document.querySelectorAll(".message.user .message-controls .conversation-switch").length === count
-    && !document.getElementById("send")?.disabled, userMessages, { timeout: 120000 });
+  // Redesign: a message drawn from what the server saved carries its message id (data-i15); the reply is in once the typing
+  // dots are gone.
+  await page.waitForFunction((count) => document.querySelectorAll("#conversation .u[data-i15]:not(.umedia15)").length === count
+    && !document.querySelector("#conversation .typing"), userMessages, { timeout: 120000 });
 }
 async function attachSound(page) {
-  await page.setInputFiles("#composer-media-file", { name: "note.wav", mimeType: "audio/wav", buffer: silentWav() });
-  await page.waitForSelector("#composer-clips .clip-chip audio");
+  await attachFiles(page, [{ name: "note.wav", mimeType: "audio/wav", buffer: silentWav() }]);
+  await chip(page).filter({ hasText: "note.wav" }).waitFor();
 }
 async function startPage(t) {
   const { app, root } = await fixture(t);
@@ -109,27 +128,30 @@ const videoReady = (sel) => {
 
 test("an attached video file gets a working <video> player, on the message box and in the sent message after it is redrawn", async (t) => {
   const { page, errors } = await startPage(t);
-  await page.setInputFiles("#composer-media-file", { name: "clip.webm", mimeType: "video/webm", buffer: await clipWebm() });
-  await page.waitForFunction(videoReady, "#composer-clips .clip-chip video", { timeout: 60000 });
+  await attachFiles(page, [{ name: "clip.webm", mimeType: "video/webm", buffer: await clipWebm() }]);
+  await chip(page).first().waitFor();
+  // Redesign: replaced by the new window (the composer chip is not a player; the card plays once the clip is sent).
 
   await sendAndAwaitRedraw(page, "here is a clip", 1);
-  await page.waitForFunction(videoReady, ".message.user .message-clips video", { timeout: 60000 });
-  const duration = await page.evaluate(() => document.querySelector(".message.user .message-clips video").duration);
+  await page.locator("#conversation .media15.video").waitFor({ timeout: 60000 });
+  await page.locator('#conversation .media15.video .m-play15').click();
+  await page.waitForFunction(videoReady, "#conversation .media15.video video", { timeout: 60000 });
+  const duration = await page.evaluate(() => document.querySelector("#conversation .media15.video video").duration);
   assert.ok(Math.abs(duration - 1) < 0.2, `the player knows the clip is about one second long (was ${duration})`);
-  assert.equal(await page.locator(".message.user .message-clips audio").count(), 0, "a video gets a video player, not a sound one");
+  assert.equal(await page.locator("#conversation .media15.audio").count(), 0, "a video gets a video player, not a sound one");
   assert.deepEqual(errors, []);
 });
 
 test("a message that carried a picture and a sound keeps its player after the conversation is redrawn from what was saved", async (t) => {
   const { page, errors } = await startPage(t);
-  await page.setInputFiles("#composer-media-file", { name: "dot.png", mimeType: "image/png", buffer: dotPng() });
-  await page.waitForSelector("#composer-attachments img");
+  await attachFiles(page, [{ name: "dot.png", mimeType: "image/png", buffer: dotPng() }]);
+  await chip(page).filter({ hasText: "dot.png" }).waitFor();
   await attachSound(page);
 
   // The server saves these words with "[attached picture: dot.png]" after them (src/runtime.ts picturesNote).
   await sendAndAwaitRedraw(page, "a picture and a note", 1);
-  assert.match(await page.locator(".message.user").first().innerText(), /attached picture/, "this is the redrawn, saved message");
-  assert.equal(await page.locator(".message.user .message-clips audio").count(), 1, "the redrawn message still carries its player");
+  assert.match(await page.locator("#conversation .u[data-i15]:not(.umedia15)").first().innerText(), /attached picture/, "this is the redrawn, saved message");
+  assert.equal(await page.locator("#conversation .media15.audio").count(), 1, "the redrawn message still carries its player");
   assert.deepEqual(errors, []);
 });
 
@@ -137,16 +159,18 @@ test("a later message with the same words but no file gets no player, in the sam
   const { page, errors } = await startPage(t);
   await attachSound(page);
   await sendAndAwaitRedraw(page, "same words", 1);
-  assert.equal(await page.locator(".message.user .message-clips audio").count(), 1);
+  assert.equal(await page.locator("#conversation .media15.audio").count(), 1);
 
   await sendAndAwaitRedraw(page, "same words", 2);
-  assert.equal(await page.locator(".message.user .message-clips").count(), 1, "only the message that carried the file plays it");
-  assert.equal(await page.locator(".message.user").first().locator(".message-clips audio").count(), 1, "and it is the first one");
+  assert.equal(await page.locator("#conversation .media15").count(), 1, "only the message that carried the file plays it");
+  const order = (await playersAfter(page)).map((one) => (one.media ? "player" : "message"));
+  assert.deepEqual(order, ["message", "player", "message"], "and it is the first one's");
 
-  await page.locator("#rail-new").click();
-  await page.waitForFunction(() => document.querySelectorAll("#conversation .message").length === 0);
+  await page.locator('#side [data-act="newmenu"]').click();
+  await page.locator('.pop [data-act="newconv"]').click();
+  await page.waitForFunction(() => document.querySelectorAll("#conversation .u").length === 0);
   await sendAndAwaitRedraw(page, "same words", 1);
-  assert.equal(await page.locator(".message-clips").count(), 0, "another conversation never shows this one's clip");
+  assert.equal(await page.locator("#conversation .media15").count(), 0, "another conversation never shows this one's clip");
   assert.deepEqual(errors, []);
 });
 
@@ -162,12 +186,16 @@ test("a clip sent into a conversation whose messages were never drawn here is no
   });
   await page.fill("#prompt", "first, with no file");
   await page.click("#send");
-  await page.waitForFunction(() => document.getElementById("session-context")?.textContent.includes("could not be loaded")
-    && !document.getElementById("send")?.disabled, undefined, { timeout: 120000 });
+  // Redesign: the new window says the engine's refusal in the conversation and keeps going.
+  await page.waitForFunction(() => /not now/.test(document.getElementById("conversation")?.textContent ?? "")
+    && !document.querySelector("#conversation .typing"), undefined, { timeout: 120000 });
 
   await attachSound(page);
   await sendAndAwaitRedraw(page, "second, with a note", 2);
-  const first = page.locator(".message.user").filter({ hasText: "first, with no file" });
-  assert.equal(await first.locator(".message-clips").count(), 0, "the older message never takes a clip it did not carry");
+  const drawn = await playersAfter(page);
+  const first = drawn.findIndex((one) => !one.media && one.text.includes("first, with no file"));
+  assert.ok(first >= 0, "the first message is drawn");
+  assert.equal(drawn[first + 1]?.media ?? false, false, "the older message never takes a clip it did not carry");
+  assert.equal(drawn.filter((one) => one.media).length, 1, "the clip is with the message that carried it");
   assert.deepEqual(errors, []);
 });

@@ -227,7 +227,7 @@ export class LiveConversation {
     // stand in for a different one that happens to touch the same thing.
     const bytes = this.deps.runtime.hideSecrets(JSON.stringify(args));
     // Fingerprinted before hiding: two different keys hide to the same words and must stay two questions.
-    const fingerprint = argumentFingerprint(JSON.stringify(args));
+    const fingerprint = argumentFingerprint(name, JSON.stringify(args));
     try {
       const check = this.deps.runtime.checkPolicy(name, args, context, fingerprint);
       this.out.notice("voice.live.tool", { name, target: this.deps.runtime.hideSecrets(check.target), decision: check.decision });

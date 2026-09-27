@@ -1,7 +1,9 @@
 import type { Run, RunStatus } from "./contracts.js";
 import type { Runtime } from "./runtime.js";
 import type { Store } from "./store.js";
-import { keepPolicyRule, readPolicy, savePolicy, policyPresets, type PolicyPresetName } from "./policy.js";
+import { keepPolicyRule, nextPolicy, readPolicy, savePolicy, policyPresets, type PolicyPresetName } from "./policy.js";
+import { lockdownSettingsRefusal, policyChangeRefusal } from "./policy-change-guard.js"; // Q259
+import type { ToolLister } from "./preset-moves.js";
 import { recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 import { readAttachment, type Attachment, attachedText } from "./terminal-commands.js";
 import { progressLine } from "./terminal.js";
@@ -9,6 +11,7 @@ import { allowTestsRefusal } from "./coding/project-tests.js";
 import { allowTestsIdleNote } from "./code-change.js"; // mac7/smoke-fixes (B6)
 import type { ImagePart } from "./contracts.js";
 import { unkeyedAlwaysRefusal } from "./runtime.js";
+import { lockdownActive } from "./lockdown.js";
 
 /**
  * `branch run` for scripts: what the flags mean, what comes out (a JSON Lines event stream with
@@ -35,6 +38,8 @@ export interface RunFlags {
   preset?: string;
   /** True when `--save-preset` was used: the setting is meant to stay changed after the task. */
   savePreset: boolean;
+  /** Q259: `--confirm`, the owner's yes to a `--save-preset` that makes Branch less careful. */
+  confirm?: boolean;
   /** Most tokens this one task may use before it stops. */
   budget?: number;
   timeoutMs?: number;
@@ -72,6 +77,7 @@ export function parseRunArgs(argv: string[]): RunFlags {
     else if (word === "--attach") flags.attach.push(argv[++at] ?? "");
     else if (word === "--preset") flags.preset = argv[++at] ?? "";
     else if (word === "--save-preset") { flags.preset = argv[++at] ?? ""; flags.savePreset = true; }
+    else if (word === "--confirm") flags.confirm = true;
     else if (word === "--budget") flags.budget = wholeNumber("--budget", argv[++at]);
     else if (word === "--timeout") flags.timeoutMs = wholeNumber("--timeout", argv[++at]);
     else if (word === "--session") flags.sessionId = argv[++at] ?? "";
@@ -84,6 +90,7 @@ export function parseRunArgs(argv: string[]): RunFlags {
   if (flags.resumeRunId && flags.forkFrom) throw new Error("Choose either --resume or --fork, not both");
   if (flags.attach.some((path) => !path)) throw new Error("--attach needs a file after it");
   if (flags.preset === "") throw new Error(`${flags.savePreset ? "--save-preset" : "--preset"} needs a name after it`);
+  if (flags.confirm && !flags.savePreset) throw new Error("--confirm goes with --save-preset");
   flags.prompt = words.join(" ").trim();
   return flags;
 }
@@ -98,13 +105,22 @@ export interface PresetChange {
  * Applies `--preset` or `--save-preset`. A script flag should not quietly rewrite what the owner
  * saved, so `--preset` holds for this one task and the old setting goes back afterwards;
  * `--save-preset` keeps the change and says so in as many words.
+ *
+ * Q259: both are held to what `/preset` is held to (src/policy-change-guard.ts). Under Lockdown the saved
+ * policy is Lockdown's ask-everything one, so either flag would loosen Lockdown (for the task, or for good)
+ * and is refused. `--save-preset` to a preset that makes Branch less careful needs `--confirm` as well.
  */
-export function usePreset(store: Store, owner: string, name: string, keep: boolean): PresetChange {
+export function usePreset(store: Store, owner: string, name: string, keep: boolean,
+  options: { confirm?: boolean; tools?: ToolLister } = {}): PresetChange {
   const known = policyPresets().map((preset) => preset.id);
   if (!known.includes(name as PolicyPresetName))
     throw new Error(`--preset takes one of: ${known.join(", ")}`);
+  if (lockdownActive(store, owner)) throw new Error(lockdownSettingsRefusal);
   const before = readPolicy(store, owner);
   if (keep) {
+    const refusal = policyChangeRefusal(store, owner, nextPolicy(before, { preset: name }), options.confirm === true, options.tools,
+      `Add --confirm after --save-preset ${name} to go ahead.`);
+    if (refusal) throw new Error(refusal);
     // Q48: a change that stays is written down like any other, so "why is this on?" names the command.
     recordedWrite(store, owner, { writer: "owner-by-command", source: "command", detail: `--save-preset ${name}` }, ["policy"],
       () => savePolicy(store, owner, { preset: name }));
@@ -261,6 +277,9 @@ export function answerFromCommand(runtime: Runtime, id: string, answer: string):
   // The CLI path cannot offer "just this once" like an attended UI can, so refuse and ask the user
   // to run the task again where they can choose the right scope.
   if (noAlways) throw new Error(`${unkeyedAlwaysRefusal}. Run the task again and choose your answer when it asks.`);
+  // unhold-approvals: this answer is kept for good, and a rule written into Lockdown's list is lost when it ends.
+  if (lockdownActive(runtime.store, runtime.owner))
+    throw new Error("Lockdown is on, so a yes cannot be kept for good. Answer it in the app window, just now or for this conversation.");
   // The question carried the fingerprint of the exact bytes it was put for, so the answer given
   // here is bound to them: a task that asks for something different next time asks again.
   const fingerprint = String(asked.data.fingerprint ?? "");

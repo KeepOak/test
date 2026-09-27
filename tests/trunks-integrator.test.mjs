@@ -9,6 +9,7 @@ import { HANDLERS } from "../dist/commands/handlers.js";
 import { saveOrchestrationSettings } from "../dist/orchestration.js";
 import * as messaging from "../dist/trunks/messages.js";
 import { call, fixture, on } from "./trunks-helpers.mjs";
+import { saveCodingMode } from "../dist/coding/settings.js";
 
 const startedWith = (app, runId) => app.store.events(runId).find((e) => e.kind === "run.started").data.permissions;
 const { maxMessageDepth, maxMessagesPerHour = 30, maxMessagesPerTask = 3, TrunkMessages } = messaging;
@@ -74,6 +75,9 @@ test("saving a taught routine runs nothing now: its first turn is at the time th
   const rules = [({ last }) => (/write the report/.test(last?.content ?? "") ? call("files.write", { path: "r.md", content: "# R" })
     : last?.role === "tool" ? "Written." : null)];
   const { app } = await fixture(t, rules);
+  // Q250: read before edit ships on. This test is about when a taught routine first runs, not that guard, and
+  // its scripted model writes r.md again on the second pass without reading it.
+  saveCodingMode(app.store, app.runtime.owner, "read-first", "off");
   on(app, "teach", "routines");
   const gu = app.trunks.create({ name: "Gu" });
   await app.trunks.introduced();

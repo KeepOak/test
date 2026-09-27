@@ -4,7 +4,8 @@ import { lockdownOverrides } from "../lockdown.js"; // mac7/lockdown-fix
 
 /**
  * Bucket R17-B: "it suggests, and runs things on its own". Each part has the owner's three-way
- * switch — off, when needed, on — kept in a settings record of its own, and every one ships off.
+ * switch — off, when needed, on — kept in a settings record of its own. What each ships as is
+ * `autonomyShipsOn` below; a saved record that cannot be read is off.
  *
  *   off          the part refuses in one plain sentence; its tools are not in the catalog at all, and
  *                nothing of it runs by itself
@@ -27,6 +28,21 @@ export type AutonomyMode = z.infer<typeof AutonomyModeSchema>;
 const RecordSchema = z.object({ mode: AutonomyModeSchema.default("off") }).strict();
 
 export const autonomyKey = (part: AutonomyPart): string => `autonomy-${part}`;
+
+/** What each part is while nothing has been saved for it. A saved record that is damaged still reads as off. */
+export const autonomyShipsOn: Partial<Record<AutonomyPart, AutonomyMode>> = {
+  // The owner's rule (ships on, 2026-09-26): suggestions are worked out on this computer without a model and only offered; none of (a)–(f).
+  suggestions: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): an order exists only once the owner makes or accepts one, bounded and held by the approval rules; none of (a)–(f).
+  orders: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): /loop and /heartbeat start only when the owner types them, and every turn is bounded; none of (a)–(f).
+  loops: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): the readiness check only looks at PATH and secret names, never runs or reads a value; none of (a)–(f).
+  readiness: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): a "from now on" instruction is kept only after the owner says yes; none of (a)–(f).
+  instructions: "when-needed",
+  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): session-commands sends the conversation out (/handoff); procedures run steps without a yes at "auto".
+};
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
 export const autonomyLabels: Record<AutonomyPart, string> = {
@@ -51,13 +67,15 @@ export const autonomyTools: Record<AutonomyPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
-export const autonomyToolFeatures: readonly (readonly [string, string, readonly string[]])[] = autonomyParts
+export const autonomyToolFeatures: readonly (readonly [string, string, readonly string[], AutonomyMode])[] = autonomyParts
   .filter((part) => autonomyTools[part].length > 0)
-  .map((part) => [autonomyKey(part), `${autonomyLabels[part].replace(/^"|"/g, "").toLowerCase()} is switched on`, autonomyTools[part]] as const);
+  .map((part) => [autonomyKey(part), `${autonomyLabels[part].replace(/^"|"/g, "").toLowerCase()} is switched on`, autonomyTools[part], autonomyShipsOn[part] ?? "off"] as const);
 
 export function autonomyMode(store: Pick<Store, "get">, owner: string, part: AutonomyPart): AutonomyMode {
   if (lockdownOverrides(store, owner, autonomyKey(part))) return "off"; // mac7/lockdown-fix
-  const saved = RecordSchema.safeParse(store.get("settings", owner, autonomyKey(part))?.data ?? {});
+  const found = store.get("settings", owner, autonomyKey(part));
+  if (!found) return autonomyShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

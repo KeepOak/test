@@ -54,6 +54,7 @@ async function fixture(t, answers) {
   const root = await mkdtemp(join(tmpdir(), "branch-reflection-"));
   const provider = scripted(answers);
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about reflection and skill drafts, not reading first
   t.after(async () => { await app.learningLoop.idle(); await app.close(); await discardTemp(root); });
   return { app, root, provider };
 }

@@ -101,6 +101,11 @@ export class Triggers {
   private readonly usedNonces = new Map<string, number>();
   /** The clock, so a test can prove a stale timestamp is refused without waiting five minutes. */
   now: () => number = Date.now;
+  /**
+   * eng-trunk-controls: why nothing may start in this conversation now (the Trunk it belongs to is paused),
+   * in words, or null. `createBranch` connects it; on its own every trigger fires.
+   */
+  held: (sessionId: string) => string | null = () => null;
 
   /**
    * Refuses a request whose timestamp is outside the window or whose nonce has been seen before.
@@ -302,6 +307,12 @@ export class Triggers {
     if (!canFireResult.allowed) {
       this.logFire(triggerId, owner, null, JSON.stringify(payload).slice(0, 100), canFireResult.reason!);
       throw new Error(canFireResult.reason);
+    }
+
+    const held = trigger.sessionId ? this.held(trigger.sessionId) : null; // eng-trunk-controls
+    if (held) {
+      this.logFire(triggerId, owner, null, JSON.stringify(payload).slice(0, 100), held);
+      throw new Error(held);
     }
 
     // Prepare inputs for substitution: {{payload}} and {{field.path}}

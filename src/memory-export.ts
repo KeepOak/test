@@ -39,6 +39,19 @@ export function parseMemoryJsonl(text: string): { records: z.infer<typeof LineSc
   }
   return { records, skipped };
 }
+/**
+ * rw4: the desktop app's Save dialog writes an export only when every line is a saved fact, and writes the facts as
+ * read back, one per line. Unlike an import it is all or nothing and has no line cap: it is the owner's whole memory.
+ */
+export function exportedMemoryLines(text: string): string {
+  if (Buffer.byteLength(text, "utf8") > maximumImportBytes) throw new Error("That file is larger than 16 MB");
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  const records = lines.map((line, at) => {
+    try { return LineSchema.parse(JSON.parse(line) as unknown); }
+    catch { throw new Error(`Line ${at + 1} is not a saved fact`); }
+  });
+  return records.map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : "");
+}
 /** The wording, subject and detail together: two facts that agree on all three are the same fact. */
 export function factFingerprint(data: { text?: unknown; entity?: unknown; attribute?: unknown }): string {
   return [data.entity, data.attribute, data.text].map((part) => normaliseFact(String(part ?? ""))).join("|");

@@ -122,8 +122,8 @@ test("the installer script and the Uninstall entry say what they will do", () =>
   assert.match(shortcutScript({ path: "C:\\M\\a.lnk", target: "C:\\App\\x.exe" }), /CreateObject\("WScript\.Shell"\)/);
 
   // mac7/app-icon: the packager copies the stock Electron executable back over the packaged one, so it
-  // still carries Electron's logo. Every shortcut and every list entry has to name the KeepOak .ico.
-  assert.equal(shippedIconPath, join("resources", "app", "public", "assets", "keepoak.ico"));
+  // still carries Electron's logo. Every shortcut and every list entry has to name the mascot .ico.
+  assert.equal(shippedIconPath, join("resources", "app", "public", "assets", "branch.ico"));
   assert.equal(shortcutIcon("C:\\App", "Branch Agent.exe", true), `${join("C:\\App", shippedIconPath)},0`);
   assert.equal(shortcutIcon("C:\\App", "Branch Agent.exe", false), `${join("C:\\App", "Branch Agent.exe")},0`,
     "an older copy without the icon still gets a working shortcut");
@@ -407,16 +407,18 @@ test("the pairing door answers only a POST to /api/pair, and hands over the key 
     const sent = { status: 0, body: null };
     return { sent, writeHead(status) { sent.status = status; }, end(text) { sent.body = text && JSON.parse(text); } };
   };
-  assert.equal(await pairingRequest(remote, request("GET", "/api/pair", {}), reply(), "/api/pair"), false,
+  // The phone is handed a key and a secret of its own, never the window's key.
+  const gateway = { remember: () => ({ device: { id: "0123456789abcdef" }, secret: "s".repeat(48), key: "p".repeat(64) }) };
+  assert.equal(await pairingRequest(remote, request("GET", "/api/pair", {}), reply(), "/api/pair", gateway), false,
     "only a POST is a pairing attempt");
-  assert.equal(await pairingRequest(remote, request("POST", "/api/state", {}), reply(), "/api/state"), false,
+  assert.equal(await pairingRequest(remote, request("POST", "/api/state", {}), reply(), "/api/state", gateway), false,
     "no other route is opened up");
   const wrong = reply();
-  await assert.rejects(pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: "123456" === offer.code ? "654321" : "123456" }), wrong, "/api/pair"), /not right/);
+  await assert.rejects(pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: "123456" === offer.code ? "654321" : "123456" }), wrong, "/api/pair", gateway), /not right/);
   assert.equal(wrong.sent.status, 0, "nothing is sent back on a wrong number");
   const right = reply();
-  assert.equal(await pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: offer.code }), right, "/api/pair"), true);
-  assert.deepEqual(right.sent.body, { token: "k".repeat(64) });
+  assert.equal(await pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: offer.code }), right, "/api/pair", gateway), true);
+  assert.deepEqual(right.sent.body, { token: "p".repeat(64), deviceId: "0123456789abcdef", deviceKey: "s".repeat(48) });
 });
 
 test("the pairing door is shut on this computer's own address", async (t) => {
@@ -451,30 +453,30 @@ test("the pairing door is shut on this computer's own address", async (t) => {
 });
 
 test("the sign-in switches name the system Branch runs on: Windows, your Mac, or this computer", async () => {
-  const { signInKey, signInSystem, opensWhenSignedIn } = await import("../public/deployment.js");
+  /* Redesign: the old card (public/deployment.js) is replaced by the new window's Settings › General (public/app/settings/
+     pages/general.js), whose switch is the prototype's "Start with Windows". On a Mac or another computer that switch
+     names that system instead (public/app/settings/signin.js, from GET /api/deployment platform), and "Branch starts
+     with Windows" is said only on Windows. */
+  const { signInSystem, startKey, startsWithWindows } = await import("../public/app/settings/signin.js");
   assert.equal(signInSystem("win32"), "windows");
   assert.equal(signInSystem("darwin"), "mac");
   assert.equal(signInSystem("linux"), "computer");
-  assert.equal(signInSystem(""), "computer", "not known yet: no system is guessed");
-  assert.equal(opensWhenSignedIn("win32"), "Branch will open when you sign in to Windows.");
-  assert.equal(opensWhenSignedIn("darwin", true), "Branch will open quietly when you sign in to your Mac.");
-  assert.equal(opensWhenSignedIn("linux"), "Branch will open when you sign in to this computer.");
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  const script = await readFile(new URL("../public/deployment.js", import.meta.url), "utf8");
-  assert.doesNotMatch(script, /sign in to Windows/, "no status line names Windows on every system");
+  assert.equal(signInSystem(undefined), "computer", "not known yet: no system is guessed");
+  assert.deepEqual(["win32", "darwin", "linux", undefined].map(startsWithWindows), [true, false, false, false]);
+  const page = await readFile(new URL("../public/app/settings/pages/general.js", import.meta.url), "utf8");
+  assert.match(page, /ctl\("g-start", t\(startKey\(platform\)\)/, "the switch's words follow the system");
+  assert.match(page, /starts && startsWithWindows\(platform\) \?/, "\"Branch starts with Windows\" only on Windows");
+  assert.doesNotMatch(page, /t\("window\.settings\.general\.start-with-windows"\)/, "no switch names Windows on every system");
   const expected = { win32: /Windows$/, darwin: /(my Mac|mon Mac)$/, linux: /(this computer|cet ordinateur)$/ };
-  for (const language of ["en", "fr"]) {
+  for (const language of ["en", "fr", "es", "de"]) {
     const words = JSON.parse(await readFile(new URL(`../public/locales/${language}.json`, import.meta.url), "utf8"));
-    for (const key of ["field.open-branch-when-i-sign", "field.start-branch-when-i-sign"]) {
-      /* Since 0.18.1 first run has no tick boxes, so only the Settings switch is on the page; the
-         first-run words stay on file and must still name the right system. */
-      if (key === "field.start-branch-when-i-sign") assert.ok(html.includes(`data-t="${key}"`), key);
-      assert.doesNotMatch(words[key], /Windows/, `${language} ${key}: the default names no system`);
-      for (const [platform, ending] of Object.entries(expected))
-        assert.match(words[signInKey(key, platform)] ?? "", ending, `${language} ${key} on ${platform}`);
+    for (const platform of Object.keys(expected)) {
+      const said = words[startKey(platform)];
+      assert.equal(typeof said, "string", `${language} has words for ${platform}`);
+      if (language === "en" || language === "fr") assert.match(said, expected[platform], `${language} on ${platform}: ${said}`);
     }
+    assert.doesNotMatch(words[startKey("linux")], /Windows|Mac/, `${language}: the default names no system`);
   }
-  assert.doesNotMatch(html, /sign in to Windows/);
 });
 
 // ---------------------------------------------------------------- P4: a safety copy before every update
@@ -682,11 +684,16 @@ test("B4 while Branch is open, the commands that only look work from another ter
   const { root, app, dataDir } = await openBranch(t);
   app.store.save("memory", "local", randomUUID(), { text: "the office plant is called Fern", source: "the owner said so" });
 
-  const doctor = await branchCli(dataDir, root, ["doctor"]);
+  const doctor = await branchCli(dataDir, root, ["doctor", "--json"]);
   assert.equal(doctor.code, 0, doctor.stderr);
   const said = JSON.parse(doctor.stdout);
   assert.match(said.from, /^the Branch already open at http/);
   assert.ok(Array.isArray(said.health.items) && said.health.items.length, "the checks came back");
+  // B5 (CL-05): without --json a person reads lines, not a JSON object.
+  const plainDoctor = await branchCli(dataDir, root, ["doctor"]);
+  assert.equal(plainDoctor.code, 0, plainDoctor.stderr);
+  assert.match(plainDoctor.stdout, /^From the Branch already open at http/);
+  assert.match(plainDoctor.stdout, /^(Everything checks out\.|Some checks need attention:)$/m);
 
   const memory = await branchCli(dataDir, root, ["memory"]);
   assert.equal(memory.code, 0, memory.stderr);
@@ -751,10 +758,12 @@ test("B4 a command that would write to the same saved work still refuses, and sa
   assert.match(refused.stderr, /branch doctor, branch token, branch trace, branch schedule/);
   assert.match(refused.stderr, /from any terminal: branch status, branch doctor/, "status is named among the ones that work");
   assert.match(refused.stderr, /needs that Branch closed first/);
-  // The terminal's own writers are refused over the running Branch too, not quietly allowed.
+  // B5 (CL-04): the terminal's own writers go through the running Branch's routes now (tests/cli-engine.test.mjs),
+  // and the sentence names them among the ones that work.
+  assert.match(refused.stderr, /branch approve, branch lockdown, branch permissions, branch theme, branch model, branch gateway/);
   const themed = await branchCli(dataDir, root, ["theme", "dark"]);
-  assert.equal(themed.code, 1);
-  assert.match(themed.stderr, /Branch is already open/);
+  assert.equal(themed.code, 0, themed.stderr);
+  assert.doesNotMatch(themed.stderr, /Branch is already open/);
 });
 
 test("B4 branch trace reads one task's steps from the Branch that is open", async (t) => {
@@ -781,7 +790,7 @@ test("B4 the terminal door runs the commands that only look, and refuses the res
   const { readOnlyTerminalCommands } = await import("../dist/terminal-cli.js");
   assert.deepEqual([...readOnlyTerminalCommands].sort(), [
     "automations", "channels", "customize", "household", "inbox", "library", "mcp", "memory",
-    "overview", "places", "projects", "sessions", "settings", "skills", "snapshots", "status", "tools", "usage", "version",
+    "overview", "places", "projects", "sessions", "settings", "skills", "snapshots", "status", "team", "tools", "usage", "version",
   ], "the list of terminal commands a second terminal may run is pinned; changing it is deliberate");
 
   const ask = (query) => fetch(`${server.url}/api/terminal?${query}`, { headers: { authorization: `Bearer ${server.token}` } });

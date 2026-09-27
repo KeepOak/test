@@ -56,6 +56,7 @@ async function fixture(t, reply = () => say("done"), options = {}) {
   const provider = scripted(reply);
 
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider, ...options });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about orchestration, not reading first
 
   t.after(async () => {
 

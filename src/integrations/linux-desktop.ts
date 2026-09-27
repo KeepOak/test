@@ -49,8 +49,9 @@ export function saveLinuxDesktop(store: Pick<Store, 'get' | 'save'>, owner: stri
 export const switchedOffMessage =
   'Branch is not allowed to use a shared Linux desktop. Turn on "Shared Linux desktop" in Settings → Computer & browser first.';
 export const sandboxRefusal = (reason: string): string => `The shared Linux desktop cannot be used: ${reason}`;
+/** unhold-control: the owner hands it back from the window's computer view, where "Take over" was pressed. */
 export const takenOverMessage =
-  'You have taken over the shared desktop, so Branch has let go of it. Only you can hand it back, with "Hand back" on the Shared Linux desktop card in Settings → Computer & browser.';
+  'You have taken over the shared desktop, so Branch has let go of it. Only you can hand it back, with "Hand back to …" at the top of the computer view.';
 export const notRunningMessage = 'No shared Linux desktop is running. Start one with desktop.shared.start first.';
 export const stoppedWhileStartingMessage = sandboxRefusal('it was stopped before it finished starting.');
 export const closingMessage = sandboxRefusal('Branch is closing.');

@@ -1,5 +1,4 @@
 import { test } from "node:test";
-import { openPlace, openSettingFor } from "./places.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,31 +7,23 @@ import { once } from "node:events";
 import { spawnSync } from "node:child_process";
 import { _electron } from "playwright";
 
-import { connected, desktopOptions } from "./fixtures/desktop-options.mjs";
+import { backToConversation, connected, desktopOptions, onboarded, openSettingsPage, send, taskDone, tokenNotExposed } from "./fixtures/desktop-options.mjs";
 
-/* Redesign phase 1: a conversation begun in the window starts on Ask first, and the practice run writes
-   a file. This checks the desktop app, so its conversation follows the setting as before
-   (tests/conversation-mode.test.mjs covers Ask first). */
-const followSetting = (page) => page.evaluate(async () => {
-  await fetch("/api/conversation-mode/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ newConversation: "follow" }) });
-  await globalThis.branchConversationMode?.refresh();
-});
-
-async function appearance(page, value) {
-  await openSettingFor(page, "#appearance");
-  await page.locator(`#lx-mode .segmented-option:has([data-t="look.${value === "daylight" ? "daylight" : "moonlight"}"])`).click();
-  await page
-    .getByRole("button", { name: "Save appearance", exact: true })
-    .click();
-  await page.waitForFunction(
-    (value) => document.documentElement.dataset.theme === value,
-    value,
-  );
+/* Redesign: the old Appearance page had Daylight or Forest and a "Save appearance" button. The new one (Settings ›
+   Appearance, as the prototype's) has a Light and a Dark mirror that apply and save at once: the page wears
+   data-theme="light" or "dark", and the engine keeps it as daylight or forest (shell/shell.js setTheme). */
+const KEPT = { light: "daylight", dark: "forest" };
+async function appearance(page, mode) {
+  await openSettingsPage(page, "appearance");
+  await page.locator(`button.mirror[data-act="themeset"][data-v="${mode}"]`).click();
+  await page.waitForFunction((mode) => document.documentElement.dataset.theme === mode, mode);
+  await page.waitForFunction(async (kept) => (await (await fetch("/api/state")).json()).preferences?.appearance === kept, KEPT[mode]);
 }
 
 async function verifyWindow(electron, page, home) {
-  await connected(page);
-  assert.match(await page.title(), /Branch Agent/);
+  await onboarded(page);
+  // Redesign: the new window names itself Branch (its title and its wordmark, as the prototype's titlebar).
+  assert.match(await page.title(), /^Branch/);
   const isolation = await electron.evaluate(({ BrowserWindow }) => {
     const p =
       BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();
@@ -44,22 +35,10 @@ async function verifyWindow(electron, page, home) {
   });
   assert.deepEqual(isolation, { node: false, context: true, sandbox: true });
   assert.equal(await page.evaluate(() => typeof window.require), "undefined");
-  const token = (
-    await readFile(join(home, "state", "session-token"), "utf8")
-  ).trim();
-  assert.equal(page.url().includes(token), false);
-  assert.equal((await page.content()).includes(token), false);
-  // Dogfood F7: the page holds a stand-in so its parts know they are signed in; never the key itself.
-  assert.equal(
-    await page.evaluate(() => sessionStorage.getItem("branch-token")),
-    "desktop-window",
-  );
-  await followSetting(page);
-  await page
-    .getByLabel("Your message", { exact: true })
-    .fill("Run the file workflow.");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await page.locator(".message.assistant").waitFor({ timeout: 30000 });
+  await tokenNotExposed(page, home);
+  await send(page, "Run the file workflow.");
+  await page.locator("#conversation .b").first().waitFor({ timeout: 30000 });
+  await taskDone(page, "Run the file workflow.");
   assert.equal(
     await readFile(join(home, "workspace", "branch-demo.txt"), "utf8"),
     "Hello from Branch.\n",
@@ -173,21 +152,18 @@ test(
       await verifyWindow(electron, page, home);
       url = page.url();
       await verifyNetworkBoundary(electron, page);
-      await appearance(page, "daylight");
+      await appearance(page, "light");
       await page.reload();
       await connected(page);
       assert.equal(
         await page.locator("html").getAttribute("data-theme"),
-        "daylight",
+        "light",
       );
-      await appearance(page, "forest");
-      /* Settings is a window over whatever place you were on, so after saving the appearance the
-         place behind it is still the conversation and .lx-back is hidden -- a click on it waits
-         thirty seconds and fails. Going back to the conversation is what this wants, and
-         places.mjs knows how: close the window, and only then use the back button if it is there. */
-      await openPlace(page, "chat");
+      await appearance(page, "dark");
+      /* Settings covers the conversation in the new window; its "Back to <assistant>" is the way back to it. */
+      await backToConversation(page);
       await page.screenshot({ path: join(home, "desktop.png") });
-      await appearance(page, "daylight");
+      await appearance(page, "light");
       await electron.evaluate(({ BrowserWindow }) =>
         BrowserWindow.getAllWindows()[0].close(),
       );
@@ -227,11 +203,12 @@ test(
       console.log("Desktop restart: connected");
       assert.equal(
         await page.locator("html").getAttribute("data-theme"),
-        "daylight",
+        "light",
       );
-      // Q249: the restarted app quit mid-start when its first load was aborted by the page itself (fixed in
-      // src/desktop/main.ts), which is why this click, and going to "/" or reloading, found nothing answering.
-      await page.getByRole("link", { name: "Branch Agent home" }).click({ timeout: 30000 });
+      // Redesign: the old window's "Branch Agent home" link is gone; the prototype's wordmark is not a link. Its way
+      // home from anywhere else is Settings' "Back to <assistant>", so that is what is followed after the restart.
+      await openSettingsPage(page, "general");
+      await backToConversation(page);
       console.log("Desktop restart: home clicked");
       await connected(page);
       console.log("Desktop restart: home again");
@@ -245,3 +222,43 @@ test(
     }
   },
 );
+
+/* Talk live in the desktop window: the page holds no key, so the app signs the task socket's opening request, and the
+   window lets the microphone through only for a call the owner started, for sound only, once. Chromium's fake
+   microphone only (--use-fake-device-for-media-stream): no real microphone is opened. */
+test("the desktop window opens a task's socket, and the microphone only for a call the owner started", { timeout: 360000 }, async () => {
+  const { options } = await desktopOptions();
+  const electron = await _electron.launch({ ...options, args: [...options.args, "--use-fake-device-for-media-stream"] });
+  try {
+    const page = await electron.firstWindow();
+    await onboarded(page);
+    const ask = (constraints, started) => page.evaluate(async ({ constraints, started }) => {
+      if (started) await window.branchDesktop.talkLiveMic();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        stream.getTracks().forEach((track) => track.stop());
+        return "open";
+      } catch (error) { return error.name; }
+    }, { constraints, started });
+    assert.equal(await ask({ audio: true }, false), "NotAllowedError", "never before the owner starts a call");
+    assert.equal(await ask({ audio: true }, true), "open", "the call's own microphone");
+    assert.equal(await ask({ audio: true }, false), "NotAllowedError", "once per call");
+    assert.equal(await ask({ audio: true, video: true }, true), "NotAllowedError", "never the camera");
+
+    await send(page, "Run the file workflow.");
+    await taskDone(page, "Run the file workflow.");
+    const heard = await page.evaluate(async () => {
+      const run = (await (await fetch("/api/state")).json()).runs.find((each) => each.prompt === "Run the file workflow.");
+      const socket = new WebSocket(new URL(`/api/runs/${run.id}/ws`, location.href).href.replace(/^http/, "ws"), ["bearer"]);
+      const kinds = [];
+      socket.onmessage = (event) => kinds.push(JSON.parse(event.data).kind);
+      return new Promise((done) => {
+        socket.onclose = () => done(kinds);
+        setTimeout(() => { socket.close(); done(kinds); }, 20000);
+      });
+    });
+    assert.ok(heard.includes("end"), `the signed socket opened and streamed the task (${heard.join(", ")})`);
+  } finally {
+    await electron.close();
+  }
+});

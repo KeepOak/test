@@ -13,14 +13,39 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { readCredentialSettings } from "../dist/credential-cli.js";
-import { BUCKETS } from "../public/settings-buckets.js";
 import { openPlace } from "./places.mjs";
+import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
 
-test("DG-189 the Secrets page's sections are the sample's, and every card it had still has a home", () => {
-  const sections = BUCKETS.secrets;
-  assert.deepEqual(sections.map((bucket) => bucket[2]), ["Keys your commands use", "Passwords and keys"]);
-  assert.deepEqual(sections[0][4].map(([card]) => card), ["secrets-form"]);
-  assert.deepEqual(sections[1][4].map(([card]) => card), ["secret-managers", "vault-autofill", "keychain-card"]);
+/* The new window: Settings › Saved sign-ins is the prototype's page, a title and one section ("Branch may fill"), at
+   every width and level; no card below it has a heading of its own, and it fits. */
+test("DG-189 Saved sign-ins shows the prototype's headings at every width and level, and fits", async (t) => {
+  const { page, errors } = await settingsWindow(t, { name: "secrets-page" });
+  for (const width of [1440, 860, 400]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const one of ["regular", "advanced", "technical"]) {
+      await openSettingsPage(page, "secrets");
+      await setLevel(page, one);
+      const headings = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
+        all.filter((node) => node.getClientRects().length > 0).map((node) => `${node.tagName} ${node.textContent.trim()}`));
+      // Pass 17 adds "Where passwords come from" from Advanced up (whereB17("secrets", 1, ...)).
+      assert.deepEqual(headings, ["H1 Saved sign-ins", "H2 Branch may fill", ...(one === "regular" ? [] : ["H2 Where passwords come from"])], `${width} px, ${one}`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `${width} px fits`);
+    }
+  }
+  assert.deepEqual(errors, []);
+});
+
+/* Where Branch reads saved sign-ins from: the page says only what Branch knows. A fresh engine reads from no password
+   manager, so the page must not say one is connected; and nothing on it could hold a password. */
+test("DG-053 Saved sign-ins says only what Branch knows about the password manager, and holds no password", async (t) => {
+  const { app, page, errors } = await settingsWindow(t, { name: "secrets-page" });
+  assert.equal(readCredentialSettings(app.store, app.runtime.owner).enabled, false, "a fresh install reads from no password manager");
+  await openSettingsPage(page, "secrets");
+  const col = page.locator(".set-col");
+  await col.getByRole("heading", { name: "Saved sign-ins", exact: true }).waitFor();
+  assert.equal(await col.locator("input, textarea, select").count(), 0, "nothing here could hold a password");
+  assert.doesNotMatch(await col.innerText(), /Bitwarden is connected/, "Branch is not reading from Bitwarden, so the page must not say it is connected");
+  assert.deepEqual(errors, []);
 });
 
 async function settings(t, before) {
@@ -39,7 +64,7 @@ async function settings(t, before) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0;
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   /* Opened as a person opens it, not through the helper that also shows every card of the page. */
@@ -67,7 +92,9 @@ const seen = (page) => page.evaluate(() => {
 /* The Keychain card shows only where the computer has a Keychain, so the answer is given here, both ways: the page's
    headings are the sample's with the card on show (as on a Mac) and without it, whatever computer runs the test. */
 for (const available of [true, false]) {
-  test(`DG-189 the page shows the sample's headings at every width and level, and no card heading of its own (Keychain ${available ? "here" : "not here"})`, async (t) => {
+  // Redesign: replaced by the new window (the prototype's Saved sign-ins has no Keychain card and no "N more" line;
+  // its headings are checked above; the French half also waits on the Language select, Coming soon (sw:lang)).
+  test.skip(`DG-189 the page shows the sample's headings at every width and level, and no card heading of its own (Keychain ${available ? "here" : "not here"})`, async (t) => {
     const { page, errors } = await settings(t, (page) => page.route("**/api/keychain/settings", (route) => route.fulfill({
       json: { enabled: false, mode: "off", entries: [], available, references: [] } })));
     const hiddenAtRegular = available ? "3 more with Advanced" : "1 more with Technical";
@@ -99,7 +126,9 @@ for (const available of [true, false]) {
   });
 }
 
-test("DG-053 where Branch reads saved sign-ins from: truthful tiles that save as you go, and French", async (t) => {
+// Redesign: replaced by the new window (the prototype's status box took the password-manager tiles' place; what it
+// may say is checked above; the French half also waits on the Language select, Coming soon (sw:lang)).
+test.skip("DG-053 where Branch reads saved sign-ins from: truthful tiles that save as you go, and French", async (t) => {
   const { app, page, errors } = await settings(t);
   await level(page, "regular");
   await secrets(page);
@@ -132,43 +161,3 @@ test("DG-053 where Branch reads saved sign-ins from: truthful tiles that save as
   assert.deepEqual(errors, []);
 });
 
-test("DG-189 the Keychain card saves as you go, with no Save button (DG-025)", async (t) => {
-  /* The Keychain is a Mac's: the answer is a Mac's here, so the card shows on any computer, and each save is kept. */
-  const posts = [];
-  let saved = { enabled: false, mode: "off", entries: [], available: true, references: [] };
-  const { page, errors } = await settings(t, (page) => page.route("**/api/keychain/settings", async (route) => {
-    if (route.request().method() === "POST") {
-      const body = route.request().postDataJSON();
-      posts.push(body);
-      saved = { ...saved, ...body, enabled: body.mode !== "off" };
-    }
-    await route.fulfill({ json: saved });
-  }));
-  /* The sample's count on a Mac: the Keychain's switch, its list and the saved sign-ins wait for Advanced. */
-  await level(page, "regular");
-  await secrets(page);
-  await page.waitForFunction(() => !document.getElementById("keychain-card")?.hidden);
-  assert.deepEqual((await seen(page)).more, ["3 more with Advanced"]);
-  await level(page, "advanced");
-  await secrets(page);
-  const card = page.locator("#keychain-card");
-  await card.waitFor({ state: "visible" });
-  assert.deepEqual(await card.locator("button:not(.quiet-button, .sg-more)").count(), 0, "no Save button");
-  /* As on a Mac in the sample: at Advanced, the Keychain's list and the saved sign-ins are what is out of sight. */
-  assert.deepEqual((await seen(page)).more, ["2 more with Technical"]);
-  await page.locator("#keychain-card-mode").selectOption("when-needed");
-  await page.waitForFunction(() => document.querySelector("#keychain-card .subtle, #keychain-card [role=status]"));
-  await page.waitForTimeout(300);
-  assert.deepEqual(posts.at(-1), { mode: "when-needed", entries: [] });
-  await level(page, "technical");
-  await page.locator("#keychain-name").fill("npm");
-  await page.locator("#keychain-service").fill("npm registry");
-  await page.locator("#keychain-add").click();
-  await page.waitForFunction((count) => document.querySelectorAll("#keychain-list .card-row").length === count, 1);
-  await page.waitForTimeout(300);
-  assert.deepEqual(posts.at(-1), { mode: "when-needed", entries: [{ name: "npm", service: "npm registry", note: "" }] });
-  await page.locator("#keychain-list .card-row button").click();
-  await page.waitForTimeout(300);
-  assert.deepEqual(posts.at(-1), { mode: "when-needed", entries: [] });
-  assert.deepEqual(errors, []);
-});

@@ -31,7 +31,7 @@ async function fixture(t, width) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   const cog = page.locator(".lx-foot-line > .sg-gear:visible");
   if (!(await cog.count())) await page.locator("#rail-toggle").click();
@@ -51,8 +51,27 @@ async function level(page, pick) {
   await page.waitForFunction((pick) => document.documentElement.dataset.settingsLevel === pick, pick);
 }
 
+/* The new window: the people half of the page is Settings › People, the prototype's page (its title and "Each person"),
+   at 1440 and 400 px; Trunks are set up in the Team place, not in Settings. */
 for (const width of [1440, 400]) {
-  test(`Trunks & people has the sample's sections in order, Show everything off and on, at ${width}px`, async (t) => {
+  test(`People has the prototype's sections at ${width}px, and its links to Team`, async (t) => {
+    const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+    const { page, errors } = await settingsWindow(t, { name: "settings-trunks", width, height: 950 });
+    await openSettingsPage(page, "people");
+    const heads = await page.locator(".set-col").locator("h1, h2, h3").evaluateAll((all) => all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+    // The prototype's person card has its "May" section (what that person may do).
+    assert.deepEqual(heads, ["People", "May", "Each person"]);
+    assert.deepEqual((await page.locator('.set-col [data-act="p-open-team"]').allInnerTexts()).map((words) => words.trim()),
+      ["Groups", "Signing in from other devices", "What you share"]);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${width} px fits`);
+    assert.deepEqual(errors, []);
+  });
+}
+
+for (const width of [1440, 400]) {
+  // Redesign: replaced by the new window (the prototype has no "Trunks & people" page: People is re-pointed above, and
+  // Trunks are set up in the Team place).
+  test.skip(`Trunks & people has the sample's sections in order, Show everything off and on, at ${width}px`, async (t) => {
     const { page, errors } = await fixture(t, width);
     await settle(page, REGULAR);
     assert.deepEqual(await outline(page), REGULAR);
@@ -71,17 +90,8 @@ for (const width of [1440, 400]) {
   });
 }
 
-test("a Trunks switch in Settings saves as you go and Customize follows it", async (t) => {
-  const { page, errors } = await fixture(t, 1440);
-  assert.equal(await page.locator("#lx-page-trunks button", { hasText: /^Save/ }).count(), 0, "no Save button");
-  await page.locator('.segmented-control:has(> #settings-trunks-switch-trunks) .segmented-option[data-v="on"]').click();
-  /* Customize › Specialists redraws with Trunks on: its further switches appear only then. */
-  await page.locator("#trunks-card [id='trunks-switch-rooms']").first().waitFor({ state: "attached" });
-  await page.waitForFunction(() => document.getElementById("settings-trunks-switch-trunks")?.value === "on");
-  assert.deepEqual(errors, []);
-});
-
-test("Trunks & people's section headings are French in French", async (t) => {
+// Redesign: Coming soon (sw:lang), checked at fc541c24.
+test.skip("Trunks & people's section headings are French in French", async (t) => {
   const { page, errors } = await fixture(t, 1440);
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
   await page.waitForFunction(() => document.getElementById("sg-bucket-trunks-person")?.textContent === "La fiche d'une personne");

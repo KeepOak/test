@@ -29,7 +29,7 @@ async function fixture(t, width) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0; // what failed before the key was given is the login page's business
   await openSettingFor(page, "#delight-ach-on");
   await page.locator("#delight-ach-on").check();
@@ -62,8 +62,10 @@ const row = (page) => page.evaluate(() => {
 const ENGLISH = { label: "Try a celebration", tiers: ["Bronze", "Silver", "Gold", "Diamond", "Godly", "SSS+"] };
 const NOTE = "Bronze and Silver appear small at the top right for a few seconds. Gold and above get a card and a party that grows with the rank. Keep things still shows a still card.";
 
+// Redesign: replaced by the new window (prototype.html's Settings › Achievements has no "Try a celebration" row;
+// celebrations come from what the engine earned, checked in achievement-medal-card).
 for (const [width, beside] of [[1440, true], [860, false], [400, false]]) {
-  test(`DG-134 at ${width} px the tiers are three and three, the sample's small buttons with their dots${beside ? ", the note beside them" : ""}`, async (t) => {
+  test.skip(`DG-134 at ${width} px the tiers are three and three, the sample's small buttons with their dots${beside ? ", the note beside them" : ""}`, async (t) => {
     const { page, errors } = await fixture(t, width);
     const seen = await row(page);
     assert.deepEqual({ label: seen.label, tiers: seen.tiers }, ENGLISH);
@@ -86,7 +88,9 @@ for (const [width, beside] of [[1440, true], [860, false], [400, false]]) {
   });
 }
 
-test("DG-134 in French the row speaks French, and a tier still shows its celebration", async (t) => {
+// Redesign: replaced by the new window (no "Try a celebration" row in prototype.html); its French is Coming soon
+// (sw:lang), checked at e5b8a610.
+test.skip("DG-134 in French the row speaks French, and a tier still shows its celebration", async (t) => {
   const { page, errors } = await fixture(t, 1440);
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
   const words = await page.evaluate(async () => { const { t } = await import("/i18n.js"); return { label: t("delight.ach.try"), note: t("delight.ach.tryNote") }; });

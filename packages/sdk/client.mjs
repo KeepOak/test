@@ -113,9 +113,9 @@ class Runs {
   cancel(runId) { return this.client.post(`/api/runs/${runId}/cancel`); }
   /** Picks a task up again after it was interrupted. */
   resume(runId) { return this.client.post(`/api/runs/${runId}/resume`); }
-  /** Answers the question a paused task stopped on. */
-  approve(sessionId, decision, remember = "session") {
-    return this.client.post("/api/policy/approve", { sessionId, decision, remember });
+  /** Answers the question a paused task stopped on: pass the fingerprint it was shown with (GET /api/policy waiting). */
+  approve(sessionId, decision, remember = "session", fingerprint) {
+    return this.client.post("/api/policy/approve", { sessionId, decision, remember, ...(fingerprint ? { fingerprint } : {}) });
   }
   /** Every tool result of a task with whether its receipt is genuine. */
   receipts(runId) { return this.client.get(`/api/runs/${runId}/receipts`); }
@@ -212,8 +212,9 @@ class Policy {
   /** The saved approval settings, the presets on offer, and anything waiting on an answer. */
   get() { return this.client.get("/api/policy"); }
   save(input) { return this.client.post("/api/policy", input); }
-  approve(sessionId, decision, remember = "session") {
-    return this.client.post("/api/policy/approve", { sessionId, decision, remember });
+  /** A question that carries a fingerprint is answered only with it; an answer without one is refused (409). */
+  approve(sessionId, decision, remember = "session", fingerprint) {
+    return this.client.post("/api/policy/approve", { sessionId, decision, remember, ...(fingerprint ? { fingerprint } : {}) });
   }
   /** Approvals decided a kind of thing at a time rather than a tool at a time. */
   categories() { return this.client.get("/api/approvals/categories"); }

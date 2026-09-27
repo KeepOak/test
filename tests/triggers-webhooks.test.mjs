@@ -1,5 +1,5 @@
 import test from "node:test";
-import { openPlace } from "./places.mjs";
+import { signIn, openPlace } from "./new-window-places.mjs";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
@@ -359,30 +359,32 @@ test("the Schedules screen shows both automations, with a web address and recent
   await app.triggers.fire("local", trigger.id, { id: 7 });
 
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const httpCall = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await httpCall("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
 
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await openPlace(page, "automations:triggers");
-
-  const panel = page.locator("#automations-container");
-  await panel.getByText("From the shop").waitFor();
-  await panel.getByText("My dashboard").waitFor();
-  assert.match(await panel.locator(".automations-url").first().innerText(), new RegExp(`/api/triggers/${trigger.id}/fire$`));
-
-  await panel.getByRole("button", { name: "Recent activity", exact: true }).click();
-  await panel.locator(".automations-log").first().waitFor({ state: "visible" });
-  assert.match(await panel.locator(".automations-log").first().innerText(), /completed/);
-
-  await panel.getByRole("button", { name: "Send a test", exact: true }).click();
-  /* Another toast may still be on screen, so "visible" is already true: wait for these words. */
-  await page.locator("#toast").filter({ hasText: "answered: HTTP 200" }).waitFor();
+  await signIn(page, server);
+  // Redesign: Automations › Triggers in the new window (public/app/places/automations.js, prototype.html's Triggers tab)
+  // lists each trigger with what it asks and its own on/off switch. The web address, recent activity, the webhooks list
+  // and "Send a test" are not in the prototype: replaced by the new window, so they are not looked for here (the engine's
+  // side of each is tested above).
+  const place = await openPlace(page, "automations", "triggers");
+  const row = place.locator(".prow").filter({ hasText: "From the shop" });
+  await row.waitFor();
+  assert.match(await row.innerText(), /New order \{\{id\}\}/);
+  const toggle = row.getByRole("checkbox", { name: "From the shop on or off", exact: true });
+  assert.equal(await toggle.isChecked(), true);
+  await toggle.uncheck();
+  for (let tries = 0; tries < 40 && app.triggers.list("local").find((one) => one.id === trigger.id)?.enabled; tries++) await page.waitForTimeout(50);
+  assert.equal(app.triggers.list("local").find((one) => one.id === trigger.id)?.enabled, false, "the switch turned it off");
   assert.deepEqual(errors, []);
 });
 

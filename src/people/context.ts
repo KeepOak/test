@@ -28,3 +28,18 @@ export function asPerson<T>(mark: PersonMark, work: () => T): T {
 export function currentPerson(): PersonMark | null {
   return person.getStore() ?? null;
 }
+
+/**
+ * A request through the paired door (the phone's, src/server.ts). The phone was paired by the owner and carries the
+ * owner's key, so its request is the owner's, never the household person the window here is switched to. Marked once
+ * where the door is checked, it follows everything the request starts, and src/profiles.ts reads it where every
+ * request's person is judged. A person's own key still answers for that person, wherever it comes in.
+ */
+const pairedDoor = new AsyncLocalStorage<true>();
+/** Marks the rest of the current request as one through the paired door. */
+export function enterPairedDoor(): void {
+  pairedDoor.enterWith(true);
+}
+export function throughPairedDoor(): boolean {
+  return pairedDoor.getStore() === true;
+}

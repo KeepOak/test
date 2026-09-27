@@ -29,9 +29,26 @@ export interface Achievement {
 type Draft = Omit<Achievement, "tier"> & { days: number };
 
 /** What the window may report having seen. Everything else is refused. */
-export const petKinds = ["squirrel", "owl", "hedgehog", "fox", "robin", "rabbit", "snail", "fawn"] as const;
+export const petKinds = ["squirrel", "owl", "hedgehog", "fox", "robin", "rabbit", "snail", "fawn",
+  // pass 17: the picture pets the window draws from /art/pets (a still and a walk loop each)
+  "redpanda", "pangolin", "quokka", "acornling", "goatkid", "piglet",
+  // the delight catalogue: Little Branch and the painted pets of the prototype (pass 12), each a still and a walk loop in
+  // /art/pets; the painted squirrel is "pet-squirrel", the prototype's own key, as "squirrel" is the pixel one
+  "sprout", "mossfrog", "leafhog", "fennec", "otter", "capybara", "cloverbun", "owlet", "shellsnail", "jelly",
+  "cloudsheep", "pebblecrab", "caterpillar", "sprigdragon", "turtle", "penguin", "puppy", "kitten", "raccoon", "koala",
+  "sloth", "fruitbat", "bumblebee", "beetle", "duckling", "hamster", "sealpup", "octopus", "chameleon", "firefly",
+  "dustbunny", "mossgolem", "narwhal", "pet-squirrel", "elephant"] as const;
 export const petNames: Record<(typeof petKinds)[number], string> = {
   squirrel: "Squirrel", owl: "Owl", hedgehog: "Hedgehog", fox: "Fox", robin: "Robin", rabbit: "Rabbit", snail: "Snail", fawn: "Deer fawn",
+  redpanda: "Red panda", pangolin: "Pangolin", quokka: "Quokka", acornling: "Acorn sprite", goatkid: "Goat kid", piglet: "Teacup piglet",
+  sprout: "Little Branch", mossfrog: "Moss frog", leafhog: "Leaf hog", fennec: "Fennec", otter: "Otter",
+  capybara: "Capybara", cloverbun: "Clover bun", owlet: "Owlet", shellsnail: "Shell snail", jelly: "Jelly",
+  cloudsheep: "Cloud sheep", pebblecrab: "Pebble crab", caterpillar: "Caterpillar", sprigdragon: "Sprig dragon",
+  turtle: "Turtle", penguin: "Penguin", puppy: "Puppy", kitten: "Kitten", raccoon: "Raccoon", koala: "Koala",
+  sloth: "Sloth", fruitbat: "Fruit Bat", bumblebee: "Bumblebee", beetle: "Beetle", duckling: "Duckling",
+  hamster: "Hamster", sealpup: "Seal Pup", octopus: "Octopus", chameleon: "Chameleon", firefly: "Firefly",
+  dustbunny: "Dust bunny", mossgolem: "Moss Golem", narwhal: "Narwhal", "pet-squirrel": "Squirrel",
+  elephant: "Elephant",
 };
 export const seasons = ["spring", "summer", "autumn", "winter"] as const;
 export const backgroundKinds = ["picture", "video", "animation", "3d"] as const;
@@ -115,8 +132,11 @@ function looks(): Draft[] {
     out.push(draft(`noticed:flag:${flag}`, 1, kind, name, desc, flag === "lonely" ? 6 : flag === "quiet" ? 4 : 2));
   return out;
 }
+/** The pets with a "Met the …" achievement of their own: the first fourteen. The delight catalogue's later pets are chosen
+ *  and kept like the rest but add none, so the 500 keep their long ladders (a 100-day streak) and every tier stays put. */
+const metPets = petKinds.slice(0, 14);
 function pets(): Draft[] {
-  const out = petKinds.map((kind, i) => draft(`noticed:pet:${kind}`, 1, "Pets", `Met the ${petNames[kind].toLowerCase()}`, `Choose the ${petNames[kind].toLowerCase()} as your pet.`, 1.5 + i * 0.1));
+  const out = metPets.map((kind, i) => draft(`noticed:pet:${kind}`, 1, "Pets", `Met the ${petNames[kind].toLowerCase()}`, `Choose the ${petNames[kind].toLowerCase()} as your pet.`, 1.5 + i * 0.1));
   for (const n of [1, 10, 25, 50, 100, 250, 500, 1000])
     out.push(draft("noticed:pats", n, "Pets", n === 1 ? "Pat pat" : `${plural(n, "pat")}`, `Pat your pet ${plural(n, "time")}.`, 1 + n / 15));
   return out;

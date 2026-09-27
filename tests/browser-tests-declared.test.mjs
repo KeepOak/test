@@ -273,6 +273,13 @@ const EXCUSED = {
       "jsonrpc: \"2.0\", id: 4, method: \"tools/call\", params: { name: \"browser.click\", arguments: { selector: \"#go\" } },",
     ],
   },
+  "tests/p17d-workbooks.test.mjs": {
+    why: "the learning task's browser tools are replaced by stepTool stand-ins, registered before the task starts, whose execute only records the name; one plan's upload is refused before it runs and the other waits for a yes, so no browser is started",
+    callsites: [
+      "const plan = { first: { name: \"browser.upload\", args: { path: \"C:/secret.txt\" } } };",
+      "const plan = { first: { name: \"browser.navigate\", args: { url: \"https://pages.example/help\" } } };",
+    ],
+  },
   "tests/research-browser.test.mjs": {
     why: "stand-in browser tools are registered so research can be driven without one; their execute returns fixed text",
     callsites: [

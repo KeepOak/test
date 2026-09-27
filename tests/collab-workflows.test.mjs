@@ -25,6 +25,7 @@ async function fixture(t, root) {
   const base = root ?? await mkdtemp(join(tmpdir(), "branch-collab-"));
   const provider = scripted();
   const app = await createBranch({ workspace: join(base, "workspace"), dataDir: join(base, "data"), provider });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about shared workflows, not reading first
   t.after(async () => {
     await app.close().catch(() => undefined);
     if (!root) await discard(base);
@@ -340,6 +341,9 @@ test("a yes remembered for one workflow only does not cover the next one", async
 
 test("a replayed recipe's own steps are checked, and nothing runs until the owner says yes", async (t) => {
   const { app, call } = await served(t);
+  // read-first ships on (Q250). This test is about approval: verifying already wrote out.txt, so the replay's write would
+  // be refused as unread. Whether a replayed recipe should be held to read-first is an open question (NOTES Q252).
+  app.coding.setMode("read-first", "off");
   const context = app.runtime.context();
   const recipe = app.knowledge.proposeProcedure(context, {
     name: "write a file", preconditions: [],

@@ -104,19 +104,23 @@ test("a streak is the best run of days in a row, so it only ever pauses", () => 
 
 /* ---------- the switches and the owner's record ---------- */
 
-test("all three switches ship off, and nothing is written down while achievements are off", async (t) => {
+// The owner's rule (Q251, 2026-09-26): nothing here reaches outside, spends, sends data out or weakens a guard, so all
+// three ship on; switched off, achievements write nothing down, as before.
+test("all three switches ship on, and nothing is written down once achievements are switched off", async (t) => {
   const { call } = await fixture(t);
   const summary = (await call("GET", "/api/delight")).body;
   assert.equal(summary.available, true);
-  assert.equal(summary.settings.pets.on, false);
-  assert.equal(summary.settings.achievements.on, false);
-  assert.equal(summary.settings.background.on, false);
+  assert.equal(summary.settings.pets.on, true);
+  assert.equal(summary.settings.achievements.on, true);
+  assert.equal(summary.settings.background.on, true);
+  await call("POST", "/api/delight/settings", { achievements: { on: false } });
   assert.deepEqual((await call("GET", "/api/delight/achievements")).body, { on: false });
   assert.deepEqual((await call("POST", "/api/delight/noticed", { what: "pat" })).body, { kept: false });
 });
 
 test("switching achievements on finds the past without a party; what happens next is celebrated once", async (t) => {
   const { app, call } = await fixture(t);
+  await call("POST", "/api/delight/settings", { achievements: { on: false } }); // they ship on (Q251); this starts from off
   await app.runtime.run({ prompt: "one" });
   await call("POST", "/api/delight/settings", { achievements: { on: true } });
   let view = (await call("GET", "/api/delight/achievements")).body;
@@ -131,6 +135,20 @@ test("switching achievements on finds the past without a party; what happens nex
   assert.equal((await call("POST", "/api/delight/told", { ids: view.fresh.map((a) => a.id) })).body.fresh, 0);
   assert.deepEqual((await call("GET", "/api/delight/achievements")).body.fresh, [], "told once, never again");
   assert.equal(view.rank, "Bronze");
+});
+
+test("Q251: an install updated with a past finds it quietly at its first look, with achievements on as shipped", async (t) => {
+  const { app, call } = await fixture(t);
+  for (let i = 0; i < 3; i++) await app.runtime.run({ prompt: `before the update ${i}` });
+  // The owner never touches the switch: it is on as shipped.
+  let view = (await call("GET", "/api/delight/achievements")).body;
+  assert.equal(view.on, true);
+  assert.ok(view.list.find((a) => a.id === "tasks:1").got, "the past counts");
+  assert.deepEqual(view.fresh, [], "and arrives without a party");
+  const next = view.list.filter((a) => a.id.startsWith("tasks:") && !a.got).map((a) => Number(a.id.slice(6))).sort((x, y) => x - y)[0];
+  for (let i = 3; i < next; i++) await app.runtime.run({ prompt: `after the update ${i}` });
+  view = (await call("GET", "/api/delight/achievements")).body;
+  assert.ok(view.fresh.some((a) => a.id === `tasks:${next}`), "what happens after the first look is celebrated");
 });
 
 test("quiet earns without any pop-up, and is itself noticed", async (t) => {
@@ -180,7 +198,7 @@ test("the switches are checked: unknown fields, a long name and a scrim out of r
   assert.equal((await call("POST", "/api/delight/settings", { sparkles: {} })).status, 400);
   const saved = (await call("POST", "/api/delight/settings", { pets: { on: true, kind: "owl", name: "Moss" } })).body.settings;
   assert.deepEqual(saved.pets, { on: true, kind: "owl", name: "Moss", talks: true, tips: true });
-  assert.equal(saved.achievements.on, false, "the other switches are untouched");
+  assert.equal(saved.achievements.on, true, "the other switches are untouched (achievements ship on, Q251)");
   assert.equal(saved.look.style, "pixel", "pixel is the default look");
   assert.equal((await call("POST", "/api/delight/settings", { look: { style: "clay" } })).status, 400);
   assert.equal((await call("POST", "/api/delight/settings", { look: { style: "3d" } })).body.settings.look.style, "3d");

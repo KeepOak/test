@@ -43,7 +43,7 @@ export class ChatGPTProvider implements Provider {
   }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: a ChatGPT sign-in never answers for a Trunk
-    const stream = new ResponsesStream(request.onTextDelta ?? (() => {}));
+    const stream = new ResponsesStream(request.onTextDelta ?? (() => {}), request.onReasoningDelta);
     try {
       const response = await this.send(request);
       await readEventStream(response, (data) => stream.consume(data));
@@ -89,7 +89,8 @@ export function responsesBody(request: CompletionRequest, model: string): Record
       tool_choice: "auto",
       parallel_tool_calls: true,
     } : {}),
-    ...(request.reasoning ? { reasoning: { effort: request.reasoning } } : {}),
+    // Dogfood B1: a summary of the thinking is asked for too, so the owner can watch it think (when shown).
+    ...(request.reasoning ? { reasoning: { effort: request.reasoning, summary: "auto" } } : {}),
   };
 }
 function inputItems(message: Message): Record<string, unknown>[] {
@@ -137,7 +138,7 @@ export class ResponsesStream {
   private readonly calls: ToolCall[] = [];
   private usage: Usage | undefined;
   private completed = false;
-  constructor(private readonly emit: (text: string) => void) {}
+  constructor(private readonly emit: (text: string) => void, private readonly think?: (text: string) => void) {}
   consume(data: string): void {
     if (data === "[DONE]") return;
     if (this.completed) throw new Error("Provider sent data after stream completion");
@@ -145,6 +146,10 @@ export class ResponsesStream {
     switch (event.type) {
       case "response.output_text.delta":
         if (event.delta) { this.content += event.delta; this.emit(event.delta); }
+        return;
+      // Dogfood B1: the thinking's summary, as it is written; heard for the silence clock, shown when the owner shows it.
+      case "response.reasoning_summary_text.delta":
+        if (event.delta) this.think?.(event.delta);
         return;
       case "response.output_item.done":
         if (event.item?.type === "function_call")

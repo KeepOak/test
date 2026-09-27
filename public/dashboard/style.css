@@ -1,0 +1,860 @@
+/* The dashboard's own copy of what was public/style.css before the old window was removed (#291), served at /dashboard/style.css. */
+@font-face {
+  font-family: Archivo;
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src: url("/fonts/archivo.woff2") format("woff2");
+}
+@font-face {
+  font-family: Geist;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/geist.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/geist-mono.woff2") format("woff2");
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-image:
+    radial-gradient(ellipse at 70% 12%, var(--accent-glow), transparent 48%),
+    radial-gradient(var(--line) 0.8px, transparent 0.8px);
+  background-size:
+    auto,
+    5px 5px;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  background: var(--copper);
+  color: var(--on-copper);
+  border: 1px solid var(--copper-low);
+  border-radius: 8px;
+  padding: 11px 17px;
+  font-weight: 600;
+  box-shadow: 0 3px 0 var(--copper-low);
+}
+button:hover {
+  background: var(--copper-hi);
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--copper-hi);
+  outline-offset: 4px;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+.oak-normal { display: none; }
+[data-theme="daylight"] .oak-reversed { display: none; }
+[data-theme="daylight"] .oak-normal { display: block; }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  font-weight: 650;
+  color: var(--faint);
+}
+header .eyebrow {
+  font-size: 9px;
+}
+h1,
+h2 {
+  font-family: var(--display);
+  font-stretch: 62%;
+  font-weight: 460;
+  letter-spacing: -0.5px;
+}
+h1 {
+  font-size: 23px;
+  margin: 0;
+  line-height: 1.2;
+}
+h2 {
+  font-size: 36px;
+  line-height: 1.03;
+}
+.status-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: var(--well);
+}
+p {
+  line-height: 1.6;
+}
+.card {
+  padding: var(--s4) 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  margin: 0 0 var(--s4);
+}
+.card:last-child {
+  border-bottom: 0;
+}
+/* the sign-in panel is the one place that still reads as a panel */
+.card.login,
+.card.first-run {
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  background: var(--well);
+}
+#model-settings-fields {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+#model-settings-fields:disabled {
+  opacity: 0.65;
+}
+.login {
+  max-width: 750px;
+  margin: 50px auto;
+  background: var(--paper);
+  color: var(--paper-text);
+}
+.login .eyebrow,
+.login p,
+.login label {
+  color: var(--paper-mute);
+}
+.login h2 {
+  font-size: 42px;
+  margin: 15px 0;
+}
+.login input {
+  background: var(--paper-2);
+  color: var(--paper-text);
+  border-color: var(--paper-line);
+}
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.input-row input {
+  flex: 1;
+  min-width: 0;
+}
+label {
+  display: block;
+  font-family: var(--body);
+  font-size: 11px;
+  color: var(--muted);
+  margin: 14px 0 8px;
+  letter-spacing: 0.3px;
+}
+input,
+textarea,
+select {
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text);
+  width: 100%;
+  outline: none;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--copper);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+form > button {
+  margin-top: 17px;
+}
+.provider-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+.provider-actions button {
+  flex: 1;
+  min-width: 120px;
+}
+.subtle {
+  font-size: 11px;
+  color: var(--faint);
+}
+.notice {
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+.notice strong {
+  min-width: 110px;
+  color: var(--copper-hi);
+}
+.notice span {
+  line-height: 1.6;
+}
+.secondary {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  margin-top: 18px;
+  box-shadow: none;
+}
+.secondary:hover {
+  background: var(--hover);
+}
+.text-button {
+  color: var(--muted);
+  background: transparent;
+  padding: 7px;
+  font-size: 11px;
+  box-shadow: none;
+  border: 0;
+}
+.text-button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.section-intro {
+  max-width: 750px;
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 25px;
+}
+.card-list {
+  margin-top: 24px;
+  display: grid;
+  gap: 12px;
+}
+.item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--well);
+  padding: 20px;
+  min-width: 0;
+}
+.item h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.item p {
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.item .meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.item button {
+  font-size: 11px;
+  padding: 7px 12px;
+  margin: 12px 8px 0 0;
+}
+.badge {
+  display: inline-block;
+  background: var(--good-tint);
+  color: var(--good);
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  margin-bottom: 10px;
+}
+.badge.failed,
+.badge.interrupted,
+.badge.cancelled,
+.badge.budget_exceeded {
+  color: var(--bad);
+  background: var(--bad-tint);
+}
+.usage {
+  display: flex;
+  gap: 22px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 13px;
+}
+/* Files that came with a message, shown whenever the conversation is read (public/app.js). */
+.message-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.message-file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  max-width: 320px;
+}
+.message-file-name {
+  font-weight: 600;
+  word-break: break-word;
+}
+.message-file-shown img,
+.message-file-shown video {
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: var(--radius);
+}
+.message-file-shown audio {
+  width: 100%;
+}
+.message-controls button,
+.session-context button {
+  margin: 0;
+  font-size: 12px;
+}
+.session-context {
+  border-left: 2px solid var(--line);
+  padding: 0 16px;
+  margin: 16px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.session-context p {
+  margin: 0 0 8px;
+}
+.saved-conversations > p {
+  font-size: 13px;
+  color: var(--muted);
+}
+.saved-history-dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(80vh, 760px);
+  padding: 24px;
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--glass-edge);
+  border-radius: 18px;
+  box-shadow: var(--card-shadow);
+}
+.saved-history-dialog::backdrop {
+  background: var(--scrim);
+}
+.saved-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.saved-history-head h2 { margin: 0; }
+.saved-history-dialog #saved-history-status:empty { display: none; }
+.saved-search {
+  display: grid;
+  gap: 10px;
+}
+.saved-search button {
+  justify-self: start;
+}
+.saved-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.saved-actions button {
+  margin: 0;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  align-items: end;
+}
+.form-grid button {
+  grid-column: 1/-1;
+  justify-self: start;
+  margin-top: 0;
+}
+.code-input,
+pre,
+code {
+  font-family: "Geist Mono", Consolas, monospace;
+  font-size: 12px;
+}
+/* A long example written inline (a web address, a line of settings) breaks rather than
+   running off the side of a narrow window, where the end of it would be cut away. */
+code {
+  overflow-wrap: anywhere;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--well);
+  border-radius: 8px;
+  padding: 15px;
+  max-height: 400px;
+  overflow: auto;
+  color: var(--muted);
+}
+summary {
+  cursor: pointer;
+  font-weight: 550;
+  font-size: 14px;
+}
+.empty {
+  padding: 36px;
+  text-align: center;
+  color: var(--faint);
+  border: 1px dashed var(--line);
+  border-radius: 13px;
+  font-size: 13px;
+}
+#keepoak-acorn {
+  width: 120px;
+  height: 104px;
+  image-rendering: pixelated;
+  cursor: grab;
+  touch-action: none;
+}
+#keepoak-acorn:active { cursor: grabbing; }
+#keepoak-acorn:focus-visible { outline: 1px solid var(--copper); outline-offset: 2px; }
+.acorn-art .acorn-motion {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  box-shadow: none;
+  font-size: 11px;
+  padding: 6px 8px;
+  margin: 0 0 8px;
+}
+#toast {
+  position: fixed;
+  bottom: 25px;
+  right: 30px;
+  max-width: 480px;
+  background: var(--paper);
+  color: var(--paper-text);
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  z-index: 5;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+[hidden] {
+  display: none !important;
+}
+
+.memory-editor { display: grid; gap: 12px; margin-top: 16px; }
+.memory-error { color: var(--danger); }
+#memory-transfer { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.identity-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.update-channel-choices { display: flex; flex-wrap: wrap; gap: 10px; border: 0; padding: 0; margin: 16px 0 8px; }
+.update-channel-choices legend { font-weight: 650; margin-bottom: 8px; }
+.update-channel-choices label { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+/* Q55: the installed build and the offered release's own notes. Layout only. */
+.update-build { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; }
+.update-build dt { font-weight: 650; }
+.update-build dd { margin: 0; overflow-wrap: anywhere; }
+.update-notes h3 { margin: 12px 0 4px; font-size: 1em; }
+.update-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-y: auto; margin: 0; }
+.update-channel-choices label:has(input:checked) { background: var(--panel); border-color: var(--accent); }
+.update-channel-choices label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+#identity-fields { border: 0; padding: 0; margin: 0; }
+.skill-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+#skill-document { font-family: var(--font-mono, monospace); }
+#skills-list { margin-bottom: 20px; }
+
+.model-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.model-controls label { margin: 0; }
+.model-controls select { width: auto; max-width: 100%; margin: 0; }
+.model-controls .meta { flex-basis: 100%; }
+.check-list { display: grid; gap: 0.35rem; margin: 0 0 0.75rem; }
+.check-list .check { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; }
+.check-list input { width: auto; margin: 0; }
+
+.code-display {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 2rem;
+  letter-spacing: 0.18em;
+  margin: 0.25rem 0 0.75rem;
+  color: var(--copper-hi);
+  user-select: all;
+}
+.button-link {
+  display: inline-block;
+  padding: 0.55rem 0.9rem;
+  border-radius: 0.6rem;
+  background: var(--copper);
+  color: var(--on-copper);
+  text-decoration: none;
+  font-weight: 600;
+}
+.button-link:hover { background: var(--copper-hi); }
+.progress {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--well);
+  overflow: hidden;
+  margin: 0.5rem 0 0.75rem;
+}
+.progress-bar {
+  height: 100%;
+  width: 0;
+  background: var(--copper);
+  transition: width 0.3s ease;
+}
+
+.topbar-by {
+  font-size: 0.55em;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  margin: 0 0.1em;
+}
+.topbar-maker {
+  font-size: 0.8em;
+  font-weight: 500;
+}
+
+.composer-temporary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-right: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+.composer-temporary input { width: auto; margin: 0; }
+
+.forget-panel { margin-top: 0.5rem; padding: 0.75rem 0.9rem; border: 1px solid var(--line); border-radius: 0.6rem; background: var(--well); }
+.forget-panel ul { margin: 0.25rem 0 0.5rem 1.1rem; padding: 0; }
+.forget-panel li { margin: 0.15rem 0; }
+
+.first-run { margin-bottom: 1rem; }
+.doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin: 0.75rem 0; }
+.door {
+  display: flex; flex-direction: column; gap: 0.35rem; text-align: left;
+  padding: 0.9rem 1rem; border: 1px solid var(--line); border-radius: 0.75rem;
+  background: var(--well); color: var(--text); font: inherit; cursor: pointer;
+}
+.door:hover { border-color: var(--copper); background: var(--hover); }
+.door.selected { border-color: var(--copper); box-shadow: inset 0 0 0 1px var(--copper); }
+.door strong { font-size: 1rem; }
+.door span { color: var(--muted); font-size: 0.9rem; font-weight: 400; }
+
+.attention { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.attention-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+.attention-row strong { color: var(--copper-hi); }
+
+/* Live activity while a task runs */
+.activity { margin: var(--s3) 0; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r2); background: var(--step-bg); color: var(--muted); font-size: 12.5px; }
+.activity strong { font-weight: 600; }
+.activity .meta { margin: 4px 0 0; }
+.check-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; font-size: 0.92rem; }
+
+.file-change { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 8px 0; font-size: 0.92rem; }
+.file-change pre.diff { flex-basis: 100%; max-height: 240px; overflow: auto; font-size: 0.8rem; white-space: pre-wrap; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--well); }
+.memory-history { margin-top: 8px; }
+
+/* Updating screen */
+.update-screen { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: var(--ground); color: var(--text); }
+.update-panel { width: min(520px, calc(100vw - 32px)); padding: 28px 28px 24px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); text-align: center; }
+.update-panel h2 { margin: 0 0 12px; }
+.update-panel canvas { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto 12px; image-rendering: pixelated; border-radius: 10px; background: var(--well); }
+.update-panel .progress { margin: 12px 0 8px; }
+.progress.indeterminate .progress-bar { width: 40% !important; animation: update-slide 1.2s ease-in-out infinite alternate; }
+@keyframes update-slide { from { transform: translateX(-20%); } to { transform: translateX(170%); } }
+
+/* Documents: the drop area, and the highlighted words inside a found passage. */
+#documents-drop { border-style: dashed; transition: border-color 120ms ease, background 120ms ease; }
+#documents-drop.dropping { border-color: var(--good); background: var(--well); }
+#documents-drop input[type="file"] { margin-top: 10px; font-size: 12px; }
+#documents-results mark { background: var(--good-tint); color: inherit; border-radius: 3px; padding: 0 2px; }
+
+/* Automations: triggers and webhooks */
+.automations-panel { display: grid; gap: 1.5rem; margin-top: 0.5rem; }
+.automations-section { padding: 1rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--well); }
+.automations-section h3 { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 600; }
+.automations-desc { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; }
+.automations-empty { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.automations-list { display: grid; gap: 0.75rem; margin-bottom: 1rem; }
+.automations-item { padding: 0.75rem; border: 1px solid var(--line); border-radius: 0.5rem; background: var(--ground); }
+.automations-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.automations-name { font-weight: 500; }
+.automations-disabled { color: var(--muted); text-decoration: line-through; }
+.automations-toggle { margin: 0; }
+.automations-url { font-size: 0.85rem; color: var(--muted); font-family: monospace; word-break: break-all; margin: 0.25rem 0; }
+.automations-events { font-size: 0.85rem; color: var(--muted); margin: 0.25rem 0; }
+.automations-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0; }
+.automations-btn, .automations-btn-small { padding: 0.45rem 0.75rem; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--well); color: var(--text); font: inherit; cursor: pointer; font-size: 0.9rem; }
+.automations-btn-small { font-size: 0.8rem; padding: 0.35rem 0.6rem; }
+.automations-btn:hover, .automations-btn-small:hover { border-color: var(--copper); background: var(--hover); }
+.automations-log { margin: 0.5rem 0 0; padding: 0.5rem; border-radius: 0.4rem; background: var(--well); font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; max-height: 12rem; overflow: auto; }
+
+/* ---------- pictures and sound (wave 5) ---------- */
+.attachments { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.5rem; }
+.attachment { display: inline-flex; align-items: center; gap: 0.4rem; max-width: 16rem; padding: 0.2rem 0.4rem; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--well); font-size: 0.82rem; }
+.attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment img { width: 1.9rem; height: 1.9rem; object-fit: cover; border-radius: 0.25rem; }
+.attachment button { padding: 0 0.3rem; border: 0; background: none; color: var(--muted); font: inherit; line-height: 1; cursor: pointer; }
+.attachment button:hover { color: var(--text); }
+.composer.dropping { outline: 2px dashed var(--copper); outline-offset: 2px; }
+.made-thumb { display: block; width: 100%; max-width: 14rem; height: auto; border-radius: 0.4rem; margin-bottom: 0.4rem; }
+
+/* ---------- FQ-surfaces.playback: an attached sound or video file, playable in place ---------- */
+.clip-chip { max-width: 20rem; }
+.clip-chip audio { height: 1.9rem; max-width: 11rem; }
+.clip-chip video.clip-video { width: 4rem; height: 1.9rem; object-fit: cover; border-radius: 0.25rem; }
+.message-clips { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.message-clips audio { width: 100%; max-width: 20rem; }
+.message-clips video.clip-video { width: 100%; max-width: 20rem; height: auto; border-radius: 0.4rem; }
+
+/* Wave 5: how Branch runs on this computer. */
+#deployment-card h2 { margin-top: 0; }
+#deployment-card h3 { margin: 1.2rem 0 0.4rem; }
+#deployment-card canvas { display: block; margin: 0.8rem 0; background: var(--paper-2); border-radius: 0.4rem; padding: 0.5rem; max-width: 100%; height: auto; }
+#deployment-card pre { margin: 0.5rem 0 0; padding: 0.5rem; border-radius: 0.4rem; background: var(--well); font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; }
+#deployment-card .bad { color: var(--bad); }
+
+/* ========== Wave 8: one anatomy for every card, one shape for every tick box ==========
+   Nothing here invents a colour, a spacing or a radius: every value is a token from
+   public/tokens.css. See docs/design.md, "The anatomy of a card". */
+
+/* A tick box belongs beside its words, in the reading face. The `input { width: 100% }` rule
+   further up used to stretch it across the whole column, which is what left the tick sitting
+   on a line of its own above its label, in the small mono label face. */
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]),
+label.check,
+label.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  margin: var(--s2) 0;
+  font-family: var(--body);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  letter-spacing: normal;
+  color: var(--text);
+}
+label > input[type="checkbox"],
+label > input[type="radio"] {
+  width: auto;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--copper);
+  translate: 0 2px;
+}
+/* The two ticks inside the message box are part of a button row, not a list of settings. */
+.composer label.check {
+  margin: 0;
+  align-items: center;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.composer label.check > input[type="checkbox"] {
+  translate: none;
+}
+
+/* Every card reads the same way down the page: what it is, what it is for, the controls,
+   a plain note, and at most one filled button. */
+.card > h2 {
+  margin: 0 0 var(--s1);
+}
+/* The line straight after a card's title is its purpose, whatever class it was given. */
+.card > h2 + p,
+.card > h3 + p,
+.card > .card-purpose,
+.section-intro {
+  margin: 0 0 var(--s4);
+  max-width: 68ch;
+  font-family: var(--body);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--muted);
+  letter-spacing: normal;
+}
+/* A note under a control explains it in a sentence; the caption above it stays short. */
+.field-note {
+  margin: calc(var(--s1) * -1) 0 var(--s3);
+  max-width: 68ch;
+  font-family: var(--body);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--muted);
+  letter-spacing: normal;
+}
+
+/* An empty screen says what it is for and offers the one thing worth doing next. */
+.empty-state {
+  /* DG-074: Empty state is one quiet line, no filled box */
+  display: block;
+  /* removed: display: grid; */
+  /* removed: justify-items: start; */
+  gap: 0;
+  /* removed padding and border for box effect */
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  text-align: left;
+}
+.empty-state strong {
+  color: var(--text-2);
+  font-size: 0.95rem;
+  font-weight: 540;
+}
+.empty-state p {
+  margin: 0;
+  max-width: none;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+/* A card's title and purpose run the full width of a two-column form, not one cell of it. */
+.form-grid > h2,
+.form-grid > h2 + p {
+  grid-column: 1 / -1;
+}
+
+/* A wide table keeps its own sideways scroll so the page never gains one. */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* mac5/providers: the Terms line under a provider. A route that is not official is marked in the
+   warning colour, from tokens only. */
+.terms-line[data-standing="unofficial"] #provider-terms-standing,
+.terms-line[data-standing="retired"] #provider-terms-standing,
+.terms-line[data-standing="not-offered"] #provider-terms-standing { color: var(--warn); }
+.terms-line a { overflow-wrap: anywhere; }
+
+/* Wave mac3 (commands): the "/" menu above the message box, and the list in the commands card. */
+.composer { position: relative; }
+.slash-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 18rem;
+  overflow-y: auto;
+  margin: 0 0 0.4rem;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+.slash-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.slash-choice[aria-selected="true"], .slash-choice:hover { background: var(--selected); }
+.slash-choice strong { color: var(--text); }
+.commands-where { padding-left: 1rem; overflow-wrap: anywhere; }
+/* bucket-18 (A0098): the code editor in the Files tab. Tokens only. */
+.wsedit-list { display: flex; flex-direction: column; gap: var(--s1); max-height: 12rem; overflow-y: auto; }
+.wsedit-entry { justify-content: flex-start; text-align: left; overflow-wrap: anywhere; }
+.wsedit-editor { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s2); min-width: 0; }
+.wsedit-code { display: flex; min-width: 0; border: 1px solid var(--line); border-radius: var(--r2); background: var(--well); }
+.wsedit-lines { margin: 0; padding: var(--s2) var(--s1); overflow: hidden; max-height: 24rem; color: var(--muted);
+  font: 0.8125rem/1.5 var(--font-mono); text-align: right; user-select: none; border-right: 1px solid var(--line); }
+.wsedit-text { flex: 1; min-width: 0; min-height: 16rem; max-height: 24rem; margin: 0; padding: var(--s2); border: 0;
+  resize: vertical; background: transparent; color: var(--text); font: 0.8125rem/1.5 var(--font-mono); tab-size: 2; overflow: auto; }
+.wsedit-text:focus-visible { outline: 2px solid var(--copper); outline-offset: -2px; }
+#wsedit-unsaved { color: var(--warn); }
+/* FQ-collaboration: a video opened from the Files tab, and the comments pinned to a moment in it. */
+.wsedit-media { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s2); min-width: 0; }
+.wsedit-media-video { width: 100%; max-height: 20rem; border-radius: var(--r2); background: var(--well); }
+.media-comments-list { display: flex; flex-direction: column; gap: var(--s1); margin: 0; padding: 0; list-style: none; max-height: 10rem; overflow-y: auto; }
+.media-comments-time { font: 0.8125rem/1.5 var(--font-mono); color: var(--accent); }
+.wsedit-media-comment-form { display: flex; gap: var(--s1); }
+.wsedit-media-comment-form input { flex: 1; min-width: 0; }
+
+/* mac7/clean-uninstall: the danger zone, last in Settings. Marked with the warning colour from
+   tokens only, so it reads the same in both themes and at 400 px. */
+.danger-zone { border-color: var(--bad); }
+.danger-zone h2 { color: var(--bad); }
+.danger-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--well);
+  padding: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.danger-row p { margin: 4px 0 0; }
+.danger-button { border-color: var(--bad); color: var(--bad); }
+.danger-button:disabled { opacity: 0.55; }
+
+/* mac7/live-voice: words the speech program is still unsure of sit greyed in the message box, and
+   settle to ordinary weight when a quiet room has ended the phrase. The box is never disabled while
+   dictation runs: you can always type over it, and you are always the one who presses Send. */
+#prompt.dictating { color: var(--muted); font-style: italic; }

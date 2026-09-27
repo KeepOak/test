@@ -333,13 +333,18 @@ async function commitOf(deps: Pick<ContractGuardDeps, "workspace" | "git">, cont
  * worktree and not yet committed. A file added and removed again, or moved out of the allowed paths
  * under another name, is caught as surely as one left changed at the end.
  */
+/** Whether the repository Git finds in the worktree is the worktree's own, sharing the source checkout's, not one planted in it. */
+export async function worktreesOwnRepository(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal): Promise<boolean> {
+  const cwd = resolve(deps.workspace, contract.worktreePath);
+  const found = await deps.git({ cwd, args: ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], timeoutMs: 60_000 }, signal);
+  const [top = "", common = ""] = found.stdout.trim().split("\n");
+  return found.status === "completed" && !!top && onDisk(resolve(top)) === onDisk(cwd) && onDisk(resolve(cwd, common)) === onDisk(resolve(deps.workspace, sourceFolder, ".git"));
+}
+
 async function remoteBroken(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal, commit: string, ref = commit): Promise<string | null> {
   const cwd = resolve(deps.workspace, contract.worktreePath);
   const git = (args: string[]) => deps.git({ cwd, args, timeoutMs: 60_000, maxOutputBytes: 4_194_304 }, signal);
-  // The repository Git finds here must be the worktree's own, sharing the source checkout's, not one planted in it.
-  const found = await git(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"]);
-  const [top = "", common = ""] = found.stdout.trim().split("\n");
-  if (found.status !== "completed" || !top || onDisk(resolve(top)) !== onDisk(cwd) || onDisk(resolve(cwd, common)) !== onDisk(resolve(deps.workspace, sourceFolder, ".git")))
+  if (!(await worktreesOwnRepository(deps, contract, signal)))
     return `The repository Git finds in ${contract.worktreePath} is not the worktree's own, so nothing is sent from it.`;
   if ((await git(["merge-base", "--is-ancestor", contract.sourceSha, commit])).status !== "completed")
     return `${ref === "HEAD" ? "This worktree" : ref} no longer starts from the contract's source commit ${contract.sourceSha.slice(0, 12)}.`;

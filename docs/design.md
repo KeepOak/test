@@ -290,12 +290,16 @@ the assistant behaves, and no tool can be switched on or off from here.
 
 ## Artwork
 
-The KeepOak logo and the revolving acorn stay. Logo PNGs are bundled locally.
+Branch's icon is its mascot. `node scripts/make-icons.mjs` makes every icon from one picture,
+`docs/images/mascot.png`: the favicons (the face alone at 16 and 32 px, where the branches are too
+thin to see), the install icons, the desktop window, tray and `.ico`/`.icns`/Linux sizes, and the
+phone app icons and launch mark. The KeepOak logo stays where it means the company (the KeepOak
+account and team screens, the publisher and bundle id), and so does the revolving acorn. Logo PNGs
+are bundled locally.
 `public/acorn.js` adapts its analytic ellipsoid geometry, ordered dithering, colours and
 rotation to this interface, and supports dragging, arrow keys, pause/resume and reduced-motion
 preferences; animation suspends when hidden. "Show the acorn" hides it entirely. No KeepOak
-scripts, analytics or network calls run inside the application. The native window, tray and
-Windows executable use the logo.
+scripts, analytics or network calls run inside the application.
 
 Electron supplies the native window and tray. The renderer has no Node integration, uses
 context isolation and sandboxing, and loads only the local application. Credentials are added

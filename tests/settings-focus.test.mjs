@@ -30,7 +30,7 @@ async function fixture(t, { withoutMoveBefore = false } = {}) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click({ noWaitAfter: true });
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("#agent-files").waitFor({ state: "attached", timeout: 60000 });
   await openSettings(page, "general");
   return { page, errors };
@@ -56,9 +56,28 @@ const focusAndDisplace = (page) => page.evaluate(async () => {
   };
 });
 
+/* The new window: a control a person reaches the moment Settings › General opens keeps the keyboard while the page
+   draws what it loaded, and the next Tab moves on to a real control. Settings is not a dialog, so it does not keep
+   the Tab inside (the prototype traps Tab only in dialogs and setup; "Show all" is General's last control). */
+test("a control focused the moment Settings opens keeps the keyboard while the page settles (new window)", async (t) => {
+  const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "settings-focus" });
+  await openSettingsPage(page, "general");
+  const shortcuts = page.locator(".set-col").getByRole("button", { name: "Show all", exact: true });
+  await shortcuts.focus();
+  await page.waitForTimeout(1200);
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim() ?? null), "Show all",
+    `the keyboard stays on Show all (it went to ${await page.evaluate(() => document.activeElement?.tagName)})`);
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(() => document.activeElement !== null && document.activeElement !== document.body), true,
+    "and the next Tab moves on to a control, not nowhere");
+  assert.deepEqual(errors, []);
+});
+
 for (const withoutMoveBefore of [false, true]) {
   const how = withoutMoveBefore ? "without moveBefore" : "with moveBefore";
-  test(`a card Settings puts back in order keeps the keyboard on its switch (${how})`, async (t) => {
+  // Redesign: replaced by the new window (Settings no longer moves cards into order after drawing them).
+  test.skip(`a card Settings puts back in order keeps the keyboard on its switch (${how})`, async (t) => {
     const { page, errors } = await fixture(t, { withoutMoveBefore });
     await page.waitForTimeout(1500); // Settings has finished its own first arrangement.
     const result = await focusAndDisplace(page);
@@ -68,7 +87,9 @@ for (const withoutMoveBefore of [false, true]) {
   });
 }
 
-test("a switch focused the moment Settings opens keeps the keyboard while the page settles", async (t) => {
+// Redesign: replaced by the new window (#start-with-windows is the prototype's "Start with Windows", Coming soon
+// (sw:g-start); re-pointed above on a live control).
+test.skip("a switch focused the moment Settings opens keeps the keyboard while the page settles", async (t) => {
   const { page, errors } = await fixture(t);
   await page.locator("#start-with-windows").focus();
   await page.waitForTimeout(1200);
@@ -79,7 +100,8 @@ test("a switch focused the moment Settings opens keeps the keyboard while the pa
   assert.deepEqual(errors, []);
 });
 
-test("writing the page in the language it is already in changes nothing, so nothing watching the page wakes for it", async (t) => {
+// Redesign: replaced by the new window (/i18n.js is gone; the language is Coming soon, sw:lang, checked at fc541c24).
+test.skip("writing the page in the language it is already in changes nothing, so nothing watching the page wakes for it", async (t) => {
   const { page, errors } = await fixture(t);
   await page.waitForTimeout(1500);
   const changes = await page.evaluate(async () => {

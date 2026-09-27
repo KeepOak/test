@@ -6,6 +6,7 @@ import type { WorkspaceFiles } from "../files.js";
 import { runOrigin, startedWithShortLivedKey } from "../key-context.js";
 import { redactLeaksIn } from "../leak-guard.js";
 import { currentPerson } from "../people/context.js";
+import { currentAccountCall } from "../accounts/context.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
 import { deviceArgs } from "./args.js";
@@ -32,6 +33,25 @@ export const chatRefusal = "A message from a chat app cannot use the owner's dev
 export interface DeviceToolDeps {
   store: Store; owner: string; book: DeviceBook; hub: DeviceHub; files: WorkspaceFiles;
   now?: () => Date;
+  /** P17-D §9: the computers each Trunk may use (src/trunks/computers.ts); absent, every computer is allowed. */
+  rule?: () => ComputerRule | null;
+}
+
+/** P17-D §9: which computers a Trunk may use, and where a new conversation of it starts. */
+export interface ComputerRule {
+  allows(trunkId: string, computerId: string): boolean;
+  first(trunkId: string): string | null;
+  /** The saved list and limit, or null while the owner saved none (every computer, no limit). */
+  saved(trunkId: string): { allowed: string[]; atOnce: number | null } | null;
+}
+export const trunkComputerRefusal = "This Trunk may not use that computer. The owner chooses its computers on its page, under Its computers.";
+/** A paired device that is a computer (a phone is a device but never on a Trunk's list of computers). */
+export const isComputer = (device: Pick<DeviceRecord, "platform">): boolean => ["darwin", "linux", "win32"].includes(device.platform);
+/** The Trunk whose work this is: its own turn, or work it set going (a helper, a flow). */
+const trunkAtWork = (context: ToolContext): string | null => context.trunk ?? currentAccountCall()?.trunk?.id ?? null;
+function allowedHere(deps: DeviceToolDeps, context: ToolContext, device: DeviceRecord): boolean {
+  const rule = deps.rule?.(), trunk = trunkAtWork(context);
+  return !rule || !trunk || !isComputer(device) || rule.allows(trunk, device.id);
 }
 
 const DeviceName = z.string().trim().min(1).max(80).optional()
@@ -56,7 +76,7 @@ export function accessRefusal(deps: DeviceToolDeps, context: ToolContext): strin
 
 export function visibleDevices(deps: DeviceToolDeps, context: ToolContext): DeviceRecord[] {
   const person = askingPerson(deps, context);
-  return deps.book.devices().filter((device) => person === null || device.sharedWith.includes(person));
+  return deps.book.devices().filter((device) => (person === null || device.sharedWith.includes(person)) && allowedHere(deps, context, device));
 }
 
 const picksKey = "devices-picks";
@@ -79,12 +99,16 @@ export function chooseDevice(deps: DeviceToolDeps, context: ToolContext, named: 
   if (named) {
     const found = visible.find((device) => device.id === named || device.name.toLowerCase() === named.toLowerCase());
     if (found) return found;
+    const kept = deps.book.devices().find((d) => d.id === named || d.name.toLowerCase() === named.toLowerCase());
+    if (kept && !allowedHere(deps, context, kept)) throw new Error(trunkComputerRefusal); // P17-D §9
     if (askingPerson(deps, context) !== null && deps.book.devices().some((d) => d.id === named || d.name.toLowerCase() === named.toLowerCase()))
       throw new Error(personRefusal);
     throw new Error(`There is no device called "${named}". device.list shows the names.`);
   }
   const sessionId = deps.store.run(context.runId)?.sessionId;
-  const picked = sessionId ? pickedDevice(deps.store, deps.owner, sessionId) : null;
+  // P17-D §9: with nothing picked for the conversation, a Trunk starts on the first computer on its list.
+  const trunk = trunkAtWork(context);
+  const picked = (sessionId ? pickedDevice(deps.store, deps.owner, sessionId) : null) ?? (trunk ? deps.rule?.()?.first(trunk) ?? null : null);
   const chosen = visible.find((device) => device.id === picked);
   if (chosen) return chosen;
   const online = visible.filter((device) => deps.hub.connected(device.id));

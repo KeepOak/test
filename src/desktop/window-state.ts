@@ -31,6 +31,19 @@ export function openingFor(saved: unknown, screens: Area[]): Opening {
   return { maximized, bounds };
 }
 
+/**
+ * Puts a window back at the size it was left at. A display scaled by a fraction reads a size back off from the one
+ * set: at 150 % a window set to 901 wide reads 902 (one set to 900 reads 901, which is what was saved). Restoring
+ * what was read then grew the window on every reopen (901, 905, 909, 913), so the size set is nudged once by
+ * however far off it read, which lands it on the size that was saved.
+ */
+export function restoreBounds(window: { setBounds(bounds: Area): void; getBounds(): Area }, bounds: Area): void {
+  window.setBounds(bounds);
+  const read = window.getBounds();
+  const nudged = { ...bounds, width: 2 * bounds.width - read.width, height: 2 * bounds.height - read.height };
+  if (nudged.width !== bounds.width || nudged.height !== bounds.height) window.setBounds(nudged);
+}
+
 export function readWindowState(path: string): unknown {
   try {
     const text = readFileSync(path, "utf8");

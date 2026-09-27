@@ -37,6 +37,8 @@ const BlueprintBody = z.object({
 const LoopStop = z.object({ kind: z.enum(["loop", "heartbeat"]), sessionId: z.string().uuid() }).strict();
 const IdBody = z.object({ id: z.string().uuid() }).strict();
 const itemRoute = /^\/api\/autonomy\/(orders|procedures)\/([a-f0-9-]{36})\/(pause|resume|remove|run|update)$/;
+/** The owner's changed steps (and start) for a kept procedure, as a question that waits for the same yes a new one does. */
+const changeRoute = /^\/api\/autonomy\/procedures\/([a-f0-9-]{36})\/propose$/;
 
 /** Which switch an answer belongs to, so a part switched off since cannot be fed by an old question. */
 const partOf: Record<EntryKind, AutonomyPart> = {
@@ -110,6 +112,11 @@ async function kept(deps: AutonomyHttpDeps, path: string): Promise<unknown> {
 }
 
 async function item(deps: AutonomyHttpDeps, path: string): Promise<unknown> {
+  const change = changeRoute.exec(path);
+  if (change && deps.method === "POST") {
+    requirePart(deps.autonomy.store, deps.autonomy.owner, "procedures");
+    return deps.autonomy.procedures.proposeChange(change[1]!, await deps.readBody());
+  }
   const match = itemRoute.exec(path);
   if (!match || deps.method !== "POST") return undefined;
   const { autonomy } = deps;

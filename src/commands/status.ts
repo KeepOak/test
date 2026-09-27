@@ -2,6 +2,8 @@ import type { Run } from "../contracts.js";
 import { lockdownState } from "../lockdown.js";
 import { policyPresets, readPolicy } from "../policy.js";
 import type { Call } from "./handlers.js";
+import { mayAnswerHere } from "../household-approvals.js";
+import { atWindow, householdHere, runsHere } from "./household.js"; // Q259
 
 /** `/status` and `/whoami`, in words, for any surface. */
 
@@ -19,9 +21,22 @@ function stepLine(call: Call, run: Run): string {
   return `Working for ${ago(run.createdAt)}, ${steps.length} ${steps.length === 1 ? "step" : "steps"} so far. Latest: ${label}.`;
 }
 
+/**
+ * Q258: what the person at the window may count. Through the window, the phone and the dashboard (POST /api/commands/run)
+ * a household person counts only their own tasks: the ones started for them, and the questions GET /api/policy shows
+ * them (src/household-approvals.ts). A chat app and the terminal are the owner's, whatever the window is switched to.
+ * Q259: the working tasks counted are exactly the ones `/stop` may stop (src/commands/household.ts runsHere).
+ */
+function countedHere(call: Call): { working: Run[]; waiting: number } {
+  const { store, owner, approvals } = call.host.runtime;
+  const working = runsHere(store, owner, call.surface).filter((run) => run.status === "running");
+  const waiting = approvals.waiting().filter((asked) => !atWindow(call.surface) || mayAnswerHere(store, asked)).length;
+  return { working, waiting };
+}
+
 export function statusLines(call: Call): string[] {
   const { runtime } = call.host, { store, owner } = runtime;
-  const working = store.runs(owner).filter((run) => run.status === "running");
+  const { working, waiting } = countedHere(call);
   const policy = readPolicy(store, owner);
   const lines: string[] = [];
   if (call.sessionId) {
@@ -36,9 +51,10 @@ export function statusLines(call: Call): string[] {
     lines.push(working.length ? `${working.length} ${working.length === 1 ? "task is" : "tasks are"} working:` : "Nothing is working right now.");
     lines.push(...runningLines(working));
   }
-  const waiting = runtime.approvals.waiting().length;
   if (waiting) lines.push(`${waiting} ${waiting === 1 ? "question waits" : "questions wait"} for your yes in Inbox.`);
-  lines.push(`When to check with you: ${policyPresets().find((entry) => entry.id === policy.preset)?.label ?? "Rules you set yourself"}.`);
+  // Q259: the owner's approval settings are theirs; GET /api/policy leaves them out for a household person too.
+  if (!householdHere(store, call.surface))
+    lines.push(`When to check with you: ${policyPresets().find((entry) => entry.id === policy.preset)?.label ?? "Rules you set yourself"}.`);
   if (lockdownState(store, owner).on) lines.push("Lockdown is on: commands are refused and everything else waits for your yes.");
   return lines;
 }
@@ -48,7 +64,10 @@ const keyWords: Record<Call["access"], string> = {
   run: "You are using a short-lived key that may look and start tasks. It cannot change settings, permissions or Lockdown.",
   read: "You are using a short-lived key that may only look. It cannot start a task or change anything.",
 };
+/** Q259: the key of this computer, while a household person is at the window (their profile, or signed in). */
+const householdWords = "You are using your own profile: you may look at and start tasks in your own conversations. Settings and permissions are the owner's.";
 export function whoamiLines(call: Call): string[] {
+  if (householdHere(call.host.runtime.store, call.surface)) return [householdWords, "Send /help to see the commands you can use here."];
   if (call.surface !== "chat") return [keyWords[call.access], "Send /help to see the commands you can use here."];
   const may = call.permissions ?? [];
   return [

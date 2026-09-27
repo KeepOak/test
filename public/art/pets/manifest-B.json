@@ -1,0 +1,19 @@
+[
+  {"id": "raccoon", "name": "Raccoon", "description": "A raccoon kit with a striped tail and little mask", "still": "assets/pets/raccoon.webp", "walk": "assets/pets/raccoon-walk.webm"},
+  {"id": "koala", "name": "Koala", "description": "A grey koala joey with fluffy ears", "still": "assets/pets/koala.webp", "walk": "assets/pets/koala-walk.webm"},
+  {"id": "sloth", "name": "Sloth", "description": "A smiling baby sloth, tan and brown", "still": "assets/pets/sloth.webp", "walk": "assets/pets/sloth-walk.webm"},
+  {"id": "fruitbat", "name": "Fruit Bat", "description": "A small orange-brown fruit bat with folded wings and a fluffy chest", "still": "assets/pets/fruitbat.webp", "walk": "assets/pets/fruitbat-walk.webm"},
+  {"id": "bumblebee", "name": "Bumblebee", "description": "A round fuzzy bumblebee, yellow and black, with tiny wings", "still": "assets/pets/bumblebee.webp", "walk": "assets/pets/bumblebee-walk.webm"},
+  {"id": "beetle", "name": "Beetle", "description": "A shiny emerald-green beetle with little legs", "still": "assets/pets/beetle.webp", "walk": "assets/pets/beetle-walk.webm"},
+  {"id": "duckling", "name": "Duckling", "description": "A fluffy yellow duckling", "still": "assets/pets/duckling.webp", "walk": "assets/pets/duckling-walk.webm"},
+  {"id": "hamster", "name": "Hamster", "description": "A round golden hamster with full cheeks", "still": "assets/pets/hamster.webp", "walk": "assets/pets/hamster-walk.webm"},
+  {"id": "sealpup", "name": "Seal Pup", "description": "A white-grey fluffy seal pup", "still": "assets/pets/sealpup.webp", "walk": "assets/pets/sealpup-walk.webm"},
+  {"id": "octopus", "name": "Octopus", "description": "A small blue baby octopus with curly tentacles", "still": "assets/pets/octopus.webp", "walk": "assets/pets/octopus-walk.webm"},
+  {"id": "chameleon", "name": "Chameleon", "description": "A little green chameleon with a curled tail", "still": "assets/pets/chameleon.webp", "walk": "assets/pets/chameleon-walk.webm"},
+  {"id": "firefly", "name": "Firefly", "description": "A firefly with a glowing warm-amber tail light and big eyes", "still": "assets/pets/firefly.webp", "walk": "assets/pets/firefly-walk.webm"},
+  {"id": "dustbunny", "name": "Dust bunny", "description": "A small grey fluffball creature with big eyes and tiny feet", "still": "assets/pets/dustbunny.webp", "walk": "assets/pets/dustbunny-walk.webm"},
+  {"id": "mossgolem", "name": "Moss Golem", "description": "A mini stone golem covered in moss with a tiny mushroom", "still": "assets/pets/mossgolem.webp", "walk": "assets/pets/mossgolem-walk.webm"},
+  {"id": "narwhal", "name": "Narwhal", "description": "A white-and-pale-blue baby narwhal that floats in the air with a short spiral horn", "still": "assets/pets/narwhal.webp", "walk": "assets/pets/narwhal-walk.webm"},
+  {"id": "squirrel", "name": "Squirrel", "description": "A red-brown squirrel with a huge fluffy tail", "still": "assets/pets/squirrel.webp", "walk": "assets/pets/squirrel-walk.webm"},
+  {"id": "elephant", "name": "Elephant", "description": "A small grey baby elephant with big ears", "still": "assets/pets/elephant.webp", "walk": "assets/pets/elephant-walk.webm"}
+]

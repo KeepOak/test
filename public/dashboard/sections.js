@@ -3,7 +3,7 @@
    every word through a key in public/locales, with the English here only as the fallback while the
    language file loads. Nothing here writes a colour: states are the chips and meters of layout.css
    and dashboard.css, which read tokens. */
-import { t, formatNumber, formatDate, language } from "/i18n.js";
+import { t, formatNumber, formatDate, language } from "/dashboard/i18n.js";
 
 /* ---------- words and small builders ---------- */
 const fill = (text, values) =>

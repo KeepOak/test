@@ -171,7 +171,9 @@ export function registerGoogle(registry: Pick<ToolRegistry, "register">, google:
   tool("gmail.search", "personal.read", "Search the owner's Gmail with Gmail's own search words (from:, subject:, is:unread, newer_than:2d).",
     MailSearchSchema, (input) => google.searchMail(input));
   tool("gmail.read", "personal.read", "Read one message from the owner's Gmail, by the id gmail.search gave.", MailReadSchema, (input) => google.readMail(input));
-  tool("gmail.draft", "personal.write", "Write a draft in the owner's Gmail. It is never sent; the owner sends it.", DraftSchema, (input) => google.draft(input));
+  // Ships-on sweep (2026-09-26): the rules judge a draft by who it is to.
+  registry.register({ name: "gmail.draft", permission: "personal.write", description: "Write a draft in the owner's Gmail. It is never sent; the owner sends it.",
+    parameters: DraftSchema, execute: async (input) => google.draft(input), target: (input) => `draft to ${[...input.to, ...input.cc].join(", ")}` });
   tool("gcal.events", "personal.read", "List the events in the owner's Google Calendar between two times (the next day by default).",
     EventsSchema, (input) => google.events(input));
   tool("gdrive.search", "personal.read", "Find files in the owner's Google Drive by the words in them.", DriveSearchSchema, (input) => google.searchDrive(input));

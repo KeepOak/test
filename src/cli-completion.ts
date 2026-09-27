@@ -1,4 +1,4 @@
-import { TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
+import { TERMINAL_ALIASES, TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
 /**
  * Shell completion scripts for the `branch` command. They are plain text generated here, so the
  * person can write one to a file and load it from their shell profile; nothing is installed for
@@ -17,6 +17,12 @@ const planHelp = "--plan works out a numbered plan before the task starts and th
   + "(the Plan chip in the window, or Settings). A task with nobody to ask then finishes with the plan as its answer "
   + "and changes nothing.";
 
+/** B5 (CL-04): what `branch approve` does beside an open Branch, in `branch approve --help`. */
+const approveHelp = "With Branch open, this answers the question the task is waiting on, just this once, through the open Branch "
+  + "and by the same rules as the window: only questions you may answer are found, and the exact request is named. "
+  + "When a task waits on more than one question, --request <code> picks one. --code passes an authenticator code "
+  + "for a yes that needs one. With Branch closed, the answer is kept as a standing rule instead.";
+
 /**
  * Every subcommand, with the options that belong to it. Also drives `branch help`. `notes` are extra
  * lines `branch <command> --help` prints under the options, for an option that needs a sentence.
@@ -24,20 +30,23 @@ const planHelp = "--plan works out a numbered plan before the task starts and th
 export const cliCommands: { name: string; summary: string; options: string[]; notes?: string[] }[] = [
   { name: "start", summary: "Run the local web app", options: [] },
   { name: "chat", summary: "Talk to the assistant in this terminal", options: ["--plain", "--attach", "--session", "--watch"] },
-  { name: "run", summary: "Carry out one task and print the result", options: ["--json", "--attach", "--plan", "--verify", "--dry-run", "--allow-tests", "--preset", "--save-preset", "--budget", "--timeout", "--session", "--resume", "--fork"],
+  { name: "run", summary: "Carry out one task and print the result", options: ["--json", "--attach", "--plan", "--verify", "--dry-run", "--allow-tests", "--preset", "--save-preset", "--confirm", "--budget", "--timeout", "--session", "--resume", "--fork"],
     notes: [planHelp, allowTestsHelp] },
   { name: "headless", summary: "Run a scripted job with no window at all, one request per line", options: ["--script", "--stop-early", "--json", "--budget", "--timeout", "--session", "--preset", "--allow-tests"],
     notes: [allowTestsHelp] },
   { name: "status", summary: "Tasks working now, questions waiting, and a health summary", options: ["--json"] },
   { name: "logs", summary: "Print what happened during one task", options: ["--json"] },
-  { name: "approve", summary: "Answer a task that stopped to ask: approve <task id> yes|no", options: ["--json"] },
+  // B5 (CL-04): with Branch open, this answers the exact question waiting, once, through the running Branch.
+  { name: "approve", summary: "Answer a task that stopped to ask: approve <task id> yes|no", options: ["--json", "--request", "--code"],
+    notes: [approveHelp] },
   { name: "completion", summary: "Print a completion script for bash, zsh, fish or PowerShell", options: [] },
-  { name: "demo", summary: "Run the offline demonstration", options: ["--json"] },
-  { name: "doctor", summary: "Check that everything works", options: ["--probe", "--fix"] },
+  { name: "doctor", summary: "Check that everything works", options: ["--probe", "--fix", "--json"] },
   // mac7/diagnostics: nothing is sent; it shows, saves a zip, or prints a GitHub issue link.
   { name: "report", summary: "Report a problem: show what a report holds, save it as a zip, or print a GitHub issue link", options: ["log", "--save", "--without", "--issue", "--json"] },
   // mac7/nodes: lend this computer's camera, screen, notifications and more to Branch elsewhere (src/devices/node/cli.ts).
   { name: "node", summary: "Lend this computer to your Branch elsewhere: node pair | run | status | never | forget", options: ["--name"] },
+  // B5 (CL-08): the gateway that keeps the engine running and starts it again if it stops, as Settings › Gateway.
+  { name: "gateway", summary: "The gateway that keeps Branch running and starts it again if it stops: gateway [on|off]", options: ["--json"] },
   { name: "daemon", summary: "Keep Branch working with the window closed: daemon install | uninstall | status", options: [] },
   { name: "login", summary: "Sign in to a ChatGPT account", options: [] },
   { name: "logout", summary: "Sign out of the ChatGPT account", options: [] },
@@ -48,6 +57,8 @@ export const cliCommands: { name: string; summary: string; options: string[]; no
   { name: "import-agent", summary: "Read an assistant file: it shows what is inside, then --sections says what to bring in", options: ["--sections"] },
   { name: "restore", summary: "Read a backup file back in", options: [] },
   { name: "eval", summary: "Run the built-in evaluation set, or eval tools to check every tool", options: ["--suite", "--preset", "--compare", "--gate", "--json"] },
+  // w911 (A1753): plain-language page test scenarios (src/qa-api.ts); B5 (CL-06) lists it so it can run.
+  { name: "qa", summary: "Page test scenarios: qa list | run <id>", options: [] },
   { name: "study", summary: "Run a written-down experiment: study list | run <id> | compare <a> <b> | replay <id>", options: ["--fresh", "--json"] },
   { name: "mcp-serve", summary: "Offer Branch's tools to another AI tool", options: [] },
   { name: "acp-serve", summary: "Let a code editor talk to Branch", options: [] },
@@ -78,7 +89,22 @@ export const cliCommands: { name: string; summary: string; options: string[]; no
   ...TERMINAL_CLI_COMMANDS,
 ];
 
-const commandNames = (): string => cliCommands.map((command) => command.name).join(" ");
+/**
+ * B5: every word completion offers first: each command, and each name brought from Hermes and
+ * OpenClaw that means one (`models`, `plugins`, `config`…). Flags such as `--version` are left out.
+ */
+export const completionWords = (): string[] =>
+  [...new Set([...cliCommands.map((command) => command.name), ...Object.keys(TERMINAL_ALIASES).filter((name) => !name.startsWith("-"))])];
+const commandNames = (): string => completionWords().join(" ");
+/** The word after a command that names what it should do, for the commands that take one. */
+export const completionActions: Record<string, readonly string[]> = {
+  lockdown: ["on", "off"], gateway: ["on", "off"], token: ["create", "list", "revoke"], model: ["list", "use"],
+  qa: ["list", "run"], plugin: ["list", "enable", "disable"], study: ["list", "run", "compare", "replay"],
+  schedule: ["add", "list", "remove"], skill: ["pack", "install"], sessions: ["list", "show"],
+  theme: ["list", "light", "dark", "follow", "contrast", "language"], daemon: ["install", "uninstall", "status"],
+  node: ["pair", "run", "status", "never", "forget"], security: ["audit"], activity: ["verify"],
+};
+const actionCommands = (): [string, readonly string[]][] => Object.entries(completionActions);
 const optionsFor = (name: string): string[] => cliCommands.find((c) => c.name === name)?.options ?? [];
 
 /** One `case` arm per subcommand, so bash suggests only that command's options. */
@@ -87,6 +113,11 @@ function bashOptionCases(): string {
     .filter((command) => command.options.length > 0)
     .map((command) => `    ${command.name}) options="${optionsFor(command.name).join(" ")}" ;;`)
     .join("\n");
+}
+
+/** One `case` arm per command that takes an action word, for bash. */
+function bashActionCases(): string {
+  return actionCommands().map(([name, words]) => `    ${name}) actions="${words.join(" ")}" ;;`).join("\n");
 }
 
 function bashScript(): string {
@@ -106,6 +137,14 @@ _branch_complete() {
   fi
   if [ "\$command" = "approve" ] && [ "\$COMP_CWORD" -eq 3 ]; then
     COMPREPLY=( \$(compgen -W "yes no" -- "\$current") )
+    return
+  fi
+  local actions=""
+  case "\$command" in
+${bashActionCases()}
+  esac
+  if [ -n "\$actions" ] && [ "\$COMP_CWORD" -eq 2 ] && [ "\${current:0:1}" != "-" ]; then
+    COMPREPLY=( \$(compgen -W "\$actions" -- "\$current") )
     return
   fi
   local options=""
@@ -135,9 +174,12 @@ function powershellScript(): string {
 # ${completionInstallHint("powershell")}
 Register-ArgumentCompleter -Native -CommandName branch -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
-  $commands = @(${cliCommands.map((command) => `'${command.name}'`).join(", ")})
+  $commands = @(${completionWords().map((name) => `'${name}'`).join(", ")})
   $options = @{
 ${powershellOptionMap()}
+  }
+  $actions = @{
+${actionCommands().map(([name, words]) => `    '${name}' = @(${words.map((word) => `'${word}'`).join(", ")})`).join("\n")}
   }
   $words = @($commandAst.CommandElements | ForEach-Object { $_.ToString() })
   if ($words.Count -le 1 -or ($words.Count -eq 2 -and $wordToComplete)) {
@@ -147,6 +189,10 @@ ${powershellOptionMap()}
   $command = $words[1]
   if ($command -eq 'completion') {
     return @(${completionShells.map((shell) => `'${shell}'`).join(", ")}) | Where-Object { $_ -like "$wordToComplete*" } |
+      ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+  }
+  if ($actions.ContainsKey($command) -and ($words.Count -eq 2 -or ($words.Count -eq 3 -and $wordToComplete)) -and -not $wordToComplete.StartsWith('-')) {
+    return $actions[$command] | Where-Object { $_ -like "$wordToComplete*" } |
       ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
   }
   if ($command -eq 'approve') {
@@ -181,6 +227,7 @@ _branch() {
   case "\$words[2]" in
     completion) (( CURRENT == 3 )) && compadd ${completionShells.join(" ")} && return ;;
     approve) (( CURRENT == 4 )) && compadd yes no && return ;;
+${actionCommands().map(([name, words]) => `    ${name}) (( CURRENT == 3 )) && [[ "\$PREFIX" != -* ]] && compadd ${words.join(" ")} && return ;;`).join("\n")}
   esac
   options=()
   case "\$words[2]" in
@@ -209,8 +256,10 @@ function fishOptionLines(): string {
 }
 
 function fishScript(): string {
-  const commandLines = cliCommands
-    .map((command) => `complete -c branch -n "__fish_use_subcommand" -a ${command.name} -d ${fishQuote(command.summary)}`)
+  const aliasLines = completionWords().filter((name) => !cliCommands.some((command) => command.name === name))
+    .map((name) => `complete -c branch -n "__fish_use_subcommand" -a ${name} -d ${fishQuote(`Same as branch ${TERMINAL_ALIASES[name]!.join(" ")}`)}`);
+  const commandLines = [...cliCommands
+    .map((command) => `complete -c branch -n "__fish_use_subcommand" -a ${command.name} -d ${fishQuote(command.summary)}`), ...aliasLines]
     .join("\n");
   return `# Branch Agent completion for fish.
 # ${completionInstallHint("fish")}
@@ -218,6 +267,7 @@ complete -c branch -f
 ${commandLines}
 complete -c branch -n "__fish_seen_subcommand_from completion" -a "${completionShells.join(" ")}"
 complete -c branch -n "__fish_seen_subcommand_from approve" -a "yes no"
+${actionCommands().map(([name, words]) => `complete -c branch -n "__fish_seen_subcommand_from ${name}" -a "${words.join(" ")}"`).join("\n")}
 ${fishOptionLines()}
 `;
 }

@@ -252,6 +252,23 @@ export function lastActivation(dataDir: string, since: Date): { kind: Activation
   finally { db?.close(); }
 }
 
+/**
+ * p17 (the never-break journal in Settings › Gateway): the newest activations, newest first, read without opening
+ * the journal for writing. Only what the owner needs to read it: the kind, the two versions, how it ended and when.
+ * A journal that cannot be read, or none at all, is an empty list.
+ */
+export function recentActivations(dataDir: string, limit = 20): { kind: string; fromVersion: string; toVersion: string; state: string; startedAt: string; finishedAt: string | null }[] {
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(join(dataDir, activationJournalName), { readOnly: true });
+    const rows = db.prepare("SELECT kind, from_version, to_version, state, started_at, finished_at FROM activations ORDER BY id DESC LIMIT ?")
+      .all(Math.max(1, Math.min(50, Math.trunc(limit)))) as Record<string, unknown>[];
+    return rows.map((row) => ({ kind: String(row.kind), fromVersion: String(row.from_version), toVersion: String(row.to_version),
+      state: String(row.state), startedAt: String(row.started_at), finishedAt: typeof row.finished_at === "string" ? row.finished_at : null }));
+  } catch { return []; }
+  finally { db?.close(); }
+}
+
 export class ActivationJournal {
   private readonly db: DatabaseSync;
   /** Tests hand in a failure here to act out a full disk, as the task journal does. */

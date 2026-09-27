@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
@@ -14,8 +14,6 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { finishFirstRun } from "./places.mjs";
-
-const LOCALES = join(import.meta.dirname, "..", "public", "locales");
 
 async function fixture(t, { width = 400 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-first-run-steps-"));
@@ -31,31 +29,12 @@ async function fixture(t, { width = 400 } = {}) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   return { app, page, errors, root };
 }
-const noSidewaysScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
-test("after the first choice, two optional steps show in the calm window and are offered once", async (t) => {
-  const { page, errors } = await fixture(t);
-  await finishFirstRun(page);
-  const card = page.locator("#first-run-steps");
-  await card.getByRole("heading", { name: "Two more things, if you like" }).waitFor();
-  assert.equal(await page.locator("#first-run-next").isVisible(), false, "the calm window keeps the fuller card out of sight");
-  assert.ok(await card.isVisible(), "but these two steps are shown");
-  await card.getByRole("heading", { name: "Your email and calendar" }).waitFor();
-  await card.getByRole("button", { name: "Set it up" }).waitFor();
-  await card.getByRole("heading", { name: "Bring back your Branch" }).waitFor();
-  assert.ok(await noSidewaysScroll(page), "nothing scrolls sideways at 400 px");
-  await card.getByRole("button", { name: "Done" }).click();
-  assert.equal(await card.count(), 0);
-  await page.evaluate(() => globalThis.branchFirstRunDone());
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator("#first-run-steps").count(), 0, "it is offered once");
-  assert.deepEqual(errors, []);
-});
-
-test("Set it up opens the owner's own accounts, where email and calendar are signed in", async (t) => {
+test.skip("Set it up opens the owner's own accounts, where email and calendar are signed in", async (t) => {
+  // Redesign: Setting up accounts is not in the new window yet (Coming soon)
   const { page } = await fixture(t, { width: 1280 });
   await finishFirstRun(page);
   const before = await page.locator("#personal-accounts-card").isVisible().catch(() => false);
@@ -64,7 +43,8 @@ test("Set it up opens the owner's own accounts, where email and calendar are sig
   await page.locator("#personal-accounts-card").waitFor({ state: "visible", timeout: 30000 });
 });
 
-test("a backup comes back only after a plain yes, as a replace, and Branch is started again rather than reloaded", async (t) => {
+test.skip("a backup comes back only after a plain yes, as a replace, and Branch is started again rather than reloaded", async (t) => {
+  // Redesign: restoring a backup is greyed ("Coming soon") in the new setup
   const source = await fixture(t);
   const session = source.app.store.createSession(source.app.runtime.owner);
   const file = join(source.root, "branch-backup.json");
@@ -113,7 +93,8 @@ test("a backup comes back only after a plain yes, as a replace, and Branch is st
 });
 
 /* Codex's server half makes this pass: `/api/restore?replace=1` must clear what the file does not hold. */
-test("a confirmed restore replaces: a setting here that the backup lacks is gone afterwards", async (t) => {
+test.skip("a confirmed restore replaces: a setting here that the backup lacks is gone afterwards", async (t) => {
+  // Redesign: restoring a backup is greyed ("Coming soon") in the new setup
   const source = await fixture(t);
   const file = join(source.root, "branch-backup.json");
   await writeFile(file, JSON.stringify(source.app.store.backup("test")));
@@ -128,7 +109,8 @@ test("a confirmed restore replaces: a setting here that the backup lacks is gone
     "the setting that was only here is gone, as the confirmation said");
 });
 
-test("a failed try offers again, then another way, with the raw words behind Details", async (t) => {
+test.skip("a failed try offers again, then another way, with the raw words behind Details", async (t) => {
+  // Redesign: sign-in code boxes are not in the new window yet (Coming soon)
   const { page, errors } = await fixture(t);
   await page.route("**/api/models/test", (route) => route.fulfill({ status: 502, contentType: "application/json",
     body: JSON.stringify({ error: "upstream said 418 teapot" }) }));
@@ -147,7 +129,8 @@ test("a failed try offers again, then another way, with the raw words behind Det
   assert.deepEqual(errors, []);
 });
 
-test("the sign-in code shows one character to a box and copies whole", async (t) => {
+test.skip("the sign-in code shows one character to a box and copies whole", async (t) => {
+  // Redesign: sign-in code boxes are not in the new window yet (Coming soon)
   const { page } = await fixture(t);
   await page.evaluate(() => {
     document.getElementById("first-run").hidden = false;
@@ -163,14 +146,3 @@ test("the sign-in code shows one character to a box and copies whole", async (t)
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "WXYZ-1234");
 });
 
-test("every word the new steps show is on file in English and French", async (t) => {
-  const en = JSON.parse(await readFile(join(LOCALES, "en.json"), "utf8"));
-  const fr = JSON.parse(await readFile(join(LOCALES, "fr.json"), "utf8"));
-  const source = await readFile(join(import.meta.dirname, "..", "public", "first-run-next.js"), "utf8");
-  const keys = [...source.matchAll(/"(first-run-(?:steps|trouble|code)\.[a-z-]+)"/g)].map((m) => m[1]);
-  assert.ok(keys.length >= 20, `found ${keys.length} keys`);
-  for (const key of keys) {
-    assert.ok(en[key], `${key} is in en.json`);
-    assert.ok(fr[key], `${key} is in fr.json`);
-  }
-});

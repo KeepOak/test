@@ -3,7 +3,7 @@
    carries on with the workspace's own live updates (/api/events/stream) — read with fetch, because
    EventSource cannot carry the key. The stream closes itself after a while; the card simply opens it
    again from the last step it saw, so nothing is shown twice and nothing is missed. */
-import { parseEventStream } from "/activity-feed.js";
+import { parseEventStream } from "/dashboard/activity-feed.js";
 import { ago, card, make, say, taskLink, worded } from "/dashboard/sections.js";
 
 const KINDS = {

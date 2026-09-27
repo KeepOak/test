@@ -100,7 +100,7 @@ export function forgetLocalConnection(deps: LocalConnectionDeps, id: string): { 
   const kept = saved.filter((record) => record.id !== id);
   if (kept.length === saved.length) return { removed: false };
   deps.store.save("settings", deps.owner, localConnectionsSetting, { connections: kept });
-  if (deps.models.presets.has(id) && deps.models.presets.size > 1) deps.models.remove(id);
+  deps.models.remove(id);
   audit(deps.store, deps.owner, { action: "connection.changed", actor: deps.owner, subject: id,
     reason: "A model on this computer was removed", outcome: "removed" });
   return { removed: true };

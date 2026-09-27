@@ -27,7 +27,7 @@ import { trunkFilePlace } from "../trunks/file-root.js"; // FQ-routing.isolated-
  * Bucket R17-D (wave mac7): coding polish. `createBranch` makes one of these; the runtime asks it
  * where a task works and what to tell the model each round (src/coding/hooks.ts), the registry asks
  * it after every call (format-on-edit, long answers), and the server hands it /api/coding/. Every
- * part ships off. See docs/configuration.md, "Coding polish".
+ * part ships as src/coding/settings.ts says. See docs/configuration.md, "Coding polish".
  */
 export interface CodingDeps {
   runtime: Runtime; registry: ToolRegistry; files: WorkspaceFiles; servers: LanguageServers;

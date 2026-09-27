@@ -30,6 +30,7 @@ async function fixture(t, answers = ["ok"]) {
   const root = await mkdtemp(join(tmpdir(), "branch-flow-graph-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: scripted(answers) });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about the flow graph, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, root };
 }

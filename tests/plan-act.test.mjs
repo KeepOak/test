@@ -8,7 +8,9 @@ import { chromium } from "playwright";
 import { z } from "zod";
 import { createBranch, riskSentence, offPlanDifference, commandDifference, relatedCommand, correctionLabel } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { finishFirstRun } from "./places.mjs";
+import { signIn } from "./new-window-places.mjs";
+/** Q257: the fingerprint of the question the window shows for a conversation; a bare answer is refused. */
+const shownFingerprint = (app, sessionId) => app.runtime.approvals.questionFor(sessionId)?.fingerprint;
 
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
@@ -173,13 +175,13 @@ test("an ordinary approval in the middle of a plan does not throw the rest of th
 
   // Each note is a different file, so each is a question of its own: that is the approval rule
   // doing its job. What matters here is that the plan survives both of them.
-  await api("policy/approve", { sessionId: asked.sessionId, decision: "allow", remember: "session" });
+  await api("policy/approve", { sessionId: asked.sessionId, fingerprint: shownFingerprint(app, asked.sessionId), decision: "allow", remember: "session" });
   const second = await api("run", { prompt: "go ahead", sessionId: asked.sessionId });
   assert.equal(await readFile(join(workspace, "one.txt"), "utf8"), "one");
   assert.equal(second.status, "needs_input", "the second note is a second question");
   assert.deepEqual(data(app, second.id, "plan.step.started").map((d) => d.step), [1, 2],
     "the step it stopped inside is done again from its start, and then it moves on");
-  await api("policy/approve", { sessionId: asked.sessionId, decision: "allow", remember: "session" });
+  await api("policy/approve", { sessionId: asked.sessionId, fingerprint: shownFingerprint(app, asked.sessionId), decision: "allow", remember: "session" });
   const done = await api("run", { prompt: "go ahead", sessionId: asked.sessionId });
   assert.equal(done.status, "completed", "the rest of the plan is picked up after the answers");
   assert.equal(await readFile(join(workspace, "two.txt"), "utf8"), "two");
@@ -307,7 +309,7 @@ test("a command that failed is not retried silently: both commands and the diffe
     execute: () => { ran += 1; return { exitCode: 1, stdout: "", stderr: "git: 'stauts' is not a git command" }; },
   });
   // Even with the rules letting commands straight through, a second try is offered, not made.
-  await api("policy", { unmatchedCommands: "allow" });
+  await api("policy", { unmatchedCommands: "allow", confirmLoosening: true }); // Q257: a loosening needs the owner's yes
   const stopped = await api("run", { prompt: "check the repository" });
   assert.equal(stopped.status, "needs_input", "the corrected command is offered, not simply run");
   assert.match(stopped.output, /"git stauts" did not work, so this would run "git status" instead/);
@@ -337,35 +339,34 @@ test("the switch is in the conversation, and the plan card approves in one press
   });
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const httpCall = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await httpCall("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url, { timeout: 120000, waitUntil: "domcontentloaded" });
-  const token = page.getByLabel("Session token", { exact: true });
-  await token.waitFor({ state: "visible", timeout: 120000 });
-  await token.fill(server.token);
-  const workspace = page.locator("#workspace");
-  await page.getByRole("button", { name: "Connect", exact: true }).evaluate((button) => button.click());
-  await workspace.waitFor({ state: "visible", timeout: 120000 });
-  await finishFirstRun(page);
-  // The choice lives in the conversation, not in Settings: under More in the calm window (0.18.1).
-  await page.locator("#lx-more").click();
-  await page.getByRole("menuitemcheckbox", { name: "Show me the plan first" }).click();
-  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-  await page.locator("#lx-more-menu").waitFor({ state: "hidden" });
-  assert.equal(await page.locator("#session-plan-mode").inputValue(), "show-plan", "the real switch follows the menu");
-  await page.waitForFunction(() => document.getElementById("plan-mode-state")?.textContent?.length > 0);
+  await signIn(page, server);
+  // Redesign: the choice lives in the conversation's mode chip (data-act="modemenu2"), "Plan first" (prototype.html PMODES:
+  // "Writes a plan and waits for your OK before doing anything"), and the plan is drawn in the conversation as the
+  // prototype's plan block (ul.plan, prototype.html:3014). The old More menu and #session-plan-mode are replaced.
+  await page.locator('[data-act="modemenu2"]').click();
+  await page.locator('.pop [data-act="set-mode"][data-v="plan"]').click();
   await page.locator("#prompt").fill("summarise my notes");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.locator("#plan-card").waitFor({ state: "visible", timeout: 120000 });
-  assert.match(await page.locator("#plan-card").innerText(), /One step changes something: 2 \(summary\.txt\)/);
-  assert.equal(await page.locator("#plan-card .plan-step").count(), 2);
-  assert.deepEqual(await page.locator("#plan-card input.plan-step-title").evaluateAll((nodes) => nodes.map((n) => n.value)),
-    ["Read the notes", "Write the summary"], "each step is there in the owner's own words, and editable");
-  await page.locator("#plan-approve").evaluate((button) => button.click());
-  await page.waitForFunction(() => document.getElementById("plan-card")?.innerText.includes("You agreed to this plan"));
+  await page.locator("#send").click();
+  // WINDOW BUG: public/app/chat/chat.js thread() draws only policy asks; a task waiting on its plan (run needs_input under
+  // Plan first) shows nothing in the conversation, so the plan can be neither read nor agreed.
+  const plan = page.locator("#conversation ul.plan");
+  await plan.waitFor({ state: "visible", timeout: 30000 });
+  assert.deepEqual((await plan.locator("li").allInnerTexts()).map((one) => one.trim()), ["Read the notes", "Write the summary"]);
+  // The OK is given in the conversation (the engine's go-ahead from a chat message, tested below).
+  await page.locator("#prompt").fill("go ahead");
+  await page.locator("#send").click();
+  await page.locator("#conversation").getByText("All finished.").waitFor({ timeout: 30000 });
   assert.deepEqual(errors, []);
 });
 

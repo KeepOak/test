@@ -1,29 +1,34 @@
 #!/usr/bin/env node
-import { reportCommand } from "./diagnostic-cli.js"; // mac7/diagnostics
+import { reportCommand, reportUsage } from "./diagnostic-cli.js"; // mac7/diagnostics
 import { installTypeOf } from "./diagnostic-api.js"; // mac7/diagnostics
 import { resolve } from "node:path";
+import { ZodError } from "zod";
 import { createBranch } from "./index.js";
 import { maximumPolicyRules } from "./policy.js"; // Q215
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultPreset, presetsFromEnv } from "./providers.js";
+import { presetsFromEnv } from "./providers.js";
+import { noModelWords } from "./no-model.js";
 import { ChatGPTAuth, FileTokenVault } from "./chatgpt-auth.js";
 import { finishChatGPTSignIn, syncChatGPTPresets } from "./chatgpt-presets.js";
-import { DemoProvider } from "./demo.js";
 import { startServer } from "./server.js";
 import { loadIntegrations } from "./integrations/bootstrap.js";
 import { startTerminal } from "./terminal.js";
 import { startTui } from "./terminal-tui.js";
 import { looksInteractive } from "./terminal-style.js";
-import { readOnlyTerminalCommands, runTerminalCommand, statusCommand, terminalArgv, terminalCommandNames, versionText } from "./terminal-cli.js";
+import {
+  healthLines, modelLines, readOnlyTerminalCommands, runTerminalCommand, statusCommand, terminalArgv, terminalCommandNames, versionText, wordsFor,
+} from "./terminal-cli.js";
+// B5 (CL-04): the commands that change something, through the Branch already open (src/cli-engine.ts).
+import { engineApprove, engineLockdown, engineModel, enginePermissions, engineTheme, engineWords, gatewayCommand, type EngineIo } from "./cli-engine.js";
 import { asksForHelp, cliCommands, commandHelp, completionScript, usageText } from "./cli-completion.js";
 import { nodeCommand } from "./devices/node/cli.js"; // mac7/nodes
 // Batch 20 (wave 8): short-lived keys, schedules and the attach client for the running engine.
 import { clientFor, connect, conversations, messagesOf, since, transcriptLines, type Client } from "./cli-attach.js";
 // mac7/smoke-fixes (B4): the terminal beside a Branch that is already open.
-import { attachToRunning } from "./install/running.js";
+import { attachToRunning, readRunning } from "./install/running.js";
 import { traceLines, traceReport, type TraceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { errorText, type Run } from "./contracts.js";
@@ -68,6 +73,7 @@ import { qaCommand, qaDeps } from "./qa-api.js"; // w911 (A1753) hook.
 import { sayOnceIfNodeIsTooOld } from "./node-floor.js"; // mac7/node-floor
 import { phoneCommand } from "./phone-app/cli.js";
 import { scheduleCommand } from "./schedule-cli.js";
+import { realDeviceNetwork } from "./devices/network.js"; // find-computers
 
 async function configuredApp(options: Parameters<typeof createBranch>[0]) {
   const app = await createBranch(options);
@@ -118,7 +124,7 @@ async function serve(
     ...(link ? {} : { quit: () => void stopEngine?.() }),
   });
   console.log(
-    `Branch Agent listening at ${server.url}\nProvider: ${app.runtime.provider.name}\nWorkspace: ${app.runtime.workspace}\nLocal session token (paste into browser): ${server.token}`,
+    `Branch Agent listening at ${server.url}\nProvider: ${app.runtime.models.configured ? app.runtime.provider.name : noModelWords}\nWorkspace: ${app.runtime.workspace}\nLocal session token (paste into browser): ${server.token}`,
   );
   let closing: Promise<void> | null = null;
   const stop = () => {
@@ -164,7 +170,8 @@ async function main(): Promise<void> {
   // Batch 20 (wave 8): `branch <command> --help` says what that command does and stops. Asking must
   // never be the same thing as doing, so this comes before every command, workspace and database.
   if (cliCommands.some((entry) => entry.name === command) && asksForHelp(process.argv.slice(3))) {
-    console.log(commandHelp(command));
+    // B5 (CL-06): `branch report --help` shows report's own ways of being used, not only its one line.
+    console.log(command === "report" ? `${commandHelp(command)}\n\n${reportUsage}` : commandHelp(command));
     return;
   }
   // ---- mac7/nodes: `branch node` lends this computer to Branch elsewhere; it opens no workspace or database. ----
@@ -186,6 +193,15 @@ async function main(): Promise<void> {
   // These two talk to the engine that is already running and never start one of their own, so they
   // come before the workspace and the database are opened at all.
   if (command === "schedule") return scheduleCommand(dataDir);
+  // B5 (CL-08): the gateway's switch is its own file, so it needs no database; beside an open Branch it
+  // goes through that Branch's door, where only the owner may change it.
+  if (command === "gateway") {
+    const found = await attachToRunning(dataDir);
+    // Only a Branch that is really closed has its file written here. One that is open but did not let this
+    // terminal in (locked, or too busy to answer) keeps the switch behind its own door.
+    if (!found && await readRunning(dataDir)) throw new Error(gatewayUnanswered);
+    return gatewayCommand(found ? clientFor(found) : null, dataDir, plainArgs(), engineIo());
+  }
   // --- mac7/connect: `branch connect <chat app>` (src/channel-setup/cli.ts) ---
   if (command === "connect") {
     const { connectCommand } = await import("./channel-setup/cli.js");
@@ -205,11 +221,12 @@ async function main(): Promise<void> {
   // mac7/smoke-fixes (B4): the Branch already open holds the saved work, so the commands that only
   // look - and making a key, which a script needs at exactly that moment - go through its door
   // instead of refusing. With nothing running this answers null and everything opens here as before.
-  const answered = await overRunningBranch(command, dataDir);
+  const answered = await overRunningBranch(command, dataDir, inTerminal);
   if (answered !== null) { process.exitCode = answered; return; }
-  const presets = command === "demo" ? [defaultPreset(new DemoProvider())] : presetsFromEnv();
+  const presets = presetsFromEnv();
   const chatgpt = new ChatGPTAuth(new FileTokenVault(join(dataDir, "chatgpt-auth.json")), { userAgent: "BranchAgent" });
-  const { app, close } = await configuredApp({ workspace, dataDir, presets, chatgpt });
+  const { app, close } = await configuredApp({ workspace, dataDir, presets, chatgpt,
+    ...(command === "start" ? { findComputers: realDeviceNetwork() } : {}) }); // find-computers: only a running Branch looks
   if (command === "start") {
     try {
       await serve(app, dataDir, close);
@@ -222,7 +239,7 @@ async function main(): Promise<void> {
   try {
     if (command === "trigger") {
       const id = process.argv[3];
-      if (!id) throw new Error("Provide a schedule id: node dist/cli.js trigger <schedule-id>");
+      if (!id) throw new Error("Provide a schedule id: branch trigger <schedule-id>");
       const run = await app.scheduler.trigger(app.runtime.owner, id, undefined, "local");
       console.log(JSON.stringify({ run, events: app.store.events(run.id) }, null, 2));
       if (run.status !== "completed") process.exitCode = 1;
@@ -238,7 +255,7 @@ async function main(): Promise<void> {
       await (full ? startTui(app.runtime, { app, ...(session ? { sessionId: session } : {}) }) : startTerminal(app.runtime));
       return;
     } else if (command === "status") {
-      await statusCommand(app, { json: process.argv.includes("--json"), write: (line) => console.log(line) });
+      await statusCommand(app, { json: process.argv.includes("--json"), env: process.env, write: (line) => console.log(line) });
       return;
     }
     else if (command === "logs") { printLogs(app); return; }
@@ -270,7 +287,7 @@ async function main(): Promise<void> {
     }
     if (command === "backup") {
       const target = process.argv[3];
-      if (!target) throw new Error("Provide a file: node dist/cli.js backup <file>");
+      if (!target) throw new Error("Provide a file: branch backup <file>");
       await writeFile(target, JSON.stringify(app.store.backup(app.version)), { mode: 0o600 });
       console.log(`Backup written to ${target}. Secrets are not included; they stay on this device.`);
       return;
@@ -315,7 +332,7 @@ async function main(): Promise<void> {
     }
     if (command === "restore") {
       const source = process.argv[3];
-      if (!source) throw new Error("Provide a file: node dist/cli.js restore <file>");
+      if (!source) throw new Error("Provide a file: branch restore <file>");
       console.log(JSON.stringify(app.store.restore(JSON.parse(await readFile(source, "utf8")))));
       return;
     }
@@ -332,7 +349,7 @@ async function main(): Promise<void> {
  */
 async function agentPortability(app: Awaited<ReturnType<typeof configuredApp>>["app"], command: string): Promise<void> {
   const target = process.argv[3];
-  if (!target) throw new Error(`Provide a file: node dist/cli.js ${command} <file>`);
+  if (!target) throw new Error(`Provide a file: branch ${command} <file>`);
   if (command === "export-agent") {
     const withMemory = process.argv.includes("--memory");
     const redact = process.argv.includes("--redact") ? (text: string) => applyPiiGuard(text, "mask").text : undefined;
@@ -444,9 +461,17 @@ async function tokenCommand(keys: TokenAccess): Promise<void> {
  * command that only looks, `status` included (the running Branch writes its lines, with the same
  * function as here). Everything else would fight the running Branch for the same files and still
  * refuses, in a sentence that now says which commands do work.
+ *
+ * B5 (CL-04): `approve`, `lockdown`, `permissions`, `theme` and `model` go through the running
+ * Branch's own routes as well (src/cli-engine.ts), with every guard the window meets. They are not
+ * added to the read-only door above, which passes its words straight through; each has its own route.
  */
-async function overRunningBranch(command: string, dataDir: string): Promise<number | null> {
-  const wanted = ["doctor", "trace", "token"].includes(command) || readOnlyTerminalCommands.has(command);
+const gatewayUnanswered = "Branch is open but did not answer, so the gateway was not changed. Unlock Branch, or wait a moment, and try again.";
+const engineCommands = new Set(["approve", "lockdown", "permissions", "theme", "model"]);
+async function overRunningBranch(command: string, dataDir: string, inTerminal: boolean): Promise<number | null> {
+  // `branch setup` in a terminal opens the view, which needs the saved work; printed, it only looks.
+  const printedSetup = command === "setup" && !inTerminal;
+  const wanted = ["doctor", "trace", "token"].includes(command) || readOnlyTerminalCommands.has(command) || engineCommands.has(command) || printedSetup;
   if (!wanted) return null;
   // `branch doctor --fix` repairs things, so it is not one of the ones that only look.
   if (command === "doctor" && (process.argv.includes("--fix") || process.argv.includes("--repair"))) return null;
@@ -454,18 +479,28 @@ async function overRunningBranch(command: string, dataDir: string): Promise<numb
   if (!found) return null;
   const client = clientFor(found);
   if (command === "token") { await tokenCommand(runningKeys(client)); return 0; }
+  if (engineCommands.has(command)) { await engineCommand(client, command); return 0; }
   if (command === "doctor") {
-    const health = await client.get<unknown>(`/api/health${process.argv.includes("--probe") ? "?probe=1" : ""}`);
-    console.log(JSON.stringify({ from: `the Branch already open at ${client.url}`, dataDir, health }, null, 2));
+    const health = await client.get<{ ok: boolean; items: { ok: boolean; name: string; summary: string }[] }>(`/api/health${process.argv.includes("--probe") ? "?probe=1" : ""}`);
+    if (process.argv.includes("--json")) console.log(JSON.stringify({ from: `the Branch already open at ${client.url}`, dataDir, health }, null, 2));
+    else {
+      const words = await engineWords(client, process.env);
+      console.log(words.t("terminal.cli.doctor.from", "From the Branch already open at {url}", { url: client.url }));
+      for (const line of healthLines(health, words)) console.log(line);
+    }
     return 0;
   }
+  if (printedSetup) return overTerminalDoor(client, "settings", ["models", "connection"]);
   if (command === "trace") {
     const report = await client.get<TraceReport>(`/api/runs/${traceRunId()}/trace`);
     if (process.argv.includes("--json")) console.log(JSON.stringify(report, null, 2));
     else for (const line of traceLines(report)) console.log(line);
     return 0;
   }
-  const args = process.argv.slice(3).filter((word) => !word.startsWith("--"));
+  return overTerminalDoor(client, command, process.argv.slice(3).filter((word) => !word.startsWith("--")));
+}
+/** One of the commands that only look, run by the Branch already open (GET /api/terminal). */
+async function overTerminalDoor(client: Client, command: string, args: string[]): Promise<number> {
   // This terminal's own language, so a person on "follow the computer" reads the same words here.
   const locale = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || "";
   const query = [`command=${encodeURIComponent(command)}`, ...(process.argv.includes("--json") ? ["json=1"] : []),
@@ -474,6 +509,44 @@ async function overRunningBranch(command: string, dataDir: string): Promise<numb
   const { lines } = await client.get<{ lines: string[] }>(`/api/terminal?${query}`);
   for (const line of lines) console.log(line);
   return 0;
+}
+/** B5 (CL-04): a command that changes something, answered by the Branch already open. */
+async function engineCommand(client: Client, command: string): Promise<void> {
+  const io = engineIo(), args = plainArgs();
+  if (command === "approve") return engineApprove(client, args, { json: io.json, ...optional("request"), ...optional("code") }, io);
+  if (command === "lockdown") return engineLockdown(client, args, io);
+  if (command === "permissions") return enginePermissions(client, args, io);
+  if (command === "theme") return engineTheme(client, args, io);
+  return engineModel(client, args, io);
+}
+/** Printing for the engine commands: to this terminal, JSON when --json was given. */
+const engineIo = (): EngineIo => ({ json: process.argv.includes("--json"), env: process.env, write: (line) => console.log(line) });
+/** The flags that carry a value after them; everything else starting with -- stands alone. */
+const valuedFlags = new Set(["--request", "--code"]);
+/** The words after the command, without its flags or their values. */
+function plainArgs(): string[] {
+  const words: string[] = [];
+  const argv = process.argv.slice(3);
+  for (let at = 0; at < argv.length; at++) {
+    if (valuedFlags.has(argv[at]!)) { at++; continue; }
+    if (!argv[at]!.startsWith("--")) words.push(argv[at]!);
+  }
+  return words;
+}
+/** A flag's value as an optional field, refused in words when the flag is there with nothing after it. */
+function optional(name: "request" | "code"): { request?: string; code?: string } {
+  if (!process.argv.includes(`--${name}`)) return {};
+  const value = flag(name);
+  if (!value || value.startsWith("--")) throw new Error(`--${name} needs a value after it`);
+  return { [name]: value };
+}
+/**
+ * B5 (CL-05): what a person reads when a command fails. A check on typed values reports each problem
+ * in a line of its own rather than as a raw validation list.
+ */
+function plainError(error: unknown): string {
+  if (error instanceof ZodError) return error.issues.map((issue) => `${issue.path.length ? `${issue.path.join(".")}: ` : ""}${issue.message}`).join("\n");
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -542,7 +615,7 @@ async function packageFiles(folder: string): Promise<Record<string, string>> {
 async function skillCommand(app: Awaited<ReturnType<typeof createBranch>>): Promise<void> {
   const action = process.argv[3], target = process.argv[4];
   if (action === "pack") {
-    if (!target) throw new Error('Provide a folder: node dist/cli.js skill pack <folder> --author "Your name"');
+    if (!target) throw new Error('Provide a folder: branch skill pack <folder> --author "Your name"');
     const author = flag("author");
     if (!author) throw new Error('Say who made it: --author "Your name"');
     const { packSkill } = await import("./skill-package.js");
@@ -553,7 +626,7 @@ async function skillCommand(app: Awaited<ReturnType<typeof createBranch>>): Prom
     return;
   }
   if (action === "install") {
-    if (!target) throw new Error("Provide a package file: node dist/cli.js skill install <file.branchskill>");
+    if (!target) throw new Error("Provide a package file: branch skill install <file.branchskill>");
     const bytes = await readFile(resolve(target));
     const approve = process.argv.includes("--approve");
     const result = app.skillPackages.install(bytes, approve);
@@ -562,25 +635,26 @@ async function skillCommand(app: Awaited<ReturnType<typeof createBranch>>): Prom
     console.log(approve ? "Installed. The skill is switched off until you turn it on in Skills." : "Nothing was installed. Run again with --approve to accept the list above.");
     return;
   }
-  throw new Error("Usage: node dist/cli.js skill pack <folder> [out] --author \"Name\" | skill install <file.branchskill> [--approve]");
+  throw new Error("Usage: branch skill pack <folder> [out] --author \"Name\" | skill install <file.branchskill> [--approve]");
 }
 /** `branch plugin list | enable <id> | disable <id>`. */
 async function pluginCommand(app: Awaited<ReturnType<typeof createBranch>>): Promise<void> {
   const action = process.argv[3], id = process.argv[4];
-  if (action === "list") {
+  // B5 (CL-06): `branch plugin` (and `branch plugins`) on its own lists them, as the other commands do.
+  if (action === "list" || action === undefined) {
     const entries = await app.plugins.list();
     if (!entries.length) console.log("No plugin files found. Put <name>.mjs in the plugins folder beside your data.");
     for (const entry of entries) console.log(`${entry.enabled ? "on " : "off"} ${entry.id}${entry.summary ? ` — ${entry.summary.name}` : ""}`);
     return;
   }
-  if (!id) throw new Error("Provide a plugin id: node dist/cli.js plugin enable <id>");
+  if (!id) throw new Error("Provide a plugin id: branch plugin enable <id>");
   if (action === "enable") {
     const summary = await app.plugins.enable(id);
     console.log(`${summary.name} is on. It adds: ${summary.tools.map((tool) => tool.name).join(", ") || "no tools"}; it needs: ${summary.permissions.join(", ") || "nothing"}.`);
     return;
   }
   if (action === "disable") { app.plugins.disable(id); console.log(`${id} is off. Its tools are out of the catalog.`); return; }
-  throw new Error("Usage: node dist/cli.js plugin list | plugin enable <id> | plugin disable <id>");
+  throw new Error("Usage: branch plugin list | plugin enable <id> | plugin disable <id>");
 }
 /**
  * `branch watch <folder> [<procedure-id>]`: runs a saved procedure whenever a file under that folder
@@ -618,13 +692,13 @@ async function aiCommentsCommand(app: Awaited<ReturnType<typeof configuredApp>>[
 }
 async function watchCommand(app: Awaited<ReturnType<typeof configuredApp>>["app"]): Promise<void> {
   const folder = process.argv[3];
-  if (!folder) throw new Error("Give a folder: node dist/cli.js watch <folder> [<procedure-id> | --ai-comments]");
+  if (!folder) throw new Error("Give a folder: branch watch <folder> [<procedure-id> | --ai-comments]");
 
   // bucket-18: AI comments (A0344): comments ending in AI! or AI? become a task.
   if (process.argv.includes("--ai-comments")) return aiCommentsCommand(app, folder);
   const procedureId = process.argv[4];
   if (!procedureId)
-    throw new Error("Give a procedure: node dist/cli.js watch <folder> <procedure-id>");
+    throw new Error("Give a procedure: branch watch <folder> <procedure-id>");
   const once = process.argv.includes("--once");
   const settle = Number(flag("settle") ?? 400);
   let finished: (() => void) | null = null;
@@ -647,7 +721,7 @@ async function watchCommand(app: Awaited<ReturnType<typeof configuredApp>>["app"
   console.error(`[watch] stopped after ${handle.runs} run(s).`);
 }
 /**
- * `branch run` and `branch demo`. With `--json` every event goes to stdout as one JSON object per
+ * `branch run`. With `--json` every event goes to stdout as one JSON object per
  * line while the task works, and the human wording goes to stderr, so a script can read one and a
  * person can watch the other. The exit code says what happened: see `exitCodeFor`.
  */
@@ -658,14 +732,13 @@ async function runOnce(
   inTerminal: boolean,
 ): Promise<void> {
   const flags: RunFlags = parseRunArgs(process.argv.slice(3));
-  if (command === "demo") flags.prompt = "Run the deterministic file write/read/verify fixture.";
   // Carrying a stopped task on needs no new words: it takes up its own request again.
   if (!flags.prompt && !flags.resumeRunId) throw new Error('Provide a prompt: branch run "your request"');
   const writer = {
     line: (value: unknown) => { if (flags.json) process.stdout.write(JSON.stringify(value) + "\n"); },
     note: (text: string) => console.error(text),
   };
-  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset) : undefined;
+  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset, { confirm: flags.confirm === true, tools: app.registry }) : undefined;
   if (preset) writer.note(preset.message);
   let run: Run;
   try {
@@ -676,8 +749,20 @@ async function runOnce(
   if (flags.json) {
     writer.line({ type: "run", run, usage: app.store.usage(run.id), exitCode: exitCodeFor(run.status) });
     writer.note(run.status === "completed" ? run.output : `[task ${run.status}] ${run.output}`);
-  } else console.log(JSON.stringify({ run, usage: app.store.usage(run.id), events: app.store.events(run.id) }, null, 2));
+  } else {
+    // B5 (CL-05): a person reads the answer and, when the task did not finish, what to do next; the
+    // whole record (the task, its usage and every step) is --json's.
+    console.log(run.output);
+    const note = runEndWords(wordsFor(app, process.env), run);
+    if (note) console.error(note);
+  }
   process.exitCode = exitCodeFor(run.status);
+}
+/** The line under a task that did not finish: how to answer it, or where to see why it stopped. */
+function runEndWords(words: ReturnType<typeof wordsFor>, run: Run): string {
+  if (run.status === "completed") return "";
+  if (run.status === "needs_input") return words.t("terminal.cli.run.waiting", "Task {id} is waiting for your answer: branch approve {id} yes", { id: run.id });
+  return words.t("terminal.cli.run.stopped", "Task {id} stopped before it finished. branch logs {id} shows what happened.", { id: run.id });
 }
 /**
  * `branch headless`: no window, no web page, no terminal conversation — one request or a file of
@@ -692,7 +777,7 @@ async function headlessJob(app: Awaited<ReturnType<typeof createBranch>>): Promi
     line: (value: unknown) => { if (flags.json) process.stdout.write(`${JSON.stringify(value)}\n`); },
     note: (text: string) => console.error(text),
   };
-  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset) : undefined;
+  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset, { confirm: flags.confirm === true, tools: app.registry }) : undefined;
   if (preset) writer.note(preset.message);
   try {
     const report = await runHeadless(app.runtime, { prompts, flags, stopEarly }, writer);
@@ -792,7 +877,11 @@ async function runToolChecks(app: Awaited<ReturnType<typeof createBranch>>): Pro
 async function runStudy(app: Awaited<ReturnType<typeof createBranch>>): Promise<void> {
   const action = process.argv[3] ?? "list", asJson = process.argv.includes("--json");
   if (action === "list") {
-    for (const study of app.studies.list()) console.log([study.id, study.name, study.presets.join(",")].join("\t"));
+    const studies = app.studies.list();
+    if (asJson) return void console.log(JSON.stringify({ studies }, null, 2));
+    // B5 (CL-05c): an empty list says so rather than printing nothing.
+    if (!studies.length) return void console.log(wordsFor(app, process.env).t("terminal.cli.study.none", "No studies yet."));
+    for (const study of studies) console.log([study.id, study.name, study.presets.join(",")].join("\t"));
     return;
   }
   if (action === "compare") {
@@ -832,7 +921,7 @@ async function loginChatGPT(app: Awaited<ReturnType<typeof createBranch>>): Prom
 async function runDaemonCommand(): Promise<void> {
   const action = (process.argv[3] ?? "status") as DaemonAction;
   if (!["install", "uninstall", "status"].includes(action))
-    throw new Error("Usage: node dist/cli.js daemon install | uninstall | status");
+    throw new Error("Usage: branch daemon install | uninstall | status");
   const executable = process.env.BRANCH_EXECUTABLE ?? process.execPath;
   const dataDir = resolve(process.env.BRANCH_DATA_DIR ?? ".branch");
   const report = await daemonCommand(action, {
@@ -875,6 +964,18 @@ async function printDoctor(
   const connections = probe
     ? await probeAll(app.runtime.models, app.web.policy, app.web.policy.guard(globalThis.fetch))
     : [];
+  // B5 (CL-05): plain lines for a person; the whole report as JSON only with --json.
+  if (!process.argv.includes("--json")) {
+    const words = wordsFor(app, process.env);
+    for (const line of healthLines(health, words)) console.log(line);
+    console.log(words.t("terminal.cli.doctor.models", "Models:"));
+    for (const line of modelLines(app.runtime.models.summary(app.runtime.owner), app.runtime.models.configured, words)) console.log(`  ${line.trim()}`);
+    for (const one of connections)
+      console.log(`  ${one.name}: ${one.signedIn ? words.t("terminal.cli.doctor.answered", "answered") : words.t("terminal.cli.doctor.silent", "did not answer")}`);
+    console.log(words.t("terminal.cli.doctor.tools", "{count} tools ready.", { count: app.registry.permissions().length }));
+    console.log(words.t("terminal.cli.doctor.data", "Saved work: {dir}", { dir: dataDir }));
+    return;
+  }
   console.log(
     JSON.stringify(
       {
@@ -897,6 +998,6 @@ async function printDoctor(
   );
 }
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(plainError(error));
   process.exitCode = 1;
 });

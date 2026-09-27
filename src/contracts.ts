@@ -111,6 +111,21 @@ export interface Message {
    * these are written down with the conversation, so it can still show what it was given.
    */
   attachments?: AttachmentRef[];
+  /**
+   * A message the engine wrote itself rather than the person: "trunk-intro" is the ask that has a new
+   * Trunk introduce itself in its own conversation, which the window does not draw as the owner's words.
+   */
+  system?: "trunk-intro";
+  /**
+   * chatlook: in a room's own conversation, the household person who wrote this message (the owner's carry none), so
+   * the room still shows who said it once its record has let older events go.
+   */
+  person?: { id: string; name: string };
+  /**
+   * a2a-rooms: in a room's own conversation, Branch's note quoting what an outside agent said (`from: "branch"`, its words
+   * as quoted data), so the room can still draw it as that agent's once its record has let older events go.
+   */
+  outsideAgent?: { id: string; name: string };
 }
 export interface Usage {
   input: number;
@@ -346,6 +361,13 @@ export interface ToolContext {
    * has nowhere to put one, so a tool that would ask answers there as it did before.
    */
   askable?: boolean;
+  /**
+   * Q250: a step Branch runs as it was saved or asked for, not a model's own call: a verified recipe's
+   * step, or a manual action (a workflow's or flow's step, a button in the window). Its arguments were
+   * fixed before it ran, and a manual action is a task of its own, so nothing it could read first would
+   * count. The read-before-edit guard (src/coding/read-first.ts) does not hold it.
+   */
+  readFirstExempt?: boolean;
   /**
    * mac7/tests-unattended: nobody can answer a question while this task runs — a script's
    * `branch run` or `branch headless` with no terminal to ask in. Only the "Let Branch run this

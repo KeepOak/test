@@ -13,6 +13,7 @@ async function fixture(t) {
   const dataDir = join(root, "data"), workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   const app = await createBranch({ dataDir, workspace });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about the edit and patch tools, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, workspace };
 }

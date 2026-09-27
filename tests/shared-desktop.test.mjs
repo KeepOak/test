@@ -389,10 +389,14 @@ test("handing back is the owner's alone: no tool does it, and the refusal names 
   const tools = app.registry.names().filter((name) => name.startsWith("desktop.shared."));
   assert.deepEqual(tools.sort(), ["desktop.shared.key", "desktop.shared.open", "desktop.shared.start", "desktop.shared.stop", "desktop.shared.type"]);
   assert.doesNotMatch(takenOverMessage, /desktop\.shared\.release/);
-  assert.match(takenOverMessage, /Settings/);
-  const page = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  assert.match(page, /id="linux-desktop-hand-back"/, "the Hand back button the refusal points to is on the Settings card");
-  assert.match(page, /id="linux-desktop-mode"/, "the switch the switched-off refusal points to is on the Settings card");
+  // unhold-control: Hand back lives in the new window's computer view (public/app/chat/stage.js), in the prototype's words.
+  assert.match(takenOverMessage, /"Hand back to …" at the top of the computer view/);
+  const stage = await readFile(new URL("../public/app/chat/stage.js", import.meta.url), "utf8");
+  assert.match(stage, /data-act="handback">\$\{t\("window\.chat\.stage\.hand-back-to"/, "the Hand back to … button the refusal points to is drawn in the computer view");
+  const english = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
+  assert.equal(english["window.chat.stage.hand-back-to"], "Hand back to {name}", "in the prototype's words");
+  assert.match(stage, /api\(path, \{\}\)/, "and it calls the hand-back route");
+  assert.match(stage, /"linux-desktop\/hand-back"/);
 });
 
 test("the Settings routes: switching off stops the desktop at once, hand back is the owner's, and no key reaches either", async (t) => {
@@ -405,9 +409,10 @@ test("the Settings routes: switching off stops the desktop at once, hand back is
   }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
   const { desktop, ran } = heldFixture(app, app.linuxDesktop);
   await desktop.start("local");
-  const card = await fetch(server.url + "/linux-desktop.js");
-  assert.equal(card.status, 200, "the Settings card's own script is served, so its buttons work");
-  await card.text();
+  // unhold-control: the window's computer view, which draws Take over and Hand back, is served.
+  const card = await fetch(server.url + "/app/chat/stage.js");
+  assert.equal(card.status, 200, "the computer view's own script is served, so its buttons work");
+  assert.match(await card.text(), /linux-desktop\/take-over/);
 
   const shown = await call("GET", "/api/linux-desktop", server.token);
   assert.equal(shown.status, 200);

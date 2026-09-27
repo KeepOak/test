@@ -1,4 +1,4 @@
-import { reachKey, reachLabels, reachParts, savedReachMode, type ReachPart } from "../reach/settings.js";
+import { reachKey, reachLabels, reachParts, reachShipsOn, savedReachMode, type ReachPart } from "../reach/settings.js";
 import { listenAsked, listenPlaces, ListenSettingsSchema, listenKey, saveListenSettings } from "../listen-address.js"; // mac7/bind
 import { readPolicy, savePolicy, type PolicyPresetName } from "../policy.js";
 import { presetMoveLooser, type ToolLister } from "../preset-moves.js";
@@ -10,7 +10,7 @@ import { saveSecurityCheckSettings, securityCheckSettings } from "../security-au
 import { saveWallSettings, wallSettings } from "../sandbox.js";
 import { readKeychainSettings, saveKeychainSettings } from "../vault-sources.js";
 import { readVaultAutofillSettings, saveVaultAutofillSettings } from "../vault-autofill.js"; // mac7/vault-autofill (R17-068)
-import { retentionSettings, saveRetentionSettings } from "../retention.js";
+import { retentionLooser, retentionSettings, saveRetentionSettings } from "../retention.js";
 import { WakeWordSettingsSchema, wakeWordKey } from "../voice-wake.js";
 import { DictationSettingsSchema, dictationKey } from "../voice-dictation.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "../event-loop-watch.js";
@@ -26,8 +26,8 @@ import { DesktopSettingsSchema } from "../integrations/desktop-config.js";
 import { MediaProgramsSchema } from "../media-programs.js";
 import { SpeechEngineSettingsSchema } from "../speech-engines.js";
 import { executionMetricsSettings, saveExecutionMetricsSettings } from "../execution-metrics.js";
-import { askMode, type AskPart } from "../asks/settings.js";
-import { moveInMode, saveMoveInMode } from "../migrate/switch.js";
+import { askMode, askShipsOn, type AskPart } from "../asks/settings.js";
+import { moveInMode, moveInShipsAs, saveMoveInMode } from "../migrate/switch.js";
 import { MemoryHistorySettingsSchema } from "../memory-git.js";
 import { PullRequestHookSettingsSchema } from "../pr-hook.js";
 import { SkillInstallSettingsSchema } from "../skill-installs.js";
@@ -36,7 +36,7 @@ import { localModelsMode, saveLocalModelsMode } from "../local-jobs.js";
 import { saveUsageReportSettings, usageReportSettings } from "../usage-report.js";
 import { RecordingSettingsSchema } from "../run-recording.js";
 import { PromptLibrarySettingsSchema } from "../prompt-library.js";
-import { CommandSettingsSchema } from "../commands/settings.js";
+import { commandSettings, commandsShipAs, saveCommandSettings } from "../commands/settings.js";
 import { flyCoreSettings } from "../fly-core/settings.js";
 import { GoalUndoSettingsSchema } from "../goal-mode.js";
 import { reflectionSettings } from "../reflection/settings.js";
@@ -103,6 +103,13 @@ function parsedBy(key: string, schema: () => Parser): Hooks {
 const modeFrom = (reader: (store: Store, owner: string) => string): Hooks => ({ read: (store, owner) => ({ mode: reader(store, owner) }) });
 /** A smaller ask's switch (src/asks/settings.ts). It is saved through the app's own asks (src/settings-kit/writers.ts). */
 const askHooks = (part: AskPart): Hooks => modeFrom((store, owner) => askMode(store, owner, part));
+/**
+ * The owner's rule (ships on, 2026-09-26): a switch that ships "when needed" starts there, so putting it
+ * back, undoing to its starting value and weighing a change all measure from how Branch really ships.
+ */
+const shipsAs = (spec: SettingSpec, mode: string): SettingSpec =>
+  ({ ...spec, fields: spec.fields.map((field) => (field.field === "mode" ? { ...field, initial: mode } : field)) });
+const askShips = (part: AskPart): string => askShipsOn[part] ?? "off";
 
 /**
  * Q65: the screen and keyboard as the owner saved them, parsed as src/integrations/desktop-config.ts parses
@@ -322,10 +329,10 @@ const reach: SettingSpec[] = [
   // turning it up reaches further. It ships off. No plan account is ever asked, switch or no switch.
   one("usage-limits", "Asking a service what is left", "settings-kit.name.usage-limits", "settings:data", "reach",
     { keepsEnabled: true, write: (store, owner, patch) => { saveUsageLimitsSettings(store, owner, patch); }, read: (store, owner) => ({ ...usageLimitsSettings(store, owner) }) }),
-  one("asks-analytics", "Counting how Branch is used", "settings-kit.name.analytics", "settings:data", "reach", askHooks("analytics")),
-  one("asks-answer-engine", "Quick answers from the web", "settings-kit.name.answers", "library:made", "reach", askHooks("answer-engine")),
-  one("asks-runtimes", "Other agents answering a conversation", "settings-kit.name.runtimes", "settings:models:connection", "reach", askHooks("runtimes")),
-  one("asks-nodes", "Other computers running Branch", "settings-kit.name.nodes", "settings:computer", "reach", askHooks("nodes")),
+  shipsAs(one("asks-analytics", "Counting how Branch is used", "settings-kit.name.analytics", "settings:data", "reach", askHooks("analytics")), askShips("analytics")),
+  shipsAs(one("asks-answer-engine", "Quick answers from the web", "settings-kit.name.answers", "library:made", "reach", askHooks("answer-engine")), askShips("answer-engine")),
+  shipsAs(one("asks-runtimes", "Other agents answering a conversation", "settings-kit.name.runtimes", "settings:models:connection", "reach", askHooks("runtimes")), askShips("runtimes")),
+  shipsAs(one("asks-nodes", "Other computers running Branch", "settings-kit.name.nodes", "settings:computer", "reach", askHooks("nodes")), askShips("nodes")),
   // mac7/bind: moving Branch's own door off this computer's loopback lets anything on the private
   // network reach it, so raising it reaches further. It is a choice of two and never an address to
   // type: nothing brought in from a file or a preset may name where this computer listens.
@@ -342,7 +349,8 @@ const reach: SettingSpec[] = [
     read: ownListen,
   },
   one("move-in-switch", "Looking at other assistants' folders", "settings-kit.name.move-in", "settings:data", "reach",
-    { ...modeFrom(moveInMode), write: (store, owner, patch) => { saveMoveInMode(store, owner, { mode: moveInMode(store, owner), ...patch }); } }),
+    { fields: [{ ...sw("mode", "Switch", "settings-kit.field.switch", "reach"), initial: moveInShipsAs }], // p17: ships at "when needed"
+      ...modeFrom(moveInMode), write: (store, owner, patch) => { saveMoveInMode(store, owner, { mode: moveInMode(store, owner), ...patch }); } }),
   one("memory-history", "Keeping the history of what it remembers", "settings-kit.name.memory-history", "library:memory", "reach",
     parsedBy("memory-history", () => MemoryHistorySettingsSchema)),
   one("pull-request-hook", "Pull requests from changes", "settings-kit.name.pull-requests", "settings:advanced", "reach",
@@ -391,8 +399,8 @@ const reach: SettingSpec[] = [
   // r17-i integration review: every reach and platform switch reaches further when raised (src/reach/settings.ts).
   // src/server.ts saves them through Reach, so the tools and the relay follow the switch at once.
   // Q65: shown as saved, not as Lockdown reads it (`reachMode`), so a change is weighed against the owner's own switch.
-  ...reachParts.map((part) => one(reachKey(part), reachLabels[part], `reach.part.${part}`, reachHomes[part], "reach",
-    modeFrom((store, owner) => savedReachMode(store, owner, part)))),
+  ...reachParts.map((part) => shipsAs(one(reachKey(part), reachLabels[part], `reach.part.${part}`, reachHomes[part], "reach",
+    modeFrom((store, owner) => savedReachMode(store, owner, part))), reachShipsOn[part] ?? "off")),
   safetyPart("tool-scripts", "Scripts that call several tools at once", "reach"),
   safetyPart("wasm-add-ons", "Add-ons in a sealed WebAssembly box", "reach"),
   // r17-h: checks run tools and scripts, widgets ask tools on a timer, and requests reach the package lists.
@@ -432,9 +440,12 @@ const comfort: SettingSpec[] = [
     parsedBy("run-recording", () => RecordingSettingsSchema)),
   one("prompt-library", "Saved prompts", "settings-kit.name.prompts", "automations:procedures", "plain",
     parsedBy("prompt-library", () => PromptLibrarySettingsSchema)),
-  one("command-catalog", "The shared commands", "settings-kit.name.commands", "settings:general", "plain",
-    parsedBy("command-catalog", () => CommandSettingsSchema)),
-  one("asks-project-board", "Project boards", "settings-kit.name.project-board", "settings:general", "plain", askHooks("project-board")),
+  // Read as src/commands/settings.ts reads it, so a switch never saved shows how it ships.
+  shipsAs(one("command-catalog", "The shared commands", "settings-kit.name.commands", "settings:general", "plain", {
+    read: (store, owner) => ({ ...commandSettings(store, owner) }),
+    write: (store, owner, patch) => { saveCommandSettings(store, owner, { ...commandSettings(store, owner), ...patch }); } }),
+  commandsShipAs),
+  shipsAs(one("asks-project-board", "Project boards", "settings-kit.name.project-board", "settings:general", "plain", askHooks("project-board")), askShips("project-board")),
   // Saved through the learning core's own switch (src/settings-kit/writers.ts), which also adds or takes away its tool.
   one("fly-core", "What Branch learns from experience", "settings-kit.name.fly-core", "library:memory", "plain",
     { read: (store, owner) => ({ ...flyCoreSettings(store, owner) }) }),
@@ -472,6 +483,11 @@ const comfort: SettingSpec[] = [
         initial: 0, kind: { type: "number", min: 0, max: 3650 } }],
     write: (store, owner, patch) => { saveRetentionSettings(store, owner, { ...retentionSettings(store, owner), ...patch }); },
     read: (store, owner) => ({ ...retentionSettings(store, owner) }),
+    // Keeping conversations longer is less careful, as POST /api/retention holds it (src/retention.ts retentionLooser).
+    weigh: (store, owner, field, to) => {
+      const before = retentionSettings(store, owner);
+      return retentionLooser(before, { ...before, [field]: to } as typeof before);
+    },
   },
   // The round limit is the owner's own knob (src/knobs/settings.ts, limits.maxModelRounds), so Branch's settings tools
   // can find it and change it on the owner's yes. The knob records stay on the never-touched list: this reads and

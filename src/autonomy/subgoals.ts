@@ -1,5 +1,5 @@
 import type { Store } from "../store.js";
-import { quoteLine } from "./settings.js";
+import { AutonomyModeSchema, autonomyShipsOn, quoteLine } from "./settings.js";
 
 /**
  * R17-018: `/subgoal` — more that must be true before a conversation's goal (goal mode, src/goal-mode.ts)
@@ -43,7 +43,11 @@ export function addSubgoal(store: Store, owner: string, sessionId: string, text:
  */
 export function goalWithSubgoals(store: Pick<Store, "get">, owner: string, state: { sessionId: string; objective: string }): string {
   if (!state.sessionId) return state.objective;
-  const mode = (store.get("settings", owner, "autonomy-session-commands")?.data as { mode?: string } | undefined)?.mode;
+  const found = store.get("settings", owner, "autonomy-session-commands");
+  // The owner's rule (ships on, 2026-09-26): a part never saved reads as it ships (settings.ts); a saved mode that
+  // cannot be read is off.
+  const saved = found ? AutonomyModeSchema.safeParse((found.data as { mode?: unknown } | undefined)?.mode) : null;
+  const mode = saved ? (saved.success ? saved.data : "off") : autonomyShipsOn["session-commands"];
   if (!mode || mode === "off") return state.objective;
   const items = subgoalsOf(store, owner, state.sessionId);
   if (!items.length) return state.objective;

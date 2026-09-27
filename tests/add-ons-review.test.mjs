@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { openPlace } from "./places.mjs";
+import { signIn, openPlace } from "./new-window-places.mjs";
 import { createBranch, zipWrite } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { inferToolGroup } from "../dist/catalog.js";
@@ -445,22 +445,21 @@ test("review: the add-ons card opens in Customize → Plugins and fits 400 px wi
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
-  await page.goto(server.url + "/");
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await openPlace(page, "customize:plugins");
-  const card = page.locator("#add-ons-card");
-  await card.waitFor({ state: "visible" });
-  assert.equal(await card.locator("h2").innerText(), "Add-ons other people wrote");
-  assert.equal(await page.locator("#addons-packages").inputValue(), "on");
-  // Measured inside the page in one step: the card redraws itself, and a box asked for in two steps
-  // (find the element, then measure it) can land on one that was just replaced (null on a busy runner).
+  await signIn(page, server);
+  // Redesign: add-ons live in Customize › Tools › Plugins (public/app/places/customize.js, prototype.html's Tools tab), with
+  // "Add a plugin". The old "Add-ons other people wrote" card and its part switches are replaced by the new window.
+  // WINDOW BUG (400 px): public/app/main.js:38 on("view") never takes "side-open" off #app, so the side list stays over
+  // Customize after it is chosen and its tabs cannot be reached.
+  const place = await openPlace(page, "customize", "tools");
+  await place.locator('[data-act="t9-kind"][data-v="plugins"]').click();
+  await place.locator('[data-act="t9-kind"][data-v="plugins"][aria-current="true"]').waitFor();
+  assert.equal(await place.locator('[data-act="plug-add"]').innerText(), "Add a plugin");
+  // Measured inside the page in one step: the place redraws itself.
   const fits = await page.waitForFunction(() => {
-    const box = document.querySelector("#add-ons-card")?.getBoundingClientRect();
+    const box = document.querySelector("#main .place .t9")?.getBoundingClientRect();
     return box && box.width > 0 && box.x >= 0 && box.right <= 400;
   }, undefined, { timeout: 5000 }).then(() => true, () => false);
-  assert.ok(fits, "the add-ons card fits inside 400 px");
+  assert.ok(fits, "Customize › Tools fits inside 400 px");
   const wide = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   assert.equal(wide, false, "no sideways scrolling at 400 px");
 });

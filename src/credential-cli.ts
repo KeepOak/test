@@ -37,9 +37,29 @@ export function readCredentialSettings(store: Store, owner: string): CredentialS
   const saved = CredentialSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
   return saved.success ? saved.data : CredentialSettingsSchema.parse({});
 }
+/**
+ * Q257: `{ choose }` is the window's "Password manager" choice. It puts that manager first and keeps any other the
+ * owner already listed, with its command, so choosing one and then the other loses nothing. It never adds a manager
+ * the owner did not choose, and never touches the on/off switch. `{ services }` still replaces the whole list, which
+ * is how one is taken away; the two at once are refused.
+ */
+const ChoiceSchema = z.object({ choose: z.enum(credentialServices) }).strict();
+function mergedInput(current: CredentialSettings, input: unknown): Record<string, unknown> {
+  const body = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
+  if (!("choose" in body)) return { ...current, ...body };
+  const { choose } = ChoiceSchema.parse(body);
+  return { ...current, services: [choose, ...current.services.filter((service) => service !== choose)] };
+}
 export function saveCredentialSettings(store: Store, owner: string, input: unknown): CredentialSettings {
-  const next = CredentialSettingsSchema.parse({ ...readCredentialSettings(store, owner), ...(input as object ?? {}) });
+  const current = readCredentialSettings(store, owner);
+  const next = CredentialSettingsSchema.parse(mergedInput(current, input));
   store.save("settings", owner, settingsKey, { ...next });
+  // Q257: written down like every other change to what Branch may reach: names only, never a command or a value.
+  const commands = [next.bitwardenCommand !== current.bitwardenCommand ? "the Bitwarden command" : "",
+    next.onePasswordCommand !== current.onePasswordCommand ? "the 1Password command" : ""].filter(Boolean);
+  audit(store, owner, { action: "connection.changed", actor: owner, subject: "Password manager",
+    reason: `${next.enabled ? "On" : "Off"}; asks ${next.services.map((service) => serviceNames[service]).join(", ") || "no password manager"}`
+      + (commands.length ? `; changed ${commands.join(" and ")}` : ""), outcome: "saved" });
   return next;
 }
 

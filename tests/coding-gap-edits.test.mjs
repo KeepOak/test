@@ -68,6 +68,7 @@ test("files.edit takes other agents' argument names and replaceAll, through the 
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   const app = await createBranch({ dataDir: join(root, "data"), workspace });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about editing, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   await writeFile(join(workspace, "c.txt"), "n = 1\nn = 1\n");
   await app.runtime.executeTool("files.edit", { file_path: "c.txt", old_string: "n = 1", new_string: "n = 2", replace_all: true });
@@ -186,6 +187,7 @@ test("a refused edit shows the file's real lines, and an empty find appends or c
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   const app = await createBranch({ dataDir: join(root, "data"), workspace });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about editing, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   const made = await app.runtime.executeTool("files.edit", { path: "src/new.js", find: "", replace: "export const one = 1;\n" });
   assert.equal(made.created, true);
@@ -276,6 +278,7 @@ test("review: writing files never runs them — after code.patch or code.change_
   await writeFile(join(workspace, "package.json"), JSON.stringify({ type: "module" }));
   await writeFile(join(workspace, "notes.txt"), "one\r\ntwo\r\n");
   const app = await createBranch({ dataDir: join(root, "data"), workspace });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about editing, not reading first
   t.after(async () => { await app.close(); await discardTemp(root); });
   app.store.save("settings", app.runtime.owner, "code-run", { enabled: true });
   // A test file the patch itself writes: if writing ran the tests, this would run and leave a mark.

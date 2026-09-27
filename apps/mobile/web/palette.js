@@ -8,7 +8,7 @@
 /**
  * The theme the native pieces wear when nothing else is known: the splash screen, the launch colour,
  * the app icon's ground, and the first paint before the window says which theme it shows. The same
- * default the window uses (public/theme-bridge.js DEFAULT_THEME; redesign phase 1: Slate).
+ * default the window used (web/theme-bridge.js DEFAULT_THEME, the phone's copy; redesign phase 1: Slate).
  */
 export const NATIVE_THEME = "slate";
 

@@ -72,6 +72,8 @@ export const AdaptLookSchema = z.object({
   said: z.string().trim().max(400).optional(),
   stopId: z.string().max(80).optional(),
 }).strict();
+/** "Leave it stopped": which stop. Nothing is fetched, changed or deleted; the stop is only no longer offered. */
+export const AdaptLeaveSchema = z.object({ stopId: z.string().min(1).max(80) }).strict();
 export const AdaptGoSchema = z.object({
   said: z.string().trim().max(400).optional(),
   stopId: z.string().max(80).optional(),
@@ -96,6 +98,18 @@ export class Adapt {
       done: wanted.done, nextStep: wanted.nextStep, at: this.now(), carriedOnAt: null, gained: "",
       blocker: blocker ?? { kind: "program", what: wanted.said.slice(0, 200), modelKind: "", said: wanted.said },
     });
+  }
+
+  /**
+   * The owner's "Leave it stopped". The record is kept, still stopped, with the time it was left; it is only no longer
+   * offered in the waiting list. Nothing is fetched, changed or deleted.
+   */
+  leave(input: unknown): AdaptStop {
+    const { stopId } = AdaptLeaveSchema.parse(input);
+    const stop = this.stops.get(stopId);
+    if (!stop) throw new Error("There is no stopped task with that id.");
+    if (stop.carriedOnAt) throw new Error("That task has already carried on.");
+    return this.stops.update(stop.id, { leftAt: this.now() }) ?? stop;
   }
 
   /** What is missing, what would fix it and what that costs. Nothing is done here, ever. */

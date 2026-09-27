@@ -1,5 +1,8 @@
 import { z } from "zod";
 import type { Trunks } from "./index.js";
+import { characters } from "./characters.js";
+import { startedWithShortLivedKey } from "../key-context.js";
+import { currentPerson } from "../people/context.js";
 import { TrunkOffError, TrunkPartSchema, trunkLabels, trunkParts } from "./settings.js";
 
 /**
@@ -23,8 +26,10 @@ export interface TrunksHttpDeps {
 
 const SwitchSchema = z.object({ part: TrunkPartSchema, mode: z.enum(["off", "when-needed", "on"]) }).strict();
 const TextSchema = z.object({ text: z.string().trim().min(1).max(16000) }).strict();
-const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach))?$/;
-const roomPath = /^\/api\/trunks\/rooms\/([a-f0-9-]{36})(?:\/(remove|send|stop|answer|revoke|artifacts))?$/; // phase2/rooms: revoke
+/** eng-trunk-controls: resume takes nothing. */
+const EmptySchema = z.object({}).strict().nullable().optional();
+const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers))?$/;
+const roomPath = /^\/api\/trunks\/rooms\/([a-f0-9-]{36})(?:\/(remove|send|stop|answer|revoke|artifacts|typing))?$/; // phase2/rooms: revoke; chatlook: typing
 const routinePath = /^\/api\/trunks\/routines\/([a-f0-9-]{36})\/remove$/;
 /** mac7/residuals (integration): Answer / Not now on a Trunk's message that waits for the owner. */
 const messagePath = /^\/api\/trunks\/messages\/([a-f0-9-]{36})\/(answer|decline)$/;
@@ -63,7 +68,8 @@ async function conversationRoute(deps: TrunksHttpDeps, id: string | undefined, a
 
 function roomSummary(room: ReturnType<Trunks["rooms"]["get"]>) {
   return { id: room.id, name: room.name, members: room.members, people: room.people, needsYou: room.needsYou, pinned: room.pinned,
-    section: room.section, order: room.order, picture: room.picture, sessionId: room.sessionId,
+    section: room.section, order: room.order, picture: room.picture, sessionId: room.sessionId, rule: room.rule, pattern: room.pattern,
+    agents: room.agents, // a2a-rooms
     latest: room.events.filter((event) => event.kind === "user" || event.kind === "member").at(-1)?.text.slice(0, 160) ?? null,
     at: room.updatedAt };
 }
@@ -73,6 +79,7 @@ function householdRoomView(view: ReturnType<Trunks["rooms"]["view"]>) {
   return { ...shared, owner: false, waiting: [], allowed: [] };
 }
 
+/** Trunk look: `characters` are the ones a Trunk can wear, so every face drawn from this list (a person's rooms too) finds its art. */
 function overview(trunks: Trunks, person: TrunksHttpDeps["person"]) {
   const modes = trunks.modes();
   if (person) {
@@ -80,10 +87,10 @@ function overview(trunks: Trunks, person: TrunksHttpDeps["person"]) {
     // Each room also names the Trunks in it (as the room itself does for them), so a person's own
     // card can say which Trunks they may reach without seeing the owner's whole list.
     return { modes, labels: [], trunks: [], rooms: trunks.rooms.forPerson(person.id)
-      .map((room) => ({ ...roomSummary(room), roster: trunks.rooms.roster(room) })) };
+      .map((room) => ({ ...roomSummary(room), roster: trunks.rooms.roster(room) })), characters: characters() };
   }
   return { modes, labels: trunkParts.map((part) => ({ part, label: trunkLabels[part] })),
-    ...(modes.trunks === "off" ? { trunks: [], rooms: [] } : trunks.roster()) };
+    ...(modes.trunks === "off" ? { trunks: [], rooms: [] } : trunks.roster()), characters: characters() };
 }
 
 async function topRoute(deps: TrunksHttpDeps, path: string): Promise<unknown> {
@@ -97,6 +104,12 @@ async function topRoute(deps: TrunksHttpDeps, path: string): Promise<unknown> {
     return { modes: trunks.setMode(part, { mode }) };
   }
   if (path === "/api/trunks/import") return { trunk: trunks.importFile(await deps.readBody()) };
+  // eng-trunk-controls: pause every Trunk (a running task finishes unless `now`), or let them all start work again.
+  if (path === "/api/trunks/pause-all") return trunks.pause.pauseAll(await deps.readBody());
+  if (path === "/api/trunks/resume-all") {
+    EmptySchema.parse(await deps.readBody());
+    return trunks.pause.resumeAll();
+  }
   if (path === "/api/trunks/from-specialist") {
     const { specialistId } = z.object({ specialistId: z.string().uuid() }).strict().parse(await deps.readBody());
     return { trunk: trunks.fromSpecialist(specialistId) };
@@ -124,6 +137,8 @@ async function trunkRoute(deps: TrunksHttpDeps, id: string, action: string | und
   if (!action) return post ? edited(trunks, id, await deps.readBody()) : details(trunks, id);
   if (action === "export") return trunks.exportFile(id);
   if (action === "keys") return trunks.keys(id);
+  // P17-D §9: the computers it may use and how many tasks at once; reading names the owner's computers, so both are the owner's.
+  if (action === "computers") return post ? trunks.computerRule.set(id, await deps.readBody()) : trunks.computerRule.view(id);
   if (!post) return undefined;
   switch (action) {
     case "remove": return trunks.remove(id);
@@ -134,6 +149,8 @@ async function trunkRoute(deps: TrunksHttpDeps, id: string, action: string | und
     case "routines": return { routine: trunks.routines.create(id, await deps.readBody()) };
     case "watch": return trunks.teaching.watch(id);
     case "teach": return trunks.teaching.save(id, await deps.readBody());
+    case "pause": return trunks.pause.pause(id, await deps.readBody()); // eng-trunk-controls
+    case "resume": EmptySchema.parse(await deps.readBody()); return trunks.pause.resume(id);
     default: return undefined;
   }
 }
@@ -150,11 +167,16 @@ async function roomRoute(deps: TrunksHttpDeps, id: string, action: string | unde
   trunks.require("rooms");
   rooms.requireAccess(id, deps.person?.id ?? null);
   if (!action && !post) {
-    const view = rooms.view(id);
+    // chatlook: reading it counts as being here, for whoever is at a window: the app's, or a person's own key. A
+    // script's short-lived key reads the room without putting anyone in it.
+    const atWindow = !startedWithShortLivedKey() || currentPerson() !== null;
+    const view = rooms.view(id, atWindow ? { profileId: deps.person?.id ?? null } : undefined);
     return deps.person ? householdRoomView(view) : { ...view, owner: true };
   }
   if (action === "send" && post) return rooms.send(id, await deps.readBody(), deps.person);
   if (action === "artifacts" && post) return { artifact: rooms.addArtifact(id, await deps.readBody(), deps.person) };
+  // chatlook: "is typing", for whoever the room admits; who it is comes from who is at the window, never the body.
+  if (action === "typing" && post) { EmptySchema.parse(await deps.readBody()); return rooms.typing(id, deps.person?.id ?? null); }
   deps.requireOwner("Changing a private room");
   if (!action) return { room: rooms.edit(id, await deps.readBody()) };
   if (!post) return undefined;

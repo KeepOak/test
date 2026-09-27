@@ -39,7 +39,7 @@ export function withDeviceHeaders(fetcher, storage, here) {
   };
 }
 
-/** Called once by public/app.js. */
+/** Called once by public/app/main.js. */
 export function installDeviceHeaders(scope = globalThis) {
   if (!scope.fetch || scope.fetch.name === "deviceFetch") return;
   scope.fetch = withDeviceHeaders(scope.fetch.bind(scope), scope.sessionStorage, scope.location);

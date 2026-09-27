@@ -114,10 +114,10 @@ test("the approval card and the settings kit keep the owner's refusals through a
   assert.equal((await api("POST", "/api/policy", { preset: "workspace" })).status, 200);
   standing("web.fetch", "deny");
   const refusal = policy().rules[0];
-  const card = await api("POST", "/api/policy", { preset: "read-only" });
-  assert.equal(card.status, 200, "the owner's own move on the card is made at once, with no extra question");
+  const card = await api("POST", "/api/policy", { preset: "read-only", confirmLoosening: true }); // Q257: web reads stop asking, so this loosens
+  assert.equal(card.status, 200, "the owner's own move on the card, with the yes to loosening, is made at once");
   assert.deepEqual(card.body.policy.rules, [refusal, ...presetRules("read-only")], "the card's preset keeps the refusal");
-  await api("POST", "/api/policy", { preset: "workspace" });
+  await api("POST", "/api/policy", { preset: "workspace", confirmLoosening: true }); // Q257: from read-only this loosens
   const plan = { source: "set", key: "policy", field: "preset", value: "ask-before-changes" };
   const preview = (await api("POST", "/api/settings-kit/preview", plan)).body;
   assert.equal(preview.changes.find((change) => change.id === "policy.preset")?.loosens, true, "looking things up on the web stops asking");

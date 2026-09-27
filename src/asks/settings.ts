@@ -3,7 +3,8 @@ import type { Store } from "../store.js";
 
 /**
  * Bucket 23 (wave mac6): "the smaller asks". Each part has the owner's three-way switch — off, when
- * needed, on — kept in a settings record of its own, and every one ships off.
+ * needed, on — kept in a settings record of its own. What each ships as is `askShipsOn` below; a
+ * saved record that cannot be read is off.
  *
  *   off          the part refuses in one plain sentence; its tools are not in the catalog at all
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -25,6 +26,20 @@ const RecordSchema = z.object({ mode: ModeSchema.default("off") }).strict();
 
 /** The settings record a part's switch is kept in. */
 export const askKey = (part: AskPart): string => `asks-${part}`;
+
+/** What each part is while nothing has been saved for it. A saved record that is damaged still reads as off. */
+export const askShipsOn: Partial<Record<AskPart, AskMode>> = {
+  // The owner's rule (ships on, 2026-09-26): putting a flow or schedule under a project is a label on this computer; none of (a)–(f).
+  "project-board": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): an answer kept as a page stays in Library; nothing is put online; none of (a)–(f).
+  "answer-pages": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): routes only the intents the owner names, by words on this computer unless they add the model stage; none of (a)–(f).
+  "intent-pipeline": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): a page refreshes only once the owner pins it, and only through calls the rules allow outright; none of (a)–(f).
+  "live-surfaces": "when-needed",
+  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): answer-engine and analytics send data out (a search provider, usage counts); article-writer and runtimes spend;
+  // nodes and app-server let the outside in (an outside client can answer approvals).
+};
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
 export const askLabels: Record<AskPart, string> = {
@@ -65,12 +80,14 @@ export const askTools: Record<AskPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
-export const askToolFeatures: readonly (readonly [string, string, readonly string[]])[] = askParts
+export const askToolFeatures: readonly (readonly [string, string, readonly string[], AskMode])[] = askParts
   .filter((part) => askTools[part].length > 0)
-  .map((part) => [askKey(part), `${askLabels[part].charAt(0).toLowerCase()}${askLabels[part].slice(1)} is switched on`, askTools[part]] as const);
+  .map((part) => [askKey(part), `${askLabels[part].charAt(0).toLowerCase()}${askLabels[part].slice(1)} is switched on`, askTools[part], askShipsOn[part] ?? "off"] as const);
 
 export function askMode(store: Pick<Store, "get">, owner: string, part: AskPart): AskMode {
-  const saved = RecordSchema.safeParse(store.get("settings", owner, askKey(part))?.data ?? {});
+  const found = store.get("settings", owner, askKey(part));
+  if (!found) return askShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

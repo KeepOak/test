@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { ApprovalRequiredError } from "../approvals.js";
 import type { ToolCall, ToolContext } from "../contracts.js";
 import type { JournalHook } from "../never-break/journal.js";
 import type { ToolRegistry } from "../registry.js";
+import { argumentFingerprint } from "../question-fingerprint.js";
 import { openWall, type SandboxStart, type WallDeps } from "../sandbox-backends.js";
 import type { WallContext } from "../sandbox.js";
 import { gateToolUse, type ToolGateHost } from "../tool-gate.js";
@@ -61,7 +62,6 @@ export interface ScriptResult { ok: boolean; result: unknown; calls: { tool: str
 
 export const windowsScriptRefusal = "On Windows Branch cannot wall a script off from your files and the internet, so tool scripts do not run here.";
 export const askedInScript = "Your approval settings ask first about this, and a script cannot stop to ask. Call this tool on its own, outside the script.";
-const fingerprintOf = (args: unknown): string => createHash("sha256").update(JSON.stringify(args ?? {}), "utf8").digest("hex").slice(0, 32);
 
 export class ToolScripts {
   constructor(private readonly deps: ToolScriptDeps) {}
@@ -139,7 +139,7 @@ export class ToolScripts {
   /** Gate, then journal and loop guard around the call itself, as a task's own call has them. */
   private async perform(tool: string, args: unknown, context: ToolContext, callId: string): Promise<{ ok: boolean; result?: unknown; error?: string }> {
     const { host, registry } = this.deps;
-    const scope = gateToolUse(host, tool, args, context, fingerprintOf(args), "policy");
+    const scope = gateToolUse(host, tool, args, context, argumentFingerprint(tool, JSON.stringify(args ?? {})), "policy");
     // As in Runtime.callTool: the wall comes only from the gate, never from the context handed in.
     const { osSandbox: _outer, ...unwalled } = context;
     const execute = async () => ({ ok: true, result: host.hideSecrets(await registry.execute(tool, args, { ...unwalled, ...scope })) });

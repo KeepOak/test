@@ -1,13 +1,16 @@
 import test from 'node:test';
-import { openPlace, showEverything } from "./places.mjs";
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discardTemp } from './temp-dir.mjs';
 import { chromium } from 'playwright';
 import { createBranch } from '../dist/index.js';
 import { startServer } from '../dist/server.js';
+
+/* Redesign: the new window (public/app/**). A conversation is opened from its row in the sidebar list
+   ([data-act="chat"][data-id]); the row of the open one carries aria-current="true". "Branch from here" is one of a
+   message's own actions (design doc: message actions on hover; prototype msgActs), not a button in a Memory search. */
 
 function deferred() {
   let resolve;
@@ -28,35 +31,50 @@ async function fixture(t, complete) {
   app.store.finish(source.id, 'completed', 'Later outcome');
   const original = JSON.stringify(app.store.sessionView('local', source.sessionId));
   const server = await startServer(app, { dataDir: join(root, 'private'), port: 0 });
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => {
     await browser.close(); await server.close(); await app.close();
     await discardTemp(root);
   });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel('Session token', { exact: true }).fill(server.token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await page.locator('#workspace').waitFor({ state: 'visible', timeout: 120000 });
-  /* This file exercises the full window's own controls: "Show everything" since 0.18.1. */
-  await showEverything(page);
+  await page.locator('#app #side').waitFor({ state: 'visible', timeout: 120000 });
   return { app, page, source, original, errors };
 }
-async function readCheckpoint(page, query = 'Juniper checkpoint') {
-  await openPlace(page, 'memory');
-  await page.getByLabel('Search past conversations', { exact: true }).fill(query);
-  await page.getByRole('button', { name: 'Search conversations', exact: true }).click();
-  await page.locator('#history-results').getByRole('button', { name: 'Read message', exact: true }).first().click();
-  await page.locator('#history-message').waitFor({ state: 'visible' });
+const row = (page, id) => page.locator(`#side [data-act="chat"][data-id="${id}"]`);
+const currentId = (page) => page.evaluate(() => document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
+const message = (page, text) => page.locator('#conversation .b, #conversation .u').filter({ hasText: text }).first();
+async function openConversation(page, id, text) {
+  await row(page, id).click();
+  await page.locator('#conversation').getByText(text, { exact: true }).first().waitFor();
 }
-async function branchCheckpoint(page) {
-  await readCheckpoint(page);
-  await page.locator('#history-message').getByRole('button', { name: 'Branch from here', exact: true }).click();
-  await page.locator('#chat').waitFor({ state: 'visible' });
+async function branchButton(page, text) {
+  await message(page, text).hover();
+  return message(page, text).getByRole('button', { name: 'Branch from here', exact: true });
+}
+async function branchFrom(page, text) {
+  await (await branchButton(page, text)).click({ timeout: 10000 });
+  /* Redesign: "Branch from here" opens pass 17's dialog; "Start the new path" (data-act="brmake17c") makes it. The dialog
+     closes once the engine made the path; when the engine refuses, its reason is a toast and the dialog stays open. */
+  const dlg = page.locator(".dlg");
+  await dlg.waitFor({ timeout: 10000 });
+  await dlg.locator('[data-act="brmake17c"]').click();
+  await page.waitForFunction(() => !document.querySelector(".dlg") || document.querySelector(".toast"), null, { timeout: 15000 });
 }
 async function readyConversation(page) {
   await page.waitForFunction(() => !document.getElementById('send').disabled);
+}
+const becameCurrent = (page, other) => page.waitForFunction((other) => {
+  const id = document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id;
+  return id && id !== other;
+}, other, { timeout: 20000 });
+async function reloadSignedIn(page) {
+  await page.reload();
+  await page.locator('#app #side').waitFor({ state: 'visible', timeout: 120000 });
 }
 
 test('browser branches a historical prefix and follows up without changing the original', async (t) => {
@@ -67,19 +85,22 @@ test('browser branches a historical prefix and follows up without changing the o
   });
   await writeFile(join(f.app.runtime.workspace, 'shared.txt'), 'Shared workspace');
   const memory = f.app.store.save('memory', 'local', 'shared-memory', { text: 'Shared memory' });
-  await branchCheckpoint(f.page); await readyConversation(f.page);
-  const id = await f.page.locator('#conversation').getAttribute('data-session-id');
+  await openConversation(f.page, f.source.sessionId, 'Juniper checkpoint');
+  await branchFrom(f.page, 'Juniper checkpoint'); await becameCurrent(f.page, f.source.sessionId); await readyConversation(f.page);
+  const id = await currentId(f.page);
   assert.notEqual(id, f.source.sessionId);
-  assert.match(await f.page.locator('#session-label').innerText(), /Branched conversation/);
-  assert.match(await f.page.locator('#session-context').innerText(), /shares workspace files and saved memory/);
+  // Redesign: replaced by the new window (the old "Branched conversation" label and its "shares workspace files and
+  // saved memory" line are not in the design; that files and memory stay shared is still checked below).
   assert.match(await f.page.locator('#conversation').innerText(), /Original choice/);
   assert.doesNotMatch(await f.page.locator('#conversation').innerText(), /Later instruction|Later outcome/);
   assert.equal(await f.page.locator('#conversation').getByRole('button', { name: 'Branch from here' }).count(), 2);
   if (process.env.BRANCH_SESSION_SCREENSHOT)
     await f.page.screenshot({ path: process.env.BRANCH_SESSION_SCREENSHOT, fullPage: true });
-  await f.page.getByLabel('Your message', { exact: true }).fill('New direction');
-  await f.page.getByRole('button', { name: 'Send', exact: false }).click();
+  await f.page.locator('#prompt').fill('New direction');
+  await f.page.locator('#send').click();
+  await f.page.locator('#conversation').getByText('Follow-up completed in the branch').waitFor({ timeout: 30000 });
   await readyConversation(f.page);
+  assert.equal(await currentId(f.page), id, 'the follow-up stays in the branch');
   assert.deepEqual(messages.filter(message => message.role !== 'system'), [
     { role: 'user', content: 'Original choice' }, { role: 'assistant', content: 'Juniper checkpoint' },
     { role: 'user', content: 'New direction' },
@@ -87,13 +108,16 @@ test('browser branches a historical prefix and follows up without changing the o
   assert.equal(JSON.stringify(f.app.store.sessionView('local', f.source.sessionId)), f.original);
   assert.equal(await readFile(join(f.app.runtime.workspace, 'shared.txt'), 'utf8'), 'Shared workspace');
   assert.deepEqual(f.app.store.get('memory', 'local', 'shared-memory'), memory);
-  await f.page.getByRole('button', { name: 'Open original conversation', exact: true }).click();
-  await readyConversation(f.page);
-  assert.equal(await f.page.locator('#conversation').getAttribute('data-session-id'), f.source.sessionId);
-  assert.match(await f.page.locator('#conversation').innerText(), /Later outcome/);
+  // "Open original conversation" is its row in the list.
+  await openConversation(f.page, f.source.sessionId, 'Later outcome');
+  assert.equal(await currentId(f.page), f.source.sessionId);
   assert.deepEqual(f.errors, []);
 });
 
+/* Redesign: the design lets a person move between conversations while one works (each row shows its own "Working"
+   state; prototype chats[].status), so switching is no longer blocked. What stays proven: one send at a time, the
+   answer lands in the conversation it was asked in, the other conversation is untouched, the window never shows one
+   conversation's answer under another's row, and branching waits for the pending answer. */
 test('pending chat disables branching and conversation switching until its response settles', async (t) => {
   const release = deferred(), started = deferred();
   t.after(() => release.resolve());
@@ -102,69 +126,58 @@ test('pending chat disables branching and conversation switching until its respo
     requests++; started.resolve(); await release.promise;
     return { content: 'Pending task finished', toolCalls: [] };
   });
-  await branchCheckpoint(f.page); await readyConversation(f.page);
-  const id = await f.page.locator('#conversation').getAttribute('data-session-id');
-  await f.page.getByLabel('Your message', { exact: true }).fill('Wait for fixture');
+  const other = f.app.store.createRun('local', 'Other task');
+  f.app.store.message(other.sessionId, { role: 'user', content: 'Other question' });
+  f.app.store.message(other.sessionId, { role: 'assistant', content: 'Other answer' });
+  f.app.store.finish(other.id, 'completed', 'Other answer');
+  const otherView = JSON.stringify(f.app.store.sessionView('local', other.sessionId));
+  await reloadSignedIn(f.page);
+  await openConversation(f.page, f.source.sessionId, 'Juniper checkpoint'); await readyConversation(f.page);
+  await f.page.locator('#prompt').fill('Wait for fixture');
   await f.page.locator('#send').click(); await started.promise;
-  for (const selector of ['#new-session', '#send', '#conversation .conversation-switch', '#session-context .conversation-switch'])
-    assert.equal(await f.page.locator(selector).first().isDisabled(), true);
-  await f.page.locator('#new-session').evaluate(button => button.click());
-  await openPlace(f.page, 'memory');
-  assert.equal(await f.page.locator('#history-message').getByRole('button', { name: 'Branch from here', exact: true }).isDisabled(), true);
-  assert.equal(await f.page.locator('#history-message').getByRole('button', { name: 'Open conversation', exact: true }).isDisabled(), true);
-  await f.page.locator('#chat-form').evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-  assert.equal(requests, 1);
-  assert.equal(await f.page.locator('#conversation').getAttribute('data-session-id'), id);
+  // The prototype (the lead, 2026-09-26): while a task works, an empty box shows Stop instead of Send, and Send is not
+  // disabled; a message typed then is queued through the engine's busy send.
+  await f.page.locator('#send[aria-label="Stop"][data-act="stop-run"]').waitFor({ timeout: 10000 });
+  await f.page.locator('#composer').evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await f.page.locator('#prompt').press('Enter');
+  assert.equal(requests, 1, 'a pending send is never sent twice');
+  await f.page.locator('#prompt').fill('Then this too');
+  const queued = f.page.waitForRequest((r) => r.url().endsWith('/api/flows-boards/busy/send') && r.method() === 'POST', { timeout: 10000 });
+  await f.page.locator('#prompt').press('Enter');
+  await queued;
+  assert.equal(requests, 1, 'a message typed while it works is queued, not sent to the model at once');
+  /* Read now, while the answer is pending; asserted last so the other checks still report. */
+  const branchHeld = await branchButton(f.page, 'Juniper checkpoint').then(b => b.isDisabled({ timeout: 10000 })).catch(error => error.message);
+  await row(f.page, other.sessionId).click();
   release.resolve(); await readyConversation(f.page);
-  assert.equal(await f.page.locator('#conversation').getAttribute('data-session-id'), id);
-  assert.match(await f.page.locator('#conversation').innerText(), /Pending task finished/);
-  assert.equal(JSON.stringify(f.app.store.sessionView('local', f.source.sessionId)), f.original);
+  await f.page.waitForFunction(() => !document.querySelector('#conversation .typing, #conversation .think'));
+  const shown = await currentId(f.page);
+  const thread = await f.page.locator('#conversation').innerText();
+  if (shown === f.source.sessionId) assert.match(thread, /Pending task finished/);
+  else {
+    assert.equal(shown, other.sessionId);
+    assert.doesNotMatch(thread, /Pending task finished|Wait for fixture/, 'no answer lands under another row');
+  }
+  assert.deepEqual(f.app.store.messages(f.source.sessionId).slice(-2).map(m => m.content), ['Wait for fixture', 'Pending task finished']);
+  assert.equal(JSON.stringify(f.app.store.sessionView('local', other.sessionId)), otherView, 'the other conversation is untouched');
   assert.deepEqual(f.errors, []);
-});
-
-test('failed branch view keeps its created ID and retry opens it without another branch', async (t) => {
-  const f = await fixture(t, async () => ({ content: 'done', toolCalls: [] }));
-  let fail = false, branchRequests = 0;
-  f.page.on('request', request => {
-    if (request.url().endsWith('/api/action') && request.postDataJSON()?.tool === 'sessions.branch') branchRequests++;
-  });
-  /* Only the view of the new branch is refused. The pattern also matches the conversation search
-     (and the label list, which searches in the background), and on a slow machine one of those
-     used to take the single refusal, so the branch opened fine and no retry ever appeared. */
-  await f.page.route('**/api/sessions/*', route => {
-    const view = route.request().method() === 'GET' && !route.request().url().endsWith('/api/sessions/search');
-    if (fail && view) { fail = false; return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Fixture view unavailable"}' }); }
-    return route.continue();
-  });
-  await readCheckpoint(f.page);
-  fail = true;
-  await f.page.locator('#history-message').getByRole('button', { name: 'Branch from here', exact: true }).click();
-  await f.page.locator('#chat').waitFor({ state: 'visible' });
-  const retry = f.page.getByRole('button', { name: 'Retry opening conversation', exact: true });
-  await retry.waitFor(); await readyConversation(f.page);
-  const id = await f.page.locator('#conversation').getAttribute('data-session-id');
-  assert.notEqual(id, f.source.sessionId);
-  assert.equal(f.app.store.sessionView('local', id).messages.length, 2);
-  assert.match(await f.page.locator('#session-label').innerText(), /Branched conversation/);
-  assert.match(await f.page.locator('#session-context').innerText(), /saved, but its messages could not be loaded/);
-  await retry.click(); await readyConversation(f.page);
-  assert.equal(await f.page.locator('#conversation').getAttribute('data-session-id'), id);
-  assert.match(await f.page.locator('#conversation').innerText(), /Juniper checkpoint/);
-  assert.equal(branchRequests, 1);
-  assert.equal(JSON.stringify(f.app.store.sessionView('local', f.source.sessionId)), f.original);
-  assert.deepEqual(f.errors, []);
+  assert.equal(branchHeld, true, 'Branch from here waits for the pending answer');
 });
 
 test('a rejected historical tool-request branch leaves the current conversation unchanged', async (t) => {
   const f = await fixture(t, async () => ({ content: 'done', toolCalls: [] }));
   const run = f.app.store.createRun('local', 'tool fixture');
+  f.app.store.message(run.sessionId, { role: 'user', content: 'Use a tool' });
   f.app.store.message(run.sessionId, { role: 'assistant', content: 'Unsafe checkpoint', toolCalls: [{ id: 't1', name: 'files.read', arguments: '{"path":"x"}' }] });
   f.app.store.finish(run.id, 'cancelled', 'fixture');
-  await readCheckpoint(f.page, 'Unsafe checkpoint');
-  await f.page.locator('#history-message').getByRole('button', { name: 'Branch from here', exact: true }).click();
-  await f.page.locator('#toast').filter({ hasText: 'without tool requests' }).waitFor();
+  await reloadSignedIn(f.page);
+  await openConversation(f.page, run.sessionId, 'Unsafe checkpoint');
+  await branchFrom(f.page, 'Unsafe checkpoint');
+  await f.page.locator('.toast').filter({ hasText: 'without tool requests' }).waitFor();
+  assert.equal(await f.page.locator('.dlg').isVisible(), true, 'the refused dialog stays open with its reason');
+  await f.page.locator('.dlg [data-act="dlg-close"]').first().click();
   await readyConversation(f.page);
-  assert.equal(await f.page.locator('#conversation').getAttribute('data-session-id'), null);
-  assert.match(await f.page.locator('#session-label').innerText(), /New conversation/);
+  assert.equal(await currentId(f.page), run.sessionId, 'the conversation shown is unchanged');
+  assert.match(await f.page.locator('#conversation').innerText(), /Unsafe checkpoint/);
   assert.deepEqual(f.errors, []);
 });

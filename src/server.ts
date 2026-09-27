@@ -4,10 +4,10 @@ import {
   type ServerResponse,
   type Server,
 } from "node:http";
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile, writeFile, lstat } from "node:fs/promises";
-import { dirname, join, resolve as resolvePath } from "node:path"; // R17-S-B: resolvePath
+import { dirname, extname, join, resolve as resolvePath } from "node:path"; // R17-S-B: resolvePath
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { TeamHandoffs, TeamHandoffRefusedError } from "./team-handoff.js";
@@ -32,9 +32,10 @@ import { PackageInstallSchema } from "./skill-packages.js";
 import { browserSkillList, browserSkillPackage } from "./browser-skills.js";
 import { readAttachSettings, saveAttachSettings } from "./integrations/browser-attach.js";
 import { refusedHosts } from "./integrations/desktop-config.js";
-import { draftFromRuns, testSkill } from "./skill-authoring.js";
+import { draftFromRuns, testSkill, writeSkill } from "./skill-authoring.js";
 import { suggestSkills } from "./skill-suggest.js";
 import { healthReport, startedCleanly } from "./health.js";
+import { noModelWords } from "./no-model.js";
 import { maximumBackupBytes } from "./backup.js";
 import { chatCompletion, modelsList } from "./openai-compat.js";
 import { AnthropicProvider, GeminiProvider, OpenAIProvider } from "./providers.js";
@@ -61,7 +62,9 @@ import { meteringFolder, meteringSettings, saveMeteringSettings, writeMeteringFi
 import { TryToolSchema, toolForms, tryToolByHand } from "./playground.js";
 import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { exportTemplate, importTemplate } from "./templates.js";
-import { serveRunSocket, tokenFromProtocol } from "./ws.js";
+import { agentSections, agentSummary, exportAgent } from "./agent-export.js"; // p17: whole-agent export from the window
+import { applyPiiGuard } from "./pii.js"; // p17: memory leaves with personal details masked
+import { serveRunSocket, tokenFromProtocol, tokenFromSocket } from "./ws.js";
 // Bucket 13 (mac4): seeing what a task did, step by step, afterwards.
 import { handlesRecordingPath, recordingApi, startEventLoopWatch } from "./run-recording-api.js";
 import { liveHooks } from "./realtime-socket.js";
@@ -109,6 +112,7 @@ import { AppResourceSchema, appHeaders, appPage, type AppResource } from "./mcp-
 // mac2/fly-core-2: the learning core's owner routes.
 import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "./fly-core-api.js";
 // Wave 8: artifacts out of a reply, shown in the same locked-down frame an MCP app gets.
+import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
 import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from "./tool-loading.js";
@@ -126,8 +130,11 @@ import { handlesPersonalPath, personalApi, PersonalHttpError } from "./personal/
 import { handlesReachPath, reachApi, ReachHttpError } from "./reach/api.js"; // r17-i
 import { handlesSafetyPath, safetyApi, SafetyHttpError } from "./safety-extras/api.js"; // mac7/r17-g: the safety extras
 import { codesResting, confirmWithCode, restingRefusal } from "./safety-extras/code-approvals.js"; // mac7/r17-g
+import { safetyMode } from "./safety-extras/settings.js";
+import { runSteps } from "./run-steps.js"; // pass 17: Timeline and Helpers
 import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
+import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
@@ -135,7 +142,7 @@ import { handlesLearnPath, learnApi, LearnHttpError } from "./learn/api.js"; // 
 // mac4/bucket-20: the Agent Protocol, programs lending tools, and the owner's interop routes.
 import { handleInterop, handlesInteropPath, interopOffLimits } from "./interop/api.js";
 import { clientToolsPath, serveClientToolSocket } from "./interop/client-tools.js";
-import { lookApi } from "./terminal-theme.js";
+import { LOOK_LANGUAGES, lookApi } from "./terminal-theme.js";
 // Wave mac3: the owner's control dashboard, a page of its own at /dashboard.
 import {
   DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile,
@@ -146,11 +153,15 @@ import { tokenReport } from "./commands/tokens.js";
 import { handlesPromptsPath, promptsApi } from "./prompt-library-api.js"; // bucket 12
 import { handlesWikiPath, wikiApi } from "./wiki.js";
 import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"; // bucket 12
-import { PolicyRememberSchema, policyPresets, readPolicy, savePolicy } from "./policy.js";
+import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
+import { looseningRefusal, policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
+import { PrivacyChangeRefused } from "./privacy-guard.js"; // the privacy checks are held to the same yes
+import { mayAnswerHere, nothingWaitingRefusal, personConversation, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
+import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
 import { archiveBodyLimit } from "./session-library.js";
 import { maximumMemoryArchiveBytes } from "./memory.js";
 import { conversationMarkdown, maximumImportBytes } from "./memory-export.js";
-import { assistantIdentity, saveAssistantIdentity } from "./identity.js";
+import { saveAssistantIdentity } from "./identity.js";
 import { contextFileStatus, saveContextFileSettings, contextFileSettings } from "./context-files.js";
 // mac3/reflection-skills: the learning loop's routes.
 import { reflectionApi } from "./reflection/api.js";
@@ -166,6 +177,8 @@ import { voiceApi } from "./voice-api.js";
 // bucket-18: pull requests from changes (A0300), and which requests came with a short-lived key.
 import { pullRequestHookSettings, savePullRequestHookSettings } from "./pr-hook.js";
 import { markShortLivedKey, startedWithShortLivedKey } from "./key-context.js";
+import { noteSetupOrigin, setupOriginHeader } from "./setup-origin.js";
+import { onboardingRecord, saveOnboarding } from "./onboarding.js"; // setup-resume: how far setup got, merged
 import { connectionCheck } from "./local-connection-policy.js"; // mac5/key-sweep: Test this connection
 import type { NetworkPolicy } from "./network-policy.js";
 import { generalShortLivedKeyRefusal, knobsRefusal, ownerOnlyRead, taskRouteFor } from "./short-lived-keys.js"; // mac5/key-sweep (R17-S-B: knobsRefusal)
@@ -176,7 +189,7 @@ import { peopleEnabled } from "./people/settings.js";
 import { interopMode } from "./interop/settings.js";
 import { requireBoundSession } from "./people/access.js";
 import { keyAnswerRefusal, keyStopRefusal, runOrigin, shortLivedKeyMark } from "./key-context.js";
-import { currentPerson } from "./people/context.js";
+import { currentPerson, enterPairedDoor } from "./people/context.js";
 // ---- end bucket 19 ----
 // bucket-18: code editor (A0098)
 import { handlesWorkspaceEditorPath, workspaceEditorApi, workspaceEditorSettings, WorkspaceEditorApiError } from "./workspace-editor-api.js";
@@ -203,6 +216,7 @@ import { handlesPageNotes, pageNotesApi } from "./browser-notes-api.js"; // w911
 import { buildTraceDocument, traceSettings, saveTraceSettings } from "./trace.js";
 import { writeDiagnosticsBundle } from "./diagnostics.js";
 import { handlesUpdateFailurePath, updateFailureApi } from "./update-failure.js";
+import { dataCopyApi, DataCopyRefusal } from "./install/data-copy.js";
 import { handlesUpdateFixPath, updateFixApi } from "./update-fix.js";
 import { attachmentForWindow, rangeWanted, shownInPage } from "./attachments.js";
 import { diagnosticApi, handlesDiagnosticPath, installTypeOf, newRequestId, startDiagnosticLog } from "./diagnostic-api.js"; // mac7/diagnostics
@@ -210,8 +224,10 @@ import { diagnose } from "./diagnostic-log.js";
 import { toolCatalogReport } from "./tool-report.js";
 // Wave 5 (deployment): installing, background running and reaching Branch from a phone.
 import { RemoteAccess } from "./remote/remote-access.js";
-import { cliAgentRows, registerCliAgent } from "./providers/cli-agent.js";
+import { cliAgentRows } from "./providers/cli-agent.js";
+import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
+import { hereOnlyRefusal, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
 import { devicesApi, DevicesHttpError, handlesDevicesPath, openDevicePaths, openDevicesApi } from "./devices/api.js";
@@ -249,15 +265,17 @@ import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
+import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
-import { DelightError, delightRoute, handlesDelightPath } from "./delight.js"; // phase2/delight
+import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { savingsRefusal } from "./short-lived-keys.js";
-import { householdMaySend, householdRefusalFor } from "./household-routes.js"; // profile-audit
+import { householdMaySend, householdOwnerStore, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261, Q262
+import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
 import { comfortRefusal } from "./short-lived-keys.js";
@@ -280,13 +298,18 @@ import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
+import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
-import { askFirstSettings } from "./ask-first.js";
-import { decisionsFromRules } from "./tool-categories.js";
+import { proposeSchedule } from "./schedule-words.js";
+import { proposeTrigger } from "./trigger-words.js";
+import { ownerTimezone } from "./person-about.js"; // your-profile
+import { workbooksRoute } from "./workbooks.js"; // P17-D §3
+import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
 // the waiting line for tasks, days off and quiet hours, and the household's profiles.
 import { collabApi, collabState, notCollab, runForCurrentPerson } from "./collab-server.js";
 import { shareHtml, RedactionSchema } from "./conversation-share.js";
+import { askSpreadsheet } from "./data-ask.js"; // p17: Ask a spreadsheet
 
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 const actionSchema = z
@@ -323,6 +346,18 @@ const budgetSchema = z
   .refine((b) => b.maxMonthlyTokens !== undefined || b.maxMonthlyDollars !== undefined, {
     message: "Set a monthly limit in tokens, in dollars, or both",
   });
+/** What a new monthly limit lets Branch spend beyond the saved one, in words, or null when it lets it spend no more. */
+function budgetLooser(before: z.infer<typeof budgetSchema> | undefined, after: z.infer<typeof budgetSchema>): string | null {
+  if (!before) return null;
+  const found: string[] = [];
+  const more = (was: number | undefined, now: number | undefined): boolean => was !== undefined && (now === undefined || now > was);
+  if (more(before.maxMonthlyDollars, after.maxMonthlyDollars))
+    found.push(after.maxMonthlyDollars === undefined ? "there would be no monthly limit in dollars" : `the monthly limit would go up from $${before.maxMonthlyDollars} to $${after.maxMonthlyDollars}`);
+  if (more(before.maxMonthlyTokens, after.maxMonthlyTokens))
+    found.push(after.maxMonthlyTokens === undefined ? "there would be no monthly limit in tokens" : `the monthly limit would go up from ${before.maxMonthlyTokens} to ${after.maxMonthlyTokens} tokens`);
+  if (before.pauseAtBudget && !after.pauseAtBudget) found.push("work would no longer pause at the monthly limit");
+  return found.length ? found.join("; ") : null;
+}
 function send(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -435,309 +470,114 @@ const studySummary = (result: StudyRunResult) => ({
   rows: result.rows, tasks: result.tasks.length, resumed: result.resumed, stoppedEarly: result.stoppedEarly,
 });
 
+/** The new window's files (public/app/**) and its art (public/art/**), served by exact name only. */
+const windowFolders = ["app", "art"];
+const windowTypes: Record<string, string> = {
+  ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg",
+  ".webm": "video/webm", ".mp4": "video/mp4", ".woff2": "font/woff2",
+};
+let windowFileList: Map<string, [string, string]> | undefined;
+/**
+ * Redesign: the list is read from the folders once, at the first request, and never again. A request only ever
+ * picks an entry from it; nothing from the request is joined onto a disk path. Links, hidden files, names with
+ * anything but letters, digits, dot, dash or underscore, and unknown kinds of file are left out.
+ */
+function windowFiles(): Map<string, [string, string]> {
+  if (windowFileList) return windowFileList;
+  const found = new Map<string, [string, string]>();
+  const walk = (relative: string): void => {
+    const folder = fileURLToPath(new URL(`../public/${relative}/`, import.meta.url));
+    if (!existsSync(folder)) return;
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(entry.name)) continue;
+      const inside = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) walk(inside);
+      const type = entry.isFile() ? windowTypes[extname(entry.name).toLowerCase()] : undefined;
+      if (type) found.set(`/${inside}`, [inside, type]);
+    }
+  };
+  for (const folder of windowFolders) walk(folder);
+  windowFileList = found;
+  return found;
+}
+
 async function staticFile(
   path: string,
   response: ServerResponse,
+  request?: IncomingMessage,
 ): Promise<boolean> {
   const assets: Record<string, [string, string]> = {
-    "/acorn.js": ["acorn.js", "text/javascript; charset=utf-8"],
-    // phase2/delight: the corner (acorn and pet), achievements and your own background.
-    "/delight.js": ["delight.js", "text/javascript; charset=utf-8"],
-    "/delight.css": ["delight.css", "text/css; charset=utf-8"],
-    "/delight-kit.js": ["delight-kit.js", "text/javascript; charset=utf-8"],
-    "/delight-pet.js": ["delight-pet.js", "text/javascript; charset=utf-8"],
-    "/delight-achievements.js": ["delight-achievements.js", "text/javascript; charset=utf-8"],
-    "/delight-background.js": ["delight-background.js", "text/javascript; charset=utf-8"],
-    "/delight-3d.js": ["delight-3d.js", "text/javascript; charset=utf-8"],
-    "/look-sync.js": ["look-sync.js", "text/javascript; charset=utf-8"],
-    "/assets/keepoak-mark.png": ["assets/keepoak-mark.png", "image/png"],
-    "/assets/keepoak-mark-reversed.png": ["assets/keepoak-mark-reversed.png", "image/png"],
+    // The window (public/index.html, public/app.css; its modules and art under /app/ and /art/ are served by exact file).
     "/": ["index.html", "text/html; charset=utf-8"],
-    "/app.js": ["app.js", "text/javascript; charset=utf-8"],
-    "/voice.js": ["voice.js", "text/javascript; charset=utf-8"],
-    // mac2/desktop-ui: this computer's own permission switches, and the Keychain list on a Mac.
-    "/os-permissions.js": ["os-permissions.js", "text/javascript; charset=utf-8"],
-    "/voice-talk.js": ["voice-talk.js", "text/javascript; charset=utf-8"],
-    // Wave 8: the composer's live-conversation button and everything behind it.
-    "/voice-live.js": ["voice-live.js", "text/javascript; charset=utf-8"],
-    "/model-profiles.js": ["model-profiles.js", "text/javascript; charset=utf-8"],
-    // Help in the app: the owner's handbook, opened in the pane on the right.
-    "/help.js": ["help.js", "text/javascript; charset=utf-8"],
-    "/documents.js": ["documents.js", "text/javascript; charset=utf-8"],
-    // FQ-collaboration: the seek-to-comment hook, for a media player screen to wire in.
-    "/media-comments.js": ["media-comments.js", "text/javascript; charset=utf-8"],
-    "/knowledge.js": ["knowledge.js", "text/javascript; charset=utf-8"],
-    "/media.js": ["media.js", "text/javascript; charset=utf-8"],
-    // FQ-surfaces.playback: an inline player for a sound or video file attached to a message.
-    "/playback.js": ["playback.js", "text/javascript; charset=utf-8"],
-    // Bucket 17: the video programs card and the speech plug-ins card.
-    "/media-programs.js": ["media-programs.js", "text/javascript; charset=utf-8"],
-    // Bucket 21: the "Building on Branch" and "Flows as files" cards.
-    "/sdk-kit.js": ["sdk-kit.js", "text/javascript; charset=utf-8"],
-    "/memory-tidy.js": ["memory-tidy.js", "text/javascript; charset=utf-8"],
-    "/docs-memory-2.js": ["docs-memory-2.js", "text/javascript; charset=utf-8"],
-    // Batch 27 (wave 8): writing documents, summaries, the map of names and knowledge housekeeping.
-    "/docs-3.js": ["docs-3.js", "text/javascript; charset=utf-8"],
-    // Wave 9: what it noticed by itself, and the refresh that shows its cost first.
-    "/self-improving.js": ["self-improving.js", "text/javascript; charset=utf-8"],
-    "/skills-extra.js": ["skills-extra.js", "text/javascript; charset=utf-8"],
-    "/local-models.js": ["local-models.js", "text/javascript; charset=utf-8"],
-    // Wave mac5 (local models): the one-click block inside the same card.
-    "/local-oneclick.js": ["local-oneclick.js", "text/javascript; charset=utf-8"],
-    // mac7/clean-uninstall: the danger zone at the bottom of Settings.
-    "/danger-zone.js": ["danger-zone.js", "text/javascript; charset=utf-8"],
-    // Wave 6: sharing, labels and notes, workflows, the waiting line, days off and people.
-    "/collab.js": ["collab.js", "text/javascript; charset=utf-8"],
-    "/automations.js": ["automations.js", "text/javascript; charset=utf-8"],
-    // Wave mac2 (quiet-jobs): the check-in card, automation health and check-script approval.
-    "/heartbeat.js": ["heartbeat.js", "text/javascript; charset=utf-8"],
-    "/mcp.js": ["mcp.js", "text/javascript; charset=utf-8"],
-    "/same-card.js": ["same-card.js", "text/javascript; charset=utf-8"],
-    "/mcp-workbench.js": ["mcp-workbench.js", "text/javascript; charset=utf-8"],
-    "/browser.js": ["browser.js", "text/javascript; charset=utf-8"],
-    "/approvals.js": ["approvals.js", "text/javascript; charset=utf-8"],
-    "/tracing.js": ["tracing.js", "text/javascript; charset=utf-8"],
-    "/desktop.js": ["desktop.js", "text/javascript; charset=utf-8"],
-    "/linux-desktop.js": ["linux-desktop.js", "text/javascript; charset=utf-8"], // FQ-execution.desktop
-    "/diagnostics.js": ["diagnostics.js", "text/javascript; charset=utf-8"],
-    "/activity-log.js": ["activity-log.js", "text/javascript; charset=utf-8"], // mac7/diagnostics
-    "/update-screen.js": ["update-screen.js", "text/javascript; charset=utf-8"],
-    "/deployment.js": ["deployment.js", "text/javascript; charset=utf-8"],
-    "/pair": ["pair.html", "text/html; charset=utf-8"],
-    "/pair.js": ["pair.js", "text/javascript; charset=utf-8"],
-    "/pair.css": ["pair.css", "text/css; charset=utf-8"],
-    // Wave mac3: the owner's dashboard, and the card in Customize → Channels that switches it on.
-    "/dashboard": ["dashboard/index.html", "text/html; charset=utf-8"],
-    "/dashboard/dashboard.css": ["dashboard/dashboard.css", "text/css; charset=utf-8"],
-    "/dashboard/dashboard.js": ["dashboard/dashboard.js", "text/javascript; charset=utf-8"],
-    "/dashboard/sections.js": ["dashboard/sections.js", "text/javascript; charset=utf-8"],
-    "/dashboard/feed.js": ["dashboard/feed.js", "text/javascript; charset=utf-8"],
-    "/dashboard/look.js": ["dashboard/look.js", "text/javascript; charset=utf-8"],
-    "/dashboard-card.js": ["dashboard/card.js", "text/javascript; charset=utf-8"],
-    "/dashboard/commands.js": ["dashboard/commands.js", "text/javascript; charset=utf-8"],
-    // Wave mac3 (commands): the message box's / menu and the commands card.
-    "/commands.js": ["commands.js", "text/javascript; charset=utf-8"],
-    // Bucket 13 (mac4): the task recordings card and the "is Branch keeping up" card.
-    "/recordings.js": ["recordings.js", "text/javascript; charset=utf-8"],
-    // mac4/bucket-20: the cards for talking to other agents and tools, and ways of working.
-    "/interop.js": ["interop.js", "text/javascript; charset=utf-8"],
-    // Bucket 15: the add-ons card (Customize → Plugins).
-    "/add-ons.js": ["add-ons.js", "text/javascript; charset=utf-8"],
-    "/asks.js": ["asks.js", "text/javascript; charset=utf-8"], // mac6/bucket-23
-    "/devices.js": ["devices.js", "text/javascript; charset=utf-8"], // mac7/nodes
-    "/phone-app.js": ["phone-app.js", "text/javascript; charset=utf-8"], // mac7/phone-qr
-    "/autonomy.js": ["autonomy.js", "text/javascript; charset=utf-8"], // r17-b
-    "/trunks.js": ["trunks.js", "text/javascript; charset=utf-8"], // R17-A
-    "/settings-trunks.js": ["settings-trunks.js", "text/javascript; charset=utf-8"], // DG-193
-    // phase2/shell: faces, the Trunks strip, the studio, pairing, Overview and People
-    "/faces.js": ["faces.js", "text/javascript; charset=utf-8"],
-    "/faces.css": ["faces.css", "text/css; charset=utf-8"],
-    "/strip.js": ["strip.js", "text/javascript; charset=utf-8"],
-    "/topbar-crumbs.js": ["topbar-crumbs.js", "text/javascript; charset=utf-8"], // DG-099
-    "/rail-foot.js": ["rail-foot.js", "text/javascript; charset=utf-8"], // DG-094
-    "/lockdown-card.js": ["lockdown-card.js", "text/javascript; charset=utf-8"],
-    "/strip.css": ["strip.css", "text/css; charset=utf-8"],
-    "/studio.js": ["studio.js", "text/javascript; charset=utf-8"],
-    "/studio.css": ["studio.css", "text/css; charset=utf-8"],
-    "/pairing.js": ["pairing.js", "text/javascript; charset=utf-8"],
-    "/overview.js": ["overview.js", "text/javascript; charset=utf-8"],
-    "/people-place.js": ["people-place.js", "text/javascript; charset=utf-8"],
-    "/coding.js": ["coding.js", "text/javascript; charset=utf-8"], // mac7/r17-d
-    "/personal.js": ["personal.js", "text/javascript; charset=utf-8"], // R17-C
-    "/reach.js": ["reach.js", "text/javascript; charset=utf-8"], // r17-i
-    "/safety-extras.js": ["safety-extras.js", "text/javascript; charset=utf-8"], // mac7/r17-g
-    "/vault-autofill.js": ["vault-autofill.js", "text/javascript; charset=utf-8"], // mac7/vault-autofill
-    "/flows-boards.js": ["flows-boards.js", "text/javascript; charset=utf-8"], // r17-h
-    "/learning-more.js": ["learning-more.js", "text/javascript; charset=utf-8"], // R17-F
-    "/memory-provider-ui.js": ["memory-provider-ui.js", "text/javascript; charset=utf-8"], // FQ-memory.providers
-    "/adapt.js": ["adapt.js", "text/javascript; charset=utf-8"], // mac7/adapt
-    "/learn.js": ["learn.js", "text/javascript; charset=utf-8"], // mac7/learn
-    "/popover.js": ["popover.js", "text/javascript; charset=utf-8"], // 0.18.1: how every popover opens and closes
-    "/usage.js": ["usage.js", "text/javascript; charset=utf-8"],
-    "/evaluation.js": ["evaluation.js", "text/javascript; charset=utf-8"],
-    // Wave 7: written-down experiments, under the evaluation card.
-    "/studies.js": ["studies.js", "text/javascript; charset=utf-8"],
-    // Batch 19 (wave 6): the record, approval kinds, the practice workspace.
-    "/misc.js": ["misc.js", "text/javascript; charset=utf-8"],
-    // Batch 20 (wave 7): flows drawn as boxes and arrows under Procedures, and the suggested
-    // better versions of a skill under Skills.
-    "/flows.js": ["flows.js", "text/javascript; charset=utf-8"],
-    // Wave 9: the advisor switch and the two debate bounds.
-    "/second-opinion.js": ["second-opinion.js", "text/javascript; charset=utf-8"],
-    // FQ-collaboration.unified-search: the palette's fetch of GET /api/search, kept out of shell.js.
-    "/unified-search.js": ["unified-search.js", "text/javascript; charset=utf-8"],
-    // Wave mac2 (chat-live): the chat-app switches card under Customize, Chat apps.
-    "/chat-live.js": ["chat-live.js", "text/javascript; charset=utf-8"],
-    "/chat-permissions.js": ["chat-permissions.js", "text/javascript; charset=utf-8"], // mac7/chat-allowlist
-    "/wake-word.js": ["wake-word.js", "text/javascript; charset=utf-8"], // mac7/wake-pins
-    "/dictation.js": ["dictation.js", "text/javascript; charset=utf-8"], // mac7/live-voice
-    "/voice-listening.js": ["voice-listening.js", "text/javascript; charset=utf-8"], // DG-047
-    "/pins.js": ["pins.js", "text/javascript; charset=utf-8"], // mac7/wake-pins
-    "/skill-revisions.js": ["skill-revisions.js", "text/javascript; charset=utf-8"],
-    // Wave mac3 (channels-parity): the switches for the chat services added to match other assistants.
-    "/channels-more.js": ["channels-more.js", "text/javascript; charset=utf-8"],
-    "/specialist-styles.js": ["specialist-styles.js", "text/javascript; charset=utf-8"],
-    // Wave 7 (a coder's toolbox): the two Developer switches for language servers and debuggers.
-    "/code-ide.js": ["code-ide.js", "text/javascript; charset=utf-8"],
-    "/code-editor.js": ["code-editor.js", "text/javascript; charset=utf-8"], // bucket-18 (A0098)
-    // Wave 8: the Lockdown switch and the shape branched conversations make.
-    "/other.js": ["other.js", "text/javascript; charset=utf-8"],
-    "/sandbox-remote.js": ["sandbox-remote.js", "text/javascript; charset=utf-8"],
-    "/host-bridge.js": ["host-bridge.js", "text/javascript; charset=utf-8"], // FQ-execution.host-bridge
-    // Wave mac2: bringing your chats and memory over from another assistant.
-    "/move-in.js": ["move-in.js", "text/javascript; charset=utf-8"],
-    "/usage-report.js": ["usage-report.js", "text/javascript; charset=utf-8"], // bucket 14 (A0367)
-    // Wave mac2 (guards): the card that asks whether a folder is trusted.
-    "/folder-trust.js": ["folder-trust.js", "text/javascript; charset=utf-8"],
-    "/knobs.js": ["knobs.js", "text/javascript; charset=utf-8"], // R17-S-B: the hidden knobs
-    "/model-savings.js": ["model-savings.js", "text/javascript; charset=utf-8"], // R17-E
-    "/round-chart.js": ["round-chart.js", "text/javascript; charset=utf-8"], // R17-E (R17-049)
-    "/comfort.js": ["comfort.js", "text/javascript; charset=utf-8"], // R17-S-C
-    // mac3/never-break: the Keep running card and the Telegram setup card.
-    "/never-break.js": ["never-break.js", "text/javascript; charset=utf-8"],
-    // mac6/accounts: the Accounts list in each connection's card, and the chip in the conversation header.
-    "/accounts.js": ["accounts.js", "text/javascript; charset=utf-8"],
-    // phase2/accounts: thinking levels per model, the Accounts page, the agent files editor.
-    "/thinking-levels.js": ["thinking-levels.js", "text/javascript; charset=utf-8"],
-    "/brand-marks.js": ["brand-marks.js", "text/javascript; charset=utf-8"],
-    "/accounts.css": ["accounts.css", "text/css; charset=utf-8"],
-    "/agent-files.js": ["agent-files.js", "text/javascript; charset=utf-8"],
-    "/service-marks.js": ["service-marks.js", "text/javascript; charset=utf-8"],
-    "/telegram-setup.js": ["telegram-setup.js", "text/javascript; charset=utf-8"],
-    // mac7/connect: the Set up panel for each chat app.
-    "/channel-setup.js": ["channel-setup.js", "text/javascript; charset=utf-8"],
-    "/channel-setup.css": ["channel-setup.css", "text/css; charset=utf-8"],
-    // Wave mac2 (goal-undo): the goal strip, and editing an earlier message to go back to it.
-    "/goal.js": ["goal.js", "text/javascript; charset=utf-8"],
-    "/rewind.js": ["rewind.js", "text/javascript; charset=utf-8"],
-    // Wave mac3 (tool-safety): the card for the second look before an approval.
-    "/approval-reviewer.js": ["approval-reviewer.js", "text/javascript; charset=utf-8"],
-    "/jev-decisions.js": ["jev-decisions.js", "text/javascript; charset=utf-8"],
-    // Wave mac3 (os-sandbox): the card for the wall around programs.
-    "/os-sandbox.js": ["os-sandbox.js", "text/javascript; charset=utf-8"],
-    "/providers.js": ["providers.js", "text/javascript; charset=utf-8"],
-    "/style.css": ["style.css", "text/css; charset=utf-8"],
-    // App shell (wave 2): tokens, layout, appearance.
-    "/tokens.css": ["tokens.css", "text/css; charset=utf-8"],
-    "/shell.css": ["shell.css", "text/css; charset=utf-8"],
-    "/shell.js": ["shell.js", "text/javascript; charset=utf-8"],
-    // Wave 9 redesign: the five places, the Settings window, the 44 themes' colours and the oak.
-    "/layout.js": ["layout.js", "text/javascript; charset=utf-8"],
-    "/context-files.js": ["context-files.js", "text/javascript; charset=utf-8"],
-    // R17-S-A (understandable settings): the settings kit, descriptions on every control, and first-run offers.
-    "/settings-kit.js": ["settings-kit.js", "text/javascript; charset=utf-8"],
-    "/settings-describe.js": ["settings-describe.js", "text/javascript; charset=utf-8"],
-    "/settings-descriptions.js": ["settings-descriptions.js", "text/javascript; charset=utf-8"],
-    "/first-run-next.js": ["first-run-next.js", "text/javascript; charset=utf-8"],
-    "/onboarding.js": ["onboarding.js", "text/javascript; charset=utf-8"],
-    // mac3/reflection-skills: looking back (Library, Memory) and skills it wrote (Customize, Skills).
-    "/learning-loop.js": ["learning-loop.js", "text/javascript; charset=utf-8"],
-    // mac3/security-check: the security self-check card.
-    "/security-check.js": ["security-check.js", "text/javascript; charset=utf-8"],
-    // bucket 12: saved prompts (Automations › Procedures) and the skill install record (Customize › Skills).
-    "/prompt-library.js": ["prompt-library.js", "text/javascript; charset=utf-8"],
-    "/skill-installs.js": ["skill-installs.js", "text/javascript; charset=utf-8"],
-    // bucket 19: the page people sign in on, and the owner's card for it (Settings, General).
-    "/people": ["people.html", "text/html; charset=utf-8"],
-    "/people.js": ["people.js", "text/javascript; charset=utf-8"],
-    "/people.css": ["people.css", "text/css; charset=utf-8"],
-    "/people-admin.js": ["people-admin.js", "text/javascript; charset=utf-8"],
-    // mac2/fly-core-2: the learning core's card.
-    "/learning-core.js": ["learning-core.js", "text/javascript; charset=utf-8"],
-    "/layout.css": ["layout.css", "text/css; charset=utf-8"],
-    "/theme-catalogue.js": ["theme-catalogue.js", "text/javascript; charset=utf-8"],
-    // Wave mac3: one theme's colours under Branch's token names, for the window and the dashboard.
-    "/theme-bridge.js": ["theme-bridge.js", "text/javascript; charset=utf-8"],
-    // mac3/mobile integration: a phone paired in its browser sends its own secret on every request.
-    "/device-headers.js": ["device-headers.js", "text/javascript; charset=utf-8"],
-    "/grove.js": ["grove.js", "text/javascript; charset=utf-8"],
-    "/context-pane.js": ["context-pane.js", "text/javascript; charset=utf-8"],
-    // Wave 7: what a conversation is allowed to do right now, and the observability screens.
-    "/allowed.js": ["allowed.js", "text/javascript; charset=utf-8"],
-    "/labels-ui.js": ["labels-ui.js", "text/javascript; charset=utf-8"],
-    "/compare.js": ["compare.js", "text/javascript; charset=utf-8"],
-    "/activity-feed.js": ["activity-feed.js", "text/javascript; charset=utf-8"],
-    "/appearance.js": ["appearance.js", "text/javascript; charset=utf-8"],
-    // Web app (wave 6): rendering, inspector, live intervention, meter, playground, PWA, languages.
-    "/web-ui.js": ["web-ui.js", "text/javascript; charset=utf-8"],
-    // Wave 8: artifacts out of a reply, charts drawn in the page, the flow editor, reports, the
-    // to-do list, the log view and the page a local page of the owner's own can include.
-    "/artifacts.js": ["artifacts.js", "text/javascript; charset=utf-8"],
-    "/charts.js": ["charts.js", "text/javascript; charset=utf-8"],
-    "/reports.js": ["reports.js", "text/javascript; charset=utf-8"],
-    "/todos.js": ["todos.js", "text/javascript; charset=utf-8"],
-    "/logs.js": ["logs.js", "text/javascript; charset=utf-8"],
-    "/flow-editor.js": ["flow-editor.js", "text/javascript; charset=utf-8"],
-    // The small box a page of the owner's own can include. Nothing on this page imports it.
-    "/widget.js": ["widget.js", "text/javascript; charset=utf-8"],
-    "/bridges.js": ["bridges.js", "text/javascript; charset=utf-8"],
-    "/markdown.js": ["markdown.js", "text/javascript; charset=utf-8"],
-    "/inspector.js": ["inspector.js", "text/javascript; charset=utf-8"],
-    "/live-run.js": ["live-run.js", "text/javascript; charset=utf-8"],
-    "/plan-act.js": ["plan-act.js", "text/javascript; charset=utf-8"],
-    "/conversation-facts.js": ["conversation-facts.js", "text/javascript; charset=utf-8"],
-    "/follow-newest.js": ["follow-newest.js", "text/javascript; charset=utf-8"],
-    "/usage-glance.js": ["usage-glance.js", "text/javascript; charset=utf-8"],
-    "/conversation-mode.js": ["conversation-mode.js", "text/javascript; charset=utf-8"],
-    // phase2/everywhere: the window at phone and tablet widths
-    "/phone-layout.js": ["phone-layout.js", "text/javascript; charset=utf-8"],
-    "/phone-layout.css": ["phone-layout.css", "text/css; charset=utf-8"],
-    "/look-early.js": ["look-early.js", "text/javascript; charset=utf-8"],
-    "/rooms.js": ["rooms.js", "text/javascript; charset=utf-8"], // phase2/rooms
-    "/rooms.css": ["rooms.css", "text/css; charset=utf-8"], // phase2/rooms
-    "/voice-bar.js": ["voice-bar.js", "text/javascript; charset=utf-8"], // phase2/rooms
-    "/voice-view.js": ["voice-view.js", "text/javascript; charset=utf-8"], // phase2/rooms
-    "/suggestions.js": ["suggestions.js", "text/javascript; charset=utf-8"],
-    "/glass-select.js": ["glass-select.js", "text/javascript; charset=utf-8"],
-    // batch1/controls: single control factory (switches, segmented, dropdowns).
-    "/control-makers.js": ["control-makers.js", "text/javascript; charset=utf-8"],
-    // phase2/settings: Settings grown up (groups, levels, search over every setting).
-    "/settings-grown.js": ["settings-grown.js", "text/javascript; charset=utf-8"],
-    "/settings-buckets.js": ["settings-buckets.js", "text/javascript; charset=utf-8"],
-    "/settings-index.js": ["settings-index.js", "text/javascript; charset=utf-8"],
-    "/settings-rows.js": ["settings-rows.js", "text/javascript; charset=utf-8"], // DG-199
-    "/settings-row-levels.js": ["settings-row-levels.js", "text/javascript; charset=utf-8"], // DG-199
-    "/task-state.js": ["task-state.js", "text/javascript; charset=utf-8"], // Q51
-    "/team-tasks.js": ["team-tasks.js", "text/javascript; charset=utf-8"], // Q64
-    "/run-result.js": ["run-result.js", "text/javascript; charset=utf-8"], // Q52
-    "/settings-look.js": ["settings-look.js", "text/javascript; charset=utf-8"],
-    "/settings-grown.css": ["settings-grown.css", "text/css; charset=utf-8"],
-    // phase2/settings integration: the scope chips' and settings kit's look (an inline <style> the CSP refused).
-    "/settings-kit.css": ["settings-kit.css", "text/css; charset=utf-8"],
-    // phase2/panels: the side panel's tabs, resizable panes, see-through message box, hide anything.
-    "/panels.js": ["panels.js", "text/javascript; charset=utf-8"],
-    "/panels.css": ["panels.css", "text/css; charset=utf-8"],
-    // FQ-surfaces.panes: compare topics side by side (public/topic-panes.js).
-    "/topic-panes.js": ["topic-panes.js", "text/javascript; charset=utf-8"],
-    "/topic-panes.css": ["topic-panes.css", "text/css; charset=utf-8"],
-    "/panels-hide.js": ["panels-hide.js", "text/javascript; charset=utf-8"],
-    "/composer-grown.js": ["composer-grown.js", "text/javascript; charset=utf-8"],
-    "/composer-grown.css": ["composer-grown.css", "text/css; charset=utf-8"],
-    "/playground.js": ["playground.js", "text/javascript; charset=utf-8"],
-    "/tool-catalog.js": ["tool-catalog.js", "text/javascript; charset=utf-8"],
-    "/i18n.js": ["i18n.js", "text/javascript; charset=utf-8"],
-    // batch1/controls: switch, segmented, and glass dropdown styling.
-    "/control-styles.css": ["control-styles.css", "text/css; charset=utf-8"],
-    "/web-ui.css": ["web-ui.css", "text/css; charset=utf-8"],
-    "/locales/en.json": ["locales/en.json", "application/json; charset=utf-8"],
-    "/locales/fr.json": ["locales/fr.json", "application/json; charset=utf-8"],
+    "/app.css": ["app.css", "text/css; charset=utf-8"],
+    "/fonts/archivo.woff2": ["fonts/archivo.woff2", "font/woff2"],
+    "/fonts/geist.woff2": ["fonts/geist.woff2", "font/woff2"],
+    "/fonts/geist-mono.woff2": ["fonts/geist-mono.woff2", "font/woff2"],
+    // The installable web app: its manifest, icons and service worker.
     "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json; charset=utf-8"],
     "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
-    "/assets/icon.svg": ["assets/icon.svg", "image/svg+xml"],
-    "/fonts/archivo.woff2": ["fonts/archivo.woff2", "font/woff2"],
-    "/fonts/geist.woff2": ["fonts/geist.woff2", "font/woff2"],
-    "/fonts/geist-mono.woff2": ["fonts/geist-mono.woff2", "font/woff2"],
+    "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
+    "/assets/favicon-16.png": ["assets/favicon-16.png", "image/png"],
+    "/assets/favicon-32.png": ["assets/favicon-32.png", "image/png"],
+    "/assets/apple-touch-icon.png": ["assets/apple-touch-icon.png", "image/png"],
+    // Pairing a phone in its browser (src/remote), and the page people sign in on (bucket 19); both use the shared tokens.
+    "/pair": ["pair.html", "text/html; charset=utf-8"],
+    "/pair.js": ["pair.js", "text/javascript; charset=utf-8"],
+    "/pair.css": ["pair.css", "text/css; charset=utf-8"],
+    // A phone paired in its browser sends its own secret on every request (public/app/main.js installs it).
+    "/device-headers.js": ["device-headers.js", "text/javascript; charset=utf-8"],
+    "/people": ["people.html", "text/html; charset=utf-8"],
+    "/people.js": ["people.js", "text/javascript; charset=utf-8"],
+    "/people.css": ["people.css", "text/css; charset=utf-8"],
+    "/tokens.css": ["tokens.css", "text/css; charset=utf-8"],
+    // The people page's words (public/people.js imports it; the owner's dashboard does too).
+    "/i18n.js": ["i18n.js", "text/javascript; charset=utf-8"],
+    // Every language the look setting takes has its words served (src/terminal-theme.ts LOOK_LANGUAGES), and no other file.
+    ...Object.fromEntries(LOOK_LANGUAGES.map((code): [string, [string, string]] => [`/locales/${code}.json`, [`locales/${code}.json`, "application/json; charset=utf-8"]])),
+    // Wave mac3: the owner's dashboard (the old window's card that switched it on left with that window). While it is off, isDashboardFile keeps
+    // every /dashboard path unserved. Its stylesheets and modules, including its own copies of the words, the theme
+    // bridge, the oak, the look and the event reader that left public/ with the old window (#291):
+    "/dashboard": ["dashboard/index.html", "text/html; charset=utf-8"],
+    "/dashboard/dashboard.css": ["dashboard/dashboard.css", "text/css; charset=utf-8"],
+    "/dashboard/style.css": ["dashboard/style.css", "text/css; charset=utf-8"],
+    "/dashboard/layout.css": ["dashboard/layout.css", "text/css; charset=utf-8"],
+    "/dashboard/control-styles.css": ["dashboard/control-styles.css", "text/css; charset=utf-8"],
+    "/dashboard/dashboard.js": ["dashboard/dashboard.js", "text/javascript; charset=utf-8"],
+    "/dashboard/commands.js": ["dashboard/commands.js", "text/javascript; charset=utf-8"],
+    "/dashboard/sections.js": ["dashboard/sections.js", "text/javascript; charset=utf-8"],
+    "/dashboard/feed.js": ["dashboard/feed.js", "text/javascript; charset=utf-8"],
+    "/dashboard/look.js": ["dashboard/look.js", "text/javascript; charset=utf-8"],
+    "/dashboard/i18n.js": ["dashboard/i18n.js", "text/javascript; charset=utf-8"],
+    "/dashboard/theme-bridge.js": ["dashboard/theme-bridge.js", "text/javascript; charset=utf-8"],
+    "/dashboard/grove.js": ["dashboard/grove.js", "text/javascript; charset=utf-8"],
+    "/dashboard/appearance.js": ["dashboard/appearance.js", "text/javascript; charset=utf-8"],
+    "/dashboard/activity-feed.js": ["dashboard/activity-feed.js", "text/javascript; charset=utf-8"],
+    // One theme's colours under Branch's token names; the engine reads it too (src/terminal-theme.ts, src/achievements.ts).
+    "/theme-catalogue.js": ["theme-catalogue.js", "text/javascript; charset=utf-8"],
+    // Wave 8: the small box a page of the owner's own can include; served only while the owner has switched it on.
+    "/widget.js": ["widget.js", "text/javascript; charset=utf-8"],
   };
-  const asset = assets[path];
+  const asset = Object.hasOwn(assets, path) ? assets[path] : windowFiles().get(path);
   if (!asset) return false;
   const body = await readFile(
     new URL("../public/" + asset[0], import.meta.url),
   );
+  /* rw4-language: the words (public/locales, ~465 KB for English) are kept by the browser and asked about again on
+     every start: an unchanged file answers 304 with no body, and a new build's words differ, so they come fresh. */
+  const words = path.startsWith("/locales/");
+  const etag = words ? `"${createHash("sha256").update(body).digest("base64url").slice(0, 27)}"` : "";
+  if (words && request?.headers["if-none-match"] === etag) {
+    response.writeHead(304, { etag, "cache-control": "no-cache" });
+    response.end();
+    return true;
+  }
   response.writeHead(200, {
     "content-type": asset[1],
-    "cache-control": "no-store",
+    "cache-control": words ? "no-cache" : "no-store",
+    ...(words ? { etag } : {}),
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "content-security-policy":
@@ -755,15 +595,22 @@ async function staticFile(
   response.end(body);
   return true;
 }
-const OnboardingSchema = z.object({ done: z.boolean(), completedAt: z.string().optional() }).strict();
-function onboardingState(app: Branch): { done: boolean } {
-  const saved = OnboardingSchema.safeParse(app.store.get("settings", app.runtime.owner, "onboarding")?.data ?? {});
-  return { done: saved.success ? saved.data.done : false };
+/** p17: which parts of the assistant go into the one file. */
+const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).min(1).max(agentSections.length) }).strict();
+/** Setup as the window sees it (src/onboarding.ts): whether it is over, and how far it got. `done` is the install's,
+ *  so a household person's window reads it too; how far setup got and the pop-ups switch are the owner's alone, and
+ *  anybody else reads the defaults with `mine: false`. */
+function onboardingState(app: Branch): Record<string, unknown> {
+  const saved = onboardingRecord(app.store, app.runtime.owner);
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  const { completedAt: _when, ...view } = saved;
+  return { ...view, mine: true };
 }
 /** A real, tiny completion through the chosen preset so setup ends with evidence, not a saved form. */
 async function testModel(app: Branch, body: unknown): Promise<unknown> {
   const { preset } = z.object({ preset: z.string().min(1).max(64).nullable().optional() }).strict().parse(body);
   const owner = app.runtime.owner;
+  if (!preset && !app.runtime.models.configured) throw new HttpError(400, noModelWords);
   const chosen = preset ? app.runtime.models.presets.get(preset) : app.runtime.models.plan(owner, "").candidates[0];
   if (!chosen) throw new HttpError(400, "That model is not configured");
   const started = Date.now();
@@ -886,6 +733,9 @@ async function localProviders(): Promise<unknown> {
   return { local: found };
 }
 
+/** Q259: which conversations are the household person's at the window own, for narrowing the owner's usage to them. */
+const ownConversationOf = (app: Branch) => (sessionId: string): boolean => personConversation(app.store, app.runtime.owner, sessionId);
+
 /** The preset that actually served a run: the last recorded selection or fallback, if any. */
 function modelUsed(app: Branch, runId: string) {
   const events = app.store.events(runId).filter((event) => ["model.selected", "model.fallback"].includes(event.kind));
@@ -937,8 +787,10 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
   // Only the owner's own task, answered by the owner at the window: never a key's (it records source "owner" too,
   // and a carry-on would lose its key mark), a household person's, or one that came from elsewhere (NAS 618407c).
   const origin = runOrigin(app.store, run.id);
+  // Pass 17 (Helpers): nor a helper's. Its carry-on would start in the helper's conversation as a task of the owner's
+  // own, without the narrower reach the helper was given; its question is answered and the helper is settled instead.
   const owners = asked.source === "owner" && origin.source === "owner" && !origin.shortLivedKey && !origin.keyIds.length
-    && !origin.personProfileId && !origin.lentTo;
+    && !origin.personProfileId && !origin.lentTo && !origin.parentRunId;
   if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) {
     // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
     // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
@@ -969,15 +821,41 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
   app.store.finish(run.id, decision === "allow" ? "completed" : "cancelled", run.output);
   return "settled";
 }
+/**
+ * Q257: refuses a household person an answer to a question that is not their own task's, in the same words and with
+ * the same 404 whether it is live, answered already, made up, or in a conversation that is not theirs. The question
+ * looked at is the one the answer would land on: the fingerprint's, or without one (or with one that matches nothing)
+ * the conversation's oldest, which is where Runtime.approve would otherwise fall back to.
+ */
+function refuseForeignQuestion(app: Branch, sessionId: string, fingerprint: string | undefined): void {
+  if (app.store.profiles.isOwner()) return;
+  const approvals = app.runtime.approvals;
+  const asked = approvals.questionFor(sessionId, fingerprint) ?? approvals.questionFor(sessionId);
+  if (!asked || !mayAnswerHere(app.store, asked)) throw new HttpError(404, nothingWaitingRefusal);
+}
 function attention(app: Branch) {
-  type Waiting = { runId: string; sessionId: string; question: string; createdAt: string; canContinue?: true; who?: string; room?: string; open?: string };
-  return app.store.waitingRuns(app.runtime.owner).map((run): Waiting => {
+  type Waiting = { runId: string; sessionId: string; question: string; createdAt: string; parentRunId?: string; canContinue?: true; who?: string; room?: string; open?: string };
+  // Q257: a household person reads their own tasks' waits only (their conversations, runs started for them), never
+  // the owner's; the owner's list is as it was.
+  const profiles = app.store.profiles;
+  const runs = profiles.isOwner() ? app.store.waitingRuns(app.runtime.owner)
+    : app.store.waitingRuns(profiles.scope()).filter((run) => mayAnswerHere(app.store, { runId: run.id, sessionId: run.sessionId }));
+  return runs.map((run): Waiting => {
     // phase2/rooms (integration review): a Trunk's question says which Trunk, and a room member's opens the room.
     const by = app.trunks.conversations.answerer(run.sessionId);
-    return { runId: run.id, sessionId: run.sessionId, question: waitingWords(app, run), createdAt: run.createdAt,
+    return { runId: run.id, sessionId: run.sessionId, question: waitingWords(app, run), createdAt: run.createdAt, ...helperMark(app, run.id),
       ...(run.status === "interrupted" ? { canContinue: true as const } : {}),
       ...(by ? { who: by.name, open: by.sessionId, ...(by.room ? { room: by.room } : {}) } : {}) };
   });
+}
+/**
+ * Pass 17 (Helpers): a helper's question (a task another task started, "run.started" parentRunId) names the task that
+ * started it. It is answered in that task's Activity › Helpers, so the window keeps it out of the Inbox's counts and list.
+ * Only a task that exists counts: the learning passes mark their own rows "learning".
+ */
+function helperMark(app: Branch, runId: string): { parentRunId?: string } {
+  const parent = app.store.events(runId).find((event) => event.kind === "run.started")?.data.parentRunId;
+  return typeof parent === "string" && app.store.run(parent) ? { parentRunId: parent } : {};
 }
 /** What a waiting task says: its question, or for one Branch closed on, the note that it can be continued. */
 function waitingWords(app: Branch, run: Run): string {
@@ -985,61 +863,47 @@ function waitingWords(app: Branch, run: Run): string {
   const note = app.store.events(run.id).filter((event) => event.kind === "run.can_continue").at(-1)?.data.note;
   return typeof note === "string" && note ? note : "Branch closed while this task was working. Continue it when you are ready.";
 }
+/**
+ * Overview: the tasks nobody asked for in words, which recent activity leaves out: what setup started (#386), and
+ * what the engine marked as its own where it made them (Store.engineOwnRuns): helpers, learning passes, a conversation's
+ * opening row, a Trunk's introduction, reading a schedule, and tasks in a temporary conversation.
+ */
+function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySet<string> {
+  const setup = setupTaskIds(app.store, scope), found = app.store.engineOwnRuns(runs.map((run) => run.id));
+  for (const run of runs) if (setup.has(run.id)) found.add(run.id);
+  return found;
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
+  const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
-    activeModel: app.runtime.models.plan(owner, "").choice,
+    // No model set up: nothing is named as answering, and the window shows these words with the way to set one up.
+    activeModel: app.runtime.models.configured ? app.runtime.models.plan(owner, "").choice : null,
+    modelNeeded: app.runtime.models.configured ? null : noModelWords,
     onboarding: onboardingState(app),
     attention: attention(app),
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
-    project: { active: app.store.projects.active(owner), all: app.store.projects.list(owner) },
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
-    identity: assistantIdentity(app.store, owner),
-    workspace: app.runtime.workspace,
-    runs: app.store
-      .runs(scope)
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id) })),
-    learning: app.store.review.settings(owner),
-    // Batch 19 (wave 6)
-    allowed: { counts: app.store.audit.counts(owner), recent: app.store.audit.list(owner, { limit: 20 }) },
-    approvalCategories: decisionsFromRules(app.registry, readPolicy(app.store, owner).rules),
-    askFirst: askFirstSettings(app.store, owner),
-    practice: app.practice.state(owner),
-    reranking: app.retrieval.view(owner),
-    providerPlugins: app.providerPlugins.list(),
-    issueTrackers: app.issues?.available() ?? [],
-    orchestration: orchestrationSettings(app.store, owner),
-    secondOpinion: secondOpinionSettings(app.store, owner),
-    background: app.runtime.backgroundResults,
-    hooks: app.hooks.list(),
-    setAside: app.store.governance.exclusions(),
-    consolidation: app.store.review.cursor(owner),
-    network: app.web.policy.settings(),
-    memoryProposals: app.store.review.proposals(owner),
-    memoryCheckpoints: app.store.review.checkpoints(owner),
-    snapshots: app.store.workspaceHistory.snapshots(),
+    runs: runs
+      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
     memoryCapacity: app.store.memoryCapacity(scope),
-    skills: app.store.skills.list(owner),
-    skillPolicy: app.store.skills.policy(owner),
-    specialists: app.store.list("specialists", owner),
-    procedures: app.store.list("procedures", owner),
-    schedules: app.store.list("schedules", owner),
-    triggers: app.triggers.list(owner),
-    webhooks: app.webhooks.list(owner),
     // The app's own tool list is for a person to read, so it keeps the full description.
     tools: app.registry.descriptions(new Set(app.registry.permissions()), { diet: false }),
     lock: app.sessionLock.state(),
-    privacy: app.privacy.settings(),
-    secretReminders: app.store.secrets.reminders(owner, app.store.projects.list(owner).map((p) => p.id)),
+    // Q258: the owner's own records and settings (what was allowed, approval categories, projects, automations, skills,
+    // secret reminders, the assistant's instructions, every owner setting) go to the owner only. A household person at
+    // the window gets the same keys holding their own tasks' part, or nothing (src/household-state.ts).
+    ...(app.store.profiles.isOwner() ? ownerStateParts(app) : householdStateParts(app)),
   };
 }
 /** mac7/diagnostics: what kind of install this engine is, and when it started, for the report. */
@@ -1084,6 +948,13 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
     throw error;
   }
 }
+
+/**
+ * The requests that came in through the paired door (a phone paired with the owner's own key). The key cannot tell
+ * them from the app window on this computer, so a choice kept for that window alone asks the door (the update
+ * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
+ */
+const pairedDoorRequests = new WeakSet<IncomingMessage>();
 
 async function api(
   app: Branch,
@@ -1169,13 +1040,13 @@ async function api(
       .catch((error: unknown) => { throw error instanceof SavingsApiError ? new HttpError(error.status, error.message) : error; });
   // R17-S-C: shortcuts, status line, notifications, voice keys, browser care, proxy and certificates.
   if (handlesComfortPath(path))
-    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound }, request, path, readBody)
+    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound, pairedDoor: pairedDoorRequests.has(request) }, request, path, readBody)
       .catch((error: unknown) => { throw error instanceof ComfortApiError ? new HttpError(error.status, error.message) : error; });
   // mac6/accounts: the accounts of each connection, and switching between them.
   if (handlesAccountsPath(path))
     return accountsApi(request, path, {
       service: accountsServiceFor(app.runtime.models), readBody: () => readBody(request, 16 * 1024),
-      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireOwner: (what) => app.store.profiles.requireOwner(what), oauth: app.oauth,
     }).catch((error: unknown) => {
       throw error instanceof AccountsApiError ? new HttpError(error.status, error.message) : error;
     });
@@ -1239,6 +1110,25 @@ async function api(
       request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof LearningCoreApiError ? new HttpError(error.status, error.message) : error;
     });
+  // P17-D §4: decision models on the owner's own connections. Reading names the connections; deciding asks a model.
+  if (path === "/api/decisions" || path === "/api/decisions/settings" || path === "/api/decisions/decide") {
+    app.store.profiles.requireOwner("Decision models");
+    if (path === "/api/decisions") {
+      if (request.method === "GET") return app.decisionModels.overview();
+      throw new HttpError(405, "Use GET here.");
+    }
+    if (request.method !== "POST") throw new HttpError(405, "Use POST here.");
+    const body = await readBody(request, 256 * 1024);
+    return path === "/api/decisions/settings" ? { settings: app.decisionModels.configure(body) } : app.decisionModels.decide(body);
+  }
+  // P17-D §3: behaviour workbooks. Starting one, running it again and making a skill are the owner's.
+  if (path === "/api/workbooks" || path.startsWith("/api/workbooks/")) {
+    app.store.profiles.requireOwner("Learn this app or workflow");
+    return workbooksRoute(app.workbooks, request.method ?? "GET", path, () => readBody(request, 16 * 1024)).catch((error: unknown) => {
+      const status = (error as { status?: unknown }).status;
+      throw typeof status === "number" && error instanceof Error ? new HttpError(status, error.message) : error;
+    });
+  }
   // Optional JEV decisions are the owner's: even reading this card names a local program and provider.
   if (path === "/api/jev") {
     app.store.profiles.requireOwner("JEV decision support");
@@ -1336,7 +1226,10 @@ async function api(
   if (request.method === "POST" && path === "/api/tools/try") {
     // mac5/manual-actions: the same hand-pressed gate as /api/action, with its question kept, the
     // two-minute ceiling and the secret scrub; shared with the host-bridge card (src/playground.ts).
-    return tryToolByHand(app, TryToolSchema.parse(await readBody(request)));
+    const tried = TryToolSchema.parse(await readBody(request));
+    // unhold-control: a key bound to one conversation keeps what it runs in that conversation only.
+    if (tried.sessionId) requireBoundSession(shortLivedKeyMark().sessionId, tried.sessionId);
+    return tryToolByHand(app, tried);
   }
   // Wave 8: an artifact out of a reply. Minting an address puts the page behind an unguessable
   // name the frame can fetch; saving keeps it beside the task, where the Documents list finds it.
@@ -1347,6 +1240,9 @@ async function api(
     const kept = await app.artifacts.write(wanted.runId, wanted.name, wanted.mediaType, Buffer.from(wanted.code, "utf8"));
     return { ...kept, name: wanted.name, runId: wanted.runId };
   }
+  // eng-connectors: the connector catalogue, the owner's own servers and command-line tools, What's new, flagged replies.
+  const connectors = await connectorsApi(app, request, path);
+  if (connectors !== undefined) return connectors;
   if (request.method === "GET" && path === "/api/mcp/connection") return mcpConnectionSnippets(app, request, dataDir);
   if (path.startsWith("/api/mcp/")) return mcpApi(app, request, path);
   // Assistants elsewhere: the ones added, looking for more, and the link that pairs two installs.
@@ -1357,8 +1253,14 @@ async function api(
     });
   // A phone-sized list of conversations. It goes through the same door and needs the same key as
   // everything else, so a paired phone can pick up what was started at the computer.
-  if (request.method === "GET" && path === "/api/sessions")
-    return app.store.recentSessions(app.store.profiles.scope(), Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
+  if (request.method === "GET" && path === "/api/sessions") {
+    const scope = app.store.profiles.scope();
+    const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
+    // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
+    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })) };
+  }
+  // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
+  if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
   // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
   if (path === "/api/goals" || path === "/api/goal-undo/settings" || /^\/api\/sessions\/[a-f0-9-]{36}\/(goal|rewind|unrevert)$/.test(path))
     return goalUndoApi(app, request, path);
@@ -1383,6 +1285,11 @@ async function api(
   }
   if (path === "/api/schedules" || path.startsWith("/api/schedules/")) return schedulesApi(app, request, path);
   if (path.startsWith("/api/documents")) return documentsApi(app, request, path);
+  // p17: "Ask a spreadsheet" in Library › Documents, one read-only question over one of the owner's spreadsheets.
+  if (path === "/api/data/ask" && request.method === "POST") {
+    app.store.profiles.requireOwner("Asking a spreadsheet");
+    return askSpreadsheet({ documents: app.documents.list(app.runtime.owner), tables: app.dataTables }, await readBody(request));
+  }
   // FQ-collaboration: a comment pinned to a moment in a media file (video today), so it can be
   // reopened at the same position later.
   if (path.startsWith("/api/media-comments")) return mediaCommentsApi(app, request, path);
@@ -1400,6 +1307,13 @@ async function api(
   if (path.startsWith("/api/research") || path.startsWith("/api/monitors") || path.startsWith("/api/brief"))
     return researchApi(app, request, path);
   if (path.startsWith("/api/triggers")) return triggersApi(app, request, path);
+  // finish-soon-a: moving or taking out a saved recipe's steps, saved as a new version that must be verified again.
+  const recipeSteps = /^\/api\/recipes\/([a-f0-9-]{36})\/steps$/.exec(path);
+  if (recipeSteps && request.method === "POST") {
+    app.store.profiles.requireOwner("Your saved recipes");
+    const recipe = app.knowledge.reorderProcedure(app.runtime.context(), recipeSteps[1]!, await readBody(request));
+    return { recipe, said: `Saved as version ${String(recipe.data.version)}. It is not used until it is verified again, so anything that replays it waits: ask Branch to verify it in a task.` };
+  }
   if (path.startsWith("/api/webhooks")) return webhooksApi(app, request, path);
   // w911 (A2019) hook: where the browser runs (on this computer, in Docker, or on a server elsewhere).
   if (handlesBrowserContainer(path))
@@ -1439,7 +1353,7 @@ async function api(
   // command line and their own sign-in. Listing them installs nothing and signs in to nothing.
   if (request.method === "GET" && path === "/api/providers/cli-agents") return { agents: cliAgentRows() };
   if (request.method === "POST" && path === "/api/providers/cli-agents")
-    return registerCliAgent(app.runtime.models, await readBody(request, 8 * 1024));
+    return addProgram(app.runtime.models, app.store, app.runtime.owner, await readBody(request, 8 * 1024)); // written down, so it comes back after a restart
   // Models on this computer: what is installed, downloads, hardware advice and task routing.
   if (path === "/api/local-models" || path.startsWith("/api/local-models/"))
     return localModelsApi(
@@ -1462,9 +1376,12 @@ async function api(
         manage: { env: process.env, platform: process.platform, version: app.version, packageRoot: packageRootHere(), print: () => undefined } },
       request.method ?? "GET", path, () => readBody(request, 4 * 1024), windowCaller(app),
     );
+  // How far setup got, and the pop-ups switch (src/onboarding.ts): the owner's, merged. A household person's read is
+  // refused before this (Q261, src/household-routes.ts); their window reads the defaults in GET /api/state.
+  if (request.method === "GET" && path === "/api/onboarding") return onboardingState(app);
   if (request.method === "POST" && path === "/api/onboarding") {
-    const value = OnboardingSchema.parse(await readBody(request));
-    app.store.save("settings", app.runtime.owner, "onboarding", { ...value, completedAt: new Date().toISOString() });
+    if (!app.store.profiles.isOwner()) throw new HttpError(403, "Setting up Branch belongs to the owner. Switch back to the owner's profile to use it.");
+    saveOnboarding(app.store, app.runtime.owner, await readBody(request));
     return onboardingState(app);
   }
   // Wave mac3 (terminal): the theme `branch theme` and Settings › Appearance share (src/terminal-theme.ts).
@@ -1515,6 +1432,9 @@ async function api(
   if (request.method === "GET" && path === "/api/os-permissions")
     return { permissions: await app.osPermissions.all(), ...permissionsContext() };
   // Batch 26 (wave 8): reading passwords out of the password manager the owner already has.
+  // Q255: the owner's alone, read and write; a household person is refused here, a short-lived key at the door.
+  if (path === "/api/credentials/settings" && (request.method === "GET" || request.method === "POST"))
+    app.store.profiles.requireOwner("Your password manager");
   if (request.method === "GET" && path === "/api/credentials/settings")
     return readCredentialSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/credentials/settings")
@@ -1542,6 +1462,18 @@ async function api(
     const desktop = await readBody(request);
     return recordedWrite(app.store, app.runtime.owner, byCard("desktop-control"), ["desktop-control"],
       () => saveDesktopSettings(app.store, app.runtime.owner, desktop));
+  }
+  // unhold-control: "Ask before opening an app it hasn't used", once per app, per Trunk (src/desktop-app-ask.ts).
+  // Reading it is a look; changing it is the owner's alone, and every change is written in the audit log.
+  if (request.method === "GET" && path === "/api/desktop/app-ask")
+    return appAskSettings(app.store, app.runtime.owner);
+  if (request.method === "POST" && path === "/api/desktop/app-ask") {
+    app.store.profiles.requireOwner("Asking before a new app");
+    const before = appAskSettings(app.store, app.runtime.owner);
+    const after = saveAppAskSettings(app.store, app.runtime.owner, await readBody(request));
+    audit(app.store, app.runtime.owner, { action: "policy.changed", actor: app.runtime.owner,
+      subject: `Ask before opening an app it hasn't used: ${after.on ? "on" : "off"}`, reason: `Was ${before.on ? "on" : "off"}.`, outcome: "saved" });
+    return after;
   }
   // FQ-execution.desktop: the shared Linux desktop's switch, and the owner taking it over and handing
   // it back. Reading the card is a look (it never carries the VNC password); every change is the
@@ -1627,7 +1559,13 @@ async function api(
     // Q58: queued tasks show they are waiting their turn, with position and what they wait behind.
     const waiting = new URL(request.url ?? "/", "http://local").searchParams.get("waiting") === "1";
     const staleMs = staleAfterMs(app.store, app.runtime.owner, app.runtime.reliability);
-    const activities = liveActivity(app.store, app.runtime.owner, { waiting, staleMs }).map((a) => ({ ...a, followUps: app.runtime.queued(a.sessionId).length }));
+    // Dogfood B1: what a running task's model is thinking now, from memory only (never the record).
+    // Redesign security review: whose tasks these are follows who is at the window. A household profile sees its own
+    // tasks only, never the owner's (their prompts and what waits for the owner), as every other read of runs does.
+    const activities = liveActivity(app.store, app.store.profiles.scope(), { waiting, staleMs }).map((a) => {
+      const thinking = app.runtime.thinkingOf(a.runId);
+      return { ...a, followUps: app.runtime.queued(a.sessionId).length, ...(thinking ? { thinking } : {}) };
+    });
     if (!waiting) return activities;
     // Q58: add queued tasks for each conversation using pure function
     const result: RunActivity[] = [];
@@ -1820,9 +1758,18 @@ async function api(
     // name of their own: nothing they do reaches the owner's folder or the owner's memory.
     return runToolChecksSafely(app, AbortSignal.timeout(120000));
   if (request.method === "GET" && path === "/api/policy")
-    return { policy: readPolicy(app.store, app.runtime.owner), presets: policyPresets(), waiting: app.runtime.approvals.waiting() };
+    // Q259: the owner's approval rules (paths, commands, limits) are theirs; a household person is sent none of them.
+    return { policy: app.store.profiles.isOwner() ? readPolicy(app.store, app.runtime.owner) : null, presets: policyPresets(),
+      // Q257: a household person is shown only their own tasks' questions (the Inbox and the chat card read this).
+      waiting: app.runtime.approvals.waiting().filter((asked) => mayAnswerHere(app.store, asked))
+        .map((asked) => ({ ...asked, ...helperMark(app, asked.runId) })) };
   if (request.method === "POST" && path === "/api/policy") {
-    const input = await readBody(request);
+    // Q257: refused under Lockdown (409, as the rules and the settings kit are), and a change that makes Branch less
+    // careful needs the owner's separate yes, weighed on exactly the policy it would save.
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    const current = readPolicy(app.store, app.runtime.owner);
+    const refusal = policyChangeRefusal(app.store, app.runtime.owner, nextPolicy(current, input), confirmLoosening, app.registry);
+    if (refusal) throw new HttpError(409, refusal);
     return { policy: recordedWrite(app.store, app.runtime.owner, { writer: "owner-in-window", source: "card", detail: "policy" }, ["policy"],
       () => savePolicy(app.store, app.runtime.owner, input)) };
   }
@@ -1835,7 +1782,17 @@ async function api(
       code: z.string().max(12).optional(),
       // Dogfood A6/B6: the window's own cards ask for the task to be settled (carried on, or its wait ended).
       // Scripts, the terminal and phones send their next message themselves, as before.
-      carryOn: z.boolean().optional() }).strict().parse(await readBody(request));
+      carryOn: z.boolean().optional(),
+      // Redesign: "Always allow for <Trunk>": the Trunk the standing yes is kept for; it must be the Trunk that asked.
+      trunk: z.string().min(1).max(100).optional() }).strict().parse(await readBody(request));
+    // Q257: first of all, a household person answers only their own task's question; anything else reads as nothing
+    // waiting, before the room check, the code, the answer or the carry-on can say or change anything.
+    refuseForeignQuestion(app, input.sessionId, input.fingerprint);
+    // Q257: a bare yes lands on whatever the conversation is asking now, which need not be what the person saw. Every
+    // question carries a fingerprint, so an answer that names no request is refused whenever one is waiting, before
+    // anything is answered or settled.
+    if (input.fingerprint === undefined && app.runtime.approvals.questionFor(input.sessionId)?.fingerprint)
+      throw new HttpError(409, unnamedAnswerRefusal);
     // mac5/key-sweep: answering is a run key's job, but "always" would write a standing rule.
     if (input.remember === "always" && startedWithShortLivedKey())
       throw new HttpError(401, "A short-lived key can answer this once or for this conversation, but cannot make a standing rule. Do that in the app window.");
@@ -1852,7 +1809,7 @@ async function api(
     // mac7/r17-g: a code typed with the answer is checked first; a wrong one is said plainly.
     if (input.code !== undefined && asked && !(await confirmWithCode(app.store, app.runtime.owner, input.sessionId, asked.fingerprint, input.code)))
       throw new HttpError(401, codesResting(app.store, app.runtime.owner) ? restingRefusal : "That authenticator code did not match, or it was already used. Wait for the next code.");
-    const answered = app.runtime.approve(input.sessionId, input.decision, input.remember, input.fingerprint);
+    const answered = app.runtime.approve(input.sessionId, input.decision, input.remember, input.fingerprint, undefined, input.trunk);
     if (asked && input.carryOn) return { ...answered, task: await settleAsked(app, asked, input.decision) };
     return answered;
   }
@@ -1865,6 +1822,17 @@ async function api(
   if (hookEnable && request.method === "POST") return app.hooks.enable(hookEnable[1]!);
   const template = /^\/api\/templates\/(specialist|procedure)\/([a-f0-9-]{36})$/.exec(path);
   if (template && request.method === "GET") return exportTemplate(app.store, app.runtime.owner, template[1] as "specialist" | "procedure", template[2]!);
+  // p17 (whole-agent export from the window): what each part holds, then the one file. The owner's alone; a
+  // short-lived key is refused the POST by the fail-closed rule, and memory always leaves with personal details masked.
+  if (path === "/api/agent-export") {
+    app.store.profiles.requireOwner("Taking the whole assistant with you");
+    if (request.method === "GET") return { sections: agentSummary(app.store, app.runtime.owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST");
+    const { sections } = AgentExportSchema.parse(await readBody(request));
+    const { bytes, manifest } = exportAgent(app.store, app.runtime.owner, app.version, {
+      sections, memory: sections.includes("memory"), redact: (text) => applyPiiGuard(text, "mask").text });
+    return { manifest, data: bytes.toString("base64") };
+  }
   if (request.method === "POST" && path === "/api/templates/import") return importTemplate(app.knowledge, app.runtime.context(), await readBody(request, 256 * 1024));
   if (request.method === "POST" && path === "/api/receipts/verify") {
     const body = z.object({ runId: z.string().min(1).max(64), data: z.record(z.string(), z.unknown()) }).strict().parse(await readBody(request));
@@ -1898,6 +1866,10 @@ async function api(
   // phase2/panels: what the side panel's Browser and Terminal tabs show (src/panels-work.ts); owner only.
   if (request.method === "GET" && path === panelsWorkPath)
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
+  if (request.method === "GET" && path === liveStagePath)
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
+      new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -1914,6 +1886,9 @@ async function api(
     const range = (url.searchParams.get("range") ?? "30d") as "7d" | "30d" | "90d" | "all";
     const by = (url.searchParams.get("by") ?? "day") as "day" | "model" | "conversation" | "source";
     const { overrides } = pricingSettings(app.store, app.runtime.owner);
+    // Q259: the owner's spending is theirs; a household person is sent their own conversations' usage and nothing else.
+    if (!app.store.profiles.isOwner())
+      return { data: app.store.usageStore().aggregateUsage(range, by, overrides, ownConversationOf(app)), stats: null, statistics: null, pricing: null };
     const data = app.store.usageStore().aggregateUsage(range, by, overrides);
     const budget = app.store.get("settings", app.runtime.owner, "usage_budget")?.data as { maxMonthlyTokens?: number } | undefined;
     const stats = app.store.usageStore().getMonthlyStats(budget?.maxMonthlyTokens, overrides);
@@ -1937,6 +1912,11 @@ async function api(
   // Owner item 21: Fix update and who does it (src/update-fix.ts), the owner's alone.
   if (handlesUpdateFixPath(path))
     return updateFixApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path, () => readBody(request));
+  // The copies of the data folder taken before each update, and putting one back at the next start (src/install/data-copy.ts).
+  if (path === "/api/updates/data-copies")
+    return dataCopyApi({ requireOwner: (what) => app.store.profiles.requireOwner(what), pairedDoor: pairedDoorRequests.has(request), dataDir,
+      method: request.method ?? "GET", readBody: () => readBody(request) })
+      .catch((error: unknown) => { throw error instanceof DataCopyRefusal ? new HttpError(403, error.message) : error; });
   if (handlesUpdateFailurePath(path))
     return updateFailureApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path);
   if (request.method === "POST" && path === "/api/diagnostics/bundle")
@@ -1955,18 +1935,33 @@ async function api(
     return (await import("./trace-report.js")).traceReport(app.store, app.traceExport.settings(), run.id);
   }
   // "Look inside" a task: rounds, tool calls, plan, verdicts and steering in one answer.
+  // Q259: this, /steps and /trajectory are open to a household person at the window, so each finds only a task
+  // filed under whoever is there (profiles.scope()); the owner's tasks read as not found, as on /trace and /timeline.
   const inspectMatch = /^\/api\/runs\/([a-f0-9-]{36})\/inspect$/.exec(path);
   if (request.method === "GET" && inspectMatch) {
     const run = app.store.run(inspectMatch[1]!);
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     // A tool call's raw arguments are read back off the assistant message, which the runtime never
     // scrubbed; nothing leaves here carrying a saved password or key.
     return app.runtime.hideSecrets(inspectRun(app.store, run.id, await trajectoryOptions(app, run.id)));
+  }
+  // Pass 17 (Timeline, Helpers): one task's steps in order, its helpers, and its links in the activity chain.
+  const stepsMatch = /^\/api\/runs\/([a-f0-9-]{36})\/steps$/.exec(path);
+  if (request.method === "GET" && stepsMatch) {
+    const run = app.store.run(stepsMatch[1]!);
+    // Q259: household profiles are not refused this route (a GET a short-lived key may read), so whose task it is
+    // follows who is at the window (profiles.scope(), as the activity list does since #324 and /trace does).
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
+    // Tool inputs are read back off the conversation, and helpers' words and questions too: nothing leaves with a secret.
+    return app.runtime.hideSecrets(await stepsOf(app, run.id));
   }
   // Batch 26 (wave 8): "Do this again" — the same words, the same tools and the same model, in a
   // conversation of its own, so the two can be read side by side.
   const replay = /^\/api\/runs\/([a-f0-9-]{36})\/replay$/.exec(path);
   if (request.method === "POST" && replay) {
+    // Q259: the task done again runs in the owner's name (not through runForCurrentPerson), so it is the owner's alone:
+    // a household person at the window may not do the owner's task again, nor their own as the owner.
+    app.store.profiles.requireOwner("Doing a task again");
     const run = app.store.run(replay[1]!);
     if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
     const done = await replayRun(app.runtime, app.store, run.id);
@@ -1977,7 +1972,7 @@ async function api(
   const trajectory = /^\/api\/runs\/([a-f0-9-]{36})\/trajectory$/.exec(path);
   if (request.method === "GET" && trajectory) {
     const run = app.store.run(trajectory[1]!);
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     return app.runtime.hideSecrets(buildTrajectory(app.store, run.id, await trajectoryOptions(app, run.id)));
   }
   if (request.method === "GET" && /^\/api\/runs\/([a-f0-9-]{36})\/timeline$/.test(path)) {
@@ -2007,7 +2002,12 @@ async function api(
     return { budget: budget || null };
   }
   if (request.method === "POST" && path === "/api/usage/budget") {
-    const input = budgetSchema.parse(await readBody(request));
+    // A monthly limit raised or taken away needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+    const { confirmLoosening, input: asked } = withoutConfirm(await readBody(request));
+    const input = budgetSchema.parse(asked);
+    const before = app.store.get("settings", app.runtime.owner, "usage_budget")?.data as z.infer<typeof budgetSchema> | undefined;
+    const refusal = looseningRefusal(budgetLooser(before, input), confirmLoosening, lockdownActive(app.store, app.runtime.owner));
+    if (refusal) throw new HttpError(409, refusal);
     app.store.save("settings", app.runtime.owner, "usage_budget", input);
     return { budget: input };
   }
@@ -2233,7 +2233,14 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
     return { suggested: staged.length, proposals: staged, review };
   }
   if (request.method === "POST" && path === "/api/memory/hygiene") return app.store.memoryHygiene(owner, await readBody(request));
-  if (request.method === "GET" && path === "/api/memory/archive") return { archived: app.store.archivedMemory(owner) };
+  if (request.method === "GET" && path === "/api/memory/archive") return { archived: app.store.archivedMemory(owner), total: app.store.archivedMemoryCount(owner) };
+  // Purge all: every archived fact removed for good, the owner's alone. The confirm step is the word and how
+  // many archived facts the owner was shown; a count that no longer matches removes nothing.
+  if (request.method === "POST" && path === "/api/memory/archive/purge") {
+    app.store.profiles.requireOwner("Purging archived facts");
+    const { count } = z.object({ confirm: z.literal("purge"), count: z.number().int().min(1).max(1_000_000) }).strict().parse(await readBody(request));
+    return app.store.purgeArchivedMemory(owner, count);
+  }
   if (request.method === "POST" && path === "/api/memory/consolidate") return app.store.review.consolidate(app.runtime, owner);
   if (request.method === "GET" && path === "/api/memory/settings") return app.store.review.settings(owner);
   if (request.method === "POST" && path === "/api/memory/settings") return app.store.review.configure(owner, await readBody(request));
@@ -2261,14 +2268,33 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
   }
   throw new HttpError(404, "Endpoint not found");
 }
+/**
+ * App lock: whose records an open stream or socket may still carry. Once Branch locks with a PIN set
+ * the answer is nobody's, so a stream opened before the lock ends there instead of flowing on.
+ */
+const scopeWhileUnlocked = (app: Branch): string => (app.sessionLock.refusal("GET", "/api/events/stream") ? "" : app.store.profiles.scope());
+/** An App lock refusal answered with its own status (400, 403 or 429); anything else as it was. */
+async function appLockAnswer(step: () => Promise<unknown>): Promise<unknown> {
+  return step().catch((error: unknown) => {
+    throw error instanceof AppLockRefusal ? new HttpError(error.status, error.message) : error;
+  });
+}
 /** Locking the app, and the privacy checks on messages that leave this computer. */
 async function guardApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   if (request.method === "GET" && path === "/api/lock") return app.sessionLock.state();
   if (request.method === "POST" && path === "/api/lock") return app.sessionLock.lock();
-  if (request.method === "POST" && path === "/api/lock/unlock") { z.object({}).strict().parse(await readBody(request)); return app.sessionLock.unlock(); }
+  // App lock: with a PIN set, unlocking asks for it; setting, changing or removing it is the owner's.
+  // A wrong PIN is 403 and a wait 429, never 401, which the window reads as a wrong session key.
+  if (request.method === "POST" && path === "/api/lock/unlock") return appLockAnswer(async () => app.sessionLock.unlock(await readBody(request)));
+  if (request.method === "POST" && path === "/api/lock/pin") return appLockAnswer(async () => app.sessionLock.setPin(await readBody(request)));
   if (request.method === "POST" && path === "/api/lock/settings") return app.sessionLock.configure(await readBody(request));
   if (request.method === "GET" && path === "/api/privacy") return app.privacy.settings();
-  if (request.method === "POST" && path === "/api/privacy") return app.privacy.configure(await readBody(request));
+  if (request.method === "POST" && path === "/api/privacy") {
+    // Turning a check down needs the owner's yes, and nothing changes under Lockdown (src/privacy-guard.ts).
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    try { return app.privacy.configure(input, confirmLoosening, lockdownActive(app.store, app.runtime.owner)); }
+    catch (error) { throw error instanceof PrivacyChangeRefused ? new HttpError(409, error.message) : error; }
+  }
   throw new HttpError(404, "Endpoint not found");
 }
 /** Signing in to an outside service: the app opens the address this returns in the browser. */
@@ -2294,10 +2320,12 @@ async function connectionsApi(app: Branch, request: IncomingMessage, path: strin
   // Taking one back out again: the model list, the written-down record and the key, all at once.
   if (request.method === "POST" && path === "/api/connections/forget") {
     const { id } = z.object({ id: z.string().min(1).max(64) }).strict().parse(await readBody(request, 4 * 1024));
-    return forgetConnection(
+    const forgotten = await forgetConnection(
       { models: app.runtime.models, locker: app.store.locker, owner: app.runtime.owner, policy: app.web.policy, store: app.store },
       id,
     );
+    forgetProgram(app.store, app.runtime.owner, id); // a coding assistant taken out stays out after a restart
+    return forgotten;
   }
   if (request.method === "GET" && path === "/api/connections/catalog")
     return { pricedAt: providerCatalog().pricedAt, services: catalogEntries() };
@@ -2318,6 +2346,12 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
     if (request.method === "POST") return app.scheduler.create(scheduleContext(app), await readBody(request));
     throw new HttpError(404, "Endpoint not found");
   }
+  // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
+  if (path === "/api/schedules/propose" && request.method === "POST") {
+    app.store.profiles.requireOwner("Your schedules");
+    return { proposal: await proposeSchedule(await readBody(request), { now: new Date(),
+      defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) }) };
+  }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
   const record = app.store.get("schedules", owner, match[1]!);
@@ -2332,6 +2366,24 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
     return app.scheduler.remove(scheduleContext(app), record.id);
   }
   throw new HttpError(404, "Endpoint not found");
+}
+/**
+ * One question to the model in use, with no tools and a fixed answer shape, for words the engine cannot
+ * read itself. It is asked under a task of its own, kept like the morning brief's, so what it spent
+ * counts in the owner's usage and spending limits like any other model call.
+ */
+async function askAside(app: Branch, question: string, shape: AnswerShape, title = "Reading a schedule from your words"): Promise<ShapedAnswer> {
+  const run = app.store.createRun(app.runtime.owner, title, undefined, false, "owner");
+  // overview: the engine's own task, set aside in GET /api/state; fix399: and its conversation kept out of Recent.
+  app.store.markAside(run.id, { recent: false });
+  let answer: ShapedAnswer | undefined;
+  try {
+    const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });
+    answer = await app.runtime.shaped(run, context, question, shape);
+    return answer;
+  } finally {
+    app.store.finish(run.id, answer?.status === "resolved" ? "completed" : "failed", answer?.status === "refused" ? answer.reason : "");
+  }
 }
 /** The owner's own hands, for a schedule they are adding or removing from the command line. */
 function scheduleContext(app: Branch) {
@@ -2657,6 +2709,14 @@ async function triggersApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/triggers")
     return app.triggers.create(context, await readBody(request));
 
+  // finish-soon-a: words to a trigger (src/trigger-words.ts), a proposal only; the owner confirms it with POST /api/triggers
+  // or, for work after one of their tasks, POST /api/autonomy/procedures.
+  if (request.method === "POST" && path === "/api/triggers/propose") {
+    app.store.profiles.requireOwner("Your triggers");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // words to a trigger need the model
+    return { proposal: await proposeTrigger(await readBody(request), (question, shape) => askAside(app, question, shape, "Reading a trigger from your words")) };
+  }
+
   const match = /^\/api\/triggers\/([a-f0-9-]{36})(?:\/(log|rotate-secret|enabled|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
 
@@ -2820,7 +2880,9 @@ function channelAddresses(app: Branch, owner: string): {
 async function chatgptApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const auth = app.chatgpt, owner = app.runtime.owner;
   if (!auth) throw new HttpError(404, "ChatGPT sign-in is not available in this launch");
-  if (request.method === "GET" && path === "/api/chatgpt/status") return auth.status();
+  // accounts-wizard-plans (security): a waiting sign-in carries its one-time code, which would link Branch to whoever
+  // types it, so the status is the owner's alone: short-lived keys are refused (ownerOnlyReads) and so are household people.
+  if (request.method === "GET" && path === "/api/chatgpt/status") { app.store.profiles.requireOwner("The ChatGPT sign-in"); return auth.status(); }
   if (request.method === "POST" && path === "/api/chatgpt/login") {
     z.object({}).strict().parse(await readBody(request));
     const prompt = await auth.startDeviceLogin();
@@ -2972,6 +3034,12 @@ async function skillsApi(app: Branch, request: IncomingMessage, path: string): P
   }
   if (request.method === "POST" && path === "/api/skills/draft-from-runs")
     return draftFromRuns(app.store, owner, app.runtime, await readBody(request));
+  // finish-soon-a: "Write one with Branch" drafts a skill file from the owner's words for review; nothing is installed.
+  if (request.method === "POST" && path === "/api/skills/write") {
+    app.store.profiles.requireOwner("Writing a skill");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // the draft is the model's
+    return writeSkill(app.store, owner, app.runtime, await readBody(request));
+  }
   const match = /^\/api\/skills\/([a-f0-9-]{36})(?:\/(update|activate|disable|remove|read|benchmark|draft|pack|test))?$/.exec(path);
   if (match && request.method === "POST" && match[2] === "pack") return app.skillPackages.pack(match[1]!, await readBody(request));
   if (match && request.method === "POST" && match[2] === "test") return testSkill(app.store, owner, app.runtime, match[1]!, await readBody(request));
@@ -3318,17 +3386,18 @@ function mcpConnectionSnippets(app: Branch, request: IncomingMessage, dataDir: s
 /** The pairing door, open only on the phone's listener and only for the invitation on offer. */
 export async function pairingRequest(
   remote: RemoteAccess, request: IncomingMessage, response: ServerResponse, path: string,
-  /** Batch 20 (wave 8): writes the phone down and hands it a secret of its own, when asked to. */
-  gateway?: GatewayAuth,
+  /** Batch 20 (wave 8): writes the phone down and hands it a secret and a key of its own. */
+  gateway: Pick<GatewayAuth, "remember">,
 ): Promise<boolean> {
   if (request.method !== "POST" || path !== "/api/pair") return false;
   const body = z.object({ id: z.string().max(64), code: z.string().max(16), name: z.string().trim().max(80).default("A phone") })
     .strict().parse(await readBody(request, 1024));
-  const redeemed = remote.pairing.redeem(body.id, body.code);
+  remote.pairing.redeem(body.id, body.code);
   // The phone is remembered the moment it is let in, so the "this exact phone" step of the chain
-  // has something to check against from the very next request.
-  const device = gateway?.remember(body.name);
-  send(response, 200, device ? { ...redeemed, deviceId: device.device.id, deviceKey: device.secret } : redeemed);
+  // has something to check against from the very next request. It is handed a key of its own, never
+  // the window's: removing it takes that key away and nothing else (src/remote/window-key.ts).
+  const device = gateway.remember(body.name);
+  send(response, 200, { token: device.key, deviceId: device.device.id, deviceKey: device.secret });
   return true;
 }
 /**
@@ -3357,6 +3426,8 @@ export async function startServer(
     anyPortIfTaken?: boolean;
     /** The installed program file and folder, when Branch runs from an install rather than source. */
     executable?: string | null; installRoot?: string | null;
+    /** Starting at sign-in: stand-ins for the registry tool (tests), and the desktop app's Mac login item. */
+    autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
@@ -3376,7 +3447,8 @@ export async function startServer(
     tailscale?: ProbeTailscale;
   },
 ) {
-  const token = await sessionToken(options.dataDir);
+  // Removing a phone that was handed this key makes a new one (rotateWindowKey below), so it is read where it is used.
+  let token = await sessionToken(options.dataDir);
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
   const stopDiagnosticLog = startDiagnosticLog(
@@ -3386,7 +3458,7 @@ export async function startServer(
   // The same count the waiting line uses, so the two together never run more than this computer is
   // meant to handle.
   const executions = app.executions;
-  const remote = new RemoteAccess(token);
+  const remote = new RemoteAccess(() => token, options.tailscale);
   // mac7/phone-qr: the "Get Branch on your phone" download door; closed until the owner shows the code.
   const phoneApp = new PhoneApp();
   // mac7/bind: where this door listens. 127.0.0.1 unless the owner said otherwise and every
@@ -3406,6 +3478,17 @@ export async function startServer(
   const allowedHosts = (): string[] => [...remote.allowedHosts(), ...listen.extraHosts];
   // Batch 20 (wave 8): what a phone must satisfy on the extra door, as a chain of named steps.
   const gateway = new GatewayAuth(app.store, app.runtime.owner);
+  /** Requests let in with a paired phone's own key (src/remote/gateway-auth.ts keyDevice), which counts as the owner's. */
+  const phoneKeyed = new WeakSet<IncomingMessage>();
+  const bearerOf = (request: IncomingMessage): string => /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "";
+  /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
+  const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
+  /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
+  const socketPhoneKey = (request: IncomingMessage): boolean => {
+    const offered = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((part) => part.trim());
+    const supplied = offered[0] === "bearer" ? offered[1] ?? "" : bearerOf(request);
+    return gateway.keyDevice(supplied) !== null;
+  };
   // Wrong keys, PINs and pairing codes are counted per place they came from; five in a row and that
   // place is made to wait, with a line written into the record of what the assistant was allowed to do.
   const authLimiter = new AuthLimiter(options.authLimits);
@@ -3433,6 +3516,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   return true;
 }
   const handle = async (request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> => {
+    if (viaRemote) pairedDoorRequests.add(request);
     try {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1")
         .pathname;
@@ -3451,7 +3535,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (["/people", "/people.js", "/people.css"].includes(path) && !peopleEnabled(app.store, app.runtime.owner)
         && interopMode(app.store, app.runtime.owner, "handoff") === "off")
         throw new HttpError(404, "Not found");
-      if (request.method === "GET" && (await staticFile(path, response)))
+      if (request.method === "GET" && (await staticFile(path, response, request)))
         return;
       if (path.startsWith("/hooks/")) {
         send(response, 200, await hook(app, request, path));
@@ -3487,6 +3571,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       if (await peopleSignInRoute(app, request, response, path, () => readBody(request), (status, value) => send(response, status, value))) return;
       // ---- end bucket 19 ----
+      // A phone that still belongs collects the window's key again after it was rotated, with its own secret.
+      if (path === renewPath) { await renewWindowKey(request, response, viaRemote); return; }
       // ---- mac7/nodes: a device answering an invitation has no key; its number and its signature are checked. ----
       if (openDevicePaths.includes(path)) {
         if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
@@ -3502,7 +3588,11 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // It matters most behind the never-break gateway, where every device on the private network
         // reaches the engine from 127.0.0.1 and so shares one entry.
         const from = requestSource(request.socket?.remoteAddress, request.headers);
-        const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096) },
+        // B6: the phone let in from "Pair a phone" collects what POST /api/pair hands over (below): the window's key
+        // and its own "this exact phone" secret. Once, signed with its pairing key; src/devices/book.ts collectPhoneSession.
+        const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096),
+          // The window's key never travels as plain HTTP across a home network: src/remote/window-key.ts keyMayTravel.
+          ...(keyMayTravel(request, viaRemote) ? { phone: { remember: (name: string) => gateway.remember(name) } } : {}) },
           path, from).catch((error: unknown) => {
           if (!(error instanceof DevicesHttpError)) throw error;
           if (error.status !== 403) throw new HttpError(error.status, error.message);
@@ -3537,10 +3627,14 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       // Wave mac3 (commands): a read key's command is sent with POST but only looks.
       let onlyLooking = false;
+      // Q262: accepted with one of the owner's own short-lived keys (never a person's key, never this computer's key).
+      let ownersShortLivedKey = false;
       authorize(request, url, token, allowedHosts(), {
         limiter: authLimiter,
         onFailure: (from) => noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the local key"),
       }, (supplied) => {
+        // A paired phone's own key counts as the owner's, as the window's key does; the request is marked as the phone's.
+        if (gateway.keyDevice(supplied)) { phoneKeyed.add(request); return null; }
         // bucket 19: a person's own key reaches only their own page (src/people/access.ts).
         if (People.isPersonKey(supplied)) {
           const refused = app.people.admit(supplied, request.method, path);
@@ -3555,23 +3649,45 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           }), path });
         // bucket-18 (A0300): everything this request starts knows it came with a short-lived key.
         // bucket 19: and which key, and the one conversation it may be held to.
-        if (refusal === null) markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+        if (refusal === null) {
+          markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+          ownersShortLivedKey = true;
+        }
         return refusal;
       }, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied) !== null
         || app.people.keys.working(supplied)); // bucket 19
+      // A phone's own key, the paired door, or a caller beyond this computer: what only this computer's window may do
+      // (switching Lockdown off, src/other-api.ts) is refused to it.
+      if (viaRemote || phoneKeyed.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers)) markDoorRequest(request);
       // The extra door has its own chain on top of the key: see src/remote/gateway-auth.ts. The
       // window on this computer never goes through it.
       if (viaRemote) {
         const refused = gateway.check(request, true);
         if (refused) throw new HttpError(401, refused);
+        enterPairedDoor(); // the phone is the owner's, never whoever this window is switched to (src/profiles.ts)
       }
+      // A door may not make what outlasts a removed phone (a short-lived key, a phone invitation) or widen where Branch listens.
+      const notHere = throughADoor(request) ? hereOnlyRefusal(request.method, path) : null;
+      if (notHere) throw new HttpError(403, notHere);
       // profile-audit: a window switched to a household profile is that person. Every owner-only
       // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).
       if (!app.store.profiles.isOwner()) {
-        const refused = offLimitsToHousehold(request.method, path);
+        // Q261: the household read list is the window's. A person's own key already has its own fail-closed list of
+        // what it may read (People.admit, src/people/access.ts, checked above), so its reads are decided there only.
+        // Q262: the owner's own short-lived key is the owner's, whoever the window is switched to, so the owner's stores
+        // stay open to it (its own list, offLimitsToShortLivedKeys, still decides); a person's key never is.
+        const refused = currentPerson() && isRead(request.method) ? null
+          : offLimitsToHousehold(request.method, path, { ownersShortLivedKey: ownersShortLivedKey && !currentPerson() });
         // 400, as every `requireOwner` refusal over HTTP has always been answered.
         if (refused) throw new HttpError(400, refused);
       }
+      // App lock: while a PIN is set and Branch is locked, nothing is answered but the lock's own
+      // status and unlock (src/session-lock.ts). 423, never 401: the window reads 401 as a wrong key.
+      // Checked before the activity below, so a request after the quiet period cannot restart it.
+      const lockedOut = app.sessionLock.refusal(request.method, path);
+      if (lockedOut) throw new HttpError(423, lockedOut);
+      // Setup polish 2: what setup asks for is first-run configuration, set aside by achievements (src/setup-origin.ts).
+      noteSetupOrigin(request.headers[setupOriginHeader]);
       // Doing something counts as activity; merely looking does not, or the app's own three-second
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
@@ -3580,7 +3696,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
         // The key was already checked and its use counted above; this only reads what it may do.
-        const access = dashboardAccess(request, token, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
+        const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
         const answer = await dashboardApi(app, request, path, {
           dataDir: options.dataDir, access, readBody: () => readBody(request),
         }).catch((error: unknown) => {
@@ -3599,9 +3715,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // dashboard (src/commands/api.ts). What the key may do is read the way the dashboard reads it,
         // and checked command by command; running one takes a place like any other task. ----
         if (handlesCommandsPath(path)) {
-          const access = dashboardAccess(request, token, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
+          const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
           const answer = await commandsApi(app, path, {
             method: request.method ?? "GET", url: new URL(request.url ?? "/", "http://local"), access, readBody: () => readBody(request),
+            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly } : {}),
           }).catch((error: unknown) => {
             throw error instanceof CommandApiError ? new HttpError(error.status, error.message) : error;
           });
@@ -3668,7 +3785,17 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (handlesDevicesPath(path)) {
           app.store.profiles.requireOwner("Your devices");
           const answer = await devicesApi({ devices: app.devices, store: app.store, owner: app.runtime.owner, method: request.method ?? "GET",
-            readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url }, path).catch((error: unknown) => {
+            readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url,
+            trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
+            forgetGateway: (id) => void gateway.forget(id),
+            heldWindowKey: (id) => gateway.heldWindowKey(id),
+            // A removed phone that was handed this window's key takes it with it: a new key replaces it.
+            rotateKey: () => rotateWindowKey(request.socket),
+            // Never a phone's own key, even arriving from this computer (a local proxy): it is not the window.
+            keyHere: !throughADoor(request),
+            // B6: the paired door, or any caller not on this computer (a widened listener, the webhook door), is a door.
+            // A phone's own key counts too, even arriving from this computer (a local proxy).
+            viaDoor: throughADoor(request) }, path).catch((error: unknown) => {
             throw error instanceof DevicesHttpError ? new HttpError(error.status, error.message) : error;
           });
           if (answer === undefined) throw new HttpError(404, "Endpoint not found");
@@ -3822,6 +3949,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             send(response, 200, answer);
             return;
           }
+          // The phone door is switched on and off at this computer only: a phone it let in may not reopen or hold it.
+          if (path === "/api/deployment/remote" && (viaRemote || (throughADoor(request) && request.method !== "GET")))
+            throw new HttpError(403, "Reaching Branch from your phone is switched on and off on this computer only.");
           const result = await deploymentApi(app, request, path, deployment(), (r) => readBody(r), remoteHandler);
           if (result !== undefined) { send(response, 200, result); return; }
         }
@@ -3865,6 +3995,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const deployment = (): DeploymentContext => ({
     dataDir: options.dataDir, workspace: app.runtime.workspace, port: new URL(url).port ? Number(new URL(url).port) : 0,
     executable: options.executable ?? null, installRoot: options.installRoot ?? null, remote,
+    ...(options.autostartDeps ? { autostartDeps: options.autostartDeps } : {}), ...(options.loginItem ? { loginItem: options.loginItem } : {}),
   });
   // mac7/nodes: one upgrade handler for this computer's door and the paired door (`viaRemote`).
   const upgrade = (request: IncomingMessage, socket: Duplex, viaRemote: boolean): void => {
@@ -3887,6 +4018,20 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // upgrade handler before this branch, and a task's socket stays on this computer's own door.
       if (viaRemote) { refuseUpgrade(socket); return; }
       // ---- end mac7/nodes ----
+      // App lock: a locked Branch with a PIN opens no socket for a task or a program lending tools.
+      // Asked only once the key has passed, so the answer tells nobody else that Branch is locked.
+      const refusedLocked = (): boolean => {
+        if (!app.sessionLock.refusal("GET", path)) return false;
+        socket.end("HTTP/1.1 423 Locked\r\nConnection: close\r\n\r\n");
+        return true;
+      };
+      // Q261: a socket is a read, so a household person at the window opens only one listed in householdReads (none
+      // is listed now). Asked once the key has passed, like the lock above.
+      const refusedHousehold = (): boolean => {
+        if (app.store.profiles.isOwner() || offLimitsToHousehold("GET", path) === null) return false;
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        return true;
+      };
       // mac4/bucket-20: a program on this computer lending tools, behind the key and while the switch is on.
       if (path === clientToolsPath) {
         // Integration review: "a program on this computer" — the paired address never lends tools.
@@ -3895,19 +4040,24 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
           return;
         }
+        if (refusedLocked() || refusedHousehold()) return;
         serveClientToolSocket(app.interop.clients, request, socket);
         return;
       }
       const match = /^\/api\/runs\/([a-f0-9-]{36})\/ws$/.exec(path);
       const run = match && app.store.run(match[1]!);
       const sameHost = hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts());
-      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !tokenFromProtocol(request, token)) {
+      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !(tokenFromSocket(request, token) || socketPhoneKey(request))) {
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         return;
       }
+      if (refusedLocked() || refusedHousehold()) return;
       // Wave 8: the same socket also carries a live voice conversation, when the browser asks for
       // one. Nothing is opened until it does, so an ordinary task is unchanged.
-      await serveRunSocket(app.store, run.id, request, socket, liveHooks(app.live, run.id, run.sessionId));
+      // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
+      // window switches profile it ends, and opening it again is refused unless the run is theirs.
+      await serveRunSocket(app.store, run.id, request, socket, {
+        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
     })().catch(() => socket.destroy());
   };
   server.on("upgrade", (request, socket) => upgrade(request, socket, false));
@@ -3921,6 +4071,44 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     liveConnections.add(socket);
     socket.once("close", () => liveConnections.delete(socket));
   });
+  /**
+   * A new window key in place of the one a removed phone was handed (src/remote/window-key.ts). Saved first, then
+   * used; then every connection from beyond this computer but `keep` (the request that removed the phone) is ended,
+   * so nothing opened with the old key goes on. One at a time, so two removals never write the file at once.
+   */
+  let rotating: Promise<unknown> = Promise.resolve();
+  function rotateWindowKey(keep?: unknown): Promise<string> {
+    const next = rotating.then(async () => {
+      const key = await writeNewWindowKey(options.dataDir);
+      token = key;
+      for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
+      remote.dropConnections(keep);
+      audit(app.store, app.runtime.owner, { action: "channel.paired", actor: app.runtime.owner, subject: "the window's key",
+        reason: "A removed phone had been handed the window's key, so a new key replaced it", outcome: "removed" });
+      return key;
+    });
+    rotating = next.catch(() => undefined);
+    return next;
+  }
+  /** POST /api/pair/renew: a phone still on the list, proving itself with its own secret, collects the current key. */
+  async function renewWindowKey(request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> {
+    if (request.method !== "POST") throw new HttpError(405, "Use POST");
+    if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
+      throw new HttpError(403, "Origin rejected");
+    const from = requestSource(request.socket?.remoteAddress, request.headers);
+    // The secret is checked before any wait is read, so a phone whose old key was just refused is not kept out.
+    const device = keyMayTravel(request, viaRemote) ? gateway.proven(request) : null;
+    if (!device) {
+      const wait = authLimiter.refusal(from, "key");
+      noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "a phone's own secret");
+      throw new HttpError(wait ? 429 : 401, wait ?? "This phone is not the one that was let in. Accept a fresh invitation on the computer.");
+    }
+    authLimiter.succeed(from);
+    // A key of the phone's own, never the window's; a phone paired before phones had keys moves to one here.
+    const key = gateway.newKey(device.id);
+    if (!key) throw new HttpError(401, "This phone is not the one that was let in. Accept a fresh invitation on the computer.");
+    send(response, 200, { token: key, deviceId: device.id });
+  }
   await listenOn(server, options.port ?? 3210, listen.address, options.anyPortIfTaken === true);
   const address = server.address();
   if (!address || typeof address === "string")
@@ -3945,6 +4133,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const stopWatchingLockdown = onLockdownChange((_store, _owner, on) => {
     // mac7/phone-qr: Lockdown also ends a phone download link that is showing.
     if (on) phoneApp.stop();
+    // Lockdown shuts the door to the phone too, and an opening still waiting on Tailscale never opens.
+    if (on) void remote.disable();
     if (on) narrowToThisComputer("Lockdown is on, so Branch is listening on this computer only.", "Lockdown");
   });
   /**
@@ -4019,7 +4209,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   }
   return {
     url,
-    token,
+    /** The window's key as it is now; removing a phone that was handed it replaces it. */
+    get token(): string { return token; },
     remote,
     /**
      * The same handler the paired listener is given. It is exposed so the behaviour that only
@@ -4039,7 +4230,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingLockdown();
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
-      await remote.disable().catch(() => undefined);
+      await remote.close().catch(() => undefined); // every door it opened, and none opens after this
       if (options.presence) await clearRunning(options.dataDir).catch(() => undefined);
       await stopServer(app, server);
     },
@@ -4107,6 +4298,9 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       // The stream carries tool arguments and results, so nothing goes out of it carrying a saved
       // password or key; how long it may run and how much it may send are both capped inside.
       scrub: app.runtime.hideSecrets,
+      // Q253: an open stream follows who is at the window (as the activity list does since #324). Once
+      // the window switches profile it ends, and the window's reconnect opens it under the new scope.
+      scopeNow: () => scopeWhileUnlocked(app),
       ...(Number(query.get("maxMs")) ? { maxMs: Number(query.get("maxMs")) } : {}),
     });
     return true;
@@ -4116,7 +4310,10 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const run = app.store.run(stream[1]!);
     if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     const after = Number(new URL(request.url ?? "/", "http://local").searchParams.get("after") ?? 0) || 0;
-    await streamRunEvents(app.store, run.id, response, after);
+    // Q254: the stream follows who is at the window, as /api/events/stream does since #339. Once the
+    // window switches profile it ends (reason "profile"), and opening it again answers 404 unless the
+    // run belongs to whoever is there now.
+    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
     return true;
   }
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
@@ -4281,8 +4478,11 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   if (sessionExport && request.method === "GET"
       && new URL(request.url ?? "/", "http://local").searchParams.get("format") === "markdown") {
     const sessionId = sessionExport[1]!;
-    if (!app.store.ownsSession(app.runtime.owner, sessionId)) throw new HttpError(404, "Conversation not found");
-    const view = app.store.sessionView(app.runtime.owner, sessionId) as { createdAt?: string; title?: string };
+    // Q259: conversations belong to whoever's profile is switched on (as the JSON export in sessionApi reads them),
+    // so a household person saves only their own; the owner's reads exactly like one that is not there.
+    const scope = app.store.profiles.scope();
+    if (!app.store.ownsSession(scope, sessionId)) throw new HttpError(404, "Conversation not found");
+    const view = app.store.sessionView(scope, sessionId) as { createdAt?: string; title?: string };
     const markdown = conversationMarkdown({ sessionId, ...(view.createdAt ? { createdAt: view.createdAt } : {}), ...(view.title ? { title: view.title } : {}) },
       app.store.messages(sessionId));
     response.writeHead(200, {
@@ -4297,7 +4497,8 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const url = new URL(request.url ?? "/", "http://local");
     const range = (url.searchParams.get("range") ?? "30d") as "7d" | "30d" | "90d" | "all";
     const { overrides } = pricingSettings(app.store, app.runtime.owner);
-    const data = app.store.usageStore().aggregateUsage(range, "day", overrides);
+    // Q259: as GET /api/usage: a household person's file holds their own conversations' days only.
+    const data = app.store.usageStore().aggregateUsage(range, "day", overrides, app.store.profiles.isOwner() ? undefined : ownConversationOf(app));
     // estimatedCostUsd covers only the tasks with a price; runsWithoutPrice says how many had none.
     // Wave 7: the money columns a spreadsheet needs — what the day cost, what one task cost on
     // average, and the model that cost the most — with an empty cell wherever nobody knows.
@@ -4432,6 +4633,23 @@ export async function trajectoryOptions(app: Branch, runId: string) {
     },
   };
 }
+/** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
+async function stepsOf(app: Branch, runId: string) {
+  const owner = app.runtime.owner, run = app.store.run(runId)!;
+  const { price } = await trajectoryOptions(app, runId);
+  const helperName = (agent: string): string | null => {
+    if (agent.startsWith("mode:")) { try { return app.interop.modes.find(agent.slice(5)).name; } catch { return agent.slice(5); } }
+    const saved = app.store.get("specialists", owner, agent)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
+    const name = saved?.definition?.name ?? saved?.name;
+    return typeof name === "string" && name ? name : agent;
+  };
+  return runSteps(app.store, runId, {
+    price, waiting: app.runtime.approvals.waiting(),
+    decided: app.store.audit.list(owner, { action: "approval.decided", from: run.createdAt, limit: 1000 }),
+    chain: { mode: safetyMode(app.store, owner, "activity-chain"), entries: app.safetyExtras.chain.forRun(owner, runId) },
+    thinkingOf: (id) => app.runtime.thinkingOf(id), helperName, cost: (id) => runCost(app, id),
+  });
+}
 /** What the metering export needs: the ledger, the workspace it may write into, and the prices. */
 function meteringDeps(app: Branch) {
   return {
@@ -4535,6 +4753,8 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
     return "A short-lived key cannot fix an update or choose who does. Do that in the app window.";
   if (handlesUpdateFailurePath(path))
     return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
+  if (path === "/api/updates/data-copies")
+    return "A short-lived key cannot see or put back the copies of the data folder taken before updates. Do that in the app window.";
   if (method === "GET") return ownerOnlyRead(path);
   // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
   // conversation starts with (and the model services behind it), and which commands are offered
@@ -4631,9 +4851,15 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
  * profile-audit: what a household person at the window is refused. Whatever a short-lived key is
  * refused, they are too — settings, permissions, secrets, pairing, backups, updates, the danger
  * zone — except their own things and the ways out listed in src/household-routes.ts.
+ * Q261: reading fails closed too. A GET is answered only when it is listed in householdReads, and a HEAD never is,
+ * whatever a short-lived key may read.
  */
-export function offLimitsToHousehold(method: string | undefined, path: string): string | null {
+export function offLimitsToHousehold(method: string | undefined, path: string, key: { ownersShortLivedKey?: boolean } = {}): string | null {
+  // Q262: the owner's own stores come first, whatever a list below (or a short-lived key's task routes) would allow;
+  // only a request made with the owner's own short-lived key (src/server.ts, where the key is accepted) is the owner's.
+  if (!key.ownersShortLivedKey && householdOwnerStore(method, path)) return householdRefusalFor(path);
   if (householdMaySend(method, path)) return null;
+  if (isRead(method)) return householdRefusalFor(path);
   return offLimitsToShortLivedKeys(method, path) === null ? null : householdRefusalFor(path);
 }
 /**
@@ -4666,7 +4892,7 @@ async function vetTriedServer(app: Branch, input: unknown): Promise<void> {
 }
 function isExecution(request: IncomingMessage, path: string): boolean {
   return (
-    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin)(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
+    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin|servers)(\/|$)/.test(path) || /^\/api\/clis(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
     // mac4/bucket-20: an Agent Protocol step, and every change under /api/interop, start or change work.
     || (request.method !== "GET" && handlesInteropPath(path))
     // mac6/bucket-23: every change under /api/asks may start work (an answer, an article, a send).

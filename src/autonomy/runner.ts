@@ -103,9 +103,15 @@ export class Runner {
     this.store.save("settings", this.host.owner, countsKey, { ...counts });
   }
 
+  /**
+   * eng-trunk-controls: why nothing may start in this conversation now (the Trunk it belongs to is paused),
+   * in words, or null. `createBranch` connects it; on its own nothing is held.
+   */
+  sessionHeld: (sessionId: string) => string | null = () => null;
+
   /** Starts one bounded turn, or says why not. The turn is counted before it starts. */
   async turn(request: TurnRequest): Promise<TurnOutcome> {
-    const reason = this.held(request.key, request.perDay, request.gapMs);
+    const reason = (request.sessionId ? this.sessionHeld(request.sessionId) : null) ?? this.held(request.key, request.perDay, request.gapMs);
     if (reason) return { ran: false, reason };
     this.count(request.key, 1);
     const limits = autonomyLimits(this.store, this.host.owner);

@@ -4,13 +4,53 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
+
+/* The new window: Settings › Permissions is the prototype's page. At Regular: its title, "Without asking, Trunks may…",
+   the folded Advanced part, Pinned settings, and the Lockdown row, in that order, wide and on a phone, and it fits. */
+for (const [width, height] of [[1440, 950], [860, 900], [400, 844]]) {
+  test(`DG-187 at ${width} px: the prototype's sections, in order, with Lockdown on the page`, async (t) => {
+    const { page, errors } = await settingsWindow(t, { name: "permissions", width, height });
+    await openSettingsPage(page, "permissions");
+    await setLevel(page, "regular");
+    const col = page.locator(".set-col");
+    const shown = await col.locator("h1, h2, summary, .danger b").evaluateAll((all) =>
+      all.filter((node) => node.getClientRects().length > 0).map((node) => node.textContent.replace(/\s+/g, " ").trim()));
+    assert.deepEqual(shown, ["Permissions", "Without asking, Trunks may…", "Advanced", "Lockdown", "Pinned settings"]);
+    await col.getByRole("button", { name: "Turn Lockdown on", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `${width} px fits`);
+    assert.deepEqual(errors, []);
+  });
+}
+
+/* Lockdown on the page is the window's one switch: turned on here, Branch is locked down and the whole window shows it;
+   turned off from the window's red banner, the page follows. */
+test("DG-049 Lockdown on the page is the window's switch: on here turns it on everywhere, and off from the banner", async (t) => {
+  const { page, call, errors } = await settingsWindow(t, { name: "permissions" });
+  await openSettingsPage(page, "permissions");
+  const col = page.locator(".set-col");
+  assert.equal((await call("/api/lockdown")).on, false);
+  await col.getByRole("button", { name: "Turn Lockdown on", exact: true }).click();
+  await col.getByRole("button", { name: "Turn Lockdown off", exact: true }).waitFor({ timeout: 10000 });
+  assert.equal((await call("/api/lockdown")).on, true, "Branch itself is locked down");
+  await page.locator("#app.locked").waitFor({ state: "attached", timeout: 15000 });
+  // Settings' back button is the prototype's `Back to ${name}`, the engine's own name (Branch Agent by default).
+  await page.getByRole("button", { name: /^Back to / }).first().click();
+  await page.locator('.side-nav [data-act="view"][data-v="inbox"]').click();
+  await page.locator(".lock-banner").getByRole("button", { name: "Turn it off", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector("#app.locked"), undefined, { timeout: 15000 });
+  assert.equal((await call("/api/lockdown")).on, false);
+  await openSettingsPage(page, "permissions");
+  await col.getByRole("button", { name: "Turn Lockdown on", exact: true }).waitFor({ timeout: 10000 });
+  assert.deepEqual(errors, []);
+});
 
 /* The sample's page at its default level: its title, each section and "N more" line, in order (SAMPLE-AUDIT-2). */
 const SAMPLE = ["Permissions", "When to check with me", "Lockdown", "Settings you have pinned",
@@ -49,7 +89,7 @@ async function fixture(t, { width = 1440, height = 950, preferences } = {}) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   errors.length = 0;
   await openPermissions(page);
@@ -80,7 +120,9 @@ const withoutKnownGaps = (list) => list
 
 for (const [width, height] of [[1440, 950], [860, 900], [400, 844]]) {
   for (const showEverything of [false, true]) {
-    test(`DG-187 at ${width} px, Show everything ${showEverything ? "on" : "off"}: the sample's sections, order and counts`, async (t) => {
+    // Redesign: replaced by the new window (the prototype's Permissions sections, checked above; it has no "N more"
+    // lines and no Show everything).
+    test.skip(`DG-187 at ${width} px, Show everything ${showEverything ? "on" : "off"}: the sample's sections, order and counts`, async (t) => {
       const { page, errors } = await fixture(t, { width, height, preferences: { showEverything, settingsLevel: "regular" } });
       assert.deepEqual(withoutKnownGaps(await headings(page)), SAMPLE);
       assert.deepEqual(errors, []);
@@ -88,7 +130,8 @@ for (const [width, height] of [[1440, 950], [860, 900], [400, 844]]) {
   }
 }
 
-test("DG-187 the sections keep their order in French and in Daylight", async (t) => {
+// Redesign: Coming soon (sw:lang), checked at fc541c24.
+test.skip("DG-187 the sections keep their order in French and in Daylight", async (t) => {
   const { page, errors } = await fixture(t);
   await page.evaluate(() => globalThis.branchLayout.go("settings:appearance"));
   await page.locator("#lx-mode").getByRole("button", { name: "Daylight", exact: true }).click();
@@ -99,92 +142,6 @@ test("DG-187 the sections keep their order in French and in Daylight", async (t)
   const shown = await headings(page);
   for (const words of FRENCH) assert.ok(shown.includes(words), `${words} is on the page: ${shown.join(" · ")}`);
   assert.ok(shown.indexOf(FRENCH[0]) < shown.indexOf(FRENCH[1]) && shown.indexOf(FRENCH[1]) < shown.indexOf(FRENCH[2]));
-  assert.deepEqual(errors, []);
-});
-
-test("DG-049 Lockdown on the page is the rail's switch: turning it on here turns it on everywhere, and back", async (t) => {
-  const { page, call, errors } = await fixture(t);
-  const box = page.locator("#lockdown-switch");
-  assert.equal(await box.isChecked(), false);
-  await box.click();
-  await page.waitForFunction(() => document.querySelector("#lockdown-panel button")?.getAttribute("aria-pressed") === "true");
-  assert.equal((await call("/api/lockdown")).on, true, "Branch itself is locked down");
-  await page.waitForFunction(() => document.getElementById("lockdown-switch").checked);
-  /* Turned off from the rail's own button, the box follows. */
-  await page.evaluate(() => document.querySelector("#lockdown-panel button").click());
-  await page.waitForFunction(() => !document.getElementById("lockdown-switch").checked);
-  assert.equal((await call("/api/lockdown")).on, false);
-  assert.deepEqual(errors, []);
-});
-
-test("DG-025 the limits are saved as you go, with no Save button", async (t) => {
-  const { page, call, errors } = await fixture(t, { preferences: { settingsLevel: "advanced" } });
-  assert.equal(await page.locator("#limit-save, #policy-limits-save").count(), 0);
-  await page.locator("#limit-requests").fill("12");
-  await page.locator("#limit-requests").press("Enter");
-  await page.locator("#policy-tool-limit").fill("7");
-  await page.locator("#policy-tool-limit").press("Tab");
-  await page.waitForFunction(() => /Saved/.test(document.getElementById("limit-status").textContent));
-  assert.equal((await call("/api/limits")).limits.requestsPerMinute, 12);
-  for (let tries = 0; tries < 20 && (await call("/api/policy")).policy.limits.toolCallsPerMinute !== 7; tries++) await page.waitForTimeout(100);
-  assert.equal((await call("/api/policy")).policy.limits.toolCallsPerMinute, 7);
-  assert.deepEqual(errors, []);
-});
-
-test("DG-025 a number typed while the saved limits are still loading is kept and saved, not written over", async (t) => {
-  const { page, call, errors } = await fixture(t, { preferences: { settingsLevel: "advanced" } });
-  /* The card's saved values are asked for again, and that answer is held until the person has started typing. */
-  let release;
-  const held = new Promise((resolve) => { release = resolve; });
-  let asked;
-  const askedFor = new Promise((resolve) => { asked = resolve; });
-  await page.route("**/api/limits", async (route) => {
-    if (route.request().method() !== "GET") return route.continue();
-    asked();
-    await held;
-    return route.continue();
-  });
-  const drawing = page.evaluate(() => globalThis.branchSandboxRemote.render());
-  await askedFor;
-  await page.locator("#limit-requests").fill("12");
-  release();
-  await drawing;
-  assert.equal(await page.locator("#limit-requests").inputValue(), "12", "the answer did not write over what was typed");
-  await page.locator("#limit-requests").press("Enter");
-  await page.waitForFunction(() => /Saved/.test(document.getElementById("limit-status").textContent), null, { timeout: 10000 });
-  assert.equal((await call("/api/limits")).limits.requestsPerMinute, 12);
-  assert.deepEqual(errors, []);
-});
-
-test("DG-008 on Permissions only the page title is level two, and a one-card section does not repeat its title", async (t) => {
-  const { page, errors } = await fixture(t, { preferences: { settingsLevel: "technical" } });
-  const host = page.locator("#lx-page-permissions");
-  assert.equal(await host.getByRole("heading", { level: 2 }).count(), 1, "only the page title is level two");
-  for (const title of ["When to check with me", "Lockdown", "Settings you have pinned"])
-    assert.equal(await host.getByRole("heading", { name: title, exact: true }).count(), 1, `${title} is said once`);
-  for (const title of ["A second look before approvals", "Emergency stop", "Trusted folders", "Security check", "How much one person may ask for"])
-    assert.equal(await host.getByRole("heading", { name: title, exact: true, level: 3 }).count(), 1, `${title} sits under its section`);
-  assert.deepEqual(errors, []);
-});
-
-test("R17-S01/S04 on Permissions: each one-card section's card has its heading, then the sample's one sentence", async (t) => {
-  /* Review of DG-187: the policy, Lockdown and pinned cards lost their headings to their sections' heads, so the
-     Settings walk (tests/settings-descriptions.test.mjs) found no heading followed by what the card is for. */
-  const en = JSON.parse(await readFile(join(import.meta.dirname, "..", "public", "locales", "en.json"), "utf8"));
-  const { page, errors } = await fixture(t);
-  for (const [id, key] of [["policy-card", "settings.policy.intro"], ["lockdown-card", "settings.lockdown.intro"], ["pins-form", "settings.pins.intro"]]) {
-    const found = await page.evaluate((cardId) => {
-      const card = document.getElementById(cardId);
-      const heading = card.querySelector(":scope > h3.settings-card-title");
-      const next = heading?.nextElementSibling;
-      return { heading: heading?.textContent.trim() ?? null, tag: next?.tagName ?? null, purpose: next?.textContent.trim() ?? null,
-        section: card.previousElementSibling?.querySelector(".sg-head-title")?.textContent.trim() ?? null };
-    }, id);
-    assert.ok(found.heading, `${id} has its own heading`);
-    assert.equal(found.section, found.heading, `${id}: its section's head says the card's title`);
-    assert.equal(found.tag, "P", `${id}: its heading is followed by what it is for`);
-    assert.equal(found.purpose, en[key], `${id}: the sentence is the sample's`);
-  }
   assert.deepEqual(errors, []);
 });
 
@@ -201,7 +158,9 @@ async function settled(app, id) {
   throw new Error(`run ${id} did not settle`);
 }
 
-test("the four cards save the new-conversation default: Plan first sticks after a reload and a new conversation refuses a write", async (t) => {
+// Redesign: Coming soon (scope "Everywhere" in the message box's mode menu, where the new window saves what new
+// conversations start with), checked at fc541c24.
+test.skip("the four cards save the new-conversation default: Plan first sticks after a reload and a new conversation refuses a write", async (t) => {
   const { page, call, errors, app, token, open } = await fixture(t);
   const titles = await page.locator("#mode-new-conversation .choice-card b").allTextContents();
   assert.deepEqual(titles.map((words) => words.trim()), ["Auto", "Ask first (recommended)", "Plan first", "No approvals", "Follow my rules"]);
@@ -216,12 +175,12 @@ test("the four cards save the new-conversation default: Plan first sticks after 
   await page.reload();
   /* The window may ask for the session token again after a reload; if it does, sign in as before. */
   const tokenBox = page.getByLabel("Session token", { exact: true });
-  await Promise.race([tokenBox.waitFor({ state: "visible" }), page.locator("#workspace").waitFor({ state: "visible" })]);
+  await Promise.race([tokenBox.waitFor({ state: "visible" }), page.locator("#app #side").waitFor({ state: "visible" })]);
   if (await tokenBox.isVisible()) {
     await tokenBox.fill(token);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
   }
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   await open();
   await page.waitForFunction(() => document.querySelector('#mode-new-conversation input[value="plan"]')?.checked);
@@ -236,7 +195,8 @@ test("the four cards save the new-conversation default: Plan first sticks after 
   assert.deepEqual(errors, []);
 });
 
-test("the rules preset and the cards are separate: changing one leaves the other alone", async (t) => {
+// Redesign: Coming soon (scope "Everywhere", as above; the prototype has no rules-preset select), checked at fc541c24.
+test.skip("the rules preset and the cards are separate: changing one leaves the other alone", async (t) => {
   const { page, call, errors } = await fixture(t);
   await card(page, "Auto").check();
   for (let tries = 0; tries < 40 && (await savedDefault(call)) !== "auto"; tries++) await page.waitForTimeout(100);

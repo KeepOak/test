@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { posix, win32 } from "node:path";
 import { z } from "zod";
-import { autostartState, setAutostart } from "./install/autostart.js";
+import { autostartState, macLoginItemsLink, setAutostart, type AutostartDeps, type AutostartState, type LoginItem } from "./install/autostart.js";
 import { daemonCommand, daemonLauncherName, daemonTaskName, type DaemonAction, type DaemonOptions } from "./install/daemon.js";
 import { launchdLabel } from "./install/launchd.js";
 import { systemdUnitName } from "./install/systemd.js";
 import { readRunning, sessionTokenFileName } from "./install/running.js";
 import { listUpdateBackups, readFirstStart, readUpdateBackup, writeUpdateBackup } from "./install/update-backup.js";
+import { takeDataCopy } from "./install/data-copy.js";
 import { doctorFix } from "./doctor-fix.js";
 import type { RemoteAccess } from "./remote/remote-access.js";
 import type { QrMatrix } from "./remote/qr.js";
@@ -17,6 +18,9 @@ import { readComfort } from "./comfort/settings.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { neverSuggest, nextSuggestion, suggestionsSettings } from "./suggestions.js";
+import { lockdownActive } from "./lockdown.js";
+import { listenLockdownRefusal } from "./listen-address.js";
+import { HttpError } from "./server-http.js";
 
 /**
  * The screens behind "how Branch runs on this computer": start when the person signs in, keep working
@@ -33,6 +37,10 @@ export interface DeploymentContext {
   /** Where the app is installed (see `installTarget`): the program's folder, or the `.app` bundle on a Mac. */
   installRoot: string | null;
   remote: RemoteAccess;
+  /** Stand-ins for the registry tool, so a test never writes this computer's real sign-in list. */
+  autostartDeps?: AutostartDeps;
+  /** The desktop app's own login item (a Mac), used instead of the Windows sign-in list when handed in. */
+  loginItem?: LoginItem;
 }
 
 const EnabledSchema = z.object({ enabled: z.boolean(), minimized: z.boolean().optional() }).strict();
@@ -52,6 +60,19 @@ export interface DeploymentDeps {
   platform?: NodeJS.Platform;
   /** Sends a signal to a process; only used to close this engine after it has answered. */
   signal?: (pid: number, signal: NodeJS.Signals) => void;
+  /** The app's own program when this engine runs inside it in node mode (see `appRuntime`); tests pass it in. */
+  appRuntime?: string | null;
+}
+
+/**
+ * The installed app's program when this engine is that program run in node mode: the background engine on Windows
+ * starts as `"Branch Agent.exe" cli.js start` with ELECTRON_RUN_AS_NODE and is not told its own path. A plain Node, or
+ * Electron from a source checkout's node_modules, is never an installed app, so neither is ever registered.
+ */
+export function appRuntime(env: NodeJS.ProcessEnv = process.env, versions: NodeJS.ProcessVersions = process.versions,
+  execPath: string = process.execPath): string | null {
+  if (!versions.electron || env.ELECTRON_RUN_AS_NODE !== "1") return null;
+  return /[\\/]node_modules[\\/]/.test(execPath) ? null : execPath;
 }
 
 /**
@@ -69,6 +90,39 @@ export function startsBySelfWords(platform: NodeJS.Platform): string {
   if (platform === "win32") return "start with Windows";
   if (platform === "darwin") return "start by itself when you sign in to your Mac";
   return "start by itself when you sign in to this computer";
+}
+
+/**
+ * Whether Branch starts when the person signs in, and whether it can here: only an installed app can
+ * be started by the system (a source checkout has no program of its own to register). Windows keeps a
+ * per-person sign-in list; a Mac uses the app's login item, which macOS may want approved first.
+ */
+export interface AutostartView extends AutostartState { available: boolean; needsApproval: boolean; settingsLink: string }
+const noSignInStart = { enabled: false, minimized: false, command: null, needsApproval: false, settingsLink: "" };
+export const noSignInStartHereWords = "Starting by itself is not available on this kind of computer yet. Open Branch when you want it.";
+
+/** The program the sign-in list would start: the installed app's own, or none from a source checkout. */
+const signInProgram = (context: DeploymentContext, deps: DeploymentDeps): string | null =>
+  context.executable || (deps.appRuntime === undefined ? appRuntime() : deps.appRuntime);
+
+async function autostartView(context: DeploymentContext, platform: NodeJS.Platform, deps: DeploymentDeps): Promise<AutostartView> {
+  if (!signInProgram(context, deps)) return { ...noSignInStart, available: false };
+  if (context.loginItem) {
+    const { enabled, needsApproval } = context.loginItem.read();
+    return { ...noSignInStart, enabled, needsApproval, settingsLink: needsApproval ? macLoginItemsLink : "", available: true };
+  }
+  if (platform !== "win32") return { ...noSignInStart, available: false };
+  return { ...noSignInStart, ...(await autostartState({}, context.autostartDeps)), available: true };
+}
+
+async function saveAutostart(context: DeploymentContext, platform: NodeJS.Platform, deps: DeploymentDeps, body: unknown): Promise<AutostartView> {
+  const { enabled, minimized } = EnabledSchema.parse(body);
+  const program = signInProgram(context, deps);
+  if (!program) throw new Error(`Branch has to be installed on this computer before it can ${startsBySelfWords(platform)}.`);
+  if (context.loginItem) context.loginItem.set(enabled);
+  else if (platform !== "win32") throw new Error(noSignInStartHereWords);
+  else await setAutostart(enabled, { executable: program, minimized: minimized ?? true }, context.autostartDeps);
+  return autostartView(context, platform, deps);
 }
 
 function notInstalledDaemon(platform: NodeJS.Platform): { action: "status"; taskName: string; installed: false; message: string } {
@@ -90,13 +144,13 @@ export function daemonOptions(context: DeploymentContext, platform: NodeJS.Platf
   };
 }
 
-async function overview(app: Branch, context: DeploymentContext, platform: NodeJS.Platform): Promise<unknown> {
+async function overview(app: Branch, context: DeploymentContext, platform: NodeJS.Platform, deps: DeploymentDeps): Promise<unknown> {
   const installed = Boolean(context.executable);
   return {
     installed,
     installRoot: context.installRoot,
     dataDir: context.dataDir,
-    autostart: installed ? await autostartState() : { enabled: false, minimized: false, command: null },
+    autostart: await autostartView(context, platform, deps),
     daemon: installed
       ? await daemonCommand("status", daemonOptions(context, platform))
       : notInstalledDaemon(platform),
@@ -109,9 +163,12 @@ async function overview(app: Branch, context: DeploymentContext, platform: NodeJ
   };
 }
 
+/** Switching the phone door on is refused under Lockdown; switching it off always works. */
 async function setRemote(app: Branch, context: DeploymentContext, body: unknown, handler: Parameters<RemoteAccess["enable"]>[0]): Promise<unknown> {
   const { enabled } = EnabledSchema.parse(body);
-  return enabled ? context.remote.enable(handler) : context.remote.disable();
+  if (!enabled) return context.remote.disable();
+  if (lockdownActive(app.store, app.runtime.owner)) throw new HttpError(409, listenLockdownRefusal);
+  return context.remote.enable(handler);
 }
 
 const loopback = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
@@ -168,18 +225,14 @@ export async function deploymentApi(
   deps: DeploymentDeps = {},
 ): Promise<unknown | undefined> {
   const platform = deps.platform ?? process.platform;
-  if (request.method === "GET" && path === "/api/deployment") return overview(app, context, platform);
+  if (request.method === "GET" && path === "/api/deployment") return overview(app, context, platform, deps);
   if (request.method === "GET" && path === "/api/deployment/suggestion") return suggestion(app, context, platform);
   // "Don't ask again": only the owner reaches this (an unlisted change is refused to everyone else).
   if (request.method === "POST" && path === "/api/deployment/suggestion") {
     app.store.profiles.requireOwner("Suggestions");
     return { settings: neverSuggest(app.store, app.runtime.owner, await readBody(request)) };
   }
-  if (request.method === "POST" && path === "/api/deployment/autostart") {
-    const { enabled, minimized } = EnabledSchema.parse(await readBody(request));
-    if (!context.executable) throw new Error(`Branch has to be installed on this computer before it can ${startsBySelfWords(platform)}.`);
-    return setAutostart(enabled, { executable: context.executable, minimized: minimized ?? true });
-  }
+  if (request.method === "POST" && path === "/api/deployment/autostart") return saveAutostart(context, platform, deps, await readBody(request));
   if (request.method === "POST" && path === "/api/deployment/daemon") {
     const { action } = DaemonSchema.parse(await readBody(request));
     return daemonCommand(action as DaemonAction, daemonOptions(context, platform));
@@ -196,8 +249,13 @@ export async function deploymentApi(
     // Branch itself is listening on that address, so "in use" is the right answer, not a problem.
     return doctorFix({ fix, port: context.port, workspace: context.workspace, portIsOurs: true });
   }
-  if (request.method === "POST" && path === "/api/deployment/backup")
-    return writeUpdateBackup(context.dataDir, app.store.backup(app.version), app.version);
+  if (request.method === "POST" && path === "/api/deployment/backup") {
+    // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
+    const written = await writeUpdateBackup(context.dataDir, app.store.backup(app.version), app.version);
+    const folder = await takeDataCopy({ dataDir: context.dataDir, version: app.version,
+      open: { "branch.sqlite": app.store.sqlite, "journal.sqlite": app.neverBreak.journal.database } });
+    return { ...written, dataCopy: folder.name };
+  }
   if (request.method === "GET" && path === "/api/deployment/restore-points")
     return { points: await listUpdateBackups(context.dataDir), firstStart: await readFirstStart(context.dataDir) };
   if (request.method === "POST" && path === "/api/deployment/restore-point") {

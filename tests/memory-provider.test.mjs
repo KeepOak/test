@@ -248,20 +248,22 @@ test("a fact the service hands back for another owner or under another id is ref
   await assert.rejects(() => app.registry.execute("memory.put", { text: "Mine", source: "owner" }, context), /someone else/);
 });
 
-test("the card says what is switched on in the reader's language and names no source file", async () => {
-  const [en, fr, card] = await Promise.all([
+test("the memory provider's words are in the reader's language and name no source file", async () => {
+  const [en, fr] = await Promise.all([
     readFile(new URL("../public/locales/en.json", import.meta.url), "utf8").then(JSON.parse),
     readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8").then(JSON.parse),
-    readFile(new URL("../public/memory-provider-ui.js", import.meta.url), "utf8"),
   ]);
-  for (const key of ["memprovider.activeBuiltin", "memprovider.activeOutside"]) {
-    assert.ok(card.includes(`"${key}"`), `the card uses ${key}`);
+  // Redesign: the old window's memory provider card (public/memory-provider-ui.js) left with that window. The prototype
+  // has no sentence saying which memory is on; its "Outside memory" is a choice of None, Mem0, Honcho or Hindsight in
+  // Settings › Advanced (public/app/settings/pages/advanced.js). So the card's own checks are gone, and the rule that
+  // no word shown to the owner names a source file still holds for every memprovider word, in both languages.
+  for (const key of ["memprovider.activeBuiltin", "memprovider.activeOutside"])
     assert.ok(fr[key] && fr[key] !== en[key], `${key} has its own French wording`);
-  }
   const words = Object.entries({ ...en, ...Object.fromEntries(Object.entries(fr).map(([k, v]) => [k + ":fr", v])) })
     .filter(([key]) => key.startsWith("memprovider."));
   assert.deepEqual(words.filter(([, text]) => /\bsrc\/|\.ts\b/.test(text)), [], "no source file is named to the owner");
-  assert.doesNotMatch(card.replace(/\/\*[\s\S]*?\*\//g, ""), /src\/[\w-]+\.ts/, "nor in the card's own English fallbacks");
+  const choice = await readFile(new URL("../public/app/settings/pages/advanced.js", import.meta.url), "utf8");
+  assert.doesNotMatch(choice.replace(/\/\*[\s\S]*?\*\//g, ""), /src\/[\w-]+\.ts/, "nor in the window's Outside memory choice");
 });
 
 test("the outside service's key comes from the locker at each request, in the owner's header, and never sits in the settings", async (t) => {

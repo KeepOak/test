@@ -225,9 +225,9 @@ test("review: /api/action with a short-lived key goes through the approval rules
   }
   assert.deepEqual(ran, [], "the tool never ran");
   // The owner's own "try" still answers its own question, as before.
-  assert.equal((await call("POST", "/api/policy", server.token, { rules: [{ tool: "probe.change", match: "*", decision: "ask" }] })).status, 200);
+  assert.equal((await call("POST", "/api/policy", server.token, { rules: [{ tool: "probe.change", match: "*", decision: "ask" }], confirmLoosening: true })).status, 200); // Q257: from a refusal this loosens
   assert.equal((await call("POST", "/api/tools/try", server.token, { name: "probe.change", arguments: {}, confirm: true })).body.status, "ran");
-  assert.equal((await call("POST", "/api/policy", server.token, { rules: [{ tool: "probe.change", match: "*", decision: "allow" }] })).status, 200);
+  assert.equal((await call("POST", "/api/policy", server.token, { rules: [{ tool: "probe.change", match: "*", decision: "allow" }], confirmLoosening: true })).status, 200); // Q257: loosens
   const allowed = await call("POST", "/api/action", run, { tool: "probe.change", args: {} });
   assert.equal(allowed.status, 200, "a tool the rules allow still runs for a run key");
   assert.equal(ran.length, 2);

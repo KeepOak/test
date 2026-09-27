@@ -5,6 +5,7 @@ import type { LoopKind } from "./loops.js";
 import { offSentence, quoteLine, type AutonomyPart } from "./settings.js";
 import { addSubgoal, saveSubgoals, subgoalsOf } from "./subgoals.js";
 import { catalogue } from "./blueprints.js";
+import { conversationModeSettings, readConversationMode, type ConversationMode } from "../conversation-mode.js";
 
 /**
  * R17-B: what `/loop`, `/heartbeat`, `/subgoal`, `/bg`, `/handoff`, `/suggestions` and `/blueprint`
@@ -69,6 +70,21 @@ const subgoal: Handler = async (call) => {
 const background = new WeakMap<object, Set<string>>();
 const maxBackground = 3;
 
+/**
+ * Redesign security review: how much a /bg task may do. Started from a conversation, it is held to that conversation
+ * exactly as the conversation's own tasks are: a Trunk's side of a room follows the room's conversation, and a
+ * conversation with no mode of its own follows the owner's rules (so does the task). Only with no conversation at all
+ * does a task started from the window take the owner's choice for a new one, as a message sent there does.
+ */
+function backgroundMode(call: Call): ConversationMode | null {
+  const runtime = call.host.runtime;
+  if (call.sessionId)
+    return readConversationMode(runtime.store, runtime.owner, runtime.modeFollows(call.sessionId) ?? call.sessionId)?.mode ?? null;
+  if (call.surface !== "window") return null;
+  const chosen = conversationModeSettings(runtime.store, runtime.owner).newConversation;
+  return chosen === "follow" ? null : chosen;
+}
+
 const bg: Handler = async (call) => {
   const autonomy = reach(call, "session-commands");
   if (typeof autonomy === "string") return say(autonomy);
@@ -81,9 +97,11 @@ const bg: Handler = async (call) => {
   background.set(runtime, working);
   if (working.size >= maxBackground) return say(`${maxBackground} background tasks are already working; wait for one to finish.`);
   let sessionId = "", runId = "";
+  const mode = backgroundMode(call);
   // A separate conversation, not awaited: this one stays free. It is a task like any the owner starts.
   await new Promise<void>((resolve) => {
     void runtime.run({ prompt, source: "owner", onTextDelta: () => undefined, ...(call.permissions ? { permissions: call.permissions } : {}),
+      ...(mode ? { conversationMode: mode } : {}),
       onStarted: (run) => { sessionId = run.sessionId; runId = run.id; working.add(run.id); resolve(); } })
       .catch(() => undefined).finally(() => { working.delete(runId); resolve(); });
   });

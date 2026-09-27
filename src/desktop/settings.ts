@@ -4,6 +4,7 @@ import { z } from "zod";
 import { providerFromEnv } from "../providers.js";
 
 const fields = {
+  // "demo" is how this file has always written "no connection saved"; it names no model and never starts one.
   provider: z.enum(["demo", "openai", "anthropic"]),
   endpoint: z.string().max(2048),
   model: z.string().max(256),
@@ -37,7 +38,7 @@ export class DesktopSettings {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       this.value = { ...empty };
-      this.issue = "Saved model settings could not be read. Save a new connection or choose the offline demonstration.";
+      this.issue = "Saved model settings could not be read. Save a new connection in Settings › Models.";
     }
   }
   summary() {
@@ -49,10 +50,11 @@ export class DesktopSettings {
     };
   }
   reportConnectionIssue(): void {
-    this.issue = "Saved model connection could not be opened. Replace the key or choose the offline demonstration.";
+    this.issue = "Saved model connection could not be opened. Replace the key in Settings › Models.";
   }
   environment(): NodeJS.ProcessEnv {
-    if (this.value.provider === "demo") return { BRANCH_PROVIDER: "demo" };
+    // Nothing saved: no model is set up, so none is named and every message is refused until one is.
+    if (this.value.provider === "demo") return {};
     if (!this.encryption.available())
       throw new Error("Device key storage is unavailable");
     try {

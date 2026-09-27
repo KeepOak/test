@@ -4,7 +4,8 @@ import type { Store } from "../store.js";
 
 /**
  * Bucket R17-I: "reach and platform". Each part has the owner's three-way switch — off, when needed,
- * on — kept in a settings record of its own, and every one ships off.
+ * on — kept in a settings record of its own. What each ships as is `reachShipsOn` below; a saved
+ * record that cannot be read is off.
  *
  *   off          the part refuses in one plain sentence; its tools are not in the catalog at all, and
  *                nothing of it runs by itself (no polling, no watching, no connection)
@@ -26,6 +27,23 @@ export type ReachMode = z.infer<typeof ReachModeSchema>;
 const RecordSchema = z.object({ mode: ReachModeSchema.default("off") }).strict();
 
 export const reachKey = (part: ReachPart): string => `reach-${part}`;
+
+/**
+ * What each part is while nothing has been saved for it. A saved record that is damaged still reads as off.
+ * Kept off, by the owner's rule: Trunks on other computers and the relay (each takes messages in from
+ * outside, (a)); using apps in the background (it drives any app without the screen-and-keyboard switch,
+ * which ships off, (d)); making videos (a paid video service beside the model provider, (b)); sharing
+ * the assistant through git (it sends the assistant somewhere new, (c)); and `branch send` (it sends
+ * messages into chat apps, and the owner's rule keeps sending off until the owner turns it on).
+ */
+export const reachShipsOn: Partial<Record<ReachPart, ReachMode>> = {
+  // The owner's rule (ships on, 2026-09-26): pausing a chat app is the owner's alone and only quietens Branch; none of (a)–(f).
+  "platform-pause": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): notes stay in Branch's database, and a rewrite is a suggestion from the configured model; none of (a)–(f).
+  notes: "when-needed",
+  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): machines reaches other computers; skill-bundles brings in outside content; a plugged USB device starts
+  // tasks; arena spends on two model connections at once.
+};
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
 export const reachLabels: Record<ReachPart, string> = {
@@ -60,9 +78,9 @@ export const reachTools: Record<ReachPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
-export const reachToolFeatures: readonly (readonly [string, string, readonly string[]])[] = reachParts
+export const reachToolFeatures: readonly (readonly [string, string, readonly string[], ReachMode])[] = reachParts
   .filter((part) => reachTools[part].length > 0)
-  .map((part) => [reachKey(part), `${reachLabels[part].charAt(0).toLowerCase()}${reachLabels[part].slice(1)} is switched on`, reachTools[part]] as const);
+  .map((part) => [reachKey(part), `${reachLabels[part].charAt(0).toLowerCase()}${reachLabels[part].slice(1)} is switched on`, reachTools[part], reachShipsOn[part] ?? "off"] as const);
 
 /** The mode in use: Lockdown answers "off" for the outward parts, whatever was saved (mac7/lockdown-fix). */
 export function reachMode(store: Pick<Store, "get">, owner: string, part: ReachPart): ReachMode {
@@ -71,7 +89,9 @@ export function reachMode(store: Pick<Store, "get">, owner: string, part: ReachP
 
 /** The mode as the owner saved it, for putting tools in the catalog: Lockdown refuses at use instead. */
 export function savedReachMode(store: Pick<Store, "get">, owner: string, part: ReachPart): ReachMode {
-  const saved = RecordSchema.safeParse(store.get("settings", owner, reachKey(part))?.data ?? {});
+  const found = store.get("settings", owner, reachKey(part));
+  if (!found) return reachShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

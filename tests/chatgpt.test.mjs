@@ -114,7 +114,7 @@ test("device sign-in stores tokens, registers ChatGPT presets and completes a to
   assert.equal(body.model, "gpt-6-sol");
   assert.equal(body.stream, true);
   assert.equal(body.store, false);
-  assert.deepEqual(body.reasoning, { effort: "medium" }, "GPT-6 Sol thinks at medium");
+  assert.deepEqual(body.reasoning, { effort: "medium", summary: "auto" }, "GPT-6 Sol thinks at medium, and its thinking is summed up (B1)");
   assert.match(body.instructions, /Branch Agent/);
   assert.equal(body.input[0].role, "user");
   const second = JSON.parse(calls[1].body);
@@ -226,3 +226,16 @@ test("Responses stream parsing rejects failed and incomplete responses", () => {
   assert.equal("tools" in body, false);
 });
 
+
+test("the thinking's summary is passed on as it is written, and never becomes the answer (dogfood B1)", async () => {
+  const { ResponsesStream } = await import("../dist/chatgpt-provider.js");
+  const said = [], thought = [];
+  const stream = new ResponsesStream((text) => said.push(text), (text) => thought.push(text));
+  for (const event of [
+    { type: "response.reasoning_summary_text.delta", delta: "Checking the settings first" },
+    { type: "response.output_text.delta", delta: "Done." },
+    { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } },
+  ]) stream.consume(JSON.stringify(event));
+  assert.deepEqual(thought, ["Checking the settings first"]);
+  assert.equal(stream.result().content, "Done.");
+});

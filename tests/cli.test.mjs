@@ -17,7 +17,7 @@ test("CLI loads explicitly configured integrations before doctor", async (t) => 
   );
   const { stdout } = await promisify(execFile)(
     process.execPath,
-    ["dist/cli.js", "doctor"],
+    ["dist/cli.js", "doctor", "--json"],
     {
       env: {
         ...process.env,

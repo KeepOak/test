@@ -43,9 +43,15 @@ async function fixture(t, provider = scripted()) {
   return { app, root, workspace, put, on, context: (extra = {}) => ({ ...app.runtime.context({ runId: app.store.createRun(app.runtime.owner, "test").id }), ...extra }) };
 }
 
-test("every part ships off, its tools are left out, and the three-way switch loads or hides them", async (t) => {
+test("every part ships as the owner's rule says, its tools are left out while off, and the three-way switch loads or hides them", async (t) => {
   const { app } = await fixture(t);
-  for (const part of codingParts) assert.equal(app.coding.modes()[part], "off", `${part} is off on a fresh install`);
+  // The owner's rule (ships on, 2026-09-26): the coding parts ship "when needed", read-first ships on (Q250, a stricter
+  // guard), fewer-rounds is not part of this sweep; a damaged record reads as off; what "off" does is tested by switching
+  // every part off.
+  const ships = { "read-first": "on", "fewer-rounds": "off", worktrees: "off" }; // worktrees: heavy disk
+  for (const part of codingParts) assert.equal(app.coding.modes()[part], ships[part] ?? "when-needed", `${part} on a fresh install`);
+  assert.equal(codingMode({ get: () => ({ data: { mode: "sideways" } }) }, "local", "notebooks"), "off", "a damaged record reads as off");
+  for (const part of codingParts) app.coding.setMode(part, "off");
   const all = codingParts.flatMap((part) => codingTools[part]);
   for (const name of all) assert.equal(app.registry.names().includes(name), false, `${name} is not listed while off`);
   app.coding.setMode("notebooks", "when-needed");
@@ -86,6 +92,7 @@ test("R17-041: an answer over 64 KiB fails while off, and is kept in a file, sec
   const { app, context } = await fixture(t);
   const long = `token=sk-live-SECRETSECRET ${"x".repeat(70_000)}`;
   app.registry.register({ name: "test.long", permission: "files.read", description: "long", parameters: (await import("zod")).z.object({}).strict(), execute: async () => ({ text: long }) });
+  app.coding.setMode("large-output", "off"); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   await assert.rejects(app.registry.execute("test.long", {}, context()), /64 KiB/);
   app.coding.setMode("large-output", "on");
   const outputs = new LargeOutputs(app.store, app.runtime.owner, (text) => text.replaceAll("sk-live-SECRETSECRET", "[hidden]"));
@@ -110,6 +117,7 @@ test("R17-037: /init asks the model, project.init writes AGENTS.md once, and an 
   assert.deepEqual(facts.commands, ["npm run build", "npm run test"]);
   assert.match(draftInstructions(facts), /`npm run test`[\s\S]*`src\/`/);
   const host = { runtime: app.runtime };
+  app.coding.setMode("init", "off"); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   assert.match(initCommand({ host, argument: "" }).text, /switched off/);
   assert.equal(lookup("init").name, "init");
   assert.equal(PARITY.find((row) => row.theirs.startsWith("/init")).status, "built");
@@ -268,6 +276,7 @@ test("R17-034: the snapshot reads the login shell once, drops anything key-like,
   const calls = [];
   const runner = async (run) => { calls.push(run); return { exitCode: 0, stdout: output, stderr: "", timedOut: false }; };
   const snapshots = new ShellSnapshots(app.store, app.runtime.owner, { runner, env: { SHELL: "/bin/zsh" }, platform: "darwin", home: "/Users/o" });
+  app.coding.setMode("shell-snapshot", "off"); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   await assert.rejects(snapshots.take(), /switched off/);
   on("shell-snapshot");
   await snapshots.take();
@@ -374,6 +383,7 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   app.store.message(app.store.createRun(app.runtime.owner, "hi").sessionId, { role: "user", content: "hi" });
   const first = app.store.runs(app.runtime.owner)[0];
   const messageId = app.runtime.store.sqlite.prepare("SELECT source_id FROM messages WHERE session_id=?").get(first.sessionId)?.source_id;
+  app.coding.setMode("worktrees", "off"); // ships off (heavy disk); switched off explicitly all the same
   await assert.rejects(app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000)), /switched off/);
   on("worktrees");
   const fork = await app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000));
@@ -427,6 +437,7 @@ test("R17-043: the project's review checks run as read-only helpers against the 
   await put(".agents/checks/logging.md", "No passwords in logs.\n");
   await put("README.md", "# Falcon\n\nChanged.\n");
   await put("src/api.ts", "export const x = 1;\n");
+  app.coding.setMode("review-checks", "off"); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   await assert.rejects(app.coding.checks.run({ only: [] }, context()), /switched off/);
   on("review-checks");
   const outcome = await app.runtime.executeTool("review.checks", {}, { mode: "owner" });
@@ -478,7 +489,9 @@ test("the API: switches, settings and refusals in plain words", async (t) => {
   const { app } = await fixture(t);
   const { codingApi } = await import("../dist/coding/api.js");
   const call = (method, path, body) => codingApi({ coding: app.coding, runtime: app.runtime, method, query: new URLSearchParams(), readBody: async () => body }, path);
-  assert.equal((await call("GET", "/api/coding")).modes.checklist, "off");
+  // The owner's rule (ships on, 2026-09-26): the parts ship "when needed"; "off" is tested by switching it off.
+  assert.equal((await call("GET", "/api/coding")).modes.checklist, "when-needed");
+  await call("POST", "/api/coding/switch", { part: "init", mode: "off" });
   await assert.rejects(call("GET", "/api/coding/init"), (error) => error.status === 409 && /switched off/.test(error.message));
   assert.equal((await call("POST", "/api/coding/switch", { part: "init", mode: "when-needed" })).mode, "when-needed");
   assert.match((await call("GET", "/api/coding/init")).prompt, /project.init/);

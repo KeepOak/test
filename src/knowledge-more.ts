@@ -129,6 +129,7 @@ export async function knowledgeExtrasApi(
   if (method === "POST" && path === "/api/knowledge/summarise")
     return parts.summaries.summarise(owner, await body(), AbortSignal.timeout(180000));
   if (method === "POST" && path === "/api/knowledge/graph") return parts.graph.neighbourhood(owner, await body());
+  if (method === "POST" && path === "/api/knowledge/graph/names") return parts.graph.names(owner, await body()); // p17
   if (method === "POST" && path === "/api/knowledge/map") {
     const input = z.object({ collection: z.string().min(1).max(120), useModel: z.boolean().default(false) }).parse(await body());
     return parts.graph.build(owner, input.collection, input.useModel);

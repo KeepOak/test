@@ -122,7 +122,7 @@ export function syncMixtures(store: Pick<Store, "get">, owner: string, models: M
   const ids = new Set(wanted.map((mixture) => `${mixturePrefix}${mixture.id}`));
   for (const id of [...mine]) {
     if (ids.has(id)) continue;
-    if (models.presets.has(id) && models.presets.size > 1) models.remove(id);
+    models.remove(id);
     mine.delete(id);
   }
   const resolve: Resolve = (id) => models.presets.get(id);

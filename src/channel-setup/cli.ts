@@ -56,7 +56,8 @@ function attachedBackend(client: Client): ConnectBackend {
 
 async function localBackend(dataDir: string, workspace: string): Promise<{ backend: ConnectBackend; close: () => Promise<void> }> {
   const { createBranch } = await import("../index.js");
-  const app = await createBranch({ workspace, dataDir });
+  // Saving a chat app's setup asks no model, so none is named here.
+  const app = await createBranch({ workspace, dataDir, presets: [] });
   const owner = app.runtime.owner;
   // No `connect` here: this launch ends with the command, so the bot connects when Branch next starts.
   const host = { store: app.store, owner, fetch: app.web.policy.guard(globalThis.fetch), telegram: { save: app.neverBreak.telegram.save } };

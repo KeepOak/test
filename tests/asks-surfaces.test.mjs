@@ -79,6 +79,8 @@ test("A2240 a tool's page is kept fresh, served sealed with a refresh, and a hel
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, body: await response.json() };
   };
+  // The owner's rule (ships on, 2026-09-26): live pages ship "when needed", so "off" is tested by switching it off.
+  await api("/api/asks/switch", { part: "live-surfaces", mode: "off" });
   assert.equal((await api("/api/asks/surfaces", { title: "Build", tool: "demo.status" })).status, 409);
   await api("/api/asks/switch", { part: "live-surfaces", mode: "when-needed" });
   // Work that runs by itself is held to "ask before changes" at most; looking at a status is not a change.

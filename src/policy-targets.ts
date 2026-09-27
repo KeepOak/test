@@ -38,6 +38,8 @@ export interface TargetsCall {
    * every file in the call exactly as it does for a call with one.
    */
   resourceOf: (text: string) => PolicyResource | null;
+  /** Redesign: the Trunk doing the work, so a rule for one Trunk is weighed only for that Trunk's calls. */
+  trunk?: string | undefined;
 }
 
 /** Every target weighed by the rules; the strictest answer, and which target gave it. */
@@ -47,7 +49,7 @@ export function judgeTargets(policy: Policy, call: TargetsCall, targets: readonl
     const text = targetText(target);
     const resource = call.resourceOf(text);
     const outcome = evaluatePolicy(policy, {
-      tool: call.tool, target: text, readOnly: target.kind === "read", resource, callTarget: call.callTarget,
+      tool: call.tool, target: text, readOnly: target.kind === "read", resource, callTarget: call.callTarget, trunk: call.trunk,
     });
     if (stricterThan(outcome.decision, worst.decision)) worst = { decision: outcome.decision, rule: outcome.rule, target };
     const inner = innerFolderRule(policy, call, target, resource?.inWorkspace);
@@ -138,12 +140,12 @@ export function alsoDecision(
   const target = registry.targetOf(also.tool, also.args, context);
   // Sending a message always changes something.
   const whole = evaluatePolicy(policy,
-    { tool: also.tool, target, readOnly: false, resource: registry.resourceOf(also.tool, target, also.args) }).decision;
+    { tool: also.tool, target, readOnly: false, resource: registry.resourceOf(also.tool, target, also.args), trunk: context.trunk }).decision;
   let targets: ToolTarget[] | null;
   try { targets = registry.targetsOf(also.tool, also.args, context); } catch { return "deny"; }
   if (!targets) return whole;
   const spread = judgeTargets(policy, { tool: also.tool, permission: registry.permissionOf(also.tool), callTarget: target,
-    args: also.args, resourceOf: (text) => registry.resourceOf(also.tool, text, also.args) }, targets).decision;
+    args: also.args, resourceOf: (text) => registry.resourceOf(also.tool, text, also.args), trunk: context.trunk }, targets).decision;
   return stricterThan(spread, whole) ? spread : whole;
 }
 

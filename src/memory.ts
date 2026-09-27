@@ -281,6 +281,29 @@ export class MemoryFacts {
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return this.get(owner, id)!;
   }
+  /** How many facts are archived, all of them (the list shows the newest 500). */
+  archivedCount(owner: string): number {
+    return Number(this.db.prepare("SELECT COUNT(*) AS count FROM memory_archive WHERE owner=?").get(owner)!.count);
+  }
+  /**
+   * Removes every archived fact for good, with the earlier versions kept of it, so nothing puts it back.
+   * The owner says how many they saw; when that is no longer how many there are (something was archived
+   * or restored since), nothing is removed. A fact that is back in memory under the same id keeps its versions.
+   */
+  purgeArchive(owner: string, seen: number): { purged: number } {
+    const ids = this.db.prepare("SELECT id FROM memory_archive WHERE owner=?").all(owner).map((row) => String(row.id));
+    if (ids.length !== seen)
+      throw new Error(`There are ${ids.length} archived facts now, not ${seen}, so nothing was purged. Look at the list again first.`);
+    this.db.exec("BEGIN");
+    try {
+      for (const id of ids) {
+        this.db.prepare("DELETE FROM memory_archive WHERE owner=? AND id=?").run(owner, id);
+        if (!this.get(owner, id)) this.db.prepare("DELETE FROM memory_versions WHERE owner=? AND memory_id=?").run(owner, id);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    return { purged: ids.length };
+  }
   suppressed(owner: string, sessionId: string): boolean {
     return !!this.db.prepare("SELECT 1 AS found FROM memory_suppressions WHERE owner=? AND session_id=?").get(owner, sessionId);
   }

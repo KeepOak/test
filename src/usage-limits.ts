@@ -117,6 +117,8 @@ export interface LimitsAccount {
   remaining: number | null;
   /** True for a subscription sign-in, whose plan window no provider publishes an endpoint for. */
   signIn: boolean;
+  /** When the plan window refills, only when the service said. */
+  resetAt?: string | null;
 }
 export interface LimitsDeps {
   connections: LimitsConnection[];
@@ -150,7 +152,7 @@ function fromHeaders(reading: RateLimitReading | null, callsLastMinute: number):
 function planWindow(account: LimitsAccount, now: number): LimitWindow | null {
   if (account.remaining === null) return null;
   return { id: "plan", title: "Plan window", kind: "plan", limit: 100, remaining: account.remaining,
-    resetAt: null, measuredAt: new Date(now).toISOString(), state: "measured",
+    resetAt: account.resetAt ?? null, measuredAt: new Date(now).toISOString(), state: "measured",
     from: "from a header on Branch's own traffic; the service reports this unofficially, and it is not in the published API" };
 }
 

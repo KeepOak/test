@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { openSettings } from "./places.mjs";
+import { signIn, openSettings } from "./new-window-places.mjs";
 
 async function served(t) {
   const scratch = join(tmpdir(), "branch-session-files");
@@ -21,6 +21,7 @@ async function served(t) {
   const root = await mkdtemp(join(scratch, "assistant-files-"));
   const provider = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  app.store.save("settings", app.runtime.owner, "onboarding", { done: true }); // setup opens on the first draw otherwise (flows/flows.js); not what this is about
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const call = (method, path, body, key = server.token) => fetch(server.url + path, {
@@ -81,7 +82,11 @@ test("F3 a household profile and a short-lived key get neither the text nor the 
   assert.ok(!tools.some((name) => /context\.(write|save|edit)/.test(name)), "no tool writes these files, so no chat app can");
 });
 
-test("F4 the card: eight files, an editor with a preview and a counter, Save, and Undo the last save", async (t) => {
+test("F4 the card: eight files, an editor, Save, and put back the last save", async (t) => {
+  // Redesign: Settings › Instructions & personality (public/app/settings/pages/instructions.js) lists the files as rows;
+  // Edit or Write (data-act="if-open") opens prototype.html's editor (a textarea named for the file, "Earlier versions" with
+  // "Put this back", Save). The prototype's editor has no Preview tab, no byte counter and no "Start from the usual shape":
+  // replaced by the new window, so those are not looked for; an over-long file is refused by the engine instead.
   const { app, server } = await served(t);
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
@@ -89,32 +94,26 @@ test("F4 the card: eight files, an editor with a preview and a counter, Save, an
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto(server.url);
-    await page.getByLabel("Session token", { exact: true }).fill(server.token);
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.locator("#agent-files").waitFor({ state: "attached", timeout: 60000 });
+    await signIn(page, server);
     await openSettings(page, "instructions");
-    const card = page.locator("#agent-files");
-    assert.equal(await page.locator('.lx-settings-link[data-page="instructions"]').getAttribute("aria-current"), "true");
-    assert.equal(await card.evaluate((node) => node.closest(".lx-page")?.id), "lx-page-instructions");
-    assert.equal(await card.locator(".agent-file").count(), 8);
-    await card.getByRole("button", { name: "Edit HEARTBEAT.md" }).click();
-    const text = card.getByLabel("What the file says");
-    await card.getByRole("button", { name: "Start from the usual shape" }).click();
-    assert.match(await text.inputValue(), /On each scheduled wake/);
-    await text.fill("# Morning\n\n- Is the backup done?");
-    assert.match(await card.locator("#agent-files-size").innerText(), /of 8,000 bytes/);
-    await card.getByRole("button", { name: "Preview" }).click();
-    await card.locator(".agent-files-preview h1, .agent-files-preview h2, .agent-files-preview h3", { hasText: "Morning" }).first().waitFor();
-    await card.getByRole("button", { name: "Write" }).click();
+    assert.equal(await page.locator('[data-act="setpage"][data-v="instructions"]').first().getAttribute("aria-current"), "true");
+    const rows = page.locator('.rows .prow:has([data-act="if-open"])');
+    await rows.nth(7).waitFor({ timeout: 15000 });
+    assert.equal(await rows.count(), 8);
+    await page.locator('[data-act="if-open"][data-f="heartbeat"]').click();
+    const dialog = page.locator(".dlg");
+    const text = dialog.getByLabel("HEARTBEAT.md", { exact: true });
     await text.fill("x".repeat(8001));
-    assert.equal(await card.getByRole("button", { name: "Save this file" }).isDisabled(), true, "too long cannot be saved");
+    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await page.waitForTimeout(300);
+    assert.equal(existsSync(join(app.runtime.workspace, "HEARTBEAT.md")), false, "too long is never saved");
     await text.fill(`# Morning ${width}`);
-    await card.getByRole("button", { name: "Save this file" }).click();
-    await card.locator("[role=status]", { hasText: "Saved" }).waitFor();
+    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
     assert.equal(await readFile(join(app.runtime.workspace, "HEARTBEAT.md"), "utf8"), `# Morning ${width}\n`);
-    await card.getByRole("button", { name: "Undo the last save" }).click();
-    await card.locator("[role=status]", { hasText: "undone" }).waitFor();
+    await page.locator('[data-act="if-open"][data-f="heartbeat"]').click();
+    await page.locator('.dlg [data-act="if-back"]').click();
+    await page.waitForFunction(() => document.querySelector(".dlg #if-text")?.value === "");
     assert.equal(existsSync(join(app.runtime.workspace, "HEARTBEAT.md")), false);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
     assert.deepEqual(errors, []);
@@ -123,69 +122,37 @@ test("F4 the card: eight files, an editor with a preview and a counter, Save, an
 });
 
 test("F4b switching profiles clears an open owner-only editor before it can be read", async (t) => {
+  // Redesign: the English and French intros of the old pages are replaced by the new window's words (no /i18n.js), so they
+  // are not looked for; what the owner's editor may show a household person is.
   const { server, call } = await served(t);
   const privateText = "The private backup phrase is owner-only.";
   assert.equal((await call("POST", "/api/settings-kit/files", { slot: "memory", text: privateText })).status, 200);
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#agent-files").waitFor({ state: "attached", timeout: 60000 });
-  await openSettings(page, "appearance");
-  assert.equal(await page.locator("#lx-page-appearance .lx-page-intro").innerText(),
-    "Every KeepOak theme, light or dark, with the oak in any season. Changes show behind this window as you pick.");
-  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
-  assert.equal(await page.locator("#lx-page-appearance .lx-page-intro").innerText(),
-    "Tous les thèmes KeepOak, clairs ou sombres, avec le chêne à chaque saison. Les changements s’affichent derrière cette fenêtre au fil de vos choix.");
-  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("en"));
+  await signIn(page, server);
   await openSettings(page, "instructions");
-  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
-  assert.equal(await page.locator("#lx-page-instructions .lx-page-intro").innerText(),
-    "Les fichiers simples que votre assistant lit avant de travailler : qui il est, qui vous êtes, comment vous voulez que le travail soit fait. Ils fonctionnent de la même manière que dans d'autres agents, donc un fichier écrit pour l'un d'eux fonctionne ici.");
-  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("en"));
-  await page.locator("#agent-files").getByRole("button", { name: "Edit MEMORY.md" }).click();
-  assert.equal(await page.getByLabel("What the file says").inputValue(), `${privateText}\n`);
+  await page.locator('[data-act="if-open"][data-f="memory"]').click();
+  assert.equal(await page.getByLabel("MEMORY.md", { exact: true }).inputValue(), `${privateText}\n`);
 
   const person = (await call("POST", "/api/profiles", { name: "Sam", pin: "2468" })).body;
   assert.equal((await call("POST", "/api/profiles/switch", { profileId: person.id, pin: "2468" })).status, 200);
-  await page.waitForFunction(() => document.documentElement.dataset.household === "on");
-  const householdView = await page.evaluate((privateValue) => {
-    const instructions = document.querySelector('.lx-settings-link[data-page="instructions"]');
-    const instructionsPage = document.getElementById("lx-page-instructions");
-    return {
-      editorCount: document.querySelectorAll("#agent-files").length,
-      privateTextVisible: document.body.innerText.includes(privateValue),
-      instructionsHidden: instructions.hidden || getComputedStyle(instructions).display === "none",
-      tabShown: document.querySelector('.lx-settings-link[data-page="instructions"]').checkVisibility(),
-      pageHidden: instructionsPage.hidden || getComputedStyle(instructionsPage).display === "none",
-      generalCurrent: document.querySelector('.lx-settings-link[data-page="general"]').getAttribute("aria-current"),
-    };
-  }, privateText);
-  assert.deepEqual(householdView, {
-    editorCount: 0,
-    privateTextVisible: false,
-    instructionsHidden: true,
-    tabShown: false,
-    pageHidden: true,
-    generalCurrent: "true",
-  });
-
-  const guardedRoute = await page.evaluate(() => {
-    globalThis.branchLayout.go("settings:instructions");
-    return {
-      instructionsHidden: document.getElementById("lx-page-instructions").hidden,
-      generalCurrent: document.querySelector('.lx-settings-link[data-page="general"]').getAttribute("aria-current"),
-    };
-  });
-  assert.deepEqual(guardedRoute, { instructionsHidden: true, generalCurrent: "true" });
+  // WINDOW BUG: the window never learns of the switch (public/app/main.js connect() re-reads the engine only on an event,
+  // and no read follows POST /api/profiles/switch within 15 s), so public/app/settings/pages/instructions.js keeps the open
+  // editor and its owner-only text on screen for a household person, and Settings › Instructions stays in the list.
+  await page.waitForFunction(() => !document.querySelector(".dlg #if-text"), null, { timeout: 15000 }).catch(() => undefined);
+  const householdView = await page.evaluate((privateValue) => ({
+    editorCount: document.querySelectorAll(".dlg #if-text").length,
+    privateTextVisible: document.body.innerText.includes(privateValue) || [...document.querySelectorAll("textarea")].some((box) => box.value.includes(privateValue)),
+    instructionsListed: Boolean(document.querySelector('[data-act="setpage"][data-v="instructions"]')?.checkVisibility()),
+  }), privateText);
+  assert.deepEqual(householdView, { editorCount: 0, privateTextVisible: false, instructionsListed: false });
 
   assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);
-  await page.waitForFunction(() => document.documentElement.dataset.household === "off");
-  await page.locator("#agent-files").waitFor({ state: "attached" });
-  assert.equal(await page.locator('.lx-settings-link[data-page="instructions"]').isVisible(), true);
-  assert.equal(await page.locator('.lx-settings-link[data-page="instructions"]').evaluate((node) => node.checkVisibility()), true);
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openSettings(page);
+  assert.equal(await page.locator('[data-act="setpage"][data-v="instructions"]').first().isVisible(), true);
 });
 
 // Integration review: undo re-checks where the file is and whether it may be written, and the saved

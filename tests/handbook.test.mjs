@@ -4,7 +4,6 @@
  * chapter to itself, and that Help opens the right chapter for the section a person is looking at.
  */
 import test from "node:test";
-import { openPlace, showEverything } from "./places.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
@@ -14,7 +13,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { helpChapters, chapterForView } from "../dist/help.js";
+import { helpChapters } from "../dist/help.js";
 import { topLevelKeys } from "../scripts/check-docs.mjs";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -34,24 +33,15 @@ async function fixture(t) {
     await app.close();
     await discardTemp(root);
   });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  /* This file exercises the full window's own controls: "Show everything" since 0.18.1. */
-  await showEverything(page);
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  // Redesign: the new window has no "Show everything"; every control is always drawn.
   return { app, page, server, errors };
-}
-
-/** Walks past the first-run panel, when there is one, so a section can be opened. */
-async function settle(page) {
-  if (await page.locator("#first-run").isHidden()) return;
-  /* "Try it without an account" finishes first run in one click. */
-  await page.getByRole("button", { name: /Try it without an account/ }).click();
-  await page.locator("#first-run").waitFor({ state: "hidden" });
 }
 
 test("H1 every chapter exists and opens with the two headings a chapter must have", async () => {
@@ -146,44 +136,6 @@ test("H4 the help route needs the session key like every other route", async (t)
   const { server } = await fixture(t);
   const answer = await fetch(new URL("/api/help/09-glossary", server.url));
   assert.equal(answer.status, 401);
-});
-
-test("H4 Help opens the chapter for the section you are on", async (t) => {
-  const { page, errors } = await fixture(t);
-  await settle(page);
-
-  /* Documents is answered by "Everyday tasks", which is what the owner menu should open there. */
-  assert.equal(chapterForView("documents").id, "02-everyday-tasks");
-  await openPlace(page, "documents");
-  await page.locator("#owner-menu-button").click();
-  await page.locator("#menu-help").click();
-  await page.locator("#context-help").waitFor({ state: "visible" });
-  await page.waitForFunction(() => document.getElementById("context-help").dataset.chapter);
-
-  assert.equal(await page.locator("#context-help").getAttribute("data-chapter"), "02-everyday-tasks");
-  assert.equal(await page.locator("#context-help-title").textContent(), "Everyday tasks");
-  const shown = await page.locator("#context-help-body").innerText();
-  assert.ok(shown.includes("What this is for"), "the chapter was not rendered");
-  /* Rendered through the same Markdown renderer every reply uses, so headings are real headings. */
-  assert.ok(await page.locator("#context-help-body h2").count() > 1);
-
-  await page.locator("#context-help-close").click();
-  await page.locator("#context-help").waitFor({ state: "hidden" });
-  assert.deepEqual(errors, []);
-});
-
-test("H4 the palette offers every chapter by name", async (t) => {
-  const { page, errors } = await fixture(t);
-  await settle(page);
-  await page.keyboard.press("ControlOrMeta+k");
-  await page.locator("#cmd-input").waitFor({ state: "visible" });
-  await page.locator("#cmd-input").fill("Help: Glossary");
-  const entry = page.locator(".cmd-item", { hasText: "Help: Glossary" }).first();
-  await entry.waitFor({ state: "visible" });
-  await entry.click();
-  await page.locator("#context-help").waitFor({ state: "visible" });
-  await page.waitForFunction(() => document.getElementById("context-help").dataset.chapter === "09-glossary");
-  assert.deepEqual(errors, []);
 });
 
 test("H5 the release-notes drafter reads the checkpoint and writes the plain structure", async () => {

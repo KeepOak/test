@@ -60,7 +60,7 @@ test("this test needs a real browser, and says so", () => {
 test("every comfort setting ships as Branch has always behaved", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
-    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "", searchHistory: "", lookInside: "", vim: false },
+    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", vim: false },
     display: { statusLine: null, timestamps: false },
     notify: { method: "system", sound: "off", autoUpdate: "off", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
@@ -455,15 +455,13 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
   assert.deepEqual(rows.map((row) => row.command), ["/switch notify", "/switch sound"]);
   assert.match(rows[1].title, /Sound: off/);
   const state = { look: {}, mode: "dark", themeName: "Forest", switches: {} };
-  for (const page of ["general", "notifications", "voice", "computer", "advanced", "about"])
+  for (const page of ["general", "notifications", "voice", "computer", "self", "updates"])
     assert.ok(settingsRows(branch, english, page, "", state).some((row) => row.command?.startsWith("/switch ")), `${page} has a control`);
-  for (const page of ["trunks", "channels", "connections", "skills", "memory", "automations"]) {
-    const directoryRows = settingsRows(branch, english, page, "", state);
-    assert.ok(directoryRows.length > 0, `${page} has real destinations`);
-    assert.ok(directoryRows.every((row) => row.command), `${page} has no dead-end terminal row`);
-    assert.ok(directoryRows.every((row) => row.command.startsWith("/go ") && parseRoute(row.command.slice(4))),
-      `${page} routes every row to a terminal home`);
-    assert.ok(directoryRows.every((row) => !row.title.includes("rest of this page")), `${page} is not a window-only placeholder`);
+  // The old window's directory pages are gone from Settings, as in the new window: what they listed has a place of its own.
+  for (const [page, home] of [["trunks", "customize:trunks"], ["channels", "customize:channels"], ["connections", "customize:tools"],
+    ["skills", "customize:tools"], ["memory", "library:memory"], ["automations", "automations:scheduled"]]) {
+    assert.notEqual(parseRoute(`settings ${page}`)?.settings, page, `Settings has no ${page} page`);
+    assert.ok(parseRoute(home), `${page} lives at ${home}`);
   }
   assert.equal(switchComfort(branch.store, "local", "sound", "", english), "Sound: chime");
   assert.equal(switchComfort(branch.store, "local", "mcpTimeout", "45", english), "Seconds a server may take to start: 45");
@@ -477,7 +475,7 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
   const done = tui.start();
   t.after(async () => { input.write("\x04"); await done; });
   for (let i = 0; i < 20 && !tui.palette; i++) await delay(10);
-  assert.equal(tui.model().status, "Offline demonstration · no price on file", "the owner's status line (model, cost) is in the foot");
+  assert.equal(tui.model().status, "Test fixture · no price on file", "the owner's status line (model, cost) is in the foot");
   switchComfort(branch.store, "local", "statusLine", "default", english);
   assert.match(tui.model().status, / in \/ .* out · /, "as always, the line that was there");
   await tui.command("/switch vim on");
@@ -493,10 +491,3 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
   void root;
 });
 
-test("R17-S15: every shortcut on the Keyboard shortcuts card can be found by Settings search", async () => {
-  const { SETTINGS_INDEX } = await import("../public/settings-index.js");
-  const indexed = new Set(SETTINGS_INDEX.map((row) => row[0]));
-  const fields = Object.keys(ComfortKeysSchema.innerType ? ComfortKeysSchema.innerType().shape : ComfortKeysSchema.shape);
-  assert.ok(fields.length >= 11, `only ${fields.length} fields were read`);
-  assert.deepEqual(fields.filter((name) => !indexed.has(`comfort-${name}`)), [], "add a row to public/settings-index.js");
-});

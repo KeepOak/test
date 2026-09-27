@@ -4,8 +4,8 @@ import { lockdownOverrides } from "../lockdown.js"; // mac7/lockdown-fix
 
 /**
  * R17-C (re-audit 2026-09-17): files, voice, devices and personal connectors. Each part has the
- * owner's three-way switch — off, when needed, on — kept in a settings record of its own, and every
- * one ships off.
+ * owner's three-way switch — off, when needed, on — kept in a settings record of its own. What each
+ * ships as is `personalShipsOn` below; a saved record that cannot be read is off.
  *
  *   off          the part refuses in one plain sentence; its tools are not in the catalog at all
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -30,6 +30,27 @@ const RecordSchema = z.object({ mode: ModeSchema.default("off") }).strict();
 
 /** The settings record a part's switch is kept in. */
 export const personalKey = (part: PersonalPart): string => `personal-${part}`;
+
+/**
+ * What each part is while nothing has been saved for it. A saved record that is damaged still reads as off.
+ * The connectors ship ready: each tool refuses in plain words until the owner signs in or fills in its
+ * account, which is the owner's own step. Kept off, by the owner's rule: answering aloud (it opens the
+ * microphone and eases an approval, (d) and (e)), the public webhook address (it lets the outside in, (a)),
+ * Home Assistant (the defaults audit keeps it off under (a): it opens and works the house's own doors and
+ * devices), searching X (a paid xAI key beside the model provider, (b)), and sending a file or a spoken
+ * briefing into a chat (`chat.send_file`, `brief.send_voice`: the owner's rule keeps sending off until the
+ * owner turns it on).
+ */
+export const personalShipsOn: Partial<Record<PersonalPart, PersonalMode>> = {
+  // The owner's rule (ships on, 2026-09-26): does nothing until the owner signs in with their own Spotify; none of (a)–(f).
+  spotify: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): read-only until the owner signs in to their own Google account and never sends mail; none of (a)–(f).
+  google: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): read-only until the owner signs in to their own Microsoft account and never sends mail; none of (a)–(f).
+  microsoft: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): reads the email channel's own inbox once the owner names it; marks nothing read and sends nothing; none of (a)–(f).
+  "mail-search": "when-needed",
+};
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
 export const personalLabels: Record<PersonalPart, string> = {
@@ -60,13 +81,24 @@ export const personalTools: Record<PersonalPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
-export const personalToolFeatures: readonly (readonly [string, string, readonly string[]])[] = personalParts
+export const personalToolFeatures: readonly (readonly [string, string, readonly string[], PersonalMode])[] = personalParts
   .filter((part) => personalTools[part].length > 0)
-  .map((part) => [personalKey(part), `${personalLabels[part].charAt(0).toLowerCase()}${personalLabels[part].slice(1)} is switched on`, personalTools[part]] as const);
+  .map((part) => [personalKey(part), `${personalLabels[part].charAt(0).toLowerCase()}${personalLabels[part].slice(1)} is switched on`, personalTools[part], personalShipsOn[part] ?? "off"] as const);
+
+/**
+ * The tools of connectors still running as they ship, never switched by the owner. They are listed, but
+ * nothing is signed in, so they are no sign that a service is connected (src/autonomy/suggestions.ts).
+ */
+export function unsetConnectorTools(store: Pick<Store, "get">, owner: string): string[] {
+  return personalParts.filter((part) => personalShipsOn[part] && !store.get("settings", owner, personalKey(part)))
+    .flatMap((part) => personalTools[part]);
+}
 
 export function personalMode(store: Pick<Store, "get">, owner: string, part: PersonalPart): PersonalMode {
   if (lockdownOverrides(store, owner, personalKey(part))) return "off"; // mac7/lockdown-fix
-  const saved = RecordSchema.safeParse(store.get("settings", owner, personalKey(part))?.data ?? {});
+  const found = store.get("settings", owner, personalKey(part));
+  if (!found) return personalShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

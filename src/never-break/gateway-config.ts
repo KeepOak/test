@@ -178,7 +178,53 @@ export async function acceptProposal(dataDir: string): Promise<GatewayConfig> {
   const accepted = { ...proposal.config, mode: current.mode, workerEnv: current.workerEnv };
   await saveGatewayConfig(dataDir, accepted);
   await rm(join(dataDir, proposedFile), { force: true });
+  await journalChange(dataDir, { before: timingsOf(current), after: timingsOf(accepted), why: proposal.why,
+    acceptedAt: new Date().toISOString(), rolledBackAt: null });
   return accepted;
+}
+
+/* ---------- the journal of accepted changes, so the owner can roll one back ---------- */
+
+/**
+ * Every change the owner accepted, with the timings before and after it, kept in `gateway.changes.json`
+ * beside the settings (never inside the database the worker holds). Only timings are written: the
+ * owner's switch and the engine's settings are never changed by a suggestion, so neither by rolling one back.
+ */
+export const changesFile = "gateway.changes.json";
+const TimingsSchema = GatewayConfigSchema.omit({ mode: true, workerEnv: true });
+type Timings = z.infer<typeof TimingsSchema>;
+export const AcceptedChangeSchema = z.object({
+  before: TimingsSchema, after: TimingsSchema, why: z.string().max(500),
+  acceptedAt: z.iso.datetime(), rolledBackAt: z.iso.datetime().nullable(),
+}).strict();
+export type AcceptedChange = z.infer<typeof AcceptedChangeSchema>;
+const keptChanges = 20;
+const timingsOf = ({ mode: _mode, workerEnv: _env, ...timings }: GatewayConfig): Timings => TimingsSchema.parse(timings);
+
+export async function readChanges(dataDir: string): Promise<AcceptedChange[]> {
+  try { return z.array(AcceptedChangeSchema).parse(JSON.parse(await readFile(join(dataDir, changesFile), "utf8"))); }
+  catch { return []; }
+}
+async function journalChange(dataDir: string, change: AcceptedChange): Promise<void> {
+  await writeAtomic(join(dataDir, changesFile), JSON.stringify([...(await readChanges(dataDir)), change].slice(-keptChanges), null, 2));
+}
+
+/**
+ * The owner rolls back the last change they accepted: its timings go back to what they were before it,
+ * and the switch and engine settings stay as they are now. Refused when the timings are no longer what
+ * that change made them (something else changed them since), so a roll back never undoes a later change.
+ */
+export async function rollbackAccepted(dataDir: string): Promise<GatewayConfig> {
+  const changes = await readChanges(dataDir);
+  const last = changes.at(-1);
+  if (!last || last.rolledBackAt) throw new Error("There is no accepted change to roll back.");
+  const { config: current } = await loadGatewayConfig(dataDir);
+  if (JSON.stringify(timingsOf(current)) !== JSON.stringify(last.after))
+    throw new Error("The gateway's settings changed after that change was accepted, so it cannot be rolled back as it was.");
+  const back = GatewayConfigSchema.parse({ ...last.before, mode: current.mode, workerEnv: current.workerEnv });
+  await saveGatewayConfig(dataDir, back);
+  await writeAtomic(join(dataDir, changesFile), JSON.stringify([...changes.slice(0, -1), { ...last, rolledBackAt: new Date().toISOString() }], null, 2));
+  return back;
 }
 
 export async function discardProposal(dataDir: string): Promise<void> {

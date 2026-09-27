@@ -1,0 +1,398 @@
+{
+  "format": 1,
+  "checked": "2026-09-26",
+  "connectors": [
+    {
+      "id": "github",
+      "name": "GitHub",
+      "category": "Work",
+      "description": "Repos, issues, pull requests",
+      "needs": "A GitHub account"
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab",
+      "category": "Work",
+      "description": "Projects, merge requests, pipelines",
+      "needs": "A GitLab account"
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "category": "Work",
+      "description": "Issues and projects",
+      "needs": "A sign-in to Linear",
+      "address": "https://mcp.linear.app/mcp"
+    },
+    {
+      "id": "jira",
+      "name": "Jira",
+      "category": "Work",
+      "description": "Issues, sprints and boards",
+      "needs": "A sign-in to Atlassian",
+      "address": "https://mcp.atlassian.com/v2/mcp"
+    },
+    {
+      "id": "confluence",
+      "name": "Confluence",
+      "category": "Work",
+      "description": "Pages and spaces",
+      "needs": "A sign-in to Atlassian",
+      "address": "https://mcp.atlassian.com/v2/mcp"
+    },
+    {
+      "id": "asana",
+      "name": "Asana",
+      "category": "Work",
+      "description": "Tasks and projects",
+      "needs": "A sign-in to Asana",
+      "address": "https://mcp.asana.com/v2/mcp"
+    },
+    {
+      "id": "trello",
+      "name": "Trello",
+      "category": "Work",
+      "description": "Boards and cards",
+      "needs": "A Trello account"
+    },
+    {
+      "id": "clickup",
+      "name": "ClickUp",
+      "category": "Work",
+      "description": "Tasks and docs",
+      "needs": "A sign-in to ClickUp",
+      "address": "https://mcp.clickup.com/mcp"
+    },
+    {
+      "id": "monday-com",
+      "name": "Monday.com",
+      "category": "Work",
+      "description": "Boards and items",
+      "needs": "A sign-in to monday.com",
+      "address": "https://mcp.monday.com/mcp"
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "Work",
+      "description": "Pages and databases",
+      "needs": "A sign-in to Notion",
+      "address": "https://mcp.notion.com/mcp"
+    },
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "category": "Work",
+      "description": "Bases and records",
+      "needs": "A sign-in to Airtable",
+      "address": "https://mcp.airtable.com/mcp"
+    },
+    {
+      "id": "todoist",
+      "name": "Todoist",
+      "category": "Work",
+      "description": "Tasks and projects",
+      "needs": "A sign-in to Todoist",
+      "address": "https://ai.todoist.net/mcp"
+    },
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "category": "Mail & calendar",
+      "description": "Read, search and draft mail",
+      "needs": "A Google account"
+    },
+    {
+      "id": "outlook",
+      "name": "Outlook",
+      "category": "Mail & calendar",
+      "description": "Mail, calendar and contacts",
+      "needs": "A Microsoft account"
+    },
+    {
+      "id": "google-calendar",
+      "name": "Google Calendar",
+      "category": "Mail & calendar",
+      "description": "Events and free time",
+      "needs": "A Google account"
+    },
+    {
+      "id": "fastmail",
+      "name": "Fastmail",
+      "category": "Mail & calendar",
+      "description": "Mail and calendars",
+      "needs": "A Fastmail account"
+    },
+    {
+      "id": "proton-mail",
+      "name": "Proton Mail",
+      "category": "Mail & calendar",
+      "description": "Mail through the bridge",
+      "needs": "Proton Mail Bridge on this computer"
+    },
+    {
+      "id": "google-drive",
+      "name": "Google Drive",
+      "category": "Files",
+      "description": "Docs, sheets and files",
+      "needs": "A Google account"
+    },
+    {
+      "id": "onedrive",
+      "name": "OneDrive",
+      "category": "Files",
+      "description": "Files and Office documents",
+      "needs": "A Microsoft account"
+    },
+    {
+      "id": "dropbox",
+      "name": "Dropbox",
+      "category": "Files",
+      "description": "Files and folders",
+      "needs": "A Dropbox account"
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "category": "Files",
+      "description": "Files and shared folders",
+      "needs": "A sign-in to Box",
+      "address": "https://mcp.box.com/"
+    },
+    {
+      "id": "files-on-this-computer",
+      "name": "Files on this computer",
+      "category": "Files",
+      "description": "Folders you choose",
+      "needs": "Node.js on this computer, and the folders you add to the command",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem"
+      ]
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "category": "Files",
+      "description": "Notes in your vault",
+      "needs": "Your Obsidian vault on this computer"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "Chat",
+      "description": "Channels and messages",
+      "needs": "A sign-in to Slack",
+      "address": "https://mcp.slack.com/mcp"
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "category": "Chat",
+      "description": "Servers and channels",
+      "needs": "A Discord bot token"
+    },
+    {
+      "id": "microsoft-teams",
+      "name": "Microsoft Teams",
+      "category": "Chat",
+      "description": "Chats and channels",
+      "needs": "A Microsoft account"
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "category": "Chat",
+      "description": "Chats through your bot",
+      "needs": "A Telegram bot token"
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "category": "Developer",
+      "description": "Errors from your apps",
+      "needs": "A sign-in to Sentry",
+      "address": "https://mcp.sentry.dev/mcp"
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "category": "Developer",
+      "description": "Deployments and logs",
+      "needs": "A sign-in to Vercel",
+      "address": "https://mcp.vercel.com/"
+    },
+    {
+      "id": "cloudflare",
+      "name": "Cloudflare",
+      "category": "Developer",
+      "description": "Workers, DNS and pages",
+      "needs": "A sign-in to Cloudflare",
+      "address": "https://bindings.mcp.cloudflare.com/mcp"
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "category": "Developer",
+      "description": "Database and auth",
+      "needs": "A sign-in to Supabase",
+      "address": "https://mcp.supabase.com/mcp"
+    },
+    {
+      "id": "postgres",
+      "name": "Postgres",
+      "category": "Developer",
+      "description": "Query a database",
+      "needs": "The address of your database"
+    },
+    {
+      "id": "sqlite",
+      "name": "SQLite",
+      "category": "Developer",
+      "description": "A local database file",
+      "needs": "A database file on this computer"
+    },
+    {
+      "id": "docker",
+      "name": "Docker",
+      "category": "Developer",
+      "description": "Containers on this computer",
+      "needs": "Docker on this computer"
+    },
+    {
+      "id": "kubernetes",
+      "name": "Kubernetes",
+      "category": "Developer",
+      "description": "Clusters and pods",
+      "needs": "kubectl and a cluster you can reach"
+    },
+    {
+      "id": "hugging-face",
+      "name": "Hugging Face",
+      "category": "Developer",
+      "description": "Models and datasets",
+      "needs": "A sign-in to Hugging Face",
+      "address": "https://huggingface.co/mcp"
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright",
+      "category": "Developer",
+      "description": "Drive a browser",
+      "needs": "Node.js on this computer",
+      "command": [
+        "npx",
+        "@playwright/mcp@latest"
+      ]
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "category": "Design & media",
+      "description": "Designs and comments",
+      "needs": "A sign-in to Figma",
+      "address": "https://mcp.figma.com/mcp"
+    },
+    {
+      "id": "canva",
+      "name": "Canva",
+      "category": "Design & media",
+      "description": "Designs and brand kits",
+      "needs": "A sign-in to Canva",
+      "address": "https://mcp.canva.com/mcp"
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "category": "Design & media",
+      "description": "Videos and captions",
+      "needs": "A Google account"
+    },
+    {
+      "id": "spotify",
+      "name": "Spotify",
+      "category": "Design & media",
+      "description": "Music and playlists",
+      "needs": "A Spotify account"
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "category": "Business",
+      "description": "Payments and invoices",
+      "needs": "A sign-in to Stripe",
+      "address": "https://mcp.stripe.com/"
+    },
+    {
+      "id": "shopify",
+      "name": "Shopify",
+      "category": "Business",
+      "description": "Orders and products",
+      "needs": "A Shopify store"
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot",
+      "category": "Business",
+      "description": "Contacts and deals",
+      "needs": "A HubSpot account"
+    },
+    {
+      "id": "salesforce",
+      "name": "Salesforce",
+      "category": "Business",
+      "description": "Accounts and opportunities",
+      "needs": "A Salesforce account"
+    },
+    {
+      "id": "quickbooks",
+      "name": "QuickBooks",
+      "category": "Business",
+      "description": "Books and invoices",
+      "needs": "A QuickBooks account"
+    },
+    {
+      "id": "zendesk",
+      "name": "Zendesk",
+      "category": "Business",
+      "description": "Tickets and help center",
+      "needs": "A Zendesk account"
+    },
+    {
+      "id": "home-assistant",
+      "name": "Home Assistant",
+      "category": "Home & web",
+      "description": "Lights, sensors and scenes",
+      "needs": "Your Home Assistant address and a long-lived token"
+    },
+    {
+      "id": "brave-search",
+      "name": "Brave Search",
+      "category": "Home & web",
+      "description": "Search the web",
+      "needs": "A Brave Search key"
+    },
+    {
+      "id": "weather",
+      "name": "Weather",
+      "category": "Home & web",
+      "description": "Forecasts where you are",
+      "needs": "Nothing"
+    },
+    {
+      "id": "maps",
+      "name": "Maps",
+      "category": "Home & web",
+      "description": "Places and directions",
+      "needs": "A maps key"
+    },
+    {
+      "id": "zapier",
+      "name": "Zapier",
+      "category": "Home & web",
+      "description": "Thousands of apps through Zaps",
+      "needs": "Your own Zapier server address"
+    }
+  ]
+}

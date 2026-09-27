@@ -11,6 +11,7 @@ async function fixture(t) {
     workspace: join(root, "workspace"),
     dataDir: join(root, "data"),
   });
+  app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about procedures, not reading first
   t.after(async () => {
     await app.close();
     await discardTemp(root);

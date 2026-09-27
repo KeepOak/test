@@ -1,5 +1,4 @@
 import test from "node:test";
-import { openPlace } from "./places.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,7 +6,6 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { discardTemp } from "./temp-dir.mjs";
-import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -566,42 +564,6 @@ test("branch mcp-serve reports a line that is not JSON and keeps going", async (
   await new Promise((resolve) => child.once("exit", resolve));
   assert.equal(answers[0].error.code, -32700);
   assert.deepEqual(answers[1].result, {});
-});
-
-test("Settings offers sharing with a switch, a tool list and copyable settings", async (t) => {
-  const { app, url, token } = await fixture(t);
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(url);
-  await page.getByLabel("Session token", { exact: true }).fill(token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await openPlace(page, 'customize:connections');
-
-  const card = page.locator("#mcp-card");
-  await card.locator("#mcp-status").filter({ hasText: "Off." }).waitFor();
-  assert.equal(await card.locator("#mcp-choose").isHidden(), true);
-
-  await card.locator("#mcp-enabled").check();
-  await card.locator("#mcp-choose summary").click();
-  await card.locator("#mcp-tools .check").first().waitFor();
-  const readTool = card.locator(".check", { hasText: "files.read" });
-  const writeTool = card.locator(".check", { hasText: "files.write" });
-  assert.equal(await readTool.locator("input").isChecked(), true, "read tools start ticked");
-  assert.equal(await writeTool.locator("input").isChecked(), false, "tools that change things start unticked");
-  assert.match(await writeTool.innerText(), /can change things/);
-
-  const saved = app.store.get("settings", "local", "mcp-sharing").data;
-  assert.equal(saved.enabled, true);
-  assert.ok(saved.exposedTools.includes("files.read"));
-  assert.ok(!saved.exposedTools.includes("files.write"));
-
-  await card.getByRole("heading", { name: "Claude Desktop" }).waitFor();
-  assert.equal(await card.locator("#mcp-connection pre").count(), 3);
-  assert.match(await card.locator("#mcp-connection pre").first().innerText(), /mcp-serve/);
-  assert.deepEqual(errors, []);
 });
 
 /** Waits for `count` newline-delimited JSON replies from the child's standard output. */

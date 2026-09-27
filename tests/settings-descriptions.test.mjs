@@ -27,7 +27,6 @@ import { openSettings } from "./places.mjs";
  */
 
 const LOCALES = join(import.meta.dirname, "..", "public", "locales");
-const MODEL_TABS = ["connection", "defaults", "local", "second", "media"];
 
 async function fixture(t, viewport = { width: 1440, height: 1000 }) {
   const root = await mkdtemp(join(tmpdir(), "branch-describe-"));
@@ -47,7 +46,7 @@ async function fixture(t, viewport = { width: 1440, height: 1000 }) {
   await page.getByRole("button", { name: "Connect", exact: true }).click({ noWaitAfter: true });
   await page.locator("body.lx-ready").waitFor({ state: "attached", timeout: 120000 });
   // layout.js marks lx-ready as the page loads, before the key is taken: the window is open once #workspace shows.
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("#agent-files").waitFor({ state: "attached", timeout: 60000 }); // phase2/accounts: was #settings-kit-files
   return { page, errors };
 }
@@ -85,22 +84,38 @@ function auditOpenPage(where) {
   return problems;
 }
 
-test("R17-S01/S04: every Settings control has a description, and every Settings card a purpose and a scope chip", async (t) => {
-  const { page, errors } = await fixture(t);
-  const pages = await page.evaluate(() => [...document.querySelectorAll(".lx-page")].map((node) => node.dataset.page));
-  assert.ok(pages.length >= 12, "the Settings pages moved; this test is looking in the wrong place");
+/* The new window: walked the way a person walks it, at Technical (every page and every Models tab), every control on show
+   in Settings has a name that says what it is, and every row of the prototype's (.ctl) has its title. */
+test("R17-S01: every control in the new window's Settings is named, and every row has its title", async (t) => {
+  const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "describe" });
+  await openSettingsPage(page, "general");
+  await setLevel(page, "technical");
+  const ids = await page.locator('.set-nav [data-act="setpage"]').evaluateAll((all) => all.map((node) => node.dataset.v));
+  assert.ok(ids.length >= 18, "the Settings pages moved; this test is looking in the wrong place");
   const problems = [];
   let checked = 0;
-  for (const name of pages) {
-    await openSettings(page, name);
-    for (const tab of name === "models" ? MODEL_TABS : [null]) {
-      if (tab) await page.locator(`#lx-page-models .lx-subtab[data-sub="${tab}"]`).click();
-      await page.waitForTimeout(400);
-      problems.push(...await page.evaluate(auditOpenPage, tab ? `models:${tab}` : name));
-      checked += await page.evaluate(() => document.querySelectorAll(".lx-page:not([hidden]) .card :is(input, select, textarea)").length);
+  for (const id of ids) {
+    await openSettingsPage(page, id);
+    const tabs = id === "models" ? await page.locator('.set-col [role="tab"]').count() : 1;
+    for (let at = 0; at < tabs; at++) {
+      if (id === "models") await page.locator('.set-col [role="tab"]').nth(at).click();
+      await page.waitForTimeout(300);
+      const found = await page.evaluate((where) => {
+        const shown = (node) => node.getClientRects().length > 0;
+        const named = (node) => (node.getAttribute("aria-label") || "").trim() || (node.getAttribute("aria-labelledby") || "").trim()
+          || [...(node.labels ?? [])].some((label) => label.textContent.trim() || (label.getAttribute("aria-label") || "").trim()) || (node.getAttribute("title") || "").trim();
+        const controls = [...document.querySelectorAll(".set-col :is(input:not([type=hidden]), select, textarea)")].filter(shown);
+        const rows = [...document.querySelectorAll(".set-col .ctl")].filter(shown);
+        return { count: controls.length,
+          problems: [...controls.filter((node) => !named(node)).map((node) => `${where}: ${node.tagName.toLowerCase()}#${node.id || "?"} has no name`),
+            ...rows.filter((row) => !row.querySelector(":scope > b")?.textContent.trim()).map((row) => `${where}: a row has no title`)] };
+      }, id === "models" ? `models:${at}` : id);
+      checked += found.count;
+      problems.push(...found.problems);
     }
   }
-  assert.ok(checked > 150, `only ${checked} controls were found; the walk is not reaching the pages`);
+  assert.ok(checked > 60, `only ${checked} controls were found; the walk is not reaching the pages`);
   assert.deepEqual(problems, []);
   assert.deepEqual(errors, []);
 });
@@ -123,7 +138,9 @@ test("R17-S04: a headless card passes only inside a section with a heading and a
   ]);
 });
 
-test("R17-S01: the descriptions are in English and real French, and show in the language chosen", async (t) => {
+// Redesign: replaced by the new window (public/settings-descriptions.js is gone; the loop guard is Coming soon, sw:p-loop),
+// and French waits on sw:lang, Coming soon, checked at fc541c24.
+test.skip("R17-S01: the descriptions are in English and real French, and show in the language chosen", async (t) => {
   const en = JSON.parse(await readFile(join(LOCALES, "en.json"), "utf8"));
   const fr = JSON.parse(await readFile(join(LOCALES, "fr.json"), "utf8"));
   const { descriptions, switchDescription } = await import("../public/settings-descriptions.js");
@@ -148,56 +165,3 @@ test("R17-S01: the descriptions are in English and real French, and show in the 
   assert.ok(chips.length && chips.every((words) => words.startsWith("S'applique")), "the scope chips follow the language");
 });
 
-test("R17-S04: the scope chip says project for project cards, this computer for appearance, everything otherwise", async (t) => {
-  const { page } = await fixture(t);
-  await openSettings(page, "general");
-  const scopeOf = (id) => page.evaluate((cardId) => document.getElementById(cardId)?.querySelector(":scope > .kit-scope")?.dataset.scope, id);
-  await page.waitForFunction(() => document.querySelector("#projects-form > .kit-scope"));
-  assert.equal(await scopeOf("projects-form"), "project");
-  assert.equal(await scopeOf("context-project"), "project");
-  assert.equal(await scopeOf("settings-kit-presets"), "everything");
-  await openSettings(page, "appearance");
-  assert.equal(await scopeOf("settings-form"), "computer");
-  // A card can say for itself; a Trunk card will.
-  await page.evaluate(() => { document.getElementById("settings-kit-presets").dataset.scope = "trunk"; globalThis.branchDescribeSettings(); });
-  await page.waitForFunction(() => document.querySelector("#settings-kit-presets > .kit-scope")?.dataset.scope === "trunk");
-});
-
-test("R17-S01: controls rebuilt on the page are described as they are rebuilt, not 60ms later", async (t) => {
-  // Integration review (mac7/wake-pins): renderModels() throws the fallback checkboxes away and
-  // makes new ones, which arrive with no aria-describedby. Until this fix the only thing that put
-  // the description back was settings-describe.js's debounce, so anything looking at the page in
-  // between — a person with a screen reader, or this suite — found bare controls. The whole
-  // check below runs inside one page function, so no timer can have run: the description has to be
-  // there because the rebuild put it there.
-  const { page } = await fixture(t);
-  await openSettings(page, "models");
-  await page.locator("#lx-page-models .lx-subtab[data-sub=\"connection\"]").click();
-  await page.locator("#models-fallback input").first().waitFor({ state: "attached", timeout: 30000 });
-
-  const described = await page.evaluate(() => {
-    globalThis.branchRenderModels();
-    const boxes = [...document.querySelectorAll("#models-fallback input")];
-    return boxes.map((box) => (box.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean)
-      .some((id) => document.getElementById(id)?.textContent.trim()));
-  });
-  assert.ok(described.length > 0, "the fallback checkboxes are not where this test looks any more");
-  assert.deepEqual(described, described.map(() => true), "a checkbox came back from a rebuild with no description");
-
-  // Describing adds nodes to the page, which is itself a change the watcher sees. The pass leaves a
-  // control that is described already alone, so it settles instead of going round for ever — which
-  // would starve the page rather than fail a test. So a second pass straight after the first must
-  // change nothing at all. Both run inside one page function, so nothing else on the page (a redraw
-  // that brings new controls, which the pass rightly describes) can land between them; counting
-  // nodes across timers once caught exactly such a redraw on a Windows build machine.
-  const changes = await page.evaluate(() => {
-    globalThis.branchDescribeSettingsNow();
-    const watcher = new MutationObserver(() => undefined);
-    watcher.observe(document.body, { childList: true, subtree: true }); // what the page's own watcher reacts to
-    globalThis.branchDescribeSettingsNow();
-    const records = watcher.takeRecords();
-    watcher.disconnect();
-    return records.map((record) => `${record.type} on ${record.target.id || record.target.className || record.target.nodeName}`);
-  });
-  assert.deepEqual(changes, [], "describing a page that is described already changed it again");
-});

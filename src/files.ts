@@ -301,7 +301,7 @@ export function registerFiles(
       .strict(),
     execute: async (a, c: ToolContext) => {
       // mac7/coding-next: an existing file is replaced only once this task has read it as it is now.
-      if (files.readFirst?.holds(c.runId)) await files.readFirst.require(c.runId, await files.checked(a.path), a.path);
+      if (!c.readFirstExempt && files.readFirst?.holds(c.runId)) await files.readFirst.require(c.runId, await files.checked(a.path), a.path);
       const token = observer ? await observer.before(a.path, c) : undefined;
       const result = await files.write(a.path, a.content, c.signal);
       files.readFirst?.noteWritten(c.runId, files.addressOf(a.path));

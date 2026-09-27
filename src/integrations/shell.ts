@@ -35,6 +35,11 @@ export class BranchShell {
    * (src/knobs/commands.ts). The launch connects it; left alone, the file's settings are all there is.
    */
   tuning: () => { timeoutMs: number | null; env: Record<string, string> } = () => ({ timeoutMs: null, env: {} });
+  /**
+   * The programs the owner allowed from Customize › Tools (src/own-clis.ts), read fresh for each command. The launch
+   * file's own list comes first; an alias it names is never replaced from here.
+   */
+  extra: () => Record<string, { path: string; args: string[] }> = () => ({});
   constructor(input: unknown, env = process.env, private readonly secrets?: SecretResolver,
     private readonly jobs: JobObjects = defaultJobObjects()) {
     this.config = ShellConfigSchema.parse(input);
@@ -63,7 +68,9 @@ export class BranchShell {
     signal?.throwIfAborted();
   }
   private async perform(input: ShellInput, context: ToolContext, stopping: AbortSignal) {
-    const executable = Object.hasOwn(this.config.executables, input.executable) ? this.config.executables[input.executable] : undefined;
+    const own = this.extra();
+    const executable = Object.hasOwn(this.config.executables, input.executable) ? this.config.executables[input.executable]
+      : Object.hasOwn(own, input.executable) ? own[input.executable] : undefined;
     if (!executable) throw new Error('Executable alias is not configured');
     const signal = AbortSignal.any([context.signal, stopping]);
     signal.throwIfAborted();

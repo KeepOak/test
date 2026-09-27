@@ -24,6 +24,12 @@ async function fixture(t) {
     provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } },
   });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const call = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await call("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => {
     await browser.close(); await server.close(); await app.close();
@@ -35,18 +41,14 @@ async function fixture(t) {
   await page.goto(server.url, { timeout: 120000 }); // a busy Windows build machine once took over 30 s (tests/places.mjs waits 120 s too)
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  if (await page.locator("#first-run").isVisible()) {
-    /* "Try it without an account" finishes first run in one click. */
-    await page.getByRole("button", { name: /Try it without an account/ }).click();
-    await page.locator("#first-run").waitFor({ state: "hidden" });
-  }
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await openPlace(page, "procedures");
   await page.locator("#flow-editor").waitFor({ state: "visible" });
   return { app, page, server, errors };
 }
 
-test("F1 a step is added, the picture redraws, and the flow saves through the same shape", async (t) => {
+test.skip("F1 a step is added, the picture redraws, and the flow saves through the same shape", async (t) => {
+  // Redesign: Coming soon (flow-add, flow-save), checked at fc541c24. The flow editor is Automations › Procedures › a row (data-act="flow"); its "Add a step" and "Save" are drawn aria-disabled, class soon.
   const { app, page, errors } = await fixture(t);
   await page.locator("#editor-name").fill("Morning tidy-up");
   await page.locator("#editor-description").fill("What to do first thing");
@@ -71,7 +73,8 @@ test("F1 a step is added, the picture redraws, and the flow saves through the sa
   assert.deepEqual(errors, []);
 });
 
-test("F1 a second step is added, moved and taken out again", async (t) => {
+test.skip("F1 a second step is added, moved and taken out again", async (t) => {
+  // Redesign: Coming soon (flow-add, flow-mv, flow-rm, flow-save), checked at fc541c24.
   const { app, page, errors } = await fixture(t);
   await page.locator("#editor-name").fill("Two steps");
   for (const [kind, box, value] of [["prompt", "prompt", "First"], ["approval", "question", "May I?"]]) {
@@ -102,7 +105,8 @@ test("F1 a second step is added, moved and taken out again", async (t) => {
   assert.deepEqual(errors, []);
 });
 
-test("F2 the timeline under the picture says where each step has got to", async (t) => {
+test.skip("F2 the timeline under the picture says where each step has got to", async (t) => {
+  // Redesign: Coming soon (flow-run), checked at fc541c24. The procedure dialog's Run is greyed and has no timeline yet.
   const { app, page, errors } = await fixture(t);
   /* A flow saved by the app itself, so the editor is opening something that already exists. */
   app.flows.save({ name: "Two things", description: "",
@@ -110,7 +114,7 @@ test("F2 the timeline under the picture says where each step has got to", async 
       { name: "Ask again", kind: "prompt", prompt: "say goodbye", retries: 0, timeoutMs: 120000 }] });
   /* The page keeps its key for this browser session, so a reload comes back connected. */
   await page.reload();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await openPlace(page, "procedures");
   await page.locator("#editor-flow").selectOption({ label: "Two things" });
   await page.locator("#editor-timeline .card-row").first().waitFor();
@@ -131,7 +135,8 @@ test("F2 the timeline under the picture says where each step has got to", async 
   assert.deepEqual(errors, []);
 });
 
-test("F3 the rhythm picker says in plain words what it would do", async (t) => {
+test.skip("F3 the rhythm picker says in plain words what it would do", async (t) => {
+  // Redesign: Coming soon (nl-add), checked at fc541c24. A rhythm is given in words in Automations › Scheduled ("Describe it", prototype.html), whose Add is greyed; the old rhythm picker is replaced by that box.
   const { page, errors } = await fixture(t);
   const said = async (rhythm, time) => {
     await page.locator("#repeat-every").selectOption(rhythm);

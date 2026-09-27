@@ -7,6 +7,7 @@ import { errorText } from "./contracts.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { prepareToolName, type SelfDevelopmentContract } from "./self-development-contract.js";
 import { PrepareSourceChangeSchema, prepareBranchSourceChange, type SelfDevelopmentDeps } from "./self-development.js";
+import { boundedDiff, nothingPreparedYet, type BoundedDiff } from "./self-development-diff.js";
 import { HttpError } from "./server-http.js";
 import { currentTaskRun } from "./task-scope.js";
 
@@ -136,6 +137,19 @@ export class SourceChangeRequests {
     }
   }
 
+  /**
+   * What the change has done so far, as a bounded diff, for the owner to read before saying yes to it.
+   * Before the owner's yes nothing has been prepared, so there is nothing to show, and it says so.
+   */
+  async diff(id: string, signal: AbortSignal = AbortSignal.timeout(60_000)): Promise<BoundedDiff> {
+    this.ownerHere("Reading a change to Branch itself");
+    const request = this.get(id);
+    if (!request) throw new Error("There is no request to change Branch with that id.");
+    const contract = request.worktree ? this.deps.contracts.current(this.deps.owner, request.worktree) : null;
+    if (!contract) return { files: [], untracked: [], outside: [], truncated: false, allowedPaths: [], note: nothingPreparedYet, warning: null };
+    return boundedDiff(this.deps, contract, signal);
+  }
+
   /** The owner's no: the request is closed and can never be approved afterwards. */
   decline(id: string): SourceChangeRequest {
     this.ownerHere(answering);
@@ -200,7 +214,9 @@ export function improveCommand(argument: string, context: CommandContext): strin
 }
 
 const answerRoute = /^\/api\/self-development\/requests\/([a-f0-9-]{36})\/(approve|decline)$/;
-export const handlesSourceRequestPath = (path: string): boolean => path === "/api/self-development/requests" || answerRoute.test(path);
+const diffRoute = /^\/api\/self-development\/requests\/([a-f0-9-]{36})\/diff$/;
+export const handlesSourceRequestPath = (path: string): boolean =>
+  path === "/api/self-development/requests" || answerRoute.test(path) || diffRoute.test(path);
 
 /**
  * The owner's routes: the list, a yes with the terms, and a no. The server refuses short-lived keys and
@@ -208,6 +224,11 @@ export const handlesSourceRequestPath = (path: string): boolean => path === "/ap
  * answer checks again.
  */
 export async function sourceRequestsApi(requests: SourceChangeRequests, method: string, path: string, readBody: () => Promise<unknown>): Promise<unknown> {
+  const diff = diffRoute.exec(path);
+  if (diff) {
+    if (method !== "GET") throw new HttpError(405, "Use GET here.");
+    return requests.diff(diff[1]!);
+  }
   const answer = answerRoute.exec(path);
   if (!answer) {
     if (method !== "GET") throw new HttpError(405, "Use GET here.");

@@ -6,11 +6,7 @@
  */
 const CACHE = "branch-shell-v2";
 const SHELL = [
-  "/", "/tokens.css", "/style.css", "/shell.css", "/web-ui.css", "/layout.css",
-  "/app.js", "/device-headers.js", "/shell.js", "/layout.js", "/theme-catalogue.js", "/grove.js", "/appearance.js", "/context-pane.js", "/acorn.js",
-  "/markdown.js", "/i18n.js", "/inspector.js", "/live-run.js", "/conversation-facts.js", "/follow-newest.js",
-  "/locales/en.json", "/manifest.webmanifest",
-  "/assets/keepoak-mark.png", "/assets/keepoak-mark-reversed.png",
+  "/", "/app.css", "/app/main.js", "/manifest.webmanifest",
 ];
 
 self.addEventListener("install", (event) => {

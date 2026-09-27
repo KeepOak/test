@@ -113,7 +113,7 @@ test("with plan approval on, the task stops with its plan, the owner can edit it
     return say("unexpected");
   });
   assert.deepEqual(await api("orchestration", { planApproval: true, autoPlan: true }), {
-    autoPlan: true, planApproval: true, verify: false, milestoneRounds: 0, stuckAction: "default",
+    autoPlan: true, planApproval: true, verify: false, milestoneRounds: 0, stuckAction: "default", pattern: "auto",
   });
   const asked = await api("run", { prompt: "write the letter and send it", plan: true });
   assert.equal(asked.status, "needs_input");

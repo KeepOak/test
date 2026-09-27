@@ -4,7 +4,7 @@
    (/api/dashboard) and acts only through routes the window already uses — Stop, Lockdown — plus the
    two the dashboard adds (pause every automation, restart). The key is the one this browser tab
    already holds, exactly as in the window; a key that may only look gets a page that only looks. */
-import { initLanguage, applyLanguage, formatDate } from "/i18n.js";
+import { initLanguage, applyLanguage, formatDate } from "/dashboard/i18n.js";
 import { wearLook } from "/dashboard/look.js";
 import { controlsCards, healthCards, nowCards, restartWords, say, spendCards } from "/dashboard/sections.js";
 import { activityCard, startLive, stopLive } from "/dashboard/feed.js";

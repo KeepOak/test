@@ -125,7 +125,8 @@ export function routedPrompt(decision: IntentDecision, request: string): string 
 
 export function registerIntentRoute(registry: ToolRegistry, pipeline: IntentPipeline): void {
   registry.register({
-    name: "intent.route", permission: "intents.read",
+    // Ships-on sweep (2026-09-26): a toolbox of its own, not the "other" box that stays open while it is small.
+    name: "intent.route", group: "skills", permission: "intents.read",
     description: "Say which of the owner's named kinds of request this is, and where that kind goes (a skill, a specialist, a flow or an instruction). Nothing is started.",
     parameters: z.object({ request: z.string().trim().min(1).max(4000) }).strict(),
     execute: async (input, context) => pipeline.decide(input.request, context.signal),

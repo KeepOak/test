@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { discardTemp } from "./temp-dir.mjs";
 import {
-  completionScript, completionInstallHint, completionShells, cliCommands, usageText,
+  completionScript, completionInstallHint, completionShells, completionWords, cliCommands, usageText,
 } from "../dist/cli-completion.js";
 import { exitCodeFor, parseRunArgs } from "../dist/cli-run.js";
 import { resolveStyle, stripAnsi, wrap } from "../dist/terminal-style.js";
@@ -32,7 +32,8 @@ async function workspace(t) {
   });
   return {
     root,
-    env: { ...process.env, BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), NO_COLOR: undefined },
+    // BRANCH_PROVIDER=demo names the scripted test fixture: without a model named, Branch has none and refuses every task.
+    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), NO_COLOR: undefined },
   };
 }
 /**
@@ -110,6 +111,8 @@ test("the terminal view answers slash commands, streams a task and leaves on Ctr
   await view.until(/Branch Agent/);
   view.type("/help\r");
   await view.until(/Alt\+Enter adds a line/);
+  // Help wraps each description to the box rather than cutting it, so the list runs past one screen: page down to it.
+  view.type("\x1b[6~\x1b[6~");
   await view.until(/\/dry-run/);
   view.type("/preset\r");
   await view.until(/ask-before-changes — Ask before changes/);
@@ -348,7 +351,7 @@ words=(branch completion ""); CURRENT=3; PREFIX=""; _branch`;
   const out = spawnSync("zsh", ["-f", "-c", probe], { encoding: "utf8" });
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /^registered:_branch branch$/m);
-  assert.match(out.stdout, new RegExp(`^offer:${cliCommands.map((c) => c.name).join(" ")}$`, "m"));
+  assert.match(out.stdout, new RegExp(`^offer:${completionWords().join(" ")}$`, "m"));
   assert.match(out.stdout, /^offer:--json --attach --plan .*--fork$/m);
   assert.match(out.stdout, /^offer:bash zsh fish powershell$/m);
 });

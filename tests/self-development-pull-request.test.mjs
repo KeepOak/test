@@ -15,6 +15,7 @@ import { createBranch, savePolicy } from "../dist/index.js";
 import { savePullRequestHookSettings } from "../dist/pr-hook.js";
 import { ContractBook } from "../dist/self-development-contract.js";
 import { discardTemp } from "./temp-dir.mjs";
+import { saveCodingMode } from "../dist/coding/settings.js";
 
 const sha = "d".repeat(40);
 // The worktree's commit, and the one new commit the pull request makes on it.
@@ -65,6 +66,8 @@ async function branchWith(t, permissions, options = {}) {
   const app = await createBranch({ workspace, dataDir: join(root, "data"), provider, web: { allowPrivateAddresses: true } });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const owner = app.runtime.owner;
+  // Q250: read-before-edit ships on. This test is about the pull request hook, not that guard, and its scripted model changes a file it never read.
+  saveCodingMode(app.store, owner, "read-first", "off");
   savePolicy(app.store, owner, { preset: "off" });
   savePullRequestHookSettings(app.store, owner, { mode: options.mode ?? "when-needed" });
   const opened = [];

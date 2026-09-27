@@ -176,6 +176,7 @@ test("R17-031: the inbox is searched and opened without marking anything read, a
   const mail = new MailSearch({ store, owner: "local", files, secret: async (name) => (name === "EMAIL_PASSWORD" ? "pw" : ""),
     assertHost: async (host, port) => { hosts.push([host, port]); },
     imap: (server) => new ImapClient({ ...server, host: "127.0.0.1", port: imap.port, tls: false }) });
+  on(store, "mail-search", "off"); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   await assert.rejects(mail.search({}), /switched off/);
   on(store, "mail-search");
   await assert.rejects(mail.search({}), /mail server/);

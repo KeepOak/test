@@ -5,6 +5,7 @@ import type { Store } from "./store.js";
 import { checkResult } from "./delegation.js";
 import { CheckError, CompletionCheckSchema, evaluateChecks, type CompletionCheck } from "./reliability.js";
 import { audit } from "./audit.js";
+import { TeamPatternSchema } from "./team-pattern.js";
 import {
   autonomyWords, riskSentence, sessionPlanAct,
   type Autonomy, type PlanActSettings, type PlanMode,
@@ -27,6 +28,11 @@ export const OrchestrationSettingsSchema = z.object({
   milestoneRounds: z.number().int().min(0).max(12).default(0),
   /** After a task has gone quiet twice: carry on as before, ask you, or change model. */
   stuckAction: z.enum(["default", "ask", "switch"]).default("default"),
+  /**
+   * eng-trunk-controls: how Trunks work together on rooms and big tasks (src/team-pattern.ts). "auto" leaves it
+   * to Branch, per job; any other way is followed, and another one is used only after the owner's yes.
+   */
+  pattern: TeamPatternSchema.default("auto"),
 }).strict();
 export type OrchestrationSettings = z.infer<typeof OrchestrationSettingsSchema>;
 export type StuckAction = OrchestrationSettings["stuckAction"];
@@ -118,8 +124,13 @@ export function looksMultiPart(prompt: string): boolean {
 export function orchestrationSettings(store: Store, owner: string): OrchestrationSettings {
   return OrchestrationSettingsSchema.parse(store.get("settings", owner, "orchestration")?.data ?? {});
 }
+/**
+ * Saves the settings sent over the ones already saved, so a screen that changes one of them (the way Trunks work
+ * together, say) never puts the others back to their defaults (eng-trunk-controls).
+ */
 export function saveOrchestrationSettings(store: Store, owner: string, input: unknown): OrchestrationSettings {
-  const value = OrchestrationSettingsSchema.parse(input ?? {});
+  const change = z.record(z.string(), z.unknown()).parse(input ?? {});
+  const value = OrchestrationSettingsSchema.parse({ ...orchestrationSettings(store, owner), ...change });
   store.save("settings", owner, "orchestration", { ...value });
   return value;
 }

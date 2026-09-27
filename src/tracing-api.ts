@@ -8,6 +8,7 @@ import { pricingSettings } from "./pricing.js";
 import { saveTraceExportSettings, traceExportSettings } from "./tracing-export.js";
 import type { createBranch } from "./index.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
+import { lockedDown } from "./lockdown.js";
 
 /**
  * The routes for this batch: the spans of a task, sending traces somewhere, the counters page, the
@@ -123,6 +124,10 @@ async function rules(
     const policy = readPolicy(app.store, owner);
     return { rules: policy.rules.map((rule, index) => ({ index, rule, sentence: ruleSentence(rule) })) };
   }
+  // unhold-approvals: while Lockdown is on the saved list is Lockdown's own ask-everything rule, and Lockdown
+  // puts the owner's list back when it ends, so a rule added or removed now would loosen it or be lost.
+  if ((path === "/api/rules/add" || path === "/api/rules/remove") && request.method === "POST" && lockedDown(app.store, owner))
+    throw new TracingApiError(409, "Lockdown is on, so settings cannot be changed from here. Turn it off first.");
   if (path === "/api/rules/add" && request.method === "POST") {
     const rule = PolicyRuleSchema.parse(await readBody(request));
     const current = readPolicy(app.store, owner);

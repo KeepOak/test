@@ -3,6 +3,7 @@ import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { createBranch } from "./index.js";
 import { localRuntimes } from "./local-runtimes.js";
+import { noModelWords } from "./no-model.js";
 
 /**
  * A health check a person can act on: each item says what was tried, whether it works, and what to
@@ -31,6 +32,7 @@ async function checkDeviceKey(app: Branch): Promise<HealthItem> {
   catch (error) { return item("Device key", false, `The device key cannot be used: ${failure(error)}`, "The locker.key file in the data folder is missing or unreadable. Secrets saved before cannot be recovered without it."); }
 }
 async function checkModels(app: Branch, probe: boolean): Promise<HealthItem> {
+  if (!app.runtime.models.configured) return item("Models", false, noModelWords);
   const presets = [...app.runtime.models.presets.values()];
   const cooling = presets.filter((p) => app.runtime.models.coolingDown(p.id)).map((p) => p.name);
   const active = app.runtime.models.plan(app.runtime.owner, "health-check").candidates[0] ?? app.runtime.models.default;

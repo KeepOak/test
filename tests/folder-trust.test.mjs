@@ -208,10 +208,12 @@ test("the trust screen lists each folder, takes an answer, and refuses a short-l
   assert.equal(answered.status, 200);
   assert.deepEqual(answered.body.folders.map((folder) => folder.trust), ["trusted", "trusted"]);
   assert.equal((await call("POST", { folder: "../up", decision: "trust" })).status, 400);
-  const script = await fetch(server.url + "/folder-trust.js");
-  assert.equal(script.status, 200);
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  assert.match(html, /<script src="\/folder-trust\.js" type="module"><\/script>/);
+  // Redesign: replaced by the new window (the old window's /folder-trust.js and its <script> tag are gone with it; the
+  // prototype draws "Trusted folders" on Permissions, checked below). Was:
+  // const script = await fetch(server.url + "/folder-trust.js");
+  // assert.equal(script.status, 200);
+  // const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  // assert.match(html, /<script src="\/folder-trust\.js" type="module"><\/script>/);
 });
 
 /** Opens the screen these cards live on, the way a person does in the redesigned window. */
@@ -219,7 +221,38 @@ async function openSettings(page) {
   await openPlace(page, "settings:permissions");
 }
 
-test("with both switches off (as shipped) both cards are still there to turn them on", async (t) => {
+/* The new window: Settings › Permissions › Advanced draws the prototype's "Stop a Trunk that repeats itself" (the loop
+   guard) and "Trusted folders". Both ship off in the engine, and the loop guard's switch is drawn off with it. Parity B5:
+   the switch is the settings kit's loop_guard, so turning it on reaches the engine; adding a trusted folder loosens what
+   Trunks may change, so it stays greyed. */
+test("both ship off, and the new window's Permissions draws the loop guard off and Trusted folders", async (t) => {
+  const { loopGuardMode } = await import("../dist/index.js");
+  const { settingsWindow, openSettingsPage, isSoon } = await import("./settings-window.mjs");
+  const { app, page, errors, call } = await settingsWindow(t, { name: "trust-ui" });
+  assert.equal((await call("/api/folder-trust")).mode, "off", "folder trust ships off");
+  assert.equal(loopGuardMode(app.store, app.runtime.owner), "off", "the loop guard ships off");
+  await openSettingsPage(page, "permissions");
+  const advanced = page.locator(".set-col details.adv");
+  await advanced.locator("summary").click();
+  const loop = advanced.getByRole("checkbox", { name: "Stop a Trunk that repeats itself", exact: true });
+  await loop.waitFor();
+  assert.equal(await loop.isChecked(), false, "the switch says off, as the engine does");
+  assert.equal(await isSoon(loop), false, "the switch is the engine's loop guard");
+  await loop.click();
+  for (let tries = 0; tries < 50 && loopGuardMode(app.store, app.runtime.owner) === "off"; tries++) await page.waitForTimeout(100);
+  assert.notEqual(loopGuardMode(app.store, app.runtime.owner), "off", "turning it on reaches the engine");
+  /* The page is drawn again from the engine (which may fold Advanced again), so the switch is read by its id. */
+  const drawn = page.locator(".set-col #p-loop");
+  for (let tries = 0; tries < 50 && !(await drawn.isChecked()); tries++) await page.waitForTimeout(100);
+  assert.equal(await drawn.isChecked(), true, "drawn again from the engine");
+  const trusted = advanced.locator(".ctl", { hasText: "Trusted folders" }).getByRole("button", { name: "Add", exact: true });
+  assert.equal(await isSoon(trusted), true, "Trusted folders › Add waits, greyed out, until it is wired");
+  assert.deepEqual(errors, []);
+});
+
+// Redesign: Coming soon (sw:p-loop "Stop a Trunk that repeats itself", pin-add8 "Trusted folders" › Add), checked at
+// fc541c24. What still holds is checked above.
+test.skip("with both switches off (as shipped) both cards are still there to turn them on", async (t) => {
   const { chromium } = await import("playwright");
   const { app, root } = await fixture(t, { "AGENTS.md": "a" });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
@@ -229,7 +262,7 @@ test("with both switches off (as shipped) both cards are still there to turn the
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await openSettings(page);
   for (const id of ["folder-trust-card", "loop-guard-card"]) {
     await page.locator(`#${id}`).waitFor({ state: "attached" });
@@ -242,7 +275,9 @@ test("with both switches off (as shipped) both cards are still there to turn the
   assert.equal(await page.locator("#folder-trust-ask").count(), 0, "nobody is asked while it is off");
 });
 
-test("the chat screen asks once, the answer sticks, and Settings shows it", async (t) => {
+// Redesign: replaced by the new window (the prototype has no "Do you trust this folder?" question in the conversation);
+// its Settings half waits on "Trusted folders", Coming soon (pin-add8), and French on sw:lang, checked at fc541c24.
+test.skip("the chat screen asks once, the answer sticks, and Settings shows it", async (t) => {
   const { chromium } = await import("playwright");
   const deep = "folderwithaverylongnameandnowheretobreakit".repeat(4); // no spaces or hyphens to wrap at
   const { app, root, workspace: top, owner } = await fixture(t, { [`${deep}/AGENTS.md`]: "a", [`${deep}/.mcp.json`]: JSON.stringify({ mcpServers: { planted: {} } }) });
@@ -258,7 +293,7 @@ test("the chat screen asks once, the answer sticks, and Settings shows it", asyn
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   const ask = page.locator("#folder-trust-ask");
   await ask.waitFor({ state: "attached" });
   assert.match(await ask.textContent(), /Do you trust this folder\?[\s\S]*Your workspace holds[\s\S]*AGENTS\.md/);

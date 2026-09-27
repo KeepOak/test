@@ -3,7 +3,7 @@ import type { Run } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import { nextTurn, type Scheduler } from "../scheduler.js";
 import type { Store } from "../store.js";
-import type { TrunkRecords } from "./record.js";
+import type { Trunk, TrunkRecords } from "./record.js";
 import { requireTrunkPart } from "./settings.js";
 
 /**
@@ -21,8 +21,12 @@ export const RoutineSchema = z.object({
   dueAt: z.iso.datetime().optional(),
   intervalMs: z.number().int().min(60000).max(31536000000).optional(),
   dailyAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  /** finish-soon-a: with dailyAt, only these weekdays (0 Sunday to 6 Saturday), or this day of each month, as a schedule has. */
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+  monthDay: z.number().int().min(1).max(31).optional(),
   timezone: z.string().min(1).max(64).optional(),
-}).strict();
+}).strict().refine((value) => (!value.weekdays && !value.monthDay) || value.dailyAt, "Days of the week or of the month need a time of day")
+  .refine((value) => !(value.weekdays && value.monthDay), "Choose days of the week or a day of the month, not both");
 
 const linksKey = "trunk-routines";
 
@@ -31,7 +35,7 @@ const linksKey = "trunk-routines";
  * one interval from now — so saving one (or teaching one) never sets it going straight away.
  */
 function firstTurn(value: z.infer<typeof RoutineSchema>, now = new Date()): string {
-  if (value.dailyAt) return nextTurn({ dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC" }, now);
+  if (value.dailyAt) return nextTurn({ dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC", weekdays: value.weekdays, monthDay: value.monthDay }, now);
   return new Date(now.getTime() + (value.intervalMs ?? 60000)).toISOString();
 }
 interface Link { trunkId: string; name: string }
@@ -70,6 +74,8 @@ export class TrunkRoutines {
       dueAt: value.dueAt ?? firstTurn(value),
       ...(value.intervalMs ? { intervalMs: value.intervalMs } : {}),
       ...(value.dailyAt ? { dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC" } : {}),
+      ...(value.weekdays ? { weekdays: value.weekdays } : {}),
+      ...(value.monthDay ? { monthDay: value.monthDay } : {}),
     });
     this.saveLinks({ ...this.links(), [saved.id]: { trunkId, name: value.name } });
     return { id: saved.id, name: value.name };
@@ -100,14 +106,18 @@ export class TrunkRoutines {
    * The scheduler's hook: a linked schedule runs as its Trunk and reports back. One that cannot run
    * as its Trunk (the part is switched off, or the Trunk is gone) is refused rather than run as the
    * owner, whose saved set is wider than the Trunk's. A refusal because the part is switched off is
-   * `held`: a repeating routine then waits for its next turn instead of failing this one.
+   * `held`: a repeating routine then waits for its next turn instead of failing this one. So is a refusal
+   * because its Trunk is paused (eng-trunk-controls).
    */
-  route(scheduleId: string, switchedOn = true): { options: { trunkId: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null {
+  route(scheduleId: string, switchedOn = true, paused: (trunk: Trunk) => string | null = () => null): { options: { trunkId: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null {
     const link = this.links()[scheduleId];
     if (!link) return null;
     const trunk = this.records.find(link.trunkId);
     if (!trunk) return { refuse: "The Trunk this routine belonged to is gone, so the routine did not run." };
     if (!switchedOn) return { refuse: "Routines a Trunk owns are switched off, so this routine did not run.", held: true };
+    // eng-trunk-controls: a paused Trunk's routine is held the same way, and says why on its badge.
+    const held = paused(trunk);
+    if (held) return { refuse: held, held: true };
     return { options: { trunkId: trunk.id }, finished: (run) => this.report(trunk.chatSessionId, `Routine "${link.name}": ${run.status === "completed" ? run.output : `it did not finish (${run.status}). ${run.output}`}`) };
   }
   private report(sessionId: string, text: string): void {

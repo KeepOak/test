@@ -179,8 +179,10 @@ jobs:
           npm run package:desktop -- --release
           if [ "$RUNNER_OS" = "macOS" ]; then node scripts/package-desktop.mjs --release --arch x64; fi
       - name: Smoke the exact packaged merge source
+        env:
+          BRANCH_PROVIDER: demo
         run: |
-          node dist/cli.js demo
+          node dist/cli.js run "Write, read and verify the fixture file."
           node --test tests/beta-release.test.mjs tests/packaging.test.mjs
       - name: Remove Mac signing material
         if: always() && runner.os == 'macOS'

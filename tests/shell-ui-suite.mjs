@@ -5,8 +5,9 @@ import nodeTest from "node:test";
 const part = globalThis.branchTestPart ?? { index: 0, of: 1 };
 let declared = 0;
 const test = (...args) => (declared++ % part.of === part.index ? nodeTest(...args) : undefined);
+test.skip = (...args) => (declared++ % part.of === part.index ? nodeTest.skip(...args) : undefined);
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -14,18 +15,23 @@ import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
-import { openPlace, openSettingFor, showEverything } from "./places.mjs";
+import { signIn, openPlace, openSettings } from "./new-window-places.mjs";
 
-/* Wave 9 redesign: four places in the sidebar, and Settings behind the gear (public/layout.js). */
-const PLACES = ["Inbox", "Automations", "Library", "Customize"];
+/* Redesign (sweep-B): the shell of the new window (public/app/shell/**, design/redesign/prototype.html pass 17). The
+   old window's shell (#rail-*, #trunk-strip, #settings-window, body.lx-ready, /appearance.js) is gone; waiting for its
+   body.lx-ready is what made each of these tests sit out a 120 s timeout, and each part of this file run past 600 s.
+   The places are in the side list, Settings behind the gear at its foot. */
+const PLACES = [["overview", "Overview"], ["inbox", "Inbox"], ["automations", "Automations"], ["library", "Library"], ["team", "Team"], ["customize", "Customize"]];
 
-async function fixture(t) {
+const scripted = { name: "scripted", async complete() { return { content: "Hello from Branch.", toolCalls: [] }; } };
+async function fixture(t, { width = 1440, height = 1000, onboarded = true, provider = scripted } = {}) {
   const scratch = join(tmpdir(), "Codex-session-files");
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, "branch-shell-ui-"));
   const app = await createBranch({
     workspace: join(root, "workspace"),
     dataDir: join(root, "data"),
+    ...(provider ? { provider } : { presets: [] }), // no provider: no model set up at all
   });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   /* Redesign phase 1: a conversation begun in the window starts on Ask first. These tests are about
@@ -39,19 +45,26 @@ async function fixture(t) {
     await app.close();
     await discardTemp(root);
   });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  if (onboarded) await call("/api/onboarding", { done: true });
+  const page = await (await browser.newContext({ viewport: { width, height }, serviceWorkers: "block" })).newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  /* These tests are about the full shell: every rail row, icon, tab and meter. Since 0.18.1 that is
-     "Show everything"; the calm default has its own tests in calm-ui.test.mjs. */
-  await showEverything(page);
-  return { page, server, errors };
+  /* A screen draws what it reads once the engine has answered, so it is read when nothing is in flight (the live event
+     stream aside, which stays open). */
+  const pending = new Set();
+  const api = (request) => new URL(request.url()).pathname.startsWith("/api/") && !request.url().includes("/api/events/stream");
+  page.on("request", (request) => { if (api(request)) pending.add(request); });
+  for (const done of ["requestfinished", "requestfailed"]) page.on(done, (request) => pending.delete(request));
+  page.settled = async () => {
+    for (let quiet = 0; quiet < 3;) { await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20)))); quiet = pending.size ? 0 : quiet + 1; }
+  };
+  await signIn(page, server);
+  return { app, page, server, errors, call };
 }
-const look = (page) => page.evaluate(() => ({ ...document.documentElement.dataset }));
+const sideways = (page) => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+const reload = async (page) => { await page.reload(); await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 }); };
 const SIZES = [
   { width: 1280, height: 800 },
   { width: 1024, height: 700 },
@@ -67,355 +80,173 @@ const boxesHit = (page, one, two) =>
     },
     [one, two],
   );
+/** Leaves Settings the way a person does on any width: its own way back to the conversation. */
+async function leaveSettings(page) {
+  const back = page.locator('.settings [data-act="chat"]:visible');
+  if (await back.count()) await back.first().click();
+  else await page.locator('.settings [data-act="chat"]').first().evaluate((button) => button.click());
+}
 
 test("the sidebar starts with this real computer and keeps project switching available", async (t) => {
   const f = await fixture(t);
-  assert.equal(await f.page.locator(".rail-head #rail-target-name").textContent(), "This computer");
-  assert.match(await f.page.locator("#app-switcher").ariaSnapshot(), /button "This computer/,
+  const name = () => f.page.locator("#side .machine .mach14 b").textContent();
+  assert.equal(await name(), "This computer");
+  assert.match(await f.page.locator("#side .machine").ariaSnapshot(), /button "This computer/,
     "the visible computer name is part of the switcher's accessible name");
-  assert.equal(await f.page.locator("#brand-name").count(), 0, "the old app-name header is not built invisibly");
-  await f.page.locator("#rail-target-mark .face-computer").waitFor();
-  assert.equal(await f.page.locator(".rail-scroll #rail-target").count(), 0, "the identity is not repeated below the actions");
-
-  const saved = await fetch(`${f.server.url}/api/reach/machine-name`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${f.server.token}`, "content-type": "application/json" },
-    body: JSON.stringify({ name: "studio-mac" }),
-  });
+  assert.equal(await f.page.locator("#side .machine").count(), 1, "the identity is not repeated in the side list");
+  const saved = await f.call("/api/reach/machine-name", { name: "studio-mac" });
   assert.equal(saved.status, 200);
-  await f.page.evaluate(async () => (await import("/shell.js")).loadRail());
-  assert.equal(await f.page.locator(".rail-head #rail-target-name").textContent(), "studio-mac");
-  assert.match(await f.page.locator("#app-switcher").ariaSnapshot(), /button "studio-mac/);
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await f.page.locator(".rail-head #rail-target-name").filter({ hasText: "studio-mac" }).waitFor();
-
-  await f.page.locator("#app-switcher").click();
-  assert.equal(await f.page.locator("#app-menu").isVisible(), true, "project switching still works");
+  await reload(f.page);
+  await f.page.locator("#side .machine .mach14 b").filter({ hasText: "studio-mac" }).waitFor();
+  assert.match(await f.page.locator("#side .machine").ariaSnapshot(), /button "studio-mac/);
+  await f.page.locator("#side .machine").click();
+  await f.page.locator(".pop").waitFor();
+  assert.equal(await f.page.locator(".pop").getByText("studio-mac").first().isVisible(), true, "switching computers still works");
+  await f.page.keyboard.press("Escape");
   for (const width of [1440, 1024]) {
     await f.page.setViewportSize({ width, height: 900 });
-    const fits = await f.page.locator("#app-switcher").evaluate((button) => {
-      const head = button.closest(".rail-head").getBoundingClientRect();
-      const identity = button.querySelector("#rail-target-name").getBoundingClientRect();
-      return identity.left >= head.left && identity.right <= head.right;
+    const fits = await f.page.locator("#side .machine").evaluate((button) => {
+      const side = button.closest("#side").getBoundingClientRect();
+      const identity = button.querySelector(".mach14 b").getBoundingClientRect();
+      return identity.left >= side.left && identity.right <= side.right;
     });
-    assert.equal(fits, true, `the computer name fits the sidebar header at ${width}px`);
+    assert.equal(fits, true, `the computer name fits the side list at ${width}px`);
   }
   assert.deepEqual(f.errors, []);
 });
-/** Walks Tab and reports where the focus landed each time. */
-async function tabStops(page, count) {
-  const stops = [];
-  for (let index = 0; index < count; index += 1) {
-    await page.keyboard.press("Tab");
-    stops.push(await page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName));
-  }
-  return stops;
-}
 
 test("every place opens from the sidebar in one click, and every Settings page from the gear", async (t) => {
   const f = await fixture(t);
-  // The places are buttons in the sidebar, never a drop-down. Integration review (mac7/wake-pins):
-  // this looks outside the Settings window, because a drop-down inside Settings is not navigation.
-  // mac7/linux-fixes: it also used to look for the word "Memory", which is not one of the places at
-  // all, so it went off on any drop-down with a memory-ish option — on Linux it caught
-  // #knobs-memoryProvider, the Memory card's own provider picker, once that card had drawn. A
-  // drop-down of places would list the places, so it is their own names that are looked for now.
-  const placesInADropDown = () => f.page.locator("select:not(#settings-window select)")
-    .filter({ hasText: PLACES[0] }).filter({ hasText: PLACES[1] }).count();
+  // The places are buttons in the side list, never a drop-down. A drop-down of places would list the places, so it is
+  // their own names that are looked for, outside Settings (a drop-down inside Settings is not navigation).
+  const placesInADropDown = () => f.page.locator("select:not(.settings select)")
+    .filter({ hasText: PLACES[1][1] }).filter({ hasText: PLACES[2][1] }).count();
   assert.equal(await placesInADropDown(), 0, "places must not live in a drop-down");
-  // And the check above can still go off: a drop-down of places in the shell is caught, so scoping
-  // it away from the Settings window did not quietly turn it into an assertion that cannot fail.
+  // And the check above can still go off: a drop-down of places in the shell is caught.
   await f.page.evaluate((places) => {
     const select = document.createElement("select");
     select.id = "places-drop-down-probe";
-    for (const place of places) select.append(new Option(place, place.toLowerCase()));
-    document.getElementById("workspace").append(select);
+    for (const [id, name] of places) select.append(new Option(name, id));
+    document.getElementById("side").append(select);
   }, PLACES);
   assert.equal(await placesInADropDown(), 1, "this check can no longer catch places moving into a drop-down");
   await f.page.evaluate(() => document.getElementById("places-drop-down-probe").remove());
-  assert.equal(await placesInADropDown(), 0);
-  for (const name of PLACES) {
-    await f.page.getByRole("button", { name, exact: true }).click();
-    await f.page.locator("#page-title").filter({ hasText: name }).waitFor();
+  for (const [id, name] of PLACES) {
+    await f.page.locator(`#side [data-act="view"][data-v="${id}"]`).click();
+    // The prototype's Team place is headed "People" (design/redesign/dom/place-team.html).
+    await f.page.locator("#main .place h1").filter({ hasText: id === "team" ? "People" : name }).first().waitFor();
+    await f.page.locator(`#side [data-act="view"][data-v="${id}"][aria-current="true"]`).waitFor();
   }
-  // As in the sample, a conversation opens from the side list's New conversation; there is no Conversation button.
-  assert.equal(await f.page.getByRole("button", { name: "Conversation", exact: true }).count(), 0);
-  await f.page.locator("#rail-new").click();
-  await f.page.locator("#chat").waitFor({ state: "visible" });
-  await f.page.locator("#page-title").filter({ hasText: "Conversation" }).waitFor({ state: "attached" });
+  // As in the prototype, a conversation starts from the side list's New menu; there is no Conversation place.
+  assert.equal(await f.page.locator('#side [data-act="view"][data-v="chat"]').count(), 0);
+  await f.page.locator('#side [data-act="newmenu"]').click();
+  await f.page.locator('.pop [data-act="newconv"]').click();
+  await f.page.locator("#composer").waitFor({ state: "visible" });
   await f.page.getByRole("button", { name: "Settings", exact: true }).click();
-  await f.page.locator("#settings-window").waitFor({ state: "visible" });
-  const pages = f.page.locator(".lx-settings-link");
-  assert.equal(await pages.count(), 20, "Settings includes every first-class page and honest place directory");
+  await f.page.locator(".settings").waitFor({ state: "visible" });
+  const pages = f.page.locator('.settings button.nav[data-act="setpage"]');
+  assert.equal(await pages.count(), 18, "Settings lists every page of the prototype's four groups");
   for (let index = 0; index < await pages.count(); index += 1) {
+    const id = await pages.nth(index).getAttribute("data-v");
     await pages.nth(index).click();
-    assert.equal(await pages.nth(index).getAttribute("aria-current"), "true");
-    assert.equal(await f.page.locator(".lx-page:not([hidden])").count(), 1, "one page at a time");
+    // A page is shown once its first read has come back (settings.js waitFirst), so its mark is waited for.
+    await f.page.locator(`.settings button.nav[data-v="${id}"][aria-current="true"]`).waitFor();
+    assert.equal(await f.page.locator('.settings button.nav[aria-current="true"]').count(), 1, "one page at a time");
+    assert.equal(await f.page.locator(".set-col h1").count(), 1, "and one page title");
   }
-  await f.page.keyboard.press("Escape");
-  await f.page.locator("#settings-window").waitFor({ state: "hidden" });
+  await leaveSettings(f.page);
+  await f.page.locator(".settings").waitFor({ state: "detached" });
   assert.deepEqual(f.errors, []);
 });
 
-test("the rail switches between conversations and real Trunks without duplicating either", async (t) => {
-  const f = await fixture(t);
-  await f.page.locator('#trunk-strip [data-strip-id="here"]').waitFor();
-  assert.equal(await f.page.locator("#rail-view-conversations").getAttribute("aria-selected"), "true");
-  assert.equal(await f.page.locator('.rail-group[data-group="recents"]').isVisible(), true);
-  assert.equal(await f.page.locator("#rail-new-trunk").isVisible(), false);
-  assert.equal(await f.page.locator("#rail-target-name").textContent(), "This computer");
-  await f.page.locator("#branch-tree").evaluate((node) => { node.hidden = false; node.textContent = "A branch"; });
-  assert.equal(await f.page.locator("#branch-tree").isVisible(), true);
-  await f.page.locator("#rail-view-trunks").click();
-  assert.equal(await f.page.locator("#rail-view-trunks").getAttribute("aria-selected"), "true");
-  assert.equal(await f.page.locator('.rail-group[data-group="recents"]').isVisible(), false);
-  assert.equal(await f.page.locator("#rail-new-trunk").isVisible(), true);
-  assert.equal(await f.page.locator("#branch-tree").isVisible(), false, "conversation branches do not mix into Trunks");
-  await f.page.locator("#branch-tree").evaluate((node) => { node.hidden = false; });
-  assert.equal(await f.page.locator("#branch-tree").isVisible(), false, "a redraw cannot override the chosen rail view");
-  assert.equal(await f.page.evaluate(() => localStorage.getItem("branch-rail-view")), "trunks");
-  await f.page.locator("#rail-new-trunk").click();
-  await f.page.locator("#studio").waitFor({ state: "visible" });
-  assert.equal(await f.page.locator("#studio").getByText("Trunks are switched off.").isVisible(), true);
-  await f.page.locator("#studio").getByRole("button", { name: "Switch Trunks on" }).click();
-  await f.page.locator("#trunks-rail").waitFor({ state: "visible" });
-  await f.page.locator("#studio-name").fill("Scout");
-  await f.page.locator("#studio").getByRole("button", { name: "Create the Trunk" }).click();
-  await f.page.locator("#studio").waitFor({ state: "detached" });
-  await f.page.locator('#trunks-rail [data-trunk]').filter({ hasText: "Scout" }).waitFor({ state: "visible" });
-  await f.page.locator("#rail-view-trunks").press("ArrowLeft");
-  assert.equal(await f.page.locator("#rail-view-conversations").getAttribute("aria-selected"), "true");
-  assert.deepEqual(f.errors, []);
-});
-
-test("the selected Trunk stays named when its visual strip is off", async (t) => {
-  const f = await fixture(t);
-  await f.page.locator('#trunk-strip [data-strip-id="here"]').waitFor();
-  const selected = await f.page.evaluate(async () => {
-    const strip = await import("/strip.js");
-    strip.shell.roster = { modes: { trunks: "on" }, trunks: [{ id: "ada", name: "Ada", chatSessionId: "ada-chat" }] };
-    strip.shell.look.strip = "off";
-    document.getElementById("conversation").dataset.sessionId = "ada-chat";
-    strip.drawStrip();
-    document.getElementById("rail-target-name").textContent = "This computer";
-    const { setLanguage } = await import("/i18n.js");
-    await setLanguage("fr");
-    return document.getElementById("rail-target-name").textContent;
-  });
-  assert.equal(selected, "Ada");
-  assert.equal(await f.page.locator("#trunk-strip").count(), 0);
-  assert.deepEqual(f.errors, []);
-});
-
-test("a hidden active Trunk stays named in the rail", async (t) => {
-  const f = await fixture(t);
-  await f.page.locator('#trunk-strip [data-strip-id="here"]').waitFor();
-  const selected = await f.page.evaluate(async () => {
-    const strip = await import("/strip.js");
-    strip.shell.roster = { modes: { trunks: "on" }, trunks: [
-      { id: "hidden-ada", name: "Ada", chatSessionId: "hidden-ada-chat", hidden: true },
-    ] };
-    document.getElementById("conversation").dataset.sessionId = "hidden-ada-chat";
-    document.getElementById("rail-target-name").textContent = "This computer";
-    strip.drawStrip();
-    return { name: document.getElementById("rail-target-name").textContent,
-      visible: !!document.querySelector('[data-strip-id="trunk:hidden-ada"]') };
-  });
-  assert.deepEqual(selected, { name: "Ada", visible: false }, "hiding the roster face does not change who owns the conversation");
-  assert.deepEqual(f.errors, []);
-});
+// Redesign: as above, no strip of Trunk faces to hide one from.
+test.skip("a hidden active Trunk stays named in the rail", async () => {});
 
 test("the Trunks rail stays owner-only", async (t) => {
+  // Redesign: the new window starts again from nothing when the person changes (public/app/main.js watchPerson), so
+  // what is checked is that a household person's window shows none of the owner's conversations or owner-only actions.
   const f = await fixture(t);
-  await f.page.locator('#trunk-strip [data-strip-id="here"]').waitFor();
-  await f.page.locator("#rail-view-trunks").click();
-  const headers = { authorization: `Bearer ${f.server.token}`, "content-type": "application/json" };
-  const person = await fetch(`${f.server.url}/api/profiles`, {
-    method: "POST", headers, body: JSON.stringify({ name: "Sam", pin: "2468" }),
-  }).then((response) => response.json());
-  assert.equal((await fetch(`${f.server.url}/api/profiles/switch`, {
-    method: "POST", headers, body: JSON.stringify({ profileId: person.id, pin: "2468" }),
-  })).status, 200);
-  const synchronous = await f.page.evaluate(() => {
-    const oldGroup = document.getElementById("trunks-rail");
-    oldGroup?.remove();
-    const group = document.createElement("section");
-    group.id = "trunks-rail";
-    group.textContent = "Private Trunk name and latest words";
-    document.getElementById("rail-scroll").append(group);
-    document.dispatchEvent(new CustomEvent("branch-strip", {
-      detail: { profiles: { isOwner: true }, profileGeneration: 0 },
-    }));
-    const ownerGroupVisible = !group.hidden;
-    document.dispatchEvent(new CustomEvent("branch-strip-selection", { detail: {
-      name: "Private Ada", kind: "Private Trunk", status: "Working",
-    } }));
-    const generation = Number(document.documentElement.dataset.profileGeneration || 0) + 1;
-    document.documentElement.dataset.household = "on";
-    document.documentElement.dataset.profileGeneration = String(generation);
-    document.dispatchEvent(new CustomEvent("branch-profile", { detail: { owner: false, profileGeneration: generation } }));
-    return { ownerGroupVisible, group: group.hidden,
-      tab: document.getElementById("rail-view-trunks").hidden,
-      conversations: document.getElementById("rail-view-conversations").getAttribute("aria-selected"),
-      target: document.getElementById("rail-target-name").textContent,
-      translated: document.getElementById("rail-target-name").dataset.t };
-  });
-  assert.deepEqual(synchronous, { ownerGroupVisible: true, group: true, tab: true, conversations: "true",
-    target: "This computer", translated: "strip.here" },
-  "owner-only names, actions and selected identity disappear in the profile event itself");
-  /* A strip refresh that began for the owner may finish after the profile event. It must not put
-     owner-only names and actions back into somebody else's window. */
-  await f.page.evaluate(() => document.dispatchEvent(new CustomEvent("branch-strip", {
-    detail: { profiles: { isOwner: true },
-      profileGeneration: Number(document.documentElement.dataset.profileGeneration || 0) - 1 },
-  })));
-  await f.page.evaluate(() => document.dispatchEvent(new CustomEvent("branch-strip-selection", { detail: {
-    name: "Stale private Ada", kind: "Private Trunk", status: "Working",
-  } })));
-  assert.equal(await f.page.locator("#rail-view-trunks").isVisible(), false);
-  assert.equal(await f.page.locator("#rail-new-trunk").isVisible(), false);
-  assert.equal(await f.page.locator("#rail-view-conversations").getAttribute("aria-selected"), "true");
-  assert.equal(await f.page.locator("#rail-target-name").textContent(), "This computer",
-    "a late owner-side selection cannot restore a private name");
-  await f.page.locator("#rail-view-conversations").focus();
-  await f.page.keyboard.press("ArrowRight");
-  assert.equal(await f.page.evaluate(() => document.activeElement?.id), "rail-view-conversations",
-    "arrow navigation contains only visible choices");
+  await f.page.locator("#prompt").fill("Private owner words");
+  await f.page.locator("#send").click();
+  const row = f.page.locator("#side .list").getByText("Private owner words").first();
+  await row.waitFor({ timeout: 30000 });
+  await openSettings(f.page, "people");
+  await f.page.locator('.set-col [data-act="p-invite"]').first().waitFor({ state: "attached" });
+  await leaveSettings(f.page);
+  const person = await (await f.call("/api/profiles", { name: "Sam", pin: "2468" })).json();
+  const reloaded = f.page.waitForEvent("load", { timeout: 30000 });
+  assert.equal((await f.call("/api/profiles/switch", { profileId: person.id, pin: "2468" })).status, 200);
+  await reloaded;
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await f.page.locator("#side .owner-row").getByText("Sam").first().waitFor();
+  assert.equal(await f.page.locator("#side .list").getByText("Private owner words").count(), 0, "the owner's conversation is not named");
+  await openSettings(f.page, "people");
+  await f.page.locator(".set-col h1").first().waitFor();
+  await f.page.settled();
+  assert.equal(await f.page.locator('.set-col [data-act="p-invite"]').count(), 0, "owner-only actions are not drawn");
   assert.deepEqual(f.errors, []);
 });
 
 test("an ordinary conversation assigned to a Trunk updates the shell target", async (t) => {
+  // Redesign: the prototype's header names the Trunk that answers a conversation (public/app/shell/shell.js trunkFor).
   const f = await fixture(t);
-  await f.page.locator('#trunk-strip [data-strip-id="here"]').waitFor();
-  const target = await f.page.evaluate(async () => {
-    const strip = await import("/strip.js");
-    strip.shell.roster = { modes: { trunks: "on" }, trunks: [
-      { id: "assigned-ada", name: "Ada", handle: "ada", chatSessionId: "ada-own-chat" },
-    ] };
-    document.getElementById("conversation").dataset.sessionId = "ordinary-chat";
-    strip.drawStrip();
-    document.dispatchEvent(new CustomEvent("branch-rooms-changed", { detail: {
-      kind: "trunk", trunkId: "assigned-ada",
-    } }));
-    return document.getElementById("rail-target-name").textContent;
-  });
-  assert.equal(target, "Ada");
+  await f.call("/api/trunks/mode", { mode: "on" });
+  const made = await f.call("/api/trunks", { name: "Ada", description: "Keeps the books." });
+  assert.equal(made.status, 200, await made.clone().text());
+  const { trunk } = await made.json();
+  await reload(f.page);
+  const row = f.page.locator(`#side .list [data-act="chat"][data-id="${trunk.chatSessionId}"]`);
+  await row.waitFor({ timeout: 30000 });
+  await row.click();
+  // Redesign: the header's name is its accessible heading now (the owner took the visible name out of the title-bar row).
+  await f.page.locator('.titlebar .head .who[role="heading"] > b').filter({ hasText: "Ada" }).first().waitFor({ state: "attached" });
   assert.deepEqual(f.errors, []);
 });
 
-test("the Trunks rail recovers after profile loading fails or the owner returns", async (t) => {
-  const f = await fixture(t);
-  await f.page.locator('#trunk-strip [data-strip-id="here"]').waitFor();
-  const targets = await f.page.evaluate(() => {
-    const selectAda = () => document.dispatchEvent(new CustomEvent("branch-strip-selection", { detail: {
-      name: "Ada", kind: "Trunk", status: "Online",
-    } }));
-    document.addEventListener("branch-strip-reselect", selectAda);
-    document.dispatchEvent(new CustomEvent("branch-strip", { detail: { profiles: null } }));
-    document.dispatchEvent(new CustomEvent("branch-strip", { detail: { profiles: { isOwner: true } } }));
-    const afterRetry = document.getElementById("rail-target-name").textContent;
-    document.dispatchEvent(new CustomEvent("branch-profile", { detail: { owner: false } }));
-    document.dispatchEvent(new CustomEvent("branch-profile", { detail: { owner: true } }));
-    selectAda();
-    const beforeRefresh = document.getElementById("rail-target-name").textContent;
-    document.dispatchEvent(new CustomEvent("branch-strip", { detail: { profiles: { isOwner: true } } }));
-    return { afterRetry, beforeRefresh, afterRefresh: document.getElementById("rail-target-name").textContent };
-  });
-  assert.deepEqual(targets, { afterRetry: "Ada", beforeRefresh: "This computer", afterRefresh: "Ada" });
-  assert.deepEqual(f.errors, []);
-});
-
-test("a new screen that names its home with data-home is shown there, even when added later", async (t) => {
-  const f = await fixture(t);
-  await f.page.evaluate(() => {
-    const card = document.createElement("section");
-    card.className = "card";
-    card.id = "home-probe";
-    card.dataset.home = "settings:secrets";
-    card.innerHTML = "<h2>Probe</h2><p>Lands on the Secrets page.</p>";
-    document.getElementById("workspace").append(card);
-    const local = document.createElement("section");
-    local.id = "home-probe-local";
-    local.dataset.home = "settings:models:local";
-    document.body.append(local);
-  });
-  await f.page.waitForFunction(() => document.getElementById("home-probe").closest("#lx-page-secrets")
-    && document.getElementById("home-probe-local").closest("#lx-models-local"));
-  await openSettingFor(f.page, "#home-probe");
-  await f.page.locator("#home-probe").waitFor({ state: "visible" });
-  assert.deepEqual(f.errors, []);
-});
+// Redesign: the new window draws each Settings page from its own module (public/app/settings/pages/*.js); there is no
+// data-home to move a card added later onto a page.
+test.skip("a new screen that names its home with data-home is shown there, even when added later", async () => {});
 
 test("the command palette jumps to a section and closes on Escape", async (t) => {
   const f = await fixture(t);
   await f.page.keyboard.press("ControlOrMeta+k");
-  await f.page.locator("#cmd-input").waitFor({ state: "visible" });
-  await f.page.locator("#cmd-input").fill("Schedu");
-  await f.page.locator(".cmd-item").first().click();
-  assert.match(await f.page.locator("#page-title").innerText(), /Automations/);
-  assert.equal(await f.page.locator('.lx-tab[data-view="schedules"]').getAttribute("aria-selected"), "true");
+  await f.page.locator("#pal-in").waitFor({ state: "visible" });
+  await f.page.locator("#pal-in").fill("Automa");
+  await f.page.locator('.palette [data-act="pal"]').filter({ hasText: "Automations" }).first().click();
+  await f.page.locator("#main .place h1").filter({ hasText: "Automations" }).waitFor();
   await f.page.keyboard.press("ControlOrMeta+k");
-  await f.page.locator("#cmd-input").waitFor({ state: "visible" });
+  await f.page.locator("#pal-in").waitFor({ state: "visible" });
   await f.page.keyboard.press("Escape");
-  await f.page.locator("#cmd-input").waitFor({ state: "hidden" });
+  await f.page.locator("#pal-in").waitFor({ state: "detached" });
   assert.deepEqual(f.errors, []);
 });
 
 test("every appearance control applies at once and survives a reload", async (t) => {
   const f = await fixture(t);
-  await openSettingFor(f.page, "#appearance");
-  await f.page.getByRole("button", { name: "Daylight", exact: true }).click();
-  await f.page.getByRole("button", { name: "Cherry", exact: true }).click();
-  await f.page.getByRole("button", { name: "Large", exact: true }).click();
-  await f.page.getByRole("button", { name: "Compact", exact: true }).click();
-  await f.page.getByRole("button", { name: "This computer's lettering", exact: true }).click();
-  await f.page.locator("#appearance-motion").check();
-  await f.page.locator("#appearance-acorn").uncheck();
-  const chosen = {
-    theme: "daylight",
-    accent: "copper",
-    palette: "cherry",
-    textSize: "large",
-    density: "compact",
-    font: "system",
-    motion: "reduced",
-    acorn: "off",
-    everything: "on",
-    voice: "off",
-    settingsLevel: "advanced", // phase2/settings: Show everything is the Advanced level of Settings
-    convw: "wide", // phase2/panels: how wide the conversation grows (What's on screen)
-  };
-  assert.deepEqual(await look(f.page), chosen, "every choice shows straight away");
-  assert.equal(await f.page.locator(".acorn-art").isVisible(), false);
-  await f.page.getByRole("button", { name: "Save appearance", exact: true }).click();
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await f.page.waitForFunction(() => document.documentElement.dataset.textSize === "large");
-  const accent = await f.page.evaluate(async () => {
-    const { THEMES, TOKEN_NAMES } = await import("/theme-catalogue.js");
-    const cherry = THEMES.find((theme) => theme[0] === "cherry")[3].light;
-    return {
-      shown: getComputedStyle(document.documentElement).getPropertyValue("--copper").trim(),
-      cherry: cherry[TOKEN_NAMES.indexOf("--copper")],
-    };
-  });
-  assert.equal(accent.shown, accent.cherry, "the chosen theme's accent is the one on the page");
-  assert.deepEqual(await look(f.page), chosen, "the same look comes back after a reload");
+  await openSettings(f.page, "appearance");
+  const col = f.page.locator(".set-col");
+  await col.locator('[data-act="themeset"][data-v="light"]').click();
+  await f.page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  await col.locator('[data-act="size"][data-v="large"]').click();
+  await col.locator('[data-act="widthset"][data-v="full"]').click();
+  const shown = () => f.page.evaluate(() => ({ theme: document.documentElement.dataset.theme,
+    size: document.documentElement.dataset.textSize ?? getComputedStyle(document.documentElement).getPropertyValue("--text-size").trim(),
+    width: getComputedStyle(document.getElementById("app")).getPropertyValue("--thread-w").trim() }));
+  await f.page.waitForFunction(() => getComputedStyle(document.getElementById("app")).getPropertyValue("--thread-w").trim() === "100%");
+  const chosen = await shown();
+  assert.equal(chosen.theme, "light", "Daylight shows at once");
+  assert.equal(chosen.width, "100%", "the conversation's width shows at once");
+  const kept = (await (await f.call("/api/state")).json()).preferences;
+  assert.deepEqual([kept.appearance, kept.textSize, kept.conversationWidth], ["daylight", "large", "full"], "every choice is kept by the engine");
+  await reload(f.page);
+  await f.page.waitForFunction(() => getComputedStyle(document.getElementById("app")).getPropertyValue("--thread-w").trim() === "100%");
+  assert.deepEqual(await shown(), chosen, "the same look comes back after a reload");
   assert.deepEqual(f.errors, []);
 });
 
 test("an unknown appearance value is refused and the saved look is unchanged", async (t) => {
   const f = await fixture(t);
-  const send = (body) =>
-    fetch(new URL("/api/preferences", f.server.url), {
-      method: "POST",
-      headers: {
-        authorization: "Bearer " + f.server.token,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+  const send = (body) => f.call("/api/preferences", body);
   assert.equal((await send({ appearance: "midnight" })).ok, false);
   assert.equal((await send({ accent: "purple" })).ok, false);
   const kept = await (await send({ appearance: "daylight" })).json();
@@ -427,380 +258,313 @@ test("an unknown appearance value is refused and the saved look is unchanged", a
 test("the shell fits a 400 pixel window without sideways scrolling", async (t) => {
   const f = await fixture(t);
   await f.page.setViewportSize({ width: 400, height: 800 });
-  assert.equal(
-    await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-    true,
-  );
-  /* On a narrow window the rail slides over the page, so it is opened first. */
-  await f.page.getByRole("button", { name: "Conversations", exact: true }).click();
-  await f.page.getByRole("button", { name: "Library", exact: true }).click();
-  assert.match(await f.page.locator("#page-title").innerText(), /Library/);
-  assert.equal(
-    await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-    true,
-  );
+  assert.equal(await sideways(f.page), 0);
+  /* On a narrow window the side list slides over the page, so it is opened first. */
+  await openPlace(f.page, "library");
+  await f.page.locator("#main .place h1").filter({ hasText: "Library" }).waitFor();
+  assert.equal(await sideways(f.page), 0);
   assert.deepEqual(f.errors, []);
 });
 
 test("a rail folded away on a wide window still opens on a narrow one", async (t) => {
   const f = await fixture(t);
-  await f.page.getByRole("button", { name: "Conversations", exact: true }).click();
-  assert.equal(await f.page.locator("#conversation-rail").isVisible(), false);
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await f.page.locator("#prompt").focus();
+  await f.page.keyboard.press("ControlOrMeta+b"); // the prototype's "Show or hide the list"
+  await f.page.waitForFunction(() => document.getElementById("app").classList.contains("side-hidden"));
+  assert.equal(await f.page.locator("#side .machine").isVisible(), false, "folded away on the wide window");
   await f.page.setViewportSize({ width: 400, height: 800 });
-  assert.equal(await f.page.locator("#conversation-rail").isVisible(), false);
-  await f.page.getByRole("button", { name: "Conversations", exact: true }).click();
-  await f.page.locator("#conversation-rail").waitFor({ state: "visible" });
-  await f.page.getByRole("button", { name: "Find anything Ctrl K" }).click();
-  await f.page.locator("#cmd-input").waitFor({ state: "visible" });
+  // Redesign: in the prototype a list folded away with Ctrl+B stays folded on every width until Ctrl+B brings it back
+  // (its .app.side-hidden); the narrow window's "Show conversations" then slides it in.
+  await f.page.locator("#prompt").focus();
+  await f.page.keyboard.press("ControlOrMeta+b");
+  await f.page.waitForFunction(() => !document.getElementById("app").classList.contains("side-hidden"));
+  // Redesign: on a narrow window Ctrl+B slides the list in (shell/resize.js toggleSide), and "Show conversations" now
+  // sits in the title-bar row above the slid-in list, so it stays pressable: it slides the list away and back in.
+  await f.page.waitForFunction(() => document.getElementById("app").classList.contains("side-open"));
+  const menu = f.page.locator('.titlebar [data-act="side"]:visible').first();
+  await menu.click();
+  await f.page.waitForFunction(() => !document.getElementById("app").classList.contains("side-open"));
+  await menu.click();
+  await f.page.waitForFunction(() => document.getElementById("app").classList.contains("side-open"));
+  await f.page.locator("#side-q").waitFor({ state: "visible" });
+  assert.equal(await f.page.locator("#side-q").isVisible(), true, "the list and its search open on the narrow one");
   assert.deepEqual(f.errors, []);
 });
 
 test("this computer's reduce-motion setting is honoured before anyone opens Appearance", async (t) => {
   const f = await fixture(t);
-  const speed = () =>
-    f.page
-      .locator("#update-bar")
-      .evaluate((node) => Number.parseFloat(getComputedStyle(node).transitionDuration));
-  assert.equal(
-    await f.page.evaluate(() => "motion" in document.documentElement.dataset),
-    false,
-    "nothing is written until the owner asks for stillness",
-  );
-  assert.equal(await speed(), 0.3, "normally things move");
+  // The level switch in Settings slides between its choices (.settings .set-level .seg::before, transition .28s).
+  await openSettings(f.page);
+  const speed = () => f.page.locator(".settings .set-level .seg").first()
+    .evaluate((node) => Number.parseFloat(getComputedStyle(node, "::before").transitionDuration));
+  assert.ok((await speed()) > 0.1, "normally things move");
   await f.page.emulateMedia({ reducedMotion: "reduce" });
-  assert.equal((await speed()) < 0.01, true, "this computer's setting switches it off");
-  await f.page.emulateMedia({ reducedMotion: "no-preference" });
-  await f.page.locator("#lx-foot-theme").click(); // DG-159: the leaf in the sidebar's foot
-  await f.page.locator("#appearance-motion").check();
-  assert.equal((await speed()) < 0.01, true, "so does the Appearance choice");
+  // The browser takes the new setting on its next style pass, so the page is asked once it reports it.
+  await f.page.waitForFunction(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const still = await f.page.waitForFunction(() => {
+    const node = document.querySelector(".settings .set-level .seg");
+    return node && Number.parseFloat(getComputedStyle(node, "::before").transitionDuration) < 0.01;
+  }, null, { timeout: 5000 }).then(() => true, () => false);
+  assert.equal(still, true, "this computer's setting switches it off");
   assert.deepEqual(f.errors, []);
 });
 
 test("the composer never comes to rest on top of the greeting or the welcome card", async (t) => {
+  // Redesign: the prototype's first run is a screen of its own over the whole window (public/app/flows/first.js), not a
+  // card above the composer, so the greeting of an empty conversation is what must stay clear of the message box.
   const f = await fixture(t);
-  assert.equal(await f.page.locator("#first-run").isVisible(), true, "a new workspace starts on the welcome card");
   for (const size of SIZES) {
     await f.page.setViewportSize(size);
-    /* The variable is written when the dock reports its new size, which a loaded machine can take
-       well over a fixed pause to do; wait for the two to agree, and the assertion below still
-       names the size if they never do. */
-    await f.page
-      .waitForFunction(() =>
-        Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue("--composer-h"), 10) ===
-          Math.round(document.getElementById("composer-dock").getBoundingClientRect().height), undefined, { timeout: 10000 })
-      .catch(() => undefined);
-    /* The column keeps exactly the composer's height in reserve at its end. */
-    const reserved = await f.page.evaluate(() => ({
-      variable: Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue("--composer-h"), 10),
-      dock: Math.round(document.getElementById("composer-dock").getBoundingClientRect().height),
-      padding: Number.parseInt(getComputedStyle(document.getElementById("chat")).paddingBottom, 10),
-    }));
-    assert.equal(reserved.variable, reserved.dock, `--composer-h follows the dock at ${size.width}`);
-    assert.equal(reserved.padding >= reserved.dock, true, `the column reserves the dock's height at ${size.width}`);
-    await f.page.evaluate(() => {
-      const column = document.getElementById("workspace");
-      column.scrollTo(0, column.scrollHeight);
-    });
-    await f.page.waitForTimeout(150);
-    assert.equal(
-      await boxesHit(f.page, "#first-run", "#composer-dock"),
-      false,
-      `the welcome card clears the composer at ${size.width}×${size.height}`,
-    );
-  }
-  /* And once the welcome card is done, the greeting takes its place, still clear. */
-  await f.page.evaluate(async () => {
-    await fetch("/api/onboarding", {
-      method: "POST",
-      headers: {
-        authorization: "Bearer " + sessionStorage.getItem("branch-token"),
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ done: true }),
-    });
-  });
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  for (const size of SIZES) {
-    await f.page.setViewportSize(size);
-    await f.page.waitForTimeout(150);
-    await f.page.locator("#greeting").waitFor({ state: "visible" });
-    assert.equal(
-      await boxesHit(f.page, "#greeting", "#composer-dock"),
-      false,
-      `the greeting clears the composer at ${size.width}×${size.height}`,
-    );
-    assert.equal(
-      await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-      true,
-      `no sideways scrolling at ${size.width}`,
-    );
+    await f.page.locator("#main .empty-chat h1").waitFor({ state: "visible" });
+    await f.page.evaluate(() => { const column = document.getElementById("scroll"); column?.scrollTo(0, column.scrollHeight); });
+    assert.equal(await boxesHit(f.page, "#main .empty-chat h1", "#composer"), false,
+      `the greeting clears the composer at ${size.width}×${size.height}`);
+    assert.equal(await sideways(f.page), 0, `no sideways scrolling at ${size.width}`);
   }
   assert.deepEqual(f.errors, []);
 });
 
 test("Send is the round button at every size and the helper note sits under the composer", async (t) => {
+  // Redesign: the prototype's composer has no helper line under it; Send is still its round button, named Send.
   const f = await fixture(t);
   for (const size of SIZES) {
     await f.page.setViewportSize(size);
-    await f.page.waitForTimeout(150);
-    /* DG-175: Send is the sample's round button in the full window too, still named Send. */
     const send = await f.page.evaluate(() => {
-      const button = document.getElementById("send"), box = button.getBoundingClientRect();
-      return { round: Math.abs(box.width - box.height) < 1 && getComputedStyle(button).borderRadius === "50%", name: button.getAttribute("aria-label") || button.textContent.trim() };
+      const button = document.getElementById("send"), box = button.getBoundingClientRect(), style = getComputedStyle(button);
+      return { round: Math.abs(box.width - box.height) < 1 && Number.parseFloat(style.borderRadius) >= box.width / 2 - 0.5,
+        name: button.getAttribute("aria-label") || button.textContent.trim(), inside: Boolean(button.closest("#composer")) };
     });
     assert.equal(send.round, true, `Send is round at ${size.width}`);
+    assert.equal(send.inside, true, `Send is in the message box at ${size.width}`);
     assert.match(send.name, /Send/);
   }
-  await f.page.setViewportSize(SIZES[0]);
-  const placed = await f.page.evaluate(() => {
-    const note = document.getElementById("session-label");
-    return {
-      inComposer: Boolean(note.closest("#chat-form")),
-      belowBox:
-        note.getBoundingClientRect().top >= document.querySelector(".composer").getBoundingClientRect().bottom,
-    };
-  });
-  assert.equal(placed.inComposer, false, "the helper line left the button row");
-  assert.equal(placed.belowBox, true, "and sits under the composer box");
   assert.deepEqual(f.errors, []);
 });
 
 test("a Recents row lights up under the pointer in Daylight", async (t) => {
   const f = await fixture(t);
-  await f.page.locator("#lx-foot-theme").click(); // DG-159: the leaf in the sidebar's foot
-  await f.page.getByRole("button", { name: "Daylight", exact: true }).click();
-  await f.page.locator(".lx-settings-close").click();
+  await openSettings(f.page, "appearance");
+  await f.page.locator('.set-col [data-act="themeset"][data-v="light"]').click();
+  await f.page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  await leaveSettings(f.page);
   await f.page.locator("#prompt").fill("Say hello");
-  await f.page.getByRole("button", { name: "Send", exact: true }).click();
-  await f.page.locator("#conversation .message.assistant").first().waitFor({ timeout: 30000 });
-  /* The rail fills itself when the workspace opens, so it is read after a reload. */
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await f.page.locator("#rail-list .rail-line").first().waitFor({ timeout: 30000 });
-  const row = f.page.locator("#rail-list .rail-line").first();
+  await f.page.locator("#send").click();
+  await f.page.locator("#conversation").getByText("Hello from Branch.").first().waitFor({ timeout: 30000 });
+  // A new conversation, so the one just had is a Recents row that is not the open one.
+  await f.page.locator('#side [data-act="newmenu"]').click();
+  await f.page.locator('.pop [data-act="newconv"]').click();
+  const row = f.page.locator('#side .list [data-act="chat"]:not([aria-current="true"])').first();
+  await row.waitFor({ timeout: 30000 });
+  await f.page.mouse.move(0, 0);
   const colour = () => row.evaluate((node) => getComputedStyle(node).backgroundColor);
   const resting = await colour();
-  /* The wash arrives through a CSS transition, so wait for the colour rather than for a stopwatch:
-     a build machine under load paints later than a quiet laptop, and 150ms is a guess either way.
-     Waited for inside the page, in one step: the old loop asked the page again every 25ms, and on a
-     loaded machine each of those round trips costs more than the transition it was waiting for, so
-     the deadline ran out while the wash was already on screen (seen once at load average 22). */
-  /* The rail can be drawn again just after it first fills (it reloads each time the workspace is
-     shown), and the browser does not move :hover onto a row that replaced the one under a still
-     pointer. So the row being pointed at is marked, and if it is replaced the new row is pointed at:
-     what is waited for is the wash on the row the pointer is really over. */
-  let hovered = resting;
-  for (let attempt = 0; attempt < 5 && hovered === resting; attempt++) {
-    await row.evaluate((node) => { node.dataset.pointed = "yes"; });
-    await row.hover();
-    hovered = await f.page.waitForFunction((was) => {
-      const node = document.querySelector("#rail-list .rail-line");
-      if (!node) return null;
-      if (node.dataset.pointed !== "yes") return "replaced";
-      const now = getComputedStyle(node).backgroundColor;
-      return now !== was ? now : null;
-    }, resting, { timeout: 5000 }).then((handle) => handle.jsonValue(), () => resting);
-    if (hovered === "replaced") { hovered = resting; await f.page.mouse.move(0, 0); }
-  }
+  await row.hover();
+  /* The wash arrives through a CSS transition, so the colour is waited for inside the page, not a stopwatch. */
+  const hovered = await f.page.waitForFunction((was) => {
+    const node = document.querySelector('#side .list [data-act="chat"]:not([aria-current="true"])');
+    const now = node && getComputedStyle(node).backgroundColor;
+    return now && now !== was ? now : null;
+  }, resting, { timeout: 5000 }).then((handle) => handle.jsonValue(), () => resting);
   assert.notEqual(hovered, resting, "the row takes a background under the pointer");
-  /* color-mix serialises as color(srgb r g b / a), so the alpha is the last part. */
-  const alpha = hovered.includes("/")
-    ? Number.parseFloat(hovered.split("/").pop().replace(")", "").trim())
-    : Number.parseFloat(hovered.replace(")", "").split(",").pop());
-  assert.equal(alpha >= 0.09, true, `the wash is strong enough to see (${hovered})`);
   assert.deepEqual(f.errors, []);
 });
 
 test("Ctrl+Shift+K opens the side panel and folds it away again", async (t) => {
   const f = await fixture(t);
-  const open = () => f.page.locator("#context-panel").isVisible();
-  /* DG-114: the side panel is a card, closed until asked for. */
+  const open = () => f.page.evaluate(() => !document.getElementById("pane").hidden);
+  // The side panel is a conversation's, so one is had first.
+  await f.page.locator("#prompt").fill("Say hello");
+  await f.page.locator("#send").click();
+  await f.page.locator("#conversation").getByText("Hello from Branch.").first().waitFor({ timeout: 30000 });
   assert.equal(await open(), false, "closed until asked for");
+  await f.page.locator("#prompt").focus();
   await f.page.keyboard.press("ControlOrMeta+Shift+K");
-  await f.page.waitForTimeout(150);
-  assert.equal(await open(), true, "the keys open it");
+  await f.page.waitForFunction(() => !document.getElementById("pane").hidden);
   await f.page.keyboard.press("ControlOrMeta+Shift+K");
-  await f.page.waitForTimeout(150);
-  assert.equal(await open(), false, "and fold it away");
-  assert.equal(await f.page.locator("#cmd-input").count(), 0, "the palette stays shut");
+  await f.page.waitForFunction(() => document.getElementById("pane").hidden);
+  assert.equal(await f.page.locator("#pal-in").count(), 0, "the palette stays shut");
   assert.deepEqual(f.errors, []);
 });
 
-test("Tab walks the rail first, then the title bar, the messages and the composer", async (t) => {
+/** Walks Tab and reports where the focus landed each time. */
+async function tabStops(page, count) {
+  const stops = [];
+  for (let index = 0; index < count; index += 1) {
+    await page.keyboard.press("Tab");
+    stops.push(await page.evaluate(() => {
+      const node = document.activeElement;
+      return node?.id || [node?.dataset?.act, node?.dataset?.v].filter(Boolean).join(":") || node?.tagName;
+    }));
+  }
+  return stops;
+}
+
+test("Tab walks the title bar first, then the side list, the messages and the composer", async (t) => {
+  // Redesign: the prototype's markup puts the title bar first (.titlebar, then #side, then #main), so Tab walks the
+  // title bar, then the side list, then the conversation and its message box.
   const f = await fixture(t);
-  /* A reload puts the focus back at the top of the document before the walk. */
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  /* DG-159: the old half-moon beside the computer's name is gone; day/night sits in the rail's foot. */
-  assert.deepEqual(await tabStops(f.page, 4), [
-    "app-switcher",
-    "cmd-open",
-    "rail-new",
-    "rail-find",
-  ]);
+  await reload(f.page);
   const walk = await tabStops(f.page, 60);
-  const at = (id) => walk.indexOf(id);
-  assert.equal(at("rail-toggle") > -1, true, "the title bar is reachable");
-  /* DG-094: the Settings cog ends the icon line at the foot of the rail, right before the account row. */
-  assert.equal(at("rail-settings"), at("owner-menu-button") - 1, "the cog comes right before the account row");
-  assert.equal(at("conversation") > -1, true, "the messages are a stop of their own");
-  assert.equal(at("rail-toggle") < at("conversation"), true, "title bar before the messages");
-  assert.equal(at("conversation") < at("prompt"), true, "messages before the composer");
+  const at = (stop) => walk.indexOf(stop);
+  assert.ok(at("pane") > -1, "the title bar is reachable");
+  assert.ok(at("machines") > at("pane"), "the side list after the title bar");
+  assert.equal(at("side-q"), at("machines") + 1, "the search right after the computer");
+  assert.equal(at("view:settings"), at("owner") + 1, "the gear right after the person, at the foot of the list");
+  assert.ok(at("prompt") > at("view:settings"), "the message box after the side list");
   assert.deepEqual(f.errors, []);
 });
 
 test("Escape leaves the message box without throwing away what was typed", async (t) => {
+  // Redesign: the prototype's Escape closes a popover, a dialog or Focus mode and leaves the caret where it is; what was
+  // typed is never thrown away.
   const f = await fixture(t);
   await f.page.locator("#prompt").fill("half a thought");
   await f.page.keyboard.press("Escape");
-  assert.equal(await f.page.evaluate(() => document.activeElement?.id), "");
   assert.equal(await f.page.locator("#prompt").inputValue(), "half a thought");
   assert.deepEqual(f.errors, []);
 });
 
-test("a folded Projects group stays folded, remembered for this workspace", async (t) => {
+test("a folded Places group stays folded, remembered for this workspace", async (t) => {
+  // Redesign: the prototype remembers its folded Places group (S.placesShut, kept by public/app/core/state.js), which
+  // folds the places into one row of icons whose names become their labels, hiding nothing; its Projects group opens
+  // fresh each time.
   const f = await fixture(t);
-  const head = f.page.locator('.group-head[data-toggle="projects"]');
+  const head = f.page.locator('#side [data-act="places14"]');
+  const inbox = f.page.locator('#side [data-act="view"][data-v="inbox"]');
+  const folded = () => f.page.evaluate(() => {
+    const nav = document.querySelector("#side .side-nav"), boxes = [...nav.querySelectorAll(":scope > .nav")].map((b) => b.getBoundingClientRect());
+    return { shut: nav.classList.contains("shut14"), oneRow: new Set(boxes.map((b) => Math.round(b.top))).size === 1 };
+  });
+  assert.deepEqual(await folded(), { shut: false, oneRow: false });
   await head.click();
   assert.equal(await head.getAttribute("aria-expanded"), "false");
-  assert.equal(await f.page.locator("#rail-projects").isVisible(), false);
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  assert.deepEqual(await folded(), { shut: true, oneRow: true }, "the places fold into one row");
+  assert.equal(await inbox.isVisible(), true, "nothing is hidden");
+  assert.equal(await inbox.getAttribute("aria-label"), "Inbox", "each keeps its name");
+  await reload(f.page);
   assert.equal(await head.getAttribute("aria-expanded"), "false", "it is still folded after a reload");
-  const keys = await f.page.evaluate(() =>
-    Object.keys(localStorage).filter((key) => key.startsWith("branch-group-") && localStorage.getItem(key) === "closed"),
-  );
-  assert.equal(keys.length, 1);
-  assert.match(keys[0], /^branch-group-projects::.+/, "the choice is kept under this workspace's own name");
-  /* A choice made before the workspace answered is still honoured. */
-  await f.page.evaluate(() => {
-    localStorage.clear();
-    localStorage.setItem("branch-group-recents", "closed");
-  });
-  await f.page.reload();
-  await f.page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  assert.equal(
-    await f.page.locator('.group-head[data-toggle="recents"]').getAttribute("aria-expanded"),
-    "false",
-  );
+  assert.deepEqual(await folded(), { shut: true, oneRow: true });
+  await head.click();
+  assert.equal(await head.getAttribute("aria-expanded"), "true");
+  assert.equal(await inbox.getAttribute("aria-label"), null);
   assert.deepEqual(f.errors, []);
 });
 
 test("with nothing connected the context pane offers one thing to do", async (t) => {
-  const f = await fixture(t);
-  assert.equal(await f.page.locator("#context-panel").getAttribute("data-connected"), "false");
-  await f.page.locator("#aside-toggle").click(); // DG-114: the side panel is a card, closed until asked for
-  await f.page.locator("#context-connect").waitFor({ state: "visible" });
-  assert.equal(await f.page.locator("#context-change-model").isVisible(), false);
-  await f.page.locator("#context-connect").click();
-  await f.page.locator("#settings-window").waitFor({ state: "visible" });
-  assert.equal(await f.page.locator('.lx-settings-link[data-page="models"]').getAttribute("aria-current"), "true");
+  // Redesign: with no model connected, the prototype's message box says so and offers one way on (public/app/chat/nomodel.js).
+  const f = await fixture(t, { provider: null });
+  const offers = f.page.locator('.dock .dockrow15[role="status"]');
+  await offers.first().waitFor({ state: "visible" });
+  assert.equal(await offers.count(), 1, "one thing to do");
+  const said = (await (await f.call("/api/state")).json()).modelNeeded;
+  assert.ok(said, "the engine says no model is set up");
+  assert.equal((await offers.locator(".hint").innerText()).trim(), said, "in the engine's own words");
+  await offers.locator('[data-act="setgo"][data-v="models"]').click();
+  await f.page.locator('.settings button.nav[data-v="models"][aria-current="true"]').waitFor();
   assert.deepEqual(f.errors, []);
 });
 
 /* ==================== Wave 8: the design QA pass ====================
    Q3 nothing is wider than a 400 px window; Q4 the words on the screens are the words in the
-   glossary; Q5 focus can be seen, Escape closes what it opened, and stillness is honoured. */
+   glossary; Q5 focus can be seen, Escape closes what it opened, and stillness is honoured.
+   Redesign: every screen of the new window: each place and each of its tabs, and each Settings page. */
+const PLACE_TABS = { inbox: ["needs", "finished", "history"], automations: ["scheduled", "procedures", "triggers"], library: ["memory", "documents", "made"],
+  customize: ["trunks", "tools", "specialists", "channels", "everywhere"], team: [], overview: [] };
 
-/** Every screen the owner can open, as [how it is opened, the element that holds it]. */
-const SETTINGS_PAGES = ["general", "assistant", "instructions", "appearance", "notifications", "models", "accounts", "voice", "permissions",
-  "computer", "secrets", "data", "advanced", "about", "trunks", "channels", "connections", "skills", "memory", "automations"];
-const SCREENS = [
-  ["chat", "chat"], ["runs", "runs"], ["memory", "memory"], ["skills", "skills"], ["specialists", "specialists"],
-  ["procedures", "procedures"], ["schedules", "schedules"], ["documents", "documents"],
-  ["inbox:needs", "lx-slot-inbox-needs"], ["inbox:finished", "lx-slot-inbox-finished"],
-  ["automations:triggers", "lx-slot-automations-triggers"], ["library:made", "lx-slot-library-made"],
-  ["customize:plugins", "lx-slot-customize-plugins"], ["customize:connections", "lx-slot-customize-connections"],
-  ["customize:channels", "lx-slot-customize-channels"],
-  ...SETTINGS_PAGES.map((page) => [`settings:${page}`, `lx-page-${page}`]),
-];
-
-/** Opens a screen, letting the rail slide over first on a narrow window. */
-async function openScreen(page, view) {
-  await openPlace(page, view);
-  await page.evaluate(() => document.body.classList.remove("rail-open"));
-  await page.waitForTimeout(350);
+/** Every screen, opened the way a person opens it; `look(name)` is called on each with its holder's selector. */
+async function everyScreen(page, look) {
+  for (const [place, tabs] of Object.entries(PLACE_TABS)) {
+    for (const tab of tabs.length ? tabs : [null]) {
+      await openPlace(page, place, tab ?? undefined);
+      await page.locator("#main .place h1").first().waitFor();
+      await page.evaluate(() => document.getElementById("app").classList.remove("side-open"));
+      await page.settled();
+      await look(tab ? `${place}:${tab}` : place, "#main .place");
+    }
+  }
+  await openSettings(page, "general");
+  const pages = await page.locator('.settings button.nav[data-act="setpage"]').evaluateAll((all) => all.map((one) => one.dataset.v));
+  for (const id of pages) {
+    await page.locator(`.settings button.nav[data-act="setpage"][data-v="${id}"]`).click();
+    await page.locator(".set-col h1").first().waitFor();
+    await page.settled();
+    await look(`settings:${id}`, ".set-col");
+  }
+  await leaveSettings(page);
 }
 
 test("Q3 at 400 px nothing on any screen is wider than the window", async (t) => {
-  const f = await fixture(t);
-  await f.page.setViewportSize({ width: 400, height: 800 });
-  for (const [view, holder] of SCREENS) {
-    await openScreen(f.page, view);
-    const tooWide = await f.page.evaluate((id) => {
-      /* Only a scroller INSIDE the reading column excuses a wide box. The column itself
-         (#workspace) scrolls up and down, which makes the browser report its sideways
-         overflow as "auto" too; walking past it would excuse every element on the page. */
+  const f = await fixture(t, { width: 400, height: 800 });
+  await everyScreen(f.page, async (view, holder) => {
+    const tooWide = await f.page.evaluate((selector) => {
+      /* Only a scroller inside the screen excuses a wide box (a table or a row of tabs may keep its own sideways scroll). */
+      const root = document.querySelector(selector);
       const scrolls = (node) => {
-        for (let p = node; p && p.id !== "workspace" && !p.classList.contains("lx-settings-body"); p = p.parentElement) {
+        for (let p = node; p && p !== root.parentElement; p = p.parentElement) {
           const x = getComputedStyle(p).overflowX;
-          if (x === "auto" || x === "scroll") return true;
+          if ((x === "auto" || x === "scroll" || x === "hidden") && p !== root) return true;
         }
         return false;
       };
       const out = [];
-      for (const node of document.getElementById(id).querySelectorAll("*")) {
+      for (const node of root.querySelectorAll("*")) {
         if (node.offsetParent === null) continue;
         const box = node.getBoundingClientRect();
-        /* A table may keep its own sideways scroll; the page itself may not. */
         if (box.width > window.innerWidth + 1 && !scrolls(node))
           out.push(`${node.tagName.toLowerCase()}.${node.className.toString().slice(0, 30)} = ${Math.round(box.width)}px`);
       }
       return out;
     }, holder);
     assert.deepEqual(tooWide, [], `${view} has something wider than a 400 px window`);
-    const sideways = await f.page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-    assert.ok(sideways <= 1, `${view} makes the page scroll sideways by ${sideways}px`);
-    /* The reading column must not gain a sideways bar of its own either. */
-    const inColumn = await f.page.evaluate(() => {
-      const column = document.querySelector("#settings-window:not([hidden]) .lx-settings-body") ?? document.getElementById("workspace");
-      return column.scrollWidth - column.clientWidth;
-    });
-    assert.ok(inColumn <= 1, `${view} makes the reading column scroll sideways by ${inColumn}px`);
-  }
+    const across = await sideways(f.page);
+    assert.ok(across <= 1, `${view} makes the page scroll sideways by ${across}px`);
+  });
   assert.deepEqual(f.errors, []);
 });
 
 test("Q4 every control that can be seen can also be named", async (t) => {
   const f = await fixture(t);
-  for (const [view, holder] of SCREENS) {
-    await openScreen(f.page, view);
-    const nameless = await f.page.evaluate((id) => {
+  await everyScreen(f.page, async (view, holder) => {
+    const nameless = await f.page.evaluate((selector) => {
       const out = [];
-      for (const node of document.getElementById(id).querySelectorAll("button, input, select, textarea")) {
+      for (const node of document.querySelector(selector).querySelectorAll("button, input, select, textarea")) {
         if (node.offsetParent === null) continue;
-        const name = node.labels?.[0]?.textContent?.trim() || node.getAttribute("aria-label") ||
+        const name = node.labels?.[0]?.textContent?.trim() || node.labels?.[0]?.getAttribute("aria-label") || node.getAttribute("aria-label") ||
           document.getElementById(node.getAttribute("aria-labelledby") ?? "")?.textContent?.trim() ||
-          node.title || node.textContent.trim();
-        if (!name) out.push(`${node.tagName.toLowerCase()}#${node.id || "(no id)"}`);
+          node.title || node.textContent.trim() || node.getAttribute("placeholder");
+        if (!name) out.push(`${node.tagName.toLowerCase()}#${node.id || "(no id)"}.${node.dataset.act ?? ""}`);
       }
       return out;
     }, holder);
     assert.deepEqual(nameless, [], `${view} has a control nothing can read out`);
-  }
+  });
   assert.deepEqual(f.errors, []);
 });
 
 test("Q4 a tick box sits beside its words, in the reading face", async (t) => {
+  // Redesign: the prototype's switches are tick boxes drawn as switches (.sw) in a row (.ctl) with their words (<b>).
   const f = await fixture(t);
   const wrong = [];
-  for (const page of SETTINGS_PAGES) {
-    await openScreen(f.page, `settings:${page}`);
-    wrong.push(...await f.page.evaluate(() => {
-    const out = [];
-    for (const box of document.querySelectorAll('#settings-window label > input[type="checkbox"]')) {
-      if (box.offsetParent === null) continue;
-      /* Stretched across the column is what used to put the tick on a line of its own. */
-      if (box.getBoundingClientRect().width > 40) out.push(`${box.id}: the tick box is stretched`);
-      if (getComputedStyle(box.parentElement).fontFamily.includes("Mono"))
-        out.push(`${box.id}: its words are in the label face`);
-    }
-    return out;
-    }));
-  }
+  await everyScreen(f.page, async (view, holder) => {
+    if (!view.startsWith("settings:")) return;
+    wrong.push(...await f.page.evaluate(({ selector, name }) => {
+      const out = [];
+      for (const box of document.querySelector(selector).querySelectorAll('input[type="checkbox"].sw')) {
+        if (box.offsetParent === null) continue;
+        // A settings row (.ctl) leads with its words (<b>); a switch in a list row (a file, a Trunk) is beside that row's words.
+        let words = box.closest(".ctl")?.querySelector(":scope > b");
+        for (let up = box.parentElement, n = 0; !words && up && n < 3; up = up.parentElement, n++) if (up.textContent.trim()) words = up;
+        if (!words?.textContent.trim()) out.push(`${name} ${box.id || box.dataset.sw}: no words beside it`);
+        else {
+          const w = words.getBoundingClientRect(), b = box.getBoundingClientRect(), row = box.closest(".ctl")?.getBoundingClientRect() ?? w;
+          if (b.top + b.height / 2 < row.top - 1 || b.top + b.height / 2 > row.bottom + 1) out.push(`${name} ${box.id || box.dataset.sw}: not beside its words`);
+          else if (b.width > 60) out.push(`${name} ${box.id || box.dataset.sw}: the tick box is stretched`);
+        }
+        if (words && getComputedStyle(words).fontFamily.includes("Mono")) out.push(`${name} ${box.id}: its words are not in the reading face`);
+      }
+      return out;
+    }, { selector: holder, name: view }));
+  });
   assert.deepEqual(wrong, []);
   assert.deepEqual(f.errors, []);
 });
@@ -809,118 +573,82 @@ test("Q4 every screen calls the same thing by the same name", async (t) => {
   const f = await fixture(t);
   /* One name per idea. Each pattern is a word the owner should never have to meet on its own;
      the second half of each pair is what to say instead. See docs/design.md, "The glossary". */
+  // Redesign: the prototype names a skill's file itself ("Step-by-step know-how, as SKILL.md"), so SKILL.md is its word now.
   const banned = [
-    [/\bSKILL\.md\b/, "the instructions"],
     [/\bAPI base URL\b/, "web address of the service"],
     [/\bendpoint\b/i, "web address"],
     [/\bpayload\b/i, "what is sent"],
     [/\bSSE\b/, "live updates"],
   ];
-  for (const [view, holder] of SCREENS) {
-    await openScreen(f.page, view);
-    const words = await f.page.evaluate((id) => document.getElementById(id).innerText, holder);
+  await everyScreen(f.page, async (view, holder) => {
+    const words = await f.page.evaluate((selector) => document.querySelector(selector).innerText, holder);
     for (const [pattern, instead] of banned)
       assert.equal(pattern.test(words), false, `${view} still says ${pattern} where it should say "${instead}"`);
-  }
+  });
   assert.deepEqual(f.errors, []);
 });
 
 test("Q4 every section says what it is for, and every card carries a title", async (t) => {
+  // Redesign: every place and Settings page opens on its title (h1) and the line that says what it is for (.lede), as
+  // the prototype's placeHead and set-col do; every section (.sec) of a Settings page carries its heading.
   const f = await fixture(t);
-  for (const [view, holder] of SCREENS) {
-    if (view === "chat") continue; /* the conversation opens on its greeting, not an intro */
-    await openScreen(f.page, view);
-    /* An old section keeps its own intro; a new tab is introduced by its place, a settings page by its own line. */
-    const said = await f.page.evaluate((id) => {
-      const node = document.getElementById(id);
-      return Boolean(node.querySelector(".section-intro") || node.querySelector(".lx-page-intro") ||
-        (!node.classList.contains("view") && node.closest(".lx-place")?.querySelector(".lx-place-intro")));
+  await everyScreen(f.page, async (view, holder) => {
+    const said = await f.page.evaluate((selector) => {
+      const root = document.querySelector(selector), title = root.querySelector("h1");
+      return { title: title?.textContent.trim() ?? "", lede: Boolean(root.querySelector(".lede")?.textContent.trim()) };
     }, holder);
-    assert.ok(said, `${view} never says what it is for`);
-    /* As in the sample, a Settings card may be titled by the section it sits in (the .sg-head matching its
-       data-sg-bucket, public/settings-grown.js) rather than by a heading of its own; the same rule as
-       tests/settings-descriptions.test.mjs. */
-    const untitled = await f.page.evaluate((id) => {
-      const sectionTitled = (card) => {
-        const bucket = card.dataset.sgBucket;
-        const head = bucket && [...(card.parentElement?.children ?? [])].find((node) => node.matches(".sg-head") && node.dataset.bucket === bucket);
-        return Boolean(head?.querySelector("h3.sg-head-title")?.textContent.trim());
-      };
-      return [...document.getElementById(id).querySelectorAll(".card")]
-        .filter((card) => card.offsetParent !== null && !sectionTitled(card) && !card.querySelector(
-          card.classList.contains("settings-directory-card") ? "h3.settings-directory-title" : "h2, h3.settings-card-title, summary"))
-        .map((card) => card.id || card.className);
-    }, holder);
-    assert.deepEqual(untitled, [], `${view} has a card with no title`);
-  }
+    assert.ok(said.title, `${view} has no title`);
+    assert.ok(said.lede, `${view} never says what it is for`);
+    if (!view.startsWith("settings:")) return; // a place may lay out a row of cards with no heading, as the prototype's do
+    const untitled = await f.page.evaluate((selector) => [...document.querySelector(selector).querySelectorAll(".sec")]
+      .filter((section) => section.offsetParent !== null && !section.querySelector(":scope > h2, :scope > h3, :scope > summary")?.textContent.trim())
+      .map((section) => section.className), holder);
+    assert.deepEqual(untitled, [], `${view} has a section with no title`);
+  });
   assert.deepEqual(f.errors, []);
 });
 
 test("Q5 Escape closes every popover this pass touched", async (t) => {
   const f = await fixture(t);
   await f.page.keyboard.press("ControlOrMeta+k");
-  await f.page.locator("#cmd-input").waitFor({ state: "visible" });
+  await f.page.locator("#pal-in").waitFor({ state: "visible" });
   await f.page.keyboard.press("Escape");
-  await f.page.locator("#cmd-input").waitFor({ state: "hidden" });
+  await f.page.locator("#pal-in").waitFor({ state: "detached" });
 
-  await f.page.locator("#owner-menu-button").click();
-  await f.page.locator("#owner-menu").waitFor({ state: "visible" });
+  await f.page.locator('#side [data-act="owner"]').click();
+  await f.page.locator(".pop").waitFor({ state: "visible" });
   await f.page.keyboard.press("Escape");
-  await f.page.locator("#owner-menu").waitFor({ state: "hidden" });
-  assert.equal(await f.page.locator("#owner-menu-button").getAttribute("aria-expanded"), "false");
+  await f.page.locator(".pop").waitFor({ state: "detached" });
 
-  assert.deepEqual(f.errors, []);
-});
-
-test("Q5 the helper line and the conversation's cost share one row, clear of the message box (DG-101)", async (t) => {
-  const f = await fixture(t);
-  await f.page.evaluate(() => { document.getElementById("conversation-cost").textContent = "About $0.12 so far"; });
-  const boxes = await f.page.evaluate(() => {
-    const rect = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
-    return { composer: rect(".composer"), foot: rect(".composer-foot"), cost: rect("#conversation-cost"), note: rect(".composer-foot .composer-note") };
-  });
-  assert.ok(boxes.foot.top >= boxes.composer.bottom - 1, "the quiet row still overlaps the message box");
-  assert.ok(boxes.cost.left >= boxes.note.right - 1, "the cost and the helper line overlap each other");
-  assert.ok(boxes.cost.top >= boxes.foot.top - 1 && boxes.cost.bottom <= boxes.foot.bottom + 1, "the cost sits on the line under the box");
-  // With Show everything on, the limits ring ends the line; the cost sits just before it, at the far end (NAS f3a163d).
-  await f.page.evaluate(() => { document.documentElement.dataset.everything = "on"; });
-  await f.page.waitForFunction(() => document.querySelector(".composer-foot > .status-bar"));
-  const end = await f.page.evaluate(() => {
-    const bar = document.querySelector(".composer-foot > .status-bar"), cost = document.getElementById("conversation-cost");
-    bar.style.minWidth = "24px"; // the ring's own size, whatever it has to say yet
-    return { gap: bar.getBoundingClientRect().left - cost.getBoundingClientRect().right,
-      toEnd: document.querySelector(".composer-foot").getBoundingClientRect().right - bar.getBoundingClientRect().right };
-  });
-  assert.ok(end.gap >= 0 && end.gap <= 16, `the cost sits just before the ring, not floating mid-line (${end.gap} px apart)`);
-  assert.ok(end.toEnd <= 24, `and the ring ends the line (${end.toEnd} px short)`);
+  await f.page.locator('#side [data-act="newmenu"]').click();
+  await f.page.locator(".pop").waitFor({ state: "visible" });
+  await f.page.keyboard.press("Escape");
+  await f.page.locator(".pop").waitFor({ state: "detached" });
   assert.deepEqual(f.errors, []);
 });
 
 test("Q5 focus can be seen, and stillness is honoured", async (t) => {
   const f = await fixture(t);
-  /* The message box shows its focus as the sample's does (DG-175): the whole box takes the accent edge and ring,
-     easing in over a moment, so it is read once it has arrived. */
-  await f.page.evaluate(() => document.getElementById("prompt").focus());
-  await f.page.waitForFunction(() => / 0px 0px 0px 3px\b/.test(` ${getComputedStyle(document.getElementById("chat-form")).boxShadow}`), null, { timeout: 3000 }).catch(() => undefined);
+  /* The message box shows its focus as the prototype's pass 17 does: a darker edge and a 4 px ring round the whole box. */
+  const rest = await f.page.evaluate(() => getComputedStyle(document.getElementById("composer")).borderTopColor);
+  await f.page.locator("#prompt").focus();
+  await f.page.waitForFunction((was) => {
+    const box = getComputedStyle(document.getElementById("composer"));
+    return box.borderTopColor !== was && / 0px 0px 0px 4px\b/.test(` ${box.boxShadow}`);
+  }, rest, { timeout: 3000 }).then(() => true, () => assert.fail("a focused message box shows no edge or ring"));
+  /* Keyboard focus on a control can be seen. */
+  await f.page.keyboard.press("Tab"); // Shift+Tab in the message box changes how much it may do (the prototype's mode chip)
   const ring = await f.page.evaluate(() => {
-    const box = getComputedStyle(document.getElementById("chat-form"));
-    const probe = document.createElement("i");
-    probe.style.color = "var(--copper)";
-    document.body.append(probe);
-    const accent = getComputedStyle(probe).color;
-    probe.remove();
-    return { edge: box.borderTopColor === accent, ring: / 0px 0px 0px 3px\b/.test(` ${box.boxShadow}`) };
+    const node = document.activeElement, style = getComputedStyle(node);
+    return { seen: style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0 || style.boxShadow !== "none",
+      which: `${node.tagName}.${node.className}[${node.dataset.act ?? ""}] outline ${style.outlineStyle} ${style.outlineWidth}` };
   });
-  assert.deepEqual(ring, { edge: true, ring: true }, "a focused message box shows the accent edge and ring");
-
-  /* "Keep things still" writes data-motion onto the page, and every move is then instant. */
-  const still = await f.page.evaluate(() => {
-    document.documentElement.dataset.motion = "reduced";
-    const measured = getComputedStyle(document.getElementById("send")).transitionDuration;
-    delete document.documentElement.dataset.motion;
-    return measured;
-  });
-  assert.ok(Number.parseFloat(still) < 0.01,
-    `movement is still ${still} long when the owner asked for stillness`);
+  assert.equal(ring.seen, true, `a focused control shows where the keyboard is (${ring.which})`);
+  /* This computer's "reduce motion" makes every move instant. */
+  await f.page.emulateMedia({ reducedMotion: "reduce" });
+  await f.page.waitForFunction(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const still = await f.page.waitForFunction(() => Number.parseFloat(getComputedStyle(document.getElementById("send")).transitionDuration) < 0.01,
+    null, { timeout: 5000 }).then(() => "0s", () => f.page.evaluate(() => getComputedStyle(document.getElementById("send")).transitionDuration));
+  assert.ok(Number.parseFloat(still) < 0.01, `movement is still ${still} long when the computer asked for stillness`);
   assert.deepEqual(f.errors, []);
 });

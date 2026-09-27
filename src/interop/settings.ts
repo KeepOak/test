@@ -3,7 +3,8 @@ import type { Store } from "../store.js";
 
 /**
  * Bucket 20 (wave mac4): talking to other agents and tools. Each part has the owner's three-way
- * switch — off, when needed, on — kept in a settings record of its own, and every one ships off.
+ * switch — off, when needed, on — kept in a settings record of its own. What each ships as is
+ * `interopShipsOn` below; a saved record that cannot be read is off.
  *
  *   off          the part refuses in one plain sentence; its tools are not in the catalog at all
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -24,6 +25,20 @@ const RecordSchema = z.object({ mode: ModeSchema.default("off") }).strict();
 
 /** The settings record a part's switch is kept in. */
 export const interopKey = (part: InteropPart): string => `interop-${part}`;
+
+/**
+ * What each part is while nothing has been saved for it. A saved record that is damaged still reads as off.
+ * Kept off: the Agent Protocol (an HTTP door for outside programs to hand Branch work) and tools lent by a
+ * program (a socket other programs connect to), because each lets something from outside in, rule (a).
+ */
+export const interopShipsOn: Partial<Record<InteropPart, InteropMode>> = {
+  // The owner's rule (ships on, 2026-09-26): a mode only narrows what a task could already do; none of (a)–(f).
+  modes: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): scores the owner's projects on words, and only the owner switches; none of (a)–(f).
+  "project-routing": "when-needed",
+  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): fleet and handoff reach assistants and devices outside this task; flow-search spends on repeated model
+  // tries; agent-market brings in outside content.
+};
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
 export const interopLabels: Record<InteropPart, string> = {
@@ -50,7 +65,9 @@ export const interopTools: Record<InteropPart, readonly string[]> = {
 };
 
 export function interopMode(store: Pick<Store, "get">, owner: string, part: InteropPart): InteropMode {
-  const saved = RecordSchema.safeParse(store.get("settings", owner, interopKey(part))?.data ?? {});
+  const found = store.get("settings", owner, interopKey(part));
+  if (!found) return interopShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

@@ -31,7 +31,7 @@ async function studio(t, width = 1440) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0; // what failed before the key was given is the login page's business
   /* The strip reads the Trunks switch when it loads; it is read again here, as it is after the switch is pressed. */
   await page.evaluate(async () => { await (await import("/strip.js")).refresh(); (await import("/studio.js")).openAdd("trunk"); });
@@ -55,28 +55,9 @@ const row = (page) => page.evaluate(() => {
   };
 });
 
-test("DG-106 Follow my theme is the sample's switch row, and still follows the theme", async (t) => {
-  const { page, errors } = await studio(t);
-  const seen = await row(page);
-  assert.deepEqual({ words: seen.words, note: seen.note, role: seen.role, size: seen.size }, {
-    words: "Follow my theme", note: "Takes the highlight colour of whichever theme is on.", role: "switch", size: "40×24",
-  });
-  assert.deepEqual({ words: seen.wordsType, note: seen.noteType, quiet: seen.noteQuiet }, { words: "14px/21.7px 520", note: "12.5px/19.375px 400", quiet: true });
-  assert.deepEqual({ beside: seen.switchBeside, beneath: seen.noteBeneath }, { beside: true, beneath: true });
-  /* On: no fixed colour is chosen. A colour chosen turns it off; on again, the colour is let go. */
-  if (!seen.checked) await page.locator("#studio-follow").click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked);
-  assert.equal((await row(page)).pressedSwatches, 0, "following the theme, no colour of its own");
-  await page.getByRole("button", { name: "Colour #E07033", exact: true }).click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked === false);
-  assert.equal((await row(page)).pressedSwatches, 1, "a colour of its own");
-  await page.locator("#studio-follow").click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked);
-  assert.equal((await row(page)).pressedSwatches, 0);
-  assert.deepEqual(errors, []);
-});
-
-test("DG-106 in French the row's words are French", async (t) => {
+// Redesign: replaced by the new window (no "Follow my theme" row), and its French is Coming soon (sw:lang), checked at
+// e5b8a610.
+test.skip("DG-106 in French the row's words are French", async (t) => {
   const { page, errors } = await studio(t);
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
   const words = await page.evaluate(async () => { const { t } = await import("/i18n.js"); return { words: t("studio.follow"), note: t("studio.follow.note") }; });
@@ -89,8 +70,9 @@ test("DG-106 in French the row's words are French", async (t) => {
 
 /* Codex's review of ceb75959: the sample's control row is one column at 760px and narrower (its `.ctl` phone rule):
    the words, then the switch under them, then the note. At 761px it is two columns again. */
+// Redesign: replaced by the new window (no "Follow my theme" row in prototype.html's studio).
 for (const [width, stacked] of [[760, true], [400, true], [761, false]]) {
-  test(`DG-106 at ${width} px the row is ${stacked ? "one column: words, switch, note" : "words and switch side by side"}`, async (t) => {
+  test.skip(`DG-106 at ${width} px the row is ${stacked ? "one column: words, switch, note" : "words and switch side by side"}`, async (t) => {
     const { page, errors } = await studio(t, width);
     const seen = await row(page);
     assert.deepEqual({ stacked: seen.stacked, beside: seen.switchBeside, beneath: seen.noteBeneath },

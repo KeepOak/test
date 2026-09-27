@@ -1,5 +1,7 @@
 /* Redesign phase 1: the one suggestion bar above the message box, and the update choice cards.
-   Nothing here installs anything: the background engine's own route is answered by the test. */
+   Nothing here installs anything: the background engine's own route is answered by the test.
+   Redesign: the new window's bar is the prototype's recBar (.recbar, public/app/chat/rec.js), above the conversation and at
+   the top of Inbox and Overview; Settings › Updates keeps "Keep Branch up to date by itself" as one switch (#u-auto). */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -8,6 +10,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { openSettingFor, pressUntil } from "./places.mjs";
+import { openSettings } from "./new-window-places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { nextSuggestion, SuggestionsSettingsSchema } from "../dist/suggestions.js";
@@ -42,22 +45,22 @@ async function fixture(t, { onboarded = true } = {}) {
   };
   if (onboarded) await call("/api/onboarding", { done: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
+  /* The new window never opens its first run under automation (public/app/flows/flows.js:33 checks navigator.webdriver);
+     the page is shown the browser a person has, so the first run is the one they would see. */
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "webdriver", { get: () => false }));
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  /* Opening the window again: the token is kept for the tab, so only the first time asks for it.
-     The page can take well over 30 s to load on a busy Windows runner (trunk 73f73153 timed out here),
-     so it gets the same 120 s as tests/places.mjs gives the window to be ready. */
+  /* Opening the window again: the session token is asked for each time the page is loaded. */
   const open = async () => {
     await page.goto(server.url);
-    await page.waitForFunction(() => document.getElementById("workspace")?.hidden === false
-      || document.getElementById("token")?.offsetParent !== null, null, { timeout: 120000 });
-    if (await page.locator("#token").isVisible()) {
-      await page.getByLabel("Session token", { exact: true }).fill(server.token);
+    // Opened again in the same tab, the window already holds the key and skips the key field; the locale loads first (#345).
+    const key = page.getByLabel("Session token", { exact: true });
+    await Promise.race([key.waitFor({ timeout: 60000 }), page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 })]).catch(() => {});
+    if (await key.isVisible()) {
+      await key.fill(server.token);
       await page.getByRole("button", { name: "Connect", exact: true }).click();
     }
-    await page.locator("body.lx-ready").waitFor({ state: "attached", timeout: 120000 });
-    // layout.js marks lx-ready as the page loads, before the key is taken: the window is open once #workspace shows.
-    await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+    await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   };
   return { app, server, call, page, errors, open };
 }
@@ -77,13 +80,13 @@ test("the server offers the update bar to the owner, remembers Don't ask again, 
 test("Yes on the update bar turns on updating by itself; nothing changes before it", async (t) => {
   const f = await fixture(t);
   await f.open();
-  const bar = f.page.locator("#suggest-bar");
+  const bar = f.page.locator(".recbar");
   await bar.waitFor({ state: "visible" });
   assert.match(await bar.innerText(), /Keep Branch up to date by itself\?\s*Recommended/);
   assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "off", "showing it changed nothing");
   await bar.getByRole("button", { name: "Yes", exact: true }).click();
   await bar.waitFor({ state: "detached" });
-  await f.page.waitForFunction(() => /keeps itself up to date/.test(document.getElementById("toast")?.textContent ?? ""));
+  await f.page.locator(".toast").filter({ hasText: "keeps itself up to date" }).waitFor();
   assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "install");
   assert.deepEqual(f.errors, []);
 });
@@ -91,26 +94,46 @@ test("Yes on the update bar turns on updating by itself; nothing changes before 
 test("first run comes first and the bar is its last question; Not now lasts until the window opens again; Don't ask again lasts", async (t) => {
   const f = await fixture(t, { onboarded: false });
   await f.open();
-  await f.page.locator("#first-run").waitFor({ state: "visible" });
+  // Redesign: the new window's first run is "Set up Branch" (public/app/flows/setup.js); its last page, Health check, ends
+  // it with Finish (data-act="ob-done").
+  // Redesign: Skip for now (ob-close) shows only after Welcome (35e53413); the setup dialog itself says first run is up.
+  const setup = f.page.locator(".ob9");
+  await setup.waitFor({ state: "visible", timeout: 15000 });
   await f.page.waitForTimeout(800);
-  const bar = f.page.locator("#suggest-bar");
+  const bar = f.page.locator(".recbar");
   assert.equal(await bar.count(), 0, "never while the first-run screen is up");
-  await f.page.getByRole("button", { name: /Try it without an account/ }).click();
-  await f.page.locator("#first-run").waitFor({ state: "hidden" });
-  await bar.waitFor({ state: "visible" });
+  await f.page.locator("#ob-trust").check();
+  // Redesign (#391): Keep it running offers "Keep Branch up to date by itself" on (the ship-on rule) and saves it on
+  // Continue, which answers the updates question before the bar could ask it; this person switches it off there.
+  for (let step = 0; step < 15 && !(await f.page.locator('[data-act="ob-done"]').isVisible()); step++) {
+    const upd = f.page.locator("#ob-upd:not([disabled])");
+    if (await f.page.locator("#ob-upd").isVisible()) {
+      await upd.waitFor({ timeout: 10000 }); // the step reads the engine's switches first
+      if (await upd.isChecked()) { await upd.uncheck(); await f.page.locator("#ob-upd:not([disabled]):not(:checked)").waitFor(); }
+    }
+    await f.page.locator('[data-act="ob-next"]').click();
+  }
+  await f.page.locator('[data-act="ob-done"]').click();
+  await setup.waitFor({ state: "detached" });
+  // Finishing setup starts the prototype's tour of the window; a person can end it at once.
+  const endTour = f.page.locator('.tour-layer [data-act="tour-end"]');
+  if (await endTour.waitFor({ timeout: 5000 }).then(() => true, () => false)) await endTour.click();
+  // WINDOW BUG: public/app/chat/rec.js recBar() asks the engine for its bar once, when the window is let in (before the first
+  // run is done, when the engine offers nothing), and never again, so the bar does not follow the first run.
+  await bar.waitFor({ state: "visible", timeout: 15000 });
   assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "off");
   await bar.getByRole("button", { name: "Not now", exact: true }).click();
   await bar.waitFor({ state: "detached" });
-  await f.page.evaluate(() => globalThis.branchSuggestions.offer());
+  await f.page.locator('#side [data-act="view"][data-v="inbox"]').click();
+  await f.page.waitForTimeout(500);
   assert.equal(await bar.count(), 0, "at most once each time the window opens");
   await f.open();
   await bar.waitFor({ state: "visible" });
-  /* The bar closes at once and saves the answer after; the window is only opened again once it is saved,
-     as a person reopening it seconds later would find (on a busy build machine the reload won the race). */
+  /* The bar closes once the answer is saved, as a person reopening the window seconds later would find. */
   const saved = f.page.waitForResponse((response) => response.url().endsWith("/api/deployment/suggestion") && response.request().method() === "POST");
-  await bar.getByRole("button", { name: "Don't ask again", exact: true }).click();
-  await bar.waitFor({ state: "detached" });
+  await bar.getByRole("button", { name: "Don’t ask again", exact: true }).click();
   assert.equal((await saved).ok(), true, "the answer was saved");
+  await bar.waitFor({ state: "detached" });
   await f.open();
   await f.page.waitForTimeout(800);
   assert.equal(await bar.count(), 0, "Don't ask again is kept");
@@ -118,7 +141,9 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   assert.deepEqual(f.errors, []);
 });
 
-test("the background bar comes first where Branch is installed, and Yes sets up the background engine", async (t) => {
+test.skip("the background bar comes first where Branch is installed, and Yes sets up the background engine", async (t) => {
+  // Redesign: Coming soon (rec-install), checked at fc541c24. The background bar's Yes is drawn aria-disabled, class soon
+  // (public/app/chat/rec.js: installing a system service stays greyed until it can be proved safe).
   const f = await fixture(t);
   const asked = [];
   await f.page.route("**/api/deployment/suggestion", (route) => route.fulfill({ json: { bar: "background" } }));
@@ -142,20 +167,22 @@ test("Updates in Settings are three choice cards, the recommended one marked, an
   const f = await fixture(t);
   await f.call("/api/deployment/suggestion", { id: "updates", answer: "never" });
   await f.open();
-  await f.page.waitForFunction(() => document.getElementById("comfort-updates-card")?.closest("#lx-page-about"));
-  await openSettingFor(f.page, "#comfort-updates-card");
-  const cards = f.page.locator("#comfort-updates-card .choice-card");
-  assert.equal(await cards.count(), 3);
-  assert.match(await cards.nth(2).innerText(), /Keep Branch up to date by itself\s*Recommended/);
-  assert.equal(await f.page.locator('#comfort-updates-card input[value="off"]').isChecked(), true, "Off, as shipped");
-  await cards.nth(1).click();
-  await f.page.waitForFunction(() => document.querySelector("#comfort-updates-card [role=status]")?.textContent?.length > 0);
+  // Redesign: replaced by the new window (prototype.html's Settings › Updates keeps one switch, "Keep Branch up to date by
+  // itself", where the old page had three choice cards); switching it saves the engine's choice.
+  await openSettings(f.page, "updates");
+  const auto = f.page.getByLabel("Keep Branch up to date by itself", { exact: true });
+  await auto.waitFor();
+  // The page reads the engine's choice after it is drawn (GET /api/comfort); the switch shows it once that answer is in.
+  await f.page.waitForFunction(() => document.getElementById("u-auto")?.checked === false, null, { timeout: 5000 }).catch(() => undefined);
+  assert.equal(await auto.isChecked(), false, "Off, as shipped");
+  await auto.check();
+  for (let tries = 0; tries < 40 && readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate === "off"; tries++) await f.page.waitForTimeout(50);
   assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "check");
-  assert.equal(await f.page.locator('#comfort-updates-card select').count(), 0, "no hidden list any more");
   assert.deepEqual(f.errors, []);
 });
 
-test("integration review: when the background engine cannot be set up, the bar says so in plain words, never that it worked", async (t) => {
+test.skip("integration review: when the background engine cannot be set up, the bar says so in plain words, never that it worked", async (t) => {
+  // Redesign: Coming soon (rec-install), checked at fc541c24. The background bar's Yes is greyed, so nothing is set up.
   for (const reply of [
     { json: { action: "install", installed: false, taskName: "Branch Agent", message: "Windows would not add the task." } },
     { status: 500, json: { error: "The system list could not be read." } },

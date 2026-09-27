@@ -156,10 +156,15 @@ export class WorkspaceHistory {
     return this.db.prepare("SELECT * FROM workspace_snapshots WHERE owner=? ORDER BY created_at DESC LIMIT 50").all(this.owner)
       .map((row) => ({ id: String(row.id), label: String(row.label), files: Number(row.files), bytes: Number(row.bytes), createdAt: String(row.created_at) }));
   }
-  /** Puts every file in the snapshot back to its exact bytes; files created since are left in place. */
-  async restoreSnapshot(id: string): Promise<{ id: string; restored: number }> {
+  /**
+   * Puts every file in the snapshot back to its exact bytes; files created since are left in place.
+   * Redesign security review: what those files hold now is kept first, as a snapshot of its own ("Before putting back
+   * …"), so putting a point back never loses work done since; that snapshot can itself be put back.
+   */
+  async restoreSnapshot(id: string): Promise<{ id: string; restored: number; kept?: string }> {
     const rows = this.db.prepare("SELECT path, content FROM file_versions WHERE owner=? AND snapshot_id=?").all(this.owner, id);
     if (!rows.length) throw new Error("That snapshot is not kept");
+    const kept = await this.keepBeforeRestore(id, rows.map((row) => String(row.path)));
     let restored = 0;
     for (const row of rows) {
       const path = String(row.path), target = await this.files.checked(path);
@@ -167,7 +172,35 @@ export class WorkspaceHistory {
       await writeFile(target, Buffer.from(String(row.content), "base64"), { mode: 0o600 });
       restored++;
     }
-    return { id, restored };
+    return { id, restored, ...(kept ? { kept } : {}) };
+  }
+  /**
+   * The files a restore is about to write over, as they are now, under a snapshot of their own; null when none exists yet.
+   * Every one is kept whatever its size (Mac mini's attack on #315): the size limit is for the points the owner makes,
+   * and a file skipped here would still be written over. All of it is written at once, or none of it.
+   */
+  private async keepBeforeRestore(restoring: string, paths: string[]): Promise<string | null> {
+    const from = this.db.prepare("SELECT label FROM workspace_snapshots WHERE owner=? AND id=?").get(this.owner, restoring);
+    const now: [string, Buffer][] = [];
+    for (const path of paths) {
+      const content = await this.current(path);
+      if (content) now.push([path, content]);
+    }
+    if (!now.length) return null;
+    const id = randomUUID();
+    const bytes = now.reduce((sum, [, content]) => sum + content.length, 0);
+    const label = `Before putting back ${String(from?.label ?? "a snapshot")}`.slice(0, 120);
+    this.db.exec("SAVEPOINT keep_before_restore");
+    try {
+      for (const [path, content] of now) this.insert(path, content, "", "before snapshot restore", id);
+      this.db.prepare("INSERT INTO workspace_snapshots VALUES(?,?,?,?,?,?)").run(id, this.owner, label, now.length, bytes, new Date().toISOString());
+      this.db.exec("RELEASE keep_before_restore");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO keep_before_restore");
+      this.db.exec("RELEASE keep_before_restore");
+      throw error;
+    }
+    return id;
   }
   /**
    * A named point in one conversation: the exact bytes, right now, of every file the assistant has

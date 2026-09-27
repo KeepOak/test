@@ -18,7 +18,7 @@ choosing one, paying as little as you have to, and knowing what each choice cost
 
 **A ChatGPT plan.** **Settings → ChatGPT account** signs you in on OpenAI's own website with a short
 code. Branch never sees your password. Signing in registers a few presets and makes ChatGPT the
-default if you were still on the offline demonstration. Access through a plan is something OpenAI
+default if no other model was chosen yet. Access through a plan is something OpenAI
 provides for its own tools and may change without notice.
 
 **A key from a service.** **Settings → Models** lets you pick a service, paste its key, and fill in

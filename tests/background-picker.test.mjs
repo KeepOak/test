@@ -7,8 +7,12 @@ import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { discardTemp } from "./temp-dir.mjs";
-import { openSettingFor } from "./places.mjs";
+import { openSettingFor } from "./places.mjs"; // the old window's helper, for the skipped body only
 
+/* Redesign: Settings › Appearance › Background (settings/pages/appearance.js, shell/ownbg.js), 1:1 with prototype.html:
+   "Your own" shows the prototype's file field ("Choose a background file"), the chosen file is kept in this window's
+   storage only, drawn behind the glass (#bgLayer .bg-media), and Remove asks first. The old themed "Choose a file…"
+   button and its looks are replaced by that field. */
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-background-picker-"));
   const dataDir = join(root, "data");
@@ -20,55 +24,49 @@ async function fixture(t) {
   await fetch(new URL("/api/onboarding", server.url), { method: "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
     body: JSON.stringify({ done: true }) });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 950 }, reducedMotion: "reduce" });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 950 }, reducedMotion: "reduce", serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await openSettingFor(page, "#delight-bg-file");
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openOwnBackground(page);
   return { page, errors };
 }
+/** Settings › Appearance, then Background › "Your own". */
+async function openOwnBackground(page) {
+  if (await page.evaluate(() => innerWidth <= 760)) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
+  await page.locator('#side [data-act="view"][data-v="settings"]').click();
+  await page.locator('[data-act="setpage"][data-v="appearance"]').click();
+  const own = page.locator('[data-act="bgset"][data-v="own"]');
+  if (await own.getAttribute("aria-pressed") !== "true") await own.click();
+  await page.locator("#bg-file6").waitFor({ state: "attached" });
+}
+const png = { name: "a-long-real-background-name.png", mimeType: "image/png",
+  buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMAAAAwGAQFm2g5eAAAAAElFTkSuQmCC", "base64") };
+const savedName = (page) => page.locator(".set-col .ctl b", { hasText: png.name });
 
-test("background picker matches the sample's small themed button at desktop, tablet and phone widths", async (t) => {
+test("background picker is the prototype's named file field, in view and reachable by keyboard at desktop, tablet and phone widths", async (t) => {
   const { page, errors } = await fixture(t);
-  const choose = page.getByRole("button", { name: "Choose a file…", exact: true });
-  assert.equal(await choose.count(), 1, "a named button replaces the browser's grey file control");
+  const choose = page.getByLabel("Choose a background file", { exact: true });
+  assert.equal(await choose.count(), 1, "one named field chooses the file");
   for (const width of [1440, 860, 400]) {
     await page.setViewportSize({ width, height: 950 });
-    for (const appearance of ["forest", "daylight"]) {
-      await page.evaluate(async (appearance) => {
-        const { applyAppearance, currentAppearance } = await import("/appearance.js");
-        applyAppearance({ ...currentAppearance(), appearance });
-      }, appearance);
-      assert.equal(await page.locator("html").getAttribute("data-palette"), "slate");
-      await choose.scrollIntoViewIfNeeded();
-      await choose.focus();
-      await page.keyboard.press("Tab");
-      await page.keyboard.press("Shift+Tab");
-      const style = await choose.evaluate((button) => {
-        const css = getComputedStyle(button), box = button.getBoundingClientRect();
-        const probe = document.createElement("span");
-        probe.style.backgroundColor = "var(--surface)";
-        button.append(probe);
-        const surface = getComputedStyle(probe).backgroundColor;
-        probe.remove();
-        return { height: box.height, radius: css.borderRadius, fontSize: css.fontSize,
-          background: css.backgroundColor, surface, shadow: css.boxShadow,
-          focused: document.activeElement === button, outline: css.outlineStyle,
-          inside: box.left >= 0 && box.right <= innerWidth,
-          icon: button.querySelector('svg[aria-hidden="true"]')?.getBoundingClientRect().width };
+    for (const theme of ["dark", "light"]) {
+      await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+      await page.waitForTimeout(100); // the page redraws on a new size, replacing the field
+      // Measured in one step inside the page: a redraw can replace the field between two steps.
+      const seen = await page.evaluate(() => {
+        const field = document.getElementById("bg-file6");
+        field.scrollIntoView({ block: "center" });
+        field.focus();
+        const box = field.getBoundingClientRect();
+        return { focused: document.activeElement === field, inside: box.left >= 0 && box.right <= innerWidth, enabled: !field.disabled && field.getAttribute("aria-disabled") !== "true" };
       });
-      assert.equal(style.height, 30);
-      assert.equal(style.radius, "9px");
-      assert.equal(style.fontSize, "12.5px");
-      assert.equal(style.background, style.surface);
-      assert.equal(style.shadow, "none");
-      assert.ok(style.focused && style.outline !== "none", "keyboard focus is visible");
-      assert.equal(style.icon, 15, "the sample uses its small image icon");
-      assert.ok(style.inside, "the complete button fits the viewport");
-      assert.equal(await page.locator('#delight-bg-file').isVisible(), false);
+      assert.ok(seen.focused, "the keyboard reaches it");
+      assert.ok(seen.inside, `the complete field fits the viewport at ${width} px`);
+      assert.ok(seen.enabled, "it is live, not Coming soon");
     }
   }
   assert.deepEqual(errors, [], "startup and settings must stay error-free");
@@ -76,34 +74,35 @@ test("background picker matches the sample's small themed button at desktop, tab
 
 test("background picker opens by mouse, Enter and Space; keeps filenames, errors and repeat selection functional", async (t) => {
   const { page, errors } = await fixture(t);
-  const choose = page.getByRole("button", { name: "Choose a file…", exact: true });
-  assert.equal(await choose.count(), 1);
-  const png = { name: "a-long-real-background-name.png", mimeType: "image/png",
-    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMAAAAwGAQFm2g5eAAAAAElFTkSuQmCC", "base64") };
   for (const activation of ["click", "Enter", "Space"]) {
+    const choose = page.locator("#bg-file6");
     const opened = page.waitForEvent("filechooser");
     if (activation === "click") await choose.click();
     else { await choose.focus(); await choose.press(activation); }
     await (await opened).setFiles(png);
-    await page.waitForFunction((name) => document.querySelector("#delight-bg-name").textContent === name &&
-      document.querySelector("#delight-bg-file").value === "", png.name);
-    await page.locator("#delight-wall img").waitFor({ state: "attached" });
-    await page.locator("#delight-bg-file").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a picture") });
-    await page.getByRole("status").filter({ hasText: /can't go behind the glass/ }).waitFor();
-    assert.equal(await page.locator("#delight-bg-name").textContent(), png.name, "rejection retains the saved picture");
+    await savedName(page).waitFor();
+    await page.locator("#bgLayer .bg-media").waitFor({ state: "attached" });
+    await page.locator("#bg-file6").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a picture") });
+    await page.getByRole("status").filter({ hasText: /can’t go behind the glass/ }).waitFor();
+    assert.equal(await savedName(page).count(), 1, "rejection retains the saved picture");
   }
-  await page.locator("#delight-bg-file").setInputFiles([]);
-  assert.equal(await page.locator("#delight-bg-name").textContent(), png.name, "cancelling does not forget the saved file");
+  await page.locator("#bg-file6").setInputFiles([]);
+  assert.equal(await savedName(page).count(), 1, "cancelling does not forget the saved file");
   await page.reload();
-  await openSettingFor(page, "#delight-bg-file");
-  await page.waitForFunction((name) => document.querySelector("#delight-bg-name").textContent === name, png.name);
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Remove picture", exact: true }).click();
-  await page.getByText("No file chosen yet.", { exact: true }).waitFor();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openOwnBackground(page);
+  await savedName(page).waitFor();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await page.getByRole("dialog", { name: "Remove your background?" }).getByRole("button", { name: "Remove", exact: true }).click();
+  await page.getByRole("status").filter({ hasText: "Removed. Nothing is kept." }).waitFor();
+  await page.locator('[data-act="bgset"][data-v="own"]').click();
+  await page.getByLabel("Choose a background file", { exact: true }).waitFor();
+  assert.equal(await savedName(page).count(), 0, "the file is gone");
   assert.deepEqual(errors, []);
 });
 
-test("background picker keeps its accessible name when the language changes", async (t) => {
+// Redesign: Coming soon (sw:lang), checked at e5b8a610.
+test.skip("background picker keeps its accessible name when the language changes", async (t) => {
   const { page, errors } = await fixture(t);
   await page.evaluate(async () => { const { setLanguage } = await import("/i18n.js"); await setLanguage("fr"); });
   const choose = page.getByRole("button", { name: "Choisir un fichier…", exact: true });

@@ -26,7 +26,7 @@ import { canBeOpened, citationLine, type LearnCitation, type LearnMap, type Lear
 export const tourLimits = { minSteps: 3, maxSteps: 12, perStep: 6 } as const;
 
 /** The languages Branch writes in, and how to name each one to a model in that language. */
-const languageNames: Record<string, string> = { en: "English", fr: "français" };
+const languageNames: Record<string, string> = { en: "English", fr: "français", es: "español" };
 export const languageName = (language: string): string => languageNames[language] ?? languageNames.en!;
 
 /**

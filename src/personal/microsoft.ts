@@ -152,8 +152,11 @@ export function registerMicrosoft(registry: Pick<ToolRegistry, "register">, micr
   tool("outlook.search", "personal.read", "Search the owner's Outlook mail, or list the newest in the inbox when no words are given.",
     OutlookSearchSchema, (input) => microsoft.search(input));
   tool("outlook.read", "personal.read", "Read one message from the owner's Outlook mail, by the id outlook.search gave.", OutlookReadSchema, (input) => microsoft.read(input));
-  tool("outlook.draft", "personal.write", "Write a draft in the owner's Outlook, or a draft reply to a message. It is never sent; the owner sends it.",
-    OutlookDraftSchema, (input) => microsoft.draft(input));
+  // Ships-on sweep (2026-09-26): the rules judge a draft by who it is to, or the message it answers.
+  registry.register({ name: "outlook.draft", permission: "personal.write",
+    description: "Write a draft in the owner's Outlook, or a draft reply to a message. It is never sent; the owner sends it.",
+    parameters: OutlookDraftSchema, execute: async (input) => microsoft.draft(input),
+    target: (input) => { const to = [...input.to, ...input.cc]; return to.length ? `draft to ${to.join(", ")}` : `draft reply to ${input.replyTo ?? "a message"}`; } });
   tool("outlook.events", "personal.read", "List the events in the owner's Outlook calendar between two times (the next day by default), with Teams join addresses.",
     OutlookEventsSchema, (input) => microsoft.events(input));
   tool("teams.summary", "personal.read", "Fetch the transcript of a Teams meeting, by its join address, so it can be summarised for the owner.",

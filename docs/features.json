@@ -1288,7 +1288,6 @@
           "src/index.ts",
           "public/index.html",
           "tests/identity.test.mjs",
-          "tests/identity-ui.test.mjs",
           "tests/desktop-identity.test.mjs"
         ],
         "tests": [

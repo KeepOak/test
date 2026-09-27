@@ -12,7 +12,22 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { openSettings } from "./places.mjs";
 
-test("DG-170 the usage report's range reads words, not keys, in English and in French", async (t) => {
+/* The new window: Settings › Data & usage's report reads words after a cold load: its Period choices are the prototype's,
+   and no key shows anywhere on the page. */
+test("DG-170 the usage report's period reads words, not keys", async (t) => {
+  const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "usage-words" });
+  await openSettingsPage(page, "usage");
+  const period = page.locator(".set-col").getByRole("group", { name: "Period", exact: true });
+  await period.waitFor();
+  assert.deepEqual((await period.getByRole("button").allInnerTexts()).map((words) => words.trim()), ["7 days", "30 days", "90 days"]);
+  assert.deepEqual((await page.locator(".set-col").innerText()).match(/(?:usage\.report|counters)\.[a-z][\w-]*/g) ?? [], [], "no key shows");
+  assert.deepEqual(errors, []);
+});
+
+// Redesign: replaced by the new window (the period is the prototype's segments, re-pointed above; #usage-report-range and
+// the counters card are gone), and French waits on sw:lang, Coming soon, checked at fc541c24.
+test.skip("DG-170 the usage report's range reads words, not keys, in English and in French", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-usage-words-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
@@ -27,7 +42,7 @@ test("DG-170 the usage report's range reads words, not keys, in English and in F
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0; // what failed before the key was given is the login page's business
   await openSettings(page, "data");
   /* Every key either card shows as text, shown or not (text runs together, so no word boundary), and the range's choices. */

@@ -13,7 +13,6 @@ import { exportTrunk, importedFields } from "../dist/trunks/share.js";
 import { TrunkLookSchema } from "../dist/trunks/look.js";
 import { TrunkSchema } from "../dist/trunks/record.js";
 
-import { trunkColour } from "../public/faces.js";
 
 async function branch(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-trunk-colour-"));
@@ -33,17 +32,6 @@ test("DG-105 the look an older build reads has no value in it, so it can still c
   assert.equal(trunk.chosenColour, "#e07033");
   assert.equal(trunk.look.colour, null);
   assert.equal(TrunkLookSchema.safeParse(trunk.look).success, true);
-});
-
-test("DG-105 order, pin and rename in an older build keep the colour; a colour chosen there wins over it (the window's own rule)", async (t) => {
-  const { records, trunk, olderBuildWrites } = await branch(t);
-  olderBuildWrites({ order: 30, pinned: true, name: "Scout Two" });
-  assert.equal(trunkColour(records.get(trunk.id)), "#e07033", "back in this build, the colour the owner picked");
-  /* The older studio saves the colour it showed (the name's token) or Follow my theme: that is the latest choice. */
-  olderBuildWrites({ look: { ...records.get(trunk.id).look, colour: 3 } });
-  assert.equal(trunkColour(records.get(trunk.id)), 3, "a stale picked colour never comes back over a later choice");
-  olderBuildWrites({ look: { ...records.get(trunk.id).look, colour: "theme" } });
-  assert.equal(trunkColour(records.get(trunk.id)), "theme");
 });
 
 test("DG-105 a Trunk's file carries the picked colour, and brings it back", async (t) => {

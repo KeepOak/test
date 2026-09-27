@@ -11,21 +11,29 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
-const { BUCKETS } = await import("../public/settings-buckets.js");
-const CARDS = ["health-card", "diagnostics-card", "settings", "event-loop-card", "activity-log-card",
-  "developer-card", "sdk-kit-card", "coding-card", "jev-decisions-card", "counters-card", "knobs-retries-card", "knobs-tools-card"];
-
-/* The sample's Advanced page, measured from its rendered sections: Regular, then Advanced (Show everything on). */
-const REGULAR = ["Fixing problems", "3 more with Advanced", "For developers", "22 more with Advanced"];
-const ADVANCED = ["Fixing problems", "1 more with Technical", "For developers", "3 more with Technical"];
-const TECHNICAL = ["Fixing problems", "For developers", "Under the hood"];
-
-test("every Advanced card keeps a section, in the sample's order", () => {
-  const placed = BUCKETS.advanced.flatMap((bucket) => bucket[4].map(([ref]) => ref));
-  assert.deepEqual([...placed].sort(), [...CARDS].sort());
-  assert.deepEqual(BUCKETS.advanced.map((bucket) => bucket[2]), ["Fixing problems", "For developers", "Under the hood"]);
-  assert.deepEqual(BUCKETS.advanced[0][4].slice(0, 4).map(([ref]) => ref), ["health-card", "diagnostics-card", "settings", "event-loop-card"]);
-  assert.deepEqual(BUCKETS.advanced[1][4].slice(0, 3).map(([ref]) => ref), ["developer-card", "sdk-kit-card", "coding-card"]);
+/* The new window: Settings › Advanced is on the list from Advanced up (not at Regular), and is the prototype's page: its
+   title, the only h1, over its sections in order, the same at Advanced and Technical, at 1440, 860 and 400 px. */
+// Pass 17 adds "What it can do" and "Memory, more" at Advanced (whereB17("advanced", 1, ...)).
+const NEW_SECTIONS = ["Advanced", "Seeing more", "Memory", "Automations", "Tools and skills", "Trunks, more", "Library, more", "Pinned skills", "What it can do", "Memory, more"];
+test("Advanced has the prototype's sections at 1440, 860 and 400 px, at Advanced and Technical, and waits for Advanced", async (t) => {
+  const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "settings-advanced" });
+  await openSettingsPage(page, "general");
+  await setLevel(page, "regular");
+  assert.equal(await page.locator('[data-act="setpage"][data-v="advanced"]').count(), 0, "Advanced is not on the list at Regular");
+  for (const width of [1440, 860, 400]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const one of ["advanced", "technical"]) {
+      await setLevel(page, one);
+      await openSettingsPage(page, "advanced");
+      const heads = await page.locator(".set-col").locator("h1, h2, h3").evaluateAll((all) => all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+      // Pass 17 adds "Health" at Technical (whereB17("advanced", 2, ...)).
+      assert.deepEqual(heads, [...NEW_SECTIONS, ...(one === "technical" ? ["Health"] : [])], `${one} at ${width} px`);
+      assert.equal(await page.locator(".set-col h1").count(), 1, "only the page title is level one");
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, `${width} px fits`);
+    }
+  }
+  assert.deepEqual(errors, []);
 });
 
 async function fixture(t) {
@@ -43,7 +51,7 @@ async function fixture(t) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   await page.keyboard.press("ControlOrMeta+Comma");
   await page.locator("#settings-window").waitFor({ state: "visible" });
@@ -51,38 +59,9 @@ async function fixture(t) {
   await page.locator("#coding-card").waitFor({ state: "attached" });
   return { page, errors };
 }
-/** The section headings and "N more" lines on show, in page order. */
-const outline = (page) => page.evaluate(() => [...document.querySelectorAll("#lx-page-advanced :is(.sg-head-title, .sg-more)")]
-  .filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
-async function expect(page, level, want) {
-  await page.evaluate((pick) => globalThis.branchSettingsLevel.set(pick), level);
-  await page.waitForFunction((pick) => document.documentElement.dataset.settingsLevel === pick, level);
-  /* Modules draw their cards when they like; wait for the outline to settle on the sample's, then say what it is. */
-  await page.waitForFunction((words) => [...document.querySelectorAll("#lx-page-advanced :is(.sg-head-title, .sg-more)")]
-    .filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()).join("|") === words, want.join("|"), { timeout: 10000 })
-    .catch(() => {});
-  assert.deepEqual(await outline(page), want, `${level} at ${page.viewportSize().width}px`);
-}
 
-test("Advanced has the sample's sections and counts at 1440, 860 and 400 px, Show everything off and on", async (t) => {
-  const { page, errors } = await fixture(t);
-  for (const width of [1440, 860, 400]) {
-    await page.setViewportSize({ width, height: 950 });
-    await expect(page, "regular", REGULAR);
-    await expect(page, "advanced", ADVANCED);
-    assert.equal(await page.evaluate(() => document.documentElement.dataset.everything), "on");
-    await expect(page, "technical", TECHNICAL);
-  }
-  /* Nothing is dropped: at Technical every card of the page shows, in its section, and nothing is left over. */
-  for (const id of CARDS) assert.equal(await page.locator(`#lx-page-advanced > #${id}`).isVisible(), true, `${id} shows at Technical`);
-  assert.equal(await page.locator("#lx-page-advanced .sg-other").isVisible(), false, "no card is left over under More on this page");
-  const under = await page.locator("#lx-page-advanced > [data-sg-bucket]").evaluateAll((nodes, cards) => nodes
-    .filter((node) => cards.includes(node.id)).map((node) => node.dataset.sgBucket), CARDS);
-  assert.deepEqual(under.slice(-3), ["advanced:under", "advanced:under", "advanced:under"], "Under the hood is last");
-  assert.deepEqual(errors, []);
-});
-
-test("Advanced's section headings and counts are French in French", async (t) => {
+// Redesign: Coming soon (sw:lang), checked at fc541c24.
+test.skip("Advanced's section headings and counts are French in French", async (t) => {
   const { page, errors } = await fixture(t);
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
   await page.evaluate(() => globalThis.branchSettingsLevel.set("technical"));
@@ -99,21 +78,9 @@ test("Advanced's section headings and counts are French in French", async (t) =>
   assert.deepEqual(errors, []);
 });
 
-test("DG-008: on Advanced only the page title is level two; each card's title sits under its section's", async (t) => {
-  const { page, errors } = await fixture(t);
-  await page.evaluate(() => globalThis.branchSettingsLevel.set("technical"));
-  for (const id of CARDS) await page.locator(`#${id === "settings" ? "adapt-card" : id}`).waitFor({ state: "visible" });
-  const host = page.locator("#lx-page-advanced");
-  assert.deepEqual(await host.locator("h2").evaluateAll((nodes) => nodes.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim())), ["Advanced"]);
-  for (const id of CARDS.filter((id) => id !== "settings").concat("adapt-card"))
-    assert.equal(await page.locator(`#${id} > h3.settings-card-title`).count(), 1, `${id} has one card title at level three`);
-  /* Headings inside a card sit one level below its title. */
-  for (const inner of ["#diagnostics-card h4", "#playground h4", "#sdk-kit-card > h4"])
-    assert.equal(await page.locator(inner).count(), 1, `${inner} is level four`);
-  assert.deepEqual(errors, []);
-});
-
-test("DG-025: the code editor and pull request switches save as you go, with no Save button, and say when a save fails", async (t) => {
+// Redesign: Coming soon (sw:f15-draft-a-pull-request-from-a-task on Computer & browser, sw:dv-ls on Developer), checked
+// at fc541c24.
+test.skip("DG-025: the code editor and pull request switches save as you go, with no Save button, and say when a save fails", async (t) => {
   const { page, errors } = await fixture(t);
   await page.evaluate(() => globalThis.branchSettingsLevel.set("advanced"));
   for (const [details, select, path, status] of [["wsedit-card", "wsedit-mode", "/api/workspace-editor/settings", "wsedit-mode-status"],

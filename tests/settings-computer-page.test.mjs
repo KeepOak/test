@@ -26,7 +26,60 @@ const sections = (page) => page.evaluate(() => [...document.querySelectorAll("#l
   .filter((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
   .map((node) => node.textContent.trim()));
 
-test("Computer & browser: the sample's sections, counts and paired devices, at every width and in French", async (t) => {
+/* The new window: Settings › Computer & browser is the prototype's page. Its sections at Regular and Advanced, at 1440,
+   860 and 400 px, fitting the window; at Technical nothing is drawn twice; and "Computers they may use" lists the
+   computers the owner paired, from the engine (GET /api/devices), not only this one. */
+const pageHeads = (page) => page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
+  all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+// The prototype (pass 17) adds "Phones lent to Branch" to the page itself, so it shows at every level.
+const REGULAR_NOW = ["Computer & browser", "Computers they may use", "Which Trunk uses which", "On a computer", "The browser", "Phones lent to Branch"];
+// Pass 17 adds "Where scripts run, more" at Advanced (whereB17("computer", 1, ...)).
+const ADVANCED_NOW = [...REGULAR_NOW, "The browser, more", "Code", "On a computer, more", "Where scripts run, more"];
+
+test("Computer & browser has the prototype's sections at Regular and Advanced, at every width", async (t) => {
+  const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "settings-computer" });
+  for (const width of [1440, 860, 400]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await openSettingsPage(page, "computer");
+    await setLevel(page, "regular");
+    assert.deepEqual(await pageHeads(page), REGULAR_NOW, `Regular at ${width} px`);
+    await setLevel(page, "advanced");
+    assert.deepEqual(await pageHeads(page), ADVANCED_NOW, `Advanced at ${width} px`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, `nothing scrolls sideways at ${width} px`);
+  }
+  assert.deepEqual(errors, []);
+});
+
+test("Computer & browser at Technical draws each section once", async (t) => {
+  const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "settings-computer" });
+  await openSettingsPage(page, "computer");
+  await setLevel(page, "technical");
+  const heads = await pageHeads(page);
+  assert.deepEqual(heads.filter((words, at) => heads.indexOf(words) !== at), [], `drawn twice: ${heads.join(" · ")}`);
+  assert.deepEqual(errors, []);
+});
+
+test("Computers they may use lists a computer the owner paired", async (t) => {
+  const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  const { page, errors } = await settingsWindow(t, { name: "settings-computer", before: (app) => {
+    app.devices.book.setMode({ mode: "on" });
+    const offer = app.devices.book.invite();
+    const publicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64");
+    const { requestId } = app.devices.book.redeem({ offer: offer.id, code: offer.code, name: "Studio Mac", platform: "darwin", publicKey, offers: ["screen"] });
+    app.devices.book.decide(requestId, true);
+  } });
+  await openSettingsPage(page, "computer");
+  const section = page.locator(".set-col .sec", { has: page.getByRole("heading", { name: "Computers they may use", exact: true }) });
+  await section.waitFor();
+  await section.getByText("Studio Mac").waitFor({ timeout: 10000 });
+  assert.deepEqual(errors, []);
+});
+
+// Redesign: replaced by the new window (the prototype's sections, re-pointed above; no "N more" lines, no Show everything,
+// no proxy card); "Where scripts run" is Coming soon (seg), and French waits on sw:lang, checked at fc541c24.
+test.skip("Computer & browser: the sample's sections, counts and paired devices, at every width and in French", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-computer-"));
   const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
@@ -49,7 +102,7 @@ test("Computer & browser: the sample's sections, counts and paired devices, at e
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   const open = async (name) => {
     if (!(await page.locator("#settings-window").isVisible())) {

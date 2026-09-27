@@ -117,7 +117,8 @@ export class AnswerPages {
 
 export function registerAnswerPages(registry: ToolRegistry, pages: AnswerPages): void {
   registry.register({
-    name: "answer.page", permission: "pages.write",
+    // Ships-on sweep (2026-09-26): its own box, not "core" by its name's "answer" prefix, so shipping it on does not put it in every mode.
+    name: "answer.page", group: "documents", permission: "pages.write",
     description: "Keep an answer with its numbered sources as a page in the owner's Library, or update one (pass its id). The page can be opened again and handed on as one file.",
     parameters: SavePageSchema,
     execute: async (input) => { const page = pages.save(input); return { id: page.id, title: page.title, revision: page.revision }; },

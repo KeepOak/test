@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { closeSettings, openSettingFor, showEverything } from "./places.mjs";
+import { closeSettings, openSettingFor } from "./places.mjs"; // the old window's helpers, for the skipped bodies only
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -31,21 +31,45 @@ async function fixture(t) {
   await call("/api/delight/settings", { pets: { on: true, name: NAME } });
   return { server, browser };
 }
-async function open(f, { width, scheme, everything }) {
-  const page = await f.browser.newPage({ viewport: { width, height: 900 }, colorScheme: scheme });
+/* Redesign: the new window has no rail corner tile with a 58px acorn (prototype.html draws the pet walking at the foot
+   of the list, shell/scene.js petHTML, and its pixel oak "Scenery behind the list" is Coming soon). What the corner
+   promised about the pet is still checked: its saved name is its name, whole, never a caption squeezed into the
+   list, and the list's foot fits at every width in both lights. */
+async function open(f, { width, scheme }) {
+  const page = await f.browser.newPage({ viewport: { width, height: 900 }, colorScheme: scheme, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(f.server.url);
   await page.getByLabel("Session token", { exact: true }).fill(f.server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await page.locator("body.lx-ready").waitFor({ state: "attached" });
-  await showEverything(page, { showEverything: everything, showAcorn: true });
-  await page.waitForFunction(() => document.documentElement.dataset.acorn === "on");
-  if (width < 700) await page.locator("#rail-toggle").click();
-  await page.locator("#pet").waitFor();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  if (width <= 760) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
+  await page.locator("#side #pet-cv").waitFor();
   return { page, errors };
 }
+const foot = (page) => page.evaluate(() => {
+  const side = document.getElementById("side").getBoundingClientRect(), pet = document.getElementById("pet-cv").getBoundingClientRect();
+  const keeper = document.querySelector("#side .keeper");
+  const words = [...keeper.querySelectorAll("*")].filter((node) => !node.closest("[hidden]") && node.children.length === 0 && node.textContent.trim()).map((node) => node.textContent.trim());
+  return { petInside: pet.left >= side.left && pet.right <= side.right + 0.5 && pet.width > 0, words,
+    sideways: document.documentElement.scrollWidth > innerWidth };
+});
+
+test("the pet at the foot of the list keeps its saved name whole, at every width, in both lights", { timeout: 360000 }, async (t) => {
+  const f = await fixture(t);
+  for (const width of [1440, 860, 400]) for (const scheme of ["dark", "light"]) {
+    const { page, errors } = await open(f, { width, scheme });
+    const m = await foot(page), at = `${width}px ${scheme}`;
+    assert.equal(m.petInside, true, `${at}: the pet is inside the list`);
+    assert.deepEqual(m.words, [], `${at}: no caption at the foot of the list`);
+    assert.equal(m.sideways, false, `${at}: nothing scrolls sideways`);
+    assert.equal(await page.locator("#pet-cv").getAttribute("aria-label"), `${NAME} the squirrel. Click for a tip.`, `${at}: the saved name, whole`);
+    assert.deepEqual(errors, []);
+    await page.close();
+  }
+});
+
+/* The old window's corner measures, for the skipped bodies below. */
 /** Every box the corner is measured by, relative to the rail's inner edge. */
 const measure = (page) => page.evaluate(() => {
   const box = (selector) => document.querySelector(selector).getBoundingClientRect();
@@ -60,27 +84,8 @@ const measure = (page) => page.evaluate(() => {
   };
 });
 
-test("the corner matches the approved tile at every width, in both lights, with Show everything on or off", { timeout: 360000 }, async (t) => {
-  const f = await fixture(t);
-  for (const width of [1440, 860, 400]) for (const [scheme, everything] of [["dark", false], ["light", true]]) {
-    const { page, errors } = await open(f, { width, scheme, everything });
-    const m = await measure(page), at = `${width}px ${scheme}${everything ? " everything" : ""}`;
-    assert.deepEqual(m.acorn, [58, 58], `${at}: the acorn is 58px`);
-    assert.equal(m.backing, 58, `${at}: drawn a pixel per screen pixel`);
-    assert.deepEqual([m.inset, m.above, m.below, m.beside], [18, 12, 8, 10], `${at}: the tile's spacing`);
-    assert.deepEqual(m.pet, [60, 54], `${at}: the pet is three times its pixels`);
-    assert.ok(Math.abs(m.petBottom) <= 0.5, `${at}: the pet stands on the acorn's line`);
-    assert.equal(m.petInside, true, `${at}: the pet is inside the rail`);
-    assert.ok(Math.abs(m.onFoot) <= 0.5, `${at}: the corner sits on the rail's foot`);
-    assert.equal(m.words, "", `${at}: no caption in the corner`);
-    assert.equal(m.sideways, false, `${at}: nothing scrolls sideways`);
-    assert.equal(await page.locator("#pet").getAttribute("title"), `${NAME} the squirrel. Press to pat.`, `${at}: the saved name, whole`);
-    assert.deepEqual(errors, []);
-    await page.close();
-  }
-});
-
-test("in French the corner keeps its size and the pet keeps its saved name", { timeout: 180000 }, async (t) => {
+// Redesign: Coming soon (sw:lang), checked at e5b8a610; and the corner tile is replaced (see above).
+test.skip("in French the corner keeps its size and the pet keeps its saved name", { timeout: 180000 }, async (t) => {
   const f = await fixture(t);
   const { page, errors } = await open(f, { width: 400, scheme: "dark", everything: false });
   await openSettingFor(page, "#appearance-language");
@@ -96,7 +101,9 @@ test("in French the corner keeps its size and the pet keeps its saved name", { t
 });
 
 /* DG-138: the 3D acorn and pets are the approved sample's shapes, drawn by the window's own WebGL. */
-test("3D: the acorn and the pets are the sample's shapes, faceted where it is, in colours from the tokens", { timeout: 180000 }, async (t) => {
+// Redesign: replaced by the new window (prototype.html's pets are the pixel pets of shell/scene.js; no WebGL acorn
+// or 3D pets; "The oak in 3D" background is Coming soon, bgset-oak3d).
+test.skip("3D: the acorn and the pets are the sample's shapes, faceted where it is, in colours from the tokens", { timeout: 180000 }, async (t) => {
   const f = await fixture(t);
   const { page, errors } = await open(f, { width: 1440, scheme: "dark", everything: false });
   const shapes = await page.evaluate(async () => {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { signIn, openPlace } from "./new-window-places.mjs";
 
 async function fixture(t) {
   const scratch = join(tmpdir(), "Codex-session-files");
@@ -259,6 +260,12 @@ test("Q54 the memory list shows what was recorded about a fact, and opens the co
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return steps.shift() ?? { content: "Done.", toolCalls: [] }; } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
+  const httpCall = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await httpCall("/api/onboarding", { done: true });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const run = await app.runtime.run({ prompt: "remember that I drink tea" });
   const browser = await chromium.launch({ headless: true });
@@ -266,18 +273,17 @@ test("Q54 the memory list shows what was recorded about a fact, and opens the co
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await signIn(page, server);
   errors.length = 0;
-  const card = page.locator("#memory-list [data-memory-id]").first();
-  await card.waitFor({ state: "attached", timeout: 15000 });
-  const meta = await card.locator(".memory-meta").textContent();
-  assert.match(meta, /From this conversation · revision 1$/, meta);
-  await card.locator("a.memory-from").evaluate((link) => link.click());
-  await page.waitForFunction((id) => document.getElementById("conversation")?.dataset.sessionId === id, run.sessionId, { timeout: 15000 });
-  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
-  assert.equal(await page.evaluate(async () => (await import("/i18n.js")).t("memory.from-conversation")), "De cette conversation");
+  // Redesign: the fact is a row in Library › Memory (public/app/places/library.js); prototype.html:3135 draws each row as
+  // the fact over "who · where it came from" (for example "Branch · from a past conversation").
+  const place = await openPlace(page, "library", "memory");
+  const row = place.locator(".prow").filter({ hasText: "The owner drinks tea, not coffee" });
+  await row.waitFor({ state: "visible", timeout: 15000 });
+  // WINDOW BUG: public/app/places/library.js:44 draws only data.kind under the fact (empty here), never what was recorded
+  // about where it came from; the engine keeps source "Said in chat" and the run it came from.
+  assert.match(await row.locator("small").innerText(), /Said in chat|conversation/i);
+  // Redesign: replaced by the new window (prototype.html's memory row has no link that opens the conversation, no
+  // revision number, and the window has no /i18n.js French strings), so those are not looked for.
   assert.deepEqual(errors, []);
 });

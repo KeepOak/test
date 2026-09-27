@@ -42,6 +42,13 @@ export const auditActions = [
   // Somebody in a chat asked for a change to Branch itself, or the owner answered that request
   // (src/self-development-requests.ts). Only the owner's yes writes a contract.
   "self_development.request",
+  // eng-trunk-controls: a Trunk, or all of them, was paused or resumed (src/trunks/pause.ts).
+  "trunk.paused",
+  // App lock: the PIN that opens a locked Branch was set, changed or removed (src/session-lock.ts).
+  // Only that it happened is written; never the PIN.
+  "lock.changed",
+  // P17-D: the computers a Trunk may use, or how many tasks it may run at once, were changed (src/trunks/computers.ts).
+  "trunk.computers",
 ] as const;
 export type AuditAction = (typeof auditActions)[number];
 
@@ -117,6 +124,9 @@ const actionLabels: Record<AuditAction, string> = {
   "data.imported": "Chats, memory or settings were brought in from another assistant",
   "self_development.contract": "Branch changing its own source was held to its contract, or the contract was widened",
   "self_development.request": "Somebody in a chat asked for a change to Branch itself, or you answered that request",
+  "trunk.paused": "A Trunk was paused or resumed",
+  "lock.changed": "The App lock PIN was set, changed or removed",
+  "trunk.computers": "The computers a Trunk may use were changed",
 };
 export const auditLabel = (action: AuditAction): string => actionLabels[action];
 

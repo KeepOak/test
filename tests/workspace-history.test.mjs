@@ -81,7 +81,10 @@ test("a workspace snapshot restores every file to its exact previous bytes and s
   assert.equal(listed.snapshots[0].id, snapshot.id);
   assert.equal(listed.snapshots[0].label, "before the change");
   const result = await api(`history/snapshots/${snapshot.id}/restore`, {});
-  assert.deepEqual(result, { id: snapshot.id, restored: 2 });
+  const { kept, ...put } = result;
+  assert.deepEqual(put, { id: snapshot.id, restored: 2 });
+  // Redesign security review: what those two files held a moment ago is kept first, as a snapshot of its own.
+  assert.equal((await api("history/snapshots")).snapshots.find((one) => one.id === kept)?.label, "Before putting back before the change");
   assert.ok(Buffer.from(await readFile(join(ws, "binary.bin"))).equals(bytes), "exact bytes came back");
   assert.equal(await readFile(join(ws, "deep", "text.txt"), "utf8"), "hello\r\nworld");
   assert.equal(await readFile(join(ws, "new.txt"), "utf8"), "created after the snapshot", "files created later are left alone");

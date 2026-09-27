@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
@@ -14,7 +14,50 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { contextFileSettings } from "../dist/context-files.js";
-import { openSettings, showEverything } from "./places.mjs";
+import { openSettings } from "./places.mjs";
+import { settingsWindow, openSettingsPage } from "./settings-window.mjs";
+
+const SOUL = "# Who you are\n\nYou are Branch, a calm and practical assistant.\n";
+
+/* The new window: Settings › Instructions & personality is the prototype's page, its title over the list of files, at
+   every width. */
+test("DG-182: the page is the prototype's title over its files, at every width", async (t) => {
+  const { page, errors } = await settingsWindow(t, { name: "instructions-page",
+    before: (app) => writeFile(join(app.store.folder, "SOUL.md"), SOUL) });
+  for (const width of [1440, 860, 400]) {
+    await page.setViewportSize({ width, height: 900 });
+    await openSettingsPage(page, "instructions");
+    await page.locator(".set-col .prow", { hasText: "SOUL.md" }).waitFor();
+    const headings = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
+      all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+    assert.deepEqual(headings, ["Instructions & personality"], `${width} px`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `${width} px fits`);
+  }
+  assert.deepEqual(errors, []);
+});
+
+/* Each file's row has the prototype's words and how long it is (or Empty); Edit opens the file as the engine keeps it,
+   and Save writes it, for the next task to read. */
+test("DG-182: each file's row has the prototype's words, and Edit and Save write the file the engine keeps", async (t) => {
+  const { app, page, errors } = await settingsWindow(t, { name: "instructions-page",
+    before: (app) => writeFile(join(app.store.folder, "SOUL.md"), SOUL) });
+  await openSettingsPage(page, "instructions");
+  const soul = page.locator(".set-col .prow", { hasText: "SOUL.md" });
+  await soul.waitFor();
+  assert.match(await soul.innerText(), /Who your assistant is: tone and boundaries/);
+  assert.match(await soul.innerText(), /3 lines/);
+  assert.match(await page.locator(".set-col .prow", { hasText: "USER.md" }).innerText(), /Empty/);
+  await soul.getByRole("button", { name: "Edit", exact: true }).click();
+  const text = page.getByRole("textbox", { name: "SOUL.md", exact: true });
+  await text.waitFor();
+  assert.equal((await text.inputValue()).trim(), SOUL.trim(), "the editor shows the file as the engine keeps it");
+  await text.fill("You are Branch, brief and kind.");
+  await page.locator(".dlg").getByRole("button", { name: "Save", exact: true }).click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  assert.equal((await readFile(join(app.store.folder, "SOUL.md"), "utf8")).trim(), "You are Branch, brief and kind.");
+  await page.locator(".set-col .prow", { hasText: "SOUL.md" }).filter({ hasText: /1 lines?/ }).waitFor();
+  assert.deepEqual(errors, []);
+});
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-instructions-page-"));
@@ -53,22 +96,9 @@ const seen = (page) => page.evaluate(() => {
   return [...host.querySelectorAll("h1, h2, h3, h4, .sg-more-line")].filter(shown).map((node) => node.textContent.trim());
 });
 
-test("DG-182: the page is the sample's title and one section, Its files, in every state", async (t) => {
-  const { browser, server } = await fixture(t);
-  for (const width of [1440, 860, 400]) {
-    const { page, errors } = await connect(browser, server, width);
-    for (const [everything, theme] of [[false, "forest"], [true, "daylight"], [true, "forest"], [false, "daylight"]]) {
-      await showEverything(page, { showEverything: everything, appearance: theme });
-      await openAtLevel(page);
-      assert.deepEqual(await seen(page), ["Instructions & personality", "Its files"], `${width} px, Show everything ${everything}, ${theme}`);
-      assert.equal(await page.locator("#agent-files").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, `${width} px fits`);
-    }
-    assert.deepEqual(errors, []);
-    await page.close();
-  }
-});
-
-test("DG-182: each file's row has the sample's words, its first line, Off / When needed / On saved as pressed, and Edit", async (t) => {
+// Redesign: replaced by the new window (the prototype's rows have no Off / When needed / On and no first line; Edit and
+// Save are re-pointed above); its French half also waits on the Language select, Coming soon (sw:lang), checked at fc541c24.
+test.skip("DG-182: each file's row has the sample's words, its first line, Off / When needed / On saved as pressed, and Edit", async (t) => {
   const { app, browser, server } = await fixture(t);
   const { page, errors } = await connect(browser, server, 1440);
   await openAtLevel(page);

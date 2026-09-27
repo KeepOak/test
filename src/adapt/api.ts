@@ -38,6 +38,11 @@ export async function adaptApi(
     deps.requireOwner("/adapt");
     return adaptFor(store, owner).record(await body());
   }
+  // p17: "Leave it stopped" in Inbox › Needs you. The owner's own step; the stop is kept, only no longer offered.
+  if (method === "POST" && path === "/api/adapt/leave") {
+    deps.requireOwner("/adapt");
+    return adaptFor(store, owner).leave(await body());
+  }
   if (method === "POST" && path === "/api/adapt/plan") {
     deps.requireOwner("/adapt");
     return adaptFor(store, owner).look(await body(), context);

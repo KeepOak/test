@@ -3,7 +3,8 @@ import type { Store } from "../store.js";
 
 /**
  * Bucket R17-D (wave mac7): "coding polish". Each part has the owner's three-way switch — off, when
- * needed, on — kept in a settings record of its own, and every one ships off.
+ * needed, on — kept in a settings record of its own. What each ships as is `codingShipsOn` below; a
+ * saved record that cannot be read is off.
  *
  *   off          the part does nothing and refuses in one plain sentence; its tools are not listed
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -30,6 +31,34 @@ const RecordSchema = z.object({ mode: ModeSchema.default("off") }).passthrough()
 
 /** The settings record a part's switch is kept in. */
 export const codingKey = (part: CodingPart): string => `coding-${part}`;
+
+/** What each part is while nothing has been saved for it. A saved record that is damaged still reads as off. */
+const codingShipsOn: Partial<Record<CodingPart, CodingMode>> = {
+  // The owner's rule (Q250, 2026-09-26): reading a file before changing it is a stricter guard, so it is on until the
+  // owner turns it off.
+  "read-first": "on",
+  // The owner's rule (ships on, 2026-09-26): runs only the formatter programs the owner names, behind the wall; none of (a)–(f).
+  "format-on-edit": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): the login shell is read once when the owner takes a snapshot, keys dropped; none of (a)–(f).
+  "shell-snapshot": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): an @ reads through the ordinary tools and the task's own permissions; none of (a)–(f).
+  mentions: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): /init writes AGENTS.md only when there is none, otherwise it proposes; none of (a)–(f).
+  init: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): only writes the lines the owner pastes into their own workflow; no key is in them; none of (a)–(f).
+  ci: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): a list of steps kept beside the conversation; none of (a)–(f).
+  checklist: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): rules carry only from a folder the owner trusts, and a schedule file schedules nothing by itself; none of (a)–(f).
+  "path-rules": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): an over-long answer is kept in Branch's own folder, secrets hidden, instead of failing; none of (a)–(f).
+  "large-output": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): a notebook read as its cells, nothing run; none of (a)–(f).
+  notebooks: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): checks run only when asked, each by a helper that may only read; none of (a)–(f).
+  "review-checks": "when-needed",
+  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): worktrees puts a whole git worktree on disk for every forked conversation (heavy disk).
+};
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
 export const codingLabels: Record<CodingPart, string> = {
@@ -66,12 +95,14 @@ export const codingTools: Record<CodingPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
-export const codingToolFeatures: readonly (readonly [string, string, readonly string[]])[] = codingParts
+export const codingToolFeatures: readonly (readonly [string, string, readonly string[], CodingMode])[] = codingParts
   .filter((part) => codingTools[part].length > 0)
-  .map((part) => [codingKey(part), `${codingLabels[part].charAt(0).toLowerCase()}${codingLabels[part].slice(1)} is switched on`, codingTools[part]] as const);
+  .map((part) => [codingKey(part), `${codingLabels[part].charAt(0).toLowerCase()}${codingLabels[part].slice(1)} is switched on`, codingTools[part], codingShipsOn[part] ?? "off"] as const);
 
 export function codingMode(store: Pick<Store, "get">, owner: string, part: CodingPart): CodingMode {
-  const saved = RecordSchema.safeParse(store.get("settings", owner, codingKey(part))?.data ?? {});
+  const found = store.get("settings", owner, codingKey(part));
+  if (!found) return codingShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

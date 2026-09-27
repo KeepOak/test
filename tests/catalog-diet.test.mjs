@@ -86,7 +86,10 @@ test("a tool in a closed group is found and called through tools.expand, and per
   assert.ok(result.tools.length >= 30, `${result.tools.length} tools were opened at once`);
   assert.deepEqual(Object.keys(result.tools[0]).sort(), ["description", "name"], "names and purposes only");
   // Comfortably inside the 12,000-character tool-result limit, so it is never clipped mid-JSON.
-  assert.ok(JSON.stringify(result).length < 8000, `the answer is ${JSON.stringify(result).length} characters`);
+  // The owner's rule (ships on, 2026-09-26): ways of working, the fleet, the market, handing on and choosing a project
+  // now ship listed in these three boxes (about 8,800 characters opened together), so the margin is 10,000, still
+  // 2,000 inside the limit; other computers and project boards moved to their own boxes to keep it there.
+  assert.ok(JSON.stringify(result).length < 10_000, `the answer is ${JSON.stringify(result).length} characters`);
   // The size must be bounded by the number of tools, not by how carefully each description was
   // worded. This crept to within 27 characters of the limit once, which meant the next tool anybody
   // registered would have broken this test for a reason that had nothing to do with their work.

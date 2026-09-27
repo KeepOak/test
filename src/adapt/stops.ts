@@ -37,6 +37,8 @@ const StopSchema = z.object({
   carriedOnAt: z.string().nullable(),
   /** What it could do afterwards that it could not before; empty while it is still stopped. */
   gained: z.string().max(400),
+  /** When the owner chose "Leave it stopped": it is kept, still stopped, but no longer offered as waiting. */
+  leftAt: z.string().nullable().optional(),
 }).strict();
 export type AdaptStop = z.infer<typeof StopSchema>;
 
@@ -52,7 +54,7 @@ export class AdaptStops {
   }
   get(id: string): AdaptStop | undefined { return this.all().find((stop) => stop.id === id); }
   /** The stops still waiting for what they are missing, newest first. */
-  waiting(): AdaptStop[] { return this.all().filter((stop) => stop.carriedOnAt === null); }
+  waiting(): AdaptStop[] { return this.all().filter((stop) => stop.carriedOnAt === null && !stop.leftAt); }
   put(stop: AdaptStop): AdaptStop {
     const valid = StopSchema.parse(stop);
     const kept = [valid, ...this.all().filter((one) => one.id !== stop.id)].slice(0, 40);

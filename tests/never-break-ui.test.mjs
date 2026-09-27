@@ -23,15 +23,17 @@ async function served(t) {
 }
 async function signedIn(t, server) {
   const { chromium } = await import("playwright");
+  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
+  await call("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   return { page, errors };
 }
 
@@ -52,7 +54,58 @@ test("the settings can only be changed with the master key, and the gateway itse
     "the suggesting tool is only offered when the switch was on at launch");
 });
 
-test("the Keep running card sits in Settings → General, works in French and fits 400 px", async (t) => {
+/* Redesign: the Keep running card is replaced by the prototype's Settings › Gateway page (public/app/settings/pages/
+   gateway.js): the Off / When needed / On switch, and "A change Branch suggested" while the gateway is not off. The
+   prototype draws "Use it" on every suggestion; a change that failed its try is refused by the engine and nothing
+   changes. The window does not read the gateway-only health route (the status bar's gateway reads /api/never-break). */
+test("Settings › Gateway: ships off, a change that failed its try cannot be used, and it fits 400 px", async (t) => {
+  const { server, dataDir } = await served(t);
+  await proposeConfig(dataDir, { holdSeconds: 3 }, "Shorter waits while the assistant restarts", async () => ({ ok: false, detail: "The engine did not come up." }));
+  const { page, errors } = await signedIn(t, server);
+  const gatewayAuthorizations = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/gateway/health")) gatewayAuthorizations.push(request.headers().authorization ?? "");
+  });
+  const view = () => fetch(server.url + "/api/never-break", { headers: { authorization: `Bearer ${server.token}` } }).then((r) => r.json());
+  await page.locator('#side [data-act="view"][data-v="settings"]').click();
+  await page.locator('[data-act="setpage"][data-v="gateway"]').click();
+  await page.getByRole("heading", { name: "Gateway", exact: true }).waitFor();
+  // One on/off switch: "when-needed" and "on" both run the gateway, so the window offers only on and off.
+  await page.waitForFunction(() => { const sw = document.querySelector("#main #gw-mode"); return sw && !sw.disabled && !sw.checked; });
+  assert.equal((await view()).mode, "off", "shipped off");
+  assert.equal(await page.locator('#main [data-act="gw-mode"]').count(), 0, "no three-way left");
+  assert.equal(await page.getByText("A change Branch suggested").count(), 0, "no suggestion while the gateway is off");
+
+  await page.locator("#main #gw-mode").click();
+  await page.waitForFunction(() => document.querySelector("#main #gw-mode")?.checked === true);
+  // A native switch shows its new state at once; the engine's answer is what counts.
+  for (let i = 0; i < 50 && (await view()).mode !== "on"; i++) await page.waitForTimeout(100);
+  assert.equal((await view()).mode, "on", "the engine keeps the switch");
+  const tile = page.locator("#main .tile").filter({ hasText: "A change Branch suggested" });
+  await tile.waitFor();
+  assert.match(await tile.textContent(), /Shorter waits while the assistant restarts/);
+  assert.equal(await tile.getByText("passed").count(), 0, "a failed try is not shown as passed");
+  await tile.getByRole("button", { name: "Use it", exact: true }).click();
+  await page.locator(".toast").filter({ hasText: "cannot be used" }).waitFor();
+  assert.ok((await view()).proposal, "a change that failed its try is not used");
+  await tile.getByRole("button", { name: "Discard", exact: true }).click();
+  await page.locator(".toast").filter({ hasText: "Discarded. Nothing changed." }).waitFor();
+  await tile.waitFor({ state: "detached" });
+  assert.equal((await view()).proposal ?? null, null);
+  assert.deepEqual(gatewayAuthorizations, [], "a direct engine does not poll the gateway-only route");
+
+  await page.setViewportSize({ width: 400, height: 800 });
+  await page.waitForTimeout(300);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+  const wide = await page.evaluate(() => [...document.querySelectorAll("#main *")]
+    .filter((node) => node.getClientRects().length && !node.closest(".sr-only, .set-nav") && (node.getBoundingClientRect().right > document.documentElement.clientWidth + 1))
+    .map((node) => `${node.tagName} ${node.textContent.slice(0, 30)}`));
+  assert.deepEqual(wide, []);
+  assert.deepEqual(errors, []);
+});
+
+// Redesign: replaced by the new window (Settings › Gateway, checked above; its French words are Coming soon, the Language select sw:lang, checked at fc541c24).
+test.skip("the Keep running card sits in Settings → General, works in French and fits 400 px", async (t) => {
   const { server, dataDir } = await served(t);
   await proposeConfig(dataDir, { holdSeconds: 3 }, "Shorter waits while the assistant restarts", async () => ({ ok: false, detail: "The engine did not come up." }));
   const { page, errors } = await signedIn(t, server);
@@ -158,7 +211,8 @@ test("the Telegram card keeps the token in the locker, connects the bot and pair
   assert.equal(app.channels.summary().approved.length, 1, "the owner's account is paired");
 });
 
-test("the Telegram card sits in Settings › Chat apps & devices, in plain words and in French, and fits 400 px", async (t) => {
+// Redesign: replaced by the new window (the chat-app wizard, checked in channel-setup-ui; its check asks Telegram itself, which a test may not reach; the Language select sw:lang is Coming soon, checked at fc541c24).
+test.skip("the Telegram card sits in Settings › Chat apps & devices, in plain words and in French, and fits 400 px", async (t) => {
   const { server } = await served(t);
   const { page, errors } = await signedIn(t, server);
   await openPlace(page, "settings:channels");

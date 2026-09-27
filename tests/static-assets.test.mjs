@@ -14,28 +14,39 @@ test("every file the page loads is on the server's allowlist and answers 200", a
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const publicDir = new URL("../public/", import.meta.url);
-  const html = await readFile(new URL("index.html", publicDir), "utf8");
-  const referenced = new Set([...html.matchAll(/(?:src|href)="(\/[^"]+)"/g)].map((m) => m[1]));
-  for (const file of await readdir(publicDir)) {
-    if (!file.endsWith(".js")) continue;
-    const source = await readFile(new URL(file, publicDir), "utf8");
-    for (const m of source.matchAll(/import\(\s*["']\.\/([a-z0-9-]+\.js)["']\s*\)/g)) referenced.add("/" + m[1]);
-    for (const m of source.matchAll(/^import\s+[^"']*["']\.\/([a-z0-9-]+\.js)["']/gm)) referenced.add("/" + m[1]);
-    /* Wave 6 modules import each other by the path the browser asks for, e.g. "/markdown.js". */
-    for (const m of source.matchAll(/^import\s+[^"']*["'](\/[a-z0-9-]+\.js)["']/gm)) referenced.add(m[1]);
-    for (const m of source.matchAll(/import\(\s*["'](\/[a-z0-9-]+\.js)["']\s*\)/g)) referenced.add(m[1]);
-    /* Anything the page fetches for itself: the language files, and the worker it registers. */
-    for (const m of source.matchAll(/["'`](\/(?:locales\/[a-z-]+\.json|service-worker\.js))["'`]/g)) referenced.add(m[1]);
-    for (const m of source.matchAll(/fetch\(`(\/locales\/)\$\{\w+\}(\.json)`/g)) for (const id of ["en", "fr"]) referenced.add(m[1] + id + m[2]);
+  const referenced = new Set();
+  /* Redesign: the window is public/index.html, public/app.css and the ES modules under public/app/, which import each
+     other by relative path; the pair and people pages keep their own few files. */
+  // people.html's files are served only while signing in is switched on (bucket 19), so they aren't required here.
+  for (const page of ["index.html", "pair.html"]) {
+    const html = await readFile(new URL(page, publicDir), "utf8");
+    for (const m of html.matchAll(/(?:src|href)="(\/[^"]+)"/g)) referenced.add(m[1]);
   }
+  const walk = async (dir, at) => {
+    for (const entry of await readdir(new URL(dir, publicDir), { withFileTypes: true })) {
+      if (entry.isDirectory()) { await walk(`${dir}${entry.name}/`, `${at}${entry.name}/`); continue; }
+      if (!entry.name.endsWith(".js")) continue;
+      /* A file gone between the listing and the read (tests/window-files.test.mjs, run alongside, adds and removes its own
+         probe files in public/app) is not one the window loads; anything else that cannot be read still fails. */
+      const source = await readFile(new URL(dir + entry.name, publicDir), "utf8").catch((error) => {
+        if (error?.code === "ENOENT") return "";
+        throw error;
+      });
+      for (const m of source.matchAll(/(?:^import\s+[^"'`]*|import\(\s*)["'](\.{1,2}\/[^"']+\.js)["']/gm))
+        referenced.add(new URL(m[1], `http://x${at}${entry.name}`).pathname);
+    }
+  };
+  referenced.add("/app/main.js");
+  await walk("app/", "/app/");
+  const css = await readFile(new URL("app.css", publicDir), "utf8");
+  for (const m of css.matchAll(/url\(["']?(\/[^"')]+)["']?\)/g)) referenced.add(m[1]);
+  assert.ok(referenced.has("/app/main.js") && referenced.has("/app/core/api.js") && referenced.has("/app.css"), "the scan found the window's modules and stylesheet");
   /* The worker names the files it keeps; every one of them has to be served too. */
   const worker = await readFile(new URL("service-worker.js", publicDir), "utf8");
   const shell = /const SHELL = \[([\s\S]*?)\];/.exec(worker);
   assert.ok(shell, "the worker lists the files it keeps");
   for (const m of shell[1].matchAll(/"([^"]+)"/g)) referenced.add(m[1]);
-  assert.ok(referenced.has("/app.js") && referenced.has("/usage.js"), "the scan found the page's scripts");
-  for (const path of ["/markdown.js", "/i18n.js", "/locales/en.json", "/locales/fr.json", "/service-worker.js", "/manifest.webmanifest"])
-    assert.ok(referenced.has(path), `the scan found ${path}`);
+  for (const path of ["/service-worker.js", "/manifest.webmanifest"]) referenced.add(path);
   /* Wave 8: the small box is included by a page of the owner's OWN, so nothing here imports it and
      the scan above cannot see it. It is served only while the owner has switched it on, so switching
      it off takes the box off their page rather than only hiding the setting. */
@@ -50,4 +61,34 @@ test("every file the page loads is on the server's allowlist and answers 200", a
     if (response.status !== 200) missing.push(`${path} → ${response.status}`);
   }
   assert.deepEqual(missing, [], "these referenced files are not served");
+});
+
+/** The owner's dashboard: off at first (nothing under /dashboard is served), then its page and every file it loads,
+    following its modules' own imports, answer 200 once it is switched on. */
+test("the dashboard's page and every file it loads are served while it is switched on", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-static-dash-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const publicDir = new URL("../public/", import.meta.url);
+  assert.equal((await fetch(server.url + "/dashboard")).status, 404, "the dashboard is not served while it is off");
+  const on = await fetch(server.url + "/api/dashboard/settings", { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "on" }) });
+  assert.equal(on.status, 200, "the owner switches the dashboard on");
+  const html = await readFile(new URL("dashboard/index.html", publicDir), "utf8");
+  const referenced = new Set(["/dashboard"]);
+  for (const m of html.matchAll(/(?:src|href)="(\/[^"#]+)"/g)) if (m[1] !== "/") referenced.add(m[1]);
+  const scripts = [...referenced].filter((path) => path.endsWith(".js"));
+  for (let i = 0; i < scripts.length; i++) {
+    const source = await readFile(new URL("." + scripts[i], publicDir), "utf8");
+    for (const m of source.matchAll(/(?:^import\s+[^"'`]*|import\(\s*)["'](\/[^"']+\.js)["']/gm)) {
+      if (!referenced.has(m[1])) { referenced.add(m[1]); scripts.push(m[1]); }
+    }
+  }
+  assert.ok(referenced.has("/dashboard/dashboard.js") && referenced.has("/dashboard/i18n.js"), "the scan followed the dashboard's modules");
+  const missing = [];
+  for (const path of referenced) {
+    const response = await fetch(server.url + path);
+    if (response.status !== 200) missing.push(`${path} → ${response.status}`);
+  }
+  assert.deepEqual(missing, [], "these files the dashboard loads are not served");
 });

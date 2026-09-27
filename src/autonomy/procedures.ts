@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Store } from "../store.js";
 import { fingerprintOf, type Ledger, type LedgerEntry } from "./ledger.js";
@@ -40,6 +41,14 @@ export const ProcedureSchema = z.object({
   perDay: z.number().int().min(1).max(24).default(4),
 }).strict();
 export type Procedure = z.infer<typeof ProcedureSchema>;
+/** A change the owner proposes to a kept procedure: its steps, and its start if that changes too. */
+export const ProcedureChangeSchema = z.object({ steps: ProcedureSchema.shape.steps, start: StartSchema.optional() }).strict();
+/** What a change is made against and what it makes, as kept in the waiting question. */
+const ChangePayloadSchema = z.object({
+  procedureId: z.string().uuid(),
+  base: z.object({ steps: ProcedureSchema.shape.steps, start: StartSchema }).strict(),
+  change: z.object({ steps: ProcedureSchema.shape.steps, start: StartSchema }).strict(),
+}).strict();
 
 type Outcome = "completed" | "failed" | "cancelled";
 export interface ProcedureState {
@@ -52,7 +61,13 @@ export interface ProcedureState {
   recent: { at: string; outcome: Outcome; note: string }[];
   levelNote: string;
   createdAt: string;
+  /** Which version of its steps is in use (1 until a change is approved), and since when. */
+  version?: number;
+  changedAt?: string;
+  /** The versions before it, oldest first, each with the steps and start it had and when it came into use. */
+  history?: { version: number; steps: Procedure["steps"]; start: Procedure["start"]; from: string }[];
 }
+const keptVersions = 20;
 
 const prefix = "autonomy-procedure:";
 export const maxProcedures = 20;
@@ -79,9 +94,10 @@ export class SelfStarting {
     this.work.add(tracked);
   }
 
-  list(): (ProcedureState & { successRate: number | null })[] {
+  list(): (ProcedureState & { successRate: number | null; starts: string })[] {
     return this.deps.store.list("settings", this.deps.owner).filter((r) => r.id.startsWith(prefix))
-      .map((r) => r.data as unknown as ProcedureState).map((s) => ({ ...s, successRate: successRate(s.stats) }));
+      .map((r) => r.data as unknown as ProcedureState)
+      .map((s) => ({ ...s, successRate: successRate(s.stats), starts: startWords(s.procedure.start) }));
   }
   get(id: string): ProcedureState {
     const found = this.deps.store.get("settings", this.deps.owner, prefix + id)?.data as ProcedureState | undefined;
@@ -113,6 +129,51 @@ export class SelfStarting {
       ].join("\n"),
       payload: { procedure } });
     return entry ? { waiting: true, id: entry.id } : { waiting: false };
+  }
+
+  /**
+   * The owner proposes changed steps (and start) for a kept procedure. It waits in the same list, for
+   * the same yes, as a new procedure does; nothing changes until then. The question is fingerprinted
+   * by what it changes from and to, so the same change asked again from the same steps is not asked twice,
+   * and a no to it blocks only that.
+   */
+  proposeChange(id: string, input: unknown): { waiting: boolean; id?: string; said: string } {
+    const asked = ProcedureChangeSchema.parse(input);
+    const current = this.get(id).procedure;
+    const base = { steps: current.steps, start: current.start };
+    const change = { steps: ProcedureSchema.parse({ ...current, steps: asked.steps }).steps, start: asked.start ?? current.start };
+    if (isDeepStrictEqual(base, change)) throw new Error("Nothing changed: the steps and the start are the same as now.");
+    const fingerprint = fingerprintOf("procedure-change", id, base, change);
+    const entry = this.deps.ledger.ask({ kind: "procedure", from: "owner", fingerprint,
+      title: `Change the procedure ${quoteLine(current.name, 80)}`,
+      detail: [
+        `From now on: ${change.steps.length} step${change.steps.length === 1 ? "" : "s"}, starting ${startWords(change.start)}. Its level, its runs and its record stay as they are.`,
+        ...change.steps.map((step, i) => `Step ${i + 1}${step.confirm ? " (asks you first)" : ""}, ${quoteLine(step.title, 120)}: ${quoteLine(step.prompt, 2000)}`),
+      ].join("\n"),
+      payload: { procedureId: id, base, change } });
+    if (entry) return { waiting: true, id: entry.id, said: "Nothing about the procedure changes until you say yes to this change." };
+    const already = this.deps.ledger.list("pending").find((e) => e.fingerprint === fingerprint);
+    if (already) return { waiting: true, id: already.id, said: "This exact change already waits for your answer." };
+    return { waiting: false, said: this.deps.ledger.refused(fingerprint) ? "You already said no to this exact change." : "This exact change was already answered." };
+  }
+
+  /**
+   * The owner's yes to a proposed change: the same procedure, under the same id, with its record, runs
+   * and level kept, and only its steps and start replaced. A change asked from steps that have changed
+   * since, or while it runs, is refused, and the question keeps waiting with the reason.
+   */
+  applyChange(payload: unknown): ProcedureState {
+    const { procedureId, base, change } = ChangePayloadSchema.parse(payload);
+    const state = this.get(procedureId);
+    if (state.running) throw new Error("It is running now, so the change waits. Answer again once it has finished.");
+    if (!isDeepStrictEqual({ steps: state.procedure.steps, start: state.procedure.start }, base))
+      throw new Error("Its steps or start changed after this was asked, so this change no longer fits. Say no to it and propose it again.");
+    const procedure = ProcedureSchema.parse({ ...state.procedure, steps: change.steps, start: change.start });
+    const moved = !isDeepStrictEqual(state.procedure.start, procedure.start) && state.status === "active";
+    // The steps it had are kept as the version before, so the owner can see them and go back to them.
+    const version = state.version ?? 1, at = this.now.toISOString();
+    const history = [...(state.history ?? []), { version, steps: state.procedure.steps, start: state.procedure.start, from: state.changedAt ?? state.createdAt }].slice(-keptVersions);
+    return this.save({ ...state, procedure, version: version + 1, changedAt: at, history, ...(moved ? { nextDueAt: nextDue(procedure.start, this.now) } : {}) });
   }
 
   /** The owner changes the level or pauses it. Raising to "auto" clears the note about going back. */

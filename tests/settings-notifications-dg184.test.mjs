@@ -12,14 +12,58 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, readComfort } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { BUCKETS } from "../public/settings-buckets.js";
+import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
 
 const REGULAR = ["hold-overnight", "comfort-method", "comfort-sound"];
-const ADVANCED = ["hold-from", "hold-until", "holidays", "quiet-switch-news", "heartbeat-second"];
 
-test("DG-184 Notifications has the sample's one section, days off first, every card kept", () => {
-  assert.deepEqual(BUCKETS.notifications.map((bucket) => bucket[2]), ["When Branch gets your attention"]);
-  assert.deepEqual(BUCKETS.notifications[0][4].map(([card]) => card), ["lx-collab-days-off", "comfort-notify-card", "quiet-interruptions"]);
+/* The new window: Settings › Notifications is the prototype's page, the same at 1440 and 400 px and at every level: its
+   title, "Tell me when…" and "Updates"; every choice is saved the moment it is pressed, with no Save button; and what it
+   says about quiet hours is what the engine keeps. */
+test("DG-184 Notifications has the prototype's sections at 1440 and 400 px and every level, with no Save button", async (t) => {
+  const { page, errors } = await settingsWindow(t, { name: "notifications" });
+  for (const width of [1440, 400]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const one of ["regular", "advanced", "technical"]) {
+      await openSettingsPage(page, "notifications");
+      await setLevel(page, one);
+      const col = page.locator(".set-col");
+      const headings = await col.locator("h1, h2, h3, h4").evaluateAll((all) => all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+      // The prototype's page has "Quiet" (days off) after "Tell me when…".
+      assert.deepEqual(headings, ["Notifications", "Tell me when…", "Quiet", "Updates"], `${width} px, ${one}`);
+      assert.equal(await col.getByRole("button", { name: /^Save/ }).count(), 0, "saved as you go");
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0, `${width} px: no sideways scrolling`);
+    }
+  }
+  assert.deepEqual(errors, []);
+});
+
+test("DG-184 each choice on Notifications is saved the moment it is pressed", async (t) => {
+  const { app, page, errors } = await settingsWindow(t, { name: "notifications" });
+  await openSettingsPage(page, "notifications");
+  const col = page.locator(".set-col");
+  const press = async (group, choice, key, value) => {
+    await col.getByRole("group", { name: group, exact: true }).getByRole("button", { name: choice, exact: true }).click();
+    for (let tries = 0; tries < 50 && readComfort(app.store, "local", "notify")[key] !== value; tries++) await page.waitForTimeout(100);
+    assert.equal(readComfort(app.store, "local", "notify")[key], value, `${group} › ${choice}`);
+    await col.getByRole("group", { name: group, exact: true }).getByRole("button", { name: choice, exact: true, pressed: true }).waitFor();
+  };
+  await press("Play a sound", "A chime", "sound", "chime");
+  await press("Notifications", "In the app", "method", "window");
+  await press("Check for updates", "Daily", "autoUpdate", "check");
+  /* The release channel keeps its choices exactly: Stable, Beta and Dev (tests/dev-channel.test.mjs). */
+  assert.deepEqual((await col.getByRole("group", { name: "Release channel", exact: true }).getByRole("button").allInnerTexts()).map((w) => w.trim()),
+    ["Stable", "Beta", "Dev"]);
+  assert.deepEqual(errors, []);
+});
+
+test("DG-184 Notifications says only what the engine keeps about quiet hours", async (t) => {
+  const { page, errors, call } = await settingsWindow(t, { name: "notifications" });
+  const quiet = (await call("/api/calendar")).settings.quietHours;
+  assert.equal(quiet.enabled, false, "a fresh install holds nothing overnight");
+  await openSettingsPage(page, "notifications");
+  await page.locator(".set-col").getByRole("heading", { name: "Tell me when…", exact: true }).waitFor();
+  assert.doesNotMatch(await page.locator(".set-col").innerText(), /Quiet hours are/, "quiet hours are off, so the page must not say when they are");
+  assert.deepEqual(errors, []);
 });
 
 async function fixture(t) {
@@ -39,7 +83,7 @@ async function fixture(t) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0;
   await page.locator("body.sg-ready").waitFor({ state: "attached" });
   await page.keyboard.press("ControlOrMeta+Comma");
@@ -73,48 +117,8 @@ const shown = (page) => page.evaluate((ids) => {
   };
 }, [...REGULAR, ...ADVANCED]);
 
-test("DG-184 the page's sections, counts and rows match the sample at 1440 and 400, Show everything on and off", async (t) => {
-  const { page, errors } = await fixture(t);
-  for (const width of [1440, 400]) {
-    await page.setViewportSize({ width, height: 950 });
-    for (const everything of ["off", "on"]) {
-      await page.evaluate((one) => { document.documentElement.dataset.everything = one; }, everything);
-      const where = `${width} px, Show everything ${everything}`;
-      await level(page, "regular");
-      const regular = await shown(page);
-      assert.deepEqual(regular.headings, ["Notifications", "When Branch gets your attention"], where);
-      assert.deepEqual(regular.more, ["5 more with Advanced"], where);
-      assert.deepEqual(regular.controls, REGULAR, where);
-      assert.equal(regular.saves, 0, `${where}: saved as you go`);
-      assert.ok(regular.wide <= 0, `${where}: no sideways scrolling`);
-      await level(page, "advanced");
-      const advanced = await shown(page);
-      assert.deepEqual(advanced.headings, ["Notifications", "When Branch gets your attention"], where);
-      assert.deepEqual(advanced.more, [], where);
-      assert.deepEqual(advanced.controls, [...REGULAR, ...ADVANCED], where);
-      assert.equal(advanced.saves, 0, where);
-    }
-  }
-  assert.deepEqual(errors, []);
-});
-
-test("DG-184 each choice on the page is saved the moment it changes", async (t) => {
-  const { app, page, call, errors } = await fixture(t);
-  await level(page, "advanced");
-  await page.locator("#comfort-sound").selectOption("chime");
-  await page.waitForFunction(() => document.querySelector("#comfort-notify-card [role=status]")?.textContent.trim().length > 0);
-  assert.equal(readComfort(app.store, "local", "notify").sound, "chime");
-  await page.locator("#hold-overnight").check();
-  await page.waitForFunction(() => document.getElementById("hold-overnight")?.checked);
-  await page.waitForTimeout(500);
-  assert.equal((await call("/api/calendar")).settings.quietHours.enabled, true);
-  await page.locator("#quiet-switch-news").selectOption("on");
-  await page.waitForTimeout(800);
-  assert.equal((await app.scheduler.overview("local")).switches.notifyGate, "on");
-  assert.deepEqual(errors, []);
-});
-
-test("DG-184 in French the page keeps its one section and its rows speak French", async (t) => {
+// Redesign: Coming soon (sw:lang), checked at fc541c24.
+test.skip("DG-184 in French the page keeps its one section and its rows speak French", async (t) => {
   const { page, errors } = await fixture(t);
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
   await page.waitForTimeout(500);

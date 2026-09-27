@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "releases": [
+    {
+      "version": "0.19.3",
+      "date": "2026-09-26",
+      "items": [
+        {
+          "icon": "layers",
+          "title": "A new window",
+          "text": "Branch has a new window: places down the side, the conversation in the middle, and everything the engine cannot do yet shown greyed out rather than hidden.",
+          "act": "view",
+          "data": { "v": "chat" }
+        },
+        {
+          "icon": "inbox",
+          "title": "One place for what needs you",
+          "text": "Questions a Trunk is waiting on, tasks that can be picked up again, and a record you can check, all in the Inbox.",
+          "act": "view",
+          "data": { "v": "inbox", "tab": "needs" }
+        },
+        {
+          "icon": "pin",
+          "title": "Pins, rewind and a look inside",
+          "text": "Pin a message so it stays in front of the assistant, go back to an earlier message and try again, and look inside any answer to see what ran.",
+          "act": "view",
+          "data": { "v": "chat" }
+        },
+        {
+          "icon": "board15",
+          "title": "A board for longer work",
+          "text": "Automations has a task board, a record of how each one is doing, and a way to carry on a task Branch closed on.",
+          "act": "view",
+          "data": { "v": "automations", "tab": "board" }
+        },
+        {
+          "icon": "star",
+          "title": "Memory that stays tidy",
+          "text": "See what is remembered, tidy up facts said twice, and export or archive what you want to keep.",
+          "act": "view",
+          "data": { "v": "library", "tab": "memory" }
+        },
+        {
+          "icon": "puzzle",
+          "title": "Connectors and your own servers",
+          "text": "A catalogue of well-known connectors, and your own servers kept between restarts. A server that starts a program on this computer is added switched off, and starting it waits for your yes.",
+          "act": "view",
+          "data": { "v": "customize", "tab": "tools" }
+        },
+        {
+          "icon": "term",
+          "title": "Command-line tools on this computer",
+          "text": "Branch finds the command-line tools installed here without running them. Allow one and Trunks may use it; every command still asks first unless your approval settings say otherwise.",
+          "act": "view",
+          "data": { "v": "customize", "tab": "tools" }
+        },
+        {
+          "icon": "keyboard",
+          "title": "Shortcuts you set",
+          "text": "Press the keys you want for the actions you use most.",
+          "act": "shortcuts",
+          "data": {}
+        }
+      ]
+    }
+  ]
+}

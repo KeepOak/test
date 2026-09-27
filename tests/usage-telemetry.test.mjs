@@ -7,7 +7,6 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
-import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import {
   createBranch, afterTaskMetrics, bridgeLogs, change, executionMetricsDeps, executionMetricsSettings, levelFor, money, rollUp,
@@ -272,7 +271,9 @@ test("U6: the builders' guide says how to log, and the settings page explains th
 
 // ------------------------------------------------------------ U7-U8: the two cards
 
-test("U7: every word the two cards show is on file in English and in real French", async () => {
+// Redesign: replaced by the new window (/usage-report.js and its keys are gone with the old window; the prototype's words
+// are its own), and French waits on sw:lang, Coming soon, checked at fc541c24.
+test.skip("U7: every word the two cards show is on file in English and in real French", async () => {
   const script = await readFile(new URL("../public/usage-report.js", import.meta.url), "utf8");
   const english = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
   const french = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
@@ -289,47 +290,20 @@ test("U7: every word the two cards show is on file in English and in real French
   assert.ok(!/#[0-9a-f]{3,6}\b|rgba?\(/i.test(script), "no colour is written down");
 });
 
-test("U8: the report card lives in Data and the counters card in Advanced, at 400 pixels with no page errors", async (t) => {
-  const { openPlace } = await import("./places.mjs");
-  const root = await mkdtemp(join(tmpdir(), "branch-ui14-"));
-  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: scripted([say("done")]) });
-  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  await app.runtime.run({ prompt: "one task" });
-  const page = await browser.newPage({ viewport: { width: 400, height: 800 }, acceptDownloads: true });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  await openPlace(page, "settings:data");
-  const choice = page.locator("#lx-page-data #usage-report-mode");
-  await choice.waitFor({ state: "visible" });
-  assert.equal(await choice.inputValue(), "off");
-  assert.equal(await page.locator("#usage-report-body").isHidden(), true, "off shows only the switch");
-  await choice.selectOption("on");
-  const save = page.getByRole("button", { name: "Save as notes", exact: true }).and(page.locator("#usage-report-card button"));
-  await save.waitFor({ state: "visible" });
-  assert.equal(await page.locator("#usage-report-card button:not(.quiet):not(.sg-more)").count(), 1, "one filled button"); // "N more" can end the card (DG-199)
-  const [download] = await Promise.all([page.waitForEvent("download"), save.click()]);
-  assert.match(download.suggestedFilename(), /^usage-report-last-30-days\.md$/);
-  const wide = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  assert.ok(await wide() <= 0, "the report card pushes the page sideways");
-
-  await openPlace(page, "settings:advanced");
-  const counters = page.locator("#lx-page-advanced #counters-mode");
-  await counters.waitFor({ state: "visible" });
-  assert.equal(await counters.inputValue(), "off");
-  assert.equal(await page.locator("#counters-send").isHidden(), true);
-  await counters.selectOption("when-needed");
-  await page.locator("#counters-send").waitFor({ state: "visible" });
-  await page.locator("#counters-send").click();
-  await page.getByText("Sending traces is off, so there is no address of yours", { exact: false }).waitFor();
-  assert.ok(await wide() <= 0, "the counters card pushes the page sideways");
-  const text = await page.locator("#counters-card").innerText();
-  assert.doesNotMatch(text, /endpoint|payload|SSE|telemetry/i, "plain words only");
+/* The new window: Settings › Data & usage's report is the prototype's; with the usage report switched off (as it ships),
+   "Open the report" shows the engine's one-sentence refusal and no report, at 400 pixels, with no page errors. */
+test("U8: the report lives in Data & usage and, switched off as it ships, Open the report says so, at 400 pixels", async (t) => {
+  const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  const { app, page, errors } = await settingsWindow(t, { name: "ui14", width: 400, height: 800, provider: scripted([say("done")]),
+    before: (one) => one.runtime.run({ prompt: "one task" }) });
+  assert.equal(usageReportSettings(app.store, app.runtime.owner).mode, "off", "ships off");
+  await openSettingsPage(page, "usage");
+  const open = page.locator(".set-col").getByRole("button", { name: "Open the report", exact: true });
+  await open.waitFor();
+  await open.click();
+  await page.locator(".toast", { hasText: "switched off" }).waitFor({ timeout: 10000 });
+  assert.equal(await page.locator(".dlg").count(), 0, "no report is shown");
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0, "the page does not scroll sideways");
   assert.deepEqual(errors, []);
 });
 

@@ -209,6 +209,8 @@ test("R17-072 a widget is a question first, only a look-only tool, and then a se
   const asked = await callAs(app, mine, "widgets.propose", { title: "Weather", tool: "tests.weather", everySeconds: 600, why: "you ask every morning" });
   assert.equal(asked.status, "waiting");
   assert.equal(app.flowsBoards.waitingForOwner().widgets, 1);
+  // The owner's rule (ships on, 2026-09-26): live pages ship "when needed", so the refusal is tested switched off.
+  app.asks.setMode("live-surfaces", { mode: "off" });
   await assert.rejects(app.flowsBoards.widgets.decide(asked.id, true), /Switch on/);
   app.asks.setMode("live-surfaces", { mode: "on" });
   await app.flowsBoards.widgets.decide(asked.id, true);

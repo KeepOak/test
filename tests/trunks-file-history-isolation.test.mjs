@@ -26,11 +26,14 @@ function toolOutcome(app, runId, name) {
 }
 
 test("a Trunk's files.history and files.restore never reach another Trunk's kept versions", async (t) => {
+  // Q250: read before edit ships on, so the second write reads note.md first, then writes it.
+  let readForV2 = false;
   const rules = [({ last }) => {
+    if (last?.role === "tool" && readForV2) { readForV2 = false; return call("files.write", { path: "note.md", content: "Ada v2" }); }
     if (last?.role !== "user") return null;
     const text = String(last.content ?? "");
     if (text === "write v1") return call("files.write", { path: "note.md", content: "Ada v1" });
-    if (text === "write v2") return call("files.write", { path: "note.md", content: "Ada v2" });
+    if (text === "write v2") { readForV2 = true; return call("files.read", { path: "note.md" }); }
     if (text === "history") return call("files.history", { path: "note.md" });
     if (text.startsWith("restore ")) return call("files.restore", { versionId: text.slice("restore ".length) });
     return null;

@@ -5,11 +5,15 @@ import type { Scheduler } from "../scheduler.js";
 import { noAccounts, keyPlan, type TrunkAccountsPort } from "./accounts.js";
 import { pictureAddress } from "./avatar.js";
 import { TrunkMessages, registerTrunkMessage } from "./messages.js";
+import { registerTrunkPropose, trunkProposeTool } from "./propose.js";
 import { setSharedFacts, trunkAgent } from "./memory-scope.js";
 import { TrunkCreateSchema, TrunkEditSchema, TrunkRecords, TrunkSchema, type Trunk } from "./record.js";
 import { StartsInSchema, cannotStartThere, checkStartsIn, requireStartsHere, startTarget, type Computer, type ComputersPort, type StartElsewhere } from "./starts-in.js"; // Q44
 import { TrunkRooms } from "./rooms.js";
+import type { OutsideAgents } from "./room-outside.js"; // a2a-rooms
 import { TrunkConversations } from "./conversations.js"; // phase2/rooms
+import { TrunkPause } from "./pause.js"; // eng-trunk-controls
+import { TrunkComputers, thisComputer } from "./computers.js"; // P17-D §9
 
 /** Which Trunk a conversation belongs to, and how (phase2/rooms: `room` and `chosen`). */
 export interface Owned { trunkId: string; canonical: boolean; room?: boolean; chosen?: boolean }
@@ -27,6 +31,8 @@ import { audit } from "../audit.js";
  * "Trunks", and docs/places.md for where each part shows.
  */
 export interface TrunksDeps {
+  /** a2a-rooms: agents elsewhere a room may seat (src/a2a-client.ts), there before a room carries on after a restart. */
+  outside?: OutsideAgents;
   runtime: Runtime;
   registry: ToolRegistry;
   knowledge: Knowledge;
@@ -49,7 +55,7 @@ const introPrompt = "Introduce yourself to the owner in two or three short sente
 const CreateInput = TrunkCreateSchema.extend({ startsIn: StartsInSchema.optional() }).strict();
 const AvatarInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("face"), locked: z.boolean().default(false) }).strict(),
-  z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000) }).strict(),
+  z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000, "That picture is too large for a Trunk; use one under about 290 KB") }).strict(),
   z.object({ kind: z.literal("generate"), prompt: z.string().trim().min(1).max(500) }).strict(),
 ]);
 
@@ -62,6 +68,10 @@ export class Trunks {
   readonly accounts: TrunkAccountsPort;
   /** phase2/rooms: who answers in each conversation the owner chose a Trunk for (src/trunks/conversations.ts). */
   readonly conversations: TrunkConversations;
+  /** eng-trunk-controls: pausing one Trunk or all of them (src/trunks/pause.ts). */
+  readonly pause: TrunkPause;
+  /** P17-D §9: the computers each Trunk may use and how many tasks it may run at once (src/trunks/computers.ts). */
+  readonly computerRule: TrunkComputers;
   /** `room`: a Trunk's side of a room; `chosen`: an ordinary conversation the owner chose it for (phase2/rooms). */
   private owned = new Map<string, Owned>();
   /** phase2/rooms: a room member's conversation → the room's own conversation (whose mode it follows). */
@@ -76,17 +86,25 @@ export class Trunks {
     this.accounts = deps.accounts ?? noAccounts;
     this.records = new TrunkRecords(store, owner);
     this.rooms = new TrunkRooms({ store, owner, records: this.records, runtime, changed: () => this.refresh(),
+      scrub: (text) => runtime.hideSecrets(text), // a2a-rooms: what goes to an outside agent
       notify: (room, why) => {
         runtime.notifyEvent("approval.needed", { roomId: room.id, sessionId: room.sessionId, question: why });
       } });
+    this.rooms.outside = deps.outside ?? null; // a2a-rooms
     this.conversations = new TrunkConversations({ store, owner, records: this.records, rooms: this.rooms, changed: () => this.refresh(),
       owns: (sessionId) => store.ownsSession(store.profiles.scope(), sessionId) }); // phase2/rooms
     this.messages = new TrunkMessages(store, owner, this.records, runtime);
     this.routines = new TrunkRoutines(store, owner, this.records, scheduler, runtime);
     this.teaching = new TrunkTeaching({ store, owner, records: this.records, routines: this.routines, workflows: deps.workflows,
       scrub: (value) => runtime.hideSecrets(value) });
+    this.pause = new TrunkPause({ store, owner, records: this.records, runsOf: (id) => runtime.runsOfTrunk(id),
+      cancel: (runId) => runtime.cancel(runId) });
+    this.computerRule = new TrunkComputers({ store, owner, records: this.records, computers: () => this.computers(),
+      runsOf: (id) => runtime.runsOfTrunk(id) }); // P17-D §9
     this.refresh();
     runtime.trunkShape = (options) => this.shapeOf(options);
+    runtime.trunkPaused = (id) => this.pause.refusal(id); // eng-trunk-controls
+    runtime.trunkAtOnce = (id) => this.computerRule.atOnceRefusal(id); // P17-D §9
     runtime.trunkKeysFor = (id) => this.records.find(id)?.keys ?? null; // Q114
     runtime.trunkPermissionsFor = (id) => this.shapeOf({ prompt: "", trunkId: id })?.permissions ?? null; // Q119
     runtime.trunkStartsElsewhere = (id) => { // Q144
@@ -96,9 +114,12 @@ export class Trunks {
     runtime.queueGuard = (sessionId) => this.requireQueueable(sessionId); // Q44: every queued message, whoever queues it
     runtime.followUpNotSent = (sessionId, prompt, reason) => this.messages.notSent(sessionId, prompt, reason); // Q44
     runtime.modeFollows = (sessionId) => this.followsRoom.get(sessionId) ?? null; // phase2/rooms
+    runtime.roomPattern = (sessionId) => this.rooms.list().find((room) => room.sessionId === sessionId)?.pattern ?? null; // eng-trunk-controls
     byRuntime.set(runtime, this);
-    scheduler.routeRun = (id) => this.routines.route(id, this.mode("routines") !== "off");
-    scheduler.trunkHeld = () => (this.mode("trunks") === "off" ? "Trunks are switched off, so this schedule a Trunk made did not run." : null);
+    scheduler.routeRun = (id) => this.routines.route(id, this.mode("routines") !== "off",
+      (trunk) => this.pause.refusal(trunk.id, "this routine did not run")); // eng-trunk-controls
+    scheduler.trunkHeld = (trunkId) => (this.mode("trunks") === "off" ? "Trunks are switched off, so this schedule a Trunk made did not run."
+      : this.pause.refusal(trunkId, "this schedule it made did not run")); // eng-trunk-controls
     this.syncTools();
     if (this.mode("rooms") !== "off") this.rooms.resumeAll();
   }
@@ -122,6 +143,9 @@ export class Trunks {
   private syncTools(): void {
     for (const part of trunkParts) for (const name of trunkTools[part]) this.deps.registry.unregister(name);
     if (this.mode("messages") !== "off") registerTrunkMessage(this.deps.registry, this.messages);
+    // "Have Branch make a Trunk": the assistant may propose one while Trunks are on; the owner makes it.
+    this.deps.registry.unregister(trunkProposeTool);
+    if (this.mode("trunks") !== "off") registerTrunkPropose(this.deps.registry, () => this.require("trunks"));
   }
 
   /** Which conversations belong to a Trunk; asked on every task, so it is kept in memory. */
@@ -158,6 +182,16 @@ export class Trunks {
   requireQueueable(sessionId: string): void {
     const trunk = this.records.find(this.owned.get(sessionId)?.trunkId ?? "");
     if (trunk) requireStartsHere(trunk, this.computers());
+    const paused = trunk ? this.pause.refusal(trunk.id, "this message was not sent") : null; // eng-trunk-controls
+    if (paused) throw new Error(paused);
+  }
+  /**
+   * eng-trunk-controls: why nothing may start in this conversation now because the Trunk it belongs to is
+   * paused, in words, or null. Triggers, standing orders and chat apps ask it before they start anything.
+   */
+  pausedForConversation(sessionId: string, what: string): string | null {
+    const owned = this.owned.get(sessionId);
+    return owned ? this.pause.refusal(owned.trunkId, what) : null;
   }
 
   /** The runtime's hook: a task in a Trunk's conversation, or a routine it owns, runs as that Trunk. */
@@ -171,9 +205,12 @@ export class Trunks {
     requireStartsHere(trunk, this.computers()); // Q44: a Trunk that starts on another computer is never quietly run here.
     const { runtime, registry } = this.deps;
     const sessionModel = options.sessionId ? !!runtime.models.session(this.owner, options.sessionId).preset : false;
-    return shapeFor(trunk, this.records.list(), { available: registry.permissions(), caller: options.permissions,
+    const shape = shapeFor(trunk, this.records.list(), { available: registry.permissions(), caller: options.permissions,
       messaging: owned?.canonical === true && this.mode("messages") !== "off", sessionModel, agent: trunkAgent(trunk.id),
       roomTurn: owned?.room === true });
+    // P17-D §9: a Trunk the owner has not let use this computer never gets its screen, mouse or clipboard.
+    if (this.computerRule.allows(trunk.id, thisComputer)) return shape;
+    return { ...shape, permissions: shape.permissions.filter((permission) => !permission.startsWith("desktop.")) };
   }
 
   /** R17-007: the roster the rail shows — each Trunk with its latest message, when, and how many are unread. */
@@ -187,10 +224,12 @@ export class Trunks {
       const lastRun = this.store.runs(this.owner).find((run) => run.sessionId === trunk.chatSessionId);
       return { ...trunk, latest: last ? { role: last.role, text: last.content.slice(0, 160) } : null,
         at: lastRun?.updatedAt ?? trunk.updatedAt, unread: Math.max(0, replies - (seen[trunk.id] ?? 0)),
-        working: lastRun?.status === "running" };
+        working: lastRun?.status === "running",
+        running: this.deps.runtime.runsOfTrunk(trunk.id).length }; // eng-trunk-controls: every task running as it, for "pause now"
     });
     return { trunks, rooms: this.rooms.list().map((room) => ({ id: room.id, name: room.name, members: room.members, people: room.people, needsYou: room.needsYou,
       pinned: room.pinned, section: room.section, order: room.order, picture: room.picture, sessionId: room.sessionId,
+      rule: room.rule, pattern: room.pattern, // eng-trunk-controls
       latest: room.events.filter((e) => e.kind === "user" || e.kind === "member").at(-1)?.text.slice(0, 160) ?? null, at: room.updatedAt })) };
   }
   /** What the Trunk said in words, not the steps in between. */
@@ -209,6 +248,7 @@ export class Trunks {
 
   private conversation(title: string): string {
     const run = this.store.createRun(this.owner, title);
+    this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
     this.store.finish(run.id, "completed", "Opened");
     return run.sessionId;
   }
@@ -232,7 +272,7 @@ export class Trunks {
     return trunk;
   }
   private introduce(trunk: Trunk): void {
-    const work = this.deps.runtime.run({ prompt: introPrompt, sessionId: trunk.chatSessionId, onTextDelta: () => undefined })
+    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, onTextDelta: () => undefined })
       .then((run) => {
         if (run.status !== "completed")
           this.store.message(trunk.chatSessionId, { role: "assistant", content: `Hello, I am ${trunk.name}${trunk.title ? `, ${trunk.title}` : ""}.` });

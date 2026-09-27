@@ -85,7 +85,7 @@ export class CodeEditor {
   async mustHaveRead(paths: string[], context: ToolContext): Promise<void> {
     const guard = this.files.readFirst;
     // With the switch off nothing is looked at, so every refusal is exactly what it was before.
-    if (!guard?.holds(context.runId)) return;
+    if (context.readFirstExempt || !guard?.holds(context.runId)) return;
     for (const path of paths) await guard.require(context.runId, await this.files.checked(path), path);
   }
 

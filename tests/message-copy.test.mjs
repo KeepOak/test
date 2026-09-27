@@ -2,6 +2,9 @@
  * Dogfood B8: every message can be copied, the owner's and the assistant's, with a Copy button (as in Claude Code and
  * ChatGPT) and by plain selection. A real window with the clipboard allowed; the calm window, so the buttons appear
  * on the pointer as a person would find them.
+ *
+ * Redesign: the new window (public/app/chat/chat.js). A reply's own actions (prototype msgActs('b'): Copy, Try again,
+ * Look inside, Report a problem, Branch from here) show on the pointer; a reply is #conversation .b, its words .txt.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -23,9 +26,10 @@ async function fixture(t) {
     provider: { name: "scripted", async complete() { return { content: reply, toolCalls: [] }; } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   saveConversationModeSettings(app.store, app.runtime.owner, { newConversation: "follow" });
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: server.url });
   const page = await context.newPage();
   const errors = [];
@@ -33,32 +37,30 @@ async function fixture(t) {
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-  if (await page.locator("#first-run").isVisible()) {
-    await page.getByRole("button", { name: /Try it without an account/ }).click();
-    await page.locator("#first-run").waitFor({ state: "hidden" });
-  }
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("#prompt").fill(typed);
   await page.locator("#send").click();
-  await page.locator(".message.assistant").first().waitFor({ timeout: 20000 });
+  await page.locator("#conversation .b .txt").first().waitFor({ timeout: 20000 });
   return { page, errors };
 }
 const clipboard = (page) => page.evaluate(() => navigator.clipboard.readText());
 async function copyFrom(page, which) {
-  const message = page.locator(`#conversation .message.${which}`).last();
+  const message = page.locator(which === "assistant" ? "#conversation .b" : "#conversation .u").last();
   await message.hover();
-  await message.locator(".message-copy").click();
+  await message.getByRole("button", { name: "Copy", exact: true }).click({ timeout: 10000 });
 }
 
 test("B8 the owner's message and the assistant's each copy as they were written", async (t) => {
   const { page, errors } = await fixture(t);
-  await copyFrom(page, "user");
   // Windows' clipboard writes a line break as CRLF, which is how it should paste there; the words are compared as lines.
   const lines = (text) => String(text).replace(/\r\n/g, "\n");
-  assert.equal(lines(await clipboard(page)), typed, "what was typed, spacing and line breaks and all");
+  // Redesign: replaced by the new window (the person's own message has Edit and Branch from here, not Copy:
+  // prototype msgActs('u')). What they typed is still shown as typed (the row's own buttons and "Sent at" time aside):
+  assert.equal(lines(await page.locator("#conversation .u").last().evaluate((node) => { const copy = node.cloneNode(true); copy.querySelector(".msg-acts")?.remove(); return copy.textContent; })), typed,
+    "what was typed, spacing and line breaks and all");
   await copyFrom(page, "assistant");
   assert.equal(lines(await clipboard(page)), reply, "the answer as it was written, markdown and all");
-  await page.locator("#toast").filter({ hasText: "Copied." }).waitFor({ state: "attached" });
+  await page.locator(".toast").filter({ hasText: "Copied." }).waitFor({ state: "attached" });
   assert.deepEqual(errors, []);
 });
 
@@ -73,14 +75,14 @@ test("B8 a window that refuses the clipboard still copies, through the selection
   });
   await copyFrom(page, "assistant");
   assert.equal((await page.evaluate(() => globalThis.copiedThroughSelection)).length, 1, "the fallback copy ran once");
-  await page.locator("#toast").filter({ hasText: "Copied." }).waitFor({ state: "attached" });
+  await page.locator(".toast").filter({ hasText: "Copied." }).waitFor({ state: "attached" });
   assert.deepEqual(errors, []);
 });
 
 test("B8 a message's text can be selected like any page's", async (t) => {
   const { page } = await fixture(t);
   const selected = await page.evaluate(() => {
-    const body = [...document.querySelectorAll("#conversation .message.assistant .message-body")].at(-1);
+    const body = [...document.querySelectorAll("#conversation .b .txt")].at(-1);
     const range = document.createRange();
     range.selectNodeContents(body);
     const selection = getSelection();

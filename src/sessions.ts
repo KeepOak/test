@@ -54,7 +54,12 @@ export class SessionBranches {
       parent_session_id TEXT NOT NULL REFERENCES sessions(id),
       branch_point_message_id INTEGER NOT NULL, created_at TEXT NOT NULL)`);
   }
-  branch(owner: string, input: BranchInput, agent?: string) {
+  /**
+   * `before` (pass 17, "Branch from here" on one of your own messages): the copy stops just before
+   * that message, so the new path can answer it again without the words appearing twice. The branch
+   * record still names the message it came off.
+   */
+  branch(owner: string, input: BranchInput, agent?: string, before = false) {
     const { sessionId: parentSessionId, messageId } = BranchSessionSchema.parse(input);
     this.requireOwner(owner, parentSessionId);
     if (agent && !canAccessSession(this.db, parentSessionId, agent))
@@ -67,20 +72,22 @@ export class SessionBranches {
     const selected = JSON.parse(String(point.body)) as Message;
     if (!["user", "assistant"].includes(selected.role) || selected.toolCalls?.length)
       throw new Error("Choose a user message or an assistant reply without tool requests");
-    const rows = this.rows(parentSessionId, Number(point.id));
+    if (before && selected.role !== "user") throw new Error("Only one of your own messages can be answered again");
+    const rows = this.rows(parentSessionId, Number(point.id) - (before ? 1 : 0));
     if (reconcileTranscript(rows.map(row => JSON.parse(String(row.body)) as Message), "branch check").added)
       throw new Error("The selected conversation contains unfinished tool requests");
     const sessionId = randomUUID(), createdAt = new Date().toISOString();
     this.db.exec("BEGIN");
     try {
       this.db.prepare("INSERT INTO sessions(id,owner,created_at) VALUES(?,?,?)").run(sessionId, owner, createdAt);
-      const insert = this.db.prepare("INSERT INTO messages(session_id,body) VALUES(?,?)");
+      const insert = this.db.prepare("INSERT INTO messages(session_id,body,created_at) VALUES(?,?,?)");
       // The branch gets its own copy of every file, in its own folder, under its own names. Copying
       // the parent's references instead would have put cards here that cannot open, and would have
       // tied this conversation's files to the lifetime of the one it came off.
       const copied = withCopiedFiles(rows.map((row) => JSON.parse(String(row.body)) as Message),
         parentSessionId, sessionId, this.files());
-      for (const message of copied) insert.run(sessionId, JSON.stringify(message));
+      // Each copied message keeps when it was first written.
+      copied.forEach((message, i) => insert.run(sessionId, JSON.stringify(message), rows[i]?.created_at == null ? null : String(rows[i]!.created_at)));
       this.db.prepare("INSERT INTO session_branches VALUES(?,?,?,?)")
         .run(sessionId, parentSessionId, messageId, createdAt);
       this.db.exec("COMMIT");
@@ -97,6 +104,8 @@ export class SessionBranches {
         branchPointMessageId: Number(branch.branch_point_message_id), createdAt: String(branch.created_at) } : null,
       messages: this.rows(sessionId).map(row => ({
         ...JSON.parse(String(row.body)) as Message, messageId: Number(row.source_id),
+        // Parity B1: when it was written (kept beside the message, never inside what a model is sent).
+        ...(row.created_at == null ? {} : { at: String(row.created_at) }),
       })),
     };
   }
@@ -109,7 +118,7 @@ export class SessionBranches {
       FROM messages WHERE session_id=? AND id<=?`).get(sessionId, through)!;
     if (Number(size.count) > maximumMessages || Number(size.bytes) > maximumBytes)
       throw new Error("Conversation exceeds 1000 messages or 4 MiB; choose an earlier branch point");
-    return this.db.prepare("SELECT id,source_id,body FROM messages WHERE session_id=? AND id<=? ORDER BY id")
+    return this.db.prepare("SELECT id,source_id,body,created_at FROM messages WHERE session_id=? AND id<=? ORDER BY id")
       .all(sessionId, through);
   }
 }

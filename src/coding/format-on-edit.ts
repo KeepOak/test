@@ -111,6 +111,9 @@ export class EditChecks {
     if (!paths.length) return result;
     const checks: FileCheck[] = [];
     for (const path of paths) checks.push(await this.check(path, context).catch((error: Error) => ({ path, formatter: null, reformatted: false, note: error.message.slice(0, 300) })));
+    // Ships-on sweep (2026-09-26): with no formatter named and nothing found, an edit's answer is left as it was,
+    // so shipping this on adds no noise to every write (and a kept procedure's expected answer still matches).
+    if (!checks.some((c) => c.formatter || c.reformatted || c.note || c.problems?.length)) return result;
     const afterEdit = { files: checks };
     return result && typeof result === "object" && !Array.isArray(result) ? { ...result, afterEdit } : { result, afterEdit };
   }

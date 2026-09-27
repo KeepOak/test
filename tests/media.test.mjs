@@ -8,6 +8,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { signIn, attachFiles } from "./new-window-places.mjs";
 import { MediaTools, registerMedia, kindOf } from "../dist/media.js";
 import { readWav, trimWav, writeWav, transcribeFile } from "../dist/media-audio.js";
 import { mediaInfo, mp4Boxes, videoLimits } from "../dist/media-video.js";
@@ -83,52 +84,52 @@ test("a picture is one of the six files a message may carry, and its bytes are p
   // ten files and 52 MB and hand them to a server that takes six and 32.
   const { app, root } = await fixture(t, { provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const httpCall = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await httpCall("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
-
+  await signIn(page, server);
+  // Redesign: files go through the message box's + menu, "Attach files", and wait as chips in #attached; the new window
+  // keeps six files and 32 MB for one message (public/app/chat/plus.js) and says so in a toast.
+  const chips = () => page.locator("#attached .file").allInnerTexts();
   const note = (name) => ({ name, mimeType: "text/plain", buffer: Buffer.from("a note") });
 
-  // A film comes back with stills taken out of it. The page's own request is answered here, so this
-  // does not depend on anything being installed to watch a video with.
-  await page.route("**/api/media/understand", (route) => route.fulfill({
-    status: 200, contentType: "application/json",
-    body: JSON.stringify({ transcript: "", notes: [], pictures: Array.from({ length: 4 },
-      () => ({ mediaType: "image/png", data: onePixelPng.toString("base64") })) }),
-  }));
-  await page.setInputFiles("#composer-media-file", [{ name: "film.mp4", mimeType: "video/mp4", buffer: Buffer.from("not really a film") }]);
-  await page.waitForFunction(() => document.querySelectorAll("#composer-attachments .attachment").length === 5,
-    null, { timeout: 30000 });
-  assert.deepEqual(await page.evaluate(() => globalThis.branchAttachedFiles().map((one) => one.name)), ["film.mp4"],
-    "the film is the only file being sent; its four stills go as pictures for the model");
+  // Redesign: replaced by the new window (a film is sent as the file itself; the window takes no stills out of it through
+  // /api/media/understand), so the film counts as one file of the six.
+  await attachFiles(page, [{ name: "film.mp4", mimeType: "video/mp4", buffer: Buffer.from("not really a film") }]);
+  await page.locator("#attached .file").first().waitFor({ timeout: 30000 });
+  assert.equal((await chips()).length, 1, "the film is one file");
 
-  // So five more files fit. Counting the stills as files left room for one.
-  await page.setInputFiles("#composer-media-file", [note("1.txt"), note("2.txt"), note("3.txt"), note("4.txt"), note("5.txt")]);
-  await page.waitForFunction(() => globalThis.branchAttachedFiles().length === 6, null, { timeout: 30000 })
-    .catch(() => { throw new Error("a file was refused for room the stills were never spending"); });
-  await page.setInputFiles("#composer-media-file", [note("6.txt")]);
-  await page.waitForFunction(() => document.body.textContent.includes("Up to 6 files"), null, { timeout: 30000 })
+  // So five more files fit, and a seventh is refused.
+  await attachFiles(page, [note("1.txt"), note("2.txt"), note("3.txt"), note("4.txt"), note("5.txt")]);
+  await page.waitForFunction(() => document.querySelectorAll("#attached .file").length === 6, null, { timeout: 30000 })
+    .catch(() => { throw new Error("a file was refused for room that was there"); });
+  await attachFiles(page, [note("6.txt")]);
+  await page.locator(".toast").filter({ hasText: "At most 6 files" }).waitFor({ timeout: 30000 })
     .catch(() => { throw new Error("the seventh file was not refused"); });
-  await page.unroute("**/api/media/understand");
+  assert.equal((await chips()).length, 6);
 
   // And what they weigh. One 20 MB document leaves 12 MB; three 5 MB pictures do not fit in it.
-  await page.evaluate(() => globalThis.branchAttachmentsClear());
-  await page.setInputFiles("#composer-media-file", [
+  while (await page.locator("#attached .file").count()) await page.locator("#attached .file").first().click();
+  await attachFiles(page, [
     { name: "big.txt", mimeType: "text/plain", buffer: Buffer.alloc(20 * 1024 * 1024, 97) },
     { name: "a.png", mimeType: "image/png", buffer: Buffer.alloc(5 * 1024 * 1024, 1) },
     { name: "b.png", mimeType: "image/png", buffer: Buffer.alloc(5 * 1024 * 1024, 2) },
     { name: "c.png", mimeType: "image/png", buffer: Buffer.alloc(5 * 1024 * 1024, 3) },
   ]);
-  await page.waitForFunction(() => document.body.textContent.includes("can add up to 32 MB"), null, { timeout: 60000 })
+  // The toast from the seventh file says the same words, so the refusal is read from the chips once they are drawn.
+  await page.waitForFunction(() => document.querySelectorAll("#attached .file").length > 0, null, { timeout: 60000 });
+  await page.locator(".toast").filter({ hasText: "32 MB" }).waitFor({ timeout: 60000 })
     .catch(() => { throw new Error("35 MB of files was not refused"); });
-  assert.deepEqual(await page.evaluate(() => globalThis.branchAttachedFiles().map((one) => one.name)),
-    ["big.txt", "a.png", "b.png"], "the two that fit stayed; the one that did not was left off");
+  const kept = (await chips()).map((one) => one.match(/(big\.txt|[abc]\.png)/)?.[1]);
+  assert.deepEqual(kept, ["big.txt", "a.png", "b.png"], "the two that fit stayed; the one that did not was left off");
   assert.deepEqual(errors, []);
 });
 
@@ -389,26 +390,27 @@ test("the media settings route saves a folder and a model, and prices stay hones
 test("the picture button on the message box makes a chip the next message will carry", async (t) => {
   const { app, root } = await fixture(t, { provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const httpCall = (path, body) => fetch(new URL(path, server.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then((response) => response.json());
+  await httpCall("/api/onboarding", { done: true });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#workspace").waitFor({ state: "visible", timeout: 120000 });
+  await signIn(page, server);
 
-  await page.setInputFiles("#composer-media-file", { name: "dot.png", mimeType: "image/png", buffer: onePixelPng });
-  await page.waitForSelector("#composer-attachments .attachment img");
-  assert.equal(await page.locator("#composer-attachments .attachment").count(), 1);
-  // A picture now travels once, as a file the message carries; the server derives the model's copy
-  // from it. `branchAttachments()` is only for pictures that are not files of their own, such as a
-  // still taken out of a film (public/media.js).
-  assert.deepEqual(await page.evaluate(() => globalThis.branchAttachedFiles().map((p) => p.name)), ["dot.png"]);
-  assert.deepEqual(await page.evaluate(() => globalThis.branchAttachments()), [], "and not a second time");
-  await page.click("#composer-attachments .attachment button");
-  assert.equal(await page.locator("#composer-attachments .attachment").count(), 0, "the chip can be taken off again");
+  // Redesign: the new window's "Attach files" in the + menu; a picture waits as a chip in #attached.
+  await attachFiles(page, [{ name: "dot.png", mimeType: "image/png", buffer: onePixelPng }]);
+  await page.locator("#attached .file").first().waitFor();
+  assert.equal(await page.locator("#attached .file").count(), 1);
+  assert.match(await page.locator("#attached .file").innerText(), /dot\.png/);
+  // That it travels once, as a file the message carries, is checked on what POST /api/run is sent in attachments-ui.test.mjs.
+  await page.locator("#attached .file").first().click();
+  assert.equal(await page.locator("#attached .file").count(), 0, "the chip can be taken off again");
   assert.deepEqual(errors, []);
 });
 

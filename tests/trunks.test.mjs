@@ -22,6 +22,10 @@ import { call, fixture, on } from "./trunks-helpers.mjs";
 
 test("every part ships off, says so in one sentence, and advertises nothing", async (t) => {
   const { app } = await fixture(t);
+  // The owner's rule (ships on, 2026-09-26): every part but choosing a Trunk in any conversation ships "when needed";
+  // what "off" does is tested by switching each part off.
+  assert.deepEqual(app.trunks.modes(), { trunks: "when-needed", rooms: "when-needed", messages: "when-needed", routines: "when-needed", teach: "when-needed", conversations: "off" });
+  for (const part of ["trunks", "rooms", "messages", "routines", "teach"]) app.trunks.setMode(part, { mode: "off" });
   assert.deepEqual(app.trunks.modes(), { trunks: "off", rooms: "off", messages: "off", routines: "off", teach: "off", conversations: "off" }); // phase2/rooms
   assert.throws(() => app.trunks.create({ name: "Ada" }), /Trunks, your named assistants is switched off/);
   assert.equal(app.registry.names().includes("trunk.message"), false);
@@ -212,6 +216,7 @@ test("routines a Trunk owns run as it and report in its own conversation", async
   on(app);
   const fi = app.trunks.create({ name: "Fi" });
   await app.trunks.introduced();
+  app.trunks.setMode("routines", { mode: "off" }); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   assert.throws(() => app.trunks.routines.create(fi.id, { name: "News", prompt: "Check the news" }), /Routines a Trunk owns is switched off/);
   app.trunks.setMode("routines", { mode: "on" });
   const routine = app.trunks.routines.create(fi.id, { name: "News", prompt: "Check the news", dailyAt: "08:00", timezone: "UTC" });
@@ -231,6 +236,7 @@ test("teaching by showing: what the owner did once becomes the Trunk's workflow"
   on(app, "routines");
   const gu = app.trunks.create({ name: "Gu" });
   await app.trunks.introduced();
+  app.trunks.setMode("teach", { mode: "off" }); // ships "when needed" (the owner's rule, 2026-09-26); "off" is tested switched off
   assert.throws(() => app.trunks.teaching.watch(gu.id), /Teaching a Trunk/);
   app.trunks.setMode("teach", { mode: "on" });
   assert.throws(() => app.trunks.teaching.save(gu.id, {}), /Watch me/);
@@ -288,6 +294,9 @@ test("the window's routes and /trunk: create, roster, talk, switch, and a short-
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, body: await response.json() };
   };
+  // The owner's rule (ships on, 2026-09-26): Trunks ship "when needed"; "off" is tested by switching it off.
+  assert.equal((await ask("/api/trunks")).body.modes.trunks, "when-needed");
+  assert.equal((await ask("/api/trunks/switch", { part: "trunks", mode: "off" })).status, 200);
   const first = await ask("/api/trunks");
   assert.deepEqual(first.body.trunks, []);
   assert.equal(first.body.modes.trunks, "off");

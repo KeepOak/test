@@ -1,0 +1,223 @@
+
+/* ================= pass 17a: the look and feel ================= */
+/* A calmer system on top of the 16 passes below: a slightly bluer Slate, legible faint text, one radius scale, soft
+   hairlines instead of stamped borders, elevation only on things that float, quiet chrome and one clear send.
+   Themes write their colours inline on <html>, so everything new here is mixed from those colours, never literal. */
+
+/* ---------- tokens: Slate, refined (the JS keeps BRANCH_EF in step) ---------- */
+:root{
+  --bg:#F6F8F9;--side:#EDF1F3;--raise:#FFFFFF;--title:#E7ECEF;
+  --ink:#141D24;--ink-2:#3A4751;--ink-3:#5F6C76;
+  --line:#DFE5E9;--line-2:#CAD3D9;--fill:#ECF0F3;--fill-2:#E1E8EC;
+  --scrim:rgba(14,20,26,.30);
+  --sh1-17:0 1px 2px rgba(16,24,32,.06),0 0 0 1px color-mix(in srgb,var(--ink) 5%,transparent);
+  --sh2-17:0 1px 2px rgba(16,24,32,.05),0 12px 32px -16px rgba(16,24,32,.24);
+  --pop:0 0 0 1px color-mix(in srgb,var(--ink) 7%,transparent),0 8px 20px -10px rgba(16,24,32,.16),0 28px 56px -24px rgba(16,24,32,.30);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0F1418;--side:#0B0F12;--raise:#161D22;--title:#080B0D;
+  --ink:#E6ECF0;--ink-2:#AEBAC3;--ink-3:#85929B;
+  --line:#1D262C;--line-2:#2B363E;--fill:#182026;--fill-2:#212B32;
+  --scrim:rgba(0,0,0,.52);
+  --sh1-17:0 1px 2px rgba(0,0,0,.35),0 0 0 1px color-mix(in srgb,var(--ink) 7%,transparent);
+  --sh2-17:0 1px 2px rgba(0,0,0,.3),0 14px 34px -16px rgba(0,0,0,.7);
+  --pop:0 0 0 1px color-mix(in srgb,var(--ink) 10%,transparent),0 10px 24px -10px rgba(0,0,0,.5),0 30px 60px -24px rgba(0,0,0,.75);
+}}
+:root[data-theme="dark"]{
+  --bg:#0F1418;--side:#0B0F12;--raise:#161D22;--title:#080B0D;
+  --ink:#E6ECF0;--ink-2:#AEBAC3;--ink-3:#85929B;
+  --line:#1D262C;--line-2:#2B363E;--fill:#182026;--fill-2:#212B32;
+  --scrim:rgba(0,0,0,.52);
+  --sh1-17:0 1px 2px rgba(0,0,0,.35),0 0 0 1px color-mix(in srgb,var(--ink) 7%,transparent);
+  --sh2-17:0 1px 2px rgba(0,0,0,.3),0 14px 34px -16px rgba(0,0,0,.7);
+  --pop:0 0 0 1px color-mix(in srgb,var(--ink) 10%,transparent),0 10px 24px -10px rgba(0,0,0,.5),0 30px 60px -24px rgba(0,0,0,.75);
+}
+/* derived, so every theme gets its own: a soft hairline, a hover wash, a glass surface; one radius scale (4/8 based) */
+:root{
+  --hair17:color-mix(in srgb,var(--line) 70%,transparent);
+  --wash17:color-mix(in srgb,var(--ink) 5%,transparent);
+  --wash2-17:color-mix(in srgb,var(--ink) 9%,transparent);
+  --glass17:color-mix(in srgb,var(--raise) 90%,transparent);
+  --glass2-17:color-mix(in srgb,var(--raise) 97%,transparent);
+  --r1-17:8px;--r2-17:12px;--r3-17:16px;--r4-17:20px;
+  --ease17:cubic-bezier(.2,.8,.2,1);
+}
+/* More contrast asks for strong lines: keep them */
+:root.contrast17{--hair17:var(--line)}
+/* one type scale: 11 · 12 · 13 · 14 · 15 · 17 · 26 */
+body{letter-spacing:-.003em}
+kbd{border:0;background:var(--wash17);border-radius:6px;padding:2px 6px}
+
+/* ---------- motion: short, soft, and only on hover, press and arrival (the base turns it all off for reduced motion) ---------- */
+.row,.nav,.mi,.btn,.tab,.c-btn,.chip-c,.icon-btn,.tb-btn,.sb,.opt,.prow,.ptab,.seg button,.set-back,.owner,.machine,.lh-btn{transition:background-color .14s var(--ease17),color .14s var(--ease17),box-shadow .14s var(--ease17),border-color .14s var(--ease17)}
+.composer .c-btn:active,.composer .send:active{transform:scale(.96)}
+.pop.in17{animation:pop17 .16s var(--ease17) backwards;transform-origin:50% 0}
+.scrim.in17{animation:scrim17 .18s ease-out backwards}
+.scrim.in17>.dlg,.scrim.in17>.palette{animation:dlg17 .22s var(--ease17) backwards}
+@keyframes pop17{from{opacity:0;transform:translateY(-4px) scale(.98)}}
+@keyframes scrim17{from{background-color:transparent}}
+@keyframes dlg17{from{opacity:0;transform:translateY(10px) scale(.985)}}
+
+/* ---------- title bar and conversation header: one quiet strip ---------- */
+.titlebar.merged14::before{border-right-color:var(--hair17)}
+/* the state line (working, waiting) stays, as a soft wash from the left instead of a full-width rule */
+.titlebar.merged14::after,.app.has-bg .titlebar.merged14::after{border-bottom-color:var(--hair17);box-shadow:none;background-image:linear-gradient(90deg,var(--tint14,transparent),transparent 62%);background-size:100% 2px;background-position:left bottom;background-repeat:no-repeat}
+.tb-head14 .head .who b{font-size:15px;font-weight:600;letter-spacing:-.012em}
+.tb-head14 .head .who small{font-size:12px}
+.tb-head14 .head .icon-btn,.head .icon-btn{color:var(--ink-3);border-radius:10px}
+.tb-head14 .head .icon-btn:hover,.head .icon-btn:hover{background:var(--wash17);color:var(--ink)}
+.tb-btn{color:var(--ink-3);border-radius:8px}
+.tb-btn:hover{background:var(--wash17);color:var(--ink)}
+.tb-btn[aria-pressed="true"]{background:var(--wash2-17);color:var(--ink)}
+.surf-one{border-color:transparent;background:var(--wash17);color:var(--ink-2)}
+.surf-one:hover{background:var(--wash2-17);color:var(--ink)}
+.head{border-bottom-color:var(--hair17)}
+.bar{border-bottom-color:var(--hair17)}
+
+/* ---------- sidebar: quiet, grouped, a clear current item ---------- */
+.side{border-right-color:var(--hair17)}
+.side .machine .mico{border:0;background:var(--raise);box-shadow:var(--sh1-17)}
+.sq9{background:var(--wash17);border-radius:var(--r2-17)}
+.sq9:hover{background:var(--wash2-17)}
+.sq9:focus-within{background:var(--raise);border-color:transparent;box-shadow:var(--sh1-17),0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+.side .icon-btn{color:var(--ink-3)}
+.side .icon-btn:hover{background:var(--wash17);color:var(--ink)}
+.nav{color:var(--ink-2);border-radius:10px}
+.nav:hover{background:var(--wash17)}
+.nav[aria-current="true"]{background:var(--raise);color:var(--ink);font-weight:600;box-shadow:var(--sh1-17)}
+.nav .i{color:var(--ink-3)}
+.nav[aria-current="true"] .i,.nav:hover .i{color:var(--ink)}
+/* counts that are not asking for you stay neutral; copper is kept for the Inbox, which is */
+.live6{background:var(--wash17);color:var(--ink-2)}
+.places-h14,.owner-wrap,.side-nav{border-top-color:var(--hair17)}
+.side-nav.nav7{border-bottom-color:var(--hair17)}
+.row{border-radius:14px}
+.row:hover{background:var(--wash17)}
+.row[aria-current="true"]{background:var(--raise);box-shadow:var(--sh1-17)}
+.row b{font-size:14px;letter-spacing:-.01em}
+.row p{font-size:12.5px}
+.row b .paused{border:0;background:var(--wash17);border-radius:6px;padding:1px 6px}
+.lh,.grp,.pop .ph,.sec h2{letter-spacing:.07em}
+.owner:hover{background:var(--wash17)}
+
+/* ---------- the conversation: more air, readable measure ---------- */
+.thread{gap:16px}
+.b .txt{font-size:15px;line-height:1.62}
+.u{background:var(--fill-2);border-radius:20px 20px 6px 20px;padding:10px 16px}
+.card,.check,.file{border-color:var(--hair17)}
+.card{border-radius:var(--r3-17);padding:16px}
+.card.ask{border-color:color-mix(in srgb,var(--accent) 75%,transparent)}
+.check{border-radius:var(--r2-17)}
+.file{border-radius:var(--r2-17)}
+.file:hover{border-color:var(--line-2)}
+.kv{border-radius:var(--r2-17)}
+.ckpt{border-color:var(--line);border-radius:var(--r2-17)}
+.msg-acts{border-radius:10px}
+.steps summary:hover{background:var(--wash17)}
+
+/* ---------- the composer: one soft surface, quiet tools, one clear send ---------- */
+.dock{padding:8px 24px 16px}
+.composer{padding:8px;gap:4px;border-radius:26px;border-color:var(--hair17);box-shadow:var(--sh2-17)}
+.composer:focus-within{border-color:color-mix(in srgb,var(--ink) 18%,transparent);box-shadow:var(--sh2-17),0 0 0 4px color-mix(in srgb,var(--ink) 5%,transparent)}
+.composer textarea{font-size:15px;padding:7px 6px}
+.c-btn{color:var(--ink-3)}
+.c-btn:hover{background:var(--wash17);color:var(--ink)}
+.c-btn[aria-expanded="true"]{background:var(--wash2-17);color:var(--ink)}
+.chip-c{color:var(--ink-3)}
+.chip-c:hover,.chip-c[aria-expanded="true"]{background:var(--wash17);color:var(--ink)}
+.send{width:36px;height:36px;background:var(--wash17);color:var(--ink-3)}
+.send.ready{background:var(--accent);color:#fff;box-shadow:0 4px 12px -4px color-mix(in srgb,var(--accent) 60%,transparent)}
+.send.stop{background:var(--btn);color:var(--on-btn)}
+.flag{border:0;background:var(--wash17)}
+.bgchip15,.mat15{border-color:transparent;background:var(--wash17)}
+.bgchip15:hover{border-color:transparent;background:var(--wash2-17)}
+
+/* ---------- places: calmer tabs, grouped lists ---------- */
+.place{padding:32px 24px 48px}
+.place h1,.set-col h1{font-size:26px;font-weight:650;letter-spacing:-.025em}
+.lede{font-size:14px;line-height:1.55}
+.tab{border-color:transparent;color:var(--ink-2);height:32px;padding:0 14px}
+.tab:hover{border-color:transparent;background:var(--wash17);color:var(--ink)}
+.tab[aria-selected="true"]{background:var(--fill-2);border-color:transparent;color:var(--ink);font-weight:600}
+.tab .n{opacity:.6}
+.prow{border-bottom-color:var(--hair17)}
+/* a place's list sits on one soft card, the same as Settings */
+.place>.rows:has(>.prow):not(:has(>:not(.prow))){background:var(--raise);border-radius:var(--r3-17);padding:0 16px;box-shadow:inset 0 0 0 1px var(--hair17)}
+.place>.rows>.prow:last-child{border-bottom:0}
+/* quiet the accents that are not asking for anything: copper and green stay for attention and success */
+.self15{border-color:var(--hair17)}
+.add-row{color:var(--ink-2)}
+.add-row:hover{color:var(--ink)}
+.tile{border-color:var(--hair17);border-radius:var(--r3-17);padding:16px}
+.ico-tile{border-radius:var(--r2-17);background:var(--wash17)}
+.inp{border-color:var(--line);border-radius:var(--r1-17)}
+.inp:focus{border-color:color-mix(in srgb,var(--ink) 28%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--ink) 6%,transparent)}
+.nl .inp{border-radius:var(--r2-17)}
+
+/* ---------- Settings: softer nav, grouped rows on one card, clearer labels ---------- */
+.set-nav{border-right-color:var(--hair17)}
+.set-nav .nav[aria-current="true"]{box-shadow:none;background:var(--wash2-17)}
+.set-search{border-color:transparent;background:var(--wash17);border-radius:var(--r2-17)}
+.set-col{padding:32px 32px 56px}
+.status{border-color:var(--hair17);border-radius:var(--r3-17)}
+.sec{margin-top:28px}
+.ctl b{font-size:14px;font-weight:500}
+.ctl small{font-size:12.5px;line-height:1.45}
+/* a section of only rows (and hints) becomes one card of rows, like a system settings pane */
+.set-col .sec:not(:has(> :not(h2,p,.ctl)))>.ctl,.set-col details.adv>.ctl{background:var(--raise);padding:14px 16px;border-bottom:1px solid var(--hair17);box-shadow:inset 1px 0 0 var(--hair17),inset -1px 0 0 var(--hair17)}
+.set-col .sec:not(:has(> :not(h2,p,.ctl)))>.ctl:first-of-type{border-radius:var(--r3-17) var(--r3-17) 0 0;box-shadow:inset 1px 0 0 var(--hair17),inset -1px 0 0 var(--hair17),inset 0 1px 0 var(--hair17)}
+.set-col .sec:not(:has(> :not(h2,p,.ctl)))>.ctl:last-of-type{border-radius:0 0 var(--r3-17) var(--r3-17)}
+.set-col .sec:not(:has(> :not(h2,p,.ctl)))>.ctl:first-of-type:last-of-type{border-radius:var(--r3-17)}
+.set-col .sec>.rows:has(>.prow):not(:has(>:not(.prow))){background:var(--raise);border-radius:var(--r3-17);padding:0 16px;box-shadow:inset 0 0 0 1px var(--hair17)}
+.set-col .sec>.rows>.prow:last-child{border-bottom:0}
+details.adv{border-color:var(--hair17);border-radius:var(--r3-17)}
+.set-col details.adv{padding:4px 12px 12px}
+.set-col details.adv>.ctl:first-of-type{border-radius:var(--r2-17) var(--r2-17) 0 0}
+.set-col details.adv>.ctl:last-of-type{border-radius:0 0 var(--r2-17) var(--r2-17);border-bottom:0}
+.seg{border-radius:10px}
+.danger{border-color:color-mix(in srgb,var(--bad) 55%,transparent);border-radius:var(--r3-17)}
+.theme{border-color:var(--hair17)}
+.frow{border-bottom-color:var(--hair17)}
+.frow code{background:var(--wash17)}
+.settings .set-level{border-top-color:var(--hair17)}
+.settings .set-level .seg{border-color:transparent;background:var(--wash17)}
+
+/* ---------- side pane and status bar ---------- */
+.pane{border-left-color:var(--hair17)}
+.pane-h{border-bottom-color:var(--hair17)}
+.memrow{border-color:var(--hair17)}
+.statusbar{background:var(--side);border-top-color:var(--hair17);font-size:11px}
+button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
+
+/* ---------- popovers and dialogs: soft glass, a clear title, one primary action ---------- */
+.pop{background:var(--glass17);-webkit-backdrop-filter:blur(20px) saturate(1.4);backdrop-filter:blur(20px) saturate(1.4);border-radius:var(--r3-17);padding:6px}
+.mi{border-radius:10px;padding:8px 10px}
+.mi:hover{background:var(--wash17)}
+.mi:focus-visible{outline:none;background:var(--wash17);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--accent) 70%,transparent)}
+.pop hr{border-top-color:var(--hair17);margin:6px 6px}
+.pop .pt{font-size:14px;letter-spacing:-.01em}
+.scrim{-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+/* nearly solid on a blurred scrim; no backdrop-filter here, so positioned sheets inside a dialog keep their containing block */
+.dlg{background:var(--glass2-17);border-radius:var(--r4-17)}
+.dlg-h{border-bottom:0;padding:18px 14px 6px 24px}
+.dlg-h h2{font-size:17px;letter-spacing:-.015em}
+.dlg-b{padding:14px 24px 20px}
+.dlg-f{padding:10px 24px 20px}
+/* where a footer has a filled action, that is the one clear action and the others step back; footers without one keep theirs */
+.dlg-f:has(.pri,.bad,.dz) .btn:not(.pri):not(.bad):not(.dz){border-color:transparent;background:none;color:var(--ink-2)}
+.dlg-f:has(.pri,.bad,.dz) .btn:not(.pri):not(.bad):not(.dz):hover{background:var(--wash17);color:var(--ink)}
+.palette{background:var(--glass2-17);border-radius:var(--r4-17)}
+.palette .pin-in,.pal-foot{border-color:var(--hair17)}
+.note-pop{border-radius:var(--r3-17)}
+.toast{box-shadow:var(--sh2-17)}
+.field label{color:var(--ink-2)}
+
+/* ---------- narrow windows: the same rhythm (one step more specific, since the base's narrow rules come after this file) ---------- */
+@media (max-width:760px){
+  .main .place,.main .set-col{padding:24px 16px 40px}
+  .main .dock{padding:8px 12px 12px}
+  .dlg-h{padding:16px 10px 4px 20px}
+  .dlg-b{padding:12px 20px 16px}
+  .dlg-f{padding:8px 20px 16px}
+  .set-nav{border-bottom-color:var(--hair17)}
+}
