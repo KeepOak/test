@@ -32,11 +32,14 @@ lines.on("line", (line) => { work = work.then(async () => {
   const payload = { model: value("--model"), ...generation,
     system: [{ type: "text", text: readFileSync(value("--system-prompt-file"), "utf8") }], messages: frames.map((item) => item.message) };
   const url = process.env.ANTHROPIC_BASE_URL + "/v1/messages?beta=true";
-  const request = () => fetch(url, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-native-account", "anthropic-version": "2023-06-01" }, body: JSON.stringify(payload) });
+  const request = () => fetch(url, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-native-account", "anthropic-version": "2023-06-01",
+    ...(process.env.BRANCH_NATIVE_FIXTURE_RELAY ? { "x-branch-fixture-relay": process.env.BRANCH_NATIVE_FIXTURE_RELAY } : {}) }, body: JSON.stringify(payload) });
   const response = await request(); await response.arrayBuffer();
   if (mode === "grandchild") await new Promise(() => {});
   if (mode === "retry") { const denied = await request(); await denied.arrayBuffer(); }
-  emit({ type: "rate_limit_event", rate_limit_info: { rateLimitType: "five_hour", utilization: 0.25, resetsAt: 2000000000 } });
+  if (process.env.BRANCH_NATIVE_FIXTURE_RATES) {
+    for (const line of JSON.parse(readFileSync(process.env.BRANCH_NATIVE_FIXTURE_RATES, "utf8"))) emit(JSON.parse(line));
+  } else emit({ type: "rate_limit_event", rate_limit_info: { rateLimitType: "five_hour", utilization: 0.25, resetsAt: 2000000000 } });
   emit({ type: "result", num_turns: 1, subtype: mode === "retry" ? "error_during_execution" : "success", is_error: mode === "retry" });
   process.exitCode = mode === "retry" ? 1 : 0;
 }).catch(() => { emit({ type: "result", num_turns: 1, subtype: "error_during_execution", is_error: true }); process.exitCode = 1; }); });
