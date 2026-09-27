@@ -752,13 +752,13 @@ export class BranchBrowser {
     if (++entry.actions > this.config.maxActionsPerRun) throw new Error(actionStop(this.config.maxActionsPerRun));
     if (action === 'open') {
       await this.trunkProfile(context, entry); write?.check();
-      await session.openTab(signal);
-      if (write) entry.tabIds!.push(write.addTab());
+      await session.openTab(signal, () => { if (write) entry.tabIds!.push(write.addTab()); });
     } else if (action === 'select') await session.selectTab(requireIndex(index), signal);
     else if (action === 'close') {
       const chosen = requireIndex(index), id = entry.tabIds?.[chosen];
-      await session.closeTab(chosen, signal);
-      if (write && id) { write.closeTab(id); entry.tabIds!.splice(chosen, 1); }
+      await session.closeTab(chosen, signal, () => {
+        if (write && id) { write.closeTab(id); entry.tabIds!.splice(chosen, 1); }
+      });
     }
     // Each tab's address is scrubbed of what that tab's own boxes hold, as every other answer is (operation).
     return { tabs: await Promise.all(session.tabs().map(async tab => {
