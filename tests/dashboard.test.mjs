@@ -425,3 +425,20 @@ test("the switch lives in Customize › Everywhere, where the engine's refusal s
   await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "off", f.server.token, { timeout: 10000 });
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
 });
+
+test("under Lockdown the dashboard may be switched off and never on", async (t) => {
+  const f = await fixture(t);
+  saveDashboardSettings(f.app.store, f.owner, { mode: "on" });
+  assert.equal((await f.call("/api/lockdown", f.server.token, { on: true })).status, 200);
+  const off = await f.call("/api/dashboard/settings", f.server.token, { mode: "off" });
+  assert.equal(off.status, 200, "switching it off is always allowed");
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
+  for (const mode of ["on", "when-needed"]) {
+    const on = await f.call("/api/dashboard/settings", f.server.token, { mode });
+    assert.equal(on.status, 409, `${mode} under Lockdown`);
+    assert.match((await on.json()).error, /Lockdown is on/);
+  }
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
+  assert.equal((await f.call("/api/lockdown", f.server.token, { on: false })).status, 200);
+  assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "on" })).status, 200, "on again once Lockdown is off");
+});
