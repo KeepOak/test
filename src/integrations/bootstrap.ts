@@ -422,14 +422,16 @@ export async function startMcp(
   const id = McpConfigSchema.parse(server).id;
   // Opening it puts nothing in the tool list — the tools are already there — so `openMcp`, not
   // `connectMcp`: the same connection, without a second registration to collide with the first.
-  host.connections.register(id, () => vet().then(() => openMcp(server, env, guard, host.cache, host.startupTimeoutMs?.()))); // R17-S20
+  // Every open after that is a program started again (its first call, or after a crash or a warm close): the same checks.
+  host.connections.register(id, reopen); // R17-S20
   const names = registerCachedMcp(registry, server, host.cache.read(id), async () => {
     // Opened through the manager, so keep-warm, the cap and the retries all apply to it. What it
     // says its tools are NOW, and the credentials it was opened with, travel back with it: the
     // first call is checked against the live shape, and anything echoed back has them taken out.
     const opened = await host.connections.acquire(`mcp:${id}`, id) as unknown as LiveMcp & { found?: LiveMcp['tools'] };
+    // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
-      ...(opened.found ? { tools: opened.found } : {}) };
+      ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
   });
   if (!names.length) {
     const connection = await connect();
@@ -449,7 +451,7 @@ export interface McpHost {
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
   cache: McpToolCache;
-  /** Checks made before a crashed server's program is started again (src/mcp-own-servers.ts); throws to refuse. */
+  /** Checks made before a server's program is started again, after a crash or on demand (src/mcp-own-servers.ts); throws to refuse. */
   beforeRestart?: () => void | Promise<void>;
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;

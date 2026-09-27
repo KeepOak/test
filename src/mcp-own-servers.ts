@@ -319,7 +319,7 @@ export class OwnMcpServers {
     if (!host) return undefined;
     const connections = host.connections;
     return { ...host,
-      // Before its program is started again after a crash, the checks switching it on made (the malware check runs
+      // Before its program is started again (after a crash, or on demand), the checks switching it on made (the malware check runs
       // again on its own): nothing it runs is in the workspace, Lockdown is off, and the owner still wants it.
       beforeRestart: () => {
         this.guard(entry.server);
