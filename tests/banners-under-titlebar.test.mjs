@@ -2,7 +2,8 @@
    a place's own) start below the floating title row at every width, with Lockdown on or off, and after a theme of your
    own is made in Settings › Appearance and Settings is left; that theme's colours are the ones the conversation wears.
    The title row's height is measured (public/app/shell/shell.js measureTitleRow, --tb-h), so a taller row keeps them
-   clear too. The engine's suggestion answers "background" here; nothing is installed. */
+   clear too. The engine's suggestion answers "background" here; nothing is installed. Pass 18 (one frame): the suggestion
+   shows only on Overview and Inbox, never over a conversation. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -64,20 +65,26 @@ async function clearOfRow(page, where) {
 }
 
 const PLACES = ["overview", "inbox", "automations", "library", "team", "customize"];
+const WITH_BAR = ["overview", "inbox"];
 async function everyView(page, where) {
-  if (!(await page.locator("#main .recbar").isVisible())) {
-    await page.locator('#side [data-act="newmenu"]').click();
-    await page.locator('.pop [data-act="newconv"]').click();
-  }
-  await page.locator("#main .recbar").waitFor({ timeout: 15000 });
+  await page.locator('#side [data-act="newmenu"]').click();
+  await page.locator('.pop [data-act="newconv"]').click();
+  await page.locator("#main #composer").waitFor({ timeout: 15000 });
   await clearOfRow(page, `${where}, conversation`);
+  assert.equal(await page.locator("#main .recbar").count(), 0, `${where}: no suggestion over a conversation (pass 18)`);
   for (const place of PLACES) {
     const nav = page.locator(`#side [data-act="view"][data-v="${place}"]`).first();
     if (!(await nav.isVisible())) continue;
     await nav.click();
     await page.locator("#main .place").first().waitFor({ timeout: 15000 });
+    if (WITH_BAR.includes(place)) await page.locator("#main .recbar").waitFor({ timeout: 15000 });
     await clearOfRow(page, `${where}, ${place}`);
   }
+}
+/* The suggestion's own place: Overview. */
+async function overview(page) {
+  await page.locator('#side [data-act="view"][data-v="overview"]').first().click();
+  await page.locator("#main .recbar").waitFor({ timeout: 15000 });
 }
 
 for (const width of [1440, 1100, 900, 761]) {
@@ -94,7 +101,7 @@ for (const width of [1440, 1100, 900, 761]) {
 
 test("a taller title row (a theme's or text size's) is measured again and the bars move below it", async (t) => {
   const f = await fixture(t);
-  await f.page.locator("#main .recbar").waitFor({ timeout: 15000 });
+  await overview(f.page);
   /* The window's policy refuses a style tag; a constructed sheet is how a script in the page adds a rule. */
   await f.page.evaluate(() => { const sheet = new CSSStyleSheet(); sheet.replaceSync(".titlebar.merged14{height:76px}"); document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]; });
   assert.equal(await f.page.evaluate(() => document.querySelector(".titlebar").getBoundingClientRect().height), 76);
@@ -116,10 +123,10 @@ async function worn(page) {
   });
 }
 
-test("a theme of your own made in Settings › Appearance is worn by the conversation after Settings is left, with its bar in view", async (t) => {
+test("a theme of your own made in Settings › Appearance is worn after Settings is left, with Overview's bar in view", async (t) => {
   const f = await fixture(t);
   const { page } = f;
-  await page.locator("#main .recbar").waitFor({ timeout: 15000 });
+  await overview(page);
   await page.locator('#side [data-act="view"][data-v="settings"]').first().click();
   await page.locator('[data-act="setpage"][data-v="appearance"]').first().click();
   await page.locator('.set-page [data-act="ce-new"], #main [data-act="ce-new"]').first().click();
@@ -127,7 +134,8 @@ test("a theme of your own made in Settings › Appearance is worn by the convers
   await page.locator('[data-act="ce-save"]').click();
   await page.locator(".dlg .ced").waitFor({ state: "detached" });
   await page.locator(".set-back").click();
-  await page.locator("#main .recbar").waitFor({ timeout: 15000 });
+  await page.locator("#main #composer").waitFor({ timeout: 15000 });
+  await overview(page);
   await clearOfRow(page, "after Settings with a theme of your own");
   const look = await worn(page);
   assert.match(look.palette, /^my-/, "the theme of your own is the one worn");

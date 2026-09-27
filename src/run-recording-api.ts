@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, extname, resolve } from "node:path";
 import { audit } from "./audit.js";
+import { errorText } from "./request-errors.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "./event-loop-watch.js";
 import { preferences } from "./preferences.js";
 import { recordingFlowDraft } from "./recording-to-flow.js";
@@ -60,7 +61,7 @@ export async function recordingApi(app: RecordingApp, request: IncomingMessage, 
     if (answer !== undefined) sendJson(response, 200, answer);
   } catch (error) {
     const status = Number((error as { status?: unknown }).status) || 400;
-    if (!response.headersSent) sendJson(response, status, { error: error instanceof Error ? error.message : String(error) });
+    if (!response.headersSent) sendJson(response, status, { error: errorText(error) });
   }
 }
 

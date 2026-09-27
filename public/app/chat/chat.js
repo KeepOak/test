@@ -3,7 +3,7 @@
 
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
 import { S, E, refresh, trunkIntro, chatFace } from "../core/state.js";
-import { api } from "../core/api.js";
+import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -11,7 +11,7 @@ import { text } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
-import { recBar, initRec } from "./rec.js";
+import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
@@ -51,7 +51,7 @@ import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room d
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
-const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "" };
+const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "" };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
@@ -280,7 +280,7 @@ export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => sto
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
 
 export function draw() {
-  return `${lockBanner()}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
@@ -331,12 +331,33 @@ export async function openConversation(id) {
   C.sessionId = id;
   S.chat = id;
   C.messages = [];
+  C.mark = openMark(id);
   renderNow();
   try { C.messages = (await api("sessions/" + id)).messages ?? []; } catch (error) { toast(error.message); }
   await loadWaiting();
   await loadExtras(id);
   renderNow();
 }
+/* What the engine last said about the open conversation: its line in the list and its tasks. When it changes, something
+   happened there that this window did not start (a new Trunk's hello, a schedule's run, an answer from another window). */
+const openMark = (id) => JSON.stringify([E.sessions.find((s) => (s.sessionId ?? s.id) === id) ?? null,
+  (E.state?.runs ?? []).filter((r) => r.sessionId === id).map((r) => [r.id, r.status, r.updatedAt ?? ""])]);
+
+/* After the engine's state is read again (an event, or the engine coming back): the open conversation's messages are read
+   again when its mark changed, or always with `force`. Not while this window's own send or follow is reading it. Answers
+   whether it read them, so the caller draws. */
+export async function rereadOpen(force = false) {
+  const id = C.sessionId;
+  if (S.view !== "chat" || !id || C.sending) return false;
+  const mark = openMark(id);
+  if (!force && mark === C.mark) return false;
+  const got = await api("sessions/" + encodeURIComponent(id));
+  if (C.sessionId !== id || C.sending) return false;
+  C.mark = mark; // only once the read succeeded, so a failed read is tried again on the next event
+  C.messages = got.messages ?? C.messages;
+  return true;
+}
+
 export function startConversation() {
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
@@ -491,8 +512,10 @@ async function sendPlain(prompt) {
   C.sending = true;
   watchThinking(true);
   renderNow();
+  let started = false;
   try {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : await startMode()) });
+    started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
@@ -500,7 +523,8 @@ async function sendPlain(prompt) {
     readNewReply(before, C.messages);
     await loadWaiting();
   } catch (error) {
-    C.messages.push({ role: "assistant", content: error.message });
+    if (error.offline && !started) keepForLater(prompt);
+    else C.messages.push({ role: "assistant", content: error.message });
   } finally {
     C.sending = false;
     watchThinking(false);
@@ -513,6 +537,19 @@ async function sendPlain(prompt) {
     $("#prompt")?.focus();
   }
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
+}
+
+/* Q063: a message the engine never got (Branch was not running) goes back in the box, and is sent once the engine
+   answers again, unless the person changed it or went elsewhere meanwhile. */
+function keepForLater(prompt) {
+  const sid = C.sessionId;
+  C.messages.pop();
+  S.drafts[sid ?? "new"] = prompt;
+  const box = $("#prompt");
+  if (box) box.value = prompt;
+  whenBack().then(() => {
+    if (C.sessionId === sid && !C.sending && ($("#prompt")?.value ?? "").trim() === prompt) return send();
+  }).catch((error) => toast(error.message));
 }
 
 /* A room answers in the background (each member in its own conversation): its conversation is read again each second

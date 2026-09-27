@@ -11,10 +11,12 @@ import { ic, av } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { renderNow } from "../core/dom.js";
-import { recBar } from "../chat/rec.js";
+import { recBar, updateCard } from "../chat/rec.js";
 import { allPaused } from "../flows/pause.js";
 import { look17, figure17 } from "../core/art17.js";
 import { agentState } from "../chat/agent17.js";
+import { modeLabel } from "../chat/chips.js";
+import { lockdownOn } from "../chat/approvals.js";
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 
@@ -87,9 +89,18 @@ function recentTile() {
   return `<section class="tile"><h2>${t("window.places.overview.recent-activity")}</h2>${rows}<div class="acts"><button class="btn sm" type="button" data-act="ptab" data-place="inbox" data-v="history">${t("window.places.overview.all-history")}</button></div></section>`;
 }
 
+/* One mode, as the prototype's tile names it: Lockdown while it is on; else what a new conversation, a new Trunk and a new
+   room start on (GET /api/conversation-mode newConversation, the chip's own words), or the owner's setting when they
+   follow it (newConversation null). Lockdown's button is the prototype's: "Turn Lockdown off" while it is on. */
+function modeName() {
+  if (lockdownOn()) return t("lockdown.label");
+  const cm = conversationMode;
+  return cm ? (cm.newConversation ? modeLabel(cm.newConversation) : cm.following?.label ?? "") : "";
+}
+
 function controlsTile() {
-  const mode = conversationMode?.following?.label ?? "";
-  return `<section class="tile"><h2>${t("dashboard.area.controls")}</h2><p>${t("window.places.overview.mode")} <b data-css="font-weight:600">${esc(mode)}</b> · <button class="link" type="button" data-act="setgo" data-v="permissions">${t("window.places.overview.change")}</button></p><div class="acts"><button class="btn bad sm" type="button" data-act="lock">${t("lockdown.label")}</button><button class="btn sm" type="button" data-act="pauseall">${allPaused() ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")}</button></div></section>`;
+  const locked = lockdownOn();
+  return `<section class="tile"><h2>${t("dashboard.area.controls")}</h2><p>${t("window.places.overview.mode")} <b data-css="font-weight:600">${esc(modeName())}</b> · <button class="link" type="button" data-act="setgo" data-v="permissions">${t("window.places.overview.change")}</button></p><div class="acts"><button class="btn${locked ? "" : " bad"} sm" type="button" data-act="lock" aria-pressed="${locked}">${t(locked ? "dashboard.controls.lockdownOff" : "lockdown.label")}</button><button class="btn sm" type="button" data-act="pauseall">${allPaused() ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")}</button></div></section>`;
 }
 
 /* Everyone on this computer (GET /api/profiles: the owner, then each profile), as the prototype's tile lists them; the
@@ -116,7 +127,7 @@ function milestonesTile() {
 export function draw() {
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
   return `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place ovs" data-css="max-width:1000px">
-    ${recBar()}
+    ${recBar()}${updateCard()}
     <h1>${t("strip.menu.overview")}</h1><p class="lede">${t("window.places.overview.whats-happening-across-your-trunks-at")} <button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button></p>
     <section class="tile ovs-status">${nowPart()}${healthPart()}</section>
     <div class="ovs-cols"><div class="ovs-col">${recentTile()}${milestonesTile()}</div><div class="ovs-col">${spendTile()}${controlsTile()}${usersTile()}</div></div>
@@ -147,11 +158,9 @@ export async function after() {
   const asked = (policy?.waiting ?? []).filter((q) => !q.parentRunId).length;
   if (policy && asked !== approvals) { approvals = asked; needsRender = true; }
 
-  // Fetch conversation mode if not yet cached
-  if (!conversationMode) {
-    conversationMode = await api("conversation-mode").catch(() => null);
-    if (conversationMode) needsRender = true;
-  }
+  // What new conversations start on, read each time Overview is drawn: it changes from setup and the owner's setting
+  const mode = await api("conversation-mode").catch(() => null);
+  if (mode && JSON.stringify(mode) !== JSON.stringify(conversationMode)) { conversationMode = mode; needsRender = true; }
 
   // Fetch achievements if not yet cached, or cached in another language (their names are the engine's words)
   if (!achievements || achievementsIn !== language()) {
