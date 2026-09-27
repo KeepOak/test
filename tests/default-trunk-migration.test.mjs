@@ -15,6 +15,20 @@ import { chatThread, chatThreadKey } from "../dist/channels/threads.js";
 import { saveOnboarding } from "../dist/onboarding.js";
 import { discardTemp } from "./temp-dir.mjs";
 import { brain } from "./trunks-helpers.mjs";
+import { fixture } from "./trunks-helpers.mjs";
+
+test("migration rolls every claim back when its audit cannot be recorded", async (t) => {
+  const { app } = await fixture(t);
+  app.trunks.ensureDefault(true);
+  const session = app.store.createSession(app.runtime.owner), before = snapshot(app);
+  app.store.sqlite.exec("CREATE TRIGGER test_audit_failure BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT, 'test audit unavailable'); END");
+  try { assert.throws(() => app.trunks.settle(), /test audit unavailable/); }
+  finally { app.store.sqlite.exec("DROP TRIGGER test_audit_failure"); }
+  assert.equal(app.trunks.threads.get(session), undefined);
+  assert.deepEqual(snapshot(app), before);
+  assert.equal(app.trunks.settle().toDefault, 1);
+  assert.ok(app.trunks.threads.get(session));
+});
 
 const open = (root, data, provider) => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, data), provider });
 /** Everything a person would notice about their conversations: which exist, their words and times, and what is unread. */
@@ -94,9 +108,8 @@ test("the migration puts every conversation with a Trunk, keeps everything else 
 
 test("thousands of conversations are put with a Trunk in one step, and the Trunks stay in sight", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-default-many-"));
-  t.after(() => discardTemp(root));
   const app = await open(root, "data", brain());
-  t.after(() => app.close());
+  t.after(async () => { await app.close(); await discardTemp(root); });
   saveOnboarding(app.store, app.runtime.owner, { done: true });
   app.trunks.setMode("trunks", { mode: "on" });
   const insert = app.store.sqlite.prepare("INSERT INTO sessions(id,owner,created_at,temporary) VALUES(?,?,?,0)");

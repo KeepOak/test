@@ -692,6 +692,9 @@ export class ChannelRouter {
   }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
+    // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
+    if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
+      return { name: "new", argument: "" };
     const setting = this.switches().commands;
     if (setting === "off" || message.voice) return null;
     // Wave mac3 (commands): which of the shared table's commands a chat may read follows the owner's switch.

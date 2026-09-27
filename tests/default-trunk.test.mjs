@@ -106,7 +106,7 @@ test("the window's new conversation is a thread with the default Trunk; a tempor
 
 test("the default's turn is the owner's own: the same memory scope and tools as a conversation with nobody, plus who it is", async (t) => {
   const { app, provider } = await fixture(t);
-  on(app);
+  on(app, "messages");
   setupOver(app);
   const plain = app.runtime.trunkShape({ prompt: "x" });
   assert.equal(plain, null);
@@ -120,11 +120,9 @@ test("the default's turn is the owner's own: the same memory scope and tools as 
   assert.equal(turn.data.trunkId, main.id);
   const tools = (request) => (request.tools ?? []).map((tool) => tool.name).sort();
   const asDefault = tools(provider.requests.at(-1));
-  app.trunks.setMode("trunks", { mode: "off" });
   await app.runtime.run({ prompt: "remember this" });
   const asNobody = tools(provider.requests.at(-1));
   assert.deepEqual(asDefault, asNobody, "the default Trunk is given exactly the tools a conversation with nobody is");
-  app.trunks.setMode("trunks", { mode: "on" });
   const system = provider.requests.at(-2).messages.find((m) => m.role === "system").content;
   assert.match(system, /You are Main \(@main\), the owner's own assistant/);
   // Another Trunk is still narrowed as before: its own memory, no commands.

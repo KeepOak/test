@@ -30,6 +30,9 @@ import { introPrompt, introSystem } from "./intro.js"; // a new Trunk's first wo
 import { TrunkThreads } from "./threads.js"; // defaulttrunk
 import { adoptOrphans, defaultAmong, pickDefault, saveDefault, setupOver } from "./defaults.js"; // defaulttrunk
 import { assistantIdentity } from "../identity.js"; // defaulttrunk: the default Branch makes is named as the owner named their assistant
+import { TrunkFiles } from "./files.js";
+import { characters } from "./characters.js";
+import { currentPerson } from "../people/context.js";
 
 
 /**
@@ -64,6 +67,9 @@ const AvatarInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000, "That picture is too large for a Trunk; use one under about 290 KB") }).strict(),
   z.object({ kind: z.literal("generate"), prompt: z.string().trim().min(1).max(500) }).strict(),
 ]);
+const defaultFields = (name: string) => TrunkSchema.parse({ name,
+  character: characters().find((character) => character.id !== "branch" && character.states.idle)?.id ?? null,
+  look: { motion: "breathe", depth: "3d" } });
 
 export class Trunks {
   readonly records: TrunkRecords;
@@ -80,6 +86,7 @@ export class Trunks {
   readonly computerRule: TrunkComputers;
   /** defaulttrunk: which Trunk each conversation is a thread with (src/trunks/threads.ts). */
   readonly threads: TrunkThreads;
+  readonly files: TrunkFiles;
   /** `room`: a Trunk's side of a room; `chosen`: an ordinary conversation the owner chose it for (phase2/rooms). */
   private owned = new Map<string, Owned>();
   /** phase2/rooms: a room member's conversation → the room's own conversation (whose mode it follows). */
@@ -93,6 +100,7 @@ export class Trunks {
     const store = runtime.store, owner = runtime.owner;
     this.accounts = deps.accounts ?? noAccounts;
     this.records = new TrunkRecords(store, owner);
+    this.files = new TrunkFiles(store, owner, this.records);
     this.rooms = new TrunkRooms({ store, owner, records: this.records, runtime, changed: () => this.refresh(),
       scrub: (text) => runtime.hideSecrets(text), // a2a-rooms: what goes to an outside agent
       notify: (room, why) => {
@@ -212,6 +220,29 @@ export class Trunks {
   defaultTrunk(): Trunk | undefined {
     return pickDefault(this.store, this.owner, this.records.list());
   }
+  /** Household defaults are stored entirely in that person's scope, never on the owner's roster. */
+  personDefault() {
+    const scope = this.store.profiles.scope();
+    if (scope === this.owner) return null;
+    return this.store.atomically(() => {
+    const records = new TrunkRecords(this.store, scope), files = new TrunkFiles(this.store, scope, records);
+    const threads = new TrunkThreads(this.store.sqlite, scope);
+    let trunk = pickDefault(this.store, scope, records.list()) ?? defaultAmong(this.store, scope, records.list());
+    if (!trunk) {
+      const name = assistantIdentity(this.store, scope).name.slice(0, 40);
+      const session = this.store.createSession(scope);
+      trunk = records.put(records.build(defaultFields(name), session));
+      saveDefault(this.store, scope, trunk.id);
+    }
+    files.seedDefault(trunk.id);
+    trunk = records.get(trunk.id);
+    const moved = adoptOrphans({ store: this.store, owner: scope, threads, to: trunk.id,
+      canonical: new Set(records.list().flatMap((record) => [record.chatSessionId, ...record.retiredChats])), here: new Set(records.list().map((record) => record.id)) });
+    if (moved.toDefault || moved.toTheirTrunk) this.store.audit.record(scope, { action: "trunk.default", actor: scope,
+      subject: "Personal conversations", reason: "Conversations assigned to the person's own default Trunk; messages preserved", outcome: "saved" });
+    return { trunk, records, files, threads, scope };
+    });
+  }
   /** Customize › Trunks › Default: the owner picks which Trunk everything that names nobody goes to. */
   setDefault(id: string): Trunk {
     requireTrunkPart(this.store, this.owner, "trunks");
@@ -233,11 +264,12 @@ export class Trunks {
   ensureDefault(now = false): Trunk | null {
     if (this.mode("trunks") === "off") return null;
     const found = this.defaultTrunk();
-    if (found) return found;
+    if (found) { this.files.seedDefault(found.id); return found; }
     if (!now && !setupOver(this.store, this.owner)) return null;
     const picked = defaultAmong(this.store, this.owner, this.records.list())
-      ?? this.adopt(TrunkSchema.parse({ name: assistantIdentity(this.store, this.owner).name.slice(0, 40) }), {}, false);
+      ?? this.adopt(defaultFields(assistantIdentity(this.store, this.owner).name.slice(0, 40)), {}, false);
     saveDefault(this.store, this.owner, picked.id);
+    this.files.seedDefault(picked.id);
     this.settle();
     return picked;
   }
@@ -251,34 +283,51 @@ export class Trunks {
     const to = this.defaultTrunk();
     if (!to) return null;
     const trunks = this.records.list(), here = new Set(trunks.map((trunk) => trunk.id));
-    const mirrored = this.conversations.mirrorChoices(here);
     const canonical = new Set([...trunks.flatMap((trunk) => [trunk.chatSessionId, ...trunk.retiredChats]),
       ...this.rooms.list().map((room) => room.sessionId), ...this.rooms.memberConversations().keys()]);
-    const moved = adoptOrphans({ store: this.store, owner: this.owner, threads: this.threads, to: to.id, canonical, here });
+    const result = this.store.atomically(() => {
+      const mirrored = this.conversations.mirrorChoices(here);
+      const moved = adoptOrphans({ store: this.store, owner: this.owner, threads: this.threads, to: to.id, canonical, here });
+      if (mirrored || moved.toDefault || moved.toTheirTrunk)
+        this.store.audit.record(this.owner, { action: "trunk.default", actor: this.owner, subject: "Conversations with no Trunk",
+          reason: `Put with a Trunk, nothing else changed: ${moved.toDefault} with ${to.name}, ${moved.toTheirTrunk} with the Trunk that answered in them, ${mirrored} with the Trunk chosen for them`, outcome: "saved" });
+      return { mirrored, ...moved };
+    });
     this.refresh();
-    if (mirrored || moved.toDefault || moved.toTheirTrunk)
-      audit(this.store, this.owner, { action: "trunk.default", actor: this.owner, subject: "Conversations with no Trunk",
-        reason: `Put with a Trunk, nothing else changed: ${moved.toDefault} with ${to.name}, ${moved.toTheirTrunk} with the Trunk that answered in them, ${mirrored} with the Trunk chosen for them`,
-        outcome: "saved" });
     this.afterSettle?.();
-    return { mirrored, ...moved };
+    return result;
   }
   /** Set by src/index.ts: the chat apps' threads are brought up to date after conversations were put with Trunks. */
   afterSettle: (() => void) | null = null;
   /** The runtime's hook: a conversation a Trunk's turn runs in, not yet anybody's and not temporary, is its thread. */
   claimThread(sessionId: string, trunkId: string): void {
+    const person = this.personDefault();
+    if (person && person.records.find(trunkId)) {
+      if (!this.store.sessionTemporary(sessionId)) person.threads.claim(sessionId, trunkId, "claimed");
+      return;
+    }
     if (this.owned.has(sessionId) || this.store.sessionTemporary(sessionId) || !this.records.find(trunkId)) return;
     if (!this.store.ownsSession(this.owner, sessionId)) return; // a household person's conversation is never the owner's Trunk's
     if (this.threads.claim(sessionId, trunkId, "claimed")) this.owned.set(sessionId, { trunkId, canonical: false, chosen: true });
   }
   /** The Trunk a new conversation that names nobody goes to, made if needed (null: Trunks are off, or setup is not over). */
   homeForNew(): string | null {
-    return this.ensureDefault()?.id ?? null;
+    if (this.mode("trunks") === "off") return null;
+    return this.personDefault()?.trunk.id ?? this.ensureDefault()?.id ?? null;
   }
   // ── end defaulttrunk ──
 
   /** The runtime's hook: a task in a Trunk's conversation, or a routine it owns, runs as that Trunk. */
   shapeOf(options: RunOptions): TrunkRunShape | null {
+    const person = currentPerson() || (options.source ?? "owner") === "owner" ? this.personDefault() : null;
+    const personalId = options.trunkId ?? (options.sessionId ? person?.threads.get(options.sessionId)?.trunkId
+      ?? person?.records.list().find((trunk) => trunk.chatSessionId === options.sessionId || trunk.retiredChats.includes(options.sessionId!))?.id : undefined);
+    const personalTrunk = personalId ? person?.records.find(personalId) : undefined;
+    if (personalTrunk && person) {
+      const shape = shapeFor(personalTrunk, person.records.list(), { available: this.deps.registry.permissions(),
+        caller: options.permissions, messaging: false, sessionModel: false, agent: trunkAgent(personalTrunk.id), owners: true });
+      return { ...shape, instructions: shape.instructions + `\n\n${person.files.instructions(personalTrunk.id)}` };
+    }
     // Integrator (R17-A): no switch check here. A Trunk's shape only ever narrows, so a message queued
     // for it before Trunks were switched off never runs with the owner's whole set afterwards.
     const owned = options.sessionId ? this.owned.get(options.sessionId) : undefined;
@@ -289,9 +338,11 @@ export class Trunks {
     const { runtime, registry } = this.deps;
     const sessionModel = options.sessionId ? !!runtime.models.session(this.owner, options.sessionId).preset : false;
     const roster = this.records.list();
-    const shape = shapeFor(trunk, roster, { available: registry.permissions(), caller: options.permissions,
+    const baseShape = shapeFor(trunk, roster, { available: registry.permissions(), caller: options.permissions,
       messaging: owned?.canonical === true && this.mode("messages") !== "off", sessionModel, agent: trunkAgent(trunk.id),
-      roomTurn: owned?.room === true, owners: pickDefault(this.store, this.owner, roster)?.id === trunk.id }); // defaulttrunk
+      roomTurn: owned?.room === true, owners: !person && owned?.room !== true && pickDefault(this.store, this.owner, roster)?.id === trunk.id });
+    const notes = this.files.instructions(trunk.id);
+    const shape = { ...baseShape, instructions: baseShape.instructions + (notes ? `\n\n${notes}` : "") };
     // P17-D §9: a Trunk the owner has not let use this computer never gets its screen, mouse or clipboard.
     if (this.computerRule.allows(trunk.id, thisComputer)) return shape;
     return { ...shape, permissions: shape.permissions.filter((permission) => !permission.startsWith("desktop.")) };

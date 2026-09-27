@@ -106,11 +106,9 @@ for (const [rel, text] of sources) {
 // named here draw it, and an empty state's markup never carries it, even there.
 const ART_PLACES = new Set([...LOGO, "public/app/core/art17.js",
   // The lead's ruling (2026-09-27), exactly these and no others. A helper's face is never the mascot (chat/helpframe.js).
-  "public/app/chat/chat.js", // the new conversation's welcome: Branch itself is the speaker there, beside the wordmark
   "public/app/flows/tour.js", // the walkthrough
   "public/app/shell/inperson.js", // the first-load splash
-  "public/app/core/pets.js", // Little Branch, the owner's own pet toggle in Appearance
-  "public/app/shell/cheer.js"]); // Branch's cheer, only in Branch's own conversation
+  "public/app/core/pets.js"]);
 const ART = /\/art\/(branch|anim)-|look17\(\s*["']branch["']\s*\)/;
 const EMPTY_STATE = /\bempty(18c|11)\b|\bsq-none\b|class="empty[\s"]/; // the new conversation's "empty-chat" is its welcome
 for (const [rel, text] of sources) {

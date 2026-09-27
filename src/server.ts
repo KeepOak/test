@@ -1295,7 +1295,10 @@ async function api(
     const away = app.store.putAwayConversations(scope, { limit: 1 });
     // defaulttrunk: which Trunk each is a thread with (its own chat, a room side, a thread), so the list shows it under that
     // Trunk with its face. The owner's Trunks only: a household person's list names none.
-    const trunkOf = (sessionId: string) => (app.store.profiles.isOwner() ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null : null);
+    const personal = app.store.profiles.isOwner() ? null : app.trunks.personDefault();
+    const trunkOf = (sessionId: string) => app.store.profiles.isOwner()
+      ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null
+      : personal?.threads.get(sessionId)?.trunkId ?? null;
     return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
       archived: away.totals.archived, deleted: away.totals.deleted };
   }
@@ -1934,7 +1937,7 @@ async function api(
     // Wave 6: a task started while somebody's profile is switched on is filed under their name.
     let userMessageId: number | undefined;
     // defaulttrunk: a new conversation that names nobody is a thread with the default Trunk (a temporary one stays nobody's).
-    const home = !input.sessionId && !input.temporary && app.store.profiles.isOwner() ? app.trunks.homeForNew() : null;
+    const home = !input.sessionId && !input.temporary ? app.trunks.homeForNew() : null;
     const run = await runForCurrentPerson(app, {
       prompt: input.prompt,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),

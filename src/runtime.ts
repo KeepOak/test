@@ -1336,7 +1336,8 @@ ${run.output.slice(0, 6000)}`;
     // mac7/lockdown-fix: trunkKeys. Work a Trunk set going (a workflow's prompt step, a flow box) is its work too.
     const inherited = given.trunkKeys ?? currentAccountCall()?.trunk?.keys;
     // defaulttrunk: the default Trunk's turn is the owner's own (src/trunks/shape.ts `owners`): their memory, keys and reach.
-    const context = trunk && !trunk.owners ? { ...given, agent: trunk.agent, trunk: trunk.trunkId, trunkKeys: trunk.keys }
+    const context = trunk ? trunk.owners ? { ...given, trunkKeys: trunk.keys }
+      : { ...given, agent: trunk.agent, trunk: trunk.trunkId, trunkKeys: trunk.keys }
       : inherited ? { ...given, trunkKeys: inherited } : given;
     if (trunk) this.store.event(run.id, "trunk.turn", { trunkId: trunk.trunkId });
     if (!this.store.sessionTemporary(run.sessionId)) return context;

@@ -8,7 +8,7 @@
 
 import { $, esc, renderNow } from "../core/dom.js";
 import { ic, openPop, closePop, mi, toast } from "../core/ui.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -46,8 +46,9 @@ function whoRows() {
   if (S.chat && w?.kind === "room") return roomWho(w);
   if (!S.chat || !w || (w.kind !== "plain" && w.kind !== "trunk")) return "";
   const now = w.trunk?.id ?? "", off = (E.trunkModes?.conversations ?? "off") === "off";
-  return `<hr><div class="ph">${t("window.chat.plus.who")}</div>` + radio("", "Branch", t("window.chat.plus.assistant"), now === "")
-    + (w.trunks ?? []).filter((tr) => !off || now === tr.id).map((tr) => radio(tr.id, tr.name, "", now === tr.id, off)).join("");
+  const home = defaultTrunk();
+  return `<hr><div class="ph">${t("window.chat.plus.who")}</div>` + (home ? radio("", home.name, t("look.badge.default"), now === home.id || now === "") : "")
+    + (w.trunks ?? []).filter((tr) => tr.id !== home?.id && (!off || now === tr.id)).map((tr) => radio(tr.id, tr.name, "", now === tr.id, off)).join("");
 }
 
 /** Whether the next new conversation starts as a temporary one (the box shows its Temporary flag). */
@@ -78,7 +79,7 @@ async function chooseWho(el) {
   Q.whoFor = sid;
   await refresh().catch((error) => toast(error.message));
   renderNow();
-  toast(t("window.chat.plus.answers", { name: Q.who.trunk?.name ?? "Branch" }));
+  toast(t("window.chat.plus.answers", { name: Q.who.trunk?.name ?? defaultTrunk()?.name ?? "" }));
 }
 
 /* The files waiting to go with the next message (chat/attach.js: sent ahead as soon as they are added, each a chip with
