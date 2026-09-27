@@ -122,7 +122,8 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     assert.deepEqual(await page.evaluate(() => Object.keys(window.branchDesktop).sort()),
       ["checkForUpdates", "clipboardFiles", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "onUpdateStatus", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "showInFolder", "talkLiveMic", "updateStatus", "windowLook"]);
     // attach-anything: the page cannot read the clipboard's files by asking; only a paste the person made opens that.
-    assert.match(await page.evaluate(() => window.branchDesktop.clipboardFiles().then(() => "read", (error) => error.message)), /denied/);
+    // attach-followups: asked without one, it is told there are none (no error for the page to show).
+    assert.deepEqual(await page.evaluate(() => window.branchDesktop.clipboardFiles()), { sent: [], error: null });
     // dogfood-ux-3: Show in folder reveals only a file the engine lists as one the assistant kept, never a path the page makes up.
     assert.match(await page.evaluate(() => window.branchDesktop.showInFolder("C:/Windows/System32/drivers/etc/hosts").then(() => "shown", (error) => error.message)), /not made by the assistant/);
     await verifyOtherWindowDenied(electron, page.url());

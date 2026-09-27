@@ -67,6 +67,9 @@ function redraw() {
   if (!box) return;
   box.innerHTML = attachedChips();
   applyCss(box);
+  /* Send turns copper once there is something to send: words, or files (a message may be only files). */
+  const sendButton = $("#send");
+  if (sendButton?.type === "submit") sendButton.classList.toggle("ready", !!$("#prompt")?.value.trim() || hasFiles());
 }
 
 /** Adds files (a FileList or an array of { file, name }) and starts sending each one at once. */
@@ -78,13 +81,22 @@ export function addFiles(list) {
   redraw();
 }
 function start(file, name) {
-  const f = { key: String(A.next++), name: name || file.name || "file", size: file.size, kind: kindOf(file), state: "sending", pct: 0, preview: {}, upload: null, error: "" };
+  const f = { key: String(A.next++), name: name || file.name || "file", size: file.size, kind: kindOf(file), state: "sending", pct: 0, preview: {}, upload: null, error: "", file };
   A.files.push(f);
   describe(f, file).then(redraw, () => {});
   if (file.size > MAX_FILE_BYTES) return fail(f, t("window.chat.plus.too-big", { name: f.name, size: sizeOf(MAX_FILE_BYTES) }));
-  const sending = uploadFile(file, f.name, (sent, total) => { const pct = Math.floor((sent / total) * 100); if (pct !== f.pct) { f.pct = pct; paintProgress(f); } });
+  send(f);
+}
+/* Sends one chip's file ahead (again, after the engine was away: what it had waiting went with it). */
+function send(f) {
+  Object.assign(f, { state: "sending", pct: 0, upload: null, error: "", offline: false });
+  const sending = uploadFile(f.file, f.name, (sent, total) => { const pct = Math.floor((sent / total) * 100); if (pct !== f.pct) { f.pct = pct; paintProgress(f); } });
   f.abort = sending.abort;
-  f.done = sending.promise.then((view) => { f.upload = view.upload; f.name = view.name || f.name; f.state = "ready"; redraw(); }, (error) => { if (!error.aborted) fail(f, error.message); });
+  f.done = sending.promise.then((view) => { f.upload = view.upload; f.name = view.name || f.name; f.state = "ready"; redraw(); }, (error) => {
+    if (error.aborted) return;
+    f.offline = !!error.offline;
+    fail(f, error.message);
+  });
 }
 function fail(f, why) { f.state = "failed"; f.error = why; redraw(); }
 /* Only the one chip's bar and words move while a file is sent; the rest of the row is left alone. */
@@ -146,19 +158,37 @@ export function removeFile(key) {
   redraw();
 }
 
+/* A chip whose file could not reach the engine (it was away) keeps its file, and is sent ahead again with the message. */
+const retryable = (f) => f.state === "failed" && f.offline && !!f.file;
 /** Whether anything is waiting to go (so a message can be only files). */
-export const hasFiles = () => A.files.some((f) => f.state !== "failed");
+export const hasFiles = () => A.files.some((f) => f.state !== "failed" || retryable(f));
 
-/** The upload ids for the next message, once every file has finished sending; the chips go with it. */
-export async function takeUploads() {
-  const waiting = A.files.filter((f) => f.state === "sending").map((f) => f.done);
-  await Promise.all(waiting);
-  const ids = A.files.filter((f) => f.state === "ready" && f.upload).map((f) => f.upload);
+/** The upload ids for the next message, once every file has finished sending. The chips stay until it is sent. */
+export async function readyUploads() {
+  for (const f of A.files) if (retryable(f)) send(f);
+  await Promise.all(A.files.filter((f) => f.state === "sending").map((f) => f.done));
+  return A.files.filter((f) => f.state === "ready" && f.upload).map((f) => f.upload);
+}
+/** The message went (POST /api/run answered): its chips go with it, and a file that could not be sent is named. */
+export function filesSent() {
   const failed = A.files.filter((f) => f.state === "failed");
   for (const f of A.files) if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
   A.files = [];
   if (failed.length) toast(failed.map((f) => f.error).join(" "));
-  return ids;
+  redraw();
+}
+/**
+ * The engine was away when the message was sent: the files it had waiting may have gone with it (they are kept in its
+ * memory, src/attachments.ts), so each chip holding its file is sent ahead again, the earlier copy taken off.
+ */
+export async function resendFiles() {
+  for (const f of A.files) {
+    if (!f.file || !(f.state === "ready" || f.offline)) continue;
+    if (f.upload) api(`attachments/upload?id=${encodeURIComponent(f.upload)}`, undefined, "DELETE").catch(() => {});
+    send(f);
+  }
+  redraw();
+  await readyUploads();
 }
 
 /* ---------- paste and drop ---------- */
@@ -179,12 +209,14 @@ function onPaste(e) {
   }
   /* Files copied in Explorer or Finder are not handed to a page; the desktop app reads the list itself and sends them. */
   if (!text && window.branchDesktop?.clipboardFiles) {
-    window.branchDesktop.clipboardFiles().then((sent) => {
-      for (const view of sent ?? []) {
+    /* The app answers the files it sent ahead, and the engine's own words when one was refused. */
+    window.branchDesktop.clipboardFiles().then((answer) => {
+      for (const view of answer?.sent ?? []) {
         if (A.files.length >= MAX_FILES) break;
         A.files.push({ key: String(A.next++), name: view.name, size: view.bytes, kind: { picture: "image", sound: "audio", document: "text" }[view.kind] ?? view.kind, state: "ready", pct: 100, preview: {}, upload: view.upload, error: "" });
       }
       redraw();
+      if (answer?.error) toast(answer.error);
     }, (error) => toast(error.message));
   }
 }
