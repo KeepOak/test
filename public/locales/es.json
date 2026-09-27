@@ -3404,7 +3404,7 @@
   "phoneApp.page.download": "Descargar Branch ({size})",
   "phoneApp.page.iphone": "Este código instala la app de Android, así que no se ha descargado nada en tu iPhone. Por ahora, la app de iPhone solo se puede instalar desde un Mac con Xcode, firmada con tu propio Apple ID. Pronto se podrá instalar escaneando un código.",
   "phoneApp.page.iphoneTitle": "Branch para iPhone está en camino",
-  "phoneApp.page.pair": "En la app de Branch, pulsa Escanear el código cuadrado. En tu equipo, abre Personalizar, luego Canales, y activa Llegar a Branch desde mi teléfono para mostrar ese código.",
+  "phoneApp.page.pair": "En la app de Branch, pulsa Vincular con un equipo. En tu equipo, pulsa Vincular un teléfono: muestra el código cuadrado y sus seis números.",
   "phoneApp.page.pairTitle": "Después, conéctala a tu Branch",
   "phoneApp.page.refused": "Este enlace ha caducado o no es correcto. En tu equipo, abre Consigue Branch en tu teléfono y escanea el código nuevo.",
   "phoneApp.page.step1": "Pulsa Descargar.",

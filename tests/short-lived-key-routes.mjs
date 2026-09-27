@@ -352,6 +352,7 @@ export const ROUTES = {
   "/api/devices/": "prefix",
   "/api/devices/pair": "pre-auth POST",
   "/api/devices/pair/status": "pre-auth POST",
+  "/api/devices/pair/session": "pre-auth POST",
   "/api/devices/socket": "pre-auth GET",
   "/api/devices/mode": "owner POST",
   "/api/devices/invite": "owner POST",

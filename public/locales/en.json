@@ -3404,7 +3404,7 @@
   "phoneApp.page.download": "Download Branch ({size})",
   "phoneApp.page.iphone": "This code installs the Android app, so nothing was downloaded to your iPhone. Today the iPhone app can only be installed from a Mac with Xcode, signed with your own Apple ID. Installing it by scanning a code is coming.",
   "phoneApp.page.iphoneTitle": "Branch for iPhone is coming",
-  "phoneApp.page.pair": "In the Branch app, press Scan the square code. On your computer, open Customize, then Channels, and switch on Reach Branch from my phone to show that code.",
+  "phoneApp.page.pair": "In the Branch app, press Pair with a computer. On your computer, press Pair a phone: it shows the square code and its six numbers.",
   "phoneApp.page.pairTitle": "Then connect it to your Branch",
   "phoneApp.page.refused": "This link has expired or is not right. On your computer, open Get Branch on your phone and scan the new code.",
   "phoneApp.page.step1": "Press Download.",
