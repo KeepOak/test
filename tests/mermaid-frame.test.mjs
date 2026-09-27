@@ -36,6 +36,7 @@ async function engine(t) {
     if (/attack/.test(asked)) return { content: `Here they are.\n\n${ATTACKS.map(fence).join("\n\n")}`, toolCalls: [] };
     if (/too long/.test(asked)) return { content: `Here.\n\n${fence("flowchart TD\n" + "  A --> B\n".repeat(6000))}`, toolCalls: [] };
     if (/wide/.test(asked)) return { content: `Here.\n\n${fence("flowchart LR\n  " + Array.from({ length: 24 }, (_, i) => `N${i}[Step number ${i}]`).join(" --> "))}`, toolCalls: [] };
+    if (/tall/.test(asked)) return { content: `Here.\n\n${fence("flowchart TD\n  " + Array.from({ length: 110 }, (_, i) => `N${i}[Step number ${i}]`).join(" --> "))}`, toolCalls: [] };
     return { content: `Here is who pays.\n\n${fence(BENIGN)}`, toolCalls: [] };
   } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
@@ -169,5 +170,18 @@ test("the window turning dark or light draws each diagram again in its colours; 
   await frame.waitForFunction(() => document.scrollingElement.scrollWidth > innerWidth, null, { timeout: 10000 }).catch(() => null);
   const widths = await frame.evaluate(() => ({ scroll: document.scrollingElement.scrollWidth, view: innerWidth }));
   assert.ok(widths.scroll > widths.view, `a wide drawing keeps its size and scrolls sideways: ${JSON.stringify(widths)}`);
+  const tall = await app.runtime.run({ prompt: "tall" });
+  await openConversation(page, tall.sessionId);
+  await page.waitForFunction(() => [...document.querySelectorAll("iframe.dmm-frame")].some((f) => parseInt(f.style.height, 10) === 8000), null, { timeout: 20000 });
+  const tallFrame = frames(page).at(-1);
+  const height = await tallFrame.evaluate(() => ({ scroll: document.scrollingElement.scrollHeight, view: innerHeight }));
+  assert.ok(height.scroll > height.view, "a capped tall diagram has a vertical scrollbar");
+  const bottom = await tallFrame.evaluate(() => {
+    const end = [...document.querySelectorAll(".node")].find((node) => node.textContent.includes("Step number 109"));
+    end.scrollIntoView({ block: "end" });
+    const box = end.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom, view: innerHeight };
+  });
+  assert.ok(bottom.top >= 0 && bottom.bottom <= bottom.view + 1, `the last step is reachable: ${JSON.stringify(bottom)}`);
   assert.deepEqual(errors, []);
 });
