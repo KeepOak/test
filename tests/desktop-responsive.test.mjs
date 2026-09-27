@@ -18,7 +18,10 @@ const signedState = (page) => page.evaluate(async () => {
   return { status: response.status, ms: performance.now() - began };
 });
 
-test("the window stays responsive while the engine is busy, and the engine comes back after it stops", { timeout: 360000 }, async (t) => {
+test("the window stays responsive while the engine is busy, and the engine comes back after it stops", {
+  timeout: 360000,
+  skip: process.env.BRANCH_PACKAGED_EXECUTABLE ? "the engine's test hook exists only in a copy run from its source" : false,
+}, async (t) => {
   const { options } = await desktopOptions();
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   // Started quietly in the tray: the window loads and works but is never shown, so nothing flashes on the screen.
