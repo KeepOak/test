@@ -127,6 +127,10 @@ test("the release signs the Windows setup file only through SignPath, and says p
     assert.equal(entry.with.name.startsWith("download-"), !/^unsigned-/.test(entry.with.name), entry.with.name);
   assert.equal(build.env.HAS_WINDOWS_SIGNING, "${{ github.event_name == 'push' && needs.release-gate.outputs.rehearsal != 'true' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}");
   const sign = step("build", "Sign the setup file");
+  // Every request waits for a person to approve it; SignPath's own default of ten minutes is too short for that.
+  for (const name of ["Sign the program file", "Sign the setup file"])
+    assert.equal(step("build", name).with["wait-for-completion-timeout-in-seconds"], 1800, name);
+  assert.ok(2 * 1800 / 60 + 15 <= build["timeout-minutes"], "both approvals fit in the build job's time limit");
   assert.match(sign.uses, /^signpath\/github-action-submit-signing-request@[0-9a-f]{40}$/, "pinned to a commit");
   assert.equal(sign.if, "runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'");
   assert.equal(sign.with["api-token"], "${{ secrets.SIGNPATH_API_TOKEN }}");

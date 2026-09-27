@@ -322,6 +322,8 @@ jobs:
           signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
           github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
           wait-for-completion: true
+          # Each request waits for the owner's approval in SignPath: half an hour each, inside the job's limit.
+          wait-for-completion-timeout-in-seconds: 1800
           output-artifact-directory: release/signed-app
       - name: Put the signed program file in place and make the download again
         if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
@@ -362,6 +364,8 @@ jobs:
           signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
           github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
           wait-for-completion: true
+          # Each request waits for the owner's approval in SignPath: half an hour each, inside the job's limit.
+          wait-for-completion-timeout-in-seconds: 1800
           output-artifact-directory: release/signed
       # The signed file replaces the unsigned one only when Windows itself says its signature is valid.
       - name: Put the signed setup file in place
