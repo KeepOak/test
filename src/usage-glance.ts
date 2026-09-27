@@ -109,8 +109,19 @@ export type UsageGlance =
     running: number; rows: LimitRow[]; summary: string; empty: boolean; month?: GlanceMonth };
 
 /** What the ring and its popover show, built from rows already read. */
-export function glanceFrom(view: LimitsView, settings: UsageGlanceSettings, running: number, now: number, month?: GlanceMonth): UsageGlance {
-  return { available: true, settings, tightest: tightestOf(view.rows), crossings: crossingsOf(view.rows, now),
+/**
+ * Dogfood C3 (CodexBar-style): the ring is about what the next message spends, so with the connection in use known it
+ * reads only that connection's account in use, and says nothing rather than borrow another account's number. The
+ * popover still lists every account.
+ */
+export function nextRows(rows: LimitRow[], active: string | null | undefined): LimitRow[] {
+  if (!active) return rows;
+  const mine = rows.filter((row) => row.connection === active);
+  if (!mine.length) return rows;
+  return mine.filter((row) => row.account === null || row.inUse);
+}
+export function glanceFrom(view: LimitsView, settings: UsageGlanceSettings, running: number, now: number, month?: GlanceMonth, active?: string | null): UsageGlance {
+  return { available: true, settings, tightest: tightestOf(nextRows(view.rows, active)), crossings: crossingsOf(view.rows, now),
     running, rows: view.rows, summary: view.summary, empty: view.empty, ...(month ? { month } : {}) };
 }
 

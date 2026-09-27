@@ -19,10 +19,15 @@ const PMODES = [["auto", "look.season.auto", "window.chat.mode.auto-hint", "spar
 const M = { sid: undefined, model: null, mode: null, at: 0, pending: null };
 
 const presets = () => E.state?.models?.presets ?? [];
+/* The model's own name where the engine has one (GET /api/state models.presets[].modelName, "GPT-6 Sol"), else its id; and
+   the level a reply really runs at: the conversation's own, else what its connection starts at (presets[].startsAt: the
+   connection's own, then the workspace's Thinking, then the model's). */
 function current() {
   const eff = M.model?.effective ?? E.state?.activeModel ?? {};
-  const reasoning = M.model ? M.model.reasoning ?? E.state?.models?.reasoning : E.state?.models?.reasoning;
-  return { id: M.model?.preset ?? eff.presetId, name: eff.model || eff.presetName || "", provider: eff.provider ?? "", reasoning };
+  const id = M.model?.preset ?? eff.presetId;
+  const preset = presets().find((p) => p.id === id);
+  const reasoning = M.model?.reasoning ?? preset?.startsAt ?? E.state?.models?.reasoning;
+  return { id, name: preset?.modelName || eff.model || eff.presetName || "", provider: eff.provider ?? "", reasoning };
 }
 /* What the engine will really do here: Lockdown; for a new conversation, the mode picked for it or what new ones start
    on; for a conversation started from outside, Ask first whatever was picked; else its own pick, or the owner's policy. */

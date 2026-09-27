@@ -93,7 +93,7 @@ test("1 the question shows the call as it will run: the mapped name, not the one
   const [question] = eventsOf(app, run, "policy.ask");
   assert.equal(question.data.target, "finance/q1.txt");
   assert.equal(JSON.parse(question.data.bytes).path, "finance/q1.txt");
-  assert.equal(question.data.fingerprint, argumentFingerprint(JSON.stringify(sent)));
+  assert.equal(question.data.fingerprint, argumentFingerprint("files.edit", JSON.stringify(sent)));
 });
 
 test("1 trying a tool by hand and another AI tool's dry run judge the call as the tool will run it", async (t) => {

@@ -26,23 +26,23 @@ async function fixture(t, presets) {
 
 test("the first answer from a real model ends setup, without the owner pressing Done", async (t) => {
   const { app, onboarding } = await fixture(t, [{ id: "good", name: "Good model", provider: answering, model: "g-1" }]);
-  assert.deepEqual(await onboarding(), { done: false }, "control: a new Branch shows the card");
+  assert.equal((await onboarding()).done, false, "control: a new Branch shows the card");
   await app.runtime.run({ prompt: "hello" });
-  assert.deepEqual(await onboarding(), { done: true });
+  assert.equal((await onboarding()).done, true);
 });
 
 test("an empty reply is no answer: it does not end setup (NAS ca8db88)", async (t) => {
   const empty = { name: "empty", async complete() { return { content: "", toolCalls: [], usage: { input: 5, output: 0 } }; } };
   const { app, onboarding } = await fixture(t, [{ id: "empty", name: "Empty model", provider: empty, model: "e-1" }]);
   await app.runtime.run({ prompt: "hello" }).catch(() => undefined);
-  assert.deepEqual(await onboarding(), { done: false });
+  assert.equal((await onboarding()).done, false);
 });
 
 test("the offline demonstration answering does not end setup", async (t) => {
   const { app, onboarding } = await fixture(t);
   assert.equal(app.runtime.provider.name, "offline-demo-fixture", "control: this Branch has only the demonstration");
   await app.runtime.run({ prompt: "hello" });
-  assert.deepEqual(await onboarding(), { done: false });
+  assert.equal((await onboarding()).done, false);
 });
 
 /* Redesign: in the new window the first-run card is "Set up Branch" (flows/setup.js, the .ob9 dialog), opened by itself
@@ -80,7 +80,7 @@ test("in the window, the card goes once a model has answered and a new conversat
   await page.locator("#prompt").fill("hello");
   await page.locator("#send").click();
   await page.locator("#conversation").getByText("Hello there.").first().waitFor({ timeout: 20000 });
-  assert.deepEqual(await onboarding(), { done: true }, "the first answer ended setup");
+  assert.equal((await onboarding()).done, true, "the first answer ended setup");
   await page.keyboard.press("ControlOrMeta+N");
   await page.waitForFunction(() => !document.querySelector("#conversation .b"), null, { timeout: 10000 });
   assert.equal(await shownAfterAMoment(page), false, "a new conversation does not bring it back");

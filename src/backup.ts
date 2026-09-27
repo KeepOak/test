@@ -4,6 +4,10 @@ import { z } from "zod";
 import { ensureFlyTables, flyTables } from "./fly-core/state.js";
 import { dropIndex } from "./fly-core/fast-index.js";
 import { ensureContractTable } from "./self-development-contract.js";
+import { reachKey, reachParts } from "./reach/settings.js";
+import { safetyKey, safetyParts } from "./safety-extras/settings.js";
+import { neverTouched, settingsCatalogue } from "./settings-kit/catalogue.js";
+import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
 
 /**
@@ -68,7 +72,12 @@ export type BackupArchive = z.infer<typeof BackupArchiveSchema>;
 export function parseBackupArchive(input: unknown): BackupArchive {
   const serialized = JSON.stringify(input);
   if (!serialized || Buffer.byteLength(serialized) > maximumBackupBytes) throw new Error("Backup exceeds 64 MiB");
-  return BackupArchiveSchema.parse(input);
+  const archive = BackupArchiveSchema.parse(input);
+  // NAS f5ce37d: a task with no id cannot be settled, and at the next start the store's recovery would take it for the
+  // task whose id is the text "null" (or fail to start at all). Such a file is refused whole, before anything is written.
+  if (archive.tables.tasks.some((task) => task.id === null || task.id === undefined || task.id === ""))
+    throw new Error("This backup has a task with no id, so it cannot be restored as it is.");
+  return archive;
 }
 
 /**
@@ -98,7 +107,58 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
 export const thisComputerSettings: readonly string[] = [
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
+  // NAS 49b183b's unchecked class: this computer's OS sandbox, whether its emergency stop is pressed (letting it go
+  // needs the authenticator code, which a replacing restore would skip), and which tools need that code.
+  "os-sandbox", "safety-emergency-stop", "safety-code-approvals-setup",
+  // Q193 (NAS a870cea): which release failed to install on this computer, so update by itself skips it here only.
+  "comfort-update-failed",
+  // NAS 2db8099's unclassified ids: where this computer's door listens (a file may never open it to the network),
+  // this computer's name among the others, and its place at a chat relay: its id there, and the envelopes it has
+  // already taken, whose older list would let one be taken twice.
+  "listen-address", "reach-machine-name", "reach-relay-settings", "reach-relay-seen",
+  // NAS 23e7382: Lockdown, like the stop. Its `before` holds this computer's own values, which "Lockdown off" writes
+  // back as they are, so a file's copy would put held rows in place with nobody asked, or release a pressed Lockdown.
+  "lockdown",
+  // NAS dfb2136: the rows that name a program on this disk and its arguments, which Branch runs as they are: the
+  // speech engines, the voice's local speech program, and where ffmpeg and yt-dlp live.
+  "speech-engines", "voice", "media-programs",
+  // NAS f30facf: the same class, run with no approval by a read (language servers, debug adapters), after a patch (the
+  // project check), or by name (background programs), and the container image code runs in.
+  "language-servers", "debug-adapters", "code-check", "background-processes", "sandbox-backends",
+  // NAS dd7589d: running code names its Python program in full, the same class. And the records Branch writes about
+  // its own state here, which the catalogue never touches either: the switch migration and which chat service is
+  // being turned away (a file must never say a service is fine while it is refused).
+  "code-run", "feature-switches-migration", "webhook-waits",
+  // NAS 360099c: a program on this disk and its arguments, which the decision judge starts as they are, and the folder
+  // the vector store makes its database in. Both only mean something on this computer.
+  "jev-decisions", "vector-store",
+  // NAS f7e95b5: the folder each task's trace is written to, the same class.
+  "trace",
+  // Q230: this computer's own folders, devices, jobs, scheduler records, tallies for caps and setup records.
+  "adapt-stops", "channel-setup-done", "coding-worktree-forks", "dashboard-paused", "devices-join", "devices-picks",
+  "git-checkpoints", "heartbeat-state", "learning-more-readback-last", "obsidian", "onboarding",
+  "practice-previous-project", "practice-session", "reach-remote-trunks-inbox", "reach-video-count", "run_queue",
+  "studies", "trunk-receipts",
+  // Q230, keys worked out in code: the shell a coding task snapshots, and this computer's memory-history status.
+  "coding-shell-snapshot", "memory-history-status",
 ];
+/** NAS 23e7382: one row per add-on file on this disk, its fingerprint (src/safety-extras/wasm-add-ons.ts). */
+const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
+  // NAS f30facf: whether each hook configured on this computer is on, and how it last failed.
+  "hook:",
+  // NAS dd7589d: Branch's own records here: work put off, a move-in under way, and each flow run's limit and origin
+  // (a file must never loosen a limit a task set, or say who started a run).
+  "deferred:", "move-in:", "flow-run-limit:", "flow-run-source:",
+  // Q230 (NAS eba8bd8): a conversation's live waiting line, whose words run by themselves; this computer's MCP tool
+  // cache, plugins and their fingerprints; and a running task's shared notes.
+  "followups:", "mcp-tools:", "plugin-catalog:", "plugin:", "scratch:",
+  // Q230, keys worked out in code: this computer's place in each chat stream and its offsets, its holds against redoing
+  // a chat task, its webhook word, its MCP sign-in clients, which Trunk a flow run works as, the file-undo slots, a
+  // "Watch me" under way, kept answers (a planted one comes back as if real) and the yeses carried over a restart.
+  "channel-mark:", "channel-position:", "channel-replay:", "webhook-address:", "mcp-oauth:", "flow-run-trunk:",
+  "settings-kit-file-undo-", "trunk-watch:", "cache:", "session-carry:",
+  // NAS dc50a36: the memory a conversation's next turn reads, kept for that conversation here.
+  "memory-snapshot:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
@@ -106,7 +166,7 @@ export const restoreHeldKey = "restore-held";
  * restore. One test for all three, so what a backup leaves out and what a replace keeps can never drift apart.
  */
 export const staysOnThisComputer = (id: string): boolean =>
-  signInSettings.includes(id) || thisComputerSettings.includes(id) || signInPrefixes.some((start) => id.startsWith(start))
+  signInSettings.includes(id) || thisComputerSettings.includes(id) || [...signInPrefixes, ...thisComputerPrefixes].some((start) => id.startsWith(start))
   || id === restoreHeldKey;
 /**
  * The owner's own preferences that say where their words go or who gets in (Q168 B): the model accounts and
@@ -117,9 +177,135 @@ export const staysOnThisComputer = (id: string): boolean =>
  * until then. One that is the same as this computer's is not held at all (a restore point minutes old).
  */
 export const heldSettings: readonly string[] = ["accounts", "model-connections", "sender-allowlist", "people-shares", "people-groups", "policy",
-  "chat-permissions"];
-const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:"];
-export const heldForTheOwner = (id: string): boolean => heldSettings.includes(id) || heldPrefixes.some((start) => id.startsWith(start));
+  "chat-permissions",
+  // What works by itself, and how much of it: standing instructions every automatic turn reads, and its limits. The
+  // agent market's index addresses, and whether the password book fills sign-ins.
+  "autonomy-limits", "autonomy-kept-instructions", "interop-market-indexes", "vault-autofill",
+  // NAS 2db8099's unclassified ids. The checks that stand between a task and the owner's yes: the second look before
+  // an approval, the repeated-step guard, the security check and each safety part, so an older file cannot switch
+  // one off. What reaches further than this computer, or acts by itself: the screen and keyboard, each reach part's
+  // switch, the chats a relay may bring, the USB rules that start a task, and the git sources the assistant shares to.
+  "desktop-control", "approval_reviewer", "loop_guard", "security-check", ...safetyParts.map(safetyKey), ...reachParts.map(reachKey),
+  "reach-relay-chats", "reach-usb-rules", "reach-agent-git-sources",
+  // NAS 23e7382: which chat accounts count as the owner for `/platform`, read before the sender list is.
+  "reach-platform-settings",
+  // NAS f30facf: where the owner's words and records are sent: the trace export's endpoint and the memory service.
+  "trace_export", "memory-provider",
+  // NAS 2a15d6b: the month's spending limit and pause, and how a skill with findings is handled (block → review).
+  "usage_budget", "skill-scan",
+  // NAS 0f26219: the Schedules check-in (its switch, the words it runs and the chat its news goes to) and the daily
+  // brief (its template and the chat it is sent to) run by themselves, as a heartbeat does. `heartbeat-state` travels.
+  "quiet-jobs", "heartbeat", "brief",
+  // NAS 63d028c: automatic problem reports send by themselves to the place the file names (a repository, a chat), and
+  // the owner's own prices set when the month's dollar limit trips.
+  "automatic-problem-reports", "pricing",
+  // NAS f7e95b5: where the owner's browsing runs (a server's address, with the owner's own token sent to it), the
+  // video part's price, daily count and locker secret, and the words every turn reads as the assistant's identity.
+  "browser-container", "reach-video-settings", "assistant-identity",
+  // Q230: the notices card's record also holds automatic installing and the update channel, which install by themselves.
+  "comfort-notify",
+  // NAS dc50a36: whether the model's own memory changes wait for the owner (read and written with raw SQL).
+  "learning",
+  // Q230 (NAS a1291bd, eba8bd8): every other settings id src reads, classified one by one. Each of these could make
+  // something run by itself, send somewhere or name a connection or account, run or name a program, carry words a turn
+  // reads, or loosen a limit, price or safety switch. The one-line reasons are in tests/backup-classified.test.mjs.
+  "batch-inference", "channel-parity-switches", "channel-setup", "chat-live-switches", "command-catalog",
+  "context-files", "conversation-mode-settings", "dashboard", "documents", "embeds", "flowboards-install-list",
+  "flowboards-kanban-settings", "flowboards-widget-ideas", "gemini-signin", "governance", "interop-modes-list",
+  "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
+  "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
+  "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits",
+  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages"];
+/** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
+const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
+  // NAS f30facf: each outside service the assistant may call, by its address.
+  "openapi-service:",
+  // NAS 2a15d6b: every ask part, its switch and its settings (Hindsight's address and the secret it sends, analytics'
+  // `sendTo`, the answer engine, nodes and runtimes): each reaches past this computer or says where words go.
+  "asks-",
+  // Q230: a chat made known for sends, a plan the next message carries on, a project's every-turn instructions and
+  // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
+  "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
+  "skill-origin:", "skill-package:",
+  // Q230, keys worked out in code: each coding, interop, learning-more, Trunks and model-savings part (they run
+  // programs, reach other assistants or outside services, or choose where the words go), a conversation's mode, goal,
+  // checklist, pinned skill and autonomy, a procedure's recipe checks, and a specialist's handoff list.
+  "coding-", "interop-", "learning-more-", "trunks-", "model-savings-", "conversation-mode:", "goal:", "coding-checklist:",
+  "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:"];
+/**
+ * Q230 (NAS a1291bd): the settings ids and prefixes that travel in a backup and are put in place by a restore, each
+ * with why any value a file carries is harmless. tests/backup-classified.test.mjs fails for an id src reads that is in
+ * none of this list, the held lists or this computer's, so a new id never travels by accident.
+ */
+export const travelsWithBackup: Readonly<Record<string, string>> = {
+  "mcp-serving": "two timeouts for serving Branch's own tools; no address, program or switch",
+  "channel-usage:": "only adds a tokens-and-cost line to replies that already go to that chat",
+  "delight-achievements": "achievement progress only",
+  "prompt-library-items": "a saved prompt only becomes a message the owner sends",
+  "reflection-cursor:": "how far a look back has read; nothing runs from it",
+  "reflection-note:": "what accepting a queued note would do; it still needs the owner's yes",
+  "skill-install-log": "install history for display only",
+  "ask-first": "askFirst and maxQuestions only decide whether clarifying questions are asked",
+  "calendar": "country, days off, working days, timezone and quiet hours only skip or hold existing work",
+  "chat-engine": "whether a follow-up is rewritten before searching documents",
+  "delight": "pets, achievements, look and background are display preferences",
+  "diagnostic-log": "shapes a local, scrubbed log that sends nothing",
+  "event-loop-watch": "local event-loop measurement",
+  "flowboards-busy-mode": "what the owner's own typing does while a task works",
+  "fly-core": "only reorders what a task already has",
+  "knowledge-retention": "only creates archive suggestions",
+  "learn": "a feature switch and tour length",
+  "look": "appearance only",
+  "milestone:": "nothing reads it",
+  "preferences": "layout only",
+  "prompt-library": "a feature mode; a prompt only becomes a typed message",
+  "qa-scenarios": "a feature mode",
+  "reach-arena-ratings": "leaderboard scores",
+  "reach-note:": "the owner's own notes, read only when asked",
+  "reflection-batch:": "look-back history shown on a review card",
+  "reflection-jobs": "recent job outcomes the owner sees",
+  "request-cache": "whether plain answers are reused",
+  "reranking": "only reorders passages",
+  "retrieval-pipelines": "only changes search order",
+  "run-recording": "what a saved recording contains",
+  "settings-history": "change history the owner sees; undo is gated",
+  "shell-look": "how the window is drawn",
+  "skill-draft-offered:": "a marker that only stops an offer",
+  "skill-retire-offered:": "only holds back an offer",
+  "suggestions": "ask/never answers to a suggestion bar",
+  "terminal-switches": "terminal display switches",
+  "tool_catalog_health": "a nightly cache the owner sees",
+  "trunk-seen": "unread badge counts",
+  "usage-glance": "display and offers only",
+  "usage-report": "a local report never sent",
+};
+/**
+ * NAS dfb2136: naming the ids by hand kept missing some, so every setting the catalogue itself marks as taking a
+ * protection away or reaching further (a field whose guard is not "plain") is held too, unless it stays here. Read at
+ * first use, because the catalogue imports much of the app.
+ */
+let guardedByCatalogue: ReadonlySet<string> | null = null;
+const catalogueGuards = (id: string): boolean =>
+  (guardedByCatalogue ??= new Set(settingsCatalogue.filter((spec) => spec.fields.some((field) => field.guard !== "plain")).map((spec) => spec.key)))
+    .has(id);
+/**
+ * NAS dd7589d: the most sensitive records are kept out of the catalogue on purpose and named in its `neverTouched`
+ * list ("the one a crafted file meets first"), and Lockdown names what reaches past this app. A restore meets both
+ * lists too, and the privacy guard, whose masking a file could otherwise switch off.
+ */
+const codeOwnedLists = (id: string): boolean =>
+  id === "privacy-guard" || neverTouched.some((pattern) => pattern.test(id)) || coveredSettings.some((pattern) => pattern.test(id));
+/** A catalogue setting whose every field is plain: the settings kit already treats any value of it as harmless. */
+const cataloguePlain = (id: string): boolean => settingsCatalogue.some((spec) => spec.key === id) && !catalogueGuards(id);
+/** Q230: what travels, by name or by a travelling prefix, or as a plain catalogue setting. */
+const travels = (id: string): boolean => id in travelsWithBackup || cataloguePlain(id)
+  || Object.keys(travelsWithBackup).some((key) => key.endsWith(":") && id.startsWith(key));
+/**
+ * Q230 (NAS dc50a36): an id in none of the lists waits for the owner's yes. Reading every id by hand kept missing one
+ * (a raw query, a single-quoted key), so an id nobody classified is held rather than put in place from a file.
+ */
+export const heldForTheOwner = (id: string): boolean => heldSettings.includes(id) || heldPrefixes.some((start) => id.startsWith(start))
+  || (!staysOnThisComputer(id) && (catalogueGuards(id) || codeOwnedLists(id) || !travels(id)));
 /** A settings row from a backup, waiting for the owner's yes: its owner, its id and its data as the file had it. */
 export interface HeldRow { owner: string; id: string; data: string }
 const staysHere = (table: string, row: Record<string, unknown>): boolean => table === "settings" && staysOnThisComputer(String(row.id));
@@ -134,6 +320,7 @@ const staysHere = (table: string, row: Record<string, unknown>): boolean => tabl
  * SQLite reads JSON5, so the next start would rewrite it into a job that still carries the file's yes (NAS 54d30f2).
  */
 function disarmed<Row extends Record<string, unknown>>(table: string, row: Row): Row | null {
+  if (table === "deliveries") return undelivered(row);
   if (table !== "schedules") return row;
   if (typeof row.data !== "string") return null;
   let job: unknown;
@@ -144,6 +331,20 @@ function disarmed<Row extends Record<string, unknown>>(table: string, row: Row):
   // Only a job that has a webhook gets a new token; an empty one would otherwise switch a webhook on.
   if (typeof kept.hookToken === "string" && kept.hookToken) kept.hookToken = randomBytes(24).toString("hex");
   return { ...row, data: JSON.stringify(kept) } as Row;
+}
+
+/**
+ * NAS dc50a36: a chat message the file says is still waiting to go is restored as not sent, so it waits among the
+ * owner's undelivered messages for a Retry instead of being sent by the owner's own bot at the next flush.
+ */
+function undelivered<Row extends Record<string, unknown>>(row: Row): Row | null {
+  if (typeof row.data !== "string") return null;
+  let message: unknown;
+  try { message = JSON.parse(row.data); } catch { return null; }
+  if (!message || typeof message !== "object" || Array.isArray(message)) return null;
+  const kept = message as Record<string, unknown>;
+  if (kept.status !== "pending") return row;
+  return { ...row, data: JSON.stringify({ ...kept, status: "dead", lastError: "Restored from a backup and not sent. Retry it to send it." }) } as Row;
 }
 
 /** Tables whose rows SQLite itself reads by field (`json_extract`, `json_set` in src/store.ts). */
@@ -226,11 +427,36 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
         rows++;
       }
     }
+    settleRestoredTasks(db, archive);
     settleFlyRestore(db);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   dropIndex(db);
   return { tables, rows, held };
+}
+
+/** What a task the backup says was working or cut off shows the owner, with Continue and Stop, after a restore. */
+export const restoredTaskNote = "Restored from a backup. Continue it to carry on, or stop it.";
+/**
+ * Q227 (NAS f7e95b5): a task the file says was working or cut off is offered to the owner, never carried on by itself at
+ * the next start. never-break reads `run.can_continue` as settled, so a date far in the future cannot make it resume
+ * with the file's words; the owner's Continue still does.
+ */
+function settleRestoredTasks(db: DatabaseSync, archive: BackupArchive): void {
+  const now = new Date().toISOString();
+  for (const task of archive.tables.tasks ?? []) {
+    const status = String(task.status ?? "");
+    if (status !== "running" && status !== "interrupted") continue;
+    // NAS d96cab6: bound exactly as the import bound it. A file's number id (5) is stored as the text "5.0", and so are
+    // the events written for it here, so String(5) would miss the row and leave it to be carried on by itself.
+    const id = task.id;
+    // A file with a task of no id is refused when it is read (parseBackupArchive); this only narrows the type.
+    if (id === null || id === undefined || !db.prepare("SELECT 1 FROM tasks WHERE id=?").get(id)) continue;
+    db.prepare("UPDATE tasks SET status='interrupted' WHERE id=?").run(id);
+    // NAS 5653d17: `run.restored` is what never-break asks for by name, however many events the file gave the task.
+    db.prepare("INSERT INTO events(run_id,kind,data,created_at) VALUES(?,?,?,?)").run(id, "run.restored", "{}", now);
+    db.prepare("INSERT INTO events(run_id,kind,data,created_at) VALUES(?,?,?,?)").run(id, "run.can_continue", JSON.stringify({ note: restoredTaskNote }), now);
+  }
 }
 
 /**

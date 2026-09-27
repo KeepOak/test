@@ -15,6 +15,7 @@ import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { mediaRows } from "./media.js";
 import { t } from "../../i18n.js";
+import { shareMenu } from "../flows/share.js";
 
 const V = { id: null, messages: [], loaded: null };
 const sid = (s) => s.sessionId ?? s.id;
@@ -23,7 +24,7 @@ const nameOf = (id) => ownName(id) || E.sessions.find((s) => sid(s) === id)?.ope
 
 /* ---------- the conversation beside ---------- */
 export function chatMenuTop() {
-  return mi("beside15", "cols15", S.beside15 ? t("window.chat.beside.change") : t("window.chat.beside.open-another")) + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
+  return mi("beside15", "cols15", S.beside15 ? t("window.chat.beside.change") : t("window.chat.beside.open-another")) + shareMenu() + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
 }
 
 function besidePop() {

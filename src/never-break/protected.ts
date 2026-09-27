@@ -32,7 +32,7 @@ export interface ProtectedAreas {
 export const guardedDataFiles = [
   "branch.sqlite", "branch.sqlite-wal", "branch.sqlite-shm", "branch.sqlite-journal",
   "journal.sqlite", "journal.sqlite-wal", "journal.sqlite-shm", "journal.sqlite-journal",
-  "locker.key", "session-token", "chatgpt-auth.json",
+  "locker.key", "session-token", "chatgpt-auth.json", "question-fingerprint.key",
 ] as const;
 /** Files and folders in the data folder the gateway and the updater own. */
 export const gatewayDataFiles = [
@@ -338,7 +338,7 @@ export function shellWords(text: string, platform: NodeJS.Platform = process.pla
 /** Every word in a piece of text that could name a place. */
 export function placeWords(text: string, platform: NodeJS.Platform = process.platform): string[] {
   return shellWords(text, platform).flatMap((word) => word.split(",")).map((word) => expandVariables(word))
-    .filter((word) => /[\\/*?]|^\.\.?$|\.sqlite|locker\.key|gateway/i.test(word));
+    .filter((word) => /[\\/*?]|^\.\.?$|\.sqlite|locker\.key|question-fingerprint\.key|gateway/i.test(word));
 }
 
 /* ---------- deciding ---------- */

@@ -109,7 +109,7 @@ async function stillEnglish(english, french) {
 async function shellWords(page) {
   await page.locator('#side [data-act="owner"]').click();
   const menu = page.locator(".pop");
-  await menu.locator('[data-act="switchto"]').first().waitFor();
+  await menu.locator('[data-act="switchto"], [data-act="yp-open"]').first().waitFor(); // your-profile: your own tile opens Your profile
   const words = [...await texts(menu.locator(".ph")), ...await texts(menu.locator(".mi-t")), ...await texts(menu.locator(".row-in > span:first-child, .seg button"))];
   await page.keyboard.press("Escape");
   await place(page, "team", "people");
@@ -267,9 +267,11 @@ test("Overview and People are real, with faces; Who is using Branch lists everyo
   await f.page.locator('#side [data-act="owner"]').click();
   const menu = f.page.locator(".pop");
   assert.deepEqual(await texts(menu.locator(".ph").first()), ["Who is using Branch"]);
-  assert.deepEqual(await menu.locator('[data-act="switchto"]').evaluateAll((nodes) => nodes.map((node) => node.lastChild.textContent)), [owner, "Amara"]);
+  // your-profile: your own tile opens Your profile; everybody else's switches to them.
+  assert.deepEqual(await menu.locator('[data-act="switchto"], [data-act="yp-open"]').evaluateAll((nodes) => nodes.map((node) => [node.dataset.act, node.lastChild.textContent])), [["yp-open", owner], ["switchto", "Amara"]]);
   // Redesign: switching person and Add (invites) are live since the un-hold (#353); the owner sees Add.
-  assert.equal(await live(menu.locator('[data-act="switchto"]').nth(1)), true, "switching to Amara is live");
+  assert.equal(await live(menu.locator('[data-act="switchto"]').first()), true, "switching to Amara is live");
+  assert.equal(await live(menu.locator('[data-act="yp-open"]')), true, "your own tile is live: it opens Your profile");
   assert.equal(await live(menu.locator('[data-act="invite"]')), true, "Add is live for the owner");
   await f.page.keyboard.press("Escape");
   // People: Team › People, everyone with a face.
@@ -370,8 +372,10 @@ test("every name gives a face with one of the eight colours: a Trunk its pixel p
   const trunks = [];
   for (const name of ["Name 0 A", "Name 1 B", "Name 2 C", "Name 3 D", "Name 4 E", "Name 5 F"]) trunks.push(await withTrunk(f, name, { face: "pattern" }));
   await f.open();
-  // Redesign: the assistant's face is the prototype's brand face (av({kind:'main'})), not a drawn mouth.
-  assert.ok(await f.page.locator(".av.brand .mark-face").first().isVisible(), "Branch's own face");
+  // Redesign (the owner's decision, #390): the conversation's header, now in the title-bar row, carries no face, so the
+  // assistant's brand face (av({kind:'main'})) is not drawn there; it signs the assistant's replies (the test above).
+  await f.page.locator(".titlebar .head").waitFor();
+  assert.equal(await f.page.locator(".titlebar .av").count(), 0, "no face in the conversation's header, Branch's own included");
   for (const trunk of trunks) await row(f.page, trunk).waitFor();
   const colours = await f.page.evaluate((ids) => ids.map((id) => document.querySelector(`#side .row[data-id="${id}"] .av`).style.getPropertyValue("--c").toLowerCase()), trunks.map((trunk) => trunk.chatSessionId));
   assert.deepEqual(f.errors, []);
@@ -450,11 +454,11 @@ test("integration review: faces are painted in real colours under the page's sty
   for (const trunk of trunks) await row(f.page, trunk).waitFor();
   await place(f.page, "customize", "trunks");
   await f.page.locator("#main .prow .av").nth(5).waitFor();
-  const painted = await f.page.evaluate(() => [...document.querySelectorAll("#side .row .av .peb, #main .prow .av .peb")].map((peb) => getComputedStyle(peb).backgroundColor));
+  const painted = await f.page.evaluate(() => [...document.querySelectorAll("#side .row .av .peb, #side .row .av.pbl .pbl-c, #main .prow .av .peb, #main .prow .av.pbl .pbl-c")].map((peb) => getComputedStyle(peb).backgroundColor));
   assert.ok(painted.length >= 12, `${painted.length} faces`);
   const bad = painted.filter((colour) => /^rgba?\(0, 0, 0(, 0)?\)$/.test(colour) || colour === "transparent");
   assert.deepEqual(bad, [], "no black or empty face: the colour reaches the page through its style rules");
-  const chosen = await f.page.evaluate((id) => getComputedStyle(document.querySelector(`#side .row[data-id="${id}"] .av .peb`)).backgroundColor, trunks[0].chatSessionId);
+  const chosen = await f.page.evaluate((id) => getComputedStyle(document.querySelector(`#side .row[data-id="${id}"] .av .peb, #side .row[data-id="${id}"] .av.pbl .pbl-c`)).backgroundColor, trunks[0].chatSessionId);
   assert.deepEqual(f.errors, []);
   assert.equal(chosen, "rgb(184, 74, 107)", "window bug: the sidebar row paints a Trunk's chosen colour as #2F6F5E (av() of the engine's record reads no chosenColour)");
 });

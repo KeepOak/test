@@ -21,7 +21,9 @@ export function staleAfterMs(store: Parameters<typeof toolLimits>[0], owner: str
  * Plain-language activity for a task in progress: what the assistant is doing right now and how
  * each earlier step ended, built from the durable event log so any client can show it.
  */
-export interface ActivityStep { id: string; label: string; status: "working" | "done" | "failed" | "stopped"; at: string }
+/** `tool` is the tool's own name (files.read, web.search, …), so a window can tell looking, reading and doing apart
+    without parsing the label, which a tool may word itself. */
+export interface ActivityStep { id: string; label: string; status: "working" | "done" | "failed" | "stopped"; at: string; tool?: string }
 /** The plan a task is working through, where it has got to, and what a reviewer said. */
 export interface ActivityPlan { steps: string[]; step: number; awaitingApproval: boolean; finished: boolean }
 export interface RunActivity {
@@ -170,6 +172,14 @@ export function describeToolCall(name: string, args: unknown): string {
     case "git.push": return "Sending work to the server";
     case "git.pull": return "Bringing down work from the server";
     case "user.ask": return "Asking you a question";
+    // Dogfood E2: the owner read "Using device.run" and "Using settings.change" in questions; each now says what it does.
+    case "device.run": return `Running ${short(a.executable ?? "a program")} on ${a.device ? short(a.device) : "your paired device"}`;
+    case "settings.change": return "Changing Branch's own settings";
+    case "settings.loosen": return "Making Branch less careful in its own settings";
+    case "settings.undo": return "Undoing a change to Branch's own settings";
+    case "settings.list": case "settings.find": case "settings.why": return "Looking through Branch's own settings";
+    case "tools.search": case "tools.describe": case "tools.open": return "Looking for the right tool";
+    case "checklist.write": return "Updating its checklist";
     case "agents.ask": return `Asking ${short(a.agent)}, an assistant elsewhere`;
     case "agents.remote": return a.action === "list" ? "Listing assistants elsewhere" : "Changing the list of assistants elsewhere";
     case "specialists.delegate": return `Asking the ${short(a.id)} specialist`;
@@ -192,9 +202,9 @@ export function runActivity(run: Run, events: Event[], options: { now?: number; 
   for (const event of events) {
     const id = String(event.data.id ?? event.id), name = String(event.data.name ?? "tool");
     if (event.kind === "tool.started")
-      steps.set(id, { id, label: String(event.data.label ?? describeToolCall(name, undefined)), status: "working", at: event.createdAt });
+      steps.set(id, { id, label: String(event.data.label ?? describeToolCall(name, undefined)), status: "working", at: event.createdAt, tool: name });
     else if (event.kind === "tool.completed" || event.kind === "tool.failed" || event.kind === "tool.stalled") {
-      const step = steps.get(id) ?? { id, label: describeToolCall(name, undefined), status: "working" as const, at: event.createdAt };
+      const step = steps.get(id) ?? { id, label: describeToolCall(name, undefined), status: "working" as const, at: event.createdAt, tool: name };
       steps.set(id, { ...step, status: event.kind === "tool.completed" ? "done" : event.kind === "tool.failed" ? "failed" : "stopped", at: event.createdAt });
     }
   }

@@ -85,7 +85,7 @@ export type PolicyLimits = z.infer<typeof PolicyLimitsSchema>;
  * deciding a whole kind of thing at once (see src/tool-categories.ts) writes one rule per tool.
  */
 export const maximumPolicyRules = 300;
-export const PolicyPresetSchema = z.enum(["off", "ask-before-changes", "workspace", "read-only", "custom"]);
+export const PolicyPresetSchema = z.enum(["off", "ask-before-changes", "workspace", "read-only", "careful", "custom"]);
 export type PolicyPresetName = z.infer<typeof PolicyPresetSchema>;
 export const PolicySchema = z
   .object({
@@ -150,6 +150,25 @@ const presetDefinitions: Record<Exclude<PolicyPresetName, "custom">, PresetDefin
       // The lines above are what an owner saved when they picked this preset, and saved lines are
       // never rewritten: a conversation that follows the owner's setting keeps exactly these, so
       // there an outbound tool not named here (x.search, gmail.search, remote.read, ...) does not ask.
+    ],
+  },
+  // Q235 (Mac mini's review): what the whole-app Careful preset picks. Every change asks, as Ask before changes does,
+  // and looking things up or opening a website is checked with the owner once per site, as the workspace preset does,
+  // so moving to it from either loosens nothing. Ask before changes itself stays the cap for work from outside.
+  // NAS's adversarial (6512883): it is saved as "custom" with these lines, never by its own name (`writePolicy`).
+  careful: {
+    label: "Careful",
+    description: "Anything that changes a file, runs a command, sends a message or acts on a web page waits for your yes, and looking something up on a new website is checked with you once.",
+    rules: [
+      { tool: "*", applies: "changes", decision: "ask", remember: "session" },
+      { tool: "shell.execute", decision: "ask", remember: "session" },
+      { tool: "shell.session.*", decision: "ask", remember: "session" },
+      { tool: "remote.run", decision: "ask", remember: "session" },
+      { tool: "browser.click", decision: "ask", remember: "session" },
+      { tool: "browser.fill", decision: "ask", remember: "session" },
+      { tool: "browser.upload", decision: "ask", remember: "session" },
+      { tool: "browser.navigate", decision: "ask", remember: "always" },
+      { tool: "web.*", decision: "ask", remember: "always" },
     ],
   },
   "read-only": {
@@ -373,10 +392,31 @@ export function cappedPolicy(policy: Policy, source: RunSource): Policy {
 }
 
 const policyKey = "policy";
+/**
+ * NAS's adversarial of Q235 (6512883): an older build reads the saved policy with its own list of preset names and
+ * falls back to no rules at all when a name is new to it, so a rollback would have dropped every rule under Careful.
+ * Careful is therefore saved as "custom" with its own lines, which every build reads, and read back as Careful from
+ * those lines: a custom list holding every line of Careful and no other preset's is Careful, however it was made.
+ * NAS's adversarial (af0a751): only when everything else in it is a refusal of the owner's, as a move to Careful
+ * leaves it. A yes (or an "ask") of the owner's own makes it their own list, as a rules edit does for every preset,
+ * so picking Careful again is a real move that drops the yes, never a no-op that leaves it letting things through.
+ */
+const carefulKeys = new Set(presetRules("careful").map(ruleKey));
+function named(policy: Policy): Policy {
+  if (policy.preset !== "custom") return policy;
+  const lines = new Set(policy.rules.map(ruleKey).filter((key) => presetLineKeys.has(key)));
+  const careful = lines.size === carefulKeys.size && [...carefulKeys].every((key) => lines.has(key))
+    && policy.rules.every((rule) => presetLineKeys.has(ruleKey(rule)) || rule.decision === "deny");
+  return careful ? { ...policy, preset: "careful" } : policy;
+}
+/** Every save of the policy goes through here, so no build is ever handed a preset name it may not know. */
+function writePolicy(store: Store, owner: string, policy: Policy): void {
+  store.save("settings", owner, policyKey, policy.preset === "careful" ? { ...policy, preset: "custom" } : policy);
+}
 /** The owner's saved policy, or the empty default when nothing is saved or the saved value is unreadable. */
 export function readPolicy(store: Store, owner: string): Policy {
   const saved = PolicySchema.safeParse(store.get("settings", owner, policyKey)?.data ?? {});
-  return saved.success ? saved.data : PolicySchema.parse({});
+  return saved.success ? named(saved.data) : PolicySchema.parse({});
 }
 /**
  * Saves a preset, a hand-edited rule list, or new limits; anything left out keeps its current value.
@@ -394,7 +434,7 @@ export function nextPolicy(current: Policy, input: unknown): Policy {
 }
 export function savePolicy(store: Store, owner: string, input: unknown, reason = "The approval settings were saved"): Policy {
   const next = nextPolicy(readPolicy(store, owner), input);
-  store.save("settings", owner, policyKey, next);
+  writePolicy(store, owner, next);
   audit(store, owner, { action: "policy.changed", actor: owner, subject: `${next.preset}, ${next.rules.length} rules`, reason, outcome: "saved" });
   return next;
 }
@@ -458,7 +498,7 @@ export function keepPolicyRule(store: Store, owner: string, rule: z.input<typeof
     return { policy: current, kept: false };
   }
   const next: Policy = { ...current, rules: room.rules };
-  store.save("settings", owner, policyKey, next);
+  writePolicy(store, owner, next);
   audit(store, owner, {
     action: "policy.changed", actor: owner, subject,
     reason: `A standing "${added.decision}" was remembered from a question you answered`
