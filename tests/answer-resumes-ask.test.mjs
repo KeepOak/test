@@ -10,7 +10,7 @@
  * - src/runtime.ts execute: drop `if (!parent) options = this.replyToAsk(options);`: "a reply resumes" fails.
  * - src/needs-you.ts needsYou: add the open questions without folding them into their task (counted.size +
  *   approvals.waiting().length): "one ask counts once" fails (2). src/health.ts: count every needs_input task: the
- *   cleanup test's Health check fails.
+ *   cleanup test's Health check fails (a helper's question and the person's are counted together).
  * - src/server.ts startServer: drop settleSupersededAsks(app): "a task already overtaken stops waiting" fails.
  */
 import test from "node:test";
@@ -124,6 +124,10 @@ test("a task already overtaken in its conversation stops waiting on start, with 
     app.store.finish(app.store.createRun(app.runtime.owner, "Yes, go ahead.", stuck.sessionId).id, "completed", "Done.");
     open = app.store.createRun(app.runtime.owner, "plan a party");
     app.store.finish(open.id, "needs_input", "How many guests?");
+    // A helper's question is answered inside the task that started it, so it is in no count of the person's.
+    const helper = app.store.createRun(app.runtime.owner, "count the chairs");
+    app.store.event(helper.id, "run.started", { parentRunId: open.id });
+    app.store.finish(helper.id, "needs_input", "Which room?");
   });
   assert.equal(f.app.store.run(stuck.id).status, "cancelled", "the overtaken task no longer waits");
   const resolved = f.app.store.events(stuck.id).find((event) => event.kind === "run.ask_resolved");
