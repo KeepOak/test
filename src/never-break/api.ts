@@ -77,7 +77,9 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
     await saveGatewayConfig(dataDir, { ...config, mode: body.data.mode ?? config.mode,
       keepAwake: body.data.keepAwake ?? config.keepAwake });
     return { ...(await neverBreakView(dataDir, extras.gatewayPower)),
-      note: body.data.mode === undefined ? "Saved. The desktop gateway applies this choice while it is running." : "This takes effect the next time Branch starts." };
+      note: body.data.mode === undefined ? "Saved. The desktop gateway applies this choice while it is running."
+        : body.data.mode === "off" && process.env.BRANCH_GATEWAY_CHILD === "1" ? "Saved off. The running gateway will stop after this response."
+          : "Saved. The gateway will use this choice when Branch next starts." };
   }
   if (path === "/api/never-break/proposal/accept") {
     try { await acceptProposal(dataDir); } catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
