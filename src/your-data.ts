@@ -9,7 +9,8 @@ import { readComfort } from "./comfort/settings.js";
 import type { createBranch } from "./index.js";
 import { lockdownActive } from "./lockdown.js";
 import { memoryHistorySettings } from "./memory-git.js";
-import { memoryProviderSettings, stillHeld } from "./memory-provider.js";
+import { memoryProviderSettings } from "./memory-provider.js";
+import { finish, openJournal, unfinished, unfinishedSentence, type Journal } from "./your-data-forgood.js";
 import type { MemoryRecord } from "./memory.js";
 import { staysOnThisComputer } from "./backup.js";
 import { hiddenMarker, redactLeaksIn } from "./leak-guard.js";
@@ -227,6 +228,7 @@ async function summary(app: Branch, doors: DoorFacts) {
     kinds: [...await ownKinds(app, scope, owner), ...(owner ? ownerKinds(app, doors) : [])],
     leaves: leaves(app, doors, owner),
     lockdown: lockdownActive(app.store, app.runtime.owner),
+    unfinished: unfinishedSentence(app, scope),
     deletePhrase,
   };
 }
@@ -378,63 +380,87 @@ function ownJob(app: Branch, id: string): Job {
 }
 
 /* ---------- Delete everything: typed, never under Lockdown, never through a door, always written down ---------- */
+/**
+ * Everything that can refuse is asked first (the words, Lockdown, a working task, the outside memory service). Then the
+ * whole purge is one transaction with its journal row and its record: it all commits, or on any failure nothing has
+ * changed and the answer says to try again. What lies outside the database is done after, step by step, from the
+ * journal (src/your-data-forgood.ts), and whatever cannot finish now finishes later.
+ */
 async function deleteEverything(app: Branch, confirm: string) {
   const scope = app.store.profiles.scope(), owner = app.runtime.owner;
   if (confirm.trim().toLowerCase() !== deletePhrase) throw new HttpError(400, `Type "${deletePhrase}" to confirm. Nothing was deleted.`);
   if (lockdownActive(app.store, owner)) throw new HttpError(409, "Lockdown is on, so nothing is deleted. Turn Lockdown off first.");
+  // A delete of this person's that was cut short finishes first.
+  const earlier = await Promise.all(unfinished(app, scope).map((journal) => finishOnce(app, journal)));
   const sessions = sessionsOf(app, scope).map((session) => session.id);
   if (sessions.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])))
     throw new HttpError(409, "A task is still working. Stop it or wait for it, then try again. Nothing was deleted.");
-  // Facts kept on an outside memory service go first: each is marked forgotten here, then deleted there, and a service
-  // that cannot say what it keeps stops everything before anything is deleted. The marks are never deleted below, so a
-  // fact the service would not delete is never read back, even after switching away from that service and back.
-  let outside: Awaited<ReturnType<Branch["memory"]["backend"]["forgetEverythingOutside"]>>;
-  try { outside = await app.memory.backend.forgetEverythingOutside(scope); }
-  catch (error) { throw new HttpError(409, error instanceof Error ? error.message : String(error)); }
-  // #458's "Delete now" for each one, wherever it is (Recent, Archived, Recently Deleted): a room's own sides go with it.
-  let conversations = 0;
-  for (const id of sessions) {
-    if (!app.store.ownsSession(scope, id)) continue; // went with a room deleted just before
-    app.store.deleteConversationForGood(scope, id);
-    conversations++;
+  let outside: Awaited<ReturnType<Branch["memory"]["backend"]["everythingOutside"]>>;
+  try { outside = await app.memory.backend.everythingOutside(scope); }
+  catch (error) { throw new HttpError(409, errorWords(error)); }
+  const history = app.memoryHistory.settings(scope).mode !== "off" || scope === owner;
+  let done: { journal: Journal; conversations: number; memory: number };
+  try { done = app.store.atomically(() => purge(app, scope, sessions, outside, history)); }
+  catch (error) {
+    throw new HttpError(500, `Something went wrong part way, so nothing was deleted (${errorWords(error)}). Try again.`);
   }
-  let memory = outside.removed;
-  // The word index keeps each fact's text under a row number only memory_terms ties to its owner, so it goes first.
-  if (tableExists(app, "memory_search") && tableExists(app, "memory_terms"))
-    app.store.sqlite.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=?)").run(scope);
-  for (const table of memoryTables) {
-    if (!tableExists(app, table)) continue;
-    const changes = Number(app.store.sqlite.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
-    if (table === "memory") memory += changes;
-  }
-  const problems = [outside.notRemoved.length ? stillHeld(outside.notRemoved.length) : "", ...await clearCopies(app, scope)].filter(Boolean);
-  const problem = problems.length ? problems.join(" ") : null;
-  audit(app.store, owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
-    reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts${problem ? `. ${problem}` : ""}`, outcome: "deleted" });
-  return { deleted: { conversations, memory }, ...(outside.notRemoved.length ? { notRemoved: outside.notRemoved.length } : {}), ...(problem ? { problem } : {}), kept: app.store.profiles.isOwner()
-    ? "Your keys, connections and settings stay, and so does the record that this was deleted." : "The record that this was deleted stays." };
+  const journal = await finishOnce(app, done.journal);
+  const waiting = [...earlier.flatMap((one) => one.waiting), ...journal.waiting];
+  return { deleted: { conversations: done.conversations, memory: done.memory }, removed: journal.removed,
+    ...(outside && journal.outside?.pending.length ? { notRemoved: journal.outside.pending.length } : {}),
+    ...(waiting.length ? { waiting, problem: waiting.join(" ") } : {}),
+    kept: app.store.profiles.isOwner()
+      ? "Your keys, connections and settings stay, and so does the record that this was deleted." : "The record that this was deleted stays." };
+}
+
+/** The database half, run inside one transaction by the caller: purge, marks, journal and record together. */
+function purge(app: Branch, scope: string, sessions: string[], outside: { url: string; ids: string[]; inUse: number } | null, history: boolean) {
+  const db = app.store.sqlite;
+  const secure = Number((db.prepare("PRAGMA secure_delete").get() as { secure_delete: number }).secure_delete);
+  db.exec("PRAGMA secure_delete=ON"); // what is deleted is overwritten, not left in the file's free space
+  try {
+    const runIds = (db.prepare("SELECT id FROM tasks WHERE owner=?").all(scope) as { id: string }[]).map((row) => row.id);
+    // #458's "Delete now" for each one, wherever it is (Recent, Archived, Recently Deleted): a room's own sides go with it.
+    let conversations = 0;
+    for (const id of sessions) {
+      if (!app.store.ownsSession(scope, id)) continue; // went with a room deleted just before
+      app.store.deleteConversationForGood(scope, id);
+      conversations++;
+    }
+    // The word index keeps each fact's text under a row number only memory_terms ties to its owner, so it goes first.
+    if (tableExists(app, "memory_search") && tableExists(app, "memory_terms"))
+      db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=?)").run(scope);
+    let memory = outside?.inUse ?? 0;
+    for (const table of memoryTables) {
+      if (!tableExists(app, table)) continue;
+      const changes = Number(db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
+      if (table === "memory") memory += changes;
+    }
+    if (tableExists(app, "memory_search")) db.exec("INSERT INTO memory_search(memory_search) VALUES('optimize')");
+    // Facts on an outside service are marked forgotten here, now, so none is read back whatever the service does later.
+    if (outside) app.memory.backend.markAllForgotten(scope, outside.ids);
+    const removed = [`${conversations === 1 ? "One conversation with its" : `${conversations} conversations with their`} files, recordings and receipts, and ${memory === 1 ? "one remembered fact" : `${memory} remembered facts`}.`];
+    const journal = openJournal(app, { scope, sessions, runIds, outside: outside ? { url: outside.url, pending: outside.ids } : null, history }, removed);
+    audit(app.store, app.runtime.owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
+      reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts`, outcome: "deleted" });
+    return { journal, conversations, memory };
+  } finally { db.exec(`PRAGMA secure_delete=${secure}`); }
 }
 
 const errorWords = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-/**
- * The copies of what is remembered that Branch writes itself: the notes in the workspace are written again from what is
- * left, and the history of what is remembered records that it is gone (and sends that on, when it is copied somewhere).
- * Earlier versions in that history still hold it, which the answer says in plain words.
- */
-async function clearCopies(app: Branch, scope: string): Promise<string[]> {
-  const problems: string[] = [];
-  if (await app.memoryMirror.exists().catch(() => false))
-    await app.memoryMirror.regenerate(scope, { force: true })
-      .catch((error: unknown) => { problems.push(`The memory notes in your workspace could not be written again, so they may still hold what was remembered (${errorWords(error)}).`); });
-  if (app.memoryHistory.settings(scope).mode !== "off") {
-    try {
-      await app.memoryHistory.record(scope);
-      problems.push("Earlier versions in the history of what is remembered still hold it, here and wherever that history is copied to.");
-    } catch (error) {
-      problems.push(`The history of what is remembered could not be brought up to date, so it still holds what was remembered (${errorWords(error)}).`);
-    }
-  }
-  return problems;
+const finishing = new Map<string, Promise<Journal>>();
+/** Runs a journal's steps once at a time: a press and a start that both want it share the same run. */
+function finishOnce(app: Branch, journal: Journal): Promise<Journal> {
+  const running = finishing.get(journal.id);
+  if (running) return running;
+  const next = finish(app, journal).finally(() => finishing.delete(journal.id));
+  finishing.set(journal.id, next);
+  return next;
+}
+/** At start: every delete that was cut short carries on. Never throws. */
+export async function resumeUnfinishedDeletes(app: Branch): Promise<void> {
+  try { for (const journal of unfinished(app)) await finishOnce(app, journal); }
+  catch (error) { console.error(`Delete everything could not carry on: ${errorWords(error)}`); }
 }
 
 const DeleteSchema = z.object({ confirm: z.string().max(100) }).strict();

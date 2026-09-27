@@ -43,6 +43,7 @@ import { saveTraceExportSettings } from "../dist/tracing-export.js";
 import { folderFor } from "../dist/attachments.js";
 import { audit } from "../dist/audit.js";
 import { createServer } from "node:http";
+import { spawnSync } from "node:child_process";
 
 const secretValue = "zq-secret-value-7a41c0";
 
@@ -228,7 +229,8 @@ test("outside memory: delete forgets every fact the service keeps, keeps the for
   service.refuse = (method, parts) => (method === "DELETE" && parts[2] === "zq-will-not-go" ? [500, { error: "no" }] : null);
   const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
   assert.equal(done.status, 200, JSON.stringify(done.body));
-  assert.deepEqual(done.body.deleted, { conversations: 1, memory: 2 }, "the fact here and the one in use outside; not the one it kept");
+  assert.deepEqual(done.body.deleted, { conversations: 1, memory: 3 }, "the fact here and both in use outside are out of use for good");
+  assert.ok(done.body.removed.some((line) => /^2 facts on the outside memory service at 127\.0\.0\.1/.test(line)), JSON.stringify(done.body.removed));
   assert.equal(done.body.notRemoved, 1);
   assert.match(done.body.problem, /could not be deleted from the outside memory service/);
   assert.deepEqual([...service.facts.values()].map((record) => record.id), ["zq-will-not-go"], "everything else is gone from the service");
@@ -238,7 +240,8 @@ test("outside memory: delete forgets every fact the service keeps, keeps the for
   app.memory.backend.configure(owner, { mode: "outside" });
   assert.deepEqual(await app.memory.backend.list(owner), [], "not after switching away and back either");
   const record = app.store.audit.list(owner, { action: "history.pruned" });
-  assert.ok(record.some((entry) => /and 2 remembered facts\. One fact could not be deleted/.test(entry.reason)), "the record says so too");
+  assert.ok(record.some((entry) => /and 3 remembered facts/.test(entry.reason)), "the record says so too");
+  assert.match((await call("GET", "/api/your-data")).body.unfinished ?? "", /has not finished yet: One fact could not be deleted/, "the page says what is left");
 });
 
 test("outside memory: refused when the service cannot say what it keeps, and nothing here is deleted", async (t) => {
@@ -352,7 +355,11 @@ test("delete (review): the memory notes and the history's newest version no long
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.doesNotMatch(markdownUnder(notes), /zqowner-fact/, "the notes are written again from what is left");
   assert.doesNotMatch(markdownUnder(app.memoryHistory.folder), /zqowner-fact/, "the history's newest version is without it");
-  assert.match(done.body.problem, /Earlier versions in the history of what is remembered still hold it/, "and the answer says what stays");
+  const log = spawnSync("git", ["log", "--all", "-p"], { cwd: app.memoryHistory.folder, encoding: "utf8" });
+  assert.equal(log.status, 0, log.stderr);
+  assert.doesNotMatch(log.stdout, /zqowner-fact/, "no earlier version holds it either");
+  assert.ok(done.body.removed.some((line) => /history of what is remembered, started again/.test(line)), JSON.stringify(done.body.removed));
+  assert.ok(done.body.removed.some((line) => /memory notes in your workspace/.test(line)));
 });
 
 test("export (follow-up): the owner's own settings, schedules and workflows, nothing of a household person's, no sign-in and no key", async (t) => {
