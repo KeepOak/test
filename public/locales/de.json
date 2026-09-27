@@ -9569,7 +9569,7 @@
   "window.why.n-done": "Branch hat dafür noch keine eigene Einstellung; erledigte Aufgaben stehen unter Posteingang › Erledigt.",
   "window.why.f15-days-off": "Die Ruhezeiten von Branch sind eine tägliche Uhrzeit; ganze freie Tage gibt es in Branch noch nicht.",
   "window.why.f15-pick-the-model-per-task": "Wähle zuerst beide unter Standards: Schnelle und günstige Aufgaben sowie Planung und schwere Probleme.",
-  "window.why.f15-mix-models-on-hard-questions": "Dafür muss zuerst eine Modellmischung gewählt sein, und das Fenster kann noch keine auswählen. Aus: Es verdoppelt die Kosten.",
+  "window.why.f15-mix-models-on-hard-questions": "Dafür muss zuerst eine Modellmischung gewählt sein, und das Fenster kann noch keine auswählen.",
   "window.why.m-effort-none": "Das verwendete Modell nimmt keinen Denkaufwand an.",
   "window.why.f15-send-each-message-to-the-right-trunk": "Branch wählt einen Trunk nicht mit einem Entscheidungsmodell; in einem Raum legen seine Raumregeln fest, wer antwortet.",
   "window.why.f15-sort-the-inbox-by-urgency": "Branch sortiert den Posteingang nicht nach Dringlichkeit; Entscheidungsmodelle beantworten nur das Feld Ausprobieren weiter unten.",
