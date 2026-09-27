@@ -155,6 +155,9 @@ test("specialists require evidence to promote and delegation cannot escalate", a
   const { run, result } = await app.knowledge.delegate(context, specialist.id, "demo");
   assert.equal(run.status, "completed");
   assert.equal(result.status, "resolved");
+  const other = app.store.createRun("other", "foreign conversation");
+  await assert.rejects(app.knowledge.delegate({ ...context, runId: other.id }, specialist.id, "demo"),
+    /parent conversation belongs to another owner/, "an explicit foreign parent is never replaced with an owner task");
   await assert.rejects(
     app.knowledge.delegate(
       { ...context, permissions: new Set(["files.read", "specialists.use"]) },

@@ -409,8 +409,10 @@ export class Knowledge {
     this.require(context, "specialists.use");
     const spec = this.activeSpecialist(context.owner, id);
     const scoped = { ...options, agent: id, style: spec.style };
-    if (options.background) return this.runtime.delegateBackground(prompt, context, spec.permissions, spec.instructions, scoped);
-    return this.runtime.delegateChecked(prompt, context, spec.permissions, spec.instructions, scoped);
+    if (options.background) return this.runtime.auditOperation(context, "Delegate specialist", (parent) =>
+      this.runtime.delegateBackground(prompt, parent, spec.permissions, spec.instructions, scoped));
+    return this.runtime.auditOperation(context, "Delegate specialist", (parent) =>
+      this.runtime.delegateChecked(prompt, parent, spec.permissions, spec.instructions, scoped));
   }
   async fanout(context: ToolContext, tasks: (FanoutTask & { specialist: string })[]) {
     this.require(context, "specialists.use");
