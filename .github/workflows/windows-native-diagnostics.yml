@@ -7,7 +7,7 @@ on:
       - 'tests/windows-credential-manager.test.mjs'
       - 'tests/credential-cli-diagnostics.test.mjs'
       - 'tests/desktop-window.test.mjs'
-      - 'tests/desktop-startup-diagnostics.test.mjs'
+      - 'tests/hosted-startup-diagnostics.test.mjs'
       - 'tests/fixtures/desktop-options.mjs'
   workflow_dispatch:
 permissions:
@@ -28,4 +28,4 @@ jobs:
       - name: Credential metadata and hosted Windows credential round trip
         run: node --test --test-concurrency=1 tests/credential-cli-diagnostics.test.mjs tests/windows-credential-manager.test.mjs
       - name: Desktop startup metadata and hosted Electron window
-        run: node --test --test-concurrency=1 tests/desktop-startup-diagnostics.test.mjs tests/desktop-window.test.mjs
+        run: node --test --test-concurrency=1 tests/hosted-startup-diagnostics.test.mjs tests/desktop-window.test.mjs
