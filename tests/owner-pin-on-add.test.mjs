@@ -93,6 +93,7 @@ test("the owner's PIN may be skipped but not be the child's own; with a PIN alre
   await (await personMenu(f.page)).locator('[data-act="invite"]').click();
   const dlg = await fillInvite(f.page, { name: "Sam", pin: "4821", own: "4821" });
   await dlg.locator('#inv-own[aria-invalid="true"]').waitFor();
+  assert.match(await dlg.locator("#inv-own-note").innerText(), /a PIN of your own/, "it says why");
   assert.equal(f.app.store.profiles.list().length, 0, "nobody is added with the owner's PIN the same as theirs");
   assert.equal(f.app.store.profiles.ownerPinOn(), false);
   await fillInvite(f.page, { name: "Sam", pin: "4821", own: "" });

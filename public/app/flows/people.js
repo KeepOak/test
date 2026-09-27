@@ -171,7 +171,8 @@ async function inviteGo() {
   // The owner's PIN is theirs alone: never the one the person being added will know.
   if (own && (!PIN.test(own) || own === pin)) {
     ownBox?.setAttribute("aria-invalid", "true");
-    if (own === pin) toast("Use a PIN of your own, not theirs.");
+    const note = $("#inv-own-note");
+    if (own === pin && note) note.textContent = "Use a PIN of your own, not theirs.";
     return;
   }
   let made;
