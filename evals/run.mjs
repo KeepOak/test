@@ -11,7 +11,6 @@
  */
 import { mkdir, rm } from "node:fs/promises";
 import { hostname } from "node:os";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describeModel, preflight } from "./lib/models.mjs";
@@ -25,7 +24,7 @@ import { allTasks, smokeTasks } from "./tasks/index.mjs";
 const evalsDir = fileURLToPath(new URL("./", import.meta.url));
 
 function parseArgs(argv) {
-  const args = { model: "ollama", out: join(evalsDir, "results"), smoke: false, only: null, basePort: 3811 };
+  const args = { model: "ollama", out: join(evalsDir, "results"), smoke: false, only: null, basePort: 0 };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === "--model") args.model = argv[++i];
@@ -92,7 +91,7 @@ async function runOne({ task, model, modelBlock, standin, args, judge }) {
 
   const root = join(scratch(args), task.id);
   await rm(root, { recursive: true, force: true });
-  const port = await freePort(); // each task its own port, one the system says is free (Windows reserves some ranges)
+  const port = 0; // each engine binds a port the system picks as it starts (no gap for another program to take it)
   if (standin && task.script) standin.script = task.script; // the stand-in answers this task's script
   const ctx = await makeContext({ task, model: standinModel(model, standin), root, port, judge, log: () => undefined });
   const started = Date.now();
@@ -119,12 +118,6 @@ function standinModel(model, standin) { return model; }
 function statusFor(block) { return /sign ?in/i.test(block) ? "needs sign-in" : "needs local model"; }
 function scratch(args) { return process.env.EVAL_SCRATCH ?? join(evalsDir, ".scratch"); }
 function pad(s) { return (s + "        ").slice(0, 8); }
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer().once("error", reject);
-    server.listen(0, "127.0.0.1", () => { const { port } = server.address(); server.close(() => resolve(port)); });
-  });
-}
 
 function withTimeout(promise, ms, what) {
   let timer;
