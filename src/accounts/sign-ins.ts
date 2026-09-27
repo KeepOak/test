@@ -4,6 +4,7 @@ import { onPath } from "../asks/runtimes.js";
 import { googleGeminiSignIn, registerSignedInGemini } from "../gemini-signin.js";
 import type { OAuthConnections } from "../oauth.js";
 import { accountHomeVariables, cliAgentCatalog, strippedEnvironment, type CliAgentRow } from "../providers/cli-agent.js";
+import { lockdownActive } from "../lockdown.js";
 import { geminiSignInState } from "../voice-api.js";
 import { startCall } from "../windows-command.js";
 import type { AccountsService } from "./service.js";
@@ -40,11 +41,41 @@ export const programStatusArgs: Readonly<Record<string, readonly string[]>> = {
   codex: ["login", "status"],
 };
 
+/**
+ * The sign-in command each maker documents, which opens the maker's own page in the browser and finishes by itself
+ * through the program's own local callback. Branch starts it with no shell, never reads what it prints, never forwards a
+ * code, and asks the status command above until it says signed in.
+ * - Claude Code: `claude auth login` "Sign in to your Anthropic account" (https://code.claude.com/docs/en/cli-reference)
+ * - Codex: `codex login` opens the ChatGPT sign-in in the browser (https://learn.chatgpt.com/docs/auth)
+ */
+export const programLoginArgs: Readonly<Record<string, readonly string[]>> = {
+  "claude-code": ["auth", "login"],
+  codex: ["login"],
+};
+const loginTimeoutMs = 10 * 60_000;
+
+/** A sign-in program Branch started, one per program and account, until it ends. */
+interface Login { stop: () => void; failed: string | null; running: boolean }
+const logins = new Map<string, Login>();
+const loginKey = (id: string, account: string | undefined): string => `${id}:${account ?? primaryAccount}`;
+
+export type StartLogin = (row: CliAgentRow, args: readonly string[], env: NodeJS.ProcessEnv,
+  done: (code: number | null, missing: boolean) => void) => () => void;
+
+/** Starts the program's own sign-in, with no shell and no window of its own; its output is not read. */
+export const startLogin: StartLogin = (row, args, env, done) => {
+  const start = startCall(row.command, [...args], env);
+  const child = spawn(start.command, start.args, { stdio: ["pipe", "ignore", "ignore"], windowsHide: true, shell: false, env });
+  child.on("error", (error: NodeJS.ErrnoException) => done(1, error.code === "ENOENT"));
+  child.on("close", (code) => done(code, false));
+  return () => { child.kill(); };
+};
+
 export async function signInOptions(host: SignInsHost) {
   const { models, chatgpt, store, owner } = host.service.deps;
   const status = chatgpt ? await chatgpt.status() : null;
   const programs = await Promise.all(cliAgentCatalog.map(async (row) => ({
-    id: row.id, pool: `cli-${row.id}`, name: row.name, label: row.name.replace(/ \(installed on this computer\)$/, ""), note: row.note, command: row.command, terms: row.terms ?? null,
+    id: row.id, pool: `cli-${row.id}`, name: row.name, label: plainName(row), note: row.note, command: row.command, terms: row.terms ?? null,
     installed: await onPath(row.command), connected: models.presets.has(`cli-${row.id}`), canCheck: !!programStatusArgs[row.id],
   })));
   const gemini = geminiSignInState(store, owner, models);
@@ -88,15 +119,84 @@ export async function checkProgram(host: SignInsHost, input: unknown, run: RunSt
   const args = programStatusArgs[id];
   if (!args) return { id, installed: true, signedIn: null,
     message: `${row.name} has no way to say whether it is signed in without being started, so Branch cannot tell. It uses its own sign-in when it is asked something.` };
+  const ran = await run(row, args, programEnv(host, id, account));
+  if (ran.missing) return { id, installed: false, signedIn: false, message: notHere };
+  const login = logins.get(loginKey(id, account));
+  const canStart = !!programLoginArgs[id];
+  if (ran.code === 0) { login?.stop(); return { id, installed: true, signedIn: true, canStart, message: `${row.name} is signed in.` }; }
+  if (ran.code === 1) {
+    if (login?.running) return { id, installed: true, signedIn: false, canStart, signingIn: true,
+      message: `${row.name} opened its sign-in page in your browser. Finish there and Branch carries on by itself; it never sees that sign-in. If no page opened, run "${loginLine(row, id)}" in a terminal.` };
+    if (login?.failed) return { id, installed: true, signedIn: false, canStart, message: login.failed };
+    return { id, installed: true, signedIn: false, canStart,
+      message: canStart
+        ? `${row.name} is not signed in. Sign in opens its own page in your browser; Branch never sees that sign-in.`
+        : `${row.name} is not signed in. Sign in to it yourself in a terminal (${row.command}), then check again. Branch never sees that sign-in.` };
+  }
+  return { id, installed: true, signedIn: null, canStart, message: `${row.name} did not say whether it is signed in. Run it yourself to see why.` };
+}
+
+function programEnv(host: SignInsHost, id: string, account: string | undefined): NodeJS.ProcessEnv {
   const env = strippedEnvironment();
   const variable = accountHomeVariables[id];
   if (account && account !== primaryAccount && variable) env[variable] = host.service.homeOf(`cli-${id}`, account);
-  const ran = await run(row, args, env);
-  if (ran.missing) return { id, installed: false, signedIn: false, message: notHere };
-  if (ran.code === 0) return { id, installed: true, signedIn: true, message: `${row.name} is signed in.` };
-  if (ran.code === 1) return { id, installed: true, signedIn: false,
-    message: `${row.name} is not signed in. Sign in to it yourself in a terminal (${row.command}), then check again. Branch never sees that sign-in.` };
-  return { id, installed: true, signedIn: null, message: `${row.name} did not say whether it is signed in. Run it yourself to see why.` };
+  return env;
+}
+/**
+ * What a sign-in program needs on top of `programEnv` to open the browser: on Linux the desktop session it runs in and
+ * the browser the person chose. Only the sign-in gets these; the status command and the program answering Branch do not.
+ */
+const browserVariables = ["DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "BROWSER"];
+export function loginEnv(host: SignInsHost, id: string, account: string | undefined): NodeJS.ProcessEnv {
+  const env = programEnv(host, id, account);
+  for (const name of browserVariables) if (process.env[name]) env[name] = process.env[name];
+  return env;
+}
+
+/** A sign-in refused before anything is started; answered 409. */
+export class SignInRefused extends Error {}
+/** The program's name without "(installed on this computer)". */
+const plainName = (row: CliAgentRow): string => row.name.replace(/ \(installed on this computer\)$/, "");
+const loginLine = (row: CliAgentRow, id: string): string => [row.command, ...(programLoginArgs[id] ?? [])].join(" ");
+
+/**
+ * One click: start the program's own sign-in (its page opens in the browser; the program finishes by itself). Already
+ * signed in, nothing is started. It runs until it ends, is stopped, or ten minutes pass; the window asks `checkProgram`.
+ */
+export async function startProgramSignIn(host: SignInsHost, input: unknown, run: RunStatus = runStatus, launch: StartLogin = startLogin) {
+  const { id, account } = CheckSchema.parse(input);
+  const row = cliAgentCatalog.find((entry) => entry.id === id);
+  const args = programLoginArgs[id];
+  if (!row || !args) throw new Error(`Branch cannot start the sign-in of "${id}". Sign in to it yourself in a terminal, then check again.`);
+  // Lockdown refuses leaving a program running (src/lockdown.ts), and the sign-in runs until it ends or ten minutes pass.
+  if (lockdownActive(host.service.deps.store, host.service.deps.owner))
+    throw new SignInRefused(`Lockdown is on, so Branch does not start ${plainName(row)}'s sign-in. Turn Lockdown off in Settings to allow this again, or run "${loginLine(row, id)}" in a terminal.`);
+  const now = await checkProgram(host, { id, ...(account ? { account } : {}) }, run);
+  if (!now.installed || now.signedIn === true) return now;
+  const key = loginKey(id, account);
+  if (logins.get(key)?.running) return checkProgram(host, { id, ...(account ? { account } : {}) }, run);
+  const login: Login = { stop: () => undefined, failed: null, running: true };
+  const timer = setTimeout(() => { login.failed = `The sign-in page was not finished within ten minutes, so Branch stopped waiting. Press Sign in to try again.`; login.stop(); }, loginTimeoutMs);
+  timer.unref?.();
+  const kill = launch(row, args, loginEnv(host, id, account), (code, missing) => {
+    clearTimeout(timer);
+    login.running = false;
+    if (login.failed) return;
+    if (missing) login.failed = `"${row.command}" is not on this computer, so Branch cannot use ${row.name}. Install it, or pick another model.`;
+    else if (code !== 0) login.failed = `${row.name}'s sign-in ended without signing in${code === null ? "" : ` (exit ${code})`}. Press Sign in to try again, or run "${loginLine(row, id)}" in a terminal to see why.`;
+  });
+  login.stop = () => { clearTimeout(timer); if (login.running) { login.running = false; kill(); } };
+  logins.set(key, login);
+  return checkProgram(host, { id, ...(account ? { account } : {}) }, run);
+}
+
+/** The window's Back or close: the sign-in program Branch started for this program and account is stopped. */
+export function stopProgramSignIn(_host: SignInsHost, input: unknown) {
+  const { id, account } = CheckSchema.parse(input);
+  const key = loginKey(id, account);
+  logins.get(key)?.stop();
+  logins.delete(key);
+  return Promise.resolve({ id, stopped: true });
 }
 
 /**
