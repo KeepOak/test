@@ -12,8 +12,8 @@
      si-owner (Team › Signing in, "Ask for my PIN when switching back to me") and owner-pin-set: POST
        /api/profiles/owner-pin {pin} to set it, {pin: null} to switch it off. The engine asks for it on every switch back
        once it is set, so setting it is what turns the switch on.
-     QA Q001: every way of adding somebody (Team, Settings › People, the person menu, Overview, setup's People step
-       ob-people-local) opens the one invite dialog, which asks for the owner's own PIN too while none is set; left empty,
+     QA Q001: every way of adding somebody (Team, Settings › People, the person menu, Overview, where setup's
+       People step now waits) opens the one invite dialog, which asks for the owner's own PIN too while none is set; left empty,
        it says plainly that anyone at this computer can switch back to the owner. A household already here with no owner
        PIN gets one notice in the person menu (owner-pin-ask, owner-pin-later), until a PIN is set or "Not now".
        Switching back re-reads GET /api/profiles first, so a PIN set elsewhere is always asked for.
@@ -293,7 +293,7 @@ async function remove(el) {
 export function init() {
   markLive(["switchto", "p-switch", "pin-ok", "sw:pin-try", "invite", "p-invite", "p-inv-tab", "p-inv-role", "p-inv-go", "sw:inv-n", "sw:inv-pin",
     "p-role", "p-code", "p-signout", "p-remove", "sw:si-owner", "owner-pin-set", "sw:owner-pin-new",
-    "sw:inv-own", "ob-people-local", "owner-pin-ask", "owner-pin-later"]);
+    "sw:inv-own", "owner-pin-ask", "owner-pin-later"]);
   document.addEventListener("change", ownerPinSwitch);
   on("owner-pin-set", () => ownerPinSet());
   on("switchto", (el) => startSwitch(el, "menu"));
@@ -301,7 +301,6 @@ export function init() {
   on("pin-ok", (el) => pinOk(el));
   on("invite", () => { INV.tab = "this"; inviteDlg(); });
   on("p-invite", () => { INV.tab = "this"; inviteDlg(); });
-  on("ob-people-local", () => { INV.tab = "this"; inviteDlg(); }); // setup's People step: somebody on this computer
   on("owner-pin-ask", () => ownerPinDlg());
   on("owner-pin-later", () => noticeLater());
   on("p-inv-tab", (el) => inviteTab(el));

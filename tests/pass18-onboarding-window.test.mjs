@@ -168,14 +168,21 @@ test("Two more things: Accounts saves your own Google app, signs in on Google's 
   const client = page.locator("#more18-google-client");
   await client.waitFor();
   await client.fill("1234-abc.apps.googleusercontent.com");
+  const secret = page.locator("#more18-google-secret");
+  assert.equal(await secret.getAttribute("type"), "password");
+  await secret.fill("gocspx-typed-in-the-window");
   await page.locator('[data-act="more18-save"][data-v="google"]').click();
-  await until(async () => (await call("/api/personal/signin/google")).settings.clientId === "1234-abc.apps.googleusercontent.com", "saved through POST /api/personal/signin/google");
+  await until(async () => (await call("/api/personal/signin/google")).settings.clientSecretName === "GOOGLE_SIGNIN_CLIENT_SECRET", "the secret went into the locker (POST /api/personal/signin/google/secret)");
+  assert.equal((await call("/api/personal/signin/google")).settings.clientId, "1234-abc.apps.googleusercontent.com", "saved through POST /api/personal/signin/google");
+  assert.equal(JSON.stringify(await call("/api/personal/signin/google")).includes("gocspx-typed-in-the-window"), false, "never read back");
+  await until(async () => (await secret.inputValue()) === "", "the field is emptied once saved");
+  assert.equal((await page.content()).includes("gocspx-typed-in-the-window"), false, "never drawn back");
   await page.locator('[data-act="more18-signin"][data-v="google"]').click();
   await until(() => page.evaluate(() => window.__opened.length === 1), "the sign-in page was opened");
   const opened = new URL(await page.evaluate(() => window.__opened[0]));
   assert.equal(opened.origin, "https://accounts.google.com", "only Google's own sign-in page");
   assert.equal(opened.searchParams.get("client_id"), "1234-abc.apps.googleusercontent.com");
-  assert.equal(await page.locator("#more18-google-secret").inputValue(), "", "a secret is only ever a saved secret's name");
+  assert.equal(await page.locator("#more18-google-secret").inputValue(), "", "a saved secret is never shown back");
   // An address that is not Google's own sign-in page is never opened, whatever the answer says.
   await page.route("**/api/personal/signin/google/start", (route) => route.fulfill({ json: { id: "personal-google", url: "https://accounts.google.com.example.net/o/oauth2/v2/auth" } }));
   await page.locator('[data-act="more18-signin"][data-v="google"]').click();
@@ -189,5 +196,26 @@ test("Two more things: Accounts saves your own Google app, signs in on Google's 
   await page.locator("#more18-file").setInputFiles({ name: "not-a-backup.json", mimeType: "application/json", buffer: Buffer.from("{}") });
   await page.locator(".toast").filter({ hasText: /backup/i }).last().waitFor();
   assert.ok(restores.length >= 2 && restores.every((url) => !/replace=/.test(url)), "a restore never replaces what is there");
+  assert.deepEqual(errors, []);
+});
+
+test("Welcome: Bring back your Branch brings a backup back after setup's Trunk introductions, and not once the person wrote", async (t) => {
+  const { app, page, call, errors } = await newWindow(t);
+  const backup = await call("/api/backup");
+  const trunk = (await call("/api/trunks", { name: "Inbox helper" })).trunk;
+  await app.trunks.introduced(); // the engine's own introduction, in the Trunk's own conversation
+  await call("/api/onboarding", { done: false });
+  await page.evaluate(() => import("/app/core/actions.js").then((m) => m.run("onboard")));
+  const tile = page.locator(".ob9 .ob-two15 .tile");
+  await tile.waitFor();
+  assert.match(await tile.innerText(), /Bring back your Branch/);
+  const restores = [];
+  page.on("request", (request) => { if (request.url().includes("/api/restore")) restores.push(request.url()); });
+  await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
+  await page.locator(".toast").filter({ hasText: /^Brought back \d+ items\./ }).first().waitFor();
+  await app.runtime.run({ prompt: "hi there", sessionId: trunk.chatSessionId }); // the person wrote
+  await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
+  await page.locator(".toast").filter({ hasText: /already has conversations/ }).first().waitFor();
+  assert.ok(restores.length === 2 && restores.every((url) => !/replace=/.test(url)), "a restore never replaces what is there");
   assert.deepEqual(errors, []);
 });
