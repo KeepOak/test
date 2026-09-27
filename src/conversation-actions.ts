@@ -31,6 +31,16 @@ export function ensureMarks(db: DatabaseSync): void {
 }
 
 export interface PutAwayRow { sessionId: string; opening: string; title: string; at: string; daysLeft?: number }
+export interface PutAway {
+  archived: PutAwayRow[]; deleted: PutAwayRow[];
+  totals: { archived: number; deleted: number }; next: { archived: number | null; deleted: number | null };
+}
+/** GET /api/sessions/put-away?kind=deleted&offset=50: the next page of one list. */
+export const PutAwayQuerySchema = z.object({
+  kind: z.enum(["archived", "deleted"]).optional(),
+  offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+}).strict();
 
 export class ConversationMarks {
   constructor(private readonly db: DatabaseSync, private readonly now: () => number = Date.now) { ensureMarks(db); }
@@ -119,20 +129,34 @@ export class ConversationMarks {
     return this.db.prepare("SELECT session_id FROM conversation_marks WHERE deleted_at IS NOT NULL AND deleted_at<=?")
       .all(cutoff).map((row) => String(row.session_id));
   }
-  /** Archived and Recently Deleted, each with its opening words and, for Recently Deleted, the days it has left. */
-  putAway(owner: string, hidden: readonly string[] = []): { archived: PutAwayRow[]; deleted: PutAwayRow[] } {
-    const rows = this.db.prepare(`SELECT c.session_id, c.title, c.archived_at, c.deleted_at,
-      (SELECT substr(json_extract(m.body,'$.content'),1,240) FROM messages m WHERE m.session_id=c.session_id
-        AND json_extract(m.body,'$.role') IN ('user','assistant') ORDER BY m.id LIMIT 1) AS opening
-      FROM conversation_marks c JOIN sessions s ON s.id=c.session_id
-      WHERE c.owner=? AND s.owner=? AND (c.archived_at IS NOT NULL OR c.deleted_at IS NOT NULL)
-      ORDER BY COALESCE(c.deleted_at,c.archived_at) DESC`).all(owner, owner).filter((row) => !hidden.includes(String(row.session_id)));
-    const shape = (row: Record<string, unknown>, at: string): PutAwayRow =>
-      ({ sessionId: String(row.session_id), opening: String(row.opening ?? ""), title: String(row.title ?? ""), at });
-    return {
-      archived: rows.filter((row) => row.archived_at && !row.deleted_at).map((row) => shape(row, String(row.archived_at))),
-      deleted: rows.filter((row) => row.deleted_at).map((row) => ({ ...shape(row, String(row.deleted_at)), daysLeft: this.daysLeft(String(row.deleted_at)) })),
+  /** The name a conversation is listed by: the one the person gave it, else its opening words. Titles only, for the audit record. */
+  titleOf(sessionId: string): string {
+    const row = this.db.prepare(`SELECT c.title, (SELECT substr(json_extract(m.body,'$.content'),1,120) FROM messages m WHERE m.session_id=c.session_id
+      AND json_extract(m.body,'$.role') IN ('user','assistant') ORDER BY m.id LIMIT 1) AS opening FROM conversation_marks c WHERE c.session_id=?`).get(sessionId);
+    return String(row?.title || row?.opening || sessionId);
+  }
+  /**
+   * Archived and Recently Deleted, a page of each (newest first, `offset` into the one `kind` asked for), with how many
+   * each holds in all and where the next page starts (null at the end). `hidden`: a room's Trunks' sides, never listed.
+   */
+  putAway(owner: string, input: unknown, hidden: readonly string[] = []): PutAway {
+    const { kind, offset, limit } = PutAwayQuerySchema.parse(input);
+    const page = (which: "archived" | "deleted", from: number) => {
+      const at = which === "deleted" ? "c.deleted_at" : "c.archived_at", where = which === "deleted" ? "c.deleted_at IS NOT NULL" : "c.archived_at IS NOT NULL AND c.deleted_at IS NULL";
+      const scope = `FROM conversation_marks c JOIN sessions s ON s.id=c.session_id
+        WHERE c.owner=? AND s.owner=? AND ${where} AND c.session_id NOT IN (SELECT value FROM json_each(?))`, args = [owner, owner, JSON.stringify(hidden)];
+      const total = Number(this.db.prepare(`SELECT COUNT(*) AS n ${scope}`).get(...args)?.n ?? 0);
+      const rows = this.db.prepare(`SELECT c.session_id, c.title, ${at} AS at,
+        (SELECT substr(json_extract(m.body,'$.content'),1,240) FROM messages m WHERE m.session_id=c.session_id
+          AND json_extract(m.body,'$.role') IN ('user','assistant') ORDER BY m.id LIMIT 1) AS opening
+        ${scope} ORDER BY ${at} DESC, c.session_id LIMIT ? OFFSET ?`).all(...args, limit, from);
+      const shaped = rows.map((row): PutAwayRow => ({ sessionId: String(row.session_id), opening: String(row.opening ?? ""), title: String(row.title ?? ""),
+        at: String(row.at), ...(which === "deleted" ? { daysLeft: this.daysLeft(String(row.at)) } : {}) }));
+      return { rows: shaped, total, next: from + rows.length < total ? from + rows.length : null };
     };
+    const archived = page("archived", kind === "archived" ? offset : 0), deleted = page("deleted", kind === "deleted" ? offset : 0);
+    return { archived: archived.rows, deleted: deleted.rows, totals: { archived: archived.total, deleted: deleted.total },
+      next: { archived: archived.next, deleted: deleted.next } };
   }
   forget(sessionId: string): void {
     this.db.prepare("DELETE FROM conversation_marks WHERE session_id=?").run(sessionId);

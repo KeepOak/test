@@ -9495,5 +9495,9 @@
   "window.switch-on.order-why": "Add it opens a conversation with your words. Branch writes the standing order there, and it is kept only after your yes.",
   "window.switch-on.order-ask": "Make this a standing order: {words}",
   "window.switch-on.prompt-need": "Give it a name and what to ask.",
-  "window.switch-on.api-key": "Add a connection with an API key"
+  "window.switch-on.api-key": "Add a connection with an API key",
+  "window.chat.putaway.now-facts": "What memory learned only from this conversation:",
+  "window.chat.putaway.now-todos": "To-dos its tasks made:",
+  "window.chat.putaway.now-cards": "Board cards its tasks made:",
+  "window.chat.putaway.now-versions": "Earlier versions of files its tasks changed:"
 }

@@ -224,3 +224,99 @@ test("a phone may pin, rename, archive and delete, but deleting for good is only
   assert.equal(app.store.ownsSession("local", a), true);
   assert.equal((await call("POST", `/api/sessions/${a}/delete-now`, {})).status, 200);
 });
+
+test("Delete now also removes what its tasks left: facts learned only there, to-dos, board cards, file versions", async (t) => {
+  const { app, call } = await served(t);
+  const { sessionId: a, runId } = seed(app.store, "the quartz project");
+  const other = seed(app.store, "another conversation").runId;
+  const db = app.store.sqlite, now = new Date().toISOString();
+  app.store.save("memory", "local", "fact-only", { text: "quartz only here", source: "a task", sourceRunId: runId });
+  app.store.save("memory", "local", "fact-both", { text: "quartz also elsewhere", source: "a task", sourceRunId: other, originRunId: runId });
+  app.store.save("memory", "local", "fact-else", { text: "quartz from the other", source: "a task", sourceRunId: other });
+  db.prepare("INSERT INTO todos(id,owner,text,done,source,due_at,run_id,created_at,done_at) VALUES('todo-1','local','Polish the quartz',0,'assistant',NULL,?,?,NULL)").run(runId, now);
+  db.prepare("INSERT INTO todos(id,owner,text,done,source,due_at,run_id,created_at,done_at) VALUES('todo-2','local','Keep me',0,'assistant',NULL,?,?,NULL)").run(other, now);
+  db.exec(`CREATE TABLE IF NOT EXISTS board_cards(id TEXT PRIMARY KEY, owner TEXT NOT NULL, project TEXT NOT NULL, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
+    lane TEXT NOT NULL, assignee TEXT NOT NULL, failures INTEGER NOT NULL DEFAULT 0, stuck INTEGER NOT NULL DEFAULT 0, run_id TEXT,
+    history TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+  db.prepare("INSERT INTO board_cards(id,owner,project,title,lane,assignee,run_id,created_at,updated_at) VALUES('card-1','local','p','Quartz card','doing','me',?,?,?)").run(runId, now, now);
+  db.prepare("INSERT INTO file_versions(id,owner,path,content,bytes,existed,run_id,reason,created_at) VALUES('ver-1','local','notes/quartz.md','',0,1,?,'before write',?)").run(runId, now);
+  await call("POST", `/api/sessions/${a}/delete`, {});
+  assert.equal(app.store.memories.search("local", "quartz only").length, 0, "Recently Deleted hides it from recall");
+  const preview = (await call("GET", `/api/sessions/${a}/delete-now`)).body;
+  assert.deepEqual([preview.facts, preview.todos, preview.cards, preview.versions],
+    [["quartz only here"], ["Polish the quartz"], ["Quartz card"], ["notes/quartz.md"]], "the question lists them");
+  assert.equal((await call("POST", `/api/sessions/${a}/delete-now`, {})).status, 200);
+  const ids = (sql) => db.prepare(sql).all().map((row) => row.id);
+  assert.deepEqual(ids("SELECT id FROM memory ORDER BY id"), ["fact-both", "fact-else"], "the fact also taught elsewhere stays");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM memory_versions WHERE memory_id='fact-only'").get().n, 0, "and no earlier wording of the gone one");
+  assert.deepEqual(ids("SELECT id FROM todos"), ["todo-2"]);
+  assert.deepEqual(ids("SELECT id FROM board_cards"), []);
+  assert.deepEqual(ids("SELECT id FROM file_versions"), []);
+  assert.equal(app.store.memories.search("local", "quartz").length, 2);
+  for (const table of ["memory", "memory_versions", "memory_archive"])
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE data LIKE ?`).get(`%${runId}%`).n, 0, `${table} still names the gone task`);
+});
+
+test("Archived and Recently Deleted page through every conversation, and the counts are the engine's totals", async (t) => {
+  const { app, call } = await served(t);
+  const made = [];
+  for (let i = 0; i < 120; i++) { const { sessionId } = seed(app.store, `filler ${i}`); app.store.deleteConversation("local", sessionId); made.push(sessionId); }
+  const seen = [];
+  for (let offset = 0; offset !== null;) {
+    const page = (await call("GET", `/api/sessions/put-away?kind=deleted&offset=${offset}`)).body;
+    assert.ok(page.deleted.length <= 50);
+    seen.push(...page.deleted.map((r) => r.sessionId));
+    offset = page.next.deleted;
+  }
+  assert.equal(seen.length, 120);
+  assert.deepEqual([...seen].sort(), [...made].sort(), "every one once, none twice");
+  assert.equal((await call("GET", "/api/sessions?limit=5")).body.deleted, 120);
+  assert.equal((await call("GET", "/api/sessions/put-away?kind=nope")).status, 400);
+});
+
+test("the 30-day removal is the engine's own upkeep: reading the lists never removes, and it is written to the audit record", async (t) => {
+  const { app, call, doorBase } = await served(t);
+  const a = seed(app.store, "old enough").sessionId, b = seed(app.store, "restored in time").sessionId;
+  await call("POST", `/api/sessions/${a}/rename`, { title: "The old one" });
+  const start = Date.now();
+  app.store.clock = () => start;
+  await call("POST", `/api/sessions/${a}/delete`, {});
+  await call("POST", `/api/sessions/${b}/delete`, {});
+  app.store.clock = () => start + 31 * 86_400_000;
+  const phone = await pairedPhone(call);
+  for (const path of ["/api/sessions/put-away", "/api/sessions?limit=5"]) {
+    await call("GET", path);
+    await call("GET", path, undefined, doorBase, phone.token, phone.headers);
+  }
+  assert.equal(app.store.ownsSession("local", a), true, "no read removes it");
+  await call("POST", `/api/sessions/${b}/restore`, {}); // restore on the last day wins over the upkeep
+  assert.equal(app.store.purgeExpiredConversations(), 1);
+  assert.equal(app.store.ownsSession("local", a), false);
+  assert.equal(app.store.ownsSession("local", b), true);
+  const entry = app.store.audit.list("local", { action: "history.pruned" });
+  assert.ok(entry.some((e) => e.subject === "The old one"), "its title is in the audit record");
+  assert.equal(app.store.purgeExpiredConversations(), 0);
+});
+
+test("a share link of a conversation in Recently Deleted no longer opens", async (t) => {
+  const { app, call } = await served(t);
+  const a = seed(app.store, "shared thing").sessionId;
+  const link = app.store.shares.create("local", { sessionId: a }, app.store.messages(a));
+  await call("POST", `/api/sessions/${a}/delete`, {});
+  assert.throws(() => app.store.shares.open(link.id, link.code), /not valid/);
+});
+
+test("a household person cannot restore or delete for good the owner's conversations", async (t) => {
+  const { app, call } = await served(t);
+  const mine = seed(app.store, "owner's binned").sessionId;
+  await call("POST", `/api/sessions/${mine}/delete`, {});
+  const sam = (await call("POST", "/api/profiles", { name: "Sam", pin: "2468" })).body;
+  assert.equal((await call("POST", "/api/profiles/switch", { profileId: sam.id, pin: "2468" })).status, 200);
+  assert.ok((await call("POST", `/api/sessions/${mine}/restore`, {})).status >= 400);
+  assert.ok((await call("GET", `/api/sessions/${mine}/delete-now`)).status >= 400);
+  assert.ok((await call("POST", `/api/sessions/${mine}/delete-now`, {})).status >= 400);
+  assert.deepEqual((await call("POST", "/api/sessions/put-away/empty", {})).body, { deleted: 0, kept: 0 });
+  assert.deepEqual((await call("GET", "/api/sessions/put-away")).body.deleted, []);
+  assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);
+  assert.equal(app.store.conversations.inBin(mine), true);
+});

@@ -1265,7 +1265,9 @@ export async function createBranch(options: {
     for (const room of trunks.rooms.list().filter((one) => one.sessionId === sessionId)) trunks.rooms.remove(room.id);
   };
   store.runFiles = artifacts;
-  // Recently Deleted keeps a conversation 30 days; whatever has had them is removed at start and every hour after.
+  // Recently Deleted keeps a conversation 30 days; whatever has had them is removed at start (once the Trunks, rooms and
+  // task files above are wired, so they go with it) and every hour after. Only this upkeep removes them; no route does.
+  try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
   setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
   channels.trunkReach = (channel, sessionId) => {

@@ -9470,5 +9470,9 @@
   "window.chat.putaway.all-body": "{count} conversaciones se van para siempre: sus mensajes, sus tareas y los archivos guardados en la carpeta de Branch. Los archivos de tus propias carpetas se quedan.",
   "window.chat.putaway.all-gone": "{count} eliminadas para siempre.",
   "window.chat.putaway.stop-it": "Detener la tarea",
-  "window.chat.putaway.rename-title": "Renombrar conversación"
+  "window.chat.putaway.rename-title": "Renombrar conversación",
+  "window.chat.putaway.now-facts": "Lo que la memoria aprendió solo de esta conversación:",
+  "window.chat.putaway.now-todos": "Pendientes que crearon sus tareas:",
+  "window.chat.putaway.now-cards": "Tarjetas del tablero que crearon sus tareas:",
+  "window.chat.putaway.now-versions": "Versiones anteriores de archivos que cambiaron sus tareas:"
 }

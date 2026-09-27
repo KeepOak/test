@@ -1268,9 +1268,9 @@ async function api(
     const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
     // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
-    const away = app.store.putAwayConversations(scope);
+    const away = app.store.putAwayConversations(scope, { limit: 1 });
     return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })),
-      archived: away.archived.length, deleted: away.deleted.length };
+      archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
@@ -2152,7 +2152,7 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
  */
 async function conversationActions(app: Branch, request: IncomingMessage, path: string, owner: string): Promise<unknown> {
   if (path === "/api/sessions/put-away") {
-    if (request.method === "GET") return app.store.putAwayConversations(owner);
+    if (request.method === "GET") return app.store.putAwayConversations(owner, Object.fromEntries(new URL(request.url ?? "/", "http://x").searchParams));
     return undefined;
   }
   if (path === "/api/sessions/put-away/empty" && request.method === "POST") {

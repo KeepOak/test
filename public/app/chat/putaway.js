@@ -96,11 +96,20 @@ function listRow(kind, row) {
     : `<button class="btn sm" type="button" data-act="chat" data-id="${id}">${t("ov.open")}</button><button class="btn ghost sm" type="button" data-act="conv-unarchive" data-id="${id}">${t("window.chat.putaway.unarchive")}</button>`;
   return `<div class="prow" data-pa="${id}"><span class="grow"><b>${esc(titleOf(row))}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</span>${acts}</div>`;
 }
-/* Archived or Recently Deleted (GET /api/sessions/put-away), each row with its days left, Restore and Delete now. */
+/* Every page of one list (GET /api/sessions/put-away?kind=&offset=), in the engine's order, until it says there is no more. */
+async function allOf(kind) {
+  const rows = [];
+  for (let offset = 0; offset !== null && rows.length < 100000;) {
+    const page = await api(`sessions/put-away?kind=${kind}&offset=${offset}`);
+    rows.push(...(page[kind] ?? []));
+    offset = page.next?.[kind] ?? null;
+  }
+  return rows;
+}
+/* Archived or Recently Deleted, each row with its days left, Restore and Delete now. */
 async function openList(kind) {
-  let away;
-  try { away = await api("sessions/put-away"); } catch (error) { return toast(error.message); }
-  const rows = away[kind] ?? [];
+  let rows;
+  try { rows = await allOf(kind); } catch (error) { return toast(error.message); }
   P.away = { kind, rows };
   if (!rows.length) { P.away = null; closeDlg(); return; }
   openDlg({ title: kind === "deleted" ? t("window.chat.putaway.recently-deleted") : t("window.chat.putaway.archived"),
@@ -114,7 +123,9 @@ async function askDeleteNow(id) {
   let what;
   try { what = await api(`sessions/${id}/delete-now`); } catch (error) { return toast(error.message); }
   const files = what.files.length ? `<ul class="pa18-files">${what.files.map((f) => `<li>${esc(f.name)} <small>${esc(size(f.bytes))}</small></li>`).join("")}</ul>` : `<p><small>${t("window.chat.putaway.no-files")}</small></p>`;
-  openDlg({ title: t("window.chat.putaway.now-title"), body: `<p>${esc(t("window.chat.putaway.now-body", { messages: what.messages, tasks: what.tasks }))}</p>${files}`,
+  /* What its tasks left elsewhere and goes with it: facts memory learned only here, to-dos, board cards, earlier file versions. */
+  const also = ["facts", "todos", "cards", "versions"].map((k) => ((what[k] ?? []).length ? `<p>${t(`window.chat.putaway.now-${k}`)}</p><ul class="pa18-files">${what[k].map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "")).join("");
+  openDlg({ title: t("window.chat.putaway.now-title"), body: `<p>${esc(t("window.chat.putaway.now-body", { messages: what.messages, tasks: what.tasks }))}</p>${files}${also}`,
     foot: `<button class="btn ghost" type="button" data-act="putaway" data-v="deleted">${t("first-run-steps.restore-no")}</button><button class="btn pri bad" type="button" data-act="conv-delnow-go" data-id="${esc(id)}">${t("window.chat.putaway.delete-now")}</button>` });
 }
 async function deleteNow(id) {

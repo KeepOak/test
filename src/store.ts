@@ -16,7 +16,7 @@ import { Locker, type LockerKeySource } from "./locker.js";
 import { Secrets } from "./vault.js";
 import { Receipts } from "./receipts.js";
 import { CollabEvents, ownerMember } from "./collab-events.js";
-import { AuditLog } from "./audit.js";
+import { AuditLog, audit } from "./audit.js";
 import { achievementTallies, type AchievementTallies, type EventScan } from "./achievement-tallies.js"; // phase2/delight
 import { MemoryReview } from "./memory-review.js";
 import { SkillGovernance } from "./skill-governance.js";
@@ -31,6 +31,7 @@ import { LeftOutMessages } from "./left-out.js";
 import { ReadMarks } from "./read-marks.js";
 import { ConversationPaths } from "./conversation-paths.js";
 import { ConversationMarks } from "./conversation-actions.js";
+import { findResidue, forgetResidue } from "./conversation-residue.js";
 import { MediaComments } from "./media-comments.js";
 import { ShareLinks } from "./conversation-share.js";
 import { Profiles } from "./profiles.js";
@@ -177,7 +178,6 @@ export class Store {
     this.interruptSchedules();
     this.interruptWorkflows();
     this.discardTemporarySessions();
-    this.purgeExpiredConversations();
     // The newest 20 000 spans are kept and the rest let go, once per launch, so a machine left
     // running for weeks does not grow a spans table without end.
     try { this.spans.prune("local"); } catch { /* tidying is never a reason not to start */ }
@@ -280,24 +280,26 @@ export class Store {
     return this.conversations.delete(owner, sessionId, this.conversationCompanions(sessionId));
   }
   restoreConversation(owner: string, sessionId: string) { return this.conversations.restore(owner, sessionId); }
-  /** Archived and Recently Deleted, after removing whatever has had its 30 days. */
-  putAwayConversations(owner: string) {
-    this.purgeExpiredConversations();
-    return this.conversations.putAway(owner, this.hiddenSessions().slice(0, 500));
+  /** Archived and Recently Deleted, a page at a time. Reading them never removes anything (purgeExpiredConversations). */
+  putAwayConversations(owner: string, input: unknown = {}) {
+    return this.conversations.putAway(owner, input, this.hiddenSessions());
   }
   /** Exactly what "Delete now" removes, so the question can list it. */
   deleteNowPreview(owner: string, sessionId: string) {
     this.conversations.requireDeletable(owner, sessionId, this.conversationCompanions(sessionId));
     const ids = [sessionId, ...this.conversationCompanions(sessionId)], list = JSON.stringify(ids);
     const messages = Number(this.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id IN (SELECT value FROM json_each(?))").get(list)?.n ?? 0);
-    const runIds = this.runIdsOf(ids);
-    return { sessionId, messages, tasks: runIds.length, files: [...ids.flatMap((id) => this.attachedFiles(id)), ...this.runFiles.held(runIds)] };
+    const runIds = this.runIdsOf(ids), residue = findResidue(this.db, runIds);
+    return { sessionId, messages, tasks: runIds.length, files: [...ids.flatMap((id) => this.attachedFiles(id)), ...this.runFiles.held(runIds)],
+      facts: residue.facts.map((fact) => fact.text), todos: residue.todos.map((todo) => todo.text),
+      cards: residue.cards.map((card) => card.title), versions: residue.versions.map((version) => version.path) };
   }
   /** "Delete now": removes one conversation in Recently Deleted for good, with what goes with it. */
   deleteConversationNow(owner: string, sessionId: string) {
     const preview = this.deleteNowPreview(owner, sessionId);
     this.purgeForGood(sessionId);
-    return { deleted: true, messages: preview.messages, tasks: preview.tasks, files: preview.files.length };
+    return { deleted: true, messages: preview.messages, tasks: preview.tasks, files: preview.files.length,
+      facts: preview.facts.length, todos: preview.todos.length, cards: preview.cards.length, versions: preview.versions.length };
   }
   /** "Delete all": empties this person's Recently Deleted. A conversation with work still going is left, and counted. */
   emptyRecentlyDeleted(owner: string) {
@@ -306,11 +308,17 @@ export class Store {
     for (const id of ids) if (!busy.includes(id)) this.purgeForGood(id);
     return { deleted: ids.length - busy.length, kept: busy.length };
   }
-  /** Removes every conversation whose 30 days in Recently Deleted are over, unless it has work still going. */
+  /**
+   * The engine's own upkeep (src/index.ts, at start and every hour; no route calls it): removes every conversation whose
+   * 30 days in Recently Deleted are over, unless it has work still going, and writes each one's title to the audit record.
+   */
   purgeExpiredConversations(): number {
     let removed = 0;
     for (const id of this.conversations.expired()) {
       if (this.conversations.busy([id, ...this.conversationCompanions(id)])) continue;
+      const owner = String(this.db.prepare("SELECT owner FROM sessions WHERE id=?").get(id)?.owner ?? "");
+      audit(this, owner || "local", { action: "history.pruned", actor: "Recently Deleted", subject: this.conversations.titleOf(id).slice(0, 300),
+        reason: "Its 30 days in Recently Deleted were over", outcome: "deleted" });
       this.purgeForGood(id);
       removed += 1;
     }
@@ -318,9 +326,12 @@ export class Store {
   }
   private purgeForGood(sessionId: string): void {
     const companions = [...this.conversationCompanions(sessionId)], runIds = this.runIdsOf([sessionId, ...companions]);
+    const residue = findResidue(this.db, runIds);
     this.beforeConversationPurge(sessionId);
     this.purgeSession(sessionId);
     for (const id of companions) if (this.db.prepare("SELECT 1 AS found FROM sessions WHERE id=?").get(id)) this.purgeSession(id);
+    this.db.exec("BEGIN");
+    try { forgetResidue(this.db, runIds, residue); this.db.exec("COMMIT"); } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     this.runFiles.forget(runIds);
   }
   importSession(owner: string, input: unknown) {

@@ -9470,5 +9470,9 @@
   "window.chat.putaway.all-body": "{count} Unterhaltungen gehen endgültig: ihre Nachrichten, ihre Aufgaben und die Dateien in Branchs eigenem Ordner. Dateien in deinen eigenen Ordnern bleiben.",
   "window.chat.putaway.all-gone": "{count} endgültig gelöscht.",
   "window.chat.putaway.stop-it": "Aufgabe stoppen",
-  "window.chat.putaway.rename-title": "Unterhaltung umbenennen"
+  "window.chat.putaway.rename-title": "Unterhaltung umbenennen",
+  "window.chat.putaway.now-facts": "Was das Gedächtnis nur aus diesem Gespräch gelernt hat:",
+  "window.chat.putaway.now-todos": "Aufgaben, die seine Tasks angelegt haben:",
+  "window.chat.putaway.now-cards": "Karten, die seine Tasks angelegt haben:",
+  "window.chat.putaway.now-versions": "Frühere Versionen von Dateien, die seine Tasks geändert haben:"
 }
