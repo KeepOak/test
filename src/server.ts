@@ -193,7 +193,9 @@ import { People } from "./people/index.js";
 import { peopleEnabled } from "./people/settings.js";
 import { interopMode } from "./interop/settings.js";
 import { requireBoundSession } from "./people/access.js";
-import { keyAnswerRefusal, keyStopRefusal, runOrigin, shortLivedKeyMark } from "./key-context.js";
+import { keyAnswerRefusal, keyStopRefusal, shortLivedKeyMark } from "./key-context.js";
+import { ownersOwnTask } from "./asked-task.js"; // Q050
+import { helperMark, needsYou } from "./needs-you.js"; // Q050
 import { currentPerson, enterPairedDoor } from "./people/context.js";
 // ---- end bucket 19 ----
 // bucket-18: code editor (A0098)
@@ -208,6 +210,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { handlesYourDataPath, yourDataApi } from "./your-data.js";
 import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
@@ -778,14 +781,13 @@ function toolInventory(app: Branch) {
  * and it can be continued. Read with store.waitingRuns, as the Activity list reads its waiting tasks, so the two lists
  * agree and a question stays listed however much other work finishes after it.
  */
-/** What a yes to the owner's own waiting task says in the conversation, as if the owner had typed it. */
-export const carryOnWords = "Yes, go ahead.";
 /**
  * Dogfood A6/B6: an answer settles the task that stopped to ask. A task stops on its question, so a yes alone
  * carried nothing on, and the task went on waiting in the banner. Now a yes to the owner's own task, given in the
- * owner's window, carries it on in that conversation as pressing Send would, and so does a no (dogfood D5: told what
- * was refused, it replies with what it can do instead). Any other answer (to a chat's or a schedule's task, which
- * carries on from where it came) ends its wait. A task with another question still waiting is left for that one.
+ * owner's window, carries that same task on (Q050: under its own id, with no words written for the owner and no second
+ * task beside it), and so does a no (dogfood D5: told of the no, it replies with what it can do instead). Any other
+ * answer (to a chat's or a schedule's task, which carries on from where it came) ends its wait. A task with another
+ * question still waiting is left for that one.
  */
 /** What an answer did to the task that asked (NAS bd6cf44): the window says so, rather than always "it carries on". */
 type Settled = "carrying-on" | "still-waiting" | "settled";
@@ -794,31 +796,29 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
   if (!run || run.status !== "needs_input" || app.runtime.approvals.waiting(asked.sessionId).length) return "still-waiting";
   // Only the owner's own task, answered by the owner at the window: never a key's (it records source "owner" too,
   // and a carry-on would lose its key mark), a household person's, or one that came from elsewhere (NAS 618407c).
-  const origin = runOrigin(app.store, run.id);
   // Pass 17 (Helpers): nor a helper's. Its carry-on would start in the helper's conversation as a task of the owner's
   // own, without the narrower reach the helper was given; its question is answered and the helper is settled instead.
-  const owners = asked.source === "owner" && origin.source === "owner" && !origin.shortLivedKey && !origin.keyIds.length
-    && !origin.personProfileId && !origin.lentTo && !origin.parentRunId;
+  const owners = asked.source === "owner" && ownersOwnTask(app.store, run.id);
   if (owners && app.store.profiles.isOwner() && !startedWithShortLivedKey() && carryOnAllowed(app, run)) {
     // The conversation busy with another task: the carry-on is not started, and this task keeps waiting (the one-time
     // yes is still there for the owner's next message), rather than being marked done with its work undone.
     // A carry-on refused as it starts (the monthly budget, the owner's inlet filter, a closing app) leaves the task waiting
     // and writes down why, where the task's own record shows it (NAS bd6cf44).
     let refused = false;
-    // Dogfood D5: a No carries the task on too, told what was refused, so the owner gets a reply and another way
-    // rather than silence. Nothing is written in the owner's name.
-    const started = decision === "allow"
-      ? runForCurrentPerson(app, { prompt: carryOnWords, sessionId: run.sessionId, onTextDelta: () => undefined })
-      : app.runtime.carryOnRefused(asked, (options) => runForCurrentPerson(app, options));
+    // Q050: the task that asked carries on itself, told of the yes to its exact request; nothing is said in the owner's
+    // name, and no second task starts. Dogfood D5: a No carries it on the same way, told of the No, so the owner gets a
+    // reply and another way rather than silence.
+    const started = decision === "allow" ? app.runtime.continueAsked(run.id) : app.runtime.continueRefused(run.id, asked.fingerprint);
     const carry = started
       .catch((error: unknown) => { refused = true; app.store.event(run.id, "run.carry_on_refused", { reason: errorText(error).slice(0, 300) }); });
     // NAS 0adb368: a refusal as it starts (the budget, an inlet filter, a busy conversation) settles within microtasks,
     // so one turn of the event loop tells it apart, and the window never says "it carries on" when nothing did.
     await Promise.race([carry, new Promise((resolve) => setTimeout(resolve, 0))]);
     if (decision === "allow") return refused ? "still-waiting" : "carrying-on";
-    // A No always ends this task's wait, whether or not the carry-on could start.
+    if (!refused) return "carrying-on";
+    // A No always ends this task's wait: one that could not carry on is ended here.
     app.store.finish(run.id, "cancelled", run.output);
-    return refused ? "settled" : "carrying-on";
+    return "settled";
   }
   if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) return "still-waiting";
   app.store.finish(run.id, decision === "allow" ? "completed" : "cancelled", run.output);
@@ -837,10 +837,10 @@ function carryOnAllowed(app: Branch, run: Run): boolean {
   const plan = app.runtime.orchestration.plan(run.sessionId);
   if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return false;
   // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
-  // question (`user.ask` takes the owner's next message as the answer), and "Yes, go ahead." would answer it.
+  // question (`user.ask` takes the owner's next message as the answer), and carrying on would talk over it.
   if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return false;
   // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
-  // report): the carry-on's model reads the conversation, so "Yes, go ahead." would answer them. A task with no
+  // report): the carry-on's model reads the conversation, so it would take the answer as theirs. A task with no
   // record of where it stopped (asked before this was kept) is left for the owner too.
   const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
   return typeof stopped === "number" && app.store.lastMessageId(run.sessionId) === stopped;
@@ -872,15 +872,6 @@ function attention(app: Branch) {
       ...(by ? { who: by.name, open: by.sessionId, ...(by.room ? { room: by.room } : {}) } : {}) };
   });
 }
-/**
- * Pass 17 (Helpers): a helper's question (a task another task started, "run.started" parentRunId) names the task that
- * started it. It is answered in that task's Activity › Helpers, so the window keeps it out of the Inbox's counts and list.
- * Only a task that exists counts: the learning passes mark their own rows "learning".
- */
-function helperMark(app: Branch, runId: string): { parentRunId?: string } {
-  const parent = app.store.events(runId).find((event) => event.kind === "run.started")?.data.parentRunId;
-  return typeof parent === "string" && app.store.run(parent) ? { parentRunId: parent } : {};
-}
 /** What a waiting task says: its question, or for one Branch closed on, the note that it can be continued. */
 function waitingWords(app: Branch, run: Run): string {
   if (run.status !== "interrupted") return run.output;
@@ -911,6 +902,7 @@ function state(app: Branch): unknown {
     modelNeeded: app.runtime.models.configured ? null : noModelWords,
     onboarding: onboardingState(app),
     attention: attention(app),
+    needsYou: needsYou(app), // Q050: the one count every "needs you" in the window reads
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
     version: app.version,
@@ -1913,6 +1905,7 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
       // works (runtime.thoughtsOf); the words themselves still arrive with the finished answer, as before.
@@ -3560,10 +3553,17 @@ export async function startServer(
     autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
+    /**
+     * The process the "already running here" note names, which must be gone before the app counts as closed: the
+     * desktop app's main process when this engine runs in a process of its own under it. This process when left out.
+     */
+    presencePid?: number;
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
     authLimits?: { attempts?: number; lockoutMs?: number; windowMs?: number };
     /** bucket 22: what `branch quit` does to this launch (src/install/quit.ts); without it, it refuses. */
     quit?: () => void;
+    /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
+    onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
     listenAddresses?: readonly OwnAddress[];
     /**
@@ -4103,6 +4103,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const answer = await securityCheckApi(app.security, request.method ?? "GET", path, () => readBody(request), remote.status().enabled);
           if (answer !== undefined) { send(response, 200, answer); return; }
         }
+        // privacy: Settings › Your data (src/your-data.ts), which needs the phone door, the paired phones and where Branch listens.
+        if (handlesYourDataPath(path)) {
+          const answer = await yourDataApi(app, request, response, path, { phoneDoor: () => remote.status().enabled,
+            beyondThisComputer: () => listen.beyond === true, phones: () => gateway.devices() });
+          if (answer !== undefined) send(response, 200, answer);
+          return;
+        }
         send(response, 200, await api(app, request, path, options.dataDir, listen));
       } finally {
         place?.();
@@ -4221,6 +4228,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     const next = rotating.then(async () => {
       const key = await writeNewWindowKey(options.dataDir);
       token = key;
+      options.onWindowKey?.(key);
       for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
       remote.dropConnections(keep);
       audit(app.store, app.runtime.owner, { action: "channel.paired", actor: app.runtime.owner, subject: "the window's key",
@@ -4337,6 +4345,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   }
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
+  settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
@@ -4345,7 +4354,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
-    await writeRunning(options.dataDir, { port: address.port, pid: process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
+    await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
     await noteFirstStart(app, options.dataDir).catch(() => undefined);
   }
   return {
@@ -4378,6 +4387,27 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       await stopServer(app, server);
     },
   };
+}
+/** Q050: the plain words a task left waiting on an answer already given is closed with. */
+export const supersededAskNote = "This question was answered, or overtaken by a later message in the conversation, so it no longer waits for you.";
+/**
+ * Q050: a yes carried a task on as a second task, so the task that asked was left waiting for good, and the Inbox,
+ * Overview and Health kept asking for an answer already given. On start, a task still waiting that is no longer the
+ * newest in its conversation (the conversation went on from it) stops waiting, with the reason on its record. Its
+ * question is never answered for it: nothing is allowed, and a question still open in this engine is left alone.
+ */
+export function settleSupersededAsks(app: Branch): number {
+  const waiting = app.store.sqlite.prepare("SELECT id FROM tasks WHERE status='needs_input'").all() as { id: unknown }[];
+  let settled = 0;
+  for (const row of waiting) {
+    const run = app.store.run(String(row.id));
+    if (!run || app.store.newestIn(run.owner, run.sessionId)?.id === run.id) continue;
+    if (app.runtime.approvals.waiting(run.sessionId).some((question) => question.runId === run.id)) continue;
+    app.store.event(run.id, "run.ask_resolved", { reason: "superseded", note: supersededAskNote, by: app.store.newestIn(run.owner, run.sessionId)?.id ?? null });
+    app.store.finish(run.id, "cancelled", supersededAskNote, { mend: false });
+    settled++;
+  }
+  return settled;
 }
 /** What a stop leaves a task waiting on: the last of these events says which question it was. */
 const askedKinds = new Set(["policy.ask", "user.ask", "attention.needed", "plan.awaiting_approval", "folder.trust_needed", "web.challenge"]);
@@ -4943,6 +4973,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // mac5/key-sweep: a few reads hand back a secret or everybody's data (src/short-lived-keys.ts).
   // mac7/diagnostics: the activity log and problem reports are the owner's alone, reading included.
   // A person's attached files are the owner's alone, like everything else kept beside the database.
+  // privacy: Settings › Your data is the app window's alone, reading included: the summary names the owner's webhooks,
+  // phones and folder, and an export's progress and file hand back everything kept, the full backup among it.
+  if (handlesYourDataPath(path))
+    return "A short-lived key cannot read, export or delete everything kept here. Do that in the app window.";
   if (path.startsWith("/api/attachments/"))
     return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
   if (path.startsWith("/api/diagnostics/"))

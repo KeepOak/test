@@ -99,9 +99,9 @@ test("when nothing more can be made to fit, the task still ends with its best an
 
 test("the window shows a task that stopped at a limit with the engine's words, as it does a failed one", () => {
   const source = readFileSync(new URL("../public/app/chat/runview.js", import.meta.url), "utf8");
-  const body = /export function failedLine[\s\S]*?\n}\n/.exec(source)[0].replace("export ", "");
+  const fn = (name) => new RegExp(`export function ${name}[\\s\\S]*?\\n}\\n`).exec(source)[0].replace("export ", "");
   const esc = (text) => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const failedLine = new Function("esc", `${body}; return failedLine;`)(esc);
+  const failedLine = new Function("esc", `${fn("failedRow")}${fn("failedLine")}; return failedLine;`)(esc);
   const runs = (status) => [{ sessionId: "s", status, output: `${outOfRoomSentence} <b>`, createdAt: "2026-09-27T00:00:00Z" }];
   assert.match(failedLine(runs("budget_exceeded"), "s", false), /I ran out of room in this conversation/);
   assert.match(failedLine(runs("budget_exceeded"), "s", false), /&lt;b&gt;/, "the engine's words are escaped");

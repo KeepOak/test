@@ -123,7 +123,7 @@ export function showModelMenu() {
 function modelMenu() {
   const m = current(), preset = presets().find((x) => x.id === m.id), trunk = inTrunkChat();
   const levels = preset?.thinking?.levels ?? [];
-  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"${trunk && !trunkCanUse(x) ? " disabled" : ""}><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.model)}</span></span></button>`).join("");
+  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"${trunk && !trunkCanUse(x) ? " disabled" : ""}><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(String(x.model ?? "").replace(/-branch\d+k$/, ""))}</span></span></button>`).join("");
   const think = levels.length ? `<hr><div class="row-in"><span>${t("field.thinking")}</span><span class="seg">${levels.map((lv) => `<button type="button" data-act="pick-think" data-v="${esc(lv)}" aria-pressed="${m.reasoning === lv}">${esc(lv[0].toUpperCase() + lv.slice(1))}</button>`).join("")}</span></div><p class="pp" data-css="padding-top:6px">${t("window.chat.mode.thinking-hint")}</p>` : "";
   return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${trunk ? trunkModelNote(E.state?.models) : ""}${think}${mi("lp-open", "cpu", t("glance.local"))}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
 }

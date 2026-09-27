@@ -147,7 +147,7 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // ── mac7/r17-g: the safety extras (src/safety-extras/settings.ts keeps these lists). ──
   ...safetyToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
   // ── r17-h: flows and boards (src/flows-boards/settings.ts keeps these lists). ──
-  ...boardToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...boardToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── R17-F: learning, deeper (src/learning-more/settings.ts keeps these lists). ──
   ...learningToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
   // ── mac7/learn: understanding something -- the map and the tour (src/learn/settings.ts). ──

@@ -7,13 +7,17 @@
    The shared commands: the settings kit's command-catalog switch (kit17.js), so every place lists the same slash commands.
    Summaries of older turns and the room to plan for are the engine's compaction knobs (POST /api/knobs { card:
    "compaction" }); repairing the history before each call is the kit's safety-history-repair switch.
-   Greyed, with why: Vim keys and message times are the engine's comfort settings, but the message box and the
-   conversation (chat/, not this page) do not read them yet, so a switch here would change nothing you can see. */
+   The conversation: vim keys in the message box and message times are the engine's comfort cards (GET /api/comfort
+   values.keys.vim and values.display.timestamps; POST /api/comfort { card, values } lays the change over what is kept),
+   read by the message box and the conversation (chat/comfort.js). The engine keeps a time on every message on or off:
+   off is On hover (the time in each message's action row), on is Always; Never has no setting, so it stays greyed with
+   why. A household person may not read the owner's cards, so the rows are drawn only once the engine has answered. */
 import { esc, renderNow } from "../../core/dom.js";
 import { level, projectName, ownerHere } from "../../core/state.js";
 import { api } from "../../core/api.js";
+import { on } from "../../core/actions.js";
 import { toast } from "../../core/ui.js";
-import { ctl, ctlSeg } from "../parts.js";
+import { ctl } from "../parts.js";
 import { startKey, startsWithWindows } from "../signin.js";
 import { K, kitOn, knob, numBox, knobSeg, changed, loadKit } from "../kit17.js";
 import { onPhone } from "../surface17.js";
@@ -21,12 +25,23 @@ import { t } from "../../../i18n.js";
 import { P, loadProjects as readProjects, conversationsWord } from "../../places/project.js"; // area projects: counts and the editor
 
 let deployment = null;
+let comfort = null; // the engine's comfort cards (values), the owner's only
 
 async function loadProjects() {
   try {
-    const [, d] = await Promise.all([ownerHere() ? readProjects() : null, api("deployment")]);
+    const [, d, c] = await Promise.all([ownerHere() ? readProjects() : null, api("deployment"), ownerHere() ? api("comfort").catch((error) => { toast(error.message); return null; }) : null]);
     deployment = d;
+    comfort = c?.values ?? null;
   } catch (error) { toast(error.message); }
+  renderNow();
+}
+
+/* Saves one comfort card's change and draws what the engine now keeps (a refused switch goes back, since an unchanged
+   page is not drawn again). */
+async function saveComfort(card, values) {
+  try { comfort = (await api("comfort", { card, values })).values ?? comfort; } catch (error) { toast(error.message); }
+  const box = document.getElementById("f15-vim-keys-in-the-message-box");
+  if (box && comfort) box.checked = comfort.keys?.vim === true;
   renderNow();
 }
 
@@ -45,9 +60,17 @@ const BOUND = {
 };
 const num = (id, title, sub, unit, value) => `<div class="ctl"><b>${esc(title)}</b>${numBox(id, title, value, unit)}<small>${esc(sub)}</small></div>`;
 
+/* Message times: On hover and Always are the engine's off and on; Never has no setting (window.why.f15-message-times). */
+function times() {
+  const always = comfort.display?.timestamps === true, title = t("window.settings.general.message-times");
+  const opt = (v, words, pressed) => `<button type="button" aria-pressed="${pressed}" data-act="mtimes15" data-v="${v}">${esc(words)}</button>`;
+  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("hover", t("window.settings.general.on-hover"), !always)}${opt("always", t("window.places.automations.always"), always)}<button type="button" aria-pressed="false" data-act="seg" data-why="f15-message-times">${esc(t("window.settings.advanced.never"))}</button></span></span><small>${esc(t("window.settings.general.when-a-message-was-sent-and"))}</small></div>`;
+}
+
 function advanced() {
   const c = K.knobs?.values?.compaction;
-  return `<div class="sec x15-sec"><h2>${t("onscreen.group.middle")}</h2>${onPhone() ? "" : ctl("f15-vim-keys-in-the-message-box", t("comfort.field.vim"), t("window.settings.general.normal-and-insert-modes-for-people"), false)}${ctlSeg(t("window.settings.general.message-times"), t("window.settings.general.when-a-message-was-sent-and"), [t("window.settings.general.on-hover"), t("window.places.automations.always"), t("window.settings.advanced.never")], "")}</div>
+  const vim = comfort && !onPhone() ? ctl("f15-vim-keys-in-the-message-box", t("comfort.field.vim"), t("window.settings.general.normal-and-insert-modes-for-people"), comfort.keys?.vim === true) : "";
+  return `${comfort ? `<div class="sec x15-sec"><h2>${t("onscreen.group.middle")}</h2>${vim}${times()}</div>` : ""}
     <div class="sec x15-sec"><h2>${t("window.settings.general.summaries-of-older-turns")}</h2>${ctl("f15-summarise-older-turns-by-themselves", t("window.settings.general.summarise-older-turns-by-themselves"), t("window.settings.general.keeps-long-conversations-fast-the-summary"), c?.autoCompact === true)}${c ? num("f15-summarise-when", t("window.settings.general.summarise-when-its-this-full"), t("window.settings.general.of-the-models-room-for-this"), "%", c.compactAtPercent) + num("f15-keep-latest", t("window.settings.general.always-keep-the-latest"), t("window.settings.general.messages-kept-word-for-word"), "messages", c.keepRecentMessages) : ""}</div>`;
 }
 
@@ -78,8 +101,10 @@ async function startUp(el) {
 export function init() {
   document.addEventListener("change", (e) => {
     if (e.target?.id === "g-start" || e.target?.id === "g-tray") startUp(e.target);
+    else if (e.target?.id === "f15-vim-keys-in-the-message-box") saveComfort("keys", { vim: e.target.checked });
     else changed(e.target, BOUND);
   });
+  on("mtimes15", (el) => saveComfort("display", { timestamps: el.dataset.v === "always" }));
   // The kit and knobs are read as General first opens (Settings no longer reads them before sign-in), as on each reopen.
   loadKit();
   loadProjects();
@@ -91,4 +116,5 @@ export const live = {
   "sw:g-start": true, "sw:g-tray": true, "sw:g-cmds": true,
   "sw:f15-summarise-older-turns-by-themselves": true, "sw:f15-summarise-when": true, "sw:f15-keep-latest": true,
   "sw:f15-repair-the-history-before-each-call": true, knobseg17: true,
+  "sw:f15-vim-keys-in-the-message-box": true, mtimes15: true,
 };

@@ -128,12 +128,15 @@ export class TrunkRoutines {
     if (!this.busy.has(sessionId)) { this.store.message(sessionId, { role: "assistant", content }); return; }
     this.waiting.set(sessionId, [...(this.waiting.get(sessionId) ?? []), content]);
   }
-  /** Notes are only written while the Trunk's conversation is quiet, so a turn in progress is never split. */
+  /**
+   * Notes are only written while the Trunk's conversation is quiet, so a turn in progress is never split. A task that
+   * stopped to ask and carries on once answered (Q050, "run.continued") is a turn in progress again.
+   */
   private observe(runId: string, kind: string): void {
-    if (kind !== "run.started" && kind !== "run.finished") return;
+    if (kind !== "run.started" && kind !== "run.continued" && kind !== "run.finished") return;
     const run = this.store.run(runId);
     if (!run) return;
-    if (kind === "run.started") { this.busy.add(run.sessionId); return; }
+    if (kind !== "run.finished") { this.busy.add(run.sessionId); return; }
     this.busy.delete(run.sessionId);
     const notes = this.waiting.get(run.sessionId);
     if (!notes) return;

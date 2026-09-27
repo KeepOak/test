@@ -10,7 +10,7 @@ import { codingMode } from "./settings.js";
  * waiting for the model, and packing the same tool calls into fewer rounds cut one task from 1,958
  * ms to 928 ms. So this part is about rounds, not about making anything in Branch run faster.
  *
- * Four things, all switched together by the `fewer-rounds` coding part, which ships off:
+ * Four things, all switched together by the `fewer-rounds` coding part, which ships "when needed":
  *
  *   - the tools a coding task always reaches for are loaded from the first round, so it never
  *     spends a round trip searching for `files.edit` before it can start;

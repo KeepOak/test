@@ -19,7 +19,7 @@ function model(seen) {
   return { name: "writer", async complete(request) {
     seen.push(request);
     const last = request.messages.at(-1);
-    const told = String(request.messages[0]?.content ?? "").includes("The owner answered No");
+    const told = String(request.messages[0]?.content ?? "").includes("they said No to the request you asked about");
     if (last?.role === "user" && /^write (\S+)/.test(last.content))
       return { content: "", toolCalls: [{ id: "w1", name: "files.write", arguments: JSON.stringify({ path: /^write (\S+)/.exec(last.content)[1], content: "hello" }) }] };
     // Carrying on after the No: first the same request again (it must be refused), then a reply.
@@ -58,10 +58,10 @@ test("a No to the owner's own task gets a reply with another way, and nothing is
   const answered = await f.no(first);
   assert.equal(answered.status, 200);
   assert.equal(answered.body.task, "carrying-on", "the window is told the task carries on, so it follows it");
-  assert.ok(await until(() => f.runsIn(first.sessionId).some((run) => run.id !== first.id && run.status === "completed")));
-  const next = f.runsIn(first.sessionId).find((run) => run.id !== first.id);
+  assert.ok(await until(() => f.app.store.run(first.id).status === "completed"), "the task that asked carried on and finished");
+  assert.deepEqual(f.runsIn(first.sessionId).map((run) => run.id), [first.id], "no second task started");
+  const next = f.app.store.run(first.id);
   assert.match(next.output, /because you said no/, "the task ends with words: what it could not do and what it can do");
-  assert.equal(f.app.store.run(first.id).status, "cancelled", "the asking task's wait is over");
   const messages = f.app.store.messages(first.sessionId);
   assert.deepEqual(messages.filter((m) => m.role === "user").map((m) => m.content), ["write b.txt"], "no words were written as the owner's");
   assert.equal(messages.at(-1).role, "assistant");
@@ -70,7 +70,7 @@ test("a No to the owner's own task gets a reply with another way, and nothing is
   const again = f.app.store.events(next.id).filter((event) => event.kind === "policy.denied" && event.data.reason === refusedAgain);
   assert.equal(again.length, 1, "trying the refused request again was refused, without asking");
   assert.equal(f.app.runtime.approvals.waiting(first.sessionId).length, 0, "and nothing was asked again");
-  assert.match(String(f.seen.at(-1).messages[0].content), /answered No to this request of yours: "[^"]*b\.txt/, "the model was told what was refused");
+  assert.match(String(f.seen.at(-1).messages[0].content), /they said No to the request you asked about/, "the model was told of the No");
 });
 
 test("a No to a task that came from elsewhere ends its wait and carries nothing on in the owner's window", async (t) => {
@@ -100,4 +100,14 @@ test("with a newer task in the conversation, a No ends the old task's wait and s
   assert.equal(said.body.task, "settled");
   assert.equal(f.app.store.run(first.id).status, "cancelled");
   assert.equal(f.runsIn(first.sessionId).length, 2, "nothing new started");
+});
+
+test("a No that cannot carry on as it starts (the monthly budget) still ends the task's wait", async (t) => {
+  const f = await fixture(t);
+  const first = await f.app.runtime.run({ prompt: "write e.txt" });
+  f.app.store.save("settings", f.app.runtime.owner, "usage_budget", { pauseAtBudget: true, maxMonthlyTokens: 0 });
+  const said = await f.no(first);
+  assert.equal(said.body.task, "settled", "the window is told the truth: nothing carries on");
+  assert.equal(f.app.store.run(first.id).status, "cancelled", "and the task does not wait for ever");
+  assert.ok(f.app.store.events(first.id).some((event) => event.kind === "run.carry_on_refused"));
 });

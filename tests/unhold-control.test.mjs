@@ -347,7 +347,8 @@ test("Ask before opening an app it hasn't used: once per app, per Trunk, and the
 // counts as the owner's own assistant, and the second Trunk is not asked).
 test("Ask before opening an app it hasn't used, on real Trunk turns: Ada is asked, answered once, then Bo is still asked", async (t) => {
   const { fixture: trunkFixture, on: trunksOn, call: toolCall } = await import("./trunks-helpers.mjs");
-  const { app, root } = await trunkFixture(t, [({ last }) => (last?.role === "user" && /open notepad|Yes, go ahead/.test(last.content ?? "") ? toolCall("desktop.open", { app: "notepad" }) : null)]);
+  const { app, root } = await trunkFixture(t, [({ last, system }) => ((last?.role === "user" && /open notepad/.test(last.content ?? ""))
+    || (last?.role === "tool" && !/"ok":true/.test(last.content ?? "") && /The call you asked about did not run/.test(system ?? "")) ? toolCall("desktop.open", { app: "notepad" }) : null)]);
   trunksOn(app);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   t.after(() => server.close());
@@ -374,7 +375,7 @@ test("Ask before opening an app it hasn't used, on real Trunk turns: Ada is aske
   const yes = await post("/api/policy/approve", { sessionId: ada.chatSessionId, decision: "allow", remember: "never", fingerprint: waiting.fingerprint, carryOn: true });
   assert.equal(yes.status, 200, JSON.stringify(yes.body));
   for (let i = 0; i < 100 && !opened.length; i++) await new Promise((done) => setTimeout(done, 50));
-  // The carry-on is "Yes, go ahead." in Ada's conversation; the scripted model asks for the same open again.
+  // Q050: Ada's own task carries on after the yes; the scripted model asks for the same open again.
   assert.deepEqual(opened, ["notepad"], "the yes opened it once");
   assert.deepEqual(appsUsed(app.store, app.runtime.owner, ada.id), ["notepad"], "kept under Ada's id");
   assert.deepEqual(appsUsed(app.store, app.runtime.owner, undefined), [], "not under the owner's own assistant");
