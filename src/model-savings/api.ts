@@ -8,7 +8,7 @@ import { allSavings, MixtureSettingsSchema, readSavings, resetSavings, saveSavin
 import { mixturePrefix, mixtureProblem, syncMixtures } from "./mixture.js";
 import { keptWarmProviders } from "./keep-alive.js";
 import { roundsOf } from "./rounds.js";
-import { validationText } from "../request-errors.js";
+import { errorText, validationText } from "../request-errors.js";
 
 /**
  * R17-E: the screen's way in.
@@ -40,7 +40,7 @@ const SaveSchema = z.object({
 function requireOwnerHere(store: Store): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new SavingsApiError(403, "Only the owner can change how models are chosen and what they may spend, in the app window.");
-  try { store.profiles.requireOwner("How models are chosen"); } catch (error) { throw new SavingsApiError(400, (error as Error).message); }
+  try { store.profiles.requireOwner("How models are chosen"); } catch (error) { throw new SavingsApiError(400, errorText(error)); }
 }
 
 function view(app: SavingsApp) {
@@ -104,7 +104,7 @@ export async function savingsApi(app: SavingsApp, request: IncomingMessage, path
   } catch (error) {
     if (error instanceof SavingsApiError) throw error;
     if (error instanceof z.ZodError) throw new SavingsApiError(400, validationText(error));
-    const message = (error as Error).message;
+    const message = errorText(error);
     throw new SavingsApiError(message === "Conversation not found" ? 404 : 400, message);
   }
 }

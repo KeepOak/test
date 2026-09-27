@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "../request-errors.js";
 import type { Store } from "../store.js";
 import { audit } from "../audit.js";
 import { lockedDown } from "../lockdown.js";
@@ -39,7 +40,7 @@ export interface SettingsKitDeps {
 
 function ownerOnly(deps: SettingsKitDeps, what: string): void {
   try { deps.store.profiles.requireOwner(what); }
-  catch (error) { throw new SettingsKitError(400, (error as Error).message); }
+  catch (error) { throw new SettingsKitError(400, errorText(error)); }
 }
 
 export const handlesSettingsKitPath = (path: string): boolean => path === "/api/settings-kit" || path.startsWith("/api/settings-kit/");
@@ -73,7 +74,7 @@ function proposalsFor(plan: z.infer<typeof Source>): { proposals: Proposal[]; wh
   if (plan.source === "set")
     return { proposals: [{ key: plan.key, field: plan.field, value: plan.value }], why: "one switch", origin: window("switch", `${plan.key}.${plan.field}`) };
   try { return { proposals: readSettingsFile(plan.file), why: "a settings file", origin: window("import", "a settings file") }; }
-  catch (error) { throw new SettingsKitError(400, (error as Error).message); }
+  catch (error) { throw new SettingsKitError(400, errorText(error)); }
 }
 
 function overview(deps: SettingsKitDeps) {
@@ -130,7 +131,7 @@ function apply(deps: SettingsKitDeps, input: unknown) {
     ({ applied, skipped, record } = applyWithPins(deps.store, deps.owner, changes,
       { accept: body.accept, confirmLoosening: body.confirmLoosening, why, writers: deps.writers,
         pinnedAllowed: body.plan.source === "set", record: origin }));
-  } catch (error) { throw new SettingsKitError(409, (error as Error).message); }
+  } catch (error) { throw new SettingsKitError(409, errorText(error)); }
   if (body.plan.source === "import" && applied.length)
     audit(deps.store, deps.owner, { action: "data.imported", actor: deps.owner, subject: "settings, from one file",
       reason: `${applied.length} of ${changes.length} proposed changes were made`, outcome: "saved" });
@@ -225,12 +226,12 @@ export async function settingsKitApi(deps: SettingsKitDeps, method: string, path
   if (path === "/api/settings-kit/files") {
     const input = await body();
     try { return saveFile(deps.store, deps.owner, deps.workspace, input, deps.guard); }
-    catch (error) { throw error instanceof z.ZodError ? error : new SettingsKitError(400, (error as Error).message); }
+    catch (error) { throw error instanceof z.ZodError ? error : new SettingsKitError(400, errorText(error)); }
   }
   if (path === "/api/settings-kit/files/undo") { // phase2/accounts: undo of the last save made here
     const input = await body();
     try { return undoFile(deps.store, deps.owner, deps.workspace, input, deps.guard); }
-    catch (error) { throw error instanceof z.ZodError ? error : new SettingsKitError(409, (error as Error).message); }
+    catch (error) { throw error instanceof z.ZodError ? error : new SettingsKitError(409, errorText(error)); }
   }
   throw new SettingsKitError(404, "Not found");
 }
