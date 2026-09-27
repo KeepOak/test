@@ -188,8 +188,17 @@ export function after(main) {
   loadPlan(liveRun());
   loadPaths(C.sessionId);
   const info = whoHere();
-  watchRoom(info);
+  watchRoom(info, rereadRoom); // the open room's refresh reads its conversation too, so new replies come with their tools
   if (info?.kind === "room" && !roomView(info)) readRoom(info).then((view) => { if (view) render(); });
+}
+
+/* The room's conversation read again (roomlook.js), kept only while it is still the one open. */
+async function rereadRoom() {
+  const sid = C.sessionId;
+  let got;
+  try { got = await api("sessions/" + encodeURIComponent(sid)); } catch (error) { toast(error.message); return C.messages; }
+  if (C.sessionId === sid && got?.messages) C.messages = got.messages;
+  return C.messages;
 }
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */

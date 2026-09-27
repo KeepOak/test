@@ -3835,3 +3835,5 @@ p.ic-t,div.ic-t{display:flex}
 .nd18::after{content:"";position:absolute;right:-2px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2.5px var(--bg)}
 .thread>.msg10,.thread>.typing10{align-self:flex-start}
 .thread>.pass10{align-self:center}
+.a2a-l{position:relative}
+.a2a-l:hover>.msg-acts{opacity:1;pointer-events:auto}
