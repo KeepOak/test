@@ -148,11 +148,13 @@ export class InstalledSkills {
   }
   private validateCatalog(owner: string): void {
     const catalog = this.catalog(owner);
-    if (catalog.length > 20) throw new Error("At most 20 enabled skills");
+    // Fifty, as many as can be installed: a skill on "load when needed" costs one short line of a request, not its whole
+    // description, so the old limit of twenty (there to keep requests small) no longer has to hold skills back.
+    if (catalog.length > 50) throw new Error("At most 50 enabled skills");
     if (new Set(catalog.map(entry => entry.name)).size !== catalog.length)
       throw new Error("An enabled skill already uses that name");
-    if (Buffer.byteLength(JSON.stringify(catalog), "utf8") > 24 * 1024)
-      throw new Error("Enabled skill metadata catalog exceeds 24 KiB");
+    if (Buffer.byteLength(JSON.stringify(catalog), "utf8") > 64 * 1024)
+      throw new Error("Enabled skill metadata catalog exceeds 64 KiB");
   }
   private transaction<T>(operation: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");

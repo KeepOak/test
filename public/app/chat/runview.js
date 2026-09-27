@@ -51,10 +51,14 @@ export async function loadPlan(run) {
   }
 }
 
-/** The newest task of this conversation, when it failed, with the engine's words. */
-export function failedLine(runs, sessionId, sending) {
+/** A failed task's line, with the engine's words; nothing for any other task. */
+export function failedRow(run) {
+  if (run?.status !== "failed" || !String(run.output ?? "").trim()) return "";
+  return `<div class="b"><div class="gut"></div><div><div class="txt">${esc(run.output)}</div></div></div>`;
+}
+/** The newest task of this conversation, when it failed, with the engine's words, unless its turn already shows them (Q068). */
+export function failedLine(runs, sessionId, sending, shownIds = new Set()) {
   if (!sessionId || sending) return "";
   const last = (runs ?? []).filter((r) => r.sessionId === sessionId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
-  if (last?.status !== "failed" || !String(last.output ?? "").trim()) return "";
-  return `<div class="b"><div class="gut"></div><div><div class="txt">${esc(last.output)}</div></div></div>`;
+  return last && !shownIds.has(last.id) ? failedRow(last) : "";
 }

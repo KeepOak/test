@@ -102,6 +102,20 @@ test("verifyAttestationBundle accepts only this repository's release workflow ru
     assert.equal(verifyAttestationBundle(makeBundle(digestHex, { uri }), { repo, digestHex }).workflow, uri);
 });
 
+test("a final release accepts only the record made for its own tag, never another version's", () => {
+  const digestHex = createHash("sha256").update("archive bytes").digest("hex");
+  const bundle = makeBundle(digestHex); // package.yml@refs/tags/v0.3.0
+  assert.equal(verifyAttestationBundle(bundle, { repo, digestHex, version: "0.3.0" }).workflow, workflowUri);
+  for (const version of ["0.4.0", "0.3.1", "10.3.0", "0.3.0+build.1", "0.0.0-rehearsal.3"])
+    assert.throws(() => verifyAttestationBundle(bundle, { repo, digestHex, version }),
+      /does not name this repository's release workflow for a version tag/, version);
+  const built = `https://github.com/${repo}/.github/workflows/package.yml@refs/tags/v12.0.1+build.7`;
+  assert.equal(verifyAttestationBundle(makeBundle(digestHex, { uri: built }), { repo, digestHex, version: "12.0.1+build.7" }).workflow, built);
+  const rehearsal = `https://github.com/${repo}/.github/workflows/package.yml@refs/tags/v0.0.0-rehearsal.3`;
+  assert.throws(() => verifyAttestationBundle(makeBundle(digestHex, { uri: rehearsal }), { repo, digestHex, version: "0.0.0-rehearsal.3" }),
+    /does not name this repository's release workflow for a version tag/, "a rehearsal's record is never a release's");
+});
+
 test("verifyAttestationBundle accepts beta.yml at refs/heads/mac/cross-platform for a Beta version", () => {
   // Beta versions (e.g. "0.19.4-beta.5") accept the beta workflow; final versions (e.g. "0.19.4") do not.
   const digestHex = createHash("sha256").update("archive bytes").digest("hex");

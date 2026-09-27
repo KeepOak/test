@@ -4,7 +4,8 @@ import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
 import { Updater, UpdateDeferredError, type UpdateChannel, type UpdateStatus } from "./updater.js";
 import { changedMind, confirmedChange, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
-import { appEntryName, releaseAssetName } from "./release-assets.js";
+import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.js";
+import { readFileSync } from "node:fs";
 import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
@@ -89,11 +90,13 @@ export function registerUpdaterIpc(
     const why = changedMind(state, started);
     if (why) throw new UpdateDeferredError(why);
   };
+  const installDir = installedAppRoot(app.isPackaged, process.platform, process.execPath);
   const updater = new Updater({
     ...(process.platform === "win32" ? updateSource : platformSource),
     currentVersion: version,
-    installDir: installedAppRoot(app.isPackaged, process.platform, process.execPath),
+    installDir,
     packaged: app.isPackaged,
+    packageType: packageTypeOf(process.platform, installDir, (path) => readFileSync(path, "utf8")),
     scratchDir: join(app.getPath("temp"), "branch-agent-update"),
     // Beta channel: which change this copy was built from, and Branch's own clone of its source to build the next one.
     currentCommit: builtFrom(app.getAppPath(), app.isPackaged),

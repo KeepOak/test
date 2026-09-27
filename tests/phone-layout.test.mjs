@@ -31,14 +31,15 @@ const noSideways = (page) => page.evaluate(() => document.documentElement.scroll
 /* Redesign: the prototype has no places bar and no Trunks strip; up to 760 px its side list slides over the conversation
    ("Show conversations", data-act="side"), and from 761 px it is a column. Its approval card (#live-ask) answers with the
    action's own verb, "Always allow" (greyed out until a standing yes can be kept for one Trunk) and "Don’t allow". */
-/** The same model for the new window: its yes carries the task on with a nudge ("Yes, go ahead."), so any message of the
-    conversation asking for a note makes the call again, which then goes through. */
+/** The same model for the new window: its yes carries the task that asked on (Q050), told that the call it asked about
+    did not run, so it makes the call again, which then goes through. */
 const carryingOn = {
   name: "scripted",
   async complete(request) {
     const last = request.messages.at(-1);
-    if (last.role === "tool") return { content: "Written.", toolCalls: [] };
-    if (last.role === "user" && request.messages.some((m) => m.role === "user" && String(m.content).includes("note")))
+    const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(last.content ?? ""));
+    if (last.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
+    if ((last.role === "user" || allowed) && request.messages.some((m) => m.role === "user" && String(m.content).includes("note")))
       return { content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 8)}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] };
     return { content: "Hello.", toolCalls: [] };
   },

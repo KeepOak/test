@@ -184,8 +184,12 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/trunks/:id/seen"),
     own("/api/trunks/rooms/:id/artifacts"),
     own("/api/trunks/rooms/:id/typing"), // chatlook: a person in a room says they are typing
+    // attach-anything: a file sent ahead of the person's own message, staged under profiles.scope() (src/server.ts).
+    own("/api/attachments/upload", "POST,DELETE"),
     own("/api/workflows"),
     own("/api/workflows/:id/remove"),
+    own("/api/your-data/delete"), // privacy: deletes only the person's own (profiles.scope(), src/your-data.ts)
+    own("/api/your-data/export"), // privacy: exports only the person's own
   ].flat(),
   { method: "POST", pattern: /^\/api\/channels\/deliveries\/[^/]{1,220}\/retry$/, why: "a household person's own things" },
   { method: "POST", pattern: /^\/api\/memory\/archive\/[^/]{1,200}\/restore$/, why: "a household person's own things" },
@@ -307,6 +311,11 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/sessions/:id/paths", "the named paths of one of the person's own conversations"),
   read("/api/sessions/:id/pins", "the pinned messages of one of the person's own conversations"),
   read("/api/sessions/:id/rewind", "whether one of the person's own conversations can be taken back"),
+  // privacy: Settings › Your data, narrowed to the person's own: their counts, the model services their words go to, and
+  // their own export (src/your-data.ts). The owner's keys, logs, folder and doors are left out for anybody else.
+  read("/api/your-data", "what is kept for the person, and the model services their words go to"),
+  read("/api/your-data/export/:id", "how far the person's own export has got"),
+  read("/api/your-data/export/:id/file", "the person's own export"),
   read("/api/runs/:id", "one of the person's own tasks"),
   read("/api/runs/:id/inspect", "Look inside one of the person's own tasks (Q259)"),
   read("/api/runs/:id/steps", "the steps of one of the person's own tasks (Q259)"),

@@ -98,11 +98,14 @@ const outlastsAPhone = [
 const secretToADoor = [/^\/api\/channels\/addresses(\/|$)/];
 /**
  * A coding assistant's own sign-in (src/accounts/sign-ins.ts) opens its page in this computer's browser, so only the
- * person at this computer can finish it. Checking and stopping stay open to a door.
+ * person at this computer can start it or paste its code. Checking and stopping stay open to a door.
  */
-const opensOnThisComputer = [/^\/api\/accounts\/sign-ins\/start$/];
-/** Deleting a conversation for good (src/conversation-actions.ts): only in the app on this computer, never a phone. */
-const permanentHereOnly = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/];
+const opensOnThisComputer = [/^\/api\/accounts\/sign-ins\/(start|code)$/];
+/**
+ * Deleting conversations for good (src/conversation-actions.ts, and the retention sweep, src/retention.ts): only in the
+ * app on this computer, never a phone.
+ */
+const permanentHereOnly = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/, /^\/api\/retention\/prune$/];
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;

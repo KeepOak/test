@@ -37,6 +37,8 @@ export interface Step {
   happened?: string | null;
   /** A tool call's id, so the window can find the message that asked for it. */
   callId?: string | null;
+  /** ask: the id of the call it asked about, so the window draws its answer right after the steps that made it (Q050). */
+  askedCall?: string | null;
   state?: AskState;
   helperRunId?: string;
   hash: string | null;
@@ -110,7 +112,7 @@ function askSteps(run: Run, events: Event[], deps: StepsDeps, hashOf: (kinds: re
     return {
       kind: "ask" as const, at: event.createdAt, seconds: null, cost: null,
       title: str(event.data.question) || str(event.data.label), detail: [str(event.data.name), target].filter(Boolean).join(" · "),
-      had: str(event.data.bytes) || null, happened: null, state, hash: hashOf(["policy.ask"]),
+      had: str(event.data.bytes) || null, happened: null, state, askedCall: str(event.data.id) || null, hash: hashOf(["policy.ask"]),
     };
   });
 }

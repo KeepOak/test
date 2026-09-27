@@ -149,6 +149,18 @@ const psSchema = z.object({
     size_vram: z.number().nonnegative().optional(), context_length: z.number().nonnegative().optional(),
   }).loose()).default([]),
 }).loose();
+/**
+ * QA Q071: a copy of an installed model that Branch made for itself: the sized copy setup makes (`qwen2.5:7b-branch8k`,
+ * sharing the model's files) or one Branch's own evaluations make (`branch-evals-qwen2-5-7b-8192`). Neither is one of the
+ * person's models, so neither is listed as installed nor named as a model.
+ */
+export function madeByBranch(name: string): boolean {
+  return /-branch\d+k$/.test(name) || /^branch-evals-/.test(name);
+}
+/** The model a copy Branch sized was made from (`qwen2.5:7b-branch8k` is `qwen2.5:7b`); any other name as it is. */
+export function unsizedModelName(name: string): string {
+  return name.replace(/-branch\d+k$/, "");
+}
 /** `qwen3:8b` with 16,384 words of room becomes `qwen3:8b-branch16k`. */
 export function sizedModelName(name: string, context: number): string {
   const [base, tag = "latest"] = name.split(":");
