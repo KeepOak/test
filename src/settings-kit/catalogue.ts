@@ -15,8 +15,8 @@ import { WakeWordSettingsSchema, wakeWordKey } from "../voice-wake.js";
 import { DictationSettingsSchema, dictationKey } from "../voice-dictation.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "../event-loop-watch.js";
 import { audit } from "../audit.js";
-import { safetyMode, saveSafetySwitch, type SafetyPart } from "../safety-extras/settings.js";
-import { boardMode, writeBoardSwitch, type BoardPart } from "../flows-boards/settings.js"; // r17-h integration review
+import { safetyMode, safetyShipsOn, saveSafetySwitch, type SafetyPart } from "../safety-extras/settings.js";
+import { boardMode, boardShipsOn, writeBoardSwitch, type BoardPart } from "../flows-boards/settings.js"; // r17-h integration review
 import { readComfort, saveComfort, type ComfortCard } from "../comfort/settings.js";
 import { readChatPermissionSettings, saveChatPermissionSettings } from "../channels/chat-permissions.js"; // mac7/chat-allowlist
 import { saveUsageLimitsSettings, usageLimitsSettings } from "../usage-limits.js"; // mac7/usage-bar
@@ -43,6 +43,7 @@ import { reflectionSettings } from "../reflection/settings.js";
 import { contextFileSettings, saveContextFileSettings } from "../context-files.js";
 import { saveVoiceSettings, voiceSettings, VoiceSettingsSchema } from "../voice.js";
 import { codingModelRounds, readKnobs, saveKnobs } from "../knobs/settings.js";
+import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * R17-S-A (understandable settings): the settings that can be put back to how they started, set
@@ -92,10 +93,21 @@ type Hooks = Pick<SettingSpec, "read" | "write">;
  * The schema is handed in as a function, so it is only reached once every module has loaded.
  */
 function parsedBy(key: string, schema: () => Parser): Hooks {
-  const read = (store: Store, owner: string): Record<string, unknown> => inForce(schema(), store.get("settings", owner, key)?.data);
+  // The ship-on rule (src/ship-on.ts): a flipped field the owner never set reads as it ships, as the module reads it;
+  // a record the app cannot read is its starting values, as before.
+  const read = (store: Store, owner: string): Record<string, unknown> => {
+    const saved = store.get("settings", owner, key)?.data;
+    const values = inForce(schema(), saved);
+    return schema().safeParse(saved ?? {}).success ? shippedUnlessChosen(store, owner, key, values, shipOnInitials[key] ?? {}) : values;
+  };
   return {
     read,
-    write: (store, owner, patch) => { store.save("settings", owner, key, schema().parse({ ...read(store, owner), ...patch }) as Record<string, unknown>); },
+    write: (store, owner, patch) => {
+      const before = store.get("settings", owner, key)?.data;
+      store.save("settings", owner, key, schema().parse({ ...read(store, owner), ...patch }) as Record<string, unknown>);
+      // Over a record the app could not read, every shipped field was shown off and is now written off: it stays off.
+      markChosen(store, owner, key, savedFields(before, schema().safeParse(before ?? {}).success, patch, shipOnInitials[key] ?? {}));
+    },
   };
 }
 
@@ -158,7 +170,7 @@ const voiceHooks: Pick<SettingSpec, "read" | "write" | "refuses" | "putBack" | "
     saveVoiceSettings(store, owner, patch);
   },
   // The whole record is replaced, not merged: the voice card's own save cannot read what is there either.
-  putBack: (store, owner) => { store.save("settings", owner, "voice", VoiceSettingsSchema.parse({})); },
+  putBack: (store, owner) => { store.save("settings", owner, "voice", VoiceSettingsSchema.parse({})); forgetChosen(store, owner, "voice"); },
   shipped: () => VoiceSettingsSchema.parse({}),
 };
 
@@ -241,8 +253,9 @@ const one = (key: string, name: string, t: string, home: string, guard: Guard, e
   ({ key, name, t, home, fields: [sw("mode", "Switch", "settings-kit.field.switch", guard)], ...extra });
 /** r17-h integration review: a flows-and-boards switch, written through the running copy so its tools follow. */
 const board = (part: BoardPart, name: string, home: string, guard: Guard): SettingSpec =>
-  one(`flowboards-${part}`, name, `settings-kit.name.flowboards-${part}`, home, guard,
-    { write: (store, owner, patch) => { writeBoardSwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => boardMode(store, owner, part)) });
+  shipsAs(one(`flowboards-${part}`, name, `settings-kit.name.flowboards-${part}`, home, guard,
+    { write: (store, owner, patch) => { writeBoardSwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => boardMode(store, owner, part)) }),
+  boardShipsOn[part] ?? "off");
 const saveWall = (store: Store, owner: string, patch: Record<string, unknown>): void => {
   const next = saveWallSettings(store, owner, { ...wallSettings(store, owner), ...patch });
   audit(store, owner, { action: "policy.changed", actor: owner, subject: `The wall around programs: ${next.mode}, reach ${next.network}`,
@@ -251,8 +264,9 @@ const saveWall = (store: Store, owner: string, patch: Record<string, unknown>): 
 
 /** mac7/r17-g: a safety extra's switch, saved through the app so its tools come and go with it. */
 const safetyPart = (part: SafetyPart, name: string, guard: Guard): SettingSpec =>
-  one(`safety-${part}`, name, `settings-kit.name.safety-${part}`, "settings:permissions", guard,
-    { write: (store, owner, patch) => { saveSafetySwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => safetyMode(store, owner, part)) });
+  shipsAs(one(`safety-${part}`, name, `settings-kit.name.safety-${part}`, "settings:permissions", guard,
+    { write: (store, owner, patch) => { saveSafetySwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => safetyMode(store, owner, part)) }),
+  safetyShipsOn[part] ?? "off");
 
 const safety: SettingSpec[] = [
   {
@@ -325,8 +339,8 @@ const reach: SettingSpec[] = [
     read: (store, owner) => ({ ...executionMetricsSettings(store, owner) }), write: (store, owner, patch) => { saveExecutionMetricsSettings(store, owner, patch); } }),
   // mac7/usage-bar: reading an allowance out of the headers on Branch's own answers is always on and
   // costs nothing. This switch is only for the one service Branch may ask outright — OpenRouter's
-  // documented key endpoint — because that is a request made on a timer without being told to, so
-  // turning it up reaches further. It ships off. No plan account is ever asked, switch or no switch.
+  // documented key endpoint. It ships "when needed" (the owner's rule): asking the owner's own
+  // connection what is left sends nothing of theirs anywhere. No plan account is ever asked, switch or no switch.
   one("usage-limits", "Asking a service what is left", "settings-kit.name.usage-limits", "settings:data", "reach",
     { keepsEnabled: true, write: (store, owner, patch) => { saveUsageLimitsSettings(store, owner, patch); }, read: (store, owner) => ({ ...usageLimitsSettings(store, owner) }) }),
   shipsAs(one("asks-analytics", "Counting how Branch is used", "settings-kit.name.analytics", "settings:data", "reach", askHooks("analytics")), askShips("analytics")),
@@ -532,7 +546,25 @@ const comfortCards: SettingSpec[] = [
       guard: "plain", initial: 10, kind: { type: "number", min: 1, max: 300 } }] },
 ];
 
-export const settingsCatalogue: readonly SettingSpec[] = [...safety, ...reach, ...comfort, ...comfortCards];
+/**
+ * The owner's rule (ships on, 2026-09-26, src/ship-on.ts): what each flipped field starts at, so putting a setting back,
+ * undoing to its starting value and weighing a change all measure from how Branch really ships. Each value is the one
+ * its own module ships (named there); a test holds the two together.
+ */
+export const shipOnInitials: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "prompt-library": { mode: "on" }, "run-recording": { mode: "when-needed" }, "event-loop-watch": { mode: "when-needed" },
+  "usage-report": { mode: "when-needed" }, "usage-limits": { mode: "when-needed" }, "execution-metrics": { mode: "when-needed" },
+  "local-models": { mode: "when-needed" }, "media-programs": { mode: "when-needed" }, "memory-history": { mode: "when-needed" }, "skill-installs": { mode: "when-needed" },
+  "workspace-editor": { mode: "when-needed" }, "speech-engines": { mode: "when-needed" }, "fly-core": { mode: "when-needed" },
+  loop_guard: { mode: "when-needed" }, "security-check": { audit: "when-needed", malware: "when-needed" }, reflection: { newSkills: "when-needed" },
+  "goal-undo": { goal: "on" }, voice: { systemVoice: "when-needed" }, "comfort-notify": { sound: "chime" },
+  "context-files": Object.fromEntries(["soul", "identity", "user", "agents", "tools", "sop", "memory", "heartbeat"].map((slot) => [`files.${slot}`, "when-needed"])),
+};
+const shipped = (spec: SettingSpec): SettingSpec => {
+  const initials = shipOnInitials[spec.key];
+  return initials ? { ...spec, fields: spec.fields.map((field) => (field.field in initials ? { ...field, initial: initials[field.field]! } : field)) } : spec;
+};
+export const settingsCatalogue: readonly SettingSpec[] = [...safety, ...reach, ...comfort, ...comfortCards].map(shipped);
 
 /**
  * Records that are never touched from here, whatever a file or a preset names. The catalogue above

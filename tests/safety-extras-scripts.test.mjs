@@ -46,9 +46,11 @@ async function served(t, steps = []) {
   return { app, api, root, looked, ran };
 }
 
-test("off refuses, and Windows refuses", async (t) => {
+test("ships when needed; switched off refuses, and Windows refuses", async (t) => {
   const { app, api } = await served(t);
   const context = app.runtime.context({ runId: app.store.createRun(app.runtime.owner, "x").id });
+  assert.equal(app.registry.names().includes("tools.script"), true, "ships when needed: the tool is in the catalog");
+  await api("/api/safety-extras/switch", { part: "tool-scripts", mode: "off" });
   await assert.rejects(app.safetyExtras.scripts.run({ source: "export default 1", tools: ["notes.lookup"], timeoutMs: 5000 }, context), /switched off/);
   assert.equal(app.registry.names().includes("tools.script"), false);
   await api("/api/safety-extras/switch", { part: "tool-scripts", mode: "on" });

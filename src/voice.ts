@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { FeatureModeSchema } from "./feature-switches.js";
+import { markChosen, shippedUnlessChosen } from "./ship-on.js";
+import { FeatureModeSchema, systemVoiceShipsAs } from "./feature-switches.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { Store } from "./store.js";
 
@@ -71,8 +72,9 @@ export type VoiceSettings = z.infer<typeof VoiceSettingsSchema>;
 
 export function voiceSettings(store: Store, owner: string): VoiceSettings {
   const saved = store.get("settings", owner, "voice")?.data;
-  if (!saved) return VoiceSettingsSchema.parse({});
-  return VoiceSettingsSchema.parse(saved);
+  const parsed = VoiceSettingsSchema.parse(saved ?? {});
+  // The owner's rule (src/ship-on.ts): the computer's own voice reads as it ships unless the owner chose.
+  return shippedUnlessChosen(store, owner, "voice", parsed, { systemVoice: systemVoiceShipsAs });
 }
 
 export function saveVoiceSettings(
@@ -85,6 +87,7 @@ export function saveVoiceSettings(
   const given = settings && typeof settings === "object" && !Array.isArray(settings) ? settings : {};
   const parsed = VoiceSettingsSchema.parse({ ...voiceSettings(store, owner), ...given });
   store.save("settings", owner, "voice", parsed);
+  markChosen(store, owner, "voice", Object.keys(given));
   return parsed;
 }
 

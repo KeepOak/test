@@ -239,6 +239,10 @@ test("Message people set to ask with Change settings allowed: a screen watch tha
 
 test("Message people set to ask with Change settings allowed: choosing the chat the morning brief goes to waits for a yes; a change that names no chat goes ahead", async (t) => {
   const { app, task, status, brief } = await harness(t, { message: "ask", settings: "allow" });
+  // The ship-on rule: the brief ships on; the owner switches it off through its own save, so a waiting question can be seen to change nothing.
+  assert.equal(brief().enabled, true, "the brief ships on");
+  app.brief.configure(app.runtime.owner, { enabled: false });
+  assert.equal(brief().enabled, false);
   const run = await task("brief.configure", pointedAt["brief.configure"](chat));
   assert.equal(status(run), "needs_input", "the owner is asked before the brief is pointed at a chat");
   assert.equal(app.runtime.approvals.questionFor(run.sessionId)?.tool, "brief.configure", "the question is the brief's own");

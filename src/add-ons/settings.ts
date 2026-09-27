@@ -1,9 +1,11 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { chosenFields, markChosen } from "../ship-on.js";
 
 /**
  * Bucket 15: add-ons other people wrote. Each part has the owner's three-way switch — off, when
- * needed, on — and every one ships off, so a fresh install reads, installs and runs nothing here.
+ * needed, on. What each ships as is `addOnShipsOn` (the owner's ship-on rule, src/ship-on.ts); nothing here installs
+ * or runs by itself either way.
  *
  *   off          the part refuses in one plain sentence; its tools are not in the catalog at all
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -48,10 +50,25 @@ export const addOnTools: Partial<Record<AddOnPart, readonly string[]>> = {
   search: ["addon.search"],
 };
 
+/**
+ * The owner's rule (ships on, 2026-09-26): lists and a Pipelines server are read only from where the owner names, filters
+ * can only make things stricter, a draft waits for the owner's review, search reads only sources the owner's plugins
+ * bring, and export writes a folder the owner adds elsewhere; none of (a)–(f). Packages stay off: installing one looks
+ * its servers up in a public database and runs code other people wrote (b, f).
+ */
+export const addOnShipsOn: Partial<Record<AddOnPart, AddOnMode>> = {
+  lists: "when-needed", filters: "when-needed", pipelines: "when-needed", drafts: "when-needed", search: "when-needed", export: "when-needed",
+};
+
 type Reader = Pick<Store, "get">;
 export function addOnSettings(store: Reader, owner: string): AddOnSettings {
   const parsed = AddOnSettingsSchema.safeParse(store.get("settings", owner, addOnSettingsKey)?.data ?? {});
-  return parsed.success ? parsed.data : AddOnSettingsSchema.parse({});
+  if (!parsed.success) return AddOnSettingsSchema.parse({});
+  // Every part is written each time one is saved, so only a part the owner set keeps a saved "off" (src/ship-on.ts).
+  const chosen = new Set(chosenFields(store, owner, addOnSettingsKey));
+  const modes = { ...parsed.data.modes };
+  for (const [part, mode] of Object.entries(addOnShipsOn) as [AddOnPart, AddOnMode][]) if (!chosen.has(`modes.${part}`)) modes[part] = mode;
+  return { ...parsed.data, modes };
 }
 
 export function addOnMode(store: Reader, owner: string, part: AddOnPart): AddOnMode {
@@ -73,6 +90,7 @@ export function saveAddOnSettings(store: Pick<Store, "get" | "save">, owner: str
     windowsWithoutWall: change.windowsWithoutWall ?? current.windowsWithoutWall,
   });
   store.save("settings", owner, addOnSettingsKey, next);
+  markChosen(store, owner, addOnSettingsKey, Object.keys(sent).map((part) => `modes.${part}`));
   return next;
 }
 

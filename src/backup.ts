@@ -278,6 +278,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "retrieval-pipelines": "only changes search order",
   "run-recording": "what a saved recording contains",
   "settings-history": "change history the owner sees; undo is gated",
+  "ship-on-chosen": "which settings the owner set, so a restored off stays off; it only keeps a saved value, never turns one on",
   "shell-look": "how the window is drawn",
   "skill-draft-offered:": "a marker that only stops an offer",
   "skill-retire-offered:": "only holds back an offer",

@@ -2,7 +2,8 @@
  * R17-H: flows and boards — going back to an earlier step of a flow (R17-069), checks with clean-up
  * and retries (R17-070), the shared board (R17-071), widgets the assistant builds (R17-072), the
  * waiting line you can change and typing while it works (R17-073), focus view (R17-074), and
- * requests for packages and tool servers answered only by the owner (R17-075). Every part ships off.
+ * requests for packages and tool servers answered only by the owner (R17-075). Under the owner's ship-on rule every
+ * part ships "when needed" except install requests, which stay off.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -50,9 +51,11 @@ const chatRun = (app) => {
 };
 const callAs = (app, runId, name, args) => app.registry.execute(name, args, app.runtime.context({ runId }));
 
-test("every part ships off: no tools, and each refuses in one sentence", async (t) => {
+test("every part, install requests included, ships when needed; switched off, no tools, and each refuses in one sentence", async (t) => {
   const { app } = await fixture(t);
-  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), "off", part);
+  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), "when-needed", part);
+  assert.ok(app.registry.names().includes("board.cards"), "a part that ships when needed has its tools in the index");
+  for (const part of boardParts) app.flowsBoards.setMode(part, { mode: "off" });
   const names = new Set(app.registry.names());
   for (const tool of Object.values(boardTools).flat()) assert.equal(names.has(tool), false, `${tool} is hidden while off`);
   assert.throws(() => app.flowsBoards.kanban.view(), /switched off/);
@@ -80,6 +83,8 @@ test("R17-069 a flow can go back to an earlier step, change a value, and run a c
   const { app, on } = await fixture(t);
   shouter(app);
   const saved = app.flows.saveGraph(twoTools);
+  // The ship-on rule turns time travel on; this test is about what is kept only once it is switched on.
+  app.flowsBoards.setMode("time-travel", { mode: "off" });
   const quiet = await app.flows.settled(app.flows.startGraph(saved.id, { topic: "ignored" }).runId);
   on("time-travel");
   assert.equal(app.flowsBoards.timeTravel.steps(quiet.runId).steps.length, 0, "nothing was kept while the part was off");
@@ -306,6 +311,9 @@ test("R17-074 /focus answers with the page action; /queue and /busy follow their
   const { app } = await fixture(t);
   saveCommandSettings(app.store, app.runtime.owner, { mode: "on" });
   const host = commandHost(app.runtime, app);
+  // The ship-on rule turns focus view and the waiting line on; this test is about each command following its switch.
+  app.flowsBoards.setMode("focus", { mode: "off" });
+  app.flowsBoards.setMode("waiting-line", { mode: "off" });
   const off = await executeCommand(host, { surface: "window", line: "/focus on", access: "full" });
   assert.match(off.text, /switched off/);
   assert.equal(off.client, undefined);
@@ -392,8 +400,10 @@ test("the owner's routes: switches, the board, and a short-lived key refused eve
     headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const overview = await (await call("/api/flows-boards")).json();
-  assert.equal(overview.modes.kanban, "off");
-  assert.equal((await call("/api/flows-boards/board")).status, 409);
+  assert.equal(overview.modes.kanban, "when-needed", "the board ships when needed");
+  assert.equal((await call("/api/flows-boards/board")).status, 200);
+  assert.equal((await call("/api/flows-boards/switch", { part: "kanban", mode: "off" })).status, 200);
+  assert.equal((await call("/api/flows-boards/board")).status, 409, "switched off, the board refuses");
   assert.equal((await call("/api/flows-boards/switch", { part: "kanban", mode: "on" })).status, 200);
   const added = await (await call("/api/flows-boards/board/cards", { title: "Rake leaves" })).json();
   assert.equal(added.card.lane, "todo");

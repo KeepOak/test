@@ -9,7 +9,7 @@ import { E, ownName, ownerHere, chatFace } from "../core/state.js";
 import { app, av, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { media17, calm17 } from "../core/art17.js";
-import { petMood } from "./scene.js";
+import { petMood, petNow } from "./scene.js";
 import { popupsOn } from "../flows/guides.js";
 import { t } from "../../i18n.js";
 
@@ -70,7 +70,7 @@ export function cheer(run) {
   leafBurst(b.left + 33, b.top + b.height / 2);
   setTimeout(() => el.classList.add("out11"), 3800);
   setTimeout(() => el.remove(), 4300);
-  petMood("yay", 4000, 900);
+  if (petNow() !== "none") petMood("yay", 4000, 900); // a pet switched off has no mood to change
 }
 
 /* Whether a run's conversation is a room's. A room's turns run in each Trunk's own side of it (src/trunks/rooms.ts

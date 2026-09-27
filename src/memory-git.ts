@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { FeatureModeSchema } from "./feature-switches.js";
+import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { factKinds, type FactKind } from "./memory-layers.js";
 import { noteFor, type MemoryMirror } from "./memory-mirror.js";
 import { redactLeaks } from "./leak-guard.js";
@@ -9,6 +9,7 @@ import type { GitOutcome, GitRunOptions } from "./integrations/git-run.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 import { accessAgent } from "./trunks/memory-scope.js";
 
 /**
@@ -46,9 +47,12 @@ const SETTINGS = "memory-history", STATUS = "memory-history-status";
 const author = ["-c", "user.name=Branch Agent", "-c", "user.email=branch-agent@localhost", "-c", "commit.gpgsign=false"];
 type GitCall = (options: GitRunOptions, signal: AbortSignal) => Promise<GitOutcome>;
 
+// The owner's rule (ships on, 2026-09-26): a private Git history of what the assistant remembers, kept on this computer; a copy goes elsewhere only to a remote the owner names; none of (a)–(f).
+export const memoryHistoryShipsAs: FeatureMode = "when-needed";
+
 export function memoryHistorySettings(store: Pick<Store, "get">, owner: string): MemoryHistorySettings {
   const saved = MemoryHistorySettingsSchema.safeParse(store.get("settings", owner, SETTINGS)?.data ?? {});
-  return saved.success ? saved.data : MemoryHistorySettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, SETTINGS, saved.data, { mode: memoryHistoryShipsAs }) : MemoryHistorySettingsSchema.parse({});
 }
 
 export class MemoryHistory {
@@ -65,6 +69,7 @@ export class MemoryHistory {
     if (merged.remote == null) delete merged.remote;
     const value = MemoryHistorySettingsSchema.parse(merged);
     this.store.save("settings", owner, SETTINGS, value);
+    markChosen(this.store, owner, SETTINGS, sentKeys(change));
     return value;
   }
   status(owner: string): MemoryHistoryStatus {

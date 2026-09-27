@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { markChosen, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * Bucket R17-D (wave mac7): "coding polish". Each part has the owner's three-way switch — off, when
@@ -57,7 +58,8 @@ const codingShipsOn: Partial<Record<CodingPart, CodingMode>> = {
   notebooks: "when-needed",
   // The owner's rule (ships on, 2026-09-26): checks run only when asked, each by a helper that may only read; none of (a)–(f).
   "review-checks": "when-needed",
-  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): worktrees puts a whole git worktree on disk for every forked conversation (heavy disk).
+// The owner's rule (ships on, 2026-09-26): a worktree is made only when the owner forks a conversation, and copies per helper stay off; none of (a)–(f).
+  worktrees: "when-needed",
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
@@ -101,9 +103,11 @@ export const codingToolFeatures: readonly (readonly [string, string, readonly st
 
 export function codingMode(store: Pick<Store, "get">, owner: string, part: CodingPart): CodingMode {
   const found = store.get("settings", owner, codingKey(part));
-  if (!found) return codingShipsOn[part] ?? "off";
+  const ships = codingShipsOn[part] ?? "off";
+  if (!found) return ships;
   const saved = RecordSchema.safeParse(found.data ?? {});
-  return saved.success ? saved.data.mode : "off";
+  // A part's own settings are saved beside its switch, so an "off" there may be the old default (src/ship-on.ts).
+  return saved.success ? shippedUnlessChosen(store, owner, codingKey(part), saved.data, { mode: ships }).mode : "off";
 }
 
 export const codingOn = (store: Pick<Store, "get">, owner: string, part: CodingPart): boolean =>
@@ -113,6 +117,7 @@ export const codingOn = (store: Pick<Store, "get">, owner: string, part: CodingP
 export function saveCodingMode(store: Store, owner: string, part: CodingPart, mode: CodingMode): CodingMode {
   const current = (store.get("settings", owner, codingKey(part))?.data ?? {}) as Record<string, unknown>;
   store.save("settings", owner, codingKey(part), { ...current, mode: ModeSchema.parse(mode) });
+  markChosen(store, owner, codingKey(part), ["mode"]);
   return mode;
 }
 
