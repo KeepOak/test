@@ -92,7 +92,7 @@ test("D1 the account menu renames an account and says which Trunks use it, throu
   assert.deepEqual(f.errors, []);
 });
 
-test("D2 when one runs out: falling back to this computer is saved in the fallback order; the next-account switch stays greyed with its reason", async (t) => {
+test("D2 when one runs out: falling back to this computer is saved in the fallback order; with one account per connection the next-account switch is greyed with its reason", async (t) => {
   const f = await fixture(t);
   await signIn(f);
   await settingsPage(f.page, "accounts");
@@ -102,9 +102,9 @@ test("D2 when one runs out: falling back to this computer is saved in the fallba
   await until(async () => (await f.call("/api/state")).models.fallbackOrder.includes("here"), "the model on this computer is in the order");
   await fall.uncheck();
   await until(async () => !(await f.call("/api/state")).models.fallbackOrder.includes("here"), "it is out of the order again");
-  const next = f.page.locator("#main #ac-next");
+  const next = f.page.locator('#main input.sw[data-why="ac-next"]');
   assert.equal(await next.isDisabled(), true);
-  assert.match(await next.locator("xpath=ancestor::div[contains(@class,'ctl')]").getAttribute("data-why-text"), /API keys already move to the next key/);
+  assert.match(await next.locator("xpath=ancestor::div[contains(@class,'ctl')]").getAttribute("data-why-text"), /add a second account to a connection first/);
   assert.deepEqual(f.errors, []);
 });
 
@@ -213,5 +213,25 @@ test("D6 an account paused with Pause has Resume on its own row, and answers aga
   await resume.click();
   await until(async () => (await disabled()) === false, "answers again");
   await until(async () => (await resume.count()) === 0, "Resume is gone once it answers");
+  assert.deepEqual(f.errors, []);
+});
+
+test("D7 account pools: Move to the next account is each list's own switch, with how the next one is picked and what switching means", async (t) => {
+  const f = await fixture(t);
+  await f.call("/api/accounts/add", { pool: POOL, label: "Second", key: KEY });
+  const list = async () => (await f.call("/api/accounts")).pools.find((p) => p.pool === POOL);
+  await signIn(f);
+  await settingsPage(f.page, "accounts");
+  const next = f.page.locator("#main #ac-next");
+  assert.equal(await next.isChecked(), true, "on by itself with two accounts");
+  await next.uncheck();
+  await until(async () => (await list()).autoSwitch === false, "switched off in the engine");
+  await next.check();
+  await until(async () => (await list()).autoSwitch === true, "on again");
+  for (const strategy of ["round-robin", "least-used", "priority"]) {
+    await f.page.locator(`#main [data-act="ac-strategy"][data-v="${strategy}"]`).click();
+    await until(async () => (await list()).strategy === strategy, strategy);
+  }
+  assert.match(await f.page.locator("#main").innerText(), /Switching doesn't merge plans: each account's own terms apply\. It also starts the provider's prompt cache again/);
   assert.deepEqual(f.errors, []);
 });

@@ -107,7 +107,7 @@ async function refusal(page) {
   const row = page.locator('.dock [role="status"]');
   const rowText = (await row.count()) ? await row.first().innerText() : "";
   check("2 the message box states a model is needed, in the engine's words", /No model yet\. Choose one in setup or in Settings › Models\./.test(rowText), rowText);
-  check("2 its Set up opens setup's Models step while setup is not done", (await page.locator('.dock [role="status"] [data-act="onboard"][data-v="2"]').count()) === 1);
+  check("2 its Set up opens setup's Models step while setup is not done", (await page.locator('.dock [role="status"] [data-act="onboard"][data-v="1"]').count()) === 1);
   const body = await page.locator("body").innerText();
   check("2 no demo anywhere in the window", !DEMO.test(body), body.match(DEMO)?.[0] ?? "");
   const before = (await api("state")).runs.length;
@@ -119,7 +119,7 @@ async function refusal(page) {
   const said = await until(async () => (await page.locator("#conversation").innerText()).includes("No model yet. Choose one in setup or in Settings › Models."), 8000);
   check("2 the conversation shows the refusal", !!said);
   check("2 the refusal did not finish setup", (await api("state")).onboarding?.done === false);
-  await page.locator('.dock [data-act="onboard"][data-v="2"]').click();
+  await page.locator('.dock [data-act="onboard"][data-v="1"]').click();
   await page.locator(".ob9").waitFor();
   await page.locator("#ob-trust").check();
   await page.locator('.ob9 [data-act="ob-next"]').click();

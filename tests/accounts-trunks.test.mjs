@@ -167,7 +167,7 @@ test("trunks-use-subscriptions: work somebody else is behind skips a sign-in fir
   assert.ok(calls.first >= 1);
 });
 
-test("trunks-use-subscriptions: a Trunk's plan limit stops it, and sharing moves it only to an account kept separate", async (t) => {
+test("trunks-use-subscriptions: a Trunk's plan limit stops it with moving on off, and moves it to the owner's next account with it on", async (t) => {
   const fx = await fixture(t);
   const { app, service, owner } = fx;
   const seen = [];
@@ -193,12 +193,12 @@ test("trunks-use-subscriptions: a Trunk's plan limit stops it, and sharing moves
   assert.equal(stopped.status, "failed");
   assert.match(stopped.output, /has reached its plan limit/);
   assert.deepEqual(accountOf(app, stopped.id), []);
-  // Sharing on: the work moves to the account kept separate, never to the owner's second plan.
+  // Moving on (account pools, 2026-09-27): the next account in the list's order takes it, the owner's own plans included.
   updatePool(service, { pool: "cli-claude-code", autoSwitch: true });
   const moved = await app.runtime.run({ prompt: "hello again", sessionId: ed.chatSessionId });
   assert.equal(moved.status, "completed", moved.output);
-  assert.deepEqual(accountOf(app, moved.id), [work]);
-  assert.ok(!seen.some((who) => who.includes(second)), "the owner's second plan was never used");
+  assert.deepEqual(accountOf(app, moved.id), [second]);
+  assert.ok(!seen.some((who) => who.includes(work)), "fill first: the next in order, not the last");
 });
 
 test("trunks-use-subscriptions: a Trunk that does not copy the owner's accounts uses only the sign-in picked for it", async (t) => {

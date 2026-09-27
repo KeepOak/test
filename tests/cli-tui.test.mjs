@@ -141,7 +141,7 @@ test("the terminal view asks for a yes with the exact path, and a y carries the 
   const view = chat(t, env);
   await view.until(/Branch Agent/);
   view.type("/preset ask-before-changes\r");
-  await view.until(/when to check with me: Ask before changes/);
+  await view.until(/When to check with me: Ask before changes/);
   view.type("write the demo file\r");
   await view.until(/Branch needs your yes/);
   /* The question is drawn a line at a time, so wait for its last line rather than reading the
@@ -162,7 +162,7 @@ test("a no in the terminal view refuses the tool and the task says so", async (t
   const view = chat(t, env);
   await view.until(/Branch Agent/);
   view.type("/preset ask-before-changes\r");
-  await view.until(/when to check with me/);
+  await view.until(/When to check with me/);
   view.type("write the demo file\r");
   await view.until(/Branch needs your yes/);
   view.type("n\r");
@@ -177,7 +177,7 @@ test("Alt+Enter adds a line and the up arrow brings the last message back", asyn
   const view = chat(t, env);
   await view.until(/Branch Agent/);
   view.type("/preset read-only\r");
-  await view.until(/when to check with me: Read only/);
+  await view.until(/When to check with me: Read only/);
   view.type("first line\rsecond line\r");
   await view.until(/Branch Agent:|task /);
   view.type("[A");

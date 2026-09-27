@@ -4,8 +4,9 @@
      are switched off), and each conversation's /loop or /heartbeat (GET /api/autonomy/loops), stopped with POST
      /api/autonomy/loops/stop. A stopped loop only starts again from /loop in its conversation, so Start stays greyed, and
      so does "Add it": a standing order needs a start the engine can read, and nothing turns words into one yet.
-   - Scheduled › Running on its own, more (Advanced): Pause all (POST /api/dashboard/automations, whose paused record is in
-     GET /api/dashboard; the engine refuses both while the dashboard is off, and says so), then what an automation needs
+   - Scheduled › Running on its own, more (Advanced): Pause all (POST /api/dashboard/automations, whose paused record is
+     GET /api/dashboard/automations; neither waits on the browser dashboard's switch, and a refusal is said in the
+     engine's words), then what an automation needs
      before it runs alone (GET /api/autonomy/readiness) and the ledger of what it decided (GET /api/autonomy/ledger), the
      days off schedules skip (GET /api/calendar), watches (GET /api/monitors), leads (GET /api/asks/leads) and forecasts
      (GET /api/asks/forecasts). "Export as CSV" saves the leads the engine listed as a CSV file (in a browser; the desktop
@@ -27,7 +28,7 @@ import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
 
-const A = { orders: [], loops: [], paused: null, pauseKnown: false };
+const A = { orders: [], loops: [], paused: null, pauseKnown: false, pauseError: "" };
 
 /* ---------- standing orders and loops ---------- */
 const gap = (ms) => { const m = Math.round(Number(ms) / 60000); return m % 60 ? `${m}m` : `${m / 60}h`; };
@@ -75,7 +76,7 @@ async function stopLoop(el) {
 /* ---------- running on its own, more ---------- */
 function pauseRow() {
   const p = Boolean(A.paused);
-  return `<div class="prow"><span class="ico-tile">${ic("pause", "s")}</span><span class="grow"><b>${p ? t("window.places.automations17.every-automation-is-paused") : t("window.places.automations17.pause-every-automation")}</b><small>${p ? t("window.places.automations17.schedules-triggers-check-ins-and-standing") : t("window.places.automations17.one-switch-for-schedules-triggers-check")}</small></span>${btn17("pauseallb17", p ? t("window.places.automations17.resume-all") : t("window.places.automations17.pause-all"), `data-v="${p ? "resume" : "pause"}"`)}</div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("pause", "s")}</span><span class="grow"><b>${p ? t("window.places.automations17.every-automation-is-paused") : t("window.places.automations17.pause-every-automation")}</b><small>${A.pauseError ? esc(A.pauseError) : p ? t("window.places.automations17.schedules-triggers-check-ins-and-standing") : t("window.places.automations17.one-switch-for-schedules-triggers-check")}</small></span>${btn17("pauseallb17", p ? t("window.places.automations17.resume-all") : t("window.places.automations17.pause-all"), `data-v="${p ? "resume" : "pause"}"`)}</div>`;
 }
 const DEMOS = [
   ["readiness", "check", ["Ready to run alone?", "Checks what an automation needs before it runs unattended, and keeps a ledger of what it decided alone.", "Check"]],
@@ -170,10 +171,10 @@ async function readKept() {
   A.orders = orders.orders ?? [];
   A.loops = loops.loops ?? [];
 }
-/* The paused record lives in the dashboard's summary; with the dashboard off the engine refuses it, and Pause all says
-   the engine's words when pressed. */
+/* The paused record (GET /api/dashboard/automations), which the engine answers whether or not the browser dashboard is
+   switched on. A refusal is said under the row in the engine's words, and the row keeps what it last knew. */
 async function readPaused() {
-  try { A.paused = (await api("dashboard")).paused ?? null; } catch { A.paused = null; }
+  try { A.paused = (await api("dashboard/automations")).paused ?? null; A.pauseError = ""; } catch (error) { A.pauseError = error.message; }
   A.pauseKnown = true;
 }
 

@@ -12,8 +12,12 @@
      working, sends the conversation a message.
    - Take over and Hand back are the engine's only take-over: the shared Linux desktop Branch drives (GET /api/linux-desktop,
      POST /api/linux-desktop/take-over and /hand-back, each the owner's alone), drawn on the computer view. Branch's own
-     browser has no hand-over and no task can be paused (the engine has neither), so the browser view's Take over and
-     every Pause are drawn greyed.
+     browser has no hand-over, so the browser view's Take over is drawn greyed. Pause stops a working task after the
+     step it is on (POST /api/runs/<id>/pause, the chat's own lw-pause in places/inboxwork.js).
+   - Batch A (pane-stage-011): the conversation shows a card for the computer its newest task used (a desktop.* step):
+     the computer's name ("on N computers" when it may use several), Working, You have control, Done or Stopped, the
+     newest picture it took, and by state Watch full size and Take over, Hand back and Open full size, or Carry on for
+     a task that was paused or cut off (POST /api/runs/<id>/resume, the chat's lw-resume).
    Which view is open, picture in picture and the docked conversation (and its width) are window state only.
    Parity B2 (pane-stage-006, -013): the view is named for whoever the conversation is (its Trunk, "The room", or the
    assistant), with that face and role line in the dock and the computer it uses on the small window's bar; the dock's
@@ -45,6 +49,7 @@ import { startWith, openConversation } from "./chat.js";
 
 const G = { kind: null, pip: null, dock: true, grid: false, browsed: null, asked: null, sid: null, messages: [], plan: null, at: 0, desk: null, said: "", drawn: {} };
 const SHOT = new Map(); // picture path → its bytes as a blob: address ("" while loading or after the engine refused it)
+const CARD = { pic: "", deskFor: undefined, resumes: null }; // the card's picture, the conversation the desktop was read for, and the task its Carry on resumes
 const STOPPABLE = new Set(["running", "needs_input", "interrupted"]);
 
 /* Whoever the conversation is: its Trunk, its room, or the assistant (Branch's own); the words the view is named with. */
@@ -76,9 +81,9 @@ function parsed(text) {
 }
 
 /* The newest picture a desktop.screenshot call in this conversation kept ({ok, result: {path}} in its tool message). */
-function desktopPicture() {
-  const calls = new Set(G.messages.flatMap((m) => m.toolCalls ?? []).filter((c) => c.name === "desktop.screenshot").map((c) => c.id));
-  const found = G.messages.filter((m) => m.role === "tool" && calls.has(m.toolCallId)).map((m) => parsed(m.content)?.result?.path).filter(Boolean);
+function desktopPicture(messages = G.messages) {
+  const calls = new Set(messages.flatMap((m) => m.toolCalls ?? []).filter((c) => c.name === "desktop.screenshot").map((c) => c.id));
+  const found = messages.filter((m) => m.role === "tool" && calls.has(m.toolCallId)).map((m) => parsed(m.content)?.result?.path).filter(Boolean);
   return found.at(-1) ?? "";
 }
 const picturePath = (kind) => (kind === "browser" ? work(G.sid)?.browser?.picture ?? "" : onThis() ? desktopPicture() : "");
@@ -99,10 +104,11 @@ async function fetchShot(path) {
     toast(error.message);
   }
   drawStage();
+  if (path === CARD.pic) render(); // the computer card lives in the conversation, drawn with it
 }
 function shotUrl(path) {
   if (!path) return "";
-  const wanted = new Set([picturePath("browser"), desktopPicture()]); // This computer's is kept for All screens too
+  const wanted = new Set([picturePath("browser"), desktopPicture(), CARD.pic]); // This computer's is kept for All screens too, and the card's
   for (const [kept, url] of SHOT) if (!wanted.has(kept)) { if (url) URL.revokeObjectURL(url); SHOT.delete(kept); }
   if (!SHOT.has(path)) fetchShot(path);
   return SHOT.get(path) ?? "";
@@ -148,7 +154,7 @@ function controls(kind) {
   if (yours) return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
   const take = kind === "computer" ? (holder() === "agent" ? `<button class="btn pri sm" type="button" data-act="takeover">${t("action.take-over")}</button>` : "")
     : run?.status === "running" ? `<button class="btn pri sm" type="button" data-act="stage-take-browser">${t("action.take-over")}</button>` : "";
-  const pause = run?.status === "running" ? `<button class="btn sm" type="button" data-act="stage-pause">${t("goal.action.pause")}</button>` : "";
+  const pause = run?.status === "running" ? `<button class="btn sm" type="button" data-act="lw-pause" data-id="${esc(run.id)}">${t("goal.action.pause")}</button>` : "";
   const stop = run && STOPPABLE.has(run.status) ? `<button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(run.id)}">${t("dashboard.stop")}</button>` : "";
   return take + pause + stop;
 }
@@ -253,6 +259,54 @@ export function stageCard() {
   return `<div class="b"><div class="gut"></div><div><div class="card comp7"><div class="card-h"><b>${ic("globe", "s")}${t("window.chat.stage.browser-of", { name: esc(name()) })}</b><span class="pill work ml"><i></i>${t("strip.status.working")}</span></div>${sub}
     <button type="button" class="comp7-thumb" data-act="stage" data-v="browser" aria-label="${t("window.chat.stage.full-size")}"><span class="st7-scale">${liveWindow(view, view.frame)}</span></button>
     <div class="acts"><button class="btn pri sm" type="button" data-act="stage" data-v="browser">${ic("monitor", "s")}${t("window.chat.stage.watch-full")}</button></div></div></div></div>`;
+}
+/* pane-stage-011: the card for the computer the conversation's newest task used (a desktop.* step since the owner's
+   last message), drawn under the conversation like the browser's. Its state is the engine's: You have control while
+   the owner holds the shared Linux desktop (GET /api/linux-desktop, read once per conversation and after each Take over
+   or Hand back), else the newest task's status. Carry on is only for a task that was paused or cut off (interrupted),
+   which Resume carries on from where it stopped; a task the owner stopped has no Carry on. */
+const CARD_STATE = { running: "working", completed: "done", cancelled: "stopped", interrupted: "stopped", failed: "stopped", budget_exceeded: "stopped" };
+function usedComputer(messages) {
+  const from = messages.findLastIndex((m) => m.role === "user" && !trunkIntro(m));
+  return messages.slice(from + 1).some((m) => (m.toolCalls ?? []).some((c) => String(c.name).startsWith("desktop.")));
+}
+async function readDesk(sid) {
+  CARD.deskFor = sid;
+  try {
+    const desk = await api("linux-desktop");
+    if (S.chat !== sid) return;
+    G.desk = { running: desk?.running === true, control: desk?.control };
+    render();
+  } catch (error) { toast(error.message); }
+}
+function cardActs(state, run) {
+  if (state === "working") return `<button class="btn pri sm" type="button" data-act="stage" data-v="computer">${ic("monitor", "s")}${t("window.chat.stage.watch-full")}</button>${holder() === "agent" ? `<button class="btn sm" type="button" data-act="takeover">${t("action.take-over")}</button>` : ""}`;
+  if (state === "yours") return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button><button class="btn sm" type="button" data-act="stage" data-v="computer">${t("window.chat.stage.full-size")}</button>`;
+  if (state === "stopped" && run.status === "interrupted") return `<button class="btn sm" type="button" data-act="lw-resume" data-id="${esc(run.id)}" data-sid="${esc(run.sessionId)}">${t("window.chat.stage.carry-on")}</button>`;
+  return "";
+}
+const PILL = { working: ["work", "strip.status.working"], yours: ["you", "window.chat.stage.you-control"], done: ["done", "panels.state.done"], stopped: ["idle", "panels.state.stopped"] };
+/** The task the computer card's Carry on resumes, so the conversation draws no second Resume for it (chat.js). */
+export const cardResumes = () => CARD.resumes;
+/** The computer card, from the conversation's own messages (chat.js hands them in). You have control only while this
+    conversation's own task works: the shared desktop held for another conversation's task says nothing here. */
+export function computerCard(messages) {
+  CARD.resumes = null;
+  if (!S.chat || G.kind === "computer" || !usedComputer(messages ?? [])) { CARD.pic = ""; return ""; }
+  if (CARD.deskFor !== S.chat && E.profiles?.isOwner !== false) readDesk(S.chat);
+  const run = runsHere()[0], state = holder() === "user" && run?.status === "running" ? "yours" : CARD_STATE[run?.status];
+  if (!state) return "";
+  if (state === "stopped" && run.status === "interrupted") CARD.resumes = run.id;
+  const st = comps(), comp = st ? computerNamed(st.using) : null;
+  const named = comp ? `${ic(comp.icon ?? "monitor", "s")}${esc(comp.name)}` : `${ic("monitor", "s")}${t("window.chat.stage.computer-of", { name: esc(owner()) })}`;
+  const tag = (st?.list.length ?? 0) > 1 ? `<span class="tag6">${t("window.chat.stage.on-computers", { count: st.list.length })}</span>` : "";
+  const [cls, words] = PILL[state], doing = state === "working" ? live()?.doing ?? "" : "";
+  CARD.pic = desktopPicture(messages);
+  const url = shotUrl(CARD.pic);
+  const pic = url ? `<span class="st7-scale"><div class="desk7"><img class="shot7" src="${esc(url)}" alt="${esc(owner())}"></div></span>` : emptyHTML("computer", true);
+  return `<div class="b"><div class="gut"></div><div><div class="card comp7"><div class="card-h"><b>${named}</b>${tag}<span class="pill ${cls} ml"><i></i>${t(words)}</span></div>${doing ? `<div class="sub">${esc(doing)}</div>` : ""}
+    <button type="button" class="comp7-thumb" data-act="stage" data-v="computer" aria-label="${t("window.chat.stage.full-size")}">${pic}</button>
+    <div class="acts">${cardActs(state, run)}</div></div></div></div>`;
 }
 const cardKey = (v) => JSON.stringify([v?.runId, v?.status, v?.doing, v?.browser?.live, !!v?.browser?.frame, v?.browser?.url, v?.browser?.title]);
 /* A new answer: the conversation is drawn again when its card changes; otherwise only the view (a frame is painted in). */
@@ -366,6 +420,7 @@ async function hold(path, done) {
     if (done) toast(done);
   } catch (error) { toast(error.message); }
   drawStage();
+  render(); // the computer card in the conversation follows who holds the desktop
 }
 
 /* The address field (the owner's alone): disabled, with the engine's reason, while a task works or waits here. */

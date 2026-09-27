@@ -64,18 +64,20 @@ records a plain sentence saying why that connection answered.
 
 ## Several accounts for one service
 
-**Settings → Accounts** (off until you switch it on) lets one connection hold several API
-keys or sign-ins, each with a name; `/account` lists them and `/account <name>` switches the
-conversation. API keys move on to the next key by themselves when one is rate limited.
+**Settings → Accounts** lets one connection hold several API keys or sign-ins, each with a name;
+`/account` lists them and `/account <name>` switches the conversation.
 
-Sign-ins are different. **Branch never moves your work between your own plans of one service** — two
-ChatGPT plans or two Claude plans that are both yours — to get past a limit: providers treat that as
-abuse and may suspend the accounts. When your plan runs out, the task stops and says so. *Share work
-between these accounts* can move work only between one of your own plans and an account you marked
-**kept separate**: one that really belongs to someone else or to work, such as your work plan or a
-family member's own plan. Tick *Kept separate* on that account, or type `/account separate <name>`
-(`/account not-separate <name>` takes the mark off). Nothing is ever marked for you. If a list of
-yours used to share work between your own plans, Branch stopped it and says why once, on the card.
+With two or more accounts on one connection, **Branch moves the work to your next account by itself**
+when one runs out, keys and sign-ins alike (the way Hermes Agent's credential pools work). A rate limit
+is tried once more on the same account and moves on at the second; running out of credit or reaching a
+plan limit moves on at once; a refused sign-in is refreshed first; an account that can't use a model is
+set aside for that model only. Each move shows in the task's steps ("Moved to "Work" — "Home" hit its
+limit, resets 15:00"), and the plan meter marks which account is used next. Pick how the next one is
+chosen (fill first, take turns, least used), or switch *Move to the next account* off, under
+**When one runs out**. Switching doesn't merge plans: each account's own terms apply, and the
+provider's prompt cache starts again, so the first reply after a switch can use more of the new
+account's limit. When every account has run out, the task waits for the first reset, or carries on
+on this computer if you turned on *Fall back to this computer*.
 
 ## Models that run here
 
