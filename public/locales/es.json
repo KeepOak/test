@@ -9578,7 +9578,6 @@
   "window.why.when-tools-are-loaded": "Branch decide por sí solo qué herramientas cargar en cada ronda; no hay ajuste.",
   "window.why.folder-trust": "Sigue desactivado aquí hasta una revisión de seguridad aparte: una carpeta de confianza deja que los Trunks cambien archivos sin preguntar.",
   "window.why.f15-practice-runs": "Los ensayos solo existen como el comando /dry-run en la terminal, una conversación cada vez.",
-  "window.why.p-rate": "Branch limita las solicitudes por minuto y las palabras por hora, no los mensajes por hora.",
   "window.why.f15-scan-for-personal-details": "Sigue desactivado aquí hasta una revisión de seguridad aparte: cambia lo que sale de este equipo.",
   "window.why.f15-authenticator-code-for-sensitive-tools": "Sigue desactivado aquí hasta una revisión de seguridad aparte: la ventana aún no tiene un paso para configurar la app de autenticación.",
   "window.why.a-container-per-trunk": "Branch no tiene un contenedor por Trunk: el contenedor se elige por regla de aprobación, y solo si Docker ya está en este equipo.",

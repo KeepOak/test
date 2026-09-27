@@ -9579,7 +9579,6 @@
   "window.why.when-tools-are-loaded": "Branch décide lui-même à chaque tour quels outils charger ; il n’y a pas de réglage.",
   "window.why.folder-trust": "Reste désactivé ici jusqu’à un examen de sécurité à part : un dossier de confiance permet aux Trunks de modifier des fichiers sans demander.",
   "window.why.f15-practice-runs": "Les essais à blanc ne sont que la commande /dry-run dans le terminal, une conversation à la fois.",
-  "window.why.p-rate": "Branch limite les requêtes par minute et les mots par heure, pas les messages par heure.",
   "window.why.f15-scan-for-personal-details": "Reste désactivé ici jusqu’à un examen de sécurité à part : cela change ce qui quitte cet ordinateur.",
   "window.why.f15-authenticator-code-for-sensitive-tools": "Reste désactivé ici jusqu’à un examen de sécurité à part : la fenêtre n’a pas encore d’étape pour configurer l’application d’authentification.",
   "window.why.a-container-per-trunk": "Branch n’a pas de conteneur par Trunk : un conteneur se choisit par règle d’approbation, et seulement si Docker est déjà sur cet ordinateur.",

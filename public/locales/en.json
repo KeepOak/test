@@ -9578,7 +9578,6 @@
   "window.why.when-tools-are-loaded": "Branch decides which tools to load every round by itself; there's no setting.",
   "window.why.folder-trust": "Stays off here until a separate safety review: a trusted folder lets Trunks change files without asking.",
   "window.why.f15-practice-runs": "Practice runs are only the /dry-run command in the terminal, one conversation at a time.",
-  "window.why.p-rate": "Branch limits requests per minute and words per hour, not messages per hour.",
   "window.why.f15-scan-for-personal-details": "Stays off here until a separate safety review: changing what leaves this computer.",
   "window.why.f15-authenticator-code-for-sensitive-tools": "Stays off here until a separate safety review: the window has no step to set up the authenticator app yet.",
   "window.why.a-container-per-trunk": "Branch has no container per Trunk: a container is picked per approval rule, and only when Docker is already on this computer.",
