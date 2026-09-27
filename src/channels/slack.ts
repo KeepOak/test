@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { fenced } from "./progress-render.js";
+import type { MessageFormat } from "./router.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
 import { connectWebSocket, reconnectDelay, type WebSocketConnect, type WebSocketConnection } from "./ws-client.js";
 
@@ -52,6 +54,9 @@ const slackEmojiNames: Record<string, string> = {
   "👀": "eyes", "🤔": "thinking_face", "\u{1F468}\u200D\u{1F4BB}": "technologist", "👍": "+1", "😢": "cry",
 };
 
+/** Slack's own formatting, with code spans as fences that carry no language (Slack would show it as a first code line). */
+const slackText = (text: string, format?: MessageFormat): string =>
+  toMrkdwn(format?.spans?.length ? fenced(text, format.spans, { tag: false }) : text);
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
   readonly id: string;
@@ -145,9 +150,9 @@ export class SlackAdapter implements ChannelAdapter {
       ...(event.thread_ts && event.ts ? { reactTo: event.ts } : {}),
     };
   }
-  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {
-      channel: chatId, text: toMrkdwn(text), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      channel: chatId, text: slackText(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
     });
     const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
     return parsed.success ? parsed.data.ts : undefined;
@@ -164,8 +169,8 @@ export class SlackAdapter implements ChannelAdapter {
       await this.call("reactions.remove", this.options.token, { channel: chatId, timestamp: messageId, name: old }).catch(() => undefined);
     await this.call("reactions.add", this.options.token, { channel: chatId, timestamp: messageId, name });
   }
-  async edit(chatId: string, messageId: string, text: string): Promise<void> {
-    await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: toMrkdwn(text) });
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+    await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format) });
   }
   // ---- R17-C (R17-022): a file through Slack's external upload (the older files.upload is retired).
   // 1. files.getUploadURLExternal hands out an address and a file id; 2. the bytes go to that

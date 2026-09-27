@@ -69,7 +69,8 @@ async function fixture(t, script = echo, parts, options) {
   return { app, model, chat, root };
 }
 const showProgressSoon = (app) => { app.channels.liveTiming = fast; };
-const allOn = { liveStatus: "on", commands: "on", steering: "on", splitting: "on" };
+// "Show steps in chats" is tried in tests/chat-steps.test.mjs; these are about the short progress message.
+const allOn = { liveStatus: "on", commands: "on", steering: "on", splitting: "on", steps: "off" };
 let nextId = 1;
 const message = (text, extra = {}) => ({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner",
   senderName: "Sam", text, addressed: true, messageId: `m${nextId++}`, ...extra });
@@ -629,10 +630,10 @@ test("a fresh install ships the chat extras when needed, commands off; switched 
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model });
   t.after(async () => { await app.close(); await discardTemp(root); });
   app.channels.liveTiming = fast;
-  // The ship-on rule (src/channels/chat-live-settings.ts): all but commands ship "when needed"; the owner switches them off.
-  assert.deepEqual(app.channels.summary().live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed" });
+  // The ship-on rule (src/channels/chat-live-settings.ts): all but commands ship on or "when needed"; the owner switches them off.
+  assert.deepEqual(app.channels.summary().live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed", steps: "on" });
   app.channels.setSwitches({ liveStatus: "off", steering: "off", splitting: "off" });
-  assert.deepEqual(app.channels.summary().live, { liveStatus: "off", commands: "off", steering: "off", splitting: "off" });
+  assert.deepEqual(app.channels.summary().live, { liveStatus: "off", commands: "off", steering: "off", splitting: "off", steps: "on" });
   const chat = fakeChat();
   await app.channels.attach(chat.adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
   const first = app.channels.handle(message("write the plan"));
@@ -654,7 +655,7 @@ test("a fresh install ships the chat extras when needed, commands off; switched 
 test("switches are saved one at a time and refuse anything but on, off and when needed", async (t) => {
   const { app } = await fixture(t);
   assert.deepEqual(app.channels.setSwitches({ commands: "when-needed" }),
-    { liveStatus: "on", commands: "when-needed", steering: "on", splitting: "on" });
+    { liveStatus: "on", commands: "when-needed", steering: "on", splitting: "on", steps: "off" });
   assert.throws(() => app.channels.setSwitches({ commands: "sometimes" }));
   assert.throws(() => app.channels.setSwitches({ typing: "on" }));
   assert.equal(app.channels.switches().commands, "when-needed");
@@ -705,7 +706,7 @@ test("the switches are read and changed over the app's own address, and bad valu
     method: body ? "POST" : "GET", body: body && JSON.stringify(body),
     headers: { authorization: "Bearer " + server.token, origin: server.url, ...(body ? { "content-type": "application/json" } : {}) },
   });
-  assert.deepEqual((await (await call("channels")).json()).live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed" });
+  assert.deepEqual((await (await call("channels")).json()).live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed", steps: "on" });
   const saved = await (await call("channels/live", { steering: "on" })).json();
   assert.equal(saved.live.steering, "on");
   assert.equal(saved.live.commands, "off");
