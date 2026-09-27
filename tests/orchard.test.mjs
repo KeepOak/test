@@ -365,3 +365,35 @@ test("an interrupted migration rolls back boards, cards and marker together", as
   assert.equal(new Set(orchard.data.cards().map((card) => card.board)).size, 1);
   assert.equal(orchard.data.migrate(() => "Garden"), 0);
 });
+
+test("the owner edits a card, renames and removes an empty board, edits only their own comments and removes any", async (t) => {
+  const { app, orchard, serve } = await fixture(t);
+  const call = await serve();
+  const board = (await call("orchard/boards", { name: "Shed" })).body.board;
+  const card = orchard.add({ title: "Paint the door", board: board.id }, { kind: "trunk", id: "t1" });
+  assert.equal((await call(`orchard/cards/${card.id}/edit`, { title: "Paint the red door", notes: "Two coats" })).status, 200);
+  assert.deepEqual([orchard.data.card(card.id).title, orchard.data.card(card.id).notes], ["Paint the red door", "Two coats"]);
+  assert.equal((await call(`orchard/boards/${board.id}`, { name: "Garden shed" })).body.board.name, "Garden shed");
+
+  const mine = (await call(`orchard/cards/${card.id}/comment`, { text: "blue" })).body.comment;
+  const theirs = orchard.comment(card.id, { text: "I will need a ladder" }, { kind: "trunk", id: "t1" });
+  assert.equal((await call(`orchard/cards/${card.id}/comment-edit`, { comment: mine.id, text: "red" })).body.comment.text, "red");
+  const refused = await call(`orchard/cards/${card.id}/comment-edit`, { comment: theirs.id, text: "no ladder" });
+  assert.equal(refused.status, 400, "a Trunk's words are never rewritten");
+  assert.match(refused.body.error ?? JSON.stringify(refused.body), /Only your own comments/);
+  assert.equal(orchard.data.comments(card.id).find((c) => c.id === theirs.id).text, "I will need a ladder");
+  const other = orchard.add({ title: "Elsewhere", board: (await call("orchard/boards", { name: "Other" })).body.board.id }, { kind: "owner" });
+  assert.equal((await call(`orchard/cards/${other.id}/comment-remove`, { comment: theirs.id })).status, 400, "a comment is only removed from its own card");
+  assert.equal((await call(`orchard/cards/${card.id}/comment-remove`, { comment: theirs.id })).body.removed, true);
+  assert.deepEqual(orchard.data.comments(card.id).map((c) => c.text), ["red"]);
+
+  const token = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
+  assert.equal((await call(`orchard/cards/${card.id}/comment-remove`, { comment: mine.id }, token)).status, 401, "a key cannot remove");
+  assert.equal((await call(`orchard/cards/${card.id}/comment-edit`, { comment: mine.id, text: "x" }, token)).status, 401, "nor edit");
+
+  assert.equal((await call(`orchard/boards/${board.id}/remove`, {})).status, 400, "a board with cards stays");
+  assert.equal((await call(`orchard/cards/${card.id}/remove`, {})).body.removed, true);
+  const removed = await call(`orchard/boards/${board.id}/remove`, {});
+  assert.equal(removed.body.removed, true, JSON.stringify(removed));
+  assert.ok(!orchard.boards().some((b) => b.id === board.id));
+});

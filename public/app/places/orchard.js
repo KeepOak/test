@@ -10,7 +10,8 @@
    - A question on a card is answered as everywhere else: No or Allow once, by conversation and fingerprint, through
      POST /api/policy/approve, and only a question that carries a fingerprint (Q257).
    - Drag a card to a column to move it (.../move), or onto a Trunk's face to give it to them (.../assign); the card's
-     menu does both from the keyboard. Open shows its notes, what it waits for (link, unlink), its comments and history.
+     menu does both from the keyboard. Open shows its notes, what it waits for (link, unlink), its comments (edit your own, remove any) and history; Edit
+     changes its title and notes. The boards menu adds, renames and removes an empty board.
    Every engine refusal is shown as the engine said it. */
 
 import { $, esc, renderNow } from "../core/dom.js";
@@ -24,7 +25,7 @@ import { offTile } from "./switch-on.js";
 import { empty18 } from "../core/p18.js";
 
 const LANES = ["seed", "growing", "ripe", "picked", "blocked"];
-const O = { view: null, problem: "", board: null, busy: new Set(), open: null, comments: {} };
+const O = { view: null, problem: "", board: null, busy: new Set(), open: null, comments: {}, editing: null };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q?.fingerprint ?? ""));
 
@@ -79,10 +80,11 @@ function card(c) {
   return `<div class="card15 orc-card${c.asks?.length ? " orc-you" : ""}" role="listitem" draggable="true" data-orc-card="${esc(c.id)}"><button type="button" class="orc-title" data-act="orc-open" data-id="${esc(c.id)}">${esc(c.title)}</button><span class="c-foot15">${faceOf(c)}<small>${esc(whoHas(c))}</small>${meta(c)}</span>${c.live ? liveOf(c) : ""}${acts ? `<span class="orc-acts">${acts}</span>` : ""}<button type="button" class="c-mv15" data-act="orc-menu" data-id="${esc(c.id)}" aria-label="${t("window.places.automations.move-title", { title: esc(c.title) })}">${ic("more", "s")}</button></div>`;
 }
 
-/* The Trunks a card can be dropped on to give it to them, and Branch itself. */
+/* The Trunks a card can be dropped on to give it to them, and Branch itself. They are drop targets only; from the
+   keyboard, a card's menu gives it. */
 function givers() {
-  const one = (id, face, name) => `<button type="button" class="orc-give" data-act="orc-give-hint" data-orc-to="${esc(id)}" aria-label="${esc(t("window.places.orchard.give-to", { name }))}">${face}<small>${esc(name)}</small></button>`;
-  return `<div class="orc-givers" aria-label="${t("window.places.orchard.give-to-title")}">${one("", `<span class="orc-branch">${ic("spark", "s")}</span>`, branchName())}${trunks().map((tr) => one(tr.id, av(tr, 28), tr.name)).join("")}</div>`;
+  const one = (id, face, name) => `<div class="orc-give" role="listitem" data-orc-to="${esc(id)}" aria-label="${esc(t("window.places.orchard.give-to", { name }))}">${face}<small>${esc(name)}</small></div>`;
+  return `<div class="orc-givers" role="list" aria-label="${t("window.places.orchard.give-to-title")}">${one("", `<span class="orc-branch">${ic("spark", "s")}</span>`, branchName())}${trunks().map((tr) => one(tr.id, av(tr, 28), tr.name)).join("")}</div>`;
 }
 
 export function orchardTab() {
@@ -161,23 +163,33 @@ function boardsMenu(el) {
   const board = O.view?.board;
   const rows = (O.view?.boards ?? []).map((b) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${b.id === board?.id}" data-act="orc-board" data-id="${esc(b.id)}"><span class="mi-t">${esc(b.name)}</span><small>${LANES.map((lane) => b.counts?.[lane] ?? 0).join(" · ")}</small></button>`).join("");
   const seg = board ? `<div class="ph">${t("window.places.orchard.at-once")}</div><div class="seg orc-seg" role="group" aria-label="${t("window.places.orchard.at-once")}">${[1, 2, 3, 4].map((n) => `<button type="button" aria-pressed="${board.atOnce === n}" data-act="orc-at-once" data-v="${n}">${n}</button>`).join("")}</div>` : "";
-  openPop(el, `<div class="ph">${t("window.places.orchard.boards")}</div>${rows}<button class="mi" type="button" data-act="orc-new-board">${ic("plus", "s")}<span class="mi-t">${t("window.places.orchard.new-board")}</span></button>${seg}`);
+  openPop(el, `<div class="ph">${t("window.places.orchard.boards")}</div>${rows}<button class="mi" type="button" data-act="orc-new-board">${ic("plus", "s")}<span class="mi-t">${t("window.places.orchard.new-board")}</span></button>${board ? `<button class="mi" type="button" data-act="orc-board-rename"><span class="mi-t">${t("accounts.action.rename")}</span></button><button class="mi" type="button" data-act="orc-board-remove"><span class="mi-t">${t("accounts.action.remove")}</span></button>` : ""}${seg}`);
 }
-function newBoard() {
-  openDlg({ title: t("window.places.orchard.new-board"),
-    body: `<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="orc-board-name" maxlength="80"></label>`,
-    foot: `<button class="btn pri" type="button" data-act="orc-board-save">${t("asks.runtimes.add")}</button>` });
+/* A new board, or (renaming) the board shown now under a new name. */
+function newBoard(renaming = false) {
+  closePop();
+  const board = renaming ? O.view?.board : null;
+  if (renaming && !board) return;
+  openDlg({ title: board ? t("accounts.action.rename") : t("window.places.orchard.new-board"),
+    body: `<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="orc-board-name" maxlength="80" value="${esc(board?.name ?? "")}"${board ? ` data-id="${esc(board.id)}"` : ""}></label>`,
+    foot: `<button class="btn pri" type="button" data-act="orc-board-save">${board ? t("action.save") : t("asks.runtimes.add")}</button>` });
 }
 async function saveBoard() {
-  const name = ($("#orc-board-name")?.value ?? "").trim();
-  if (!name) { $("#orc-board-name")?.focus(); return; }
+  const field = $("#orc-board-name"), name = (field?.value ?? "").trim(), renaming = field?.dataset.id;
+  if (!name) { field?.focus(); return; }
   try {
-    const { board } = await api("orchard/boards", { name });
-    O.board = board.id;
+    if (renaming) await api(`orchard/boards/${encodeURIComponent(renaming)}`, { name });
+    else O.board = (await api("orchard/boards", { name })).board.id;
     closeDlg();
   } catch (error) { toast(error.message); return; }
   await loadOrchard();
   renderNow();
+}
+/* Removes the board shown now; the engine refuses one that still has cards, in its own words. */
+async function removeBoard() {
+  const board = O.view?.board;
+  if (!board) return;
+  if (await change(`orchard/boards/${encodeURIComponent(board.id)}/remove`)) { O.board = null; await loadOrchard(); renderNow(); }
 }
 
 /* ---------- a new card ---------- */
@@ -189,9 +201,24 @@ function newCard() {
     body: `<label class="fld"><span>${t("window.places.orchard.card-title")}</span><input class="inp" id="orc-title" maxlength="200"></label><label class="fld"><span>${t("flowsBoards.board.notes")}</span><textarea class="inp" id="orc-notes" rows="3"></textarea></label><label class="fld"><span>${t("window.places.orchard.give-to-title")}</span><select class="inp" id="orc-to">${giveOptions()}</select></label>${before ? `<label class="fld"><span>${t("window.places.orchard.waits-for-title")}</span><select class="inp" id="orc-after"><option value="">${t("window.places.orchard.nothing")}</option>${before}</select></label>` : ""}`,
     foot: `<button class="btn pri" type="button" data-act="orc-save">${t("asks.runtimes.add")}</button>` });
 }
+/* Editing a card's title and notes (who has it, its column and what it waits for have their own controls). */
+function editCard(id) {
+  const c = cardOf(id);
+  if (!c) return;
+  O.open = null;
+  openDlg({ title: t("prompts.action.edit"),
+    body: `<label class="fld"><span>${t("window.places.orchard.card-title")}</span><input class="inp" id="orc-title" maxlength="200" value="${esc(c.title)}" data-id="${esc(c.id)}"></label><label class="fld"><span>${t("flowsBoards.board.notes")}</span><textarea class="inp" id="orc-notes" rows="3">${esc(c.notes ?? "")}</textarea></label>`,
+    foot: `<button class="btn pri" type="button" data-act="orc-save">${t("action.save")}</button>` });
+}
 async function saveCard() {
-  const title = ($("#orc-title")?.value ?? "").trim();
-  if (!title) { $("#orc-title")?.focus(); return; }
+  const field = $("#orc-title"), title = (field?.value ?? "").trim(), editing = field?.dataset.id;
+  if (!title) { field?.focus(); return; }
+  if (editing) {
+    try { await api(cardPath(editing, "edit"), { title, notes: $("#orc-notes")?.value ?? "" }); closeDlg(); } catch (error) { toast(error.message); return; }
+    await loadOrchard();
+    renderNow();
+    return openCard(editing);
+  }
   const to = $("#orc-to")?.value ?? "", after = $("#orc-after")?.value ?? "";
   try {
     await api("orchard/cards", { title, notes: $("#orc-notes")?.value ?? "", ...(O.view?.board ? { board: O.view.board.id } : {}),
@@ -213,14 +240,16 @@ async function openCard(id, again = false) {
   if (again && !document.getElementById("orc-detail")) return;
   const waits = (c.after ?? []).map((p) => cardOf(p)).filter(Boolean).map((p) => `<div class="prow"><span class="grow"><b>${esc(p.title)}</b><small>${esc(laneWord(p.lane))}</small></span><button class="icon-btn" type="button" data-act="orc-unlink" data-id="${esc(c.id)}" data-v="${esc(p.id)}" aria-label="${t("accounts.action.remove")}">${ic("x", "s")}</button></div>`).join("");
   const could = cards().filter((p) => p.id !== c.id && !(c.after ?? []).includes(p.id) && p.lane !== "picked").map((p) => `<option value="${esc(p.id)}">${esc(p.title)}</option>`).join("");
-  const comments = (detail.comments ?? []).map((m) => `<li><b>${esc(byName(m.by))}</b><span>${esc(m.text)}</span><time>${esc(when(m.at))}</time></li>`).join("");
+  const editing = O.editing?.card === c.id ? O.editing.comment : "";
+  const commentActs = (m) => `<span class="orc-cacts">${m.by === "owner" ? `<button class="icon-btn" type="button" data-act="orc-comment-edit" data-id="${esc(c.id)}" data-v="${esc(m.id)}" aria-label="${t("prompts.action.edit")}">${ic("edit", "s")}</button>` : ""}<button class="icon-btn" type="button" data-act="orc-comment-remove" data-id="${esc(c.id)}" data-v="${esc(m.id)}" aria-label="${t("accounts.action.remove")}">${ic("x", "s")}</button></span>`;
+  const comments = (detail.comments ?? []).map((m) => `<li${m.id === editing ? ' class="orc-editing"' : ""}><b>${esc(byName(m.by))}</b><span>${esc(m.text)}</span><time>${esc(when(m.at))}</time>${commentActs(m)}</li>`).join("");
   const history = (c.history ?? []).slice(-8).reverse().map((h) => `<li><span>${esc(h.what)}</span><time>${esc(when(h.at))}</time></li>`).join("");
   openDlg({ title: c.title, wide: true,
     body: `<div id="orc-detail" class="orc-detail" data-id="${esc(c.id)}"><p class="orc-who">${faceOf(c, 24)}<span>${esc(whoHas(c))} · ${esc(laneWord(c.lane))}</span></p>${c.notes ? `<p>${esc(c.notes)}</p>` : ""}${c.lane === "growing" ? liveOf(c) : ""}
       <div class="sec"><h2>${t("window.places.orchard.waits-for-title")}</h2><div class="rows">${waits}</div>${could ? `<div class="orc-link"><select class="inp" id="orc-link" aria-label="${t("window.places.orchard.waits-for-title")}"><option value="">${t("window.places.orchard.nothing")}</option>${could}</select><button class="btn sm" type="button" data-act="orc-link" data-id="${esc(c.id)}">${t("asks.runtimes.add")}</button></div>` : ""}</div>
-      <div class="sec"><h2>${t("window.places.orchard.comments")}</h2><ol class="orc-comments">${comments}</ol><div class="orc-link"><input class="inp" id="orc-comment" maxlength="2000" value="${esc(O.comments[c.id] ?? "")}" aria-label="${t("window.places.orchard.add-comment")}" placeholder="${esc(t("window.places.orchard.add-comment"))}"><button class="btn sm" type="button" data-act="orc-comment" data-id="${esc(c.id)}">${t("asks.runtimes.add")}</button></div></div>
+      <div class="sec"><h2>${t("window.places.orchard.comments")}</h2><ol class="orc-comments">${comments}</ol><div class="orc-link"><input class="inp" id="orc-comment" maxlength="2000" value="${esc(O.comments[c.id] ?? "")}" aria-label="${t("window.places.orchard.add-comment")}" placeholder="${esc(t("window.places.orchard.add-comment"))}"><button class="btn sm" type="button" data-act="orc-comment" data-id="${esc(c.id)}">${editing ? t("action.save") : t("asks.runtimes.add")}</button></div></div>
       <div class="sec"><h2>${t("place.inbox.history")}</h2><ol class="tl orc-history">${history}</ol></div></div>`,
-    foot: c.lane === "growing" ? "" : `<button class="btn ghost" type="button" data-act="orc-remove" data-id="${esc(c.id)}">${t("accounts.action.remove")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="orc-edit" data-id="${esc(c.id)}">${t("prompts.action.edit")}</button>${c.lane === "growing" ? "" : `<button class="btn ghost" type="button" data-act="orc-remove" data-id="${esc(c.id)}">${t("accounts.action.remove")}</button>`}` });
 }
 /* Who wrote a comment: the owner, a Trunk by its name, Branch, a chat app or a key. */
 function byName(by) {
@@ -274,8 +303,9 @@ function initDrag() {
 
 export function initOrchard() {
   markLive(["orc-boards", "orc-board", "orc-new-board", "orc-board-save", "orc-at-once", "orc-new", "orc-save", "orc-open", "orc-menu",
-    "orc-move", "orc-give", "orc-give-hint", "orc-plant", "orc-grow", "orc-pause", "orc-resume", "orc-stop", "orc-pick", "orc-back",
-    "orc-reset", "orc-remove", "orc-ask", "orc-link", "orc-unlink", "orc-comment",
+    "orc-move", "orc-give", "orc-plant", "orc-grow", "orc-pause", "orc-resume", "orc-stop", "orc-pick", "orc-back",
+    "orc-reset", "orc-remove", "orc-ask", "orc-link", "orc-unlink", "orc-comment", "orc-comment-edit", "orc-comment-remove", "orc-edit",
+    "orc-board-rename", "orc-board-remove",
     "sw:orc-board-name", "sw:orc-title", "sw:orc-notes", "sw:orc-to", "sw:orc-after", "sw:orc-link", "sw:orc-comment"]);
   on("orc-boards", (el) => boardsMenu(el));
   on("orc-board", async (el) => { closePop(); O.board = el.dataset.id; await loadOrchard(); renderNow(); });
@@ -288,8 +318,6 @@ export function initOrchard() {
   on("orc-menu", (el) => cardMenu(el));
   on("orc-move", (el) => move(el.dataset.id, el.dataset.v));
   on("orc-give", (el) => give(el.dataset.id, el.dataset.v));
-  /* A face is where a dragged card is dropped; pressed, it says so (the card's menu gives it from the keyboard). */
-  on("orc-give-hint", () => toast(t("window.places.orchard.drag-hint")));
   on("orc-plant", (el) => give(el.dataset.id, cardOf(el.dataset.id)?.assignee ?? ""));
   on("orc-grow", (el) => change(cardPath(el.dataset.id, "grow")));
   on("orc-pause", (el) => change(`runs/${encodeURIComponent(el.dataset.run)}/pause`));
@@ -303,11 +331,29 @@ export function initOrchard() {
   on("orc-link", async (el) => { const after = $("#orc-link")?.value; if (after) { await change(cardPath(el.dataset.id, "link"), { after }); openCard(el.dataset.id); } });
   on("orc-unlink", async (el) => { await change(cardPath(el.dataset.id, "unlink"), { after: el.dataset.v }); openCard(el.dataset.id); });
   on("orc-comment", async (el) => {
-    const text = (O.comments[el.dataset.id] ?? $("#orc-comment")?.value ?? "").trim();
+    const id = el.dataset.id, text = (O.comments[id] ?? $("#orc-comment")?.value ?? "").trim();
     if (!text) { $("#orc-comment")?.focus(); return; }
-    if (await change(cardPath(el.dataset.id, "comment"), { text })) delete O.comments[el.dataset.id];
+    const editing = O.editing?.card === id ? O.editing.comment : "";
+    const done = await change(cardPath(id, editing ? "comment-edit" : "comment"), editing ? { comment: editing, text } : { text });
+    if (done) { delete O.comments[id]; O.editing = null; }
+    openCard(id);
+  });
+  /* Editing one of your own comments puts its words back in the comment box; Save writes them over the old. */
+  on("orc-comment-edit", async (el) => {
+    const found = (await api(`orchard/cards/${encodeURIComponent(el.dataset.id)}`).catch(() => null))?.comments?.find((m) => m.id === el.dataset.v);
+    if (!found) return;
+    O.editing = { card: el.dataset.id, comment: found.id };
+    O.comments[el.dataset.id] = found.text;
     openCard(el.dataset.id);
   });
+  on("orc-comment-remove", async (el) => {
+    if (O.editing?.comment === el.dataset.v) { O.editing = null; delete O.comments[el.dataset.id]; }
+    await change(cardPath(el.dataset.id, "comment-remove"), { comment: el.dataset.v });
+    openCard(el.dataset.id);
+  });
+  on("orc-edit", (el) => editCard(el.dataset.id));
+  on("orc-board-rename", () => newBoard(true));
+  on("orc-board-remove", () => removeBoard());
   document.addEventListener("input", (event) => {
     if (event.target.id === "orc-comment" && O.open) O.comments[O.open] = event.target.value;
   });

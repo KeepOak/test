@@ -4,7 +4,7 @@ import type { Run, RunStatus } from "../contracts.js";
 import type { RunSource } from "../policy.js";
 import type { Store } from "../store.js";
 import {
-  actorName, AssignSchema, BoardEditSchema, BoardInputSchema, CardEditSchema, CardInputSchema, CommentSchema, lanes, LinkSchema,
+  actorName, AssignSchema, BoardEditSchema, BoardInputSchema, CardEditSchema, CardInputSchema, CommentEditSchema, CommentRemoveSchema, CommentSchema, lanes, LinkSchema,
   MoveSchema, oneLine, outsideActors, type Actor, type Board, type Card, type Comment, type Lane,
 } from "./model.js";
 import { OrchardStore } from "./store.js";
@@ -177,6 +177,21 @@ export class Orchard {
     const { text } = CommentSchema.parse(input);
     this.data.card(id);
     return this.data.comment(id, actorName(actor), text);
+  }
+
+  /** The owner corrects a comment of their own. A Trunk's, Branch's, a chat's or a key's words stay as they were said. */
+  editComment(id: string, input: unknown): Comment {
+    const { comment, text } = CommentEditSchema.parse(input);
+    this.data.card(id);
+    if (this.data.commentOf(id, comment).by !== "owner") throw new Error("Only your own comments can be edited; you can remove anyone's.");
+    return this.data.editComment(id, comment, text);
+  }
+  /** The owner removes any comment on a card. */
+  removeComment(id: string, input: unknown): { removed: boolean } {
+    const { comment } = CommentRemoveSchema.parse(input);
+    this.data.card(id);
+    this.data.commentOf(id, comment);
+    return { removed: this.data.removeComment(id, comment) };
   }
 
   /** The owner looked at a card blocked after failing too often: back to seed, count cleared, planted. */

@@ -116,3 +116,58 @@ test("Orchard creates a second board, holds a dependency until review, and saves
   assert.equal((await call(`/api/orchard/cards/${dependent.id}`)).comments.at(-1).text, "Check the result tomorrow");
   assert.deepEqual(errors, []);
 });
+
+test("Orchard from the window: edit a card, edit and remove comments, rename and remove a board; faces are drop targets only", async (t) => {
+  const { page, call, errors, app } = await newWindow(t, { provider, seed: async (branch) => {
+    branch.trunks.create({ name: "Ed" });
+    const trunk = branch.trunks.records.list().find((tr) => tr.name === "Ed");
+    const card = branch.flowsBoards.orchard.add({ title: "Mend the fence" }, { kind: "chat" });
+    branch.flowsBoards.orchard.comment(card.id, { text: "Ed's note" }, { kind: "trunk", id: trunk.id });
+  } });
+  const place = await openPlace(page, "automations", "board");
+  assert.equal(await place.locator(".orc-give[data-act], button.orc-give").count(), 0, "a face does nothing when pressed, so it is not a button");
+  const card = Object.values((await call("/api/orchard")).lanes).flat().find((c) => c.title === "Mend the fence");
+
+  // Edit the card's title and notes.
+  await place.locator(`[data-orc-card="${card.id}"] [data-act="orc-open"]`).click();
+  await page.locator('[data-act="orc-edit"]').click();
+  await page.locator("#orc-title").fill("Mend the back fence");
+  await page.locator("#orc-notes").fill("Posts first");
+  await page.locator('[data-act="orc-save"]').click();
+  await until(async () => (await call(`/api/orchard/cards/${card.id}`)).card.notes === "Posts first", "the card was edited");
+  assert.equal((await call(`/api/orchard/cards/${card.id}`)).card.title, "Mend the back fence");
+
+  // Comments: the owner's own is edited in place; a Trunk's can only be removed.
+  await page.locator("#orc-comment").fill("Wood is in the shed");
+  await page.locator('[data-act="orc-comment"]').click();
+  await page.locator(".orc-comments").getByText("Wood is in the shed", { exact: true }).waitFor();
+  const theirs = page.locator(".orc-comments li", { hasText: "Ed's note" });
+  assert.equal(await theirs.locator('[data-act="orc-comment-edit"]').count(), 0);
+  await page.locator(".orc-comments li", { hasText: "Wood is in the shed" }).locator('[data-act="orc-comment-edit"]').click();
+  await page.locator(".orc-comments li.orc-editing", { hasText: "Wood is in the shed" }).waitFor();
+  await page.locator("#orc-comment").fill("Wood is in the garage");
+  await page.locator('[data-act="orc-comment"]').click();
+  await until(async () => (await call(`/api/orchard/cards/${card.id}`)).comments.some((m) => m.text === "Wood is in the garage"), "edited");
+  await page.locator(".orc-comments li", { hasText: "Ed's note" }).locator('[data-act="orc-comment-remove"]').click();
+  await until(async () => (await call(`/api/orchard/cards/${card.id}`)).comments.length === 1, "removed");
+  assert.deepEqual((await call(`/api/orchard/cards/${card.id}`)).comments.map((m) => m.text), ["Wood is in the garage"]);
+  await page.locator('.scrim [data-act="dlg-close"]').first().click();
+
+  // A new board, renamed, then removed (it is empty); the active project's board is shown again.
+  await place.locator('[data-act="orc-boards"]').click();
+  await page.locator('[data-act="orc-new-board"]').click();
+  await page.locator("#orc-board-name").fill("Spare");
+  await page.locator('[data-act="orc-board-save"]').click();
+  await until(async () => (await call("/api/orchard")).boards.some((b) => b.name === "Spare"), "board added");
+  await place.locator('[data-act="orc-boards"]').click();
+  await page.locator('[data-act="orc-board-rename"]').click();
+  await page.locator("#orc-board-name").fill("Spare parts");
+  await page.locator('[data-act="orc-board-save"]').click();
+  await until(async () => (await call("/api/orchard")).boards.some((b) => b.name === "Spare parts"), "board renamed");
+  await place.locator('[data-act="orc-boards"]').click();
+  await page.locator('[data-act="orc-board-remove"]').click();
+  await until(async () => !(await call("/api/orchard")).boards.some((b) => b.name === "Spare parts"), "board removed");
+  await place.locator(`[data-orc-card="${card.id}"]`).waitFor();
+  assert.ok(app);
+  assert.deepEqual(errors, []);
+});

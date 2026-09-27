@@ -138,6 +138,20 @@ export class OrchardStore {
     return { id, at, by, text };
   }
 
+  /** One comment on a card, or an error when that card holds no such comment. */
+  commentOf(card: string, id: string): Comment {
+    const row = this.db.prepare("SELECT id, at, by, text FROM orchard_comments WHERE owner=? AND card=? AND id=?").get(this.owner, card, id);
+    if (!row) throw new Error("That comment is not on this card.");
+    return { id: String(row.id), at: String(row.at), by: String(row.by), text: String(row.text) };
+  }
+  editComment(card: string, id: string, text: string): Comment {
+    this.db.prepare("UPDATE orchard_comments SET text=? WHERE owner=? AND card=? AND id=?").run(text, this.owner, card, id);
+    return this.commentOf(card, id);
+  }
+  removeComment(card: string, id: string): boolean {
+    return Number(this.db.prepare("DELETE FROM orchard_comments WHERE owner=? AND card=? AND id=?").run(this.owner, card, id).changes ?? 0) > 0;
+  }
+
   /**
    * The shared board's cards (the old Automations › Board, table `board_cards`) move into Orchard once: one board per
    * project they were on, named after it, with their lanes mapped. None is planted: on the old board only the owner

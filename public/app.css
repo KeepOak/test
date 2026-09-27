@@ -4428,8 +4428,10 @@ audio.docread18m{width:100%}
 .orc-link{display:flex;gap:8px;margin-top:8px}
 .orc-link .inp{flex:1;min-width:0}
 .orc-comments{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-.orc-comments li{display:grid;grid-template-columns:auto 1fr auto;gap:8px;font-size:13px;align-items:baseline}
+.orc-comments li{display:grid;grid-template-columns:auto 1fr auto auto;gap:8px;font-size:13px;align-items:baseline}
 .orc-comments time,.orc-history time{font-size:11px;color:var(--ink-3)}
+.orc-cacts{display:flex;gap:2px}
+.orc-comments li.orc-editing span{color:var(--ink-3)}
 @keyframes orc-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes orc-fade{from{opacity:0}to{opacity:1}}
 @media (prefers-reduced-motion:reduce){.orc-card,.orc-steps li{animation:none}}

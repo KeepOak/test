@@ -580,6 +580,8 @@ export const ROUTES = {
   "/api/orchard/cards/:id": "look",
   "/api/orchard/cards/:id/assign": "owner POST",
   "/api/orchard/cards/:id/comment": "owner POST",
+  "/api/orchard/cards/:id/comment-edit": "owner POST",
+  "/api/orchard/cards/:id/comment-remove": "owner POST",
   "/api/orchard/cards/:id/edit": "owner POST",
   "/api/orchard/cards/:id/grow": "owner POST",
   "/api/orchard/cards/:id/link": "owner POST",

@@ -85,6 +85,8 @@ export const MoveSchema = z.object({ lane: LaneSchema, note: z.string().max(500)
 export const AssignSchema = z.object({ to: z.string().trim().max(64) }).strict();
 export const LinkSchema = z.object({ after: id }).strict();
 export const CommentSchema = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
+export const CommentEditSchema = z.object({ comment: id, text: z.string().trim().min(1).max(2000) }).strict();
+export const CommentRemoveSchema = z.object({ comment: id }).strict();
 export const BlockSchema = z.object({ why: z.string().trim().min(1).max(500) }).strict();
 
 /** One line of somebody else's text made safe to show or to put in a prompt: no line breaks, capped. */

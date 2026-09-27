@@ -18,6 +18,8 @@ import { actorName, type Card } from "./model.js";
  *   POST /api/orchard/boards/<id>/remove            an empty board
  *   POST /api/orchard/cards                         {title, notes?, board?, assignee?, after?}
  *   POST /api/orchard/cards/<id>/<action>           edit | move | assign | link | unlink | comment | grow | reset | remove
+ *   POST /api/orchard/cards/<id>/comment-edit       {comment, text}: the owner's own comment
+ *   POST /api/orchard/cards/<id>/comment-remove     {comment}: any comment
  *
  * Stopping a card's task, pausing and steering it are the task's own routes (/api/runs/<id>/cancel, pause, steer), so
  * their rules hold here too; the card follows the task's record.
@@ -46,7 +48,7 @@ export interface OrchardHttpDeps {
 }
 
 const boardRoute = /^\/api\/orchard\/boards\/([a-f0-9-]{36})(?:\/(remove))?$/;
-const cardRoute = /^\/api\/orchard\/cards\/([a-f0-9-]{36})(?:\/(edit|move|assign|link|unlink|comment|grow|reset|remove))?$/;
+const cardRoute = /^\/api\/orchard\/cards\/([a-f0-9-]{36})(?:\/(edit|move|assign|link|unlink|comment|comment-edit|comment-remove|grow|reset|remove))?$/;
 const BoardQuery = z.string().uuid().optional();
 
 /** A growing card with what its task is doing now and what it waits on. */
@@ -90,6 +92,8 @@ async function write(deps: OrchardHttpDeps, path: string): Promise<unknown> {
     case "link": return { card: orchard.link(id, await readBody()) };
     case "unlink": return { card: orchard.unlink(id, await readBody()) };
     case "comment": return { comment: orchard.comment(id, await readBody(), owner), by: actorName(owner) };
+    case "comment-edit": return { comment: orchard.editComment(id, await readBody()) };
+    case "comment-remove": return orchard.removeComment(id, await readBody());
     case "grow": return { card: await orchard.start(id) };
     case "reset": return { card: orchard.reset(id) };
     default: return orchard.remove(id);

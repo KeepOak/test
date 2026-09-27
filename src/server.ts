@@ -4977,7 +4977,6 @@ export async function trajectoryOptions(app: Branch, runId: string) {
     },
   };
 }
-/** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
 /** Orchard and Canopy: a task's newest three live steps, scrubbed, or null once it is gone. */
 function cardLive(app: Branch, runId: string): CardLive | null {
   if (!app.store.run(runId)) return null;
@@ -4988,6 +4987,7 @@ function cardLive(app: Branch, runId: string): CardLive | null {
 function waitingHere(app: Branch) {
   return app.runtime.approvals.waiting().filter((asked) => mayAnswerHere(app.store, asked)).map((asked) => ({ ...asked, ...helperMark(app, asked.runId) }));
 }
+/** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
 function liveDeps(app: Branch) {
   return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
     scrub: (text: string) => app.runtime.hideSecrets(text) };
