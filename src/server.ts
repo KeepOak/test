@@ -4552,15 +4552,16 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       throw new HttpError(/too big|does not fit/.test((error as Error).message) ? 413 : 400, (error as Error).message);
     }
   }
-  // A file a person attached, handed back to their own window (src/attachments.ts). The owner's alone,
-  // checked first so the guard moves with the route; nothing the caller sends is ever used as a path.
+  // A file a person attached, handed back to their own window (src/attachments.ts): the owner's, or a household
+  // person's own conversation's, checked first so the guard moves with the route; nothing the caller sends is a path.
   if (request.method === "GET" && path === "/api/attachments/file") {
     const wanted = new URL(request.url ?? "/", "http://local").searchParams;
-    // The owner check lives at the top of attachmentForWindow, so it cannot be left behind here.
+    // Who may open it is decided at the top of attachmentForWindow, so it cannot be left behind here.
     const found = await attachmentForWindow(
       {
         profiles: app.store.profiles, attachments: app.attachments,
         temporaryConversation: (session) => app.store.sessionTemporary(session),
+        ownsConversation: (owner, session) => app.store.ownsSession(owner, session),
       },
       { session: wanted.get("session") ?? "", id: wanted.get("id") ?? "" },
     ).catch(() => null);

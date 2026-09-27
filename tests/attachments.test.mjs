@@ -359,7 +359,8 @@ test("handing a file back checks who is asking, before it looks anything up", as
   const sessionId = run.body.sessionId;
   const ref = app.store.messages(sessionId).find((one) => one.role === "user").attachments[0];
   const parts = { profiles: app.store.profiles, attachments: app.attachments,
-    temporaryConversation: (session) => app.store.sessionTemporary(session) };
+    temporaryConversation: (session) => app.store.sessionTemporary(session),
+    ownsConversation: (owner, session) => app.store.ownsSession(owner, session) };
 
   const handed = await attachmentForWindow(parts, { session: sessionId, id: ref.id });
   assert.equal(handed.size, png.length, "the owner is handed the file, and its real size");

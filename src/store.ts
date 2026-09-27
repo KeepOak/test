@@ -363,7 +363,7 @@ export class Store {
   importSession(owner: string, input: unknown) {
     return this.library.import(owner, input);
   }
-  duplicateSession(owner: string, sessionId: string) {
+  duplicateSession(owner: string, sessionId: string): Promise<{ sessionId: string; copiedMessages: number }> {
     return this.library.duplicate(owner, sessionId);
   }
   createRun(owner: string, prompt: string, sessionId?: string, temporary = false, source = "web", project?: string): Run {

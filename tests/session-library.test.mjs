@@ -57,7 +57,7 @@ test("one file described two different ways in the same conversation is refused,
   app.store.message(run.sessionId, { role: "user", content: "and again",
     attachments: [{ ...ref, name: "something-else.png" }] });
 
-  assert.throws(() => app.store.duplicateSession("local", run.sessionId),
+  await assert.rejects(app.store.duplicateSession("local", run.sessionId),
     /describes one of its files in two different ways/);
 });
 
@@ -72,7 +72,7 @@ test("one file named by two messages is copied once, and every mention points at
   const ref = askedIn(app.store.messages(run.sessionId)).attachments[0];
   app.store.message(run.sessionId, { role: "user", content: "and again", attachments: [ref] });
 
-  const twin = app.store.duplicateSession("local", run.sessionId);
+  const twin = (await app.store.duplicateSession("local", run.sessionId));
   const mentions = app.store.sessionView("local", twin.sessionId).messages
     .flatMap((message) => message.attachments ?? []);
   assert.equal(mentions.length, 2, "both messages still say what they were given");
@@ -102,7 +102,7 @@ test("a copy whose database work fails leaves no files behind", async (t) => {
   app.store.db.exec("CREATE TRIGGER refuse_messages BEFORE INSERT ON messages "
     + "BEGIN SELECT RAISE(ABORT, 'no room'); END");
   t.after(() => { try { app.store.db.exec("DROP TRIGGER IF EXISTS refuse_messages"); } catch { /* closed */ } });
-  assert.throws(() => app.store.duplicateSession("local", run.sessionId), /no room/);
+  await assert.rejects(app.store.duplicateSession("local", run.sessionId), /no room/);
 
   assert.deepEqual((await readdir(attachments)).sort(), before,
     "no folder for a conversation that does not exist");
@@ -131,7 +131,7 @@ test("a copy of a conversation gets its own copy of the files, and still opens t
   assert.equal(landed.name, "chart.png");
   assert.ok((await opens(target.app, imported.sessionId, landed)).equals(Buffer.from(onePixel, "base64")));
 
-  const twin = original.app.store.duplicateSession("local", run.sessionId);
+  const twin = (await original.app.store.duplicateSession("local", run.sessionId));
   const copied = askedIn(original.app.store.sessionView("local", twin.sessionId).messages).attachments[0];
   assert.notEqual(copied.id, source.id, "a duplicate has its own name for it too");
   assert.ok((await opens(original.app, twin.sessionId, copied)).equals(Buffer.from(onePixel, "base64")));
@@ -228,7 +228,7 @@ test("session export imports into a clean instance and resumes exact history wit
 test("duplicated sessions have fresh message identities, preserve the source and carry import provenance through branches", async (t) => {
   const { app } = await fixture(t, { name: "duplicate-fixture", async complete() { return { content: "Separate reply", toolCalls: [] }; } });
   const id = seed(app.store), before = app.store.sessionView("local", id);
-  const duplicate = app.store.duplicateSession("local", id);
+  const duplicate = (await app.store.duplicateSession("local", id));
   const view = app.store.sessionView("local", duplicate.sessionId);
   assert.equal(view.imported, false);
   assert.deepEqual(strip(view.messages), strip(before.messages));
@@ -239,7 +239,7 @@ test("duplicated sessions have fresh message identities, preserve the source and
   const importedView = app.store.sessionView("local", imported.sessionId);
   const branch = app.store.branchSession("local", { sessionId: imported.sessionId, messageId: importedView.messages[0].messageId });
   assert.equal(app.store.sessionView("local", branch.sessionId).imported, true);
-  assert.equal(app.store.sessionView("local", app.store.duplicateSession("local", branch.sessionId).sessionId).imported, true);
+  assert.equal(app.store.sessionView("local", (await app.store.duplicateSession("local", branch.sessionId)).sessionId).imported, true);
 });
 
 test("session search paginates owned nonempty histories and treats query syntax literally", async (t) => {
@@ -287,15 +287,15 @@ test("copy operations reject active or foreign sources and roll back database wr
   const { app } = await fixture(t);
   const id = seed(app.store), foreign = seed(app.store, "Private", "other");
   assert.throws(() => app.store.exportSession("local", foreign), /not found/);
-  assert.throws(() => app.store.duplicateSession("local", foreign), /not found/);
+  await assert.rejects(app.store.duplicateSession("local", foreign), /not found/);
   const active = app.store.createRun("local", "pending", id);
   assert.throws(() => app.store.exportSession("local", id), /active task/);
-  assert.throws(() => app.store.duplicateSession("local", id), /active task/);
+  await assert.rejects(app.store.duplicateSession("local", id), /active task/);
   app.store.finish(active.id, "completed", "done");
   const before = counts(app.store.db), source = app.store.sessionView("local", id);
   app.store.db.exec("CREATE TRIGGER reject_import BEFORE INSERT ON session_origins BEGIN SELECT RAISE(ABORT,'fixture failure'); END");
   assert.throws(() => app.store.importSession("local", archive()), /fixture failure/);
-  assert.throws(() => app.store.duplicateSession("local", id), /fixture failure/);
+  await assert.rejects(app.store.duplicateSession("local", id), /fixture failure/);
   assert.deepEqual(counts(app.store.db), before);
   assert.deepEqual(app.store.sessionView("local", id), source);
 });

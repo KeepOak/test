@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readFile, readdir, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import {
   copyFileSync, createReadStream, createWriteStream, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
@@ -158,20 +159,24 @@ function trueName(path: string): string | null {
  * itself, never from the request: a caller that could name the folder could ask for the other one.
  */
 export interface DeliveryParts {
-  profiles: { requireOwner(why: string): void };
+  profiles: { isOwner(): boolean; scope(): string };
   attachments: Pick<Attachments, "partOf">;
   temporaryConversation(sessionId: string): boolean;
+  /** Whether this conversation is filed under that name (src/store.ts ownsSession). */
+  ownsConversation(owner: string, sessionId: string): boolean;
 }
 /**
- * Hands one kept file back for a window to show or save. The owner check is the first thing here, so
- * it moves with the operation in a refactor and holds even for a caller that found another way in.
- * The route in front of it refuses a short-lived key and a household profile as well; neither layer
+ * Hands one kept file back for a window to show or save. Who may is the first thing decided here, so it moves with the
+ * operation in a refactor and holds even for a caller that found another way in: the owner, or a household person for a
+ * conversation filed under their own name (profiles.scope()), never anybody else's. The route in front of it refuses a
+ * short-lived key, and a household person's read is listed in householdReads (src/household-routes.ts); neither layer
  * relies on the other.
  */
 export async function attachmentForWindow(
   parts: DeliveryParts, wanted: { session: string; id: string },
 ): Promise<{ ref: AttachmentRef; size: number; open: (part: BytesWanted | null) => Readable }> {
-  parts.profiles.requireOwner("Opening an attached file");
+  if (!parts.profiles.isOwner() && !parts.ownsConversation(parts.profiles.scope(), wanted.session))
+    throw new Error("That file is not attached to this conversation");
   return parts.attachments.partOf(wanted.session, wanted.id,
     { temporary: parts.temporaryConversation(wanted.session) });
 }
@@ -541,6 +546,41 @@ export class Attachments {
     const file = this.contained(this.folder(sessionId, false), id);
     if (!file) throw new Error("That file is not attached to this conversation");
     return readFileSync(file);
+  }
+  /**
+   * How one file is copied for a duplicate: off the engine thread (Node's file pool), as a clone where the file system
+   * can make one. Tests hold a copy here to show the engine keeps answering meanwhile.
+   */
+  copier: (from: string, to: string) => Promise<void> = (from, to) => copyFile(from, to, fsConstants.COPYFILE_FICLONE);
+  /**
+   * A duplicate's files, copied before its database work: each file of `from` that `refs` names is written beside its
+   * final name in `to`'s folder ("." + a new id), off the engine thread, however big, once the disk is known to keep
+   * its reserve (`stageLimits.reserve`) after all of them. Nothing is listed yet: `commitPrepared` moves them into
+   * place inside the duplicate's transaction, and `discard` throws them away when it does not go through.
+   */
+  async prepareCopies(from: string, to: string, refs: readonly AttachmentRef[]): Promise<AttachmentRef[]> {
+    if (!refs.length) return [];
+    const source = this.folder(from, false), target = this.folder(to, false);
+    const files = refs.map((ref) => {
+      const file = this.contained(source, ref.id);
+      if (!file) throw new Error("That file is not attached to this conversation");
+      return { ref, file };
+    });
+    const sizes = await Promise.all(files.map((one) => stat(one.file).then((found) => found.size)));
+    const total = sizes.reduce((sum, size) => sum + size, 0);
+    if ((await this.freeBytes(source)) - total < stageLimits.reserve) throw noDisk("A copy of this conversation's files", stageLimits);
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    const made: AttachmentRef[] = [];
+    for (const [at, one] of files.entries()) {
+      const ref = { ...one.ref, id: randomBytes(8).toString("hex"), bytes: sizes[at]! };
+      made.push(ref);
+      await this.copier(one.file, join(target, "." + ref.id));
+    }
+    return made;
+  }
+  /** Moves a duplicate's prepared copies into place and lists them (inside its transaction). */
+  commitPrepared(to: string, made: AttachmentRef[]): AttachmentRef[] {
+    return made.length ? this.commitCopies(this.folder(to, false), made) : [];
   }
   copyInto(from: string, to: string, refs: readonly AttachmentRef[]): AttachmentRef[] {
     if (!refs.length) return [];
