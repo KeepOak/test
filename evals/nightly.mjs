@@ -40,11 +40,13 @@ function writeStub(reason) {
 }
 
 function commitAndPush(message) {
-  git(["pull", "--rebase"], COORD); // other agents write to this repo; never force-push
   git(["add", "evals"], COORD);
   const status = git(["status", "--porcelain", "evals"], COORD).stdout ?? "";
   if (!status.trim()) { process.stdout.write("nothing to commit\n"); return; }
-  git(["commit", "-m", message], COORD);
+  // Commit first (only evals/, never what another agent left staged), then catch up: a pull before the commit refused
+  // to rebase over the scorecard the run had just written, so a push racing another agent's would leave it only local.
+  git(["commit", "-m", message, "--", "evals"], COORD);
+  git(["pull", "--rebase"], COORD); // other agents write to this repo; never force-push
   const push = git(["push"], COORD);
   if (push.status !== 0) process.stderr.write("push failed; the scorecard is committed locally in the coord repo\n");
 }
