@@ -203,7 +203,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
-import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
+import { helperReachable, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
@@ -1512,7 +1512,10 @@ async function api(
   const match = /^\/api\/runs\/([a-f0-9-]{36})(?:\/(cancel|resume|receipts|result|steer|plan))?$/.exec(path);
   if (match) {
     const run = app.store.run(match[1]!);
-    if (!run || run.owner !== app.store.profiles.scope())
+    // A helper of a household person's own task is theirs to steer or stop wherever the engine filed it.
+    const ownHelper = request.method === "POST" && (match[2] === "cancel" || match[2] === "steer") && run !== undefined
+      && helperReachable(app.store, run.id);
+    if (!run || (run.owner !== app.store.profiles.scope() && !ownHelper))
       throw new HttpError(404, "Run not found");
     if (request.method === "POST" && match[2] === "cancel") {
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.

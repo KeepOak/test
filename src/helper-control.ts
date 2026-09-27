@@ -24,6 +24,15 @@ export function helperParent(store: Store, runId: string): string | null {
   return typeof parent === "string" && store.run(parent) ? parent : null;
 }
 
+/**
+ * Whether the caller may reach this task's steer or stop although it is not filed under the caller's own records: a
+ * helper is filed where the engine made it, so a household person's own helper is reached through the person its
+ * task was started for (src/server.ts, the runs route). Anything else not filed under the caller stays not found.
+ */
+export function helperReachable(store: Store, runId: string): boolean {
+  return helperParent(store, runId) !== null && startedForHere(store, runId);
+}
+
 /** Why the person at the window may not act on this helper, or null. Not theirs reads as not found. */
 function notTheirs(store: Store, runId: string): { status: number; message: string } | null {
   return startedForHere(store, runId) ? null : { status: 404, message: helperNotFound };

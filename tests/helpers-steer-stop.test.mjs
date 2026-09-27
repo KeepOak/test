@@ -205,3 +205,29 @@ test("PR1: under Lockdown a helper that can run code is not steered; one that on
   for (const [name, release] of gates) if (name !== "gamma") release();
   await done;
 });
+
+test("callerlayer: a household person steers and stops a helper of their own task, wherever the engine filed it", async (t) => {
+  const { app, api, specialist, fanOut, gates } = await fixture(t);
+  const ids = [await specialist("alpha"), await specialist("beta")];
+  const { done, parent, byName } = await fanOut(ids, ["alpha", "beta"]);
+  // The task was started for Dana (as a task her own key starts is): filed where the engine made it, and hers.
+  const dana = app.store.profiles.create({ name: "Dana", pin: "4826" });
+  app.store.sqlite.prepare("UPDATE events SET data=json_set(data, '$.personProfileId', ?) WHERE run_id=? AND kind='run.started'")
+    .run(dana.id, parent);
+  app.store.profiles.switch({ profileId: dana.id, pin: "4826" });
+  t.after(() => app.store.profiles.switch({ profileId: null }));
+  const steer = await api(`runs/${byName.alpha.runId}/steer`, { text: "just the totals" });
+  assert.deepEqual(steer.body, { queued: 1 }, JSON.stringify(steer.body));
+  const stop = await api(`runs/${byName.beta.runId}/cancel`, {});
+  assert.deepEqual(stop.body, { cancelled: true }, JSON.stringify(stop.body));
+  for (const release of gates.values()) release();
+  await done;
+});
+
+test("callerlayer: under Lockdown a helper that may use a single tool Lockdown refuses is not steered", async (t) => {
+  const { lockdownBlocksAny } = await import("../dist/lockdown.js");
+  assert.equal(lockdownBlocksAny(["files.read"]), false);
+  assert.equal(lockdownBlocksAny(["shell.execute"]), true, "a kind of tool");
+  assert.equal(lockdownBlocksAny(["browser.borrow"]), true, "a single tool Lockdown refuses by name");
+  assert.equal(lockdownBlocksAny(["machines.look"]), true);
+});
