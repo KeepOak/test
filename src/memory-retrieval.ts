@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { z } from "zod";
 import { errorText } from "./contracts.js";
 import { EmbeddingClient, cosine, defaultEmbeddingModel, fuseRanks, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
@@ -166,7 +167,8 @@ export class MemoryRetrieval {
   /** Best facts for a question: ranked word matches, meaning matches where available, combined. */
   async search(owner: string, query: string, agent?: string, limit = 20, signal = AbortSignal.timeout(20000)): Promise<MemoryHit[]> {
     this.syncIndex(owner);
-    const visible = this.facts(owner).filter((record) => visibleTo(record, agent));
+    const binned = binnedRuns(this.store.sqlite); // not a fact a conversation in Recently Deleted taught
+    const visible = this.facts(owner).filter((record) => visibleTo(record, agent) && !learnedInBin(binned, record.data));
     const byId = new Map(visible.map((record) => [record.id, record]));
     const words = this.wordMatches(owner, query).filter((id) => byId.has(id));
     const meaning = (await this.meaningMatches(owner, query, signal)).filter((id) => byId.has(id));

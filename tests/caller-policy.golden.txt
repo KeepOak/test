@@ -1772,6 +1772,22 @@ owner GET /api/sessions/:id/cost | here=ok remote=ok phone=ok legacy=ok person=4
 owner POST /api/sessions/:id/cost | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/discard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id/discard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/:id/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/:id/rename | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/rename | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/:id/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/:id/delete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/delete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/:id/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/:id/delete-now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/delete-now | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/put-away | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/put-away | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/sessions/put-away/empty | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/put-away/empty | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/duplicate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id/duplicate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3805,6 +3821,22 @@ owner+lockdown GET /api/sessions/:id/cost | here=ok remote=ok phone=ok legacy=ok
 owner+lockdown POST /api/sessions/:id/cost | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/discard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id/discard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/pin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/rename | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/rename | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/delete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/delete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/delete-now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/delete-now | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/put-away | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/put-away | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/sessions/put-away/empty | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/put-away/empty | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/duplicate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id/duplicate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5838,6 +5870,22 @@ household GET /api/sessions/:id/cost | here=400/f6e21c remote=400/f6e21c read=40
 household POST /api/sessions/:id/cost | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id/discard | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/sessions/:id/discard | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/sessions/:id/pin | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/:id/pin | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/sessions/:id/rename | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/:id/rename | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/sessions/:id/archive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/:id/archive | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/sessions/:id/delete | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/:id/delete | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/sessions/:id/restore | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/:id/restore | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/sessions/:id/delete-now | here=ok remote=ok read=ok run=ok
+household POST /api/sessions/:id/delete-now | here=ok remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/sessions/put-away | here=ok remote=ok read=ok run=ok
+household POST /api/sessions/put-away | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/sessions/put-away/empty | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/put-away/empty | here=ok remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/sessions/:id/duplicate | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/sessions/:id/duplicate | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/sessions/:id/export | here=ok remote=ok read=ok run=ok
@@ -7871,6 +7919,22 @@ household+lockdown GET /api/sessions/:id/cost | here=400/f6e21c remote=400/f6e21
 household+lockdown POST /api/sessions/:id/cost | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/discard | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/sessions/:id/discard | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/:id/pin | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/:id/pin | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/:id/rename | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/:id/rename | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/:id/archive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/:id/archive | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/:id/delete | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/:id/delete | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/:id/restore | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/:id/restore | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/:id/delete-now | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/sessions/:id/delete-now | here=ok remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/put-away | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/sessions/put-away | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/sessions/put-away/empty | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/put-away/empty | here=ok remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/duplicate | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/sessions/:id/duplicate | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/export | here=ok remote=ok read=ok run=ok
@@ -9904,6 +9968,22 @@ applock GET /api/sessions/:id/cost | here=423/a8f863
 applock POST /api/sessions/:id/cost | here=423/a8f863
 applock GET /api/sessions/:id/discard | here=423/a8f863
 applock POST /api/sessions/:id/discard | here=423/a8f863
+applock GET /api/sessions/:id/pin | here=423/a8f863
+applock POST /api/sessions/:id/pin | here=423/a8f863
+applock GET /api/sessions/:id/rename | here=423/a8f863
+applock POST /api/sessions/:id/rename | here=423/a8f863
+applock GET /api/sessions/:id/archive | here=423/a8f863
+applock POST /api/sessions/:id/archive | here=423/a8f863
+applock GET /api/sessions/:id/delete | here=423/a8f863
+applock POST /api/sessions/:id/delete | here=423/a8f863
+applock GET /api/sessions/:id/restore | here=423/a8f863
+applock POST /api/sessions/:id/restore | here=423/a8f863
+applock GET /api/sessions/:id/delete-now | here=423/a8f863
+applock POST /api/sessions/:id/delete-now | here=423/a8f863
+applock GET /api/sessions/put-away | here=423/a8f863
+applock POST /api/sessions/put-away | here=423/a8f863
+applock GET /api/sessions/put-away/empty | here=423/a8f863
+applock POST /api/sessions/put-away/empty | here=423/a8f863
 applock GET /api/sessions/:id/duplicate | here=423/a8f863
 applock POST /api/sessions/:id/duplicate | here=423/a8f863
 applock GET /api/sessions/:id/export | here=423/a8f863

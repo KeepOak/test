@@ -256,11 +256,13 @@ const outlastsAPhone: readonly RegExp[] = [
  * word, which a phone would keep after it is removed, and its settings keep the old addresses without one answered.
  */
 const secretToADoor: readonly RegExp[] = [/^\/api\/channels\/addresses(\/|$)/];
+/** Deleting a conversation for good (src/conversation-actions.ts): only in the app on this computer, never a phone. */
+const permanentHereOnly: readonly RegExp[] = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/];
 /** Why a door (the paired door, a phone's own key, or a caller beyond this computer) may not send this, or null. */
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;
-  return outlastsAPhone.some((route) => route.test(path)) ? hereOnly : null;
+  return [...outlastsAPhone, ...permanentHereOnly].some((route) => route.test(path)) ? hereOnly : null;
 }
 
 /* ---------- 4. The App lock: while Branch is locked, only the lock itself answers ---------- */

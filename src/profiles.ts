@@ -48,6 +48,13 @@ export const OwnerPinSchema = z.object({
   pin: z.string().regex(/^\d{4,8}$/, "A PIN is four to eight digits").nullable(),
 }).strict();
 const hash = (pin: string, salt: string): Buffer => scryptSync(pin, salt, 32);
+/** True when a typed PIN is the one saved in this row. */
+const pinMatches = (pin: string, row: Record<string, unknown>): boolean => {
+  const supplied = hash(pin, String(row.salt)), stored = Buffer.from(row.pin_hash as Uint8Array);
+  return supplied.length === stored.length && timingSafeEqual(supplied, stored);
+};
+/** QA Q001: said when the owner's PIN and a person's PIN would be the same. */
+export const ownPinNotTheirs = "The owner's PIN and a person's PIN must not be the same.";
 /** The name one household person's records are saved under. */
 export const profileScope = (profileId: string): string => `profile:${profileId}`;
 
@@ -90,6 +97,7 @@ export class Profiles {
     if (this.list().length >= maximumProfiles) throw new Error(`At most ${maximumProfiles} people can share this computer`);
     if (this.list().some((profile) => nameKey(profile.name) === nameKey(value.name)))
       throw new Error("Someone here already uses that name");
+    if (this.opensOwner(value.pin)) throw new Error(ownPinNotTheirs);
     const id = randomUUID(), salt = randomBytes(16).toString("hex"), createdAt = new Date().toISOString();
     this.db.prepare("INSERT INTO household_profiles VALUES(?,?,?,?,?,?,?)")
       .run(id, this.owner, value.name, salt, hash(value.pin, salt), createdAt, null);
@@ -164,11 +172,25 @@ export class Profiles {
       this.ownerPinSet = false;
       return { ownerPin: false };
     }
+    if (this.opensAProfile(pin)) throw new Error(ownPinNotTheirs);
     const salt = randomBytes(16).toString("hex");
     this.db.prepare(`INSERT INTO household_owner_pin(owner,salt,pin_hash,active_profile) VALUES(?,?,?,NULL)
       ON CONFLICT(owner) DO UPDATE SET salt=excluded.salt, pin_hash=excluded.pin_hash`).run(this.owner, salt, hash(pin, salt));
     this.ownerPinSet = true;
     return { ownerPin: true };
+  }
+  /**
+   * QA Q001: the owner's PIN and a person's PIN are never the same, or that person could switch back to the owner. Both
+   * are asked only on the owner's own steps (adding somebody, setting the owner's PIN), never on a person's own change,
+   * so nobody else can use them to test guesses at the owner's PIN.
+   */
+  private opensOwner(pin: string): boolean {
+    const row = this.db.prepare("SELECT salt, pin_hash FROM household_owner_pin WHERE owner=?").get(this.owner);
+    return !!row && pinMatches(pin, row);
+  }
+  private opensAProfile(pin: string): boolean {
+    return this.db.prepare("SELECT salt, pin_hash FROM household_profiles WHERE owner=?").all(this.owner)
+      .some((row) => pinMatches(pin, row));
   }
   /** household-followups: the owner's PIN, checked exactly as a profile's is, in the same words. */
   private verifyOwnerPin(pin: string): void {

@@ -4,6 +4,7 @@ import {
   type ServerResponse,
   type Server,
 } from "node:http";
+import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile, writeFile, lstat } from "node:fs/promises";
@@ -1272,7 +1273,10 @@ async function api(
     const scope = app.store.profiles.scope();
     const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })) };
+    // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
+    const away = app.store.putAwayConversations(scope, { limit: 1 });
+    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })),
+      archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
@@ -2078,6 +2082,8 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     return app.store.searchSessions(owner, await readBody(request));
   if (request.method === "POST" && path === "/api/sessions/import")
     return app.store.importSession(owner, await readBody(request, archiveBodyLimit));
+  const put = await conversationActions(app, request, path, owner);
+  if (put !== undefined) return put;
   const match = /^\/api\/sessions\/([a-f0-9-]{36})(?:\/(export|duplicate|model|discard|skill|followups|memory-policy|summary|pins|tree|merge-note|context|cost))?$/.exec(path);
   // Wave 8: conversations branched off this one as a tree, and carrying one branch's answer back.
   if (match && match[2] === "tree" && request.method === "GET") return app.sessionTree.tree(owner, match[1]!);
@@ -2153,6 +2159,34 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     return app.store.duplicateSession(owner, match[1]!);
   }
   throw new HttpError(404, "Endpoint not found");
+}
+/**
+ * Conversations, like iMessage (src/conversation-actions.ts): pin, rename, archive, delete into Recently Deleted,
+ * restore, and delete for good. A person acts on their own conversations only (profiles.scope()); deleting for good
+ * is refused through a door (src/caller-policy.ts hereOnlyRefusal) and to a short-lived key (it is not a task route).
+ */
+async function conversationActions(app: Branch, request: IncomingMessage, path: string, owner: string): Promise<unknown> {
+  if (path === "/api/sessions/put-away") {
+    if (request.method === "GET") return app.store.putAwayConversations(owner, Object.fromEntries(new URL(request.url ?? "/", "http://x").searchParams));
+    return undefined;
+  }
+  if (path === "/api/sessions/put-away/empty" && request.method === "POST") {
+    EmptySchema.parse(await readBody(request));
+    return app.store.emptyRecentlyDeleted(owner);
+  }
+  const match = /^\/api\/sessions\/([a-f0-9-]{36})\/(pin|rename|archive|delete|restore|delete-now)$/.exec(path);
+  if (!match) return undefined;
+  const [, id, action] = match as unknown as [string, string, string];
+  if (action === "delete-now" && request.method === "GET") return app.store.deleteNowPreview(owner, id);
+  if (request.method !== "POST") return undefined;
+  const body = await readBody(request);
+  if (action === "pin") return app.store.pinConversation(owner, id, body);
+  if (action === "rename") return app.store.renameConversation(owner, id, body);
+  if (action === "archive") return app.store.archiveConversation(owner, id, body);
+  EmptySchema.parse(body);
+  if (action === "delete") return app.store.deleteConversation(owner, id);
+  if (action === "restore") return app.store.restoreConversation(owner, id);
+  return app.store.deleteConversationNow(owner, id);
 }
 /** Wave mac2 (goal-undo): both answer only for conversations of the profile that is switched on. */
 async function goalUndoApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
