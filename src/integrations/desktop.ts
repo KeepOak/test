@@ -107,8 +107,12 @@ export class DesktopControl {
   }
   /** Whether the owner drives this screen now. */
   isDriving(): boolean { return this.driving !== null; }
-  /** Waits, before a screen action, for as long as the owner drives. The task's own stop, cancel or time limit ends the wait. */
-  private async whileDriving(context: ToolContext, signal: AbortSignal): Promise<void> {
+  /**
+   * Waits, before a screen action, for as long as the owner drives. The task's own stop, cancel or time limit ends the
+   * wait. Public for the other tools that act on this computer's apps (src/reach/background-screen.ts), so a take-over
+   * holds them too.
+   */
+  async whileDriving(context: Pick<ToolContext, 'runId'>, signal: AbortSignal): Promise<void> {
     if (!this.driving) return;
     this.store.event(context.runId, 'desktop.paused', { reason: 'the owner took over the screen' });
     while (this.driving) {

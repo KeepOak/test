@@ -16,6 +16,7 @@ import { saveDesktopSettings } from "../dist/integrations/desktop-config.js";
 import { placeOnFrame, screenControl, screenTakeOverPath, screenHandBackPath } from "../dist/live-screen.js";
 import { desktopScript, screenBox } from "../dist/integrations/desktop-script.js";
 import { setLockdown } from "../dist/lockdown.js";
+import { BackgroundScreen } from "../dist/reach/background-screen.js";
 
 const quietBanner = { visible: false, show: async () => undefined, hide: async () => undefined };
 const notepad = { title: "notes.txt - Notepad", program: "stand-in", handle: 7, minimised: false };
@@ -89,6 +90,36 @@ test("while the owner drives, every screen action waits, and carries on only onc
   assert.equal(done, true);
   assert.deepEqual(runner.calls.map(([action]) => action), ["windows", "click"], "handed back: the click happens");
   assert.ok(app.store.events(run.id).some((e) => e.kind === "desktop.resumed"));
+});
+
+test("while the owner drives, a background press on a Mac waits too, and runs only once they hand it back", async (t) => {
+  const { desktop, app, run } = await world(t);
+  const execs = [];
+  const exec = async (executable, args) => {
+    execs.push(args[4]);
+    const result = args[4] === "windows" ? { windows: [{ handle: "501:1", title: "Mail", program: "Mail" }] } : { pressed: "Send" };
+    return { status: "ok", exitCode: 0, stdout: JSON.stringify({ ok: true, result }), stderr: "" };
+  };
+  const background = new BackgroundScreen({ store: app.store, owner: app.runtime.owner, exec, platform: "darwin",
+    held: (runId, signal) => desktop.whileDriving({ runId }, signal) });
+  desktop.takeOver();
+  let done = false;
+  const pressing = background.run({ action: "press", handle: "501:1", name: "Send" }, { runId: run.id, signal: new AbortController().signal })
+    .then(() => { done = true; });
+  while (!app.store.events(run.id).some((e) => e.kind === "desktop.paused")) await new Promise((r) => setImmediate(r));
+  assert.equal(done, false, "it waits");
+  assert.deepEqual(execs, [], "nothing reached an app while the owner drives");
+  desktop.handBack();
+  await pressing;
+  assert.deepEqual(execs, ["windows", "press"], "handed back: the press happens");
+
+  desktop.takeOver();
+  const cancel = new AbortController();
+  const stopped = background.run({ action: "press", handle: "501:1", name: "Send" }, { runId: run.id, signal: cancel.signal });
+  cancel.abort();
+  await assert.rejects(stopped, (error) => error.message === drivingMessage, "the task's own stop ends the wait");
+  desktop.handBack();
+  assert.deepEqual(execs, ["windows", "press"]);
 });
 
 for (const revoke of ["settings", "permissions", "lockdown"]) {
