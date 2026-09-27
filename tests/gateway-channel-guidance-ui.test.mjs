@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import { newWindow, openSettings } from "./new-window-places.mjs";
+import { newWindow, openPlace, openSettings } from "./new-window-places.mjs";
 
 test("gateway status describes this engine and its saved preference separately", async (t) => {
   assert.equal(typeof chromium.launch, "function");
@@ -23,5 +23,15 @@ test("Windows iMessage wizard explains Mac prerequisites and refuses Continue", 
   await page.getByText("iMessage requires Branch running on a Mac", { exact: false }).waitFor();
   assert.equal(await page.locator('[data-act="chw-next"]').isDisabled(), true);
   assert.equal(await page.getByText("Paste secrets", { exact: false }).count(), 0);
+  assert.deepEqual(errors, []);
+});
+
+test("the chat app catalog promises no fixed setup time and says iMessage needs a Mac", { skip: process.platform === "darwin" }, async (t) => {
+  const { page, errors } = await newWindow(t);
+  await openPlace(page, "customize", "channels");
+  const imessage = page.locator('[data-act="ch-open"][data-v="imessage"]');
+  await imessage.getByText("Needs a Mac", { exact: true }).waitFor();
+  await page.locator('[data-act="ch-open"][data-v="signal"]').getByText("Guided setup", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Two minutes to set up", { exact: false }).count(), 0);
   assert.deepEqual(errors, []);
 });

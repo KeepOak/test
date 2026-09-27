@@ -44,10 +44,18 @@ export function commandFor(id: string): { posix: string; windows: string } {
   return { posix: `branch connect ${id}`, windows: `branch connect ${id}` };
 }
 
-export function setupList(store: Pick<Store, "get">, owner: string): Record<string, unknown> {
+/** Why this engine cannot connect the app at all (iMessage lives in a Mac's Messages), or null. */
+export function unavailableOn(id: string, platform: NodeJS.Platform): string | null {
+  return id === "imessage" && platform !== "darwin"
+    ? "iMessage requires Branch running on a Mac signed in to Messages, with Full Disk Access and Automation permission. Set it up on that Mac; this Windows or Linux engine cannot connect it."
+    : null;
+}
+
+export function setupList(store: Pick<Store, "get">, owner: string, platform = process.platform): Record<string, unknown> {
   const book = recipeBook();
   return { mode: setupMode(store, owner), checked: book.checked, count: book.recipes.length,
-    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family, ...(recipe.what ? { what: recipe.what } : {}) })) };
+    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family, ...(recipe.what ? { what: recipe.what } : {}),
+      ...(unavailableOn(recipe.id, platform) ? { needsMac: true } : {}) })) };
 }
 
 /** Everything the Set up panel shows for one app. Nothing here is secret. */
@@ -57,7 +65,7 @@ export function setupPanel(store: Pick<Store, "get">, owner: string, id: string,
   const create = createLink(recipe);
   const done = (store.get("settings", owner, doneKey)?.data ?? {}) as Record<string, unknown>;
   return {
-    unavailableReason: id === "imessage" && platform !== "darwin" ? "iMessage requires Branch running on a Mac signed in to Messages, with Full Disk Access and Automation permission. Set it up on that Mac; this Windows or Linux engine cannot connect it." : null,
+    unavailableReason: unavailableOn(id, platform),
     prerequisites: recipe.app ? `Sign in to ${recipe.app.name} and complete the account or administrator steps below first. Installation and provider setup determine how long this takes.`
       : "Complete the provider or bridge prerequisites below before checking the connection. Setup time depends on those external steps.",
     id: recipe.id, name: recipe.name, family: recipe.family, turnOn: recipe.turnOn, mode: setupMode(store, owner),
@@ -122,8 +130,8 @@ export async function saveSetup(host: SetupHost, id: string, input: SaveInput): 
     throw new SetupRefusal(409, "Setting up chat apps from here is switched off. Turn it on under Customize, Chat apps.");
   const recipe = recipeFor(id);
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
-  if (id === "imessage" && (host.platform ?? process.platform) !== "darwin")
-    throw new SetupRefusal(400, "iMessage requires Branch running on a Mac with Messages, Full Disk Access and Automation permission. Set it up on that Mac.");
+  const unavailable = unavailableOn(id, host.platform ?? process.platform);
+  if (unavailable) throw new SetupRefusal(400, unavailable);
   if (recipe.turnOn === "guided" && !host.telegram) throw new SetupRefusal(503, "The Telegram card is not available in this launch.");
   const values = readValues(recipe, input.values);
   const checked = await runCheck(checkedAt(recipe, host), values, host.fetch);

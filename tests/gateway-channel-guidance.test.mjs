@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { setupPanel, saveSetup, saveSetupMode } from "../dist/channel-setup/service.js";
+import { setupList, setupPanel, saveSetup, saveSetupMode } from "../dist/channel-setup/service.js";
 import { createBranch } from "../dist/index.js";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,4 +23,7 @@ test("iMessage setup is gated by the engine platform before anything is saved or
   assert.equal(fetched, 0);
   assert.equal(app.store.get("settings", "local", "channel-setup-done"), undefined);
   assert.match(setupPanel(app.store, "local", "signal").prerequisites, /Installation.*setup/);
+  const flagged = (platform) => setupList(app.store, "local", platform).channels.filter((c) => c.needsMac).map((c) => c.id);
+  assert.deepEqual(flagged("win32"), ["imessage"], "the catalog marks iMessage, and only iMessage, as needing a Mac");
+  assert.deepEqual(flagged("darwin"), []);
 });
