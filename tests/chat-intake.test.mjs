@@ -53,6 +53,7 @@ async function telegram(t) {
     const reply = (result) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, result })); };
     if (method === "getMe") return reply({ id: 999, is_bot: true, first_name: "Branch", username: "BranchTestBot" });
     if (method === "getUpdates") {
+      if (state.hang) { await delay(1500); if (state.hang) { res.destroy(); return; } }
       const pending = state.queue.filter((u) => u.update_id >= (body.offset ?? 0));
       if (!pending.length) await delay(20);
       return reply(pending);
@@ -123,6 +124,9 @@ test("an album's photos, and a message split in two, are joined into one turn; o
   const album = model.requests.length;
   await Promise.all([app.channels.handle(msg("p1", "our holiday", { groupId: "g7" })), delay(300).then(() => app.channels.handle(msg("p2", "", { groupId: "g7" })))]);
   assert.equal(model.requests.length - album, 1, "an album is waited for even with no split wait");
+  const mixed = model.requests.length;
+  await Promise.all([app.channels.handle(msg("q1", "our trip", { groupId: "g9" })), delay(200).then(() => app.channels.handle(msg("q2", "and a separate question")))]);
+  assert.equal(model.requests.length - mixed, 2, "with no split wait, an album's wait takes only that album's photos");
 });
 
 /** A chat app the watchdog can look at: its last contact is set by hand, and restarts are counted. */
@@ -142,19 +146,21 @@ test("the watchdog: a quiet app is left alone; stalled for 'reconnect after' it 
   assert.equal(adapter.restarts, 0, "reached a minute ago: not stalled");
   await app.channels.checkStalled(T + 120_000);
   assert.equal(adapter.restarts, 0, "stalled, but quiet but not yet due (3 minutes)");
-  await app.channels.checkStalled(T + 181_000);
-  assert.equal(adapter.restarts, 1, "stalled for three minutes: started again");
   await app.channels.checkStalled(T + 200_000);
+  assert.equal(adapter.restarts, 0, "three minutes counted from when it became stalled (90 s), not from its last contact");
+  await app.channels.checkStalled(T + 271_000);
+  assert.equal(adapter.restarts, 1, "stalled for three minutes: started again");
+  await app.channels.checkStalled(T + 300_000);
   assert.equal(adapter.restarts, 1, "once per wait");
   const row = () => app.channels.summary().channels.find((c) => c.id === "wd");
   assert.equal(row().health.state, "connected");
   assert.equal(row().watchdog.reconnectsToday, 1);
-  await app.channels.checkStalled(T + 400_000);
+  await app.channels.checkStalled(T + 452_000);
   assert.equal(adapter.restarts, 2);
   assert.equal(row().health.state, "needs attention", "still stalled after starting again: says so on its card");
   assert.match(row().health.reason, /stopped receiving, and starting it again did not bring it back/);
-  adapter.contact = T + 410_000;
-  await app.channels.checkStalled(T + 420_000);
+  adapter.contact = T + 460_000;
+  await app.channels.checkStalled(T + 470_000);
   assert.equal(row().health.state, "connected", "back: the card clears");
   saveChatIntake(app.store, app.runtime.owner, { watchdog: false });
   await app.channels.checkStalled(T + 5_000_000);
@@ -167,7 +173,7 @@ test("the watchdog: an app that cannot start again says why", async (t) => {
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
   saveChatIntake(app.store, app.runtime.owner, { reconnectMinutes: 1, stalledAfterSeconds: 30 });
   adapter.contact = 1_000_000;
-  await app.channels.checkStalled(1_000_000 + 61_000);
+  await app.channels.checkStalled(1_000_000 + 91_000);
   const row = app.channels.summary().channels.find((c) => c.id === "wd");
   assert.equal(row.health.state, "needs attention");
   assert.match(row.health.reason, /could not start it again: the token was refused/);
@@ -179,6 +185,14 @@ test("Telegram starts again after a stall and keeps receiving; its contact time 
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["42"] });
   const first = adapter.lastContact();
   await until(() => adapter.lastContact() > first, "a poll came back");
+  // A poll that never answers: starting again does not count as contact by itself, so the watchdog can tell.
+  state.hang = true;
+  const before = adapter.lastContact();
+  await adapter.restart((message) => app.channels.handle(message).then(() => undefined));
+  await delay(300);
+  assert.equal(adapter.lastContact(), before, "no answer, no contact");
+  state.hang = false;
+  await until(() => adapter.lastContact() > before, "contact again once Telegram answers");
   await adapter.restart((message) => app.channels.handle(message).then(() => undefined));
   state.queue.push({ update_id: 1, message: { message_id: 10, text: "still there?", from, chat } });
   await until(() => model.requests.length === 1, "answered after starting again");

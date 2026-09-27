@@ -142,7 +142,7 @@ export class TelegramAdapter implements ChannelAdapter {
   async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     await this.stop();
     this.stopping = new AbortController();
-    this.contactAt = Date.now();
+    // contactAt is left as it was: only Telegram answering moves it, so a restart that brings nothing back shows (Codex P1).
     await this.start(onMessage);
   }
   /** Presence: the bot's short description, which Telegram shows on its profile ("" clears it). */

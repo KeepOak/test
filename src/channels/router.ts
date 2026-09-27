@@ -390,10 +390,11 @@ export class ChannelRouter {
       if (last === undefined || !adapter.restart) continue;
       const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
       this.watch.set(id, state);
-      const quiet = now - last, stalled = quiet >= intake.stalledAfterSeconds * 1000;
+      const stalledMs = intake.stalledAfterSeconds * 1000, quiet = now - last, stalled = quiet >= stalledMs;
       if (!intake.watchdog || !stalled) { state.problem = null; continue; }
+      // "Reconnect after" counts from when it became stalled, not from its last contact.
       const wait = intake.reconnectMinutes * 60_000;
-      if (quiet < wait || now - state.lastRestartAt < wait) continue;
+      if (quiet < stalledMs + wait || now - state.lastRestartAt < wait) continue;
       if (state.lastRestartAt && last < state.lastRestartAt)
         state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and starting it again did not bring it back. Branch keeps trying.`;
       state.lastRestartAt = now;
@@ -815,7 +816,10 @@ export class ChannelRouter {
     if ([...turn.messages, ...turn.notes.map((note) => note.message)].some((m) => m.messageId === message.messageId)) return "ignored";
     // Wait for messages split in two / albums: while the turn is still gathering, a message that fits joins it. Only the
     // same person's live messages are joined that way (steering "on" gathers everyone's, as it always has).
-    const joins = this.switches().steering === "on" || (message.senderId === turn.messages[0]?.senderId && !message.caughtUp);
+    // With no split wait, a turn gathering only for an album takes only that album's photos (Codex P2).
+    const first = turn.messages[0], sameAlbum = !!message.groupId && message.groupId === first?.groupId;
+    const joins = this.switches().steering === "on"
+      || (message.senderId === first?.senderId && !message.caughtUp && (this.intake().splitWaitMs > 0 || sameAlbum));
     if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
       turn.messages.push(message);
       return new Promise((resolve) => turn.waiters.push(resolve));
