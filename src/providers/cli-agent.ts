@@ -208,7 +208,7 @@ export class CliAgentProvider implements Provider {
     this.limits = { timeoutMs: limits.timeoutMs ?? 180_000, maxOutputChars: limits.maxOutputChars ?? 200_000 };
   }
   async complete(request: CompletionRequest): Promise<Completion> {
-    refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in never answers for a Trunk
+    refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
     const outcome = this.home
       ? await this.spawnAgent(this.row, agentPromptFrom(request), request.signal, this.limits, this.home)
       : await this.spawnAgent(this.row, agentPromptFrom(request), request.signal, this.limits);

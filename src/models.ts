@@ -9,6 +9,9 @@ import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
 import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
+import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // trunks-use-subscriptions
+import { startedWithShortLivedKey } from "./key-context.js";
+import { currentPerson } from "./people/context.js";
 
 export const reasoningEfforts = ["low", "medium", "high"] as const;
 export type ReasoningEffort = (typeof reasoningEfforts)[number];
@@ -265,6 +268,8 @@ export class ModelRouter {
   }
   summary(owner: string) {
     const settings = this.settings(owner);
+    // trunks-use-subscriptions: whoever is asking may put a Trunk on a sign-in only when it is the owner (Runtime.trunkSignIns).
+    const ownerAsking = this.store.profiles.isOwner() && !currentPerson() && !startedWithShortLivedKey();
     return {
       ...settings,
       defaultPreset: this.default.id,
@@ -282,6 +287,8 @@ export class ModelRouter {
         coolingDownUntil: this.coolingDown(preset.id) ? new Date(this.cooldowns.get(preset.id)!).toISOString() : null,
         // Batch 19 (wave 7): what this connection has actually been doing, from real calls.
         health: this.health.get(preset.id),
+        // trunks-use-subscriptions: whether a Trunk's work started by whoever asks may answer through this connection.
+        trunkUse: ownerAsking || !isSignInConnection(preset) ? { ok: true } : { ok: false, reason: trunkSignInRefusal },
       })),
     };
   }
