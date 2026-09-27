@@ -64,11 +64,12 @@ const readyToSend = (page) => page.waitForFunction(() => !document.querySelector
 const lastReply = (page) => page.locator("#conversation .b").last();
 /** The conversation open in the side list. */
 const openChat = (page) => page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
-/** A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. */
 /* A Trunk's face beside a reply, not Branch's own: Branch's is its mark (.brand) or, since every face became a moving
    character (public/app/core/figures.js), the "branch" character, whose art is /art/branch-*. */
 const TRUNK_FACE = '.gut .av:not(.brand):not(:has([data-m17^="/art/branch-"]))';
-const signed = (reply) => reply.locator(TRUNK_FACE).count().then((n) => n > 0);
+/* A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. Its words stream in before its
+   author is read (GET /api/trunks/conversations/<id>), so the face is waited for. */
+const signedSoon = (reply) => reply.locator(TRUNK_FACE).first().waitFor({ state: "attached", timeout: 15000 }).then(() => true, () => false);
 /** Opens a conversation (a room's too) from its row in the side list. */
 async function openRow(page, sessionId) {
   await page.waitForFunction((id) => document.querySelector(`#side .list [data-act="chat"][data-id="${id}"]`), sessionId, { timeout: 15000 });
@@ -112,7 +113,7 @@ test("choosing who answers: Talking to on an empty conversation, then every repl
   await f.page.waitForFunction(() => /Scout here\./.test([...document.querySelectorAll("#conversation .b")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
   // WINDOW BUG: public/app/chat/chat.js bot() draws Branch's own mark beside every reply; the engine names each reply's
   // Trunk (GET /api/trunks/conversations/<id> authors) and the window never reads it.
-  assert.equal(await signed(lastReply(f.page)), true, "Scout's reply carries Scout's face");
+  assert.equal(await signedSoon(lastReply(f.page)), true, "Scout's reply carries Scout's face");
   await readyToSend(f.page);
   // Back to your assistant: the next reply is not Scout's, and Scout's reply keeps its name.
   await (await whoMenu(f.page)).locator('[data-act="who"][data-v=""]').click();
@@ -159,8 +160,10 @@ test("a room opens as a conversation: signed replies, a question answered in pla
   // the room's Trunks never answer (the engine's room route is POST /api/trunks/rooms/<id>/send, unused by public/app).
   await send(f.page, "@scout what is the price?");
   await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent), null, { timeout: 15000 });
-  assert.equal(await signed(lastReply(f.page)), true, "Scout's reply in the room carries Scout's face");
-  // Ledger is not mentioned yet: mentioning it in the room asks it, and under Ask first it waits for a yes.
+  assert.equal(await signedSoon(lastReply(f.page)), true, "Scout's reply in the room carries Scout's face");
+  // Ledger is not mentioned yet: mentioning it in the room asks it, and under Ask first it waits for a yes. Sent once the
+  // window has finished the first send: sent sooner, it joins that send's waiting line instead.
+  await readyToSend(f.page);
   await send(f.page, "@ledger write the totals");
   const ask = f.page.locator("#live-ask");
   await ask.waitFor({ state: "visible", timeout: 15000 });
@@ -186,12 +189,15 @@ test("the owner can revoke a person's access to an existing room", async (t) => 
   await f.call(`/api/trunks/rooms/${room.id}`, { people: [] });
   assert.deepEqual((await f.call(`/api/trunks/rooms/${room.id}`)).people, []);
 
+  /* The window starts again by itself when the person changes (public/app/main.js watchPerson); a reload of our own
+     raced that one and was aborted, so the window's own restart is what is waited for. */
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   await f.call("/api/profiles/switch", { profileId: sam.id, pin: "1234" });
   const refused = await f.callRaw(`/api/trunks/conversations/${room.sessionId}`);
   assert.ok([400, 403].includes(refused.status), `the room is refused to Sam once access is revoked (${refused.status})`);
   assert.doesNotMatch(JSON.stringify(refused.body), /Private bench/);
   assert.equal(((await f.call("/api/trunks")).rooms ?? []).some((one) => one.id === room.id), false, "and it is not among Sam's rooms");
-  await f.page.reload();
+  await restarted;
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   assert.equal(await f.page.locator(`#side .list [data-act="chat"][data-id="${room.sessionId}"]`).count(), 0, "nor in Sam's side list");
   assert.doesNotMatch(await f.page.locator("#side").innerText(), /Private bench/);
@@ -207,8 +213,10 @@ test("a named household member can open only a room they belong to in the real w
   })).room;
   await f.call(`/api/trunks/rooms/${room.id}/artifacts`, { name: "brief.txt", content: "members only" });
   const owners = (await f.call("/api/trunks/rooms", { name: "Owner's room", members: [f.scout.id, f.ledger.id] })).room;
+  // The window starts again by itself when the person changes (public/app/main.js watchPerson): that restart is waited for.
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   await f.call("/api/profiles/switch", { profileId: sam.id, pin: "1234" });
-  await f.page.reload();
+  await restarted;
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   // WINDOW BUG: public/app/shell/shell.js list() draws rows from GET /api/sessions only; for a household person that is
   // empty, and the rooms they belong to (GET /api/trunks rooms) never get a row, so Sam cannot open their room.
