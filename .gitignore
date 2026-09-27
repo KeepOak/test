@@ -39,3 +39,5 @@ release/
 # mac7/phone-qr: the phone app copied in by scripts/package-desktop.mjs for the desktop download
 /phone/
 evals/.scratch/
+nightly.local.json
+.nightly-known-hosts
