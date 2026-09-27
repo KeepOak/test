@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { openPlace } from "./places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import {
@@ -395,33 +394,3 @@ test("the dashboard's links open the right place in the new window", async (t) =
   assert.equal(new URL(page.url()).hash, "");
 });
 
-// Redesign: replaced by the new window (prototype.html has no "Dashboard in the browser" card in Customize ›
-// Channels; its Overview place holds the dashboard's areas).
-test.skip("the switch lives in Customize → Channels, and the dashboard's links open the right place in the window", async (t) => {
-  const f = await fixture(t);
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await page.goto(f.server.url + "/#open=settings:data");
-  await page.getByLabel("Session token", { exact: true }).fill(f.server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  /* The link waited for the sign-in, then opened Settings → Data & usage and tidied the address. */
-  await page.locator('.lx-settings-link[data-page="data"][aria-current="true"]').waitFor();
-  assert.equal(new URL(page.url()).hash, "");
-
-  await openPlace(page, "settings:channels");
-  await page.evaluate(() => globalThis.branchSettingsLevel.set("technical")); // DG-194: its Advanced and Technical rows are on show
-  const card = page.locator("#lx-page-channels #dashboard-card");
-  await card.waitFor();
-  assert.equal(await card.locator("h2").innerText(), "Dashboard in the browser");
-  assert.equal(await page.locator("#dashboard-mode").inputValue(), "off");
-  assert.ok(await page.locator("#dashboard-open").isHidden());
-  await page.locator("#dashboard-mode").selectOption("on");
-  await card.getByRole("button", { name: "Save" }).click();
-  await card.getByText("Saved.").waitFor();
-  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "on");
-  await page.locator("#dashboard-open").click();
-  await page.waitForURL(/\/dashboard$/);
-  await page.locator("#db-grid").waitFor();
-});

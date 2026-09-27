@@ -8,7 +8,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -62,26 +62,6 @@ const artCard = (page) => page.locator("#conversation .card.art").first();
 /** A model that always answers with the same reply, so the card under test is predictable. */
 const saying = (content) => ({ name: "scripted", async complete() { return { content, toolCalls: [] }; } });
 const HTML_REPLY = "Here you go.\n\n```html\n<h1 id=\"made\">Hello</h1><script>parent.document.title='taken'</script>\n```";
-
-test.skip("W1 an html block becomes a card whose frame is sealed shut", async (t) => {
-  // Redesign: replaced by the new window (only a chart becomes a card, BRANCH-DESIGN-INTENT.md 1948; an html block is shown
-  // as code, which the next test checks runs nothing).
-  const { page, errors } = await fixture(t, saying(HTML_REPLY));
-  await settle(page);
-  await page.locator("#prompt").fill("Draw me a page.");
-  await page.locator("#send").click();
-  const card = page.locator(".message.assistant .artifact").first();
-  await card.waitFor();
-  assert.match(await card.locator(".artifact-title").innerText(), /small page/i);
-
-  const frame = card.locator("iframe.artifact-frame");
-  await frame.waitFor();
-  /* Empty sandbox: no scripts, no forms, and above all no shared origin with the page around it. */
-  assert.equal(await frame.getAttribute("sandbox"), "", "the frame is not fully sandboxed");
-  const source = await frame.getAttribute("src");
-  assert.match(source, /^\/artifact\/[A-Za-z0-9_-]{32,48}$/, "the frame is not pointed at a minted address");
-  assert.deepEqual(errors, []);
-});
 
 test("W1 the artifact page runs no script and cannot reach the page around it", async (t) => {
   const { page, server, errors } = await fixture(t, saying(HTML_REPLY));
@@ -159,24 +139,6 @@ test("W2 a chart block is drawn in the page, reads out under the pointer and sho
   assert.deepEqual(errors, []);
 });
 
-test.skip("W2 the chart is saved as a picture by the page itself, with nothing drawn on the server", async (t) => {
-  // Redesign: replaced by the new window (prototype.html's chart card copies its code and saves to Library; it has no
-  // picture export, and /charts.js is gone).
-  const { page, errors } = await fixture(t, saying(CHART_REPLY));
-  await settle(page);
-  await page.locator("#prompt").fill("Chart my week.");
-  await page.locator("#send").click();
-  await page.locator(".chart-svg").first().waitFor();
-  /* A canvas that has been handed anything from somewhere else refuses to give its picture back,
-     so this asserts the real thing: a PNG comes out, which proves the drawing never tainted it. */
-  const png = await page.evaluate(async () => {
-    const { chartPng } = await import("/charts.js");
-    return chartPng(document.querySelector("svg.chart-svg"));
-  });
-  assert.match(png, /^data:image\/png;base64,[A-Za-z0-9+/=]{100,}$/, "no picture came back from the canvas");
-  assert.deepEqual(errors, []);
-});
-
 test("W2 a chart block that says nothing usable is refused in words, not half-drawn", async (t) => {
   const { page, errors } = await fixture(t, saying("```chart\n{\"type\":\"bar\",\"data\":[]}\n```"));
   await settle(page);
@@ -207,49 +169,6 @@ test("W1 Save to workspace keeps the artifact beside its task, where Documents l
     if (!mine) await page.waitForTimeout(100);
   }
   assert.ok(mine, "nothing was kept beside the task");
-  assert.deepEqual(errors, []);
-});
-
-/* Wave 8 (A1940): one message can be put to a specialist, and the reply says which one answered. */
-test.skip("W3 a message put to a specialist comes back signed with that specialist's name", async (t) => {
-  // Redesign: replaced by the new window (prototype.html's message box has no specialist picker; a specialist is a helper
-  // a Trunk calls in, Customize › Specialists).
-  const asked = [];
-  const { app, page, errors } = await fixture(t, {
-    name: "scripted",
-    async complete(request) {
-      asked.push((request?.messages ?? []).map((message) => String(message?.content ?? "")).join("\n"));
-      return { content: "The invoices are filed.", toolCalls: [] };
-    },
-  });
-  await settle(page);
-  /* A specialist the owner has already switched on, so the composer can offer it. */
-  app.store.save("specialists", app.runtime.owner, "b1a7d1e2-0000-4000-8000-000000000001",
-    { definition: { name: "The bookkeeper", purpose: "Files invoices.", instructions: "File invoices.", permissions: ["files.read"] },
-      activeVersion: 1, status: "active", versions: [] });
-  await page.reload();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-
-  await page.waitForFunction(() => document.getElementById("composer-specialist").options.length > 1);
-  /* The calm window keeps the picker under More; choosing there chooses the real one. */
-  await page.locator("#lx-more").click();
-  await page.locator("#lx-more-assistant").selectOption({ label: "The bookkeeper" });
-  await page.keyboard.press("Escape");
-  assert.equal(await page.locator("#composer-specialist").inputValue() !== "", true, "the real picker follows");
-
-  await page.locator("#prompt").fill("File yesterday's invoices.");
-  await page.locator("#send").click();
-  await page.locator(".message.assistant").last().waitFor({ timeout: 30000 });
-
-  /* The stylesheet shouts the author line, so the comparison is on the words, not their case. */
-  const author = await page.locator(".message.assistant small").last().innerText();
-  assert.equal(author.toLowerCase(), "the bookkeeper", "the reply was not signed by the specialist that answered");
-  /* What the owner typed is what they see; the delegation wrapper is not shown back to them. */
-  assert.match(await page.locator(".message.user").last().innerText(), /^File yesterday's invoices./);
-  assert.equal(/Delegate to specialist/.test(await page.locator(".message.user").last().innerText()), false,
-    "the owner was shown the machinery instead of what they typed");
-  assert.ok(asked.some((text) => /Delegate to specialist b1a7d1e2/.test(text)),
-    "the message never actually went to the specialist");
   assert.deepEqual(errors, []);
 });
 

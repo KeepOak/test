@@ -164,35 +164,6 @@ test('pending chat disables branching and conversation switching until its respo
   assert.equal(branchHeld, true, 'Branch from here waits for the pending answer');
 });
 
-// Redesign: replaced by the new window (the "Retry opening conversation" button and the "saved, but its messages could
-// not be loaded" line are not in the design; a failed read is the window's toast).
-test.skip('failed branch view keeps its created ID and retry opens it without another branch', async (t) => {
-  const f = await fixture(t, async () => ({ content: 'done', toolCalls: [] }));
-  let fail = false, branchRequests = 0;
-  f.page.on('request', request => {
-    if (request.url().endsWith('/api/action') && request.postDataJSON()?.tool === 'sessions.branch') branchRequests++;
-  });
-  await f.page.route('**/api/sessions/*', route => {
-    const view = route.request().method() === 'GET' && !route.request().url().endsWith('/api/sessions/search');
-    if (fail && view) { fail = false; return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Fixture view unavailable"}' }); }
-    return route.continue();
-  });
-  await openConversation(f.page, f.source.sessionId, 'Juniper checkpoint');
-  fail = true;
-  await branchFrom(f.page, 'Juniper checkpoint');
-  const retry = f.page.getByRole('button', { name: 'Retry opening conversation', exact: true });
-  await retry.waitFor(); await readyConversation(f.page);
-  const id = await currentId(f.page);
-  assert.notEqual(id, f.source.sessionId);
-  assert.equal(f.app.store.sessionView('local', id).messages.length, 2);
-  await retry.click(); await readyConversation(f.page);
-  assert.equal(await currentId(f.page), id);
-  assert.match(await f.page.locator('#conversation').innerText(), /Juniper checkpoint/);
-  assert.equal(branchRequests, 1);
-  assert.equal(JSON.stringify(f.app.store.sessionView('local', f.source.sessionId)), f.original);
-  assert.deepEqual(f.errors, []);
-});
-
 test('a rejected historical tool-request branch leaves the current conversation unchanged', async (t) => {
   const f = await fixture(t, async () => ({ content: 'done', toolCalls: [] }));
   const run = f.app.store.createRun('local', 'tool fixture');

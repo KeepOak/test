@@ -122,15 +122,6 @@ test("the card's switches are saved, listed, and applied to a connected channel 
   // The old window's card script is checked on its own below (the new window has no More chat apps card).
 });
 
-// Redesign: replaced by the new window (public/channels-more.js is gone; every chat app is a tile in Customize › Channels).
-test.skip("the More chat apps card's script is served to the window", async (t) => {
-  const context = await fixture(t);
-  const server = await startServer(context.app, { dataDir: join(context.root, "data"), port: 0 });
-  t.after(() => server.close());
-  const page = await fetch(`${server.url}/channels-more.js`);
-  assert.equal(page.status, 200, "the card's script is served");
-});
-
 test("a short-lived key can read the chat app switches but never change them", async (t) => {
   const context = await fixture(t);
   const { app } = context;
@@ -348,33 +339,3 @@ test("Customize › Channels › More lists every service and fits a 400-pixel-w
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the More tiles of Customize › Channels, checked above).
-test.skip("the More chat apps card lists every service and fits a 400-pixel-wide window", async (t) => {
-  const { chromium } = await import("playwright");
-  const { openPlace } = await import("./places.mjs");
-  const context = await fixture(t);
-  const server = await startServer(context.app, { dataDir: join(context.root, "data"), port: 0 });
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); });
-  const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  await openPlace(page, "settings:channels");
-  await page.evaluate(() => globalThis.branchSettingsLevel.set("technical")); // DG-194: its Advanced and Technical rows are on show
-  const card = page.locator("#channels-more-form");
-  await card.waitFor({ state: "visible" });
-  await page.locator("#channels-more-list > details").nth(parityServices.length - 1).waitFor({ state: "attached" });
-  assert.equal(await page.locator("#channels-more-list > details").count(), parityServices.length);
-  await page.locator("#channels-more-list > details summary").first().click();
-  const widths = await page.evaluate(() => ({
-    page: document.documentElement.scrollWidth,
-    card: document.getElementById("channels-more-form").getBoundingClientRect().right,
-  }));
-  assert.ok(widths.page <= 400, `the page does not scroll sideways (${widths.page})`);
-  assert.ok(widths.card <= 400, `the card stays inside the window (${widths.card})`);
-  assert.deepEqual(errors, []);
-});

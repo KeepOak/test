@@ -123,12 +123,6 @@ const strip = (page) => page.evaluate(() => {
     back: back.checkVisibility() && back.querySelector("kbd")?.textContent === "Esc",
   };
 });
-const inSight = (page, name) => page.evaluate((one) => {
-  const holder = document.querySelector(".sg-pages").getBoundingClientRect();
-  const tab = document.querySelector(`.lx-settings-link[data-page="${one}"]`);
-  const box = tab.getBoundingClientRect();
-  return { current: tab.getAttribute("aria-current") === "true", inSight: box.left >= holder.left - 0.5 && box.right <= holder.right + 0.5 };
-}, name);
 
 for (const width of [390, 700]) {
   // Redesign: replaced by the new window (the prototype's .set-nav strip, re-pointed above; its spacing and radii are the
@@ -144,27 +138,6 @@ for (const width of [390, 700]) {
     assert.deepEqual(errors, []);
   });
 }
-
-// Redesign: replaced by the new window (the prototype does not scroll the strip to the page on show; a tab opening from the
-// keyboard is re-pointed above).
-test.skip("DG-013 the page on show stays in sight in the strip, however it was reached, and a tab opens from the keyboard", async (t) => {
-  const { page, errors } = await settings(t, 390);
-  /* Reached without touching the strip, the way a link to a setting reaches it: the last page scrolls into sight. */
-  await page.evaluate(() => globalThis.branchLayout.go("settings:automations"));
-  await page.waitForFunction(() => document.querySelector('.lx-settings-link[data-page="automations"]')?.getAttribute("aria-current") === "true");
-  await page.waitForFunction(() => document.querySelector(".sg-pages").scrollLeft > 0);
-  assert.deepEqual(await inSight(page, "automations"), { current: true, inSight: true });
-  /* And back to the first, which scrolls the strip back. */
-  await page.evaluate(() => globalThis.branchLayout.go("settings:general"));
-  await page.waitForFunction(() => document.querySelector('.lx-settings-link[data-page="general"]')?.getAttribute("aria-current") === "true");
-  assert.deepEqual(await inSight(page, "general"), { current: true, inSight: true });
-  /* A tab is a real button: focused and pressed with Enter, it opens its page. */
-  await page.locator('.lx-settings-link[data-page="assistant"]').focus();
-  await page.keyboard.press("Enter");
-  await page.waitForFunction(() => !document.getElementById("lx-page-assistant").hidden);
-  assert.deepEqual(await inSight(page, "assistant"), { current: true, inSight: true });
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: Coming soon (sw:lang), checked at fc541c24. The wide half is re-pointed above.
 test.skip("DG-013 the tabs speak French, and wide the pages stay the list with their icons and groups", async (t) => {

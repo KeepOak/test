@@ -4,15 +4,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { chromium } from "playwright";
-import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { saveVoiceSettings } from "../dist/voice.js";
-import { discardTemp } from "./temp-dir.mjs";
-import { openPlace } from "./places.mjs";
-import { brain, call, fixture, on } from "./trunks-helpers.mjs";
+import { fixture, on } from "./trunks-helpers.mjs";
 
 test("voice schema: trimmed, max 80 chars, with default empty", async (t) => {
   const { app } = await fixture(t);
@@ -104,86 +97,6 @@ test("voice in conversation info: /api/trunks/conversations includes Trunk voice
   const infoResult = await ask(`/api/trunks/conversations/${sessionId}`);
   assert.equal(infoResult.status, 200, "conversation info retrieved");
   assert.equal(infoResult.body.trunk.voice, "Australian", "voice in TrunkBrief");
-});
-
-test.skip("in the window: a Trunk's answer is read in its voice, chosen in the studio; any other answer in yours", async (t) => {
-  // Redesign: replaced by the new window (prototype.html's Trunk editor has Look and What it may do, with no Voice field or
-  // "Hear it", and its replies have no "Read aloud"; Settings › Voice keeps the one voice answers are read in).
-  const root = await mkdtemp(join(tmpdir(), "branch-trunk-voice-ui-"));
-  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: brain([]) });
-  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
-  const httpCall = (path, body) => fetch(new URL(path, server.url), {
-    method: body === undefined ? "GET" : "POST",
-    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  }).then((response) => response.json());
-  await httpCall("/api/onboarding", { done: true });
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  on(app);
-  saveVoiceSettings(app.store, app.runtime.owner, { autoReadAloud: true, useProviderVoice: true });
-  const ada = app.trunks.create({ name: "Ada" });
-  await app.trunks.introduced();
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  // Nothing is heard: the sound is handed back and never played.
-  await page.addInitScript(() => { HTMLMediaElement.prototype.play = () => Promise.resolve(); });
-  const spoken = [];
-  await page.route("**/api/voice/speak", async (route) => {
-    spoken.push(JSON.parse(route.request().postData() ?? "{}"));
-    await route.fulfill({ status: 200, contentType: "audio/mpeg", body: Buffer.from([0xff, 0xf3]) });
-  });
-  await page.goto(server.url + "/");
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-
-  // The studio: a Voice field with its own sentence, from your list, saved with the Trunk.
-  await openPlace(page, "customize:specialists");
-  await page.getByRole("button", { name: "Edit Trunk" }).click();
-  const picker = page.locator("#trunks-edit-voice");
-  await picker.waitFor();
-  assert.equal(await picker.inputValue(), "", "a Trunk starts in your own voice");
-  assert.match(await page.locator(`#${await picker.getAttribute("aria-describedby")}`).innerText(), /reads its answers in/);
-  await picker.evaluate((node) => node.append(Object.assign(document.createElement("option"), { value: "Test Voice", textContent: "Test Voice" })));
-  await picker.selectOption("Test Voice");
-  // Hear it reads a sample in the chosen voice, the way answers are read.
-  await page.getByRole("button", { name: "Hear it" }).click();
-  for (let i = 0; i < 50 && !spoken.length; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(spoken.at(-1)?.voice, "Test Voice", "Hear it uses the chosen voice");
-  assert.match(spoken.at(-1)?.text ?? "", /this is how I sound/);
-  spoken.length = 0;
-  await page.getByRole("button", { name: "Save changes" }).click();
-  for (let i = 0; i < 50 && app.trunks.records.list().find((one) => one.id === ada.id)?.voice !== "Test Voice"; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(app.trunks.records.list().find((one) => one.id === ada.id).voice, "Test Voice");
-
-  // Its conversation is read in its voice.
-  await page.getByRole("button", { name: "Talk" }).first().click();
-  await page.waitForFunction(() => document.getElementById("rail-target-name")?.textContent === "Ada");
-  await page.locator("#prompt").fill("Say hello");
-  await page.locator("#prompt").press("Enter");
-  for (let i = 0; i < 100 && !spoken.length; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(spoken.at(-1)?.voice, "Test Voice", "the Trunk's own voice");
-  // Pressing Read aloud on the answer, and hold-to-talk, go through the same reading: its voice too.
-  const manual = spoken.length;
-  await page.getByRole("button", { name: "Read aloud" }).last().click();
-  for (let i = 0; i < 50 && spoken.length === manual; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(spoken.at(-1)?.voice, "Test Voice", "Read aloud uses the Trunk's voice");
-
-  // A conversation that is not a Trunk's is read in yours: no voice is sent, so Settings › Voice decides.
-  await page.locator("#rail-new").click();
-  await page.waitForFunction(() => !document.getElementById("conversation")?.dataset.sessionId);
-  const before = spoken.length;
-  await page.locator("#prompt").fill("Say hello again");
-  await page.locator("#prompt").press("Enter");
-  for (let i = 0; i < 100 && spoken.length === before; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(spoken.at(-1)?.voice, undefined, "your own voice");
-  const plain = spoken.length;
-  await page.getByRole("button", { name: "Read aloud" }).last().click();
-  for (let i = 0; i < 50 && spoken.length === plain; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(spoken.at(-1)?.voice, undefined, "and Read aloud there uses yours");
-  assert.deepEqual(errors, []);
 });
 
 test("a Trunk saved before voices existed reads as your own voice everywhere the window looks", async (t) => {

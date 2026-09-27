@@ -42,32 +42,6 @@ async function closeFinder(page) {
 }
 const hint = (page) => page.locator("#side .sq9 kbd");
 
-// Redesign: replaced by the new window (prototype.html has no top-bar search box; the sidebar's Search box is checked
-// in the next test).
-test.skip("the top bar has the sample's search box, and it opens the same finder as Ctrl K", async (t) => {
-  const { page, errors } = await openApp(t);
-  const box = page.locator("header #head-search");
-  assert.ok(await box.isVisible(), "a search box is in the top bar");
-  assert.equal((await box.locator("span").textContent()).trim(), "Search", "its words are the sample's");
-  assert.equal((await box.locator("kbd").textContent()).trim(), process.platform === "darwin" ? "Cmd K" : "Ctrl K", "and it shows the keys that open it");
-  assert.deepEqual(await box.evaluate((element) => {
-    const style = getComputedStyle(element), icon = element.querySelector("svg").getBoundingClientRect();
-    return { height: element.getBoundingClientRect().height, radius: style.borderTopLeftRadius,
-      weight: getComputedStyle(element.querySelector("span")).fontWeight, icon: [icon.width, icon.height] };
-  }), { height: 32, radius: "10px", weight: "400", icon: [15, 15] });
-  await box.click();
-  await page.locator("#cmd-input").waitFor({ state: "visible" });
-  assert.ok(await finderOpen(page), "clicking it opens the finder");
-  const byClick = await page.locator(".cmd-panel").getAttribute("aria-label");
-  await closeFinder(page);
-  await page.keyboard.press("ControlOrMeta+K");
-  await page.locator("#cmd-input").waitFor({ state: "visible" });
-  assert.equal(await page.locator(".cmd-panel").getAttribute("aria-label"), byClick, "Ctrl K opens that same finder");
-  assert.equal(await page.locator(".cmd-panel").count(), 1, "one finder, not a second one for the box");
-  await closeFinder(page);
-  assert.deepEqual(errors, []);
-});
-
 test("the sidebar's Search box shows the keys that open the finder, and Ctrl K opens one finder", async (t) => {
   const { page, errors } = await openApp(t);
   const box = page.locator("#side-q");
@@ -109,35 +83,3 @@ test("the key hint is the owner's own binding, and says nothing when there is no
   assert.equal(await page.locator("#side-q").getAttribute("aria-keyshortcuts"), mac ? "Meta+Shift+F" : "Control+Shift+F", "a screen reader hears the same keys");
 });
 
-// Redesign: replaced by the new window (no top-bar search box to fold; prototype.html's Search box is in the sidebar).
-test.skip("the box folds by the top bar's own width, even in a window too wide to fold it", async (t) => {
-  const { page } = await openApp(t, 960);
-  const widths = await page.evaluate(() => ({
-    window: innerWidth,
-    bar: document.querySelector("header").clientWidth,
-  }));
-  assert.ok(widths.window > 760 && widths.bar < 720, `a window wide but a top bar narrow: ${JSON.stringify(widths)}`);
-  assert.equal(await page.locator("#head-search span").isVisible(), false, "the word folds by the top bar's width");
-  assert.equal(Math.round((await page.locator("#head-search").boundingBox()).width), 34);
-});
-
-// Redesign: replaced by the new window (no top-bar search box to fold; prototype.html's Search box is in the sidebar).
-test.skip("where the window is narrow the box folds to an icon that can still be named and used", async (t) => {
-  const { page } = await openApp(t, 760);
-  const box = page.locator("#head-search");
-  await page.locator("#rail-toggle").click();
-  await page.waitForFunction(() => document.body.classList.contains("no-rail"));
-  const bar = await page.evaluate(() => {
-    const header = document.querySelector("header"), style = getComputedStyle(header);
-    return header.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  });
-  assert.ok(bar <= 720, `the widest a top bar gets in a 760px window is still one its own width folds (${bar}px)`);
-  assert.ok(await box.isVisible(), "the icon is there");
-  assert.equal(await box.locator("span").isVisible(), false, "the word folds away");
-  assert.equal(await box.locator("kbd").isVisible(), false, "and so does the key hint");
-  const size = await box.boundingBox();
-  assert.equal(Math.round(size.width), 34, "at the sample's icon width");
-  assert.equal(await page.getByRole("button", { name: "Search", exact: true }).count(), 1, "it still has a name");
-  await box.click();
-  await page.locator("#cmd-input").waitFor({ state: "visible" });
-});
