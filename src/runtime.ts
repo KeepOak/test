@@ -81,7 +81,7 @@ import { routeForTask, routingSettings } from "./local-routing.js";
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
 import { memoryScope } from "./memory.js";
-import { mergeSummaries, parseSessionSummary, summaryText, type SessionSummary } from "./session-summary.js";
+import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
 import {
   CheckError, StallError, LocalModelSilentError, localFirstReplyGraceMs, ReliabilityOptionsSchema, CompletionCheckSchema, clipToolResult, evaluateChecks, shrinkToolResults, withStallWatchdog,
@@ -2406,12 +2406,14 @@ ${run.output.slice(0, 6000)}`;
       { role: "system", content: compactionInstructions },
       { role: "user", content: (previous ? previous + "\n\n" : "") + transcript },
     ];
-    const reply = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim().slice(0, 6000);
+    const answer = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+    const reply = answer.slice(0, 6000);
     // long-work: what earlier folds kept is merged in, never left to the model to remember, and the record's own
-    // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them.
-    const parsed = parseSessionSummary(reply);
+    // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them. The whole
+    // answer is read, so a long but valid summary is never cut into broken JSON first.
+    const parsed = parseSessionSummary(answer);
     const earlier = this.store.summaries.get(run.sessionId)?.summary ?? null;
-    const structured = mergeSummaries(earlier, parsed, this.recordedForSummary(run.sessionId));
+    const structured = mergeSummaries(earlier, parsed, this.recordedForSummary(run.sessionId), parsed ? statedLists(answer) : new Set());
     const summary = [summaryText(structured), parsed ? "" : reply].filter(Boolean).join("\n\n").slice(0, 8000);
     const throughId = ids[split.to - 1]!;
     this.store.saveSessionSummary(context.owner, run.sessionId, structured, summary);

@@ -19,7 +19,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveKnobs } from "../dist/knobs/settings.js";
-import { mergeSummaries, summaryCaps } from "../dist/session-summary.js";
+import { mergeSummaries, parseSessionSummary, statedLists, summaryCaps } from "../dist/session-summary.js";
 
 const isSummariser = (request) => /^Summarize the conversation below/.test(request.messages[0]?.content ?? "");
 /** Reads only "user:" lines of the turns it is handed; the earlier summary above them is ignored. */
@@ -139,4 +139,17 @@ test("merging folds keeps both ends of a long list and each entry once", () => {
   assert.deepEqual(merged.todos, ["new"], "the to-do list is the newest state");
   assert.deepEqual(merged.openQuestions, ["q"], "kept when the newest summary says nothing");
   assert.deepEqual(merged.filesTouched, ["a.md"]);
+});
+
+test("a fold that states an empty to-do list clears it, and a summary longer than the stored cut parses whole", () => {
+  const earlier = { goals: ["ship"], decisions: [], instructions: [], openQuestions: ["which host?"], todos: ["write tests"], filesTouched: [] };
+  const reply = JSON.stringify({ goals: ["ship"], todos: [], openQuestions: [], decisions: Array.from({ length: 40 }, (_, i) => `decision ${i + 1} `.padEnd(200, "x")) });
+  assert.ok(reply.length > 6000, "longer than the stored text's cut");
+  const parsed = parseSessionSummary(reply);
+  assert.equal(parsed.decisions.length, 40);
+  const merged = mergeSummaries(earlier, parsed, {}, statedLists(reply));
+  assert.deepEqual(merged.todos, [], "everything was done");
+  assert.deepEqual(merged.openQuestions, [], "everything was answered");
+  const silent = mergeSummaries(earlier, parseSessionSummary(JSON.stringify({ goals: ["ship"] })), {}, statedLists(JSON.stringify({ goals: ["ship"] })));
+  assert.deepEqual(silent.todos, ["write tests"], "a list the fold did not state is kept");
 });

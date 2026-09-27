@@ -36,6 +36,15 @@ export function parseSessionSummary(reply: string): SessionSummary | null {
     return Object.values(value).some((list) => list.length) ? value : null;
   } catch { return null; }
 }
+/** The lists a reply really stated (an explicit `[]` included), which the schema's defaults cannot tell apart from omitted ones. */
+export function statedLists(reply: string): Set<string> {
+  const start = reply.indexOf("{"), end = reply.lastIndexOf("}");
+  if (start < 0 || end <= start) return new Set();
+  try {
+    const parsed = JSON.parse(reply.slice(start, end + 1)) as unknown;
+    return new Set(parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.keys(parsed) : []);
+  } catch { return new Set(); }
+}
 /** The same summary written out for the model to read back at the top of the conversation. */
 export function summaryText(summary: SessionSummary): string {
   const section = (title: string, items: string[]) => (items.length ? `${title}:\n${items.map((i) => `- ${i}`).join("\n")}` : "");
@@ -53,14 +62,16 @@ export function summaryText(summary: SessionSummary): string {
  * long-work: a fold never loses what an earlier fold kept. Decisions, instructions, goals and files touched are the
  * earlier summary's followed by the new one's, each once; when a list is full the oldest entries and the newest stay
  * and the middle goes, so the decision from the start of a long conversation is still there at its end. To-dos and
- * open questions are the current state: the newest summary's, else the earlier one's; `known` (read from the record
- * itself: the files the task's tools touched, the open to-dos) is always added.
+ * open questions are the current state: the newest summary's when it stated the list (`stated`, an explicit empty
+ * list clears it: everything was done or answered), else the earlier one's; `known` (read from the record itself: the
+ * files the task's tools touched, the open to-dos) is always added.
  */
-export function mergeSummaries(previous: SessionSummary | null, next: SessionSummary | null, known: Partial<SessionSummary> = {}): SessionSummary {
+export function mergeSummaries(previous: SessionSummary | null, next: SessionSummary | null, known: Partial<SessionSummary> = {},
+  stated: ReadonlySet<string> = new Set()): SessionSummary {
   const merged = {} as SessionSummary;
   for (const key of Object.keys(summaryCaps) as (keyof SessionSummary)[]) {
     const current = key === "todos" || key === "openQuestions"
-      ? (next?.[key].length ? next[key] : previous?.[key] ?? [])
+      ? (next && (stated.has(key) || next[key].length) ? next[key] : previous?.[key] ?? [])
       : [...(previous?.[key] ?? []), ...(next?.[key] ?? [])];
     merged[key] = keepEnds(unique([...current, ...(known[key] ?? [])]), summaryCaps[key]);
   }
