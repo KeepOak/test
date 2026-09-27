@@ -249,7 +249,8 @@ import { decide as allowlistSays, readSenderAllowlist } from "./channels/allowli
 import { remoteChannel } from "./remote/gateway-auth.js";
 import { socketPath as deviceSocketPath } from "./devices/protocol.js";
 // ---- end mac7/nodes ----
-import { deploymentApi, type DeploymentContext } from "./deployment-api.js";
+import { deploymentApi, shipAutostart, type DeploymentContext } from "./deployment-api.js";
+import { shipKeepRunningOn } from "./keep-running.js"; // the ship-on rule: keeping Branch running
 import { quitRequest } from "./install/quit.js"; // bucket 22
 import { clearRunning, writeRunning } from "./install/running.js";
 import { readFirstStart, recordFirstStart } from "./install/update-backup.js";
@@ -615,7 +616,7 @@ const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).mi
  *  anybody else reads the defaults with `mine: false`. */
 function onboardingState(app: Branch): Record<string, unknown> {
   const saved = onboardingRecord(app.store, app.runtime.owner);
-  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, finishHidden: false, mine: false };
   const { completedAt: _when, ...view } = saved;
   return { ...view, mine: true };
 }
@@ -4400,6 +4401,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   }
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
+  // The ship-on rule: the installed app's first start keeps Branch running without a setup step (src/keep-running.ts).
+  // How earlier versions' first starts went is read here, before noteFirstStart below writes this one's.
+  if (options.executable) {
+    const firstStart = await readFirstStart(options.dataDir);
+    void shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, version: app.version, firstStart,
+      startAtSignIn: () => shipAutostart(deployment()) }).catch((error: unknown) => console.error(`Could not keep Branch running: ${errorText(error)}`));
+  }
   settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
   void resumeUnfinishedDeletes(app); // your-data/for-good: a Delete everything cut short carries on (never throws)
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
