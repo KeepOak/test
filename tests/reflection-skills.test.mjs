@@ -17,7 +17,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, saveKnobs } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 const say = (content) => ({ content, toolCalls: [] });
@@ -194,6 +194,8 @@ test("'only when needed' looks back when a conversation is shortened, never on a
     task: (request) => /Summarize the conversation below/.test(systemText(request)) ? say('{"goals":["rename photos"]}') : say("done"),
   });
   app.learningLoop.configure({ reflection: "when-needed", everyTurns: 5 });
+  // A hosted model's own room is now far larger (#500), so the room is set small enough for the turns below to fold.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: 20000 });
   const first = await app.runtime.run({ prompt: "start renaming photos" });
   for (let n = 2; n <= 8; n++) await app.runtime.run({ prompt: `short turn ${n}`, sessionId: first.sessionId });
   await settle(app);
@@ -281,25 +283,17 @@ test("a skill idea is only noted while new skills are off; once allowed it becom
   assert.equal(app.learningLoop.newSkills()[0].decision, "rejected");
 });
 
-test("with new skills on, a finished task that used three tools drafts once per conversation; NONE drafts nothing", async (t) => {
+test("with new skills on, a finished task that used three tools drafts nothing: a skill earns its place through the Gardener", async (t) => {
   const steps = [call("files.write", { path: "a.txt", content: "hi" }), call("files.read", { path: "a.txt" }, "c2"), call("files.list", { path: "." }, "c3"), say("done")];
-  let answer = "NONE";
   const { app, provider } = await fixture(t, {
-    newSkill: () => answer,
+    newSkill: () => skillFile("write-and-check"),
     task: (request) => steps[Math.min(request.messages.filter((m) => m.role === "tool").length, steps.length - 1)],
   });
   app.learningLoop.configure({ newSkills: "on" });
-  const first = await app.runtime.run({ prompt: "write and check a note file" });
+  await app.runtime.run({ prompt: "write and check a note file" });
   await settle(app);
-  assert.equal(provider.seen.newSkill.length, 1);
-  assert.deepEqual(app.learningLoop.newSkills(), [], "the model said there was nothing worth a skill");
-  answer = skillFile("write-and-check");
-  await app.runtime.run({ prompt: "write and check a note file again", sessionId: first.sessionId });
-  await settle(app);
-  assert.equal(provider.seen.newSkill.length, 1, "one offer per conversation");
-  await app.runtime.run({ prompt: "write and check another note file" });
-  await settle(app);
-  assert.equal(app.learningLoop.newSkills()[0].origin, "task");
+  assert.equal(provider.seen.newSkill.length, 0, "no draft after a task only because it used several tools (tests/seasons-gardener.test.mjs)");
+  assert.deepEqual(app.learningLoop.newSkills(), []);
 });
 
 test("skills nobody used are offered for setting aside once, never when the tasks kept do not cover the time, and a schedule's skill is left alone", async (t) => {
