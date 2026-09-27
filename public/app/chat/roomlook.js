@@ -67,13 +67,22 @@ const mention = (s) => esc(s).replace(/@([a-z0-9][\w-]*)/gi, '<span class="menti
 /* ---------- matching the transcript to the room's record ---------- */
 /* The room keeps only its newest events (src/trunks/rooms.ts maxKeptEvents), while its conversation keeps every message:
    they are lined up from the newest back, so each message finds its own event and nothing older is lost. */
-const said = (m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !m.system && !m.toolCalls?.length;
+/* An outside agent's words are kept as Branch's note quoting them (`outsideAgent`, src/trunks/rooms.ts agentTurn): drawn
+   as that agent's message, read back from the quote. */
+const agentNote = (m) => m.role === "user" && m.from === "branch" && !!m.outsideAgent?.id;
+function agentWords(m) {
+  const content = String(m.content ?? ""), at = content.indexOf(": ");
+  try { const words = JSON.parse(content.slice(at + 2)); return typeof words === "string" ? words : content; } catch { return content; }
+}
+const said = (m) => agentNote(m) || ((m.role === "user" || m.role === "assistant") && m.from !== "branch" && !m.system && !m.toolCalls?.length);
+const kindOf = (m) => (m.role === "user" && !agentNote(m) ? "user" : "member");
+const wordsOf = (m, info) => (agentNote(m) ? agentWords(m) : m.role === "user" ? m.content : replyWords(m, info));
 function matchMessages(events, messages, info) {
   const byEvent = new Map(), byMessage = new Map();
   let at = events.length - 1;
   for (const m of [...messages].reverse()) {
     if (!said(m)) continue;
-    const kind = m.role === "user" ? "user" : "member", words = m.role === "user" ? m.content : replyWords(m, info);
+    const kind = kindOf(m), words = wordsOf(m, info);
     let i = at;
     while (i >= 0 && !(events[i].kind === kind && events[i].text === words)) i--;
     if (i >= 0) { byEvent.set(events[i], m); byMessage.set(m, events[i]); at = i - 1; }
@@ -83,6 +92,7 @@ function matchMessages(events, messages, info) {
 /* A message the room's record no longer holds, read from the conversation itself: who wrote it comes from the message
    (a person's own mark, or the Trunk's @name at the start of a reply). */
 function fromMessage(m, info) {
+  if (agentNote(m)) return { kind: "member", text: agentWords(m), at: m.at, memberId: m.outsideAgent.id };
   if (m.role === "user") return { kind: "user", text: m.content, at: m.at, ...(m.person ? { personId: m.person.id, personName: m.person.name } : {}) };
   return { kind: "member", text: replyWords(m, info), at: m.at, memberId: authorOf(m, 0, info)?.id };
 }

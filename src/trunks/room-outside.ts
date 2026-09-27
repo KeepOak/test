@@ -40,16 +40,24 @@ export function agentBadge(agent: RemoteAgent): string {
   return where ? `A2A · ${where}` : "A2A";
 }
 
-/** The outside agents seated in a room, as the planner sees them, after its Trunks. */
-export function outsideMembers(ids: readonly string[], trunks: readonly RoomMember[], outside: OutsideAgents | null): RoomMember[] {
-  if (!outside) return [];
+/**
+ * The outside agents seated in a room, as the planner sees them, after its Trunks. One this Branch is no longer
+ * connected to keeps its seat under the name it was seated with (`names`), marked `gone`, so its @name still names it.
+ */
+export function outsideMembers(ids: readonly string[], trunks: readonly RoomMember[], outside: OutsideAgents | null,
+  names: Readonly<Record<string, string>> = {}): RoomMember[] {
   const taken = new Set(trunks.map((m) => m.handle.toLowerCase()));
   return ids.flatMap((id) => {
-    const agent = outside.byId(id);
-    if (!agent) return [];
-    const name = plainLine(agent.name) || "Agent";
-    return [{ id, handle: agentHandle(name, taken), name, outside: true }];
+    const agent = outside?.byId(id);
+    const name = plainLine(agent?.name ?? names[id]) || (agent ? "Agent" : "");
+    if (!name) return [];
+    return [{ id, handle: agentHandle(name, taken), name, outside: true, ...(agent ? {} : { gone: true }) }];
   });
+}
+
+/** The name an agent is seated under, kept with the room so its seat outlives the connection. */
+export function seatName(agent: RemoteAgent | undefined): string {
+  return plainLine(agent?.name) || "Agent";
 }
 
 /** An error from elsewhere, on one line and short, for the room's "didn't answer" note. */

@@ -10,12 +10,12 @@ import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
 import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
 import {
-  asksForOwner, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules,
+  asksForOwner, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
   type RoomDecision, type RoomEvent, type RoomMember, type RoomRule, type RoomTask,
 } from "./room-plan.js";
 import { TeamPatternSchema, type TeamPattern } from "../team-pattern.js"; // eng-trunk-controls
-import { lockedDown, lockdownRefusal } from "../lockdown.js"; // a2a-rooms
-import { agentBadge, maxAgentReply, maxRoomAgents, outsideMembers, reasonText, refusedStates, type OutsideAgents } from "./room-outside.js"; // a2a-rooms
+import { lockedDown, lockdownRefusal, onLockdownChange } from "../lockdown.js"; // a2a-rooms
+import { agentBadge, maxAgentReply, maxRoomAgents, outsideMembers, reasonText, refusedStates, seatName, type OutsideAgents } from "./room-outside.js"; // a2a-rooms
 
 /**
  * R17-009 (T-09): rooms where two to six Trunks and the owner talk in one transcript.
@@ -100,6 +100,8 @@ export interface Room {
   /** a2a-rooms: outside agents seated here, and the conversation each keeps for this room (its own id for it). */
   agents: string[];
   agentContexts: Record<string, string>;
+  /** a2a-rooms: the name each was seated under, so its seat and @name outlive the connection. */
+  agentNames: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,7 +141,7 @@ export class TrunkRooms {
 
   private normalize(room: Room): Room {
     return { ...room, people: room.people ?? [], artifacts: room.artifacts ?? [], rule: room.rule ?? "mention", pattern: room.pattern ?? null,
-      agents: room.agents ?? [], agentContexts: room.agentContexts ?? {} }; // a2a-rooms
+      agents: room.agents ?? [], agentContexts: room.agentContexts ?? {}, agentNames: room.agentNames ?? {} }; // a2a-rooms
   }
 
   list(): Room[] {
@@ -167,10 +169,14 @@ export class TrunkRooms {
   }
   /** a2a-rooms: only the owner seats an outside agent, and only one this Branch is connected to. */
   private checkAgents(agents: string[], before: readonly string[] = []): void {
+    if (new Set(agents).size !== agents.length) throw new Error("An outside agent can sit in a room only once");
     if (agents.length === before.length && agents.every((id) => before.includes(id))) return;
     this.deps.store.profiles.requireOwner("Adding an outside agent to a room");
-    if (new Set(agents).size !== agents.length) throw new Error("An outside agent can sit in a room only once");
     if (agents.some((id) => !before.includes(id) && !this.outside?.byId(id))) throw new Error("That outside agent is not connected to this Branch");
+  }
+  /** a2a-rooms: the names the seated agents keep: the one each had when seated. */
+  private seatNames(agents: readonly string[], before: Readonly<Record<string, string>> = {}): Record<string, string> {
+    return Object.fromEntries(agents.map((id) => [id, before[id] ?? seatName(this.outside?.byId(id))]));
   }
   allows(room: Room, profileId: string | null): boolean {
     return profileId === null || room.people.includes(profileId);
@@ -210,7 +216,7 @@ export class TrunkRooms {
       sessionId: this.conversation(`Room: ${value.name}`), memberSessions: {}, artifacts: [], events: [], seq: 0,
       needsYou: false, picture: null, pinned: false, section: "", order: 0, createdAt: now, updatedAt: now,
       rule: value.rule, pattern: value.pattern, // eng-trunk-controls
-      agents: value.agents, agentContexts: {}, // a2a-rooms
+      agents: value.agents, agentContexts: {}, agentNames: this.seatNames(value.agents), // a2a-rooms
       ...(options.context ? { context: options.context.slice(0, 3000) } : {}) }; // phase2/rooms
     for (const id of room.members) room.memberSessions[id] = this.conversation(`Room ${value.name}: ${this.deps.records.get(id).name}`);
     this.deps.store.message(room.sessionId, { role: "system", content: `Room "${room.name}". ${this.roster(room).map((m) => `@${m.handle}`).join(", ")} and you.` });
@@ -239,6 +245,7 @@ export class TrunkRooms {
     if (change.agents) { // a2a-rooms: an agent taken out forgets the conversation it kept here
       this.checkAgents(change.agents, room.agents);
       room.agentContexts = Object.fromEntries(Object.entries(room.agentContexts).filter(([id]) => change.agents!.includes(id)));
+      room.agentNames = this.seatNames(change.agents, room.agentNames);
     }
     const { members: _members, picture, ...rest } = change;
     Object.assign(room, rest, picture !== undefined ? { picture } : {});
@@ -356,14 +363,16 @@ export class TrunkRooms {
   /** a2a-rooms: everyone who takes turns here: the Trunks, then the outside agents. */
   seats(room: Room): RoomMember[] {
     const trunks = this.roster(room);
-    return [...trunks, ...outsideMembers(room.agents, trunks, this.outside)];
+    return [...trunks, ...outsideMembers(room.agents, trunks, this.outside, room.agentNames)];
   }
   /** a2a-rooms: the outside agents as the window draws them: name, badge, and whether the card answered lately. */
   outsideView(room: Room) {
     const trunks = this.roster(room), quiet = lockedDown(this.deps.store, this.deps.owner);
-    return outsideMembers(room.agents, trunks, this.outside).map((m) => {
+    return outsideMembers(room.agents, trunks, this.outside, room.agentNames).map((m) => {
+      const agent = this.outside?.byId(m.id);
+      if (!agent) return { id: m.id, handle: m.handle, name: m.name, badge: "A2A", online: false }; // not connected any more
       if (!quiet) this.outside!.probe(m.id);
-      return { id: m.id, handle: m.handle, name: m.name, badge: agentBadge(this.outside!.byId(m.id)!), online: !quiet && this.outside!.online(m.id) };
+      return { id: m.id, handle: m.handle, name: m.name, badge: agentBadge(agent), online: !quiet && this.outside!.online(m.id) };
     });
   }
   private async turn(room: Room, task: RoomTask): Promise<void> {
@@ -420,27 +429,37 @@ export class TrunkRooms {
     const base = { memberId: task.memberId, round: task.round, discussion: task.discussion, seen: task.seen };
     const name = seat?.name ?? "The outside agent";
     const fail = (why: string) => { this.append(room.id, { ...base, kind: "failed", text: `${name} didn't answer: ${why}` }); };
+    if (seat?.gone) { this.append(room.id, { ...base, kind: "failed", text: `${name} isn't connected` }); return; }
     if (!seat || !this.outside) return fail("it is no longer among your outside agents");
+    // Only the owner's own message reaches an outside agent (the planner never asks otherwise; this holds it here too).
+    if (task.personId || task.byKey) return fail("it answers the owner only");
     if (lockedDown(this.deps.store, this.deps.owner)) return fail(lockdownRefusal);
     const scrub = this.deps.scrub ?? ((text: string) => text);
     const words = scrub(task.prompt + this.artifactContext(room, null));
     const stop = new AbortController();
     this.calling.set(room.id, stop);
+    // Lockdown turned on mid-turn ends the request at once, and whatever it would have said is not kept.
+    const quiet = onLockdownChange((store, owner, on) => { if (on && store === this.deps.store && owner === this.deps.owner) stop.abort(); });
     let reply: { answer: string; state: string; contextId?: string };
     try {
       const contextId = room.agentContexts[seat.id];
       reply = await this.outside.converse(seat.id, words, { signal: stop.signal, ...(contextId ? { contextId } : {}) });
     } catch (error) {
-      if (this.closing || stop.signal.aborted) return;
+      if (this.closing) return;
+      if (lockedDown(this.deps.store, this.deps.owner)) return fail(lockdownRefusal);
+      if (stop.signal.aborted) return;
       return fail(reasonText(error));
-    } finally { this.calling.delete(room.id); }
+    } finally { quiet(); this.calling.delete(room.id); }
     if (this.get(room.id).events.some((e) => e.kind === "stopped" && e.seq > task.discussion)) return;
+    if (lockedDown(this.deps.store, this.deps.owner)) return fail(lockdownRefusal);
     if (refusedStates.has(reply.state)) return fail(`it ended the task as ${reasonText(reply.state)}`);
     if (reply.contextId) this.put({ ...this.get(room.id), agentContexts: { ...this.get(room.id).agentContexts, [seat.id]: reply.contextId } });
     if (isPass(reply.answer)) { this.append(room.id, { ...base, kind: "pass", text: "" }); return; }
     const text = reply.answer.trim().slice(0, maxAgentReply);
     const saved = this.append(room.id, { ...base, kind: "member", text });
-    this.deps.store.message(saved.sessionId, { role: "assistant", content: `@${seat.handle}: ${text}` });
+    // Kept in the room's conversation as Branch's note quoting it, never as the assistant's own words, so anything that
+    // replays this conversation to a model (a task in it, a summary, memory, search) reads it as quoted data from elsewhere.
+    this.deps.store.message(saved.sessionId, { role: "user", from: "branch", content: quotedAgent(seat.handle, text), outsideAgent: { id: seat.id, name: seat.name } });
   }
 
   /** The questions the room's members are waiting on, so they can be answered in the room. */
@@ -549,7 +568,7 @@ export class TrunkRooms {
   view(id: string, viewer?: { profileId: string | null }) {
     const room = this.get(id);
     if (viewer) this.mark(room.id, viewer.profileId, Date.now());
-    const { agentContexts: _contexts, ...shown } = room; // a2a-rooms: another assistant's ids for its conversations stay here
+    const { agentContexts: _contexts, agentNames: _names, ...shown } = room; // a2a-rooms: another assistant's ids for its conversations stay here
     return { ...shown, people: this.people(room), roster: this.roster(room), outside: this.outsideView(room), speaking: this.driving.has(id),
       waiting: this.waiting(id), allowed: this.allowed(room), ...this.presenceFor(room, viewer?.profileId ?? null) };
   }
