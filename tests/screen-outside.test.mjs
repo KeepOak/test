@@ -27,11 +27,15 @@ test("what a tool says about itself decides: category, name, description, inputs
     { name: "act", description: "Does things.", inputSchema: { properties: { action: { enum: ["mouse_move", "double_click"] } } } },
     { name: "run", description: "Runs a step.", category: "computer-use" },
     { name: "readClipboard", description: "Returns text." },
+    // A browser word in the name never exempts inputs that are computer-use actions.
+    { name: "browser_computer", description: "Controls the page.", inputSchema: { properties: { action: { enum: ["left_click", "screenshot"] } } } },
+    { name: "tab_helper", title: "Web page tools", description: "Helps.", inputSchema: { properties: { action: { enum: ["mouse_move"] } } } },
   ];
   for (const tool of yes) assert.equal(describesScreen(tool), true, tool.name);
   const no = [
     { name: "browser_click", description: "Click an element on the page." },
-    { name: "browser_take_screenshot", description: "Take a screenshot of the current page." },
+    { name: "browser_take_screenshot", description: "Take a screenshot of the current page.",
+      inputSchema: { type: "object", properties: { type: { type: "string", enum: ["png", "jpeg"] }, filename: { type: "string" }, fullPage: { type: "boolean" } } } },
     { name: "get_user_by_screen_name", description: "Look up a social account by its screen name." },
     { name: "search_issues", description: "Search the issues of a repository." },
     { name: "navigate", description: "Open a URL in the browser tab." },

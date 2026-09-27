@@ -110,11 +110,19 @@ test("every real-screen program start in the engine asks the guard first", () =>
     assert.ok(guard > from && guard < at, `${start}: the guard comes before ${marker}`);
   };
   before(script, "async run(action: DesktopAction", "new ShellProcess(");
-  before(script, "const runBounded: PosixExec", "new ShellProcess(");
+  before(script, "const boundedRunner = (standIns: boolean): PosixExec", "new ShellProcess(");
   before(script, "liveProcess(): LiveScreenProcess | null", "executable: this.executable");
   before(src("integrations/desktop-banner.ts"), "async show(onStop: () => void)", "spawn(");
   // Only the Mac/Linux runner passes its program, so only there may a test's stand-in run; the Windows places never.
-  assert.deepEqual(script.match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()", "assertRealScreenAllowed()", "assertRealScreenAllowed(executable)"]);
+  assert.deepEqual(script.match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()", "assertRealScreenAllowed()", "assertRealScreenAllowed(standIns ? executable : undefined)"]);
+  // ...and only when the code that built the runner handed in its own program finder, which Branch itself never does:
+  // its one screen runner is built with no Mac/Linux options at all.
+  assert.match(script, /this\.posix\.exec \?\? boundedRunner\(this\.posix\.locate !== undefined\)/);
+  assert.equal((script.match(/boundedRunner\(/g) ?? []).length, 1, "no other place builds the bounded runner");
+  const index = src("index.ts");
+  assert.match(index, /\.\.\.screenControlParts\(options\.bannerWindow \? \{ window: options\.bannerWindow \} : \{\}\)/);
+  assert.equal((index.match(/screenControlParts\(/g) ?? []).length, 1);
+  assert.doesNotMatch(src("integrations/desktop.ts"), /new DesktopScriptRunner\([^)]/, "the default runner is built with nothing handed in");
   assert.deepEqual(src("integrations/desktop-banner.ts").match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()"]);
   const spawns = (script.match(/\bspawn\(|new ShellProcess\(/g) ?? []).length;
   assert.equal(spawns, 3, "no other place in the runner starts a program; a new one needs the guard too");

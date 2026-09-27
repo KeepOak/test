@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, ProviderStreamError } from "../dist/index.js";
-import { hostedWindowDefault, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "../dist/model-context.js";
+import { billedRoomDefault, hostedWindowDefault, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "../dist/model-context.js";
+import { saveKnobs } from "../dist/knobs/settings.js";
 import { statedIn } from "../dist/context-words.js";
 import { ProviderHttpError, rejectedHttpResponse } from "../dist/provider-retry.js";
 import { publishedWindow, readModelWindow } from "../dist/model-info.js";
@@ -49,6 +50,49 @@ test("a stated maximum lowers the learned room further; published windows come b
   assert.equal(modelWindow(app.store, owner, listed, false), 400000, "a refusal still wins when it is lower");
   assert.equal(modelWindow(app.store, owner, { id: "listed", model: "other-model" }, false), hostedWindowDefault,
     "the same connection id on another model inherits nothing");
+  // A connection removed and added again under the same id and model name, but at another address, starts fresh.
+  const here = { id: "again", model: "same-model", endpoint: "https://one.example/v1" };
+  rememberPublished(app.store, owner, windowKey(here), 64000);
+  learnWindow(app.store, owner, windowKey(here), 50000, 64000);
+  assert.equal(modelWindow(app.store, owner, here, false), 40000);
+  assert.equal(modelWindow(app.store, owner, { ...here, endpoint: "https://two.example/v1" }, false), hostedWindowDefault,
+    "another address inherits neither the published nor the learned figure");
+  // Without an address written down, the one the connection's own routes hand out counts.
+  const routed = (endpoint) => ({ id: "routed", model: "m", provider: { name: "x", embeddings: () => ({ endpoint, apiKey: "k" }) } });
+  rememberPublished(app.store, owner, windowKey(routed("https://one.example/v1")), 64000);
+  assert.equal(modelWindow(app.store, owner, routed("https://one.example/v1"), false), 64000);
+  assert.equal(modelWindow(app.store, owner, routed("https://two.example/v1"), false), hostedWindowDefault);
+  assert.doesNotMatch(windowKey(here), /one\.example/, "the address is kept only as a digest");
+});
+
+test("a connection billed per token is held to 256k unless the owner raises it; a sign-in or a local model keeps its window", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-limits-billed-"));
+  const app = await createBranch({ dataDir: join(root, "data"), workspace: join(root, "w"), provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const owner = app.runtime.owner;
+  const plain = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
+  const keyed = { id: "keyed", name: "Keyed", model: "wide", provider: plain };
+  const signedIn = { id: "chatgpt-plan", name: "Plan", model: "wide", provider: plain };
+  const gemini = { id: "google-gemini", name: "Gemini", model: "wide", provider: plain };
+  const local = { id: "local", name: "Local", model: "wide", provider: { ...plain, embeddings: () => ({ endpoint: "http://127.0.0.1:1234/v1", apiKey: "local" }) } };
+  for (const preset of [keyed, signedIn, gemini, local]) rememberPublished(app.store, owner, windowKey(preset), 1_000_000);
+  assert.equal(billedRoomDefault, 256_000);
+  assert.equal(app.runtime.contextWindowFor(keyed), billedRoomDefault, "an API key's published million is held to 256k");
+  assert.equal(app.runtime.contextWindowFor(signedIn), 1_000_000, "a subscription sign-in keeps the model's window");
+  assert.equal(app.runtime.contextWindowFor(gemini), 1_000_000);
+  assert.equal(app.runtime.contextWindowFor(local), 1_000_000, "a model on this computer keeps its window");
+  const small = { id: "small", name: "Small", model: "narrow", provider: plain };
+  rememberPublished(app.store, owner, windowKey(small), 64000);
+  assert.equal(app.runtime.contextWindowFor(small), 64000, "a window under the cap is used as it is");
+  saveKnobs(app.store, owner, "compaction", { contextWindowTokens: 900_000 });
+  assert.equal(app.runtime.contextWindowFor(keyed), 900_000, "the owner's own figure in Settings raises it");
+  // The fold point follows the room: a long task on the billed connection folds within 256k, not the million.
+  saveKnobs(app.store, owner, "compaction", { contextWindowTokens: null });
+  app.runtime.modelInfo = async () => 1_000_000;
+  const run = await app.runtime.run({ prompt: "hello" });
+  const [budget] = app.store.events(run.id).filter((event) => event.kind === "context.budget");
+  assert.equal(budget.data.limit, billedRoomDefault);
+  assert.ok(budget.data.threshold <= billedRoomDefault, "the fold point is inside the capped room");
 });
 
 test("the model list's figure is read in each service's own shape", async () => {

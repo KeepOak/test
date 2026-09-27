@@ -7,8 +7,12 @@
  * screen is refused unless BRANCH_SCREEN_TESTS=1 (a person opting in on this computer) or the run is CI on Windows (a
  * throwaway runner whose screen belongs to nobody). Tests that stand the screen in (an injected runner, a fake program
  * runner) never reach these places, so they are not affected. On a Mac or Linux a test may also really run a stand-in
- * program it wrote into the temporary folder: only that one place passes the program, and only a file that truly lies
- * inside the temporary folder (links followed) counts as a stand-in.
+ * program it wrote into the temporary folder: only the Mac/Linux runner passes the program, only when the code that
+ * built the runner handed in its own program finder (Branch itself never does), and only a file that truly lies inside
+ * the temporary folder (links followed) counts as a stand-in.
+ *
+ * Nothing here can loosen Branch: outside the test runner this guard refuses nothing, so switching the test runner's
+ * variable on can only add refusals, and the stand-in exemption only takes some of those back.
  */
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';

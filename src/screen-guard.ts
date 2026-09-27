@@ -63,7 +63,8 @@ export const screenWithheldRefusal =
  * own screen, keyboard, mouse or clipboard, whatever it is called, so it gets the same guard as desktop.*. Read from
  * what the tool says about itself: a declared category, its MCP annotations' title, its name, its description and its
  * inputs. Only ever stricter: a tool wrongly taken for a screen tool is offered only when the owner asks for the screen.
- * Tools that drive a browser of their own (a page, a tab, Playwright) are not the owner's screen.
+ * Tools that drive a browser of their own (a page, a tab, Playwright) are not the owner's screen, unless their inputs
+ * are computer-use actions: a name never exempts those.
  */
 export interface ToolSelfDescription {
   name: string;
@@ -91,14 +92,16 @@ const screenInputs = /"(left_click|right_click|double_click|middle_click|mouse_m
 
 export function describesScreen(tool: ToolSelfDescription): boolean {
   if (tool.category && screenCategories.test(tool.category.trim())) return true;
-  // "screen name" (a social account's handle) is not the screen.
-  const named = words(`${tool.name} ${tool.title ?? ""}`).filter((word, at, all) => !(word === "screen" && all[at + 1] === "name"));
-  if (named.some((word) => browserNames.has(word))) return false;
-  const described = String(tool.description ?? "");
-  if (named.some((word) => strongNames.has(word))) return true;
+  // What a tool can be asked to do comes first: a name never exempts inputs that are computer-use actions.
   let inputs = "";
   try { inputs = JSON.stringify(tool.inputSchema ?? {}).slice(0, 20_000); } catch { /* unreadable inputs say nothing */ }
   if (screenInputs.test(inputs)) return true;
+  // "screen name" (a social account's handle) is not the screen.
+  const named = words(`${tool.name} ${tool.title ?? ""}`).filter((word, at, all) => !(word === "screen" && all[at + 1] === "name"));
+  // A browser word in the name only helps classify what is otherwise unknown.
+  if (named.some((word) => browserNames.has(word))) return false;
+  const described = String(tool.description ?? "");
+  if (named.some((word) => strongNames.has(word))) return true;
   if (named.some((word) => weakNames.has(word)) && screenNouns.test(described)) return true;
   return screenNouns.test(described) && screenVerbs.test(described) && !/\b(browser|web ?page|tab)\b/i.test(described);
 }

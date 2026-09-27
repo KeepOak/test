@@ -67,7 +67,7 @@ import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
-import { learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
+import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
 import { contractHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
@@ -2819,7 +2819,9 @@ ${run.output.slice(0, 6000)}`;
   contextWindowFor(preset?: ModelPreset): number {
     const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
     const local = chosen ? presetRunsLocally(chosen) : false;
-    return knobs.contextWindow(this.store, this.owner, modelWindow(this.store, this.owner, chosen, local));
+    // Dogfood follow-up: a connection billed per token is held to billedRoomDefault unless the owner's figure says more.
+    const billed = chosen ? !local && !isSignInConnection(chosen) : false;
+    return knobs.contextWindow(this.store, this.owner, billedRoom(modelWindow(this.store, this.owner, chosen, local), billed));
   }
   /**
    * Dogfood follow-up: what a connection's model list publishes about its model's window, read once per connection

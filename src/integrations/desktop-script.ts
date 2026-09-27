@@ -499,7 +499,8 @@ export class DesktopScriptRunner {
     const locate = this.posix.locate ?? locateProgram;
     const problem = posixAvailability(this.platform, this.posix.env ?? process.env, locate);
     if (problem) throw new Error(problem);
-    const exec = this.posix.exec ?? runBounded;
+    // A program finder handed in by code (tests only; Branch itself never passes one) may point at a test's stand-in.
+    const exec = this.posix.exec ?? boundedRunner(this.posix.locate !== undefined);
     if (this.platform === 'darwin') {
       const folder = await this.privateFolder();
       const script = join(folder, 'branch-desktop.js');
@@ -527,9 +528,13 @@ export class DesktopScriptRunner {
   }
 }
 
-/** A Mac or Linux program run through the same bounded runner, with only the search path passed on. */
-const runBounded: PosixExec = async (executable, args, signal) => {
-  assertRealScreenAllowed(executable); // dogfood follow-up: a test's own stand-in in the temp folder may run
+/**
+ * A Mac or Linux program run through the same bounded runner, with only the search path passed on. Dogfood follow-up:
+ * the real-screen guard is asked first; only when the program came from a finder handed in by code may a test's own
+ * stand-in in the temp folder run.
+ */
+const boundedRunner = (standIns: boolean): PosixExec => async (executable, args, signal) => {
+  assertRealScreenAllowed(standIns ? executable : undefined);
   const child = new ShellProcess({
     executable, args, cwd: tmpdir(),
     env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin', HOME: process.env.HOME ?? tmpdir(), TMPDIR: tmpdir(),
