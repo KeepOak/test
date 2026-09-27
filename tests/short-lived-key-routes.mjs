@@ -363,6 +363,12 @@ export const ROUTES = {
   // (with the check code) is refused to keys by the /api/devices reads rule; answering and leaving are the owner's.
   "/api/devices/join": "owner POST",
   "/api/devices/join/leave": "owner POST",
+  // find-computers: "Found nearby" in Pair another computer, and waiting to be found. Reading the list is refused to
+  // keys by the /api/devices reads rule; looking, offering the invitation and being found are the owner's.
+  "/api/devices/find": "owner POST",
+  "/api/devices/find/offer": "owner POST",
+  "/api/devices/join/find": "owner POST",
+  "/api/devices/join/find/refuse": "owner POST",
   "/api/devices/[a-f0-9]{16}/switch": "owner POST",
   "/api/devices/[a-f0-9]{16}/folder": "owner POST",
   "/api/devices/[a-f0-9]{16}/share": "owner POST",
