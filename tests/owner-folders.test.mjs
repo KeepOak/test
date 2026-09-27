@@ -358,3 +358,15 @@ test("an approval raised after a tool starts preserves uncertain side effects af
     assert.match(transcript, /may already have changed something/);
   }
 });
+
+test("an inner owner-folder preflight cannot mark its enclosing tool as never executed", async (t) => {
+  const { app } = await fixture(t, [call("files.read", { path: "list.txt" })]);
+  app.registry.execute = async () => {
+    throw new ApprovalRequiredError("files.ownerFolder", "Downloads", "Work in Downloads", "session", undefined,
+      { beforeExecution: true });
+  };
+  const run = await app.runtime.run({ prompt: "Read list.txt" });
+  assert.equal(run.status, "needs_input");
+  const result = app.store.messages(run.sessionId).filter((m) => m.role === "tool").at(-1);
+  assert.match(result.content, /"outcome":"unknown"/);
+});

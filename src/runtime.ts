@@ -4547,7 +4547,10 @@ ${run.output.slice(0, 6000)}`;
       // conversation pauses on that step's question, exactly as if the model had called it itself.
       if (e instanceof ApprovalRequiredError) {
         span?.end("error", "waiting for the person");
-        if (!e.asked.beforeExecution) this.store.event(context.runId, "policy.execution_unknown", { id: call.id });
+        // An inner file preflight does not prove an enclosing recipe never ran its earlier steps.
+        const untouched = e.asked.beforeExecution && e.tool === "files.ownerFolder"
+          && (call.name === "files.list" || call.name === "files.move");
+        if (!untouched) this.store.event(context.runId, "policy.execution_unknown", { id: call.id });
         this.askApproval(context, { tool: e.tool, label: e.label, target: e.target,
           source: this.sourceOf(context), remember: e.remember, ...e.asked, fingerprint: e.fingerprint }, call.id);
       }
