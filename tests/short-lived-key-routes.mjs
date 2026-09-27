@@ -1127,6 +1127,7 @@ export const ROUTES = {
   "/api/tools/forget": "other POST",
   "/api/tools/forms": "look",
   "/api/tools/meaning-search": "task POST",
+  "/api/tools/context": "owner POST",
   "/api/tools/notes/:id": "other DELETE",
   "/api/tools/try": "task POST",
   // mac7/smoke-fixes (B4): the terminal beside an open window. Making, listing and taking back a

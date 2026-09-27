@@ -62,6 +62,7 @@ import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
 import { supportsImages } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
+import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
 import { contractHold } from "./self-development-contract.js"; // Q12
@@ -440,6 +441,12 @@ export class Runtime {
   private readonly steers = new Map<string, { note: string; from: string | undefined }[]>();
   /** The catalog each running task is showing the model, so a tool it found stays loaded. */
   private readonly catalogs = new Map<string, ToolLoader>();
+  /**
+   * The owner's tasks that started holding every permission Branch had. A server the owner connects while one of them
+   * is working is theirs to use from its next round (its calls still go through the approval gate one by one); a task
+   * narrowed to less, or a household person's, keeps exactly what it started with.
+   */
+  private readonly wholeKit = new Set<string>();
   /** Conversations already put back in this launch, so it is done once and not on every task. */
   private readonly carriedBack = new Set<string>();
   /** Toolboxes a conversation brought back with it, opened again from its next task's first round. */
@@ -1452,6 +1459,7 @@ ${run.output.slice(0, 6000)}`;
       // the task at the top of a delegation writes it; a helper it started is not the conversation.
       if ((context.scratchRoot ?? run.id) === run.id) this.rememberCarried(run);
       this.catalogs.delete(run.id);
+      this.wholeKit.delete(run.id);
       // The scratch area belongs to the whole delegation tree, so only its top task empties it.
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
@@ -2322,11 +2330,19 @@ ${run.output.slice(0, 6000)}`;
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),
       noteOf: (name) => notes.get(name) ?? "",
+      // The owner's "Always in context" / "Load when needed" per server, plugin and skill, read every round.
+      sourceOf: (name) => this.registry.sourceOf(name),
+      contextModes: () => readContextModes(this.store, context.owner),
       // Only when the owner has said yes. With nothing here, searching is by words alone and
       // nothing about the request ever leaves this computer.
       ...this.meaningOption(run.id),
     });
     this.catalogs.set(run.id, catalog);
+    // Only the owner's own task, read from what the task recorded at its start, never from whoever is at the window
+    // now: never a household person's (or one in a conversation lent from them), a short-lived key's, a chat app's or
+    // other program's, and never a Trunk's, which reaches only the servers the owner gave it.
+    if (this.ownersOwnTask(run.id) && !runOrigin(this.store, run.id).lentTo && !context.trunk
+      && this.registry.permissions().every((permission) => context.permissions.has(permission))) this.wholeKit.add(run.id);
     this.toolWork.set(run.id, { searched: [], called: [], failures: new Map(), rounds: 0 });
     const coding = looksLikeCodingWork(run.prompt, [...guessed, ...opened]);
     this.store.event(run.id, "catalog.preselected", { guessed, available, tools: tools.length, coding,
@@ -2339,6 +2355,13 @@ ${run.output.slice(0, 6000)}`;
    */
   private reindex(run: Run, context: ToolContext, catalog: ToolLoader): void {
     const notes = this.store.toolUsage.noteMap(context.owner);
+    // A connected server's tools each carry a permission of their own name, which a task that started before the
+    // server connected could not have held. One that started with everything is given them (see `wholeKit`).
+    if (this.wholeKit.has(run.id) && context.permissions instanceof Set) {
+      const held = new Set(this.registry.permissions());
+      for (const name of this.registry.names())
+        if (this.registry.sourceOf(name)?.startsWith("mcp:") && held.has(name)) context.permissions.add(name);
+    }
     catalog.refresh(this.registry.descriptions(context.permissions), {
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),

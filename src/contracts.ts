@@ -438,6 +438,8 @@ export interface ToolDefinition<T = unknown> {
   group?: string;
   /** From a connected server, a plugin or a skill package: its description is somebody else's text. */
   external?: boolean;
+  /** Where it came from ("plugin:<id>"; a server's tools are known by their names), for the owner's context modes. */
+  source?: string;
   permission: string;
   /**
    * Q59: "outbound" when the tool sends a request over the network or acts on a web page or another
