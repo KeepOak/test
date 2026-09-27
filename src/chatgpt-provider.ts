@@ -42,7 +42,7 @@ export class ChatGPTProvider implements Provider {
     return null;
   }
   async complete(request: CompletionRequest): Promise<Completion> {
-    refuseSignInForTrunk(); // mac7/lockdown-fix: a ChatGPT sign-in never answers for a Trunk
+    refuseSignInForTrunk(); // mac7/lockdown-fix: a ChatGPT sign-in answers a Trunk only for work the owner is behind
     const stream = new ResponsesStream(request.onTextDelta ?? (() => {}), request.onReasoningDelta);
     try {
       const response = await this.send(request);

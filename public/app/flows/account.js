@@ -3,7 +3,8 @@
    Models › Connections, the account menu both of them open, and the "Add an account" wizard:
    step 1 picks a service, step 2 takes a key for a key connection, step 3 names the account, says which Trunks use it
    and where it goes in the order. A key is read from its field once, sent at once with POST /api/accounts/add, and the
-   field is emptied: it is never drawn back, kept in a variable or saved in this window. */
+   field is emptied: it is never kept in a variable or saved in this window. Only when the engine refuses it is it put
+   back in the key box it came from (keyBack), so the person can fix the address without pasting it again. */
 
 import { $, esc, render } from "../core/dom.js";
 import { openDlg, openPop, closePop, closeDlg, dialog, ic, mi, toast } from "../core/ui.js";
@@ -149,10 +150,9 @@ function step3() {
   const p = poolById(W.pool);
   const name = W.name || W.saved?.label || defaultName(p);
   const quick = [t("window.flows.acct.personal"), t("window.flows.acct.work"), t("window.flows.acct.side-project")].map((x) => `<button class="chip6" type="button" data-act="aa-nm" data-v="${esc(`${p?.name ?? W.pool} · ${x}`)}">${esc(x)}</button>`).join("");
-  /* A sign-in is never used for a Trunk (src/trunks/accounts.ts), so for a sign-in connection the chips are greyed. */
-  const keyPool = p?.kind === "api-key";
+  /* A Trunk may use a sign-in for the owner's own work (src/accounts/trunk-guard.ts), so a sign-in is picked like a key. */
   const who = [["anyone", t("window.flows.acct.anyone")], ...E.trunks.map((tr) => [tr.id, tr.name])]
-    .map(([id, l]) => `<button class="chip6" type="button" data-act="aa-tr" data-v="${esc(id)}" aria-pressed="${keyPool && W.trunks.includes(id)}" ${keyPool ? "" : 'disabled aria-disabled="true"'}>${esc(l)}</button>`).join("");
+    .map(([id, l]) => `<button class="chip6" type="button" data-act="aa-tr" data-v="${esc(id)}" aria-pressed="${W.trunks.includes(id)}">${esc(l)}</button>`).join("");
   const pos = [["first", t("window.flows.acct.first")], ["last", t("window.flows.acct.last")]].map(([v, l]) => `<button type="button" data-act="aa-pos" data-v="${v}" aria-pressed="${W.pos === v}">${l}</button>`).join("");
   const head = W.saved ? `<div class="prow" data-css="border:0;padding:0 0 8px">${logo(W.pool, p?.name, 36)}<span class="grow"><b>${esc(W.saved.label)}</b><small>${esc(p?.name ?? W.pool)}</small></span></div>` : "";
   return `${head}<label class="fld"><span>${t("window.flows.acct.call-it")}</span><input class="inp" id="aa-name" value="${esc(name)}" maxlength="40" autocomplete="off"></label>
@@ -221,8 +221,8 @@ function pickService(id) {
   draw();
 }
 
-/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere. Once the
-   engine has made the connection, step 3 names it and places it like any other account. */
+/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere (a refused
+   one is put back in its box, see keyBack). Once the engine has made the connection, step 3 names it and places it like any other account. */
 async function addService(key) {
   keepExtras();
   const extras = Object.fromEntries(Object.entries(W.extras).filter(([, v]) => String(v).trim()));
@@ -232,6 +232,14 @@ async function addService(key) {
     Object.assign(W, { pool: made.id, service: null, extras: {}, saved: poolById(made.id)?.accounts?.[0] ?? null, step: 3, error: "" });
   } catch (error) { W.error = error.message; }
   draw();
+  if (W.error) keyBack(key);
+}
+
+/* A refused key goes back into the new key box, so fixing the address does not mean pasting it again. It is put back
+   from this call only; nothing in W holds it. */
+function keyBack(key) {
+  const field = $("#aa-key");
+  if (field && key) field.value = key;
 }
 
 /* The key goes to the engine at once, under the account's first name; step 3 renames it if asked. */
@@ -250,6 +258,7 @@ async function addKey() {
   } catch (error) { W.error = error.message; }
   await loadAccounts();
   draw();
+  if (W.error) keyBack(value);
 }
 
 const keepName = () => { const v = $("#aa-name")?.value; if (v !== undefined) W.name = v; };
@@ -290,7 +299,6 @@ async function place(id, view) {
 /* Which Trunks use it: each chosen Trunk's keys.accounts names this account for this connection (POST /api/trunks/<id>
    replaces the whole keys object, so the rest of it is carried over from the Trunk as the engine has it now). */
 async function useInTrunks(id) {
-  if (poolById(W.pool)?.kind !== "api-key") return;
   for (const trunkId of W.trunks.filter((id) => id !== "anyone")) {
     const { trunk } = await api(`trunks/${encodeURIComponent(trunkId)}`);
     const keys = trunk?.keys ?? { copyFromOwner: true, accounts: {} };
@@ -299,7 +307,6 @@ async function useInTrunks(id) {
 }
 
 function toggleTrunk(v) {
-  if (poolById(W.pool)?.kind !== "api-key") return;
   keepName();
   W.trunks = W.trunks.includes(v) ? W.trunks.filter((x) => x !== v) : [...W.trunks, v];
   draw();

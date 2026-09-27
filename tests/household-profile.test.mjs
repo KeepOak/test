@@ -299,6 +299,22 @@ test("the owner's PIN for switching back: off by default, then checked like a pe
   await back();
 });
 
+test("QA Q001: the owner's PIN is never a person's PIN, whichever of the two is set first", async (t) => {
+  const { app, call } = await served(t);
+  // Set a PIN (the person menu's notice, or Team › Signing in) with Sam's PIN: refused, and nothing is set.
+  const same = await call("POST", "/api/profiles/owner-pin", { pin: "2468" });
+  assert.equal(same.status, 400);
+  assert.match(same.body.error, /must not be the same/);
+  assert.equal(app.store.profiles.ownerPinOn(), false);
+  assert.deepEqual((await call("POST", "/api/profiles/owner-pin", { pin: "9753" })).body, { ownerPin: true });
+  // With the owner's PIN set, somebody new may not be given it.
+  const added = await call("POST", "/api/profiles", { name: "Ada", pin: "9753" });
+  assert.equal(added.status, 400);
+  assert.match(added.body.error, /must not be the same/);
+  assert.equal(app.store.profiles.list().length, 1, "nobody was added with the owner's PIN");
+  assert.equal((await call("POST", "/api/profiles", { name: "Ada", pin: "1357" })).status, 200);
+});
+
 test("the owner's PIN for switching back: a restart comes back on the person's profile, and only while it is set", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-household-restart-"));
   t.after(() => discardTemp(root));

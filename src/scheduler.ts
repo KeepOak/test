@@ -2,7 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { lateNote } from "./never-break/resume.js"; // mac3/never-break
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
 import { z } from "zod";
-import { startedFromChat } from "./key-context.js"; // mac7/chat-source
+import { runOrigin, shortLivedKeyMark, startedFromChat, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // mac7/chat-source
+import { asPerson, currentPerson } from "./people/context.js"; // trunks-use-subscriptions
 import type { ToolContext, Run } from "./contracts.js";
 import type { Store, SavedRecord } from "./store.js";
 import type { Runtime } from "./runtime.js";
@@ -17,6 +18,9 @@ const timezone = z.string().min(1).max(64).refine((zone) => {
 }, "Unknown timezone");
 const sendingToChats = "Sending messages to your chats";
 const trunkMayNotSend = "The Trunk that made this schedule may no longer send to chats, so its result was kept here.";
+/** trunks-use-subscriptions: the programs and chats a Trunk-made schedule stays held as. */
+type OutsideSource = "mcp" | "a2a" | "acp" | "channel";
+const outsideSources = new Set<string>(["mcp", "a2a", "acp", "channel"]);
 export const ScheduleSchema = z
   .object({
     prompt: z.string().min(1).max(8000),
@@ -168,7 +172,7 @@ export class Scheduler {
    * R17-A (Trunks): a schedule a Trunk owns runs as that Trunk, and its result is handed back so it
    * lands in the Trunk's own conversation (src/trunks/routines.ts). Nothing is changed until connected.
    */
-  routeRun: (scheduleId: string) => { options: { trunkId: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null = () => null;
+  routeRun: (scheduleId: string) => { options: { trunkId: string; title?: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null = () => null;
   /** Why a schedule a Trunk made may not run now (its part switched off), or null; set by src/trunks. */
   trunkHeld: (trunkId: string) => string | null = () => null;
   constructor(
@@ -211,12 +215,31 @@ export class Scheduler {
       // held to the same guards. Without this, a chat could put owner-only work behind a due time.
       ...(startedFromChat(context, this.store) ? { fromChat: true } : {}),
       // Q118: a schedule a Trunk makes stays that Trunk's work, so each turn runs as it, never as the owner.
-      ...(startedBy ? { startedBy } : {}),
+      ...(startedBy ? { startedBy, ...this.madeFor(context) } : {}),
       status: definition.gate ? "paused" : "pending",
       ...(definition.gate ? { gateApproved: null, pausedBecause: awaitingApproval } : {}),
       history: [],
       ...(webhook ? { hookToken: randomBytes(24).toString("hex") } : {}),
     });
+  }
+  /**
+   * trunks-use-subscriptions: who was behind the Trunk's work that made a schedule (a household person, a
+   * short-lived key, another program), so each turn runs as them and never as the owner's own work.
+   */
+  private madeFor(context: ToolContext): Record<string, unknown> {
+    const origin = context.runId ? runOrigin(this.store, context.runId) : null;
+    const person = currentPerson()?.profileId ?? origin?.personProfileId ?? origin?.lentTo ?? null;
+    const key = startedWithShortLivedKey() || origin?.shortLivedKey === true;
+    const outside = origin && outsideSources.has(origin.source) ? origin.source : null;
+    return { ...(person ? { madeForPerson: person } : {}), ...(outside ? { madeFrom: outside } : {}),
+      ...(key ? { madeWithKey: shortLivedKeyMark().keyId ?? origin?.keyIds[0] ?? "" } : {}) };
+  }
+  /** trunks-use-subscriptions: a Trunk-made schedule's turn, as whoever was behind the work that made it. */
+  private asMaker<T>(data: Record<string, unknown>, work: () => Promise<T>): Promise<T> {
+    const person = typeof data.madeForPerson === "string" ? data.madeForPerson : null;
+    const asWho = person ? () => asPerson({ profileId: person, keyId: "schedule" }, work) : work;
+    if (typeof data.madeWithKey !== "string") return asWho();
+    return underShortLivedKey(asWho, data.madeWithKey ? { keyId: data.madeWithKey } : {});
   }
   async tick(now = new Date()): Promise<Run[]> {
     const results: Run[] = [];
@@ -325,7 +348,7 @@ export class Scheduler {
       if (held) throw new Error(held);
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
         prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: data.permissions as string[],
-        source: data.fromChat === true ? "channel" : "schedule", ...route?.options,
+        source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
         ...(madeBy ? { trunkId: madeBy } : {}),
@@ -334,7 +357,7 @@ export class Scheduler {
       });
       // Q118: a schedule a Trunk made (not one of its routines, which run as it already) runs as that Trunk,
       // and not at all once the Trunk is gone.
-      const run = madeBy ? await this.runtime.asTrunkWork(madeBy, work) : await work();
+      const run = madeBy ? await this.asMaker(data, () => this.runtime.asTrunkWork(madeBy, work)) : await work();
       Object.assign(entry, { runId: run.id, status: run.status, finishedAt: new Date().toISOString() });
       route?.finished(run); // R17-A (Trunks)
       this.runtime.notifyEvent("schedule.fired", { scheduleId: record.id, runId: run.id, status: run.status, trigger });

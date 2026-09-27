@@ -43,7 +43,7 @@ function liveFace(run) {
 function nowPart() {
   const running = (E.state.runs ?? []).filter((r) => r.status === "running" || r.status === "needs_input");
   const waiting = (E.state.trunkWaiting?.length || 0) + (E.state.attention ?? []).filter((w) => !w.parentRunId).length + approvals;
-  const rows = running.slice(0, 3).map((r) => `<button class="row" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}"><span class="avw">${liveFace(r)}</span><b>${esc(whoFor(r))}</b>${r.aside ? "" : `<p>${esc(firstLine(r.prompt))}</p>`}</button>`).join("");
+  const rows = running.slice(0, 3).map((r) => `<button class="row" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}"><span class="avw">${liveFace(r)}</span><b>${esc(whoFor(r))}</b>${r.aside ? "" : `<p>${esc(r.title ?? firstLine(r.prompt))}</p>`}</button>`).join("");
   const act = waiting ? `<button class="btn pri sm" type="button" data-act="view" data-v="inbox">${t("window.places.overview.answer-waiting-waiting", { waiting })}</button>` : `<span class="pill done"><i></i>${t("ov.calm")}</span>`;
   return `<div class="ovs-now"><h2>${t("dashboard.area.now")}</h2>${rows || `<p>${t("ov.now.none")}</p>`}<div class="acts">${act}</div></div>`;
 }
@@ -83,7 +83,7 @@ function duration(r) {
   return Math.floor(secs / 60) > 0 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
 }
 function recentTile() {
-  const rows = shown().slice(0, 4).map((r) => `<div class="ovs-act">${av(chatFace(r.sessionId), 20)}<span>${esc(firstLine(r.prompt))}</span><span class="ovs-dur">${duration(r)}</span></div>`).join("");
+  const rows = shown().slice(0, 4).map((r) => `<div class="ovs-act">${av(chatFace(r.sessionId), 20)}<span>${esc(r.title ?? firstLine(r.prompt))}</span><span class="ovs-dur">${duration(r)}</span></div>`).join("");
   return `<section class="tile"><h2>${t("window.places.overview.recent-activity")}</h2>${rows}<div class="acts"><button class="btn sm" type="button" data-act="ptab" data-place="inbox" data-v="history">${t("window.places.overview.all-history")}</button></div></section>`;
 }
 

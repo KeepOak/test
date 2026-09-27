@@ -16,7 +16,7 @@ import { Locker, type LockerKeySource } from "./locker.js";
 import { Secrets } from "./vault.js";
 import { Receipts } from "./receipts.js";
 import { CollabEvents, ownerMember } from "./collab-events.js";
-import { AuditLog } from "./audit.js";
+import { AuditLog, audit } from "./audit.js";
 import { achievementTallies, type AchievementTallies, type EventScan } from "./achievement-tallies.js"; // phase2/delight
 import { MemoryReview } from "./memory-review.js";
 import { SkillGovernance } from "./skill-governance.js";
@@ -30,6 +30,8 @@ import { Labels } from "./labels.js";
 import { LeftOutMessages } from "./left-out.js";
 import { ReadMarks } from "./read-marks.js";
 import { ConversationPaths } from "./conversation-paths.js";
+import { ConversationMarks } from "./conversation-actions.js";
+import { findResidue, forgetResidue } from "./conversation-residue.js";
 import { MediaComments } from "./media-comments.js";
 import { ShareLinks } from "./conversation-share.js";
 import { Profiles } from "./profiles.js";
@@ -59,6 +61,10 @@ export class Store {
   readonly leftOut: LeftOutMessages;
   readonly readMarks: ReadMarks;
   readonly paths: ConversationPaths;
+  /** Pinned, renamed, archived and Recently Deleted conversations (src/conversation-actions.ts). */
+  readonly conversations: ConversationMarks;
+  /** The clock Recently Deleted counts its 30 days by; tests move it. */
+  clock: () => number = Date.now;
   private readonly memories: MemoryFacts;
   readonly review: MemoryReview;
   private governanceStore: SkillGovernance | undefined;
@@ -147,6 +153,7 @@ export class Store {
         UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
+    this.conversations = new ConversationMarks(this.db, () => this.clock());
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
     this.toolUsage = new ToolUsage(this.db);
@@ -246,6 +253,87 @@ export class Store {
       throw new Error("Wait for the active task before deleting this conversation");
     return this.purgeSession(sessionId);
   }
+  /**
+   * Conversations that go with this one and share its fate: a room's Trunks' own sides (set by src/index.ts). Their
+   * work counts as the room's when deleting, and they are removed for good with it.
+   */
+  conversationCompanions: (sessionId: string) => readonly string[] = () => [];
+  /** Called before a conversation is removed for good, so a Trunk or room pointing at it is given another or removed. */
+  beforeConversationPurge: (sessionId: string) => void = () => undefined;
+  /** The files tasks kept beside the database (src/artifacts.ts), listed and removed with their conversation. */
+  runFiles: { held(runIds: readonly string[]): { name: string; bytes: number }[]; forget(runIds: readonly string[]): void } =
+    { held: () => [], forget: () => undefined };
+  /** The files a conversation's messages carry (they live in its own folder beside the database), by name and size. */
+  private attachedFiles(sessionId: string): { name: string; bytes: number }[] {
+    return this.db.prepare("SELECT body FROM messages WHERE session_id=? AND body LIKE '%\"attachments\"%'").all(sessionId)
+      .flatMap((row) => ((JSON.parse(String(row.body)) as Message).attachments ?? []).map((ref) => ({ name: ref.name, bytes: ref.bytes })));
+  }
+  private runIdsOf(sessionIds: readonly string[]): string[] {
+    return this.db.prepare("SELECT id FROM tasks WHERE session_id IN (SELECT value FROM json_each(?))").all(JSON.stringify(sessionIds)).map((row) => String(row.id));
+  }
+  pinConversation(owner: string, sessionId: string, input: unknown) { return this.conversations.pin(owner, sessionId, input); }
+  renameConversation(owner: string, sessionId: string, input: unknown) { return this.conversations.rename(owner, sessionId, input); }
+  archiveConversation(owner: string, sessionId: string, input: unknown) {
+    return this.conversations.archive(owner, sessionId, input, this.conversationCompanions(sessionId));
+  }
+  deleteConversation(owner: string, sessionId: string) {
+    return this.conversations.delete(owner, sessionId, this.conversationCompanions(sessionId));
+  }
+  restoreConversation(owner: string, sessionId: string) { return this.conversations.restore(owner, sessionId); }
+  /** Archived and Recently Deleted, a page at a time. Reading them never removes anything (purgeExpiredConversations). */
+  putAwayConversations(owner: string, input: unknown = {}) {
+    return this.conversations.putAway(owner, input, this.hiddenSessions());
+  }
+  /** Exactly what "Delete now" removes, so the question can list it. */
+  deleteNowPreview(owner: string, sessionId: string) {
+    this.conversations.requireDeletable(owner, sessionId, this.conversationCompanions(sessionId));
+    const ids = [sessionId, ...this.conversationCompanions(sessionId)], list = JSON.stringify(ids);
+    const messages = Number(this.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id IN (SELECT value FROM json_each(?))").get(list)?.n ?? 0);
+    const runIds = this.runIdsOf(ids), residue = findResidue(this.db, runIds);
+    return { sessionId, messages, tasks: runIds.length, files: [...ids.flatMap((id) => this.attachedFiles(id)), ...this.runFiles.held(runIds)],
+      facts: residue.facts.map((fact) => fact.text), todos: residue.todos.map((todo) => todo.text),
+      cards: residue.cards.map((card) => card.title), versions: residue.versions.map((version) => version.path) };
+  }
+  /** "Delete now": removes one conversation in Recently Deleted for good, with what goes with it. */
+  deleteConversationNow(owner: string, sessionId: string) {
+    const preview = this.deleteNowPreview(owner, sessionId);
+    this.purgeForGood(sessionId);
+    return { deleted: true, messages: preview.messages, tasks: preview.tasks, files: preview.files.length,
+      facts: preview.facts.length, todos: preview.todos.length, cards: preview.cards.length, versions: preview.versions.length };
+  }
+  /** "Delete all": empties this person's Recently Deleted. A conversation with work still going is left, and counted. */
+  emptyRecentlyDeleted(owner: string) {
+    const ids = this.conversations.deletedIds(owner);
+    const busy = ids.filter((id) => this.conversations.busy([id, ...this.conversationCompanions(id)]));
+    for (const id of ids) if (!busy.includes(id)) this.purgeForGood(id);
+    return { deleted: ids.length - busy.length, kept: busy.length };
+  }
+  /**
+   * The engine's own upkeep (src/index.ts, at start and every hour; no route calls it): removes every conversation whose
+   * 30 days in Recently Deleted are over, unless it has work still going, and writes each one's title to the audit record.
+   */
+  purgeExpiredConversations(): number {
+    let removed = 0;
+    for (const id of this.conversations.expired()) {
+      if (this.conversations.busy([id, ...this.conversationCompanions(id)])) continue;
+      const owner = String(this.db.prepare("SELECT owner FROM sessions WHERE id=?").get(id)?.owner ?? "");
+      audit(this, owner || "local", { action: "history.pruned", actor: "Recently Deleted", subject: this.conversations.titleOf(id).slice(0, 300),
+        reason: "Its 30 days in Recently Deleted were over", outcome: "deleted" });
+      this.purgeForGood(id);
+      removed += 1;
+    }
+    return removed;
+  }
+  private purgeForGood(sessionId: string): void {
+    const companions = [...this.conversationCompanions(sessionId)], runIds = this.runIdsOf([sessionId, ...companions]);
+    const residue = findResidue(this.db, runIds);
+    this.beforeConversationPurge(sessionId);
+    this.purgeSession(sessionId);
+    for (const id of companions) if (this.db.prepare("SELECT 1 AS found FROM sessions WHERE id=?").get(id)) this.purgeSession(id);
+    this.db.exec("BEGIN");
+    try { forgetResidue(this.db, runIds, residue); this.db.exec("COMMIT"); } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    this.runFiles.forget(runIds);
+  }
   importSession(owner: string, input: unknown) {
     return this.library.import(owner, input);
   }
@@ -261,8 +349,11 @@ export class Store {
         .get(sessionId, owner)
     )
       throw new Error("Session not found");
-    if (sessionId)
+    if (sessionId) {
       this.reconcileMessages(sessionId, "previous run interruption");
+      // A new message in an archived or deleted conversation brings it back to Recent, as a new text does in iMessage.
+      this.conversations.revive(sessionId);
+    }
     const session = sessionId ?? randomUUID();
     this.db
       .prepare("INSERT OR IGNORE INTO sessions(id,owner,created_at,temporary) VALUES(?,?,?,?)")
@@ -367,6 +458,15 @@ export class Store {
   markAside(runId: string, options: { recent?: false } = {}): void {
     this.event(runId, "run.aside", options);
   }
+  /**
+   * DESIGN-DIRECTION PR 2: each task's plain title for lists: the one the engine gave it (`run.titled`, a room turn's),
+   * else its prompt's first line. One query for the whole list.
+   */
+  runTitles(runs: readonly Run[]): Map<string, string> {
+    const given = new Map(this.db.prepare("SELECT run_id AS id, json_extract(data,'$.title') AS title FROM events WHERE kind='run.titled' AND run_id IN (SELECT value FROM json_each(?))")
+      .all(JSON.stringify(runs.map((run) => run.id))).map((row) => [String(row.id), String(row.title ?? "")]));
+    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!.slice(0, 200)]));
+  }
   /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
   keptFromRecent(runId: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.aside' AND json_extract(data,'$.recent')=0").get(runId);
@@ -390,6 +490,7 @@ export class Store {
     return this.purgeSession(sessionId);
   }
   private purgeSession(sessionId: string): { discarded: boolean; messages: number } {
+    const runIds = JSON.stringify(this.db.prepare("SELECT id FROM tasks WHERE session_id=?").all(sessionId).map((row) => String(row.id)));
     this.db.exec("BEGIN");
     try {
       // Q63: an open team task this conversation held part of is marked as such, in this transaction and
@@ -412,11 +513,27 @@ export class Store {
       this.db.prepare("DELETE FROM session_branches WHERE session_id=? OR parent_session_id=?").run(sessionId, sessionId);
       this.db.prepare("DELETE FROM session_summaries WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM session_work WHERE session_id=?").run(sessionId);
+      this.forgetConversationRows(sessionId, runIds);
       this.db.prepare("DELETE FROM sessions WHERE id=?").run(sessionId);
       this.db.exec("COMMIT");
       for (const listener of this.sessionClosedListeners) try { listener(sessionId); } catch { /* never fails a discard */ }
       return { discarded: true, messages: Number(messages) };
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+  /**
+   * The rest of what names a conversation or its tasks: where it came from, its share links, labels, name and pin, its
+   * waiting line, rewinds, snapshots, undo, token count and the traces of its tasks. A table another part opens later is
+   * left alone when it is not there. Kept on purpose: the append-only records (audit, activity_chain), which are
+   * chained and name a task only by id, and whatever a task wrote into the owner's own folders or lists.
+   */
+  private forgetConversationRows(sessionId: string, runIds: string): void {
+    const has = (table: string) => !!this.db.prepare("SELECT 1 AS found FROM sqlite_schema WHERE type='table' AND name=?").get(table);
+    for (const table of ["session_origins", "conversation_shares", "memory_suppressions", "session_tokens", "rewinds", "workspace_undo", "conversation_marks"])
+      if (has(table)) this.db.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(sessionId);
+    if (has("labels")) this.db.prepare("DELETE FROM labels WHERE target='conversation' AND target_id=?").run(sessionId);
+    if (has("run_queue")) this.db.prepare("DELETE FROM run_queue WHERE session_id=? OR run_id IN (SELECT value FROM json_each(?))").run(sessionId, runIds);
+    if (has("turn_snapshots")) this.db.prepare("DELETE FROM turn_snapshots WHERE session_id=? OR run_id IN (SELECT value FROM json_each(?))").run(sessionId, runIds);
+    if (has("spans")) this.db.prepare("DELETE FROM spans WHERE run_id IN (SELECT value FROM json_each(?))").run(runIds);
   }
   private discardTemporarySessions(): void {
     for (const row of this.db.prepare("SELECT id FROM sessions WHERE temporary=1").all())
@@ -446,7 +563,8 @@ export class Store {
   runs(owner: string): Run[] {
     return this.db
       .prepare(
-        "SELECT * FROM tasks WHERE owner=? ORDER BY created_at DESC, rowid DESC LIMIT 100",
+        // A conversation in Recently Deleted keeps its tasks, out of sight with it.
+        "SELECT * FROM tasks WHERE owner=? AND session_id NOT IN (SELECT session_id FROM conversation_marks WHERE deleted_at IS NOT NULL) ORDER BY created_at DESC, rowid DESC LIMIT 100",
       )
       .all(owner)
       .map((row) => this.toRun(row));

@@ -275,6 +275,12 @@ async function folders(base: string): Promise<{ dataDir: string; workspace: stri
   };
 }
 /**
+ * Beta builds in a folder of its own that is kept between builds, so a normal merge takes minutes: the data folder's
+ * `updates/`, which the assistant may never change (src/never-break/protected.ts) and the copy of the data folder
+ * taken before each update leaves out (src/install/data-copy.ts).
+ */
+const betaBuildDir = (dataDir: string): string => join(dataDir, "updates", "beta-build");
+/**
  * mac7/safe-rollback: the app's Update button writes the same record `branch update --yes` does, so
  * a person who updates from the window can go back afterwards. It stays `staged` until the next
  * start says the swap landed, because this process quits into the hand-over script.
@@ -327,6 +333,7 @@ async function start(): Promise<void> {
       },
       canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
       ...desktopRecord(dataDir), // mac7/safe-rollback
+      buildDir: betaBuildDir(dataDir),
     });
   const chatgpt = new ChatGPTAuth(new FileTokenVault(join(base, "chatgpt-auth.json"), {
     available: () => safeStorage.isEncryptionAvailable(),
@@ -395,6 +402,7 @@ async function start(): Promise<void> {
       // mac3/never-break: the new version is tried on a copy of this data before it is used.
       canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
       ...desktopRecord(dataDir), // mac7/safe-rollback
+      buildDir: betaBuildDir(dataDir),
     });
     // selfdev: the engine and the window are up; a Beta update waiting to see this keeps the new version (updater.ts).
     void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
