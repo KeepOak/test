@@ -9407,7 +9407,7 @@
   "window.p17d.formatting-each-hint": "Les réponses sont écrites une fois puis converties dans la mise en forme de chaque application.",
   "window.p17d.when-connected": "(une fois connectée)",
   "window.p17d.formatting-in": "Mise en forme dans {name}",
-  "window.p17d.formatting-in-hint": "Le gras, les listes et les liens sont convertis en ce qu’affiche {name}.",
+  "window.p17d.formatting-in-hint": "Utiliser les styles de chaque application lorsqu’ils sont disponibles, ou garder les réponses et le code en texte brut.",
   "window.p17d.revoked-title": "Telegram s’est arrêté : son jeton de bot a été révoqué",
   "window.p17d.turn-telegram-off": "Désactiver Telegram",
   "window.p17d.paste-the-new-token": "Coller le nouveau jeton",
@@ -9577,7 +9577,7 @@
   "window.why.n-done": "Branch n’a pas encore de réglage propre pour cela ; les tâches terminées sont dans Boîte de réception › Terminé.",
   "window.why.f15-days-off": "Les heures calmes de Branch sont un créneau quotidien ; les journées entières de repos n’existent pas encore dans Branch.",
   "window.why.f15-pick-the-model-per-task": "Choisissez d’abord les deux sous Par défaut : Tâches rapides et bon marché, et Planification et problèmes difficiles.",
-  "window.why.f15-mix-models-on-hard-questions": "Il faut d’abord choisir un mélange de modèles, et la fenêtre ne permet pas encore d’en choisir un. Désactivé : cela double le coût.",
+  "window.why.f15-mix-models-on-hard-questions": "Il faut d’abord choisir un mélange de modèles, et la fenêtre ne permet pas encore d’en choisir un.",
   "window.why.m-effort-none": "Le modèle utilisé ne prend pas d’effort de réflexion.",
   "window.why.f15-send-each-message-to-the-right-trunk": "Branch ne choisit pas un Trunk avec un modèle de décision ; dans un salon, ses règles du salon décident qui répond.",
   "window.why.f15-sort-the-inbox-by-urgency": "Branch ne trie pas la boîte de réception par urgence ; les modèles de décision ne répondent qu’à l’encadré L’essayer ci-dessous.",
@@ -9998,5 +9998,9 @@
   "window.chat.live.moved-limit-at": "Passé à « {to} » — « {from} » a atteint sa limite, renouvelée à {time}",
   "window.chat.live.moved-credit": "Passé à « {to} » — « {from} » n'a plus de crédit",
   "window.chat.live.moved-refused": "Passé à « {to} » — « {from} » a été refusé par le service",
-  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}"
+  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}",
+  "window.places.library17.import-spreadsheet": "Importer une feuille de calcul",
+  "window.places.library17.import-spreadsheet-hint": "Choisissez un fichier CSV, TSV, JSON ou Excel. Branch le garde dans la Bibliothèque et prépare une question SELECT que vous pouvez lancer.",
+  "window.places.library17.import-spreadsheet-limit": "Choisissez une feuille de calcul de moins de 8 Mo.",
+  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau."
 }

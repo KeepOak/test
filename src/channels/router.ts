@@ -16,6 +16,7 @@ import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type Steps
 import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
 import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAllowed, chatExtraPermissions,
@@ -86,6 +87,8 @@ export interface ChannelAdapter {
   readonly kind: string;
   /** Longest single message this channel accepts; the ledger splits replies to fit. */
   readonly maxTextLength?: number;
+  /** A transport may reserve space for literal-text escaping in its message limit. */
+  configureFormatting?(mode: () => "native" | "plain"): void;
   /**
    * True where every message sent costs the owner money (SMS). Nothing is added to a reply there that was not asked
    * for, such as the steps line an app without edits gets above its reply.
@@ -166,7 +169,7 @@ export interface ChannelAdapter {
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
  * quietly. A progress message arrives quietly; the finished reply that follows it is the one that rings.
  */
-export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined }
+export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined; plain?: boolean | undefined }
 /** R17-C (R17-022): one file on its way into a chat. */
 export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Array; caption?: string }
 
@@ -375,6 +378,7 @@ export class ChannelRouter {
   }
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
+    installChannelFormatting(adapter, () => channelFormatting(this.store, this.runtime.owner, adapter.kind));
     this.adapters.set(adapter.id, { adapter, policy: ChannelPolicySchema.parse(policy) });
     // This resolves once the message has been dealt with. An adapter that reads messages one by one
     // must not wait for it, or a note sent to a running task could never get through (see telegram.ts).
