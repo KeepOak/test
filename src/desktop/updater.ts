@@ -336,8 +336,9 @@ export class Updater {
       await this.tryCanary(stagedDir, expectedVersion); // mac3/never-break; a Beta build reports the version it was built as
       this.stage("copying");
       await this.safetyCopy();
-      this.stage("swapping");
+      // Only once nothing is working: a task that started during the build defers the install, and the swap never began.
       await this.options.beforeStop?.();
+      this.stage("swapping");
       const script = await this.writeScript(stagedDir, await this.stopBackground());
       this.set("ready", "Restarting to finish the update…", 1, release);
       held = options.hold === true;

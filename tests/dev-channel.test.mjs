@@ -674,3 +674,15 @@ test("the steps of a Beta install, as the update screen shows them, with the tar
   assert.ok(auto.filter((status) => status.stages).every((status) => status.automatic === true),
     "update by itself's install says so in every status, so the window keeps it in the background");
 });
+
+test("a task that starts during a background build defers the install, and the swap is never shown as begun", async (t) => {
+  const where = await folders(t), seen = [];
+  const { UpdateDeferredError } = await import("../dist/desktop/updater.js");
+  const dev = updater(where, fakeTools(where), { canary: async () => {}, onChange: (status) => seen.push(status),
+    beforeStop: async () => { throw new UpdateDeferredError("An update is ready, but Branch will wait until every task finishes or is answered."); } });
+  await assert.rejects(dev.install({ automatic: true }), /wait until every task finishes/);
+  assert.ok(seen.every((status) => !status.stages?.some((stage) => ["swapping", "restarting"].includes(stage.id) && stage.state !== "waiting")),
+    "the full screen, which comes up for the swap, never comes up over the owner's work for a swap that did not start");
+  assert.equal(dev.status.phase, "available");
+  assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app");
+});
