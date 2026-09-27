@@ -4,7 +4,7 @@ import type { ToolContext } from "./contracts.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 import type { Knowledge } from "./knowledge.js";
-import { HelperSelectionSchema, type HelperSelection } from "./delegation.js";
+import { HelperSelectionSchema, helperRouteTarget, type HelperSelection } from "./delegation.js";
 
 /**
  * Tools for working with several specialists at once: a parallel fan-out that splits this task's
@@ -121,6 +121,7 @@ export function registerOrchestration(registry: ToolRegistry, runtime: Runtime, 
     description: "Run up to six specialists at once, each on a share of this task's budget. One failure leaves the rest running unless failFast. Combine their answers yourself.",
     permission: "specialists.use",
     parameters: ParallelSchema,
+    target: (a) => helperRouteTarget(a.tasks),
     execute: async (a, c) => runParallel(runtime, knowledge, c, a),
   });
   registry.register({
@@ -134,6 +135,7 @@ export function registerOrchestration(registry: ToolRegistry, runtime: Runtime, 
       /** Why this belongs to them rather than you. It is shown in the conversation. */
       reason: z.string().trim().max(300).default(""),
     }).strict(),
+    target: (a) => helperRouteTarget([a]),
     execute: async (a, c) => handOff(runtime, knowledge, c, a),
   });
   registerScratch(registry, runtime);

@@ -11,6 +11,13 @@ export interface HelperConnection { preset: ModelPreset; accountRef?: HelperAcco
 const HelperRouteSchema = HelperSelectionSchema.extend({ model: poolId });
 export type HelperRoute = z.infer<typeof HelperRouteSchema>;
 
+/** Exact approval target for every helper destination named by a call. */
+export function helperRouteTarget(tasks: readonly ({ specialist: string } & HelperSelection)[]): string {
+  return JSON.stringify(tasks.map(({ specialist, model, accountRef }) => ({
+    specialist, model: model ?? null, accountRef: accountRef ?? null,
+  })));
+}
+
 /** Private session metadata: a helper never follows a later global account or model change. */
 export function helperRoute(store: Store, owner: string, sessionId: string): HelperRoute | null {
   const saved = store.get("settings", owner, `helper-route:${sessionId}`);
