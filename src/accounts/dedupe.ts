@@ -95,7 +95,7 @@ async function mergeOne(service: AccountsService, pool: Pool, into: string, from
 }
 
 const describe = (account: Account): string => JSON.stringify({ id: account.id, label: account.label, createdAt: account.createdAt,
-  pinned: account.pinned, disabled: account.disabled, keptSeparate: account.keptSeparate, monthlyCapUsd: account.monthlyCapUsd });
+  pinned: account.pinned, disabled: account.disabled, monthlyCapUsd: account.monthlyCapUsd });
 
 /** Conversations and Trunks that picked the merged-away account now use the kept one. */
 function repointChoices(service: AccountsService, from: string, into: string): void {

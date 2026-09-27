@@ -210,7 +210,8 @@ export class Attachments {
     private readonly remove: (path: string) => Promise<void> = (path) => rm(path, { recursive: true, force: true }),
     private readonly openRange: (path: string, part: BytesWanted | null) => Readable =
       (path, part) => createReadStream(path, part ? { start: part.start, end: part.end } : {}),
-    private readonly disk: { free?: (path: string) => Promise<number>; now?: () => number } = {},
+    private readonly disk: { free?: (path: string) => Promise<number>; now?: () => number; move?: (from: string, to: string) => Promise<void>;
+      readList?: (path: string) => Promise<string> } = {},
   ) {}
   private freeBytes(path: string): Promise<number> {
     return this.disk.free ? this.disk.free(path) : freeBytesAt(path);
@@ -240,6 +241,14 @@ export class Attachments {
   private saving: Promise<void> = Promise.resolve();
   /** Files being written right now, which a sweep must not take for leftovers of an earlier run. */
   private readonly writing = new Set<string>();
+  /** attach-4: files a message is moving into its conversation right now, held from the sweep the same way. */
+  private readonly moving = new Set<string>();
+  /** attach-5: the start-up restore of files still waiting, while it runs (`restoreIncoming`). */
+  private restoring: Promise<void> | null = null;
+  /** True while the start-up restore runs: a message naming files sent ahead waits for `restored` first. */
+  get restoringNow(): boolean { return this.restoring !== null; }
+  /** Settles once the start-up restore is done, whether or not it read anything back; at once when none runs. */
+  get restored(): Promise<void> { return this.restoring ?? Promise.resolve(); }
   private saveWaiting(): Promise<void> {
     const text = JSON.stringify([...this.incoming.values()].map(({ path: _path, ...kept }) => kept));
     const list = this.waitingList;
@@ -280,6 +289,8 @@ export class Attachments {
     if (!mediaTypeToken.safeParse(input.mediaType).success)
       throw new Error("That file does not say what kind of file it is in a way Branch can use.");
     const name = cleanName(input.name);
+    // attach-5: the waiting files an earlier run left are counted, and kept, before anything new joins them.
+    await this.restored;
     await this.expireIncoming();
     // From the count to the count going up is one synchronous step, so side-by-side sends each see the others.
     const arrivingFiles = this.arrivingFiles.get(who) ?? 0;
@@ -357,6 +368,8 @@ export class Attachments {
   }
   /** Takes a file that was sent ahead off again, before its message goes. Only the one who sent it can. */
   async unstage(who: string, id: string): Promise<boolean> {
+    // attach-5: a file an earlier run left waiting is taken off only once it is back, never restored after it went.
+    await this.restored;
     const staged = this.incoming.get(id);
     if (!staged || staged.who !== who) return false;
     this.incoming.delete(id);
@@ -384,32 +397,48 @@ export class Attachments {
   /** Moves files sent ahead into a conversation's folder, under new ids; the caller holds the turn. */
   private async claim(who: string, ids: readonly string[], folder: string): Promise<{ ref: AttachmentRef; path: string }[]> {
     this.staged(who, ids);
-    // All taken off the waiting list at once, before any move, so nothing else (a second message, the sweep of old
-    // files) can have one of them meanwhile; the ones not moved go back if a move fails.
+    // All taken off the waiting list at once, before any move, so no second message can have one of them meanwhile;
+    // the ones not moved go back if a move fails. Each is held (`moving`) until its move is done, so the start-up
+    // sweep of old files, however slow, never takes one for a leftover (attach-4).
     const taken = ids.map((id) => this.incoming.get(id)!);
-    for (const id of ids) this.incoming.delete(id);
+    for (const id of ids) { this.moving.add(id); this.incoming.delete(id); }
+    const move = this.disk.move ?? rename;
     const moved: { ref: AttachmentRef; path: string }[] = [];
-    for (const [at, one] of taken.entries()) {
-      const ref: AttachmentRef = { id: randomBytes(8).toString("hex"), kind: one.kind, mediaType: one.mediaType, name: one.name, bytes: one.bytes };
-      try {
-        await rename(one.path, join(folder, ref.id));
-      } catch (error) {
-        for (const left of taken.slice(at)) this.incoming.set(left.id, left);
-        await this.saveWaiting();
-        throw error;
+    try {
+      for (const [at, one] of taken.entries()) {
+        const ref: AttachmentRef = { id: randomBytes(8).toString("hex"), kind: one.kind, mediaType: one.mediaType, name: one.name, bytes: one.bytes };
+        try {
+          await move(one.path, join(folder, ref.id));
+        } catch (error) {
+          for (const left of taken.slice(at)) this.incoming.set(left.id, left);
+          await this.saveWaiting();
+          throw error;
+        }
+        moved.push({ ref, path: join(folder, ref.id) });
       }
-      moved.push({ ref, path: join(folder, ref.id) });
-    }
+    } finally { for (const id of ids) this.moving.delete(id); }
     await this.saveWaiting();
     return moved;
   }
-  /**
-   * At start: files sent ahead in an earlier run that were still waiting, and are still whole and within their
-   * `stagedLifeMs`, wait again for the message that takes them, bound to whoever sent them (attach-3: the engine was
-   * restarted between a paste and its message). Everything else in the folder is cleared: nothing can name it.
-   */
+  /** At start: `restoreIncoming`, then `clearIncoming`. */
   async sweepIncoming(): Promise<void> {
-    const text = await readFile(this.waitingList, "utf8").catch(() => "[]");
+    await this.restoreIncoming();
+    await this.clearIncoming();
+  }
+  /**
+   * At start, before the engine takes a message: files sent ahead in an earlier run that were still waiting, and are
+   * still whole and within their `stagedLifeMs`, wait again for the message that takes them, bound to whoever sent them
+   * (attach-3: the engine was restarted between a paste and its message). A time ahead of the clock counts as now
+   * (attach-4), so such a file still goes after `stagedLifeMs`.
+   */
+  restoreIncoming(): Promise<void> {
+    const restoring = this.readBack();
+    const settled = restoring.catch(() => undefined).then(() => { if (this.restoring === settled) this.restoring = null; });
+    this.restoring = settled;
+    return restoring;
+  }
+  private async readBack(): Promise<void> {
+    const text = await (this.disk.readList ?? ((path: string) => readFile(path, "utf8")))(this.waitingList).catch(() => "[]");
     let read: unknown = [];
     try { read = JSON.parse(text); } catch { read = []; } // not a list this app wrote whole: nothing in it is taken back
     const listed = z.array(StagedRecordSchema).safeParse(read);
@@ -418,11 +447,18 @@ export class Attachments {
       if (one.at <= oldest || this.incoming.has(one.id)) continue;
       const path = join(this.incomingFolder, one.id);
       if ((await stat(path).then((found) => found.size, () => -1)) !== one.bytes) continue;
-      this.incoming.set(one.id, { ...one, path });
+      this.incoming.set(one.id, { ...one, at: Math.min(one.at, this.now()), path });
     }
+  }
+  /**
+   * At start, once `restoreIncoming` is done: everything else in the folder is cleared, since nothing can name it. It
+   * may run while messages are taken: a file waiting, being written or being moved into its conversation is never
+   * touched.
+   */
+  async clearIncoming(): Promise<void> {
     const names = await readdir(this.incomingFolder).catch(() => [] as string[]);
     for (const name of names)
-      if (!this.incoming.has(name) && !this.writing.has(name) && name !== waitingListName && name !== `${waitingListName}.next`)
+      if (!this.incoming.has(name) && !this.writing.has(name) && !this.moving.has(name) && name !== waitingListName && name !== `${waitingListName}.next`)
         await rm(join(this.incomingFolder, name), { force: true }).catch(() => undefined);
     if (names.length) await this.saveWaiting();
   }

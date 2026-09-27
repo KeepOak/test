@@ -30,6 +30,13 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
     ipcRenderer.on("branch:quick-ask", () => (callback as () => void)());
   },
   quickAskKeysChanged: () => ipcRenderer.invoke("branch:quick-ask-keys"),
+  // attach-4: the menu bar's Help, "What can Branch do" or "About Branch" (src/desktop/app-menu.ts helpItems).
+  onHelp: (callback: unknown) => {
+    if (typeof callback !== "function") return;
+    ipcRenderer.on("branch:help", (_event, item: unknown) => {
+      if (item === "whatcan" || item === "about") (callback as (item: string) => void)(item);
+    });
+  },
   // Talk live: a call the owner started is about to ask for the microphone (src/desktop/talk-live-mic.ts).
   talkLiveMic: () => ipcRenderer.invoke("branch:talk-live-mic"),
   // attach-anything: files copied in Explorer or Finder, sent by the app itself; the page names no path.

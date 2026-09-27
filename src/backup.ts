@@ -11,6 +11,7 @@ import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { settleForgotten } from "./conversation-residue.js";
 import { introPrompt, introSystem } from "./trunks/intro.js";
+import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -52,7 +53,14 @@ const appendOnly = (table: string): boolean => (appendOnlyTables as readonly str
  * restore would send a message the owner left out to the model again.
  */
 const conversationTables = ["session_left_out", "conversation_paths", "conversation_marks"] as const;
-export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables] as const;
+/**
+ * #484: the owner's Trunks, which live in `governance` under `trunk:<id>` (src/trunks/record.ts). Only those rows travel
+ * (the rest of the table stays here, `staysHere`); a restore brings each back cut down and holds what it had for the
+ * owner's yes (src/trunks/restore-narrow.ts), and a replacing restore leaves this computer's Trunks as they are.
+ */
+const trunkTables = ["governance"] as const;
+const trunkRow = (id: string): boolean => /^trunk:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({
   ...Object.fromEntries(requiredTables.map((table) => [table, z.array(RowSchema)])) as Record<(typeof requiredTables)[number], z.ZodArray<typeof RowSchema>>,
@@ -61,6 +69,8 @@ const TablesSchema = z.object({
   // The wiki's pages and their history (src/wiki.ts). A backup from before the wiki has none.
   ...Object.fromEntries(wikiTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof wikiTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
   ...Object.fromEntries(conversationTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof conversationTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
+  // A backup from before Trunks travelled has none.
+  ...Object.fromEntries(trunkTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof trunkTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
 }).strict();
 export const BackupArchiveSchema = z.object({
   format: z.literal("branch-agent-backup"),
@@ -172,7 +182,7 @@ export const restoreHeldKey = "restore-held";
  */
 export const staysOnThisComputer = (id: string): boolean =>
   signInSettings.includes(id) || thisComputerSettings.includes(id) || [...signInPrefixes, ...thisComputerPrefixes].some((start) => id.startsWith(start))
-  || id === restoreHeldKey;
+  || id === restoreHeldKey || id === restoredTrunksKey;
 /**
  * The owner's own preferences that say where their words go or who gets in (Q168 B): the model accounts and
  * connections, approved chat senders and the allow list, who may view or drive the owner's conversations, each
@@ -321,7 +331,8 @@ export const heldForTheOwner = (id: string): boolean => heldSettings.includes(id
   || (!staysOnThisComputer(id) && (catalogueGuards(id) || codeOwnedLists(id) || !travels(id)));
 /** A settings row from a backup, waiting for the owner's yes: its owner, its id and its data as the file had it. */
 export interface HeldRow { owner: string; id: string; data: string }
-const staysHere = (table: string, row: Record<string, unknown>): boolean => table === "settings" && staysOnThisComputer(String(row.id));
+const staysHere = (table: string, row: Record<string, unknown>): boolean =>
+  (table === "settings" && staysOnThisComputer(String(row.id))) || (table === "governance" && !trunkRow(String(row.id)));
 
 /**
  * A restored schedule keeps its job but not its standing yes (Q168 C). Its check script waits for the
@@ -383,26 +394,89 @@ export function exportBackup(db: DatabaseSync, appVersion: string): BackupArchiv
  * still counts as empty; any word the person wrote anywhere in a conversation makes it not empty.
  */
 export function hasState(db: DatabaseSync): boolean {
+  return setupTrunks(db) === null;
+}
+
+/** One of setup's Trunks that nobody has touched: its record and the conversation that holds only its introduction. */
+export interface SetupTrunk { owner: string; id: string; name: string; chat: string }
+
+/**
+ * The lead's call for #484: null when this install holds someone's state; otherwise setup's untouched Trunks (possibly
+ * none), which a restore replaces with the backup's ("Replace this setup with the backup"). A Trunk is listed only when
+ * its conversation is proven to hold nothing but the engine's introduction (onlyIntroduction).
+ */
+export function setupTrunks(db: DatabaseSync): SetupTrunk[] | null {
   const count = (table: string) => Number((db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number | bigint }).n);
   // NAS review of #194: a Branch holding only wiki pages has work in it too, so a restore does not merge over them.
   const wiki = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wiki_pages'").get() ? count("wiki_pages") : 0;
-  if (count("memory") > 0 || count("installed_skills") > 0 || wiki > 0) return true;
+  if (count("memory") > 0 || count("installed_skills") > 0 || wiki > 0) return null;
   const sessions = (db.prepare("SELECT id FROM sessions").all() as { id: string }[]).map((row) => row.id);
-  if (!sessions.length) return false;
-  const intros = trunkChats(db);
-  return sessions.some((id) => !intros.has(id) || !onlyIntroduction(db, id));
+  const trunks = trunkChats(db);
+  if (sessions.some((id) => !trunks.has(id) || !onlyIntroduction(db, id))) return null;
+  return sessions.flatMap((id) => trunks.get(id) ?? []);
 }
 
 /** Each Trunk's own conversation now (governance `trunk:<id>` records), where the engine asks for its introduction. */
-function trunkChats(db: DatabaseSync): Set<string> {
-  const chats = new Set<string>();
-  for (const row of db.prepare("SELECT data FROM governance WHERE id LIKE 'trunk:%'").all() as { data: string }[]) {
+function trunkChats(db: DatabaseSync): Map<string, SetupTrunk[]> {
+  const chats = new Map<string, SetupTrunk[]>();
+  for (const row of db.prepare("SELECT owner, id, data FROM governance WHERE id LIKE 'trunk:%'").all() as { owner: string; id: string; data: string }[]) {
     try {
-      const chat = (JSON.parse(row.data) as { chatSessionId?: unknown }).chatSessionId;
-      if (typeof chat === "string") chats.add(chat);
+      const { chatSessionId: chat, name } = JSON.parse(row.data) as { chatSessionId?: unknown; name?: unknown };
+      if (typeof chat === "string") chats.set(chat, [...(chats.get(chat) ?? []), { owner: row.owner, id: row.id.slice("trunk:".length), name: String(name ?? ""), chat }]);
     } catch { continue; } // a record that does not read names no conversation, so its conversation counts as the person's
   }
   return chats;
+}
+
+/**
+ * What the engine itself keeps by a conversation or its tasks while it runs them (their session_id and run_id rows): the
+ * task's events, cost, trace, snapshots, tool and learning notes, working summary, what was read and what was folded.
+ * These go with an untouched setup Trunk's introduction. The two tamper-evident records (audit, activity_chain) are never
+ * touched. A row in any other table that names the conversation or its tasks (a pin, a mark, a share, a branch, a
+ * left-out message, a queued turn, a to-do) is the person's doing, so the conversation is not an untouched introduction.
+ */
+const engineRows = new Set(["events", "usage", "spans", "turn_snapshots", "tool_usage", "fly_traces", "session_work", "session_summaries", "message_reads", "compactions"]);
+const keptRecords = new Set(["audit", "activity_chain"]);
+
+/** Every table with a session_id or run_id column, by which of the two it has. */
+function tablesByConversation(db: DatabaseSync): { table: string; session: boolean; run: boolean }[] {
+  return (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).flatMap(({ name }) => {
+    const columns = new Set((db.prepare(`PRAGMA table_info("${name}")`).all() as { name: string }[]).map((c) => c.name));
+    return columns.has("session_id") || columns.has("run_id") ? [{ table: name, session: columns.has("session_id"), run: columns.has("run_id") }] : [];
+  });
+}
+
+/** Whether a table other than the conversation's own and the engine's names this conversation or one of its tasks. */
+function markedByThePerson(db: DatabaseSync, sessionId: string, runs: readonly string[]): boolean {
+  for (const { table, session, run } of tablesByConversation(db)) {
+    if (table === "tasks" || table === "messages" || engineRows.has(table) || keptRecords.has(table)) continue;
+    if (session && db.prepare(`SELECT 1 FROM "${table}" WHERE session_id=? LIMIT 1`).get(sessionId)) return true;
+    if (run && runs.some((id) => db.prepare(`SELECT 1 FROM "${table}" WHERE run_id=? LIMIT 1`).get(id))) return true;
+  }
+  return false;
+}
+
+/**
+ * Takes setup's untouched Trunks away, inside the restore's own transaction: each Trunk's record, its introduction
+ * conversation with its tasks and messages, the engine's own rows for them (engineRows), and the settings kept under the
+ * conversation's or the Trunk's id. Only what setupTrunks proved engine-made; the audit keeps its record.
+ */
+function removeSetupTrunks(db: DatabaseSync, trunks: readonly SetupTrunk[]): void {
+  const engine = tablesByConversation(db).filter(({ table }) => engineRows.has(table));
+  for (const trunk of trunks) {
+    const runs = (db.prepare("SELECT id FROM tasks WHERE session_id=?").all(trunk.chat) as { id: string }[]).map((row) => row.id);
+    for (const { table, session, run } of engine) {
+      if (run) for (const id of runs) db.prepare(`DELETE FROM "${table}" WHERE run_id=?`).run(id);
+      if (session) db.prepare(`DELETE FROM "${table}" WHERE session_id=?`).run(trunk.chat);
+    }
+    db.prepare("DELETE FROM messages WHERE session_id=?").run(trunk.chat);
+    db.prepare("DELETE FROM tasks WHERE session_id=?").run(trunk.chat);
+    db.prepare("DELETE FROM sessions WHERE id=?").run(trunk.chat);
+    // Only ever by uuids, which no setting the owner can pin holds (tests/pinned-settings.test.mjs P14).
+    if (trunkRow(`trunk:${trunk.chat}`) && trunkRow(`trunk:${trunk.id}`))
+      db.prepare("DELETE FROM settings WHERE instr(id, ?) > 0 OR instr(id, ?) > 0").run(trunk.chat, `trunk:${trunk.id}`);
+    db.prepare("DELETE FROM governance WHERE owner=? AND id=?").run(trunk.owner, `trunk:${trunk.id}`);
+  }
 }
 
 /**
@@ -412,9 +486,10 @@ function trunkChats(db: DatabaseSync): Set<string> {
  * and the answers used no tool. A message the person wrote, a tool call, or a second ask means the person has been here.
  */
 function onlyIntroduction(db: DatabaseSync, sessionId: string): boolean {
-  const tasks = db.prepare("SELECT prompt, output FROM tasks WHERE session_id=?").all(sessionId) as { prompt: string; output: string }[];
+  const tasks = db.prepare("SELECT id, prompt, output FROM tasks WHERE session_id=?").all(sessionId) as { id: string; prompt: string; output: string }[];
   const engines = (task: { prompt: string; output: string }) => task.prompt === introPrompt || (task.prompt.startsWith("Trunk: ") && task.output === "Opened");
   if (!tasks.every(engines)) return false;
+  if (markedByThePerson(db, sessionId, tasks.map((task) => task.id))) return false;
   let asks = 0;
   for (const row of db.prepare("SELECT body FROM messages WHERE session_id=?").all(sessionId) as { body: string }[]) {
     let message: { role?: unknown; content?: unknown; system?: unknown; toolCalls?: unknown };
@@ -434,16 +509,18 @@ export interface RestoreOptions {
 }
 
 /** Inserts every row of the archive into a fresh install, in one transaction; unknown columns are refused. */
-export function importBackup(db: DatabaseSync, input: unknown, options: RestoreOptions = {}): { tables: number; rows: number; held: HeldRow[] } {
+export function importBackup(db: DatabaseSync, input: unknown, options: RestoreOptions = {}): { tables: number; rows: number; held: HeldRow[]; replaced: SetupTrunk[] } {
   const archive = parseBackupArchive(input);
-  if (!options.replaceExisting && hasState(db)) throw new Error("This copy already has conversations, memory or skills. Restore into a fresh install (empty data folder) instead.");
+  const setup = options.replaceExisting ? [] : setupTrunks(db);
+  if (setup === null) throw new Error("This copy already has conversations, memory or skills. Restore into a fresh install (empty data folder) instead.");
   let tables = 0, rows = 0;
-  const held: HeldRow[] = [];
+  const held: HeldRow[] = [], trunksHeld = new Map<string, HeldTrunk[]>();
   db.exec("BEGIN");
   try {
+    removeSetupTrunks(db, setup); // setup's untouched Trunks make way for the backup's
     if (options.replaceExisting)
       for (const table of [...backupTables].reverse())
-        if (!appendOnly(table) && db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))
+        if (!appendOnly(table) && table !== "governance" && db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))
           if (table === "settings") {
             // What stays on this computer stays, and so does this computer's value of anything held for the owner's yes.
             const kept = (db.prepare("SELECT DISTINCT id FROM settings").all() as { id: string }[]).map((row) => row.id)
@@ -459,8 +536,16 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
       if (!list?.length) continue;
       const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
       tables++;
-      for (const given of list) {
+      for (let given of list) {
         if (staysHere(table, given)) continue;
+        if (table === "governance") {
+          // A replacing restore keeps this computer's Trunks; any other brings each back cut down, holding what it had.
+          const cut = options.replaceExisting ? null : narrowTrunk(String(given.data ?? ""));
+          if (!cut) continue;
+          const owner = String(given.owner);
+          trunksHeld.set(owner, [...(trunksHeld.get(owner) ?? []), { id: String(given.id).slice("trunk:".length), ...cut.held }]);
+          given = { ...given, data: cut.data };
+        }
         if (table === "settings" && heldForTheOwner(String(given.id))) {
           const here = db.prepare("SELECT data FROM settings WHERE owner=? AND id=?").get(String(given.owner), String(given.id)) as { data: string } | undefined;
           if (here?.data !== given.data) held.push({ owner: String(given.owner), id: String(given.id), data: String(given.data) });
@@ -480,6 +565,7 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
         rows++;
       }
     }
+    for (const [owner, trunks] of trunksHeld) holdRestoredTrunks(db, owner, trunks);
     settleRestoredTasks(db, archive);
     settleFlyRestore(db);
     // A conversation deleted for good that the file still has goes back into Recently Deleted, without what memory
@@ -488,7 +574,7 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   dropIndex(db);
-  return { tables, rows, held };
+  return { tables, rows, held, replaced: setup };
 }
 
 /** What a task the backup says was working or cut off shows the owner, with Continue and Stop, after a restore. */
