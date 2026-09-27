@@ -12,7 +12,9 @@ import { audit } from "../audit.js";
 import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifacts.js";
 import { decide, readSenderAllowlist } from "./allowlist.js";
 import type { Run } from "../contracts.js";
-import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming } from "./live-status.js";
+import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
+import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
+import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { chatLiveSwitches, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
@@ -84,6 +86,11 @@ export interface ChannelAdapter {
   /** Longest single message this channel accepts; the ledger splits replies to fit. */
   readonly maxTextLength?: number;
   /**
+   * True where every message sent costs the owner money (SMS). Nothing is added to a reply there that was not asked
+   * for, such as the steps line an app without edits gets above its reply.
+   */
+  readonly paidPerMessage?: boolean;
+  /**
    * True when the service will not let the assistant write to anybody outside the owner's own team
    * until that service has reviewed the app. Shown in Connections so it is not a surprise.
    */
@@ -101,7 +108,11 @@ export interface ChannelAdapter {
   /** Presence: the bot's short description, "Online" or "Offline, back soon" (or empty to clear it). */
   setPresence?(words: string): Promise<void>;
   start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void>;
-  send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined>;
+  /**
+   * `format` (optional): which parts of `text` are code, and whether the message should arrive without a
+   * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
+   */
+  send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -139,7 +150,7 @@ export interface ChannelAdapter {
    * refuses an edit because the words did not change must treat that as success (see telegram.ts).
    * Absent means there is no progress message and replies are not streamed.
    */
-  edit?(chatId: string, messageId: string, text: string): Promise<void>;
+  edit?(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void>;
   // ---- R17-C (R17-022): a file delivered into the chat as the app's own attachment -------------
   // Absent means "this app cannot". A failure must throw. Only `chat.send_file`
   // (src/personal/chat-files.ts) calls it, after the owner, recipient, size and leak checks.
@@ -150,6 +161,11 @@ export interface ChannelAdapter {
   // ---- end R17-C ----
   stop(): Promise<void>;
 }
+/**
+ * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
+ * quietly. A progress message arrives quietly; the finished reply that follows it is the one that rings.
+ */
+export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined }
 /** R17-C (R17-022): one file on its way into a chat. */
 export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Array; caption?: string }
 
@@ -317,6 +333,8 @@ export class ChannelRouter {
   mergeWindowMs = 1000;
   /** How often the chat's typing, reaction and progress message are refreshed. */
   liveTiming: LiveTiming = defaultLiveTiming;
+  /** The fewest milliseconds between two edits of a progress message in a group (Telegram: about 20 messages a minute). */
+  groupEditEveryMs = 3000;
   /**
    * Whether typing, reactions and progress messages may be shown at all. `createBranch` turns them
    * off while Lockdown is on, as it does every other outbound message.
@@ -885,7 +903,8 @@ export class ChannelRouter {
     const messages = followUp ? all.filter((m, index) => index === 0 || fitsTurn(all.slice(0, index), m)) : all;
     const notes = all.filter((m) => !messages.includes(m)).map((message) => ({ text: message.text, message }));
     const turn: ChatTurnState = { phase: "gathering", runId: null, startedAt: Date.now(), passed: 0, dropped: false,
-      messages, notes, waiters: [], live: this.liveFor(first) };
+      messages, notes, waiters: [], live: null };
+    turn.live = this.liveFor(first, () => turn.runId);
     this.turns.set(key, turn);
     turn.live?.start();
     const wait = this.gatherMs(first);
@@ -982,7 +1001,9 @@ export class ChannelRouter {
       return await this.finishTurn(turn, run, heard.quoted);
     } catch (error) {
       await live?.finish("error");
-      await this.deliver(message.channel, message.chatId, "Something went wrong on my side; the owner can see the details in Activity.", `reply-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
+      // Messages per conversation per hour: that refusal is said as it is, since no task started to show in Activity.
+      const said = (error as { conversationRate?: boolean }).conversationRate ? (error as Error).message : "Something went wrong on my side; the owner can see the details in Activity.";
+      await this.deliver(message.channel, message.chatId, said, `reply-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
       void error;
       return "failed";
     } finally {
@@ -1029,8 +1050,9 @@ export class ChannelRouter {
       return "replied";
     }
     const footer = usageShown(this.runtime, message.channel, message.chatId) ? usageFooter(this.runtime, run.id) : null;
-    const text = quoted + said + (footer ? `\n\n${footer}` : "");
     const ok = run.status === "completed" || run.status === "needs_input";
+    const steps = this.stepsLine(message, run, ok);
+    const text = (steps ? `${steps}\n\n` : "") + quoted + said + (footer ? `\n\n${footer}` : "");
     await this.sendReply(message, run.id, text, await live?.finish(ok ? "done" : "error", text) ?? null);
     if (message.voice) await this.voiceReply(message, said).catch(() => undefined);
     return ok ? "replied" : "failed";
@@ -1072,11 +1094,51 @@ export class ChannelRouter {
   private liveOn(): boolean {
     return this.liveAllowed() && !this.deliveries.holdUntil(new Date());
   }
-  private liveFor(message: InboundMessage): LiveStatus | null {
-    const adapter = this.adapters.get(message.channel)?.adapter, setting = this.switches().liveStatus;
+  private liveFor(message: InboundMessage, runOf: () => string | null = () => null): LiveStatus | null {
+    const adapter = this.adapters.get(message.channel)?.adapter, switches = this.switches(), setting = switches.liveStatus;
     if (!adapter || setting === "off" || !this.liveOn() || (!adapter.sendTyping && !adapter.react && !adapter.edit)) return null;
+    // A group shares one bot with other people: Telegram lets a bot post about 20 messages a minute there, edits included.
+    const timing = message.chatKind === "group" ? { ...this.liveTiming, editEveryMs: Math.max(this.liveTiming.editEveryMs, this.groupEditEveryMs) } : this.liveTiming;
+    // The steps name files and commands, so only a direct chat is shown them: this message already passed the sender check.
+    const steps = switches.steps !== "off" && message.chatKind === "direct" ? this.stepsOf(runOf) : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
-      allowed: () => this.liveOn() }, (text) => this.outboundGuard(this.hideLeaks(text)), this.liveTiming, setting === "when-needed");
+      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group" }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps);
+  }
+  /**
+   * "Show steps in chats" in an app that cannot edit a message (WhatsApp, Signal, iMessage, email…): one line above the
+   * reply saying what kinds of step the task took and how it ended, for a task that worked long enough to have shown a
+   * progress message elsewhere. It names nothing (src/channels/progress-render.ts compactSummary). Not in a group, and
+   * never where each message costs money.
+   */
+  private stepsLine(message: InboundMessage, run: Run, ok: boolean): string | null {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    if (!adapter || adapter.edit || adapter.paidPerMessage || message.chatKind !== "direct" || this.switches().steps === "off") return null;
+    if (Date.parse(run.updatedAt) - Date.parse(run.createdAt) < this.liveTiming.progressAfterMs) return null;
+    const view = this.stepsOf(() => run.id).view();
+    return this.hideLeaks(compactSummary(view, ok ? "done" : "error") ?? "") || null;
+  }
+  /**
+   * "Show steps in chats": the task's lines as the window has them (src/live-steps.ts), read from its record when the
+   * progress message is next edited, scrubbed as GET /api/runs/:id/live scrubs them, and each piece through the chat's
+   * leak guard before it is placed (src/channels/progress-render.ts).
+   */
+  private stepsOf(runOf: () => string | null): StepsSource & { view(): ChatStepsView } {
+    const owner = this.runtime.owner;
+    const deps = {
+      thoughtsOf: () => [], // a chat is not shown the model's thoughts
+      waiting: [], // questions go out as their own message, not as steps
+      helperName: (agent: string, recorded?: string) => (agent.startsWith("mode:") ? agent.slice(5) : null)
+        ?? specialistName(this.store, owner, agent) ?? (recorded?.trim() || "A helper"),
+      scrub: (text: string) => this.runtime.hideSecrets(text),
+    };
+    const view = (): ChatStepsView => {
+      const runId = runOf();
+      return runId && this.store.run(runId) ? this.runtime.hideSecrets(liveSteps(this.store, runId, deps)) : { steps: [], seconds: null };
+    };
+    return {
+      view,
+      render: (limit, final) => renderChatSteps(view(), { limit, scrub: (text) => this.hideLeaks(text), ...(final ? { final } : {}) }),
+    };
   }
   /** mac6/bucket-16 integration: whether a sender may use a connected chat app, without offering a code. */
   senderAllowed(channel: string, senderId: string): boolean {

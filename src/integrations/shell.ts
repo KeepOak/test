@@ -148,7 +148,9 @@ export class BranchShell {
     // On Linux itself a held command gets the same view as under WSL: /mnt, /run and the home shown
     // empty, with only its own programs' folders and the worktree's Git folder bound back read-only.
     const cover = scratch && run.wall && !held && process.platform === 'linux'
-      ? await heldCover({ home: homedir(), programs: [run.executable.path], searchPath: (env as NodeJS.ProcessEnv).PATH ?? '', workspace: run.workspace }) : null;
+      ? await heldCover({ home: homedir(), programs: [run.executable.path], args: [...run.executable.args, ...run.args],
+        searchPath: (env as NodeJS.ProcessEnv).PATH ?? '', workspace: run.workspace }) : null;
+    if (cover?.refusal) throw new Error(cover.refusal);
     const walled = run.wall && cover ? { ...run.wall, readOnly: [...(run.wall.readOnly ?? []), ...cover.restored] } : run.wall;
     const wall = walled && !held ? await openWall(walled, plain, { workspace: run.workspace, secrets: run.injected,
       ...(scratch ? { temp: scratch, held: true } : {}), ...(cover ? { covered: cover.covered } : {}) }) : null;

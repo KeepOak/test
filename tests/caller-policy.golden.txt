@@ -852,14 +852,20 @@ owner GET /api/personal/signin/google | here=ok remote=ok phone=ok legacy=ok per
 owner POST /api/personal/signin/google | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/google/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/google/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -1064,6 +1070,22 @@ owner GET /api/learning-more/sessions/scan | here=ok remote=ok phone=ok legacy=o
 owner POST /api/learning-more/sessions/scan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/keychain/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1672,6 +1694,8 @@ owner GET /api/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 
 owner POST /api/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/restore/held | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/restore/held | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/restore/trunks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/restore/trunks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/retention | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/retention | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/retention/prune | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1702,12 +1726,12 @@ owner GET /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290
 owner POST /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner GET /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/monitor | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/monitor | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /api/runs/:id/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /api/runs/:id/receipts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2012,8 +2036,6 @@ owner GET /api/settings-kit/undo | here=ok remote=ok phone=ok legacy=ok person=4
 owner POST /api/settings-kit/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/settings-kit/put-back | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/settings-kit/put-back | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/setup/tools | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
-owner POST /api/setup/tools | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/triggers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/triggers | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/triggers/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -2047,6 +2069,10 @@ owner GET /api/usage/limits/measure | here=ok remote=ok phone=ok legacy=ok perso
 owner POST /api/usage/limits/measure | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner GET /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
+owner GET /api/usage/limits/refresh | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/usage/limits/refresh | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
+owner GET /api/usage/limits/look | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/usage/limits/look | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner GET /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/panels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -2932,14 +2958,20 @@ owner+lockdown GET /api/personal/signin/google | here=ok remote=ok phone=ok lega
 owner+lockdown POST /api/personal/signin/google | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/google/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/google/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -3144,6 +3176,22 @@ owner+lockdown GET /api/learning-more/sessions/scan | here=ok remote=ok phone=ok
 owner+lockdown POST /api/learning-more/sessions/scan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/keychain/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3752,6 +3800,8 @@ owner+lockdown GET /api/restore | here=ok remote=ok phone=ok legacy=ok person=40
 owner+lockdown POST /api/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/restore/held | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/restore/held | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/restore/trunks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/restore/trunks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/retention | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/retention | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/retention/prune | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3782,12 +3832,12 @@ owner+lockdown GET /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=4
 owner+lockdown POST /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner+lockdown GET /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/monitor | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/monitor | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /api/runs/:id/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /api/runs/:id/receipts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4092,8 +4142,6 @@ owner+lockdown GET /api/settings-kit/undo | here=ok remote=ok phone=ok legacy=ok
 owner+lockdown POST /api/settings-kit/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/settings-kit/put-back | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/settings-kit/put-back | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/setup/tools | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
-owner+lockdown POST /api/setup/tools | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/triggers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/triggers | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/triggers/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4127,6 +4175,10 @@ owner+lockdown GET /api/usage/limits/measure | here=ok remote=ok phone=ok legacy
 owner+lockdown POST /api/usage/limits/measure | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner+lockdown GET /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
+owner+lockdown GET /api/usage/limits/refresh | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/usage/limits/refresh | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
+owner+lockdown GET /api/usage/limits/look | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/usage/limits/look | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner+lockdown GET /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/panels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -5012,14 +5064,20 @@ household GET /api/personal/signin/google | here=400/f6e21c remote=400/f6e21c re
 household POST /api/personal/signin/google | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/google/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/google/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/spotify/now | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/spotify/now | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/personal/switch | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -5224,6 +5282,22 @@ household GET /api/learning-more/sessions/scan | here=400/f6e21c remote=400/f6e2
 household POST /api/learning-more/sessions/scan | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons | here=ok remote=ok read=ok run=ok
+household POST /api/seasons | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/morning | here=ok remote=ok read=ok run=ok
+household POST /api/seasons/morning | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/morning/seen | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/morning/seen | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/rings/keep | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/keep | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/rings/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/undo | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/rings/veto | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/veto | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/issues/context | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/issues/context | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/keychain/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -5832,6 +5906,8 @@ household GET /api/restore | here=400/f6e21c remote=400/f6e21c read=400/f6e21c r
 household POST /api/restore | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/restore/held | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/restore/held | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/restore/trunks | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/restore/trunks | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/retention | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/retention | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/retention/prune | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -5862,12 +5938,12 @@ household GET /api/runs/:id | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/runs/:id/cancel | here=ok remote=ok read=401/d45404 run=ok
+household GET /api/runs/:id/pause | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/runs/:id/pause | here=ok remote=ok read=401/d45404 run=ok
 household GET /api/runs/:id/inspect | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/monitor | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/runs/:id/monitor | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/runs/:id/pause | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/runs/:id/pause | here=ok remote=ok read=401/d45404 run=ok
 household GET /api/runs/:id/plan | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id/plan | here=ok remote=ok read=401/d45404 run=ok
 household GET /api/runs/:id/receipts | here=ok remote=ok read=ok run=ok
@@ -6172,8 +6248,6 @@ household GET /api/settings-kit/undo | here=400/f6e21c remote=400/f6e21c read=40
 household POST /api/settings-kit/undo | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/settings-kit/put-back | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/settings-kit/put-back | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/setup/tools | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
-household POST /api/setup/tools | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/triggers | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/triggers | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/triggers/:id | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -6207,6 +6281,10 @@ household GET /api/usage/limits/measure | here=400/f6e21c remote=400/f6e21c read
 household POST /api/usage/limits/measure | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household GET /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
+household GET /api/usage/limits/refresh | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/usage/limits/refresh | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
+household GET /api/usage/limits/look | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/usage/limits/look | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household GET /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/panels/live | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -7092,14 +7170,20 @@ household+lockdown GET /api/personal/signin/google | here=400/f6e21c remote=400/
 household+lockdown POST /api/personal/signin/google | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/google/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/google/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/spotify/now | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/spotify/now | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/switch | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -7304,6 +7388,22 @@ household+lockdown GET /api/learning-more/sessions/scan | here=400/f6e21c remote
 household+lockdown POST /api/learning-more/sessions/scan | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/seasons | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/morning | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/seasons/morning | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/morning/seen | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/morning/seen | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/keep | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/keep | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/undo | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/veto | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/veto | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/issues/context | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/issues/context | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/keychain/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7912,6 +8012,8 @@ household+lockdown GET /api/restore | here=400/f6e21c remote=400/f6e21c read=400
 household+lockdown POST /api/restore | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/restore/held | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/restore/held | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/restore/trunks | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/restore/trunks | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/retention | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/retention | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/retention/prune | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7942,12 +8044,12 @@ household+lockdown GET /api/runs/:id | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/runs/:id/cancel | here=ok remote=ok read=401/d45404 run=ok
+household+lockdown GET /api/runs/:id/pause | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/runs/:id/pause | here=ok remote=ok read=401/d45404 run=ok
 household+lockdown GET /api/runs/:id/inspect | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/monitor | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/runs/:id/monitor | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/runs/:id/pause | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/runs/:id/pause | here=ok remote=ok read=401/d45404 run=ok
 household+lockdown GET /api/runs/:id/plan | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id/plan | here=ok remote=ok read=401/d45404 run=ok
 household+lockdown GET /api/runs/:id/receipts | here=ok remote=ok read=ok run=ok
@@ -8252,8 +8354,6 @@ household+lockdown GET /api/settings-kit/undo | here=400/f6e21c remote=400/f6e21
 household+lockdown POST /api/settings-kit/undo | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/settings-kit/put-back | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/settings-kit/put-back | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/setup/tools | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
-household+lockdown POST /api/setup/tools | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/triggers | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/triggers | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/triggers/:id | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -8287,6 +8387,10 @@ household+lockdown GET /api/usage/limits/measure | here=400/f6e21c remote=400/f6
 household+lockdown POST /api/usage/limits/measure | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household+lockdown GET /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
+household+lockdown GET /api/usage/limits/refresh | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/usage/limits/refresh | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
+household+lockdown GET /api/usage/limits/look | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/usage/limits/look | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household+lockdown GET /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/panels/live | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -9172,14 +9276,20 @@ applock GET /api/personal/signin/google | here=423/a8f863
 applock POST /api/personal/signin/google | here=423/a8f863
 applock GET /api/personal/signin/google/start | here=423/a8f863
 applock POST /api/personal/signin/google/start | here=423/a8f863
+applock GET /api/personal/signin/google/secret | here=423/a8f863
+applock POST /api/personal/signin/google/secret | here=423/a8f863
 applock GET /api/personal/signin/microsoft | here=423/a8f863
 applock POST /api/personal/signin/microsoft | here=423/a8f863
 applock GET /api/personal/signin/microsoft/start | here=423/a8f863
 applock POST /api/personal/signin/microsoft/start | here=423/a8f863
+applock GET /api/personal/signin/microsoft/secret | here=423/a8f863
+applock POST /api/personal/signin/microsoft/secret | here=423/a8f863
 applock GET /api/personal/signin/spotify | here=423/a8f863
 applock POST /api/personal/signin/spotify | here=423/a8f863
 applock GET /api/personal/signin/spotify/start | here=423/a8f863
 applock POST /api/personal/signin/spotify/start | here=423/a8f863
+applock GET /api/personal/signin/spotify/secret | here=423/a8f863
+applock POST /api/personal/signin/spotify/secret | here=423/a8f863
 applock GET /api/personal/spotify/now | here=423/a8f863
 applock POST /api/personal/spotify/now | here=423/a8f863
 applock GET /api/personal/switch | here=423/a8f863
@@ -9384,6 +9494,22 @@ applock GET /api/learning-more/sessions/scan | here=423/a8f863
 applock POST /api/learning-more/sessions/scan | here=423/a8f863
 applock GET /api/learning-more/switch | here=423/a8f863
 applock POST /api/learning-more/switch | here=423/a8f863
+applock GET /api/seasons | here=423/a8f863
+applock POST /api/seasons | here=423/a8f863
+applock GET /api/seasons/morning | here=423/a8f863
+applock POST /api/seasons/morning | here=423/a8f863
+applock GET /api/seasons/morning/seen | here=423/a8f863
+applock POST /api/seasons/morning/seen | here=423/a8f863
+applock GET /api/seasons/rings/keep | here=423/a8f863
+applock POST /api/seasons/rings/keep | here=423/a8f863
+applock GET /api/seasons/rings/run | here=423/a8f863
+applock POST /api/seasons/rings/run | here=423/a8f863
+applock GET /api/seasons/rings/undo | here=423/a8f863
+applock POST /api/seasons/rings/undo | here=423/a8f863
+applock GET /api/seasons/rings/veto | here=423/a8f863
+applock POST /api/seasons/rings/veto | here=423/a8f863
+applock GET /api/seasons/settings | here=423/a8f863
+applock POST /api/seasons/settings | here=423/a8f863
 applock GET /api/issues/context | here=423/a8f863
 applock POST /api/issues/context | here=423/a8f863
 applock GET /api/keychain/settings | here=423/a8f863
@@ -9992,6 +10118,8 @@ applock GET /api/restore | here=423/a8f863
 applock POST /api/restore | here=423/a8f863
 applock GET /api/restore/held | here=423/a8f863
 applock POST /api/restore/held | here=423/a8f863
+applock GET /api/restore/trunks | here=423/a8f863
+applock POST /api/restore/trunks | here=423/a8f863
 applock GET /api/retention | here=423/a8f863
 applock POST /api/retention | here=423/a8f863
 applock GET /api/retention/prune | here=423/a8f863
@@ -10022,12 +10150,12 @@ applock GET /api/runs/:id | here=423/a8f863
 applock POST /api/runs/:id | here=423/a8f863
 applock GET /api/runs/:id/cancel | here=423/a8f863
 applock POST /api/runs/:id/cancel | here=423/a8f863
+applock GET /api/runs/:id/pause | here=423/a8f863
+applock POST /api/runs/:id/pause | here=423/a8f863
 applock GET /api/runs/:id/inspect | here=423/a8f863
 applock POST /api/runs/:id/inspect | here=423/a8f863
 applock GET /api/runs/:id/monitor | here=423/a8f863
 applock POST /api/runs/:id/monitor | here=423/a8f863
-applock GET /api/runs/:id/pause | here=423/a8f863
-applock POST /api/runs/:id/pause | here=423/a8f863
 applock GET /api/runs/:id/plan | here=423/a8f863
 applock POST /api/runs/:id/plan | here=423/a8f863
 applock GET /api/runs/:id/receipts | here=423/a8f863
@@ -10332,8 +10460,6 @@ applock GET /api/settings-kit/undo | here=423/a8f863
 applock POST /api/settings-kit/undo | here=423/a8f863
 applock GET /api/settings-kit/put-back | here=423/a8f863
 applock POST /api/settings-kit/put-back | here=423/a8f863
-applock GET /api/setup/tools | here=423/a8f863
-applock POST /api/setup/tools | here=423/a8f863
 applock GET /api/triggers | here=423/a8f863
 applock POST /api/triggers | here=423/a8f863
 applock GET /api/triggers/:id | here=423/a8f863
@@ -10367,6 +10493,10 @@ applock GET /api/usage/limits/measure | here=423/a8f863
 applock POST /api/usage/limits/measure | here=423/a8f863
 applock GET /api/usage/limits/settings | here=423/a8f863
 applock POST /api/usage/limits/settings | here=423/a8f863
+applock GET /api/usage/limits/refresh | here=423/a8f863
+applock POST /api/usage/limits/refresh | here=423/a8f863
+applock GET /api/usage/limits/look | here=423/a8f863
+applock POST /api/usage/limits/look | here=423/a8f863
 applock GET /api/panels/work | here=423/a8f863
 applock POST /api/panels/work | here=423/a8f863
 applock GET /api/panels/live | here=423/a8f863
@@ -10452,3 +10582,13 @@ applock GET /api/workspace-editor/save | here=423/a8f863
 applock POST /api/workspace-editor/save | here=423/a8f863
 applock GET /api/workspace-editor/settings | here=423/a8f863
 applock POST /api/workspace-editor/settings | here=423/a8f863
+owner GET /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+household GET /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household POST /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
+household+lockdown GET /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household+lockdown POST /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
+applock GET /api/channels/intake | here=423/a8f863
+applock POST /api/channels/intake | here=423/a8f863
