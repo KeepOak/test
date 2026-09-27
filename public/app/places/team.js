@@ -33,6 +33,7 @@ import { tabBody, readTab, setCard, initTeamTabs } from "./team-tabs.js";
 import { api } from "../core/api.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 const tabs = [["live", "Live now"], ["people", "People"], ["groups", "Groups"],
   ["shared", "Shared"], ["agents", "Teams of specialists"], ["activity", "Activity"],
@@ -90,8 +91,11 @@ function liveRow(r) {
 
 const liveRuns = () => E.state.runs?.filter((r) => r.status === "running" || r.status === "needs_input") || [];
 function liveTab() {
-  return `<div class="runs6">${liveRuns().map((r) => liveRow(r)).join("")}</div>`;
+  const runs = liveRuns();
+  return runs.length ? `<div class="runs6">${runs.map((r) => liveRow(r)).join("")}</div>` : empty18("team:live");
 }
+/* People: with nobody but the owner on this computer, the list says so under the owner's own card, with Invite. */
+const peopleTab = () => peopleBody() + (ownerHere() && people().length === 1 ? empty18("team:people") : "");
 /* Live now counts the tasks working here; People counts the rows its tab draws (everyone on this computer). */
 const counts = () => ({ live: liveRuns().length, people: people().length });
 
@@ -180,7 +184,7 @@ export function draw() {
     ${tabBar(tabs.filter(([id]) => id !== "signin" || ownerHere()).map(([id, label]) => [id, say(label), counts()[id] ?? 0]), "team", tab)}`;
 
   if (tab === "live") html += liveTab();
-  else if (tab === "people") html += peopleBody();
+  else if (tab === "people") html += peopleTab();
   else if (tab === "signin") html += signinTab();
   else html += tabBody(tab, card);
 

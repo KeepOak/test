@@ -21,6 +21,7 @@ import { timelineBody, initTimeline } from "./timeline.js";
 import { helpersSection, initHelpers } from "./helpers.js";
 import { t } from "../../i18n.js";
 import { resizerHTML } from "../shell/resize.js";
+import { empty18 } from "../core/p18.js"; // pass 18: the empty Activity
 
 const TABS = [["activity", "dashboard.area.activity"], ["tl17c", "window.chat.pane.timeline"], ["plan", "pane.plan"], ["files", "pane.files"], ["memory", "memory.movein.kind.memory"], ["terminal", "pane.terminal"]];
 const REAL = new Set(["activity", "tl17c", "plan", "files", "memory", "terminal"]);
@@ -52,7 +53,7 @@ function activity() {
     try { ok = JSON.parse(results.get(c.id) ?? "null")?.ok ?? null; } catch { /* a result that is not JSON */ }
     return { name: c.name, detail: target(c.arguments), ok };
   });
-  if (!steps.length && !working()) return `<p class="empty">${t("window.chat.pane.no-steps")}</p>`;
+  if (!steps.length && !working()) return empty18("pane:activity");
   const rows = steps.map((s, i) => `<li class="${s.ok === false ? "" : "ok"}">${ic(s.ok === false ? "x" : "check", "s")}<span>${esc(s.name)}<small>${esc(s.detail)}</small></span><time>${i + 1}</time></li>`).join("");
   const now = working() ? `<li class="run">${ic("spin", "s")}<span>${esc(runsHere().find((r) => r.status === "running")?.prompt?.split("\n")[0] ?? "")}</span><time>${t("window.chat.pane.now")}</time></li>` : "";
   return `<ol class="tl">${rows}${now}</ol>`;
@@ -143,7 +144,8 @@ export function initPane() {
   initTerminal();
   initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt });
   initHelpers({ redraw: drawPane });
-  markLive(["pane", "ptabp"]);
+  markLive(["pane", "ptabp", "ask18c"]);
+  on("ask18c", () => $("#msg")?.focus()); // the empty Activity's "Ask something": the message box
   on("pane", (el) => {
     const p = el.dataset.p, inHead = !!el.closest(".head");
     S.pane = p === "close" ? null : inHead && S.pane ? null : p;

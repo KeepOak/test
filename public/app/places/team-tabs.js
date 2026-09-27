@@ -26,8 +26,11 @@ import { markLive } from "../core/features.js";
 import { ctl, ctlSeg } from "../settings/parts.js";
 import { limitRow } from "../settings/pages/usage.js";
 import { t, language } from "../../i18n.js";
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 const D = { card: null, links: [], teams: [], tasks: {}, audit: [], glance: null, projects: [] };
+/* Pass 18: the tabs whose data came back from the engine; only those draw an empty state (never while still reading). */
+const READ = new Set();
 /* The owner's sign-in card, as Team last read it (places/team.js). */
 export const setCard = (card) => { D.card = card; };
 const KINDS = ["read", "browse", "files", "commands", "message", "spend", "settings"];
@@ -49,6 +52,7 @@ function limits(g) {
 function groupsTab(card) {
   if (!card) return "";
   const rows = (card.groups ?? []).map((g) => `<div class="prow"><span class="ico-tile">${ic("users", "s")}</span><span class="grow"><b>${esc(g.name)}</b><small>${esc([g.members.map(nameOf).filter(Boolean).join(", "), limits(g)].filter(Boolean).join(" · "))}</small></span><button class="btn ghost sm" type="button" data-act="tgrp-edit" data-id="${esc(g.id)}">${t("prompts.action.edit")}</button></div>`).join("");
+  if (!rows) return empty18("team:groups");
   return `<p class="hint" data-css="margin:0 0 10px">${t("window.places.team.being-in-a-group-can-only")}</p><div class="rows">${rows}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="tgrp-new">${ic("plus", "s")}${t("window.places.team.new-group")}</button></div>`;
 }
@@ -127,7 +131,8 @@ function linkRows() {
 }
 function sharedTab(card) {
   if (!card) return "";
-  return `<div class="rows">${sharedRows(card)}${linkRows()}</div>`;
+  const rows = sharedRows(card) + linkRows();
+  return rows || !READ.has("shared") ? `<div class="rows">${rows}</div>` : empty18("team:shared");
 }
 
 /* Who has one conversation, a person or a group per row, as the prototype's Share dialog's With people tab. Also drawn by
@@ -192,6 +197,7 @@ function teamCard(team, task) {
     <p class="hint" data-css="margin:8px 0 0">${t("window.places.team.this-card-only-looks")}</p></div>`;
 }
 function teamsTab() {
+  if (!D.teams.length) return READ.has("agents") ? empty18("team:agents") : "";
   return `<div class="rows">${D.teams.map((team) => (D.tasks[team.id]?.[0] ? teamCard(team, D.tasks[team.id][0]) : "")).join("")}</div>`;
 }
 
@@ -205,12 +211,14 @@ function readable(subject, card) {
     .replace(/group:([a-f0-9-]{36})#member/g, (_, id) => (card?.groups ?? []).find((g) => g.id === id)?.name || _);
 }
 function activityTab(card) {
+  if (!D.audit.length && READ.has("activity")) return empty18("team:activity");
   return `<ol class="tl">${D.audit.map((e) => `<li>${ic("info", "s")}<span>${esc(e.reason)}<small>${esc(readable(e.subject, card))}</small></span><time>${esc(when(e.at ?? e.createdAt))}</time></li>`).join("")}</ol>`;
 }
 
 /* ---------- Usage and Rules ---------- */
 
 function usageTab() {
+  if (READ.has("usage") && !(D.glance?.rows ?? []).length) return empty18("team:usage");
   return `<p class="hint" data-css="margin:0 0 10px">${t("window.places.team.each-persons-own-model-accounts")}</p><div class="lims flat" data-css="margin-top:14px">${(D.glance?.rows ?? []).map(limitRow).join("")}</div>`;
 }
 /* The workspace's rules live on keepoak.com, which the engine does not reach: drawn greyed, nothing pressed. */
@@ -248,15 +256,16 @@ async function readTeams() {
 /* A tab's own data, read when it is switched to; answers whether anything changed. Only the owner reads any of it. */
 export async function readTab(tab) {
   if (!ownerHere()) return false;
-  const before = JSON.stringify(D);
+  const before = JSON.stringify(D), had = READ.has(tab);
   try {
     if (tab === "shared") D.links = (await api("shares")).shares ?? [];
     else if (tab === "groups") D.projects = (await api("projects")).all ?? [];
     else if (tab === "agents") Object.assign(D, await readTeams());
     else if (tab === "activity") D.audit = await readAudit();
     else if (tab === "usage") D.glance = await api("usage/glance");
+    READ.add(tab);
   } catch (error) { toast(error.message); }
-  return JSON.stringify(D) !== before;
+  return JSON.stringify(D) !== before || !had;
 }
 
 export function initTeamTabs(reload) {
