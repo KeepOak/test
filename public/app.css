@@ -4094,14 +4094,14 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 
 /* area: what can Branch do */
 .wc-b{display:grid;gap:10px;min-width:0}
-.wc-top{display:flex;align-items:center;gap:12px;animation:enter11 .16s ease-out both}
+.wc-top{display:flex;align-items:center;gap:12px;animation:rise18 .16s ease-out both}
 .wc-top .hint{margin:0}
 .wc-face{flex:none;display:inline-grid}
 .wc-b .tabs{margin:0}
 .wc-b .tab small{color:inherit;opacity:.7;font-size:11.5px;margin-left:2px}
 .wc-h{margin:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-3)}
 .wc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
-.wc-card{display:flex;align-items:center;gap:10px;min-width:0;padding:10px 12px;background:var(--raise);border:1px solid var(--line);border-radius:12px;animation:enter11 .16s ease-out both;transition:transform .16s ease-out,border-color .16s ease-out;content-visibility:auto;contain-intrinsic-size:auto 58px}
+.wc-card{display:flex;align-items:center;gap:10px;min-width:0;padding:10px 12px;background:var(--raise);border:1px solid var(--line);border-radius:12px;animation:rise18 .16s ease-out both;transition:transform .16s ease-out,border-color .16s ease-out;content-visibility:auto;contain-intrinsic-size:auto 58px}
 .wc-card:hover{transform:translateY(-2px);border-color:var(--line-2)}
 .wc-card .grow{flex:1;min-width:0}
 .wc-card b,.wc-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
