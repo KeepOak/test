@@ -133,6 +133,9 @@ test("switch off: the terminal answers to exactly the names it had", () => {
   }
   assert.equal(findCommand("/clear", "on")?.name, "new");
   assert.equal(findCommand("/shortcuts", "on")?.name, "keys");
+  // The owner's rule: nothing is called practice, so /dry-run has no /practice alias on either side of the switch.
+  assert.equal(findCommand("/practice", "on"), undefined);
+  assert.equal(findCommand("/practice", "off"), undefined);
 });
 
 test("switch off: a chat answers to exactly the names it had", () => {

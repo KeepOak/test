@@ -10,7 +10,7 @@ import { pricingSettings } from "./pricing.js";
 import { limitLines } from "./usage-limits.js"; // mac7/usage-bar
 import { usageLimits } from "./usage-limits-api.js"; // mac7/usage-bar
 import { choosePreset, historyLines, presetLines } from "./terminal-commands.js";
-import { PLACE_ROWS, type Row } from "./terminal-place-data.js";
+import { PLACE_ROWS, connectionRows, skillRows, type Row } from "./terminal-place-data.js";
 import { TERMINAL_ALIASES, TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
 import { MODEL_TABS, SETTINGS_PAGES, allHomes, homeOf, parseRoute, placeById, type Route } from "./terminal-places.js";
 import { settingsRows } from "./terminal-settings.js";
@@ -29,7 +29,7 @@ import { loadWords, type Words } from "./terminal-words.js";
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 interface Io { interactive: boolean; env: NodeJS.ProcessEnv; json: boolean; write(line: string): void }
 
-const PLACE_COMMANDS = new Set(["inbox", "automations", "library", "customize", "overview", "household", "settings"]);
+const PLACE_COMMANDS = new Set(["inbox", "automations", "library", "customize", "team", "overview", "household", "settings"]);
 export const terminalCommandNames = new Set(TERMINAL_CLI_COMMANDS.map((entry) => entry.name));
 
 /**
@@ -41,7 +41,7 @@ export const terminalCommandNames = new Set(TERMINAL_CLI_COMMANDS.map((entry) =>
  * through their own routes instead (src/cli-engine.ts). `status` only reads, so it is here.
  */
 export const readOnlyTerminalCommands = new Set([
-  "inbox", "automations", "library", "customize", "overview", "household", "settings", "places", "sessions", "memory",
+  "inbox", "automations", "library", "customize", "team", "overview", "household", "settings", "places", "sessions", "memory",
   "skills", "channels", "mcp", "tools", "projects", "usage", "snapshots", "version", "status",
 ]);
 
@@ -297,9 +297,9 @@ export async function runTerminalCommand(app: Branch, command: string, args: str
   if (command === "resume") return resumeCommand(app, args, io);
   if (command === "model") return modelCommand(app, args, io);
   if (command === "memory") return printRows(io, (await PLACE_ROWS["library:memory"]!(app, words)).filter((row) => !args.length || `${row.title} ${row.detail}`.toLowerCase().includes(args.join(" ").toLowerCase())), words);
-  if (command === "skills") return printRows(io, await PLACE_ROWS["customize:skills"]!(app, words), words);
+  if (command === "skills") return printRows(io, skillRows(app, words), words);
   if (command === "channels") return printRows(io, await PLACE_ROWS["customize:channels"]!(app, words), words);
-  if (command === "mcp") return printRows(io, await PLACE_ROWS["customize:connections"]!(app, words), words);
+  if (command === "mcp") return printRows(io, await connectionRows(app, words), words);
   if (command === "tools") return toolsCommand(app, io);
   if (command === "projects") return printRows(io, app.store.projects.list(owner).map((project) => ({ title: `${project.id === app.store.projects.active(owner).id ? "* " : "  "}${project.name}`, detail: project.id })), words);
   if (command === "lockdown") return lockdownCommand(app, args, io);

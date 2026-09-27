@@ -1,10 +1,12 @@
 # Where things go
 
-Branch Agent has five places and one window. Every feature, old or new, lives in exactly one of
-them, and the owner should be able to guess which before looking. This page is the rule for
-choosing, the list of homes, and how a new screen puts itself there. It was written with the
-wave 9 redesign (`public/layout.js`, approved by the owner on 2026-09-16) and applies to every
-builder on every machine.
+Branch Agent has one window: the conversation, six places and Settings. The places are the new
+window's own (`public/app/shell/shell.js` PLACES): Overview, Inbox, Automations, Library, Team and
+Customize. Every feature, old or new, lives in exactly one of them, and the owner should be able to
+guess which before looking. This page is the rule for choosing, the list of homes, and how a new
+screen puts itself there. The terminal view (`src/terminal-places.ts`) shows the same map: the
+conversation and the places on its tab row (Overview is reached from the Trunks strip), and the
+Settings pages in the window's order (`public/app/settings/settings.js` NAV).
 
 ## The rule, in one sentence each
 
@@ -15,6 +17,7 @@ builder on every machine.
 | **Automations** | Work that runs without being asked each time | Does it start on a schedule, a trigger, or as a saved procedure? |
 | **Library** | What the assistant knows and what it has made | Is it knowledge, memory or an output the owner may want to open again? |
 | **Customize** | What the assistant can do and who can reach it | Does it add an ability, a connection, or a way in? |
+| **Team** | The people who use Branch and what their Trunks are doing now | Is it about who uses Branch, or what everyone's work is doing right now? |
 | **Settings** (a window, not a place) | How the app behaves on this computer | Would the owner set it once and rarely look again? |
 
 Go down the table and stop at the first yes. If two places both seem right, the feature is
@@ -36,37 +39,36 @@ A home is written `place:tab`, or `settings:page`, or `settings:models:tab`.
 | `library:memory` | Remembered facts, tidying, how much it keeps, import and export, checkpoints |
 | `library:documents` | Documents, knowledge bases, the notes folder |
 | `library:made` | Pictures, files and reports the assistant made |
-| `customize:skills` | Installed skills, installing and sharing, suggestions, what happens when a skill looks risky |
-| `customize:specialists` | Specialists and proposing new ones |
-| `customize:plugins` | Plugins |
-| `customize:connections` | MCP in both directions: servers the assistant uses, other AI tools using Branch |
-| `customize:channels` | The chat apps' own list and the phone app; their settings are in `settings:channels` (DG-194) |
+| `customize:trunks` | The owner's Trunks: making one, editing, pausing, starting from a job |
+| `customize:tools` | Skills, plugins, tool servers (MCP in both directions), command-line tools, other agents and the owner's own accounts |
+| `customize:specialists` | Specialists, proposing new ones, and how Trunks work together |
+| `customize:channels` | The chat apps' own list, setting one up, and pairing the phone |
+| `customize:everywhere` | Every way to reach Branch: this computer, the owner's other devices, the terminal, the phone and pages of the owner's own |
+| `team:live` | Each task working or waiting right now, under whose it is |
+| `team:people` | The owner and everyone who uses Branch on this computer, and what each may do |
 | `overview:here` | What this computer is working on, what needs attention and what finished lately |
-| `household:people` | The owner and everyone who uses Branch on this computer |
-| `settings:general` | Starting with the computer, projects, labels, shared copies, people on this computer |
-| `settings:assistant` | Name, picture, working instructions, persona |
-| `settings:instructions` | The owner-written SOUL, IDENTITY, USER, AGENTS, TOOLS, SOP, MEMORY and HEARTBEAT files, with a real editor and preview |
+| `settings:general` | How Branch starts and behaves on this computer, projects, labels, shared copies |
+| `settings:people` | Everyone who uses Branch, their roles and how they sign in; the same list as Team › People |
 | `settings:appearance` | Theme, light or dark, season, contrast, text size, spacing, lettering, language |
 | `settings:notifications` | When Branch may interrupt, quiet hours, days off |
-| `settings:models:connection` | Signing in to a provider, API keys, checking connections |
+| `settings:instructions` | The owner-written SOUL, IDENTITY, USER, AGENTS, TOOLS, SOP, MEMORY and HEARTBEAT files, with a real editor and preview; the assistant's name and persona |
+| `settings:models:connections` | Signing in to a provider, API keys, checking connections |
 | `settings:models:defaults` | Which model does what, routing, fallbacks |
 | `settings:models:local` | Models running on this computer |
 | `settings:models:second` | Second opinion and debate |
 | `settings:models:media` | Pictures and sound models |
 | `settings:accounts` | Every sign-in and key, which one answers, and what happens when one runs low |
+| `settings:local` | Models that run on this computer: what fits, installing and removing them |
 | `settings:voice` | Speaking and listening |
-| `settings:permissions` | When to check with the owner, rules, limits, loop guards, trusted folders |
+| `settings:chatapps` | Chat apps: setting each one up, how each behaves, and what a chat may do |
+| `settings:permissions` | When to check with the owner, rules, limits, loop guards, trusted folders, Lockdown |
 | `settings:computer` | Screen and keyboard, where scripts run, network reach, other computers, the browser, operating-system permissions |
-| `settings:secrets` | Secrets, password managers, the Keychain list |
-| `settings:data` | Usage and cost, how long things are kept, backup, snapshots, bringing things in from another assistant |
-| `settings:advanced` | Health check, diagnostics, tracing, evaluation and studies, developer tools |
-| `settings:about` | Version and updates |
-| `settings:trunks` | Directory to the real Trunks, Overview and People places |
-| `settings:channels` | Chat apps & devices: setting up chat apps, your devices, email and other pages, and what a chat may do (DG-194) |
-| `settings:connections` | Directory to the real tool-server and app connections controls |
-| `settings:skills` | Directory to the real Skills, Specialists and Plugins places |
-| `settings:memory` | Directory to the real Memory, Documents and Made for you places |
-| `settings:automations` | Directory to the real Automations and Inbox places |
+| `settings:secrets` | Saved sign-ins, password managers, the Keychain list |
+| `settings:usage` | What each connection has left, usage and cost, how long things are kept, backup, snapshots, bringing things in from another assistant |
+| `settings:gateway` | The gateway, on or off: keeping Branch running with the window closed |
+| `settings:self` | What Branch may change about itself, health check, diagnostics, every change it made |
+| `settings:updates` | Version and updates |
+| `settings:achievements` | Achievements, private to the owner |
 
 Inside a conversation there are no homes to add to, only two surfaces with strict jobs:
 
@@ -84,11 +86,11 @@ Inside a conversation there are no homes to add to, only two surfaces with stric
 | Keychain entries Branch may read (`mac2/desktop-ui`) | `settings:secrets` |
 | Filling a saved sign-in into a page (`mac7/vault-autofill`, R17-068) | `settings:secrets`, beside the password managers it reads from |
 | Loop guard, trusted folders (`mac2/guards`) | `settings:permissions` |
-| Importing from another assistant (`mac2/move-in`) | `settings:data`, and offered once on first run |
+| Importing from another assistant (`mac2/move-in`) | `settings:usage`, and offered once on first run |
 | Heartbeat and quiet jobs (`mac2/quiet-jobs`) | `automations:scheduled`; its interruptions setting in `settings:notifications` |
 | Undoing a goal (`mac2/goal-undo`) | The conversation: a message action and the Plan tab, no screen of its own |
-| Live chat on channels (`mac2/chat-live`) | `settings:channels` |
-| Persona, identity and "who the owner is" files (SOUL, IDENTITY, USER) | Edited in `settings:instructions`; `settings:assistant` may link there from the related assistant controls |
+| Live chat on channels (`mac2/chat-live`) | `settings:chatapps` |
+| Persona, identity and "who the owner is" files (SOUL, IDENTITY, USER) | Edited in `settings:instructions`; `settings:instructions` may link there from the related assistant controls |
 | A project's own instructions (AGENTS.md and its aliases) | Edited in `settings:instructions`; `settings:general` may link there from the related project |
 | MEMORY.md | Edited in `settings:instructions`; `library:memory` shows the related remembered facts |
 | HEARTBEAT.md | Edited in `settings:instructions`; `automations:scheduled` shows the jobs it wakes |
@@ -96,106 +98,105 @@ Inside a conversation there are no homes to add to, only two surfaces with stric
 | Suggested automations, the automation catalogue, standing orders, repeating in conversations and the limits on automatic work (`mac7/r17-b`) | `automations:scheduled`; the `/loop`, `/heartbeat`, `/subgoal`, `/bg`, `/handoff`, `/suggestions` and `/blueprint` commands live in the message box |
 | Procedures that start themselves, with how much each may do on its own (`mac7/r17-b`) | `automations:procedures` |
 | What an automation, a procedure or a standing order waits for your yes on (`mac7/r17-b`) | `inbox:needs` |
-| "From now on" instructions (`mac7/r17-b`) | `settings:assistant` |
+| "From now on" instructions (`mac7/r17-b`) | `settings:instructions` |
 | Going back to an earlier step of a flow, and checks for saved procedures (`mac7/r17-h`) | `automations:procedures` |
 | The shared board of cards (`mac7/r17-h`) | `automations:scheduled`, beside the waiting line: it is work waiting to be done (bucket 23's project board stays in `settings:general`, and the shared board lays its lanes over it) |
 | Changing the waiting line, and what typing does while a task works (`mac7/r17-h`) | `automations:scheduled`; `/queue` and `/busy` live in the message box |
 | Widgets the assistant built (`mac7/r17-h`) | `library:made`, beside the live tool pages they are made from |
 | Focus view (`mac7/r17-h`) | `settings:appearance`; `/focus` lives in the message box |
 | Requests for new packages and tool servers (`mac7/r17-h`) | `inbox:needs` |
-| What installed skills need on this computer (`mac7/r17-b`) | `customize:skills` |
+| What installed skills need on this computer (`mac7/r17-b`) | `customize:tools` |
 | Other computers side by side, using apps in the background, USB devices (`mac7/r17-i`) | `settings:computer` |
 | Where Branch listens (`mac7/bind`) | `settings:computer` |
 | Trunks on other computers (`mac7/r17-i`) | `customize:specialists`, beside the Trunks card |
 | Making videos (`mac7/r17-i`) | `settings:models:media` |
-| The chat relay, sending from a script and pausing chat apps (`mac7/r17-i`) | `settings:channels`; `/platform` lives in the message box |
-| Sharing the assistant through git, skill bundles (`mac7/r17-i`) | `customize:skills` |
+| The chat relay, sending from a script and pausing chat apps (`mac7/r17-i`) | `settings:chatapps`; `/platform` lives in the message box |
+| Sharing the assistant through git, skill bundles (`mac7/r17-i`) | `customize:tools` |
 | Notes with rewriting (`mac7/r17-i`) | `library:documents` |
 | Model arena (`mac7/r17-i`) | `settings:models:second` |
-| TOOLS.md | `customize:skills` |
+| TOOLS.md | `customize:tools` |
 | DREAMS.md and other things the assistant writes for the owner | `library:made` |
 | Cheaper and faster model routing | `settings:models:defaults` |
-| Site skills for the browser | `customize:skills`, with browser access itself in `settings:computer` |
-| Evaluation and studies | `settings:advanced` |
+| Site skills for the browser | `customize:tools`, with browser access itself in `settings:computer` |
+| Evaluation and studies | `settings:self` |
 | Keep running through crashes and updates (`mac3/never-break`) | `settings:general` |
-| Set up Telegram, step by step (`mac3/never-break`) | `settings:channels` |
-| Set up any chat app: the one command, square codes and Check and save (`mac7/connect`) | `settings:channels`; the phone app shows it on its home screen, and the terminal view lists the command under Customize › Channels |
+| Set up Telegram, step by step (`mac3/never-break`) | `settings:chatapps` |
+| Set up any chat app: the one command, square codes and Check and save (`mac7/connect`) | `settings:chatapps`; the phone app shows it on its home screen, and the terminal view lists the command under Customize › Channels |
 | Watching and saving videos, ffmpeg and yt-dlp (bucket 17) | `settings:models:media`; a video attachment in the message box |
 | Other speech services and spoken commands (bucket 17) | `settings:voice` |
-| What Branch learns from experience, the learning core (`mac2/fly-core-2`) | `library:memory`; its skill ideas open in `customize:skills` |
-| Learning, deeper: memory blocks, the timeline, meaning search, lessons, preferences from Claude Code and Codex, expiring memories, note read-back, outside memory (R17-F) | `library:memory`; skill usage and merging in `customize:skills` |
+| What Branch learns from experience, the learning core (`mac2/fly-core-2`) | `library:memory`; its skill ideas open in `customize:tools` |
+| Learning, deeper: memory blocks, the timeline, meaning search, lessons, preferences from Claude Code and Codex, expiring memories, note read-back, outside memory (R17-F) | `library:memory`; skill usage and merging in `customize:tools` |
 | The wall around programs and keys at the network edge (`mac3/os-sandbox`) | `settings:computer`, beside "What can reach out"; its questions in `inbox:needs` |
-| The dashboard in the browser (`mac3/web-dashboard`) | A page of its own at `/dashboard`, not a place; its switch in `settings:channels` |
+| The dashboard in the browser (`mac3/web-dashboard`) | A page of its own at `/dashboard`, not a place; its switch in `settings:chatapps` |
 | Typed commands, the same everywhere (`mac3/commands`) | The switch and "what works where" in `settings:general`; the `/` menu lives in the message box, because it changes the next message |
 | Watching a task again: its recording, the path it took, saving it as a page or a workflow (bucket 13) | `inbox:history` |
-| Whether Branch itself is keeping up, the event-loop watch (bucket 13) | `settings:advanced` |
-| Working with other agents and tools: Agent Protocol, lent tools, fleet, handoff, project routing, flow search (`mac4/bucket-20`) | `customize:connections` |
+| Whether Branch itself is keeping up, the event-loop watch (bucket 13) | `settings:self` |
+| Working with other agents and tools: Agent Protocol, lent tools, fleet, handoff, project routing, flow search (`mac4/bucket-20`) | `customize:tools` |
 | Ways of working (modes) and shared assistants (`mac4/bucket-20`) | `customize:specialists` |
 | A conversation handed over from another device (`#handoff=<id>`) | Opens the conversation itself; no screen of its own |
-| Building on Branch: the switch for the app-builder tools, and the clients for each language (bucket 21) | `settings:advanced` |
+| Building on Branch: the switch for the app-builder tools, and the clients for each language (bucket 21) | `settings:self` |
 | Flows written out and read back as YAML files (bucket 21) | `automations:procedures` |
 | Saved prompts, your own commands and the example tool server (bucket 12) | `automations:procedures`, beside saved procedures; the commands themselves live in the message box's `/` menu |
-| Installing and removing skills with a written account, Agent Skills folders (bucket 12) | `customize:skills` |
-| Several accounts per connection (`mac6/accounts`) | `settings:models:connection`, one Accounts card (ChatGPT's list inside the ChatGPT card); the account chip sits in the title bar beside the page name, because it only names and switches what the conversation's model uses |
+| Installing and removing skills with a written account, Agent Skills folders (bucket 12) | `customize:tools` |
+| Several accounts per connection (`mac6/accounts`) | `settings:models:connections`, one Accounts card (ChatGPT's list inside the ChatGPT card); the account chip sits in the title bar beside the page name, because it only names and switches what the conversation's model uses |
 | Signing in from other devices, groups and sharing a conversation (bucket 19) | `settings:general`, beside the people on this computer; a person's own page at `/people`, not a place |
-| One-click models on this computer (`mac5/local-models`) | `settings:models:local`, inside the existing "Models on this computer" card; each finished setup appears as a connection in `settings:models:connection` |
+| One-click models on this computer (`mac5/local-models`) | `settings:models:local`, inside the existing "Models on this computer" card; each finished setup appears as a connection in `settings:models:connections` |
 | The smaller asks (`mac6/bucket-23`): project boards | `settings:general` |
-| Counting how Branch is used, with consent (`mac6/bucket-23`) | `settings:data` |
+| Counting how Branch is used, with consent (`mac6/bucket-23`) | `settings:usage` |
 | Other computers running Branch (`mac6/bucket-23`) | `settings:computer` |
-| Other agents answering a conversation (`mac6/bucket-23`) | `settings:models:connection` |
+| Other agents answering a conversation (`mac6/bucket-23`) | `settings:models:connections` |
 | Quick answers, pages kept, long articles and live tool pages (`mac6/bucket-23`) | `library:made` |
 | Bringing in new items from GitHub, mail and Telegram (`mac6/bucket-23`) | `library:documents` |
 | A Hindsight memory server (`mac6/bucket-23`) | `library:memory` |
-| Sending requests where they belong, the intent pipeline (`mac6/bucket-23`) | `customize:skills` |
-| Steps for other apps, MCP examples and the app-server door (`mac6/bucket-23`) | `customize:connections` |
-| Your devices: pairing other computers and the phone, each one's switches, who it is shared with (`mac7/nodes`) | `settings:channels`; the "which device" picker lives in the message box, because it changes the next message |
+| Sending requests where they belong, the intent pipeline (`mac6/bucket-23`) | `customize:tools` |
+| Steps for other apps, MCP examples and the app-server door (`mac6/bucket-23`) | `customize:tools` |
+| Your devices: pairing other computers and the phone, each one's switches, who it is shared with (`mac7/nodes`) | `settings:chatapps`; the "which device" picker lives in the message box, because it changes the next message |
 | Trunks, named assistants of the owner's own: the switches, the three-field create, Edit Trunk, rooms, bringing one in (R17-A) | `customize:specialists`, a card of its own after the specialist panels |
 | The Trunks roster: each Trunk with its latest line and unread replies, and each room (R17-A) | The sidebar, a group above Recents that shows only while Trunks are switched on |
 | Rooms where a Trunk asked for the owner (R17-A) | `inbox:needs` |
 | A Trunk's routines (R17-A) | `automations:scheduled`, with the rest, their words starting `[Trunk @name]`; each Trunk's own list is in its editor |
 | `@name` in the message box (R17-A) | The message box: the `@` menu, and the message goes to that Trunk's own conversation |
 | Safety extras: tool scripts, WebAssembly add-ons, authenticator codes, the emergency stop by level, command checks, the progress check, the tamper-evident record, history repair (`mac7/r17-g`) | `settings:permissions`; the emergency stop sits beside Lockdown's rules there, and a question that needs a code is still answered in `inbox:needs` |
-| The browser extension's side panel and the Obsidian plugin (`mac6/bucket-23`) | Outside the window; their instructions are in `extras/`, and the extension's switch stays in `settings:channels` |
+| The browser extension's side panel and the Obsidian plugin (`mac6/bucket-23`) | Outside the window; their instructions are in `extras/`, and the extension's switch stays in `settings:chatapps` |
 | Starting from a preset, and putting settings back (R17-S-A) | `settings:general` |
 | Which file does what, with editing of each file (R17-S-A) | `settings:general`, beside "How to work in this project"; each file's switch stays on its own card |
-| Your settings in one file (R17-S-A) | `settings:data`, beside Backup |
+| Your settings in one file (R17-S-A) | `settings:usage`, beside Backup |
 | What to try after first run: say hello, watch me once, suggested automations (R17-S-A) | The conversation, straight under the first-run card; shown once |
 | A description under every Settings control, and the scope chip on every Settings card (R17-S-A) | Every Settings page; added by `public/settings-describe.js`, nothing to place |
 | Limits that used to be hidden (R17-S-B): summarising long conversations, sub-tasks and side jobs, thinking effort and service tier | `settings:models:defaults` |
 | Most steps and most cost for one task, hiding key-like values (R17-S-B) | `settings:permissions` |
-| Trying the model service again, how much a tool may say (R17-S-B) | `settings:advanced` |
+| Trying the model service again, how much a tool may say (R17-S-B) | `settings:self` |
 | How commands run, the launch settings file as a card (R17-S-B) | `settings:computer` |
 | Showing a model's thinking (R17-S-B) | `settings:appearance` |
 | How much it remembers at the start, the note about you, where things are remembered (R17-S-B) | `library:memory` |
 | Model for planning, choosing by difficulty, counting what the service says, keeping the cache warm (R17-E) | `settings:models:defaults` |
-| OpenRouter company choice (R17-E) | `settings:models:connection` |
+| OpenRouter company choice (R17-E) | `settings:models:connections` |
 | Mixtures of models, which then appear in the model picker (R17-E) | `settings:models:second` |
 | The round-by-round chart switch (R17-E); the chart itself sits in Settings › Data & usage | `settings:appearance` |
-| Coding polish (`mac7/r17-d`): its switches, formatters, shell snapshot, copies, rules, checks and CI lines | `settings:advanced`, one card beside the developer tools |
+| Coding polish (`mac7/r17-d`): its switches, formatters, shell snapshot, copies, rules, checks and CI lines | `settings:self`, one card beside the developer tools |
 | A task's checklist (`mac7/r17-d`) | The side pane's Plan tab, under the to-do list |
 | The `@` picker (`mac7/r17-d`) | The message box, the same menu as `/`, because it changes the next message |
 | Keyboard shortcuts and vim keys, files searches skip (R17-S-C) | `settings:general` |
 | The status line and a time on each message (R17-S-C) | `settings:appearance`; the line itself sits in the composer's foot row |
 | Where you are told and the sound (R17-S-C) | `settings:notifications` |
-| Updating by itself (R17-S-C) | `settings:about` |
+| Updating by itself (R17-S-C) | `settings:updates` |
 | The push-to-talk key and the longest recording (R17-S-C) | `settings:voice` |
 | How carefully the browser acts, the proxy and trusted certificates (R17-S-C) | `settings:computer` |
-| How long a tool server may take to start (R17-S-C) | `customize:connections` |
+| How long a tool server may take to start (R17-S-C) | `customize:tools` |
 | A word that starts a turn: the switch, the word, how sure it must be (`mac7/wake-pins`) | `settings:voice` |
 | Settings you have pinned, and unpinning them (`mac7/wake-pins`) | `settings:permissions` |
 
 When something new does not fit a row, apply the rule at the top and add a row here in the same
 change.
 
-## Reached from the Trunks strip, not one of the five places
+## Reached from the Trunks strip, not the tab row
 
-These two screens are opened from the Trunks strip (phase 2). They are not homes for new features and
-the terminal does not list them among its places.
+The Overview is opened from the Trunks strip. It is not a home for new features, and the terminal
+does not put it on its tab row.
 
 | Screen | What it shows |
 | --- | --- |
-| `overview:here` | the Overview of this computer, one of your other computers or a Trunk (`public/overview.js`) |
-| `household:people` | People on this computer, with faces (`public/people-place.js`) |
+| `overview:here` | the Overview of this computer, one of your other computers or a Trunk |
 
 ## Putting a new screen in its home
 
