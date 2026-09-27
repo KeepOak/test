@@ -110,3 +110,19 @@ test("parallel selectors accept exact account references and reject malformed re
   for (const accountRef of [{ pool: "alpha", account: "someone" }, { pool: "../alpha", account: "primary" }, { pool: "alpha", account: "primary", owner: "another" }])
     assert.throws(() => ParallelSchema.parse({ tasks: [{ specialist: "worker", prompt: "work", accountRef }] }));
 });
+
+test("background helpers outlive the parent signal and spend their own budget", async (t) => {
+  const f = await fixture(t), parent = await f.app.runtime.run({ prompt: "parent" });
+  const controller = new AbortController();
+  const context = { ...f.app.runtime.context({ runId: parent.id }), signal: controller.signal };
+  const before = context.budget.tokens;
+  const started = await f.app.runtime.delegateBackground("held helper beta", context, [], "", { model: "beta" });
+  controller.abort(new Error("The parent finished"));
+  f.gate.resolve();
+  for (let tries = 0; tries < 100 && f.app.store.run(started.childRunId)?.status === "running"; tries++)
+    await new Promise((done) => setTimeout(done, 5));
+  const child = f.app.store.run(started.childRunId);
+  assert.equal(child.status, "completed");
+  assert.match(child.output, /^beta answered/);
+  assert.equal(context.budget.tokens, before, "the background child keeps its own spending cap");
+});
