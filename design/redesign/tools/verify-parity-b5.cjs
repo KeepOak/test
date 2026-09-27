@@ -233,13 +233,15 @@ async function usage(page) {
   check("Data & usage › Put back: the engine kept a checkpoint of what was there", (await api("history/snapshots")).snapshots.length >= 2);
   await closeDialog(page);
   /* The report: the engine's day rows added up. */
-  const days = (await api("usage?range=7&by=day")).data ?? [];
+  /* The report card opens on its 30 days. */
+  const days = (await api("usage?range=30&by=day")).data ?? [];
   await page.locator('.set-col [data-act="repopen15"]').click(); await settle(page, 800);
   check("Data & usage › Open the report: four tiles", (await page.locator(".scrim .rp-top15 > div").count()) === 4);
   const csv = page.locator('.scrim [data-act="repcsv15"]');
   if (days.length) {
     const [download] = await Promise.all([page.waitForEvent("download"), csv.click()]);
-    check("Data & usage › Save as a spreadsheet: one line a day", (await download.suggestedFilename()) === "usage-report-7d.csv");
+    const lines = require("node:fs").readFileSync(await download.path(), "utf8").trim().split(/\r?\n/);
+    check("Data & usage › Save as a spreadsheet: one line a day", (await download.suggestedFilename()) === "usage-report-30d.csv" && lines.length === days.length + 1, `${lines.length - 1} of ${days.length}`);
   } else check("Data & usage › Save as a spreadsheet: off with no day rows (nothing ran on this engine)", await csv.isDisabled());
   await closeDialog(page);
   /* Spend caps: one box per account that bills per use (none on a fresh engine), then Save caps. */
@@ -247,11 +249,44 @@ async function usage(page) {
   await openPage(page, "usage");
   await page.locator('.set-col [data-act="capsb17"]').click(); await settle(page, 800);
   check("Data & usage › Spend caps: one box per account the engine bills per use", (await page.locator('.scrim input[id^="cap-b17-"]').count()) === pools.reduce((n, p) => n + p.accounts.length, 0));
-  if (!pools.length) check("Data & usage › Save caps: off with no such account", await page.locator('.scrim [data-act="capssaveb17"]').isDisabled());
-  await closeDialog(page);
+  if (!pools.length) { check("Data & usage › Save caps: off with no such account", await page.locator('.scrim [data-act="capssaveb17"]').isDisabled()); await closeDialog(page); }
+  else {
+    const first = () => pools[0].accounts[0], capOf = async () => (await api("accounts")).pools.find((p) => p.pool === pools[0].pool).accounts.find((a) => a.id === first().id).monthlyCapUsd ?? null;
+    const was = await capOf(), mode = (await api("accounts")).mode;
+    /* While several accounts per connection is off, the engine refuses a cap in its own words. */
+    if (mode === "off") {
+      const no = await refusal("accounts/update", { pool: pools[0].pool, account: first().id, monthlyCapUsd: 7 });
+      await page.locator(".scrim #cap-b17-0").fill("7"); await page.locator('.scrim [data-act="capssaveb17"]').click(); await settle(page, 1500);
+      check("Data & usage › Save caps: the engine's words while several accounts is off", no && (await toastText(page)) === no, no ?? "");
+      await closeDialog(page);
+      await post("accounts/settings", { mode: "on" });
+    }
+    /* A cap is kept on a connection's list of accounts, which the engine starts when a second account is added. */
+    let added = null;
+    const listed = await refusal("accounts/update", { pool: pools[0].pool, account: first().id, monthlyCapUsd: was });
+    if (listed) added = (await post("accounts/add", { pool: pools[0].pool, label: "Parity B5", key: "parity-b5-test-key-2" })).accounts?.find((a) => a.label === "Parity B5")?.id ?? null;
+    await openPage(page, "usage");
+    await page.locator('.set-col [data-act="capsb17"]').click(); await settle(page, 800);
+    await page.locator(".scrim #cap-b17-0").fill("7"); await page.locator('.scrim [data-act="capssaveb17"]').click(); await settle(page, 1500);
+    check("Data & usage › Save caps: the engine keeps the cap", (await capOf()) === 7, String(await capOf()));
+    await page.locator('.set-col [data-act="capsb17"]').click(); await settle(page, 800);
+    await page.locator(".scrim #cap-b17-0").fill(was == null ? "" : String(was)); await page.locator('.scrim [data-act="capssaveb17"]').click(); await settle(page, 1500);
+    check("Data & usage › Save caps: put back", (await capOf()) === was, String(await capOf()));
+    if (added) await post("accounts/remove", { pool: pools[0].pool, account: added });
+    if (mode === "off") await post("accounts/settings", { mode: "off" });
+  }
   /* Flagged replies: the engine's list; sending one to the Branch team has no route, so that switch is greyed. */
+  if (STUB.session) {
+    const reply = (await api(`sessions/${STUB.session}`)).messages?.find((m) => m.role === "assistant");
+    if (reply) await post("reply-flags", { sessionId: STUB.session, messageId: reply.messageId, reasons: ["wrong"] });
+    await openPage(page, "usage");
+  }
   const flags = (await api("reply-flags")).flags;
   check("Data & usage › Flagged replies: one row a flag", (await page.locator('.set-col [data-act="flforget17c"]').count()) === flags.length, String(flags.length));
+  if (flags.length) {
+    await page.locator(`.set-col [data-act="flforget17c"][data-v="${flags[0].id}"]`).click(); await settle(page, 1500);
+    check("Data & usage › Flagged replies › Remove: the engine forgot it", !(await api("reply-flags")).flags.some((x) => x.id === flags[0].id));
+  }
   check("Data & usage › Send a flagged reply: greyed", await greyed(page.locator("#fl-send-set17c")));
   /* Backups: Back up now is the engine's. */
   await openPage(page, "usage");
@@ -282,7 +317,17 @@ async function others(page) {
   await page.locator('.scrim [data-act="arenaaskb17"]').click(); await settle(page, 2500);
   const board = (await api("reach/arena")).leaderboard;
   if (board.length < 2) check("Models › Ask two models: the engine's words with fewer than two connections", two && (await toastText(page)) === two, two ?? "");
-  else check("Models › Ask two models: two answers without names", (await page.locator(".scrim .ans-b17").count()) === 2);
+  else {
+    await page.locator(".scrim .ans-b17").first().waitFor({ timeout: 60000 });
+    check("Models › Ask two models: two answers without names", (await page.locator(".scrim .ans-b17").count()) === 2 && !(await page.locator(".scrim .ans-b17 small").first().textContent()).includes("·"));
+    const before = (await api("reach/arena")).leaderboard.reduce((n, m) => n + m.games, 0);
+    await page.locator('.scrim [data-act="arenavoteb17"][data-v="a"]').click(); await settle(page, 1500);
+    const after = (await api("reach/arena")).leaderboard;
+    check("Models › A is better: the engine counted the vote", after.reduce((n, m) => n + m.games, 0) === before + 2);
+    check("Models › After the vote: the names and the standings", (await page.locator(".scrim .ans-b17 small").first().textContent()).includes("·") && (await page.locator(".scrim .elo-b17 span").count()) === after.length);
+    await page.locator('.scrim [data-act="arenanextb17"]').click(); await settle(page, 500);
+    check("Models › Next pair: asks for the next question", (await page.locator(".scrim #arena-q17").count()) === 1);
+  }
   await closeDialog(page);
   await post("reach/switch", { part: "arena", mode: "off" });
   /* Updates: what removing Branch would take away, from the engine's survey (which only looks). */
@@ -298,6 +343,14 @@ async function others(page) {
     const twice = lines.filter((x, i) => lines.indexOf(x) !== i);
     check(`Updates (${lv}): no line printed twice`, twice.length === 0, twice.join(" | "));
   }
+  /* Send traces elsewhere › Send a test trace: the engine's own answer (it refuses while sending is off). */
+  const traced = await refusal("tracing/test", {});
+  await openPage(page, "developer");
+  await page.locator('.set-col [data-act="demob17"][data-k="tracing"]').click();
+  await page.locator('.scrim [data-act="demodob17"]').waitFor({ timeout: 15000 });
+  await page.locator('.scrim [data-act="demodob17"]').click(); await settle(page, 1500);
+  check("Developer › Send a test trace: the engine's answer", traced ? (await toastText(page)) === traced : (await toastText(page)).length > 0, traced ?? await toastText(page));
+  await closeDialog(page);
   /* People: everyone here is under On this computer until someone signs in on a device of their own. */
   const people = await api("people/settings").catch(() => ({ people: [] }));
   await openPage(page, "people");
@@ -322,8 +375,23 @@ async function sweep(page, label) {
   }
 }
 
+/* STUBS=1: two stand-in model services on this computer (stub-model-b5.cjs, on LM Studio's and Jan's own local ports,
+   which must be free), connected with made-up test keys, and one task run, so the arena, spend caps, the report's
+   spreadsheet and a flagged reply can be pressed for real. Only for a throwaway engine. */
+const STUB = { session: null, servers: [] };
+async function stubs() {
+  if (process.env.STUBS !== "1") { console.log("      (STUBS=1 adds two stand-in model services so the arena, caps, spreadsheet and flag removal are pressed too)"); return; }
+  const { start } = require("./stub-model-b5.cjs");
+  for (const [provider, port] of [["lm-studio", 1234], ["jan", 1337]]) {
+    STUB.servers.push(await start(port));
+    await post("connections/from-preset", { provider, key: `parity-b5-test-${provider}`, model: "stub-model" });
+  }
+  STUB.session = (await post("run", { prompt: "Parity B5 check" })).sessionId;
+}
+
 (async () => {
   if (SHOTS) mkdirSync(SHOTS, { recursive: true });
+  await stubs();
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   const errors = [];
@@ -338,6 +406,7 @@ async function sweep(page, label) {
   await sweep(page, label);
   check("no page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
   await browser.close();
+  for (const server of STUB.servers) server.close();
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length} passed, ${failed.length} failed`);
   process.exit(failed.length ? 1 : 0);

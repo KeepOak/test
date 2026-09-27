@@ -5,9 +5,8 @@
    where the engine says the computer has one; elsewhere it stays greyed with the engine's reason under it. This Mac /
    This PC is ../os17.js.
    Drawn from the engine and greyed, for the security review: scanning for personal details (GET /api/privacy
-   pii.outbound; its route has no loosening check of its own, so turning it off from here would weaken a guard with no
-   engine gate) and the authenticator code (GET /api/safety-extras modes; the window has no step to set up the
-   authenticator app, and without one the switch changes nothing).
+   pii.outbound) and the authenticator code (GET /api/safety-extras modes; the window has no step to set up the
+   authenticator app).
    Greyed, each for its reason: installing without asking (the engine never installs without the owner's yes); when
    tools are loaded (the engine decides that itself every round; no setting); adding a trusted folder (it loosens what
    Trunks may change); practice runs (only the terminal's /dry-run, per conversation); messages per conversation per hour
