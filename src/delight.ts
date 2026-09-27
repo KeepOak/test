@@ -45,6 +45,11 @@ export const DelightSettingsSchema = z.object({
     on: z.boolean().default(true),
     /** Earned without any pop-up. */
     quiet: z.boolean().default(false),
+    /**
+     * Whether `on` was chosen: set only when a change names `achievements.on`. A record written while they shipped off
+     * (before Q251) holds `on: false` that nobody chose, and the window has no switch to undo it, so it reads as shipped.
+     */
+    chosen: z.boolean().default(false),
   }).strict().prefault({}),
   /** How the acorn and the pet are drawn: in pixels (the default) or in 3D. */
   look: z.object({
@@ -102,7 +107,10 @@ const settingsKey = "delight", progressKey = "delight-achievements";
 
 export function delightSettings(store: Pick<Store, "get">, owner: string): DelightSettings {
   const saved = DelightSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : DelightSettingsSchema.parse({});
+  const settings = saved.success ? saved.data : DelightSettingsSchema.parse({});
+  // Achievements are off only when somebody switched them off; an "off" nobody chose is the old shipped default.
+  if (!settings.achievements.chosen) settings.achievements.on = true;
+  return settings;
 }
 function progress(store: Pick<Store, "get">, owner: string): Progress {
   const saved = ProgressSchema.safeParse(store.get("settings", owner, progressKey)?.data ?? {});
@@ -204,8 +212,9 @@ export function saveDelightSettings(store: DelightStore, owner: string, input: u
     background: z.record(z.string(), z.unknown()).optional(),
     look: z.record(z.string(), z.unknown()).optional(),
   }).strict().parse(input ?? {});
+  const chosen = before.achievements.chosen || (wanted.achievements !== undefined && "on" in wanted.achievements);
   const next = DelightSettingsSchema.parse({
-    pets: { ...before.pets, ...wanted.pets }, achievements: { ...before.achievements, ...wanted.achievements },
+    pets: { ...before.pets, ...wanted.pets }, achievements: { ...before.achievements, ...wanted.achievements, chosen },
     background: { ...before.background, ...wanted.background }, look: { ...before.look, ...wanted.look },
   });
   store.save("settings", owner, settingsKey, next);

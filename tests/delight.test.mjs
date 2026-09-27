@@ -151,6 +151,33 @@ test("Q251: an install updated with a past finds it quietly at its first look, w
   assert.ok(view.fresh.some((a) => a.id === `tasks:${next}`), "what happens after the first look is celebrated");
 });
 
+test("an 'off' written while achievements shipped off is not a choice: the past is found, quietly, and quiet keeps them on", async (t) => {
+  const { app, call } = await fixture(t);
+  const owner = app.runtime.owner;
+  // The record an install kept from before Q251: every switch at the old default, nothing chosen, never looked.
+  app.store.save("settings", owner, "delight", {
+    pets: { on: false, kind: "squirrel", name: "Hazel", talks: true, tips: true }, achievements: { on: false, quiet: false },
+    look: { style: "pixel" }, background: { on: false, scrim: 60, fit: "fill" },
+  });
+  for (let i = 0; i < 3; i++) await app.runtime.run({ prompt: `before the update ${i}` });
+  const summary = (await call("GET", "/api/delight")).body;
+  assert.equal(summary.settings.achievements.on, true, "an off nobody chose reads as shipped");
+  assert.deepEqual([summary.settings.pets.on, summary.settings.background.on], [false, false], "the pet and background keep theirs");
+  let view = (await call("GET", "/api/delight/achievements")).body;
+  assert.equal(view.on, true);
+  assert.ok(view.list.find((a) => a.id === "tasks:1").got, "the past counts as earned");
+  assert.ok(view.earned >= 1);
+  assert.deepEqual(view.fresh, [], "and arrives without a party");
+  await call("POST", "/api/delight/settings", { achievements: { quiet: true } });
+  view = (await call("GET", "/api/delight/achievements")).body;
+  assert.equal(view.on, true, "keeping them quiet is not switching them off");
+  assert.equal(view.quiet, true);
+  await call("POST", "/api/delight/settings", { achievements: { on: false } });
+  assert.deepEqual((await call("GET", "/api/delight/achievements")).body, { on: false }, "switched off on purpose stays off");
+  await call("POST", "/api/delight/settings", { pets: { on: true } });
+  assert.deepEqual((await call("GET", "/api/delight/achievements")).body, { on: false }, "and another change keeps that choice");
+});
+
 test("quiet earns without any pop-up, and is itself noticed", async (t) => {
   const { app, call } = await fixture(t);
   await call("POST", "/api/delight/settings", { achievements: { on: true, quiet: true } });
