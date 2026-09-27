@@ -73,6 +73,8 @@ export class OpenAIResponsesProvider implements Provider {
   readonly name: string = "openai-responses";
   readonly acceptsImages = true;
   private readonly fetchImpl: typeof globalThis.fetch;
+  /** The model this connection asks for (src/contracts.ts Provider.model). */
+  get model(): string { return this.options.model; }
   constructor(private readonly options: ResponsesOptions) {
     if (!options.model || !options.apiKey) throw new Error("Provider model and API key are required");
     const url = new URL(options.endpoint);

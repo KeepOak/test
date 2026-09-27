@@ -443,23 +443,33 @@ export class MemoryProvider implements MemoryBackend {
     return { cleared: scratch.filter((id) => !notRemoved.some((entry) => entry.id === id)), notRemoved };
   }
   /**
-   * Settings › Your data, Delete everything: every fact the outside service keeps for this person is marked forgotten here
-   * and deleted there, the ones forgotten earlier that it failed to delete included. The service is asked what it keeps
-   * first, and when it cannot answer this throws before anything is touched, so the caller deletes nothing anywhere.
-   * `removed` counts the facts in use that are really gone; `notRemoved` lists what the service would not delete, which
-   * stays marked forgotten, so Branch never reads it back. Nothing to do while facts are kept on this computer.
+   * Settings › Your data, Delete everything, first half: every fact the outside service now set up keeps for this person,
+   * the ones forgotten earlier included, and which of them are still in use. Throws when the service cannot say, so the
+   * caller deletes nothing anywhere; answers null while facts are kept on this computer.
    */
-  async forgetEverythingOutside(owner: string): Promise<{ removed: number; notRemoved: { id: string; reason: string }[] }> {
+  async everythingOutside(owner: string): Promise<{ url: string; ids: string[]; inUse: number } | null> {
     const service = this.serviceFor(owner);
-    if (!service) return { removed: 0, notRemoved: [] };
+    if (!service) return null;
     let held: MemoryRecord[];
     try { held = await service.list(owner); }
     catch (error) {
       throw new Error(`The outside memory service could not be asked what it keeps, so nothing was deleted (${error instanceof Error ? error.message : String(error)}).`);
     }
-    const inUse = new Set(this.remembered(owner, held).map((record) => record.id));
-    const notRemoved = await this.forgetOutside(owner, held.map((record) => record.id), service);
-    return { removed: [...inUse].filter((id) => !notRemoved.some((entry) => entry.id === id)).length, notRemoved };
+    return { url: memoryProviderSettings(this.store, owner).url, ids: held.map((record) => record.id), inUse: this.remembered(owner, held).length };
+  }
+  /** Marks these facts forgotten here, in whatever transaction is open, so none is read back whatever the service does. */
+  markAllForgotten(owner: string, ids: readonly string[]): void {
+    for (const id of ids) this.markForgotten(owner, id);
+  }
+  /**
+   * Second half: deletes these facts from the service set up now, which must still be the one at `url`; nothing is sent
+   * to any other. Answers what was not deleted, with why.
+   */
+  async forgetOutsideAt(owner: string, url: string, ids: string[]): Promise<{ id: string; reason: string }[]> {
+    const service = this.serviceFor(owner);
+    if (!service || memoryProviderSettings(this.store, owner).url !== url)
+      return ids.map((id) => ({ id, reason: "The outside memory service was changed, so this fact was not sent anywhere else." }));
+    return this.forgetOutside(owner, ids, service);
   }
   private async outsideFacts(owner: string, service?: MemoryBackend): Promise<{ records: MemoryRecord[]; problem?: string }> {
     if (!service && !this.isOutside(owner)) return { records: [] };
