@@ -1485,8 +1485,8 @@ async function api(
   // Q255: the owner's alone, read and write; a household person is refused here, a short-lived key at the door.
   if (path === "/api/credentials/settings" && (request.method === "GET" || request.method === "POST"))
     app.store.profiles.requireOwner("Your password manager");
-  if (request.method === "GET" && path === "/api/credentials/settings")
-    return readCredentialSettings(app.store, app.runtime.owner);
+  if (request.method === "GET" && path === "/api/credentials/settings") // `platform`: Windows Credential Manager is only on Windows
+    return { ...readCredentialSettings(app.store, app.runtime.owner), platform: process.platform };
   if (request.method === "POST" && path === "/api/credentials/settings")
     return saveCredentialSettings(app.store, app.runtime.owner, await readBody(request));
   // mac7/vault-autofill (R17-068): which saved sign-in goes with which site. Names and website names
