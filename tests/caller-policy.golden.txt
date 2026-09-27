@@ -1997,6 +1997,8 @@ owner GET /api/usage/limits | here=ok remote=ok phone=ok legacy=ok person=401/32
 owner POST /api/usage/limits | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner GET /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
+owner GET /api/usage/limits/measure | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/usage/limits/measure | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner GET /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/panels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4028,6 +4030,8 @@ owner+lockdown GET /api/usage/limits | here=ok remote=ok phone=ok legacy=ok pers
 owner+lockdown POST /api/usage/limits | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner+lockdown GET /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/usage/limits/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
+owner+lockdown GET /api/usage/limits/measure | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/usage/limits/measure | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/3b60c6 run=401/3b60c6 nobody=401/40daee
 owner+lockdown GET /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/panels/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/panels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -6059,6 +6063,8 @@ household GET /api/usage/limits | here=400/f6e21c remote=400/f6e21c read=401/86e
 household POST /api/usage/limits | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household GET /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
+household GET /api/usage/limits/measure | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/usage/limits/measure | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household GET /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/panels/live | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -8090,6 +8096,8 @@ household+lockdown GET /api/usage/limits | here=400/f6e21c remote=400/f6e21c rea
 household+lockdown POST /api/usage/limits | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household+lockdown GET /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/usage/limits/settings | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
+household+lockdown GET /api/usage/limits/measure | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/usage/limits/measure | here=400/f6e21c remote=400/f6e21c read=401/3b60c6 run=401/3b60c6
 household+lockdown GET /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/panels/work | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/panels/live | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -10121,6 +10129,8 @@ applock GET /api/usage/limits | here=423/a8f863
 applock POST /api/usage/limits | here=423/a8f863
 applock GET /api/usage/limits/settings | here=423/a8f863
 applock POST /api/usage/limits/settings | here=423/a8f863
+applock GET /api/usage/limits/measure | here=423/a8f863
+applock POST /api/usage/limits/measure | here=423/a8f863
 applock GET /api/panels/work | here=423/a8f863
 applock POST /api/panels/work | here=423/a8f863
 applock GET /api/panels/live | here=423/a8f863
