@@ -27,6 +27,8 @@ import { SecretScrubber } from "../dist/vault.js";
 
 const OWNER = "local";
 const THE_PASSWORD = "wincred-pässword-7731";
+const phaseMs = (started) => Math.max(0, Math.min(360000, Date.now() - started));
+const cliPhase = (name, outcome) => `${name}: exit=${outcome.code}, timeout=${outcome.timedOut === true}, signal=${outcome.signal ?? "none"}, elapsed=${outcome.elapsedMs ?? "unknown"}ms, stdoutLength=${outcome.stdout.length}, stderrLength=${outcome.stderr.length}`;
 function fakeStore() {
   const rows = new Map(), audits = [];
   return { audits, get: (table, owner, id) => (rows.has(`${table}/${owner}/${id}`) ? { data: rows.get(`${table}/${owner}/${id}`) } : undefined),
@@ -98,12 +100,22 @@ test("a saved sign-in from Windows Credential Manager is typed into the page and
 
 test("a real round trip on the build machine's Windows lane: a throwaway credential is read, then deleted", { skip: process.platform !== "win32" || !process.env.CI }, async (t) => {
   const target = `branch-ci-${randomBytes(6).toString("hex")}`, secret = `pw-${randomBytes(9).toString("base64url")}-é-пароль-你好`; // UTF-16 text above U+00FF too (Codex P2)
-  execFileSync("cmdkey", [`/generic:${target}`, "/user:branch-ci", `/pass:${secret}`], { windowsHide: true });
-  t.after(() => { try { execFileSync("cmdkey", [`/delete:${target}`], { windowsHide: true }); } catch { /* already gone */ } });
+  const setupAt = Date.now();
+  try { execFileSync("cmdkey", [`/generic:${target}`, "/user:branch-ci", `/pass:${secret}`], { windowsHide: true, timeout: 30000, stdio: "ignore" }); }
+  catch { assert.fail(`credential setup failed after ${phaseMs(setupAt)} ms`); }
+  t.diagnostic(`credential setup completed in ${phaseMs(setupAt)} ms`);
+  t.after(() => {
+    const cleanupAt = Date.now();
+    try { execFileSync("cmdkey", [`/delete:${target}`], { windowsHide: true, timeout: 30000, stdio: "ignore" }); }
+    catch { assert.fail(`credential cleanup failed after ${phaseMs(cleanupAt)} ms`); }
+    t.diagnostic(`credential cleanup completed in ${phaseMs(cleanupAt)} ms`);
+  });
   const { executable, args } = windowsCredentialCommand(target);
   const found = await spawnCli(executable, args, 30000);
-  assert.equal(found.code, 0, `exit ${found.code}: ${found.stderr.slice(0, 300)} (${found.stdout.length} characters out)`);
-  assert.equal(found.stdout, secret);
+  t.diagnostic(cliPhase("credential lookup", found));
+  assert.equal(found.code, 0, cliPhase("credential lookup", found));
+  assert.ok(found.stdout === secret, "credential lookup returned the throwaway value exactly");
   const missing = await spawnCli(...Object.values(windowsCredentialCommand(`${target}-none`)), 30000);
-  assert.equal(missing.code, 44);
+  t.diagnostic(cliPhase("credential absent lookup", missing));
+  assert.equal(missing.code, 44, cliPhase("credential absent lookup", missing));
 });

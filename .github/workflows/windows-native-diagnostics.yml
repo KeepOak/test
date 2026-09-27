@@ -1,0 +1,31 @@
+name: Windows native diagnostics
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-native-diagnostics.yml'
+      - 'src/credential-cli.ts'
+      - 'tests/windows-credential-manager.test.mjs'
+      - 'tests/credential-cli-diagnostics.test.mjs'
+      - 'tests/desktop-window.test.mjs'
+      - 'tests/desktop-startup-diagnostics.test.mjs'
+      - 'tests/fixtures/desktop-options.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-roundtrip:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node -e "require('electron')"
+      - run: npm run build
+      - name: Credential metadata and hosted Windows credential round trip
+        run: node --test --test-concurrency=1 tests/credential-cli-diagnostics.test.mjs tests/windows-credential-manager.test.mjs
+      - name: Desktop startup metadata and hosted Electron window
+        run: node --test --test-concurrency=1 tests/desktop-startup-diagnostics.test.mjs tests/desktop-window.test.mjs

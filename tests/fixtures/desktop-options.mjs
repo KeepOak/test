@@ -64,6 +64,22 @@ export async function desktopOptions({ hidden = !process.env.CI } = {}) {
  * at once has taken well over thirty seconds for the same thing, so the allowance is for that.
  */
 export const STARTUP_MS = 120000;
+/** Keep hosted startup failures useful without copying Electron logs, paths, or page contents into CI. */
+export function desktopStartupFailure(phase, startedAt, error, now = Date.now()) {
+  const elapsedMs = Math.max(0, Math.min(360000, now - startedAt));
+  const timedOut = error?.name === "TimeoutError";
+  return new Error(`desktop ${phase} ${timedOut ? "timed out" : "failed"} after ${elapsedMs} ms (limit ${STARTUP_MS} ms)`);
+}
+export async function launchDesktop(electronDriver, options) {
+  const startedAt = Date.now();
+  try { return await electronDriver.launch(options); }
+  catch (error) { throw desktopStartupFailure("launch", startedAt, error); }
+}
+export async function firstDesktopWindow(electron) {
+  const startedAt = Date.now();
+  try { return await electron.firstWindow({ timeout: STARTUP_MS }); }
+  catch (error) { throw desktopStartupFailure("firstWindow", startedAt, error); }
+}
 /* Redesign: the new window (public/app) has no #connection pill. Its status bar reads "Connected · <computer>" from
    the link state (core/api.js), which starts as up before anything has loaded, so the version button beside it is
    waited for too: the status bar draws that only from the engine's answered state (shell/shell.js status()). */

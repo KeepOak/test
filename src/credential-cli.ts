@@ -97,7 +97,10 @@ export function collectCredentialReferences(value: unknown): CredentialRef[] {
 }
 
 /** What one run of a password manager's command line came back with. */
-export interface CliOutcome { code: number | null; stdout: string; stderr: string; missing?: boolean }
+export interface CliOutcome {
+  code: number | null; stdout: string; stderr: string; missing?: boolean;
+  timedOut?: boolean; signal?: string | null; elapsedMs?: number;
+}
 export type CliRunner = (executable: string, args: string[], timeoutMs: number) => Promise<CliOutcome>;
 
 /**
@@ -211,18 +214,28 @@ export function locateCommand(name: string, platform: string = process.platform,
 }
 
 /** Runs a password manager's command line directly: no shell, no window, and a hard time limit. */
+export function cliExitMetadata(error: unknown, elapsedMs: number, timeoutMs = 0): Pick<CliOutcome, "timedOut" | "signal" | "elapsedMs"> {
+  const failure = error as { killed?: unknown; signal?: unknown; code?: unknown } | null;
+  const signal = typeof failure?.signal === "string" && /^SIG[A-Z0-9]{1,16}$/.test(failure.signal) ? failure.signal : null;
+  const timedOut = failure?.code === "ETIMEDOUT" || (failure?.killed === true && signal !== null && timeoutMs > 0
+    && elapsedMs >= timeoutMs - 50 && failure?.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER");
+  return { timedOut, signal,
+    elapsedMs: Math.max(0, Math.min(360000, Math.round(elapsedMs))) };
+}
 export const spawnCli: CliRunner = (executable, args, timeoutMs) =>
   new Promise((resolve) => {
+    const startedAt = Date.now();
     // Nowhere on the path is the same answer as not installed, and it is given without starting
     // anything at all, so no folder Branch is working in can stand in for the password manager.
     const found = locateCommand(executable);
-    if (!found) { resolve({ code: null, stdout: "", stderr: "", missing: true }); return; }
+    if (!found) { resolve({ code: null, stdout: "", stderr: "", missing: true, ...cliExitMetadata(null, Date.now() - startedAt) }); return; }
     execFile(found, args, { timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 65536, env: vaultEnvironment() },
       (error, stdout, stderr) => {
         const failure = error as (NodeJS.ErrnoException & { code?: number | string }) | null;
         const missing = failure?.code === "ENOENT";
         const code = typeof failure?.code === "number" ? failure.code : failure ? 1 : 0;
-        resolve({ code, stdout: String(stdout), stderr: String(stderr), missing });
+        resolve({ code, stdout: String(stdout), stderr: String(stderr), missing,
+          ...cliExitMetadata(failure, Date.now() - startedAt, timeoutMs) });
       });
   });
 

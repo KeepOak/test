@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { _electron } from "playwright";
-import { connected, desktopOptions, onboarded } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, firstDesktopWindow, launchDesktop, onboarded } from "./fixtures/desktop-options.mjs";
 
 const mainWindow = (electron, run) => electron.evaluate(({ BrowserWindow }, body) => {
   const win = BrowserWindow.getAllWindows().find((each) => each.getTitle() !== "" && !each.isDestroyed()) ?? BrowserWindow.getAllWindows()[0];
@@ -19,10 +19,10 @@ const staysHidden = async (electron, when) =>
    someone is using. */
 test("the desktop window has no system title bar, fills the screen first, and reopens as it was left", { timeout: 360000, skip: !process.env.CI && "it shows a window: build machines only" }, async () => {
   const { options } = await desktopOptions();
-  const electron = await _electron.launch(options);
+  const electron = await launchDesktop(_electron, options);
   let left = null; // the window's size just before it closed
   try {
-    const page = await electron.firstWindow();
+    const page = await firstDesktopWindow(electron);
     await onboarded(page);
     // Linux build machines draw windows with no window manager (Xvfb), and nothing can be maximised there;
     // the choice itself is tested in window-state.test.mjs.
@@ -47,9 +47,9 @@ test("the desktop window has no system title bar, fills the screen first, and re
   } finally {
     await electron.close();
   }
-  const again = await _electron.launch(options);
+  const again = await launchDesktop(_electron, options);
   try {
-    const page = await again.firstWindow();
+    const page = await firstDesktopWindow(again);
     await connected(page);
     assert.equal(await mainWindow(again, (win) => win.isMaximized()), false, "it reopens the way it was left");
     const bounds = await mainWindow(again, (win) => win.getNormalBounds());
@@ -62,9 +62,9 @@ test("the desktop window has no system title bar, fills the screen first, and re
 /* Its own test, so the window's top row and the reopening above each report on their own. */
 test("the desktop window's own top row moves it while its buttons still press", { timeout: 360000 }, async () => {
   const { options } = await desktopOptions({ hidden: true });
-  const electron = await _electron.launch(options);
+  const electron = await launchDesktop(_electron, options);
   try {
-    const page = await electron.firstWindow();
+    const page = await firstDesktopWindow(electron);
     await onboarded(page);
     await staysHidden(electron, "opened");
     // Redesign: the old window marked the desktop frame with body.lx-desktop-frame and its top row was body.lx header.
@@ -103,9 +103,9 @@ const underControls = (page) => page.evaluate(() => {
 test("nothing of the page sits under the desktop window's own controls", { timeout: 360000 }, async (t) => {
   if (process.platform === "darwin") return t.skip("the Mac's traffic lights sit on the left");
   const { options } = await desktopOptions({ hidden: true });
-  const electron = await _electron.launch(options);
+  const electron = await launchDesktop(_electron, options);
   try {
-    const page = await electron.firstWindow();
+    const page = await firstDesktopWindow(electron);
     await connected(page);
     await staysHidden(electron, "opened");
     await page.locator(".ob9").waitFor(); // setup, over a fresh data folder
@@ -163,9 +163,9 @@ async function cornerPixel(page, electron) {
 test("the desktop window's own controls follow the look, in every shipped theme, light and dark", { timeout: 360000 }, async (t) => {
   if (process.platform === "darwin") return t.skip("the Mac's traffic lights are drawn by the Mac");
   const { options } = await desktopOptions({ hidden: true });
-  const electron = await _electron.launch(options);
+  const electron = await launchDesktop(_electron, options);
   try {
-    const page = await electron.firstWindow();
+    const page = await firstDesktopWindow(electron);
     await onboarded(page);
     await staysHidden(electron, "opened");
     await mainWindow(electron, (win) => {
