@@ -10,7 +10,7 @@ import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
-import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
@@ -268,7 +268,7 @@ function composer() {
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || liveRun()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
-      : `<button class="c-btn send${draft.trim() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
+      : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
 }
 
 /* ---------- hook points for other batches (PARITY.md, batch B1's hook tasks) ---------- */
@@ -445,8 +445,11 @@ async function carryOut(client) {
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
-  if (!prompt) return;
-  if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, words === undefined); return; }
+  if (!prompt && !(words === undefined && hasFiles())) return;
+  /* While a task works, words join its waiting line; files wait on their chips for the next message. */
+  if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
+  /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
+  if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain(""); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
   if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
@@ -529,6 +532,7 @@ async function sendPlain(prompt) {
   try {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : await startMode()) });
     started = true;
+    filesSent();
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
@@ -560,8 +564,11 @@ function keepForLater(prompt) {
   S.drafts[sid ?? "new"] = prompt;
   const box = $("#prompt");
   if (box) box.value = prompt;
-  whenBack().then(() => {
-    if (C.sessionId === sid && !C.sending && ($("#prompt")?.value ?? "").trim() === prompt) return send();
+  /* Its files stay on their chips, and are sent ahead again once the engine answers (what it had waiting may be gone). */
+  whenBack().then(async () => {
+    if (C.sessionId !== sid || C.sending || ($("#prompt")?.value ?? "").trim() !== prompt) return;
+    if (hasFiles()) await resendFiles();
+    if (prompt || hasFiles()) return send();
   }).catch((error) => toast(error.message));
 }
 
@@ -731,7 +738,7 @@ export function init() {
     // Stop holds Send's place only while the box is empty: typing gives Send back, clearing the box brings Stop again.
     const stopNow = !e.target.value.trim() && (C.sending || !!liveRun());
     if (stopNow !== ($("#send")?.dataset.act === "stop-run")) renderNow();
-    $("#send")?.classList.toggle("ready", !!e.target.value.trim()); // pass 17: Send turns copper once there is something to send
+    $("#send")?.classList.toggle("ready", !!e.target.value.trim() || hasFiles()); // pass 17: Send turns copper once there is something to send
   });
   setInterval(async () => {
     if (S.view !== "chat" || !C.sessionId || C.sending) return;
