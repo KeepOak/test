@@ -30,9 +30,14 @@ export const heldBack = (permission: string): boolean => permission.startsWith("
 /** Whether a schedule's words say it only reads. */
 export const saysReadOnly = (words: string): boolean => readOnlyWords.test(String(words ?? ""));
 
+/** The owner's own mail, calendar and files in their accounts are read only when the words are about them. */
+const personalWords = /\b(e-?mails?|inbox|mail|gmail|outlook|calendar|meetings?|appointments?|drive)\b/i;
+
 /** The least a schedule's words need, from what the owner holds. Schedules, settings and installing are never included. */
 export function leastPermissions(words: string, held: readonly string[]): string[] {
-  const usable = held.filter((p) => !p.startsWith("schedules.") && !p.endsWith(".manage") && !p.endsWith(".propose") && !heldBack(p));
+  const personal = personalWords.test(String(words ?? ""));
+  const usable = held.filter((p) => !p.startsWith("schedules.") && !p.endsWith(".manage") && !p.endsWith(".propose") && !heldBack(p)
+    && (p !== "personal.read" || personal));
   const reads = usable.filter(isReadOnlyPermission);
   return saysReadOnly(words) ? reads : [...new Set([...reads, ...usable.filter((p) => localWrites.includes(p))])];
 }

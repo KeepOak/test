@@ -112,3 +112,10 @@ test("a list the assistant names from inside a task never carries the screen, se
   assert.deepEqual(record.data.permissions, ["web.read"], "a page telling the assistant to add them gets nothing");
   assert.notEqual(record.data.permissionsChosen, true, "and the list is not taken for the owner's own");
 });
+
+test("the owner's own mail and calendar are read only when the words are about them", async (t) => {
+  const { held } = await fixture(t);
+  if (!held.includes("personal.read")) return;
+  assert.ok(!leastPermissions(dogfoodWords, held).includes("personal.read"), "public web work never reads the owner's mail");
+  assert.ok(leastPermissions("every weekday at 8, check my inbox for invoices", held).includes("personal.read"));
+});
