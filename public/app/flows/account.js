@@ -3,7 +3,8 @@
    Models › Connections, the account menu both of them open, and the "Add an account" wizard:
    step 1 picks a service, step 2 takes a key for a key connection, step 3 names the account, says which Trunks use it
    and where it goes in the order. A key is read from its field once, sent at once with POST /api/accounts/add, and the
-   field is emptied: it is never drawn back, kept in a variable or saved in this window. */
+   field is emptied: it is never kept in a variable or saved in this window. Only when the engine refuses it is it put
+   back in the key box it came from (keyBack), so the person can fix the address without pasting it again. */
 
 import { $, esc, render } from "../core/dom.js";
 import { openDlg, openPop, closePop, closeDlg, dialog, ic, mi, toast } from "../core/ui.js";
@@ -221,8 +222,8 @@ function pickService(id) {
   draw();
 }
 
-/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere. Once the
-   engine has made the connection, step 3 names it and places it like any other account. */
+/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere (a refused
+   one is put back in its box, see keyBack). Once the engine has made the connection, step 3 names it and places it like any other account. */
 async function addService(key) {
   keepExtras();
   const extras = Object.fromEntries(Object.entries(W.extras).filter(([, v]) => String(v).trim()));
@@ -232,6 +233,14 @@ async function addService(key) {
     Object.assign(W, { pool: made.id, service: null, extras: {}, saved: poolById(made.id)?.accounts?.[0] ?? null, step: 3, error: "" });
   } catch (error) { W.error = error.message; }
   draw();
+  if (W.error) keyBack(key);
+}
+
+/* A refused key goes back into the new key box, so fixing the address does not mean pasting it again. It is put back
+   from this call only; nothing in W holds it. */
+function keyBack(key) {
+  const field = $("#aa-key");
+  if (field && key) field.value = key;
 }
 
 /* The key goes to the engine at once, under the account's first name; step 3 renames it if asked. */
@@ -250,6 +259,7 @@ async function addKey() {
   } catch (error) { W.error = error.message; }
   await loadAccounts();
   draw();
+  if (W.error) keyBack(value);
 }
 
 const keepName = () => { const v = $("#aa-name")?.value; if (v !== undefined) W.name = v; };
