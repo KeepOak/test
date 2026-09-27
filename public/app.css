@@ -3678,6 +3678,11 @@ p.ic-t,div.ic-t{display:flex}
 .rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
 .editor .field>.seg{align-self:start}
 
+/* area: window-perf — the pet walks by transform (shell/scene.js placePet), so a step moves it without laying the window out */
+.keeper .petbox{transition:transform .32s linear}
+/* area: window-perf — a face scrolled out of its list is held still (core/still.js); it moves again as it comes into view */
+.av.still-perf,.av.still-perf *{animation-play-state:paused!important}
+
 /* area: pebble 3D — the classic pebble rendered in Blender (core/pebble.js). The rendered frame is 1/0.7 of the face,
    with the body's box 21.43% in from each side and 8% of the frame under it, so hops and effects have room. The still
    is the same three passes as the canvas: the colour cut to the body and multiplied by its shading, its gloss, then

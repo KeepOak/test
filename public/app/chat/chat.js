@@ -18,7 +18,7 @@ import { checkpointRows, initCheckpoints } from "./checkpoints.js";
 import { selfCard, loadSelfChange, initSelfChange } from "./selfchange.js";
 import { mkCard, initMkTrunk } from "./mktrunk.js";
 import { teachBar, teachAdopt, initTeach } from "./teach.js";
-import { findBar, applyFind, initFind } from "./find.js";
+import { FIND, findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
 import { initDictate, loadDictation, dictating, micButton, dictRow } from "./dictate.js";
 import { replyMark, readNewReply } from "./aloud.js";
@@ -43,6 +43,7 @@ import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
 import { t } from "../../i18n.js";
 import { media17 } from "../core/art17.js";
+import { stillOutOfSight } from "../core/still.js";
 
 const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "" };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
@@ -159,6 +160,10 @@ export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null)
 export function draw() {
   return `${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
+/* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
+   are written into the drawn thread and must start from a fresh one each time. */
+export const inParts = () => !FIND.on;
+const heard = new WeakSet();
 export function after(main) {
   /* Newest at the bottom stays in view only while the reader is at the bottom; someone reading back keeps their place. */
   const box = $("#scroll", main);
@@ -166,7 +171,10 @@ export function after(main) {
     const same = C.readSid === C.sessionId;
     box.scrollTop = !same || C.atBottom !== false ? box.scrollHeight : C.readTop ?? box.scrollHeight;
     C.readSid = C.sessionId;
-    box.addEventListener("scroll", () => { C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    // A scroll box kept from the last draw already has its listener.
+    if (!heard.has(box)) box.addEventListener("scroll", () => { C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    heard.add(box);
+    stillOutOfSight(box);
   }
   applyFind();
   loadDictation();
