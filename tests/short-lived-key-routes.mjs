@@ -1198,7 +1198,8 @@ export const ROUTES = {
   "/api/usage/limits": "secret-read",
   "/api/usage/limits/measure": "owner POST", // "Measure now" spends a little of a sign-in's plan window
   "/api/usage/limits/settings": "secret-read",
-  "/api/usage/limits/measure": "owner POST", // "Measure now": one tiny real request on the owner's sign-in
+  "/api/usage/limits/refresh": "owner POST", // "Check now" and opening the popover: reads that sign-in's plan, sends no message
+  "/api/usage/limits/look": "owner POST", // looks for a signed-in Claude Code program on this computer
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
