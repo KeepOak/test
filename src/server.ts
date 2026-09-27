@@ -155,6 +155,7 @@ import { handlesWikiPath, wikiApi } from "./wiki.js";
 import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"; // bucket 12
 import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
 import { policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
+import { PrivacyChangeRefused } from "./privacy-guard.js"; // the privacy checks are held to the same yes
 import { mayAnswerHere, nothingWaitingRefusal, personConversation, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
 import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
 import { archiveBodyLimit } from "./session-library.js";
@@ -2251,7 +2252,12 @@ async function guardApi(app: Branch, request: IncomingMessage, path: string): Pr
   if (request.method === "POST" && path === "/api/lock/pin") return appLockAnswer(async () => app.sessionLock.setPin(await readBody(request)));
   if (request.method === "POST" && path === "/api/lock/settings") return app.sessionLock.configure(await readBody(request));
   if (request.method === "GET" && path === "/api/privacy") return app.privacy.settings();
-  if (request.method === "POST" && path === "/api/privacy") return app.privacy.configure(await readBody(request));
+  if (request.method === "POST" && path === "/api/privacy") {
+    // Turning a check down needs the owner's yes, and nothing changes under Lockdown (src/privacy-guard.ts).
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    try { return app.privacy.configure(input, confirmLoosening, lockdownActive(app.store, app.runtime.owner)); }
+    catch (error) { throw error instanceof PrivacyChangeRefused ? new HttpError(409, error.message) : error; }
+  }
   throw new HttpError(404, "Endpoint not found");
 }
 /** Signing in to an outside service: the app opens the address this returns in the browser. */
