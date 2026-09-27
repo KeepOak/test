@@ -10218,3 +10218,15 @@ Nothing ever rebuilds a map on its own. A stale map is a row saying so; you pres
 Settings fields (`learn`): `mode` (off, when-needed, on -- off at first) and `steps`, how many stops
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
+
+## The desktop app's engine process
+
+The desktop app runs the engine in a process of its own and hands it what it needs when it starts (`EngineConfigSchema`, src/desktop/engine-link.ts). None of these is set by hand; they are listed so every declared field is written down.
+
+- `dataDir`, `workspace`: the data folder and workspace, the same ones the app would use itself.
+- `providerEnv`: the saved model connection as provider variables, or none.
+- `version`: the app's version.
+- `executable`, `installRoot`, `packaged`: the installed program file and folder (none when run from source), and whether this is a packaged app.
+- `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
+- `appPid`: the window's main process, so the engine knows when the app is gone.
+- `testHooks`: test builds only, never in a packaged app.
