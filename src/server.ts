@@ -286,6 +286,7 @@ import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
 import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
+import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
@@ -3692,6 +3693,7 @@ export async function startServer(
   const bearerOf = (request: IncomingMessage): string => /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "";
   /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
   const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
+  const browserControls = new BrowserControlApi(app);
   /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
   const socketPhoneKey = (request: IncomingMessage): boolean => {
     const offered = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((part) => part.trim());
@@ -3930,6 +3932,22 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (executes && !place)
         throw new HttpError(429, "Too many active executions");
       try {
+        if (handlesBrowserApiPath(path)) {
+          const stopped = new AbortController();
+          request.once("aborted", () => stopped.abort());
+          response.once("close", () => { if (!response.writableEnded) stopped.abort(); });
+          const browserKey = request.headers.authorization?.replace(/^Bearer(?: |$)/, "") ?? "";
+          const authorizeBrowser = () => requireBrowserOwner(app, key === "window" && browserKey.length === token.length
+            && timingSafeEqual(Buffer.from(browserKey), Buffer.from(token)), throughDoor(request));
+          try { authorizeBrowser(); } catch (error) { const refused = browserControls.error(error); throw new HttpError(refused.status, refused.message); }
+          const browserQuery = new URL(request.url ?? "/", "http://local").searchParams;
+          const input = request.method === "GET" && path === browserApiPath
+            ? { sessionId: browserQuery.get("sessionId"), clientId: browserQuery.get("clientId"), profile: browserQuery.get("profile"),
+              id: browserQuery.get("id"), epoch: Number(browserQuery.get("epoch")) } : await readBody(request);
+          const answer = await browserControls.handle(request.method ?? "GET", path, input, { authorize: authorizeBrowser, signal: stopped.signal })
+            .catch((error: unknown) => { if (error instanceof z.ZodError) throw error; const refused = browserControls.error(error); throw new HttpError(refused.status, refused.message); });
+          send(response, 200, answer); return;
+        }
         // ---- Wave mac3 (commands): the one slash-command table, for the window, the phone and the
         // dashboard (src/commands/api.ts). What the key may do is read the way the dashboard reads it,
         // and checked command by command; running one takes a place like any other task. ----
@@ -4320,6 +4338,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     const next = rotating.then(async () => {
       const key = await writeNewWindowKey(options.dataDir);
       token = key;
+      browserControls.revoke();
       options.onWindowKey?.(key);
       for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
       remote.dropConnections(keep);
@@ -4479,6 +4498,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
+      browserControls.close();
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops

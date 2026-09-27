@@ -28,6 +28,7 @@ import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) ho
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
 import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
+import { OwnerInputSchema, ownerPageInput, type OwnerInput } from './browser-owner-input.js';
 
 export const BrowserConfigSchema = z.object({
   /** The only websites the browser may open, as exact origins. */
@@ -385,6 +386,15 @@ export class BranchBrowser {
     });
     if (!own) entry.agentSequence = { epoch: view.epoch, next: sequence + 1 };
     return result;
+  }
+  /** Available only inside an exact ownerCommand capability; model arguments never provide this grant. */
+  async ownerInput(input: OwnerInput, context: ToolContext) {
+    const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
+    if (!token || !this.ownerCommands.has(token) || !this.entry(context).control)
+      throw new Error('Page input requires the owner window\'s current browser grant.');
+    if (this.entry(context).session.isRecording()) throw new Error('Stop the browser recording before typing directly into this page.');
+    try { return await this.operation(context, (page, check) => ownerPageInput(page, input, check)); }
+    catch { throw new Error('The page input did not finish. Refresh browser control before continuing.'); }
   }
   /**
    * Browser profiles that stay signed in, per Trunk: a Trunk's task opens its first page with that Trunk's own saved
@@ -744,6 +754,8 @@ export class BranchBrowser {
   async startRecording(context: ToolContext) {
     return this.writeFor(context, async (write) => {
     const entry = this.entry(context);
+    if (entry.control && await this.ownedRecordingPrivate(entry))
+      throw new Error('This shared browser holds or has handled private values, so a recording cannot start.');
     // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
     // value is still in a box of the window.
     // A box that cannot be asked counts as holding one, as it does for a saved page (holdsSecret).
@@ -763,6 +775,13 @@ export class BranchBrowser {
     return { recording: true,
       note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
     });
+  }
+  private async ownedRecordingPrivate(entry: RunEntry): Promise<boolean> {
+    if (entry.seen.size) return true;
+    const pages = entry.session.tabs().map(tab => entry.session.tabPage(tab.index)).filter((page): page is Page => !!page);
+    const privatePages = Promise.all(pages.map(page => holdsSecret(page, entry.filled.get(page)?.boxes ?? []).catch(() => true)));
+    return Promise.race([privatePages.then(found => found.some(Boolean)),
+      new Promise<boolean>(done => { setTimeout(() => done(true), 1000).unref?.(); })]);
   }
   /** Ends the recording and keeps it beside the task's other files. */
   async keepRecording(context: ToolContext) {
@@ -943,7 +962,10 @@ export class BranchBrowser {
   }
   /** The website the run's page is on, so the approval policy can match on it. */
   hostFor(context: Pick<ToolContext, 'owner' | 'runId'>): string {
-    try { return this.sessions.get(this.key(context))?.host ?? ''; } catch { return ''; }
+    try {
+      const entry = this.sessions.get(this.key(context));
+      return hostOf(entry?.session.watched()?.page.url() ?? '') || entry?.host || '';
+    } catch { return ''; }
   }
   /**
    * Gives every borrowed browser back at once, without stopping anything else. Used when Branch
@@ -1129,6 +1151,9 @@ export function pageKey(value: string | undefined): string {
 export function registerBrowser(registry: ToolRegistry, browser: BranchBrowser): void {
   registry.onRunFinished(context => browser.closeRun(context));
   const host = (_a: unknown, c: ToolContext) => browser.hostFor(c);
+  registry.register({ name: 'browser.owner_input', permission: 'browser.interact',
+    description: 'Page input reserved for the owner window holding the browser controls.', parameters: OwnerInputSchema,
+    execute: (input, context) => browser.ownerInput(input, context), target: host });
   registry.register({ name: 'browser.navigate', reach: 'outbound', permission: 'browser.read',
     description: 'Open a configured origin in an isolated browser.',
     parameters: z.object({ url: z.string().url().max(2000) }).strict(), execute: (a, c) => browser.navigate(a.url, c) });
