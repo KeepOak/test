@@ -13,9 +13,10 @@ import { figure17, onGate, calm17 } from "./art17.js";
 export const PLAY_MAX = 6;
 const REST = new Set(["idle", "sleep"]);
 
-/* A character's face at a size (css holds --s and --c), acting out st. */
-export const figureFace = (look, st, css, extra = "") =>
-  `<span class="av look12 fig17r${extra}${st === "wait" ? " waiting" : ""}" data-css="${esc(css)}" data-st="${esc(st)}" aria-hidden="true">${figure17(look, st, "gate17")}</span>`;
+/* A character's face size px wide (css holds --s and --c), acting out st. The figure is drawn 118% of the face
+   (app.css .av.look12.fig17r .fig12), so its loop is picked for that width. */
+export const figureFace = (look, st, css, extra = "", size = 0) =>
+  `<span class="av look12 fig17r${extra}${st === "wait" ? " waiting" : ""}" data-css="${esc(css)}" data-st="${esc(st)}" aria-hidden="true">${figure17(look, st, "gate17", size * 1.18)}</span>`;
 
 /* ---------- which loops play ---------- */
 const loops = new Set(), onScreen = new Map();

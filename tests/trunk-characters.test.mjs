@@ -32,6 +32,14 @@ test("every character folder is in exactly one manifest, and every file a charac
   assert.deepEqual([...trunkCharacters], listed, "the engine accepts exactly the catalogue");
 });
 
+test("every character's loops come in the smaller sizes the window draws its faces at", () => {
+  for (const c of characters()) {
+    assert.deepEqual(c.sizes, c.id === "branch" ? [96, 160, 300] : [96, 160], `${c.id}: its smaller encodes`);
+    for (const file of Object.values(c.states))
+      for (const width of c.sizes) assert.ok(existsSync(`${art}${file.slice(5).replace(/\.webm$/, `.${width}.webm`)}`), `${c.id}: ${file} at ${width}px is on disk`);
+  }
+});
+
 test("GET /api/trunks hands the window the catalogue; a Trunk wears any of it and keeps its eyes", async (t) => {
   const { app } = await fixture(t);
   on(app);
