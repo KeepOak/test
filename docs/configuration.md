@@ -4867,7 +4867,8 @@ from `public/assets/branch-mascot.png`.
   (`xcrun simctl install booted App.app`).
 
 `.github/workflows/mobile.yml` builds both for a release tag, or when run by hand, and keeps
-the files for seven days. It publishes nothing.
+the files for seven days. It publishes nothing. It also runs the Android unit tests and compiles the
+push code (`-PbranchPushCompile`, which needs no Firebase project; that build is never kept).
 
 **Putting it on a phone.** Nothing here is uploaded anywhere; each route is a step the owner takes.
 

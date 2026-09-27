@@ -58,7 +58,7 @@ const codingShipsOn: Partial<Record<CodingPart, CodingMode>> = {
   notebooks: "when-needed",
   // The owner's rule (ships on, 2026-09-26): checks run only when asked, each by a helper that may only read; none of (a)–(f).
   "review-checks": "when-needed",
-// The owner's rule (ships on, 2026-09-26): a worktree is made only when the owner forks a conversation, and copies per helper stay off; none of (a)–(f).
+  // The owner's rule (ships on, 2026-09-26): a worktree is made only when the owner forks a conversation, and copies per helper stay off; none of (a)–(f).
   worktrees: "when-needed",
 };
 

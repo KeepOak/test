@@ -129,9 +129,13 @@ test("trunks-use-subscriptions: work somebody else is behind never reaches the o
   const remote = await app.runtime.run({ prompt: "A message from the Trunk ann-laptop:\n\nhello", sessionId: ed.chatSessionId, source: "a2a" });
   assert.equal(remote.status, "failed");
   assert.match(remote.output, /A Trunk answers through your sign-in accounts only for your own work/);
+  assert.equal(seen.length, before, "the program was never started for the other computer's Trunk");
   // A household person's message in a room the Trunk sits in.
   const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
   const flo = app.trunks.create({ name: "Flo" });
+  // Flo introducing itself to the owner is the owner's own work (Trunk conversations ship on), so it is counted first.
+  await app.trunks.introduced();
+  const beforeRoom = seen.length;
   const room = app.trunks.rooms.create({ name: "Pair", members: [ed.id, flo.id], people: [sam.id] });
   app.trunks.rooms.send(room.id, { text: "@ed say something" }, { id: sam.id, name: "Sam" });
   await app.trunks.rooms.settled(room.id);
@@ -139,7 +143,7 @@ test("trunks-use-subscriptions: work somebody else is behind never reaches the o
   assert.ok(seat, "Ed was asked in the room");
   assert.equal(seat.status, "failed", seat.output);
   assert.match(seat.output, /only for your own work/);
-  assert.equal(seen.length, before, "the program was never started for somebody else");
+  assert.equal(seen.length, beforeRoom, "the program was never started for somebody else");
   // The window's list says the same for whoever asks: the owner may, a household person may not.
   const use = () => app.runtime.models.summary(owner).presets.find((p) => p.id === "cli-claude-code").trunkUse;
   assert.deepEqual(use(), { ok: true });

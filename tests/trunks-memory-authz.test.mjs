@@ -140,6 +140,8 @@ test("memory.versions and memory.version_note refuse a Trunk or a delegated spec
   // Whether or not the history feature is even on, a Trunk's turn is refused for the reason that its
   // one note mixes every agent's facts — not the (also true here) "switched off" reason, which would
   // suggest the owner could fix this by turning a switch on.
+  // Memory history ships "when needed" (the ship-on rule); the owner switches it off so both refusals can be told apart.
+  app.memoryHistory.configure("local", { mode: "off" });
   assert.equal(app.memoryHistory.settings("local").mode, "off");
   const versions = await app.trunks.say(ada.id, "versions");
   const versionsOutcome = toolOutcome(app, versions.runId, "memory.versions");

@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, readKnobs, saveKnobs, savePolicy } from "../dist/index.js";
 import { saveLook } from "../dist/terminal-theme.js";
+import { saveLoopGuardSettings } from "../dist/loop-guard.js";
 
 const lastWordAsked = (request) => {
   const last = request.messages.at(-1);
@@ -47,6 +48,9 @@ async function fixture(t) {
   const app = await createBranch({ workspace, dataDir: join(root, "data"), provider });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const owner = app.runtime.owner;
+  // Stopping repeated steps ships "when needed" (the ship-on rule) and would end these deliberately repeating tasks
+  // before the round limit this file is about, so the owner switches it off.
+  saveLoopGuardSettings(app.store, owner, { mode: "off" });
   /** A context for a task the owner started, for calling the settings tools directly. */
   const ownerContext = () => {
     const run = app.store.createRun(owner, "look at a setting");

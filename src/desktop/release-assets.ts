@@ -45,3 +45,17 @@ export function installTarget(platform: string, executablePath: string): string 
   const match = /^(.*\.app)\/Contents\/MacOS\/[^/]+$/.exec(executablePath);
   return match?.[1] ?? null;
 }
+
+/**
+ * Linux copies installed from the .deb or run as an AppImage (scripts/package-installers.mjs) carry
+ * `resources/package-type` naming which. Their files belong to the package manager or sit in a
+ * read-only image, so the updater leaves them to the newest .deb or AppImage instead of replacing them.
+ */
+export type PackageType = "deb" | "appimage";
+export function packageTypeOf(platform: string, installDir: string | null, read: (path: string) => string): PackageType | null {
+  if (platform !== "linux" || !installDir) return null;
+  let text: string;
+  try { text = read(posix.join(installDir, "resources", "package-type")); } catch { return null; }
+  const kind = text.trim();
+  return kind === "deb" || kind === "appimage" ? kind : null;
+}

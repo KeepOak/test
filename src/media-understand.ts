@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -80,12 +80,29 @@ export class MediaUnderstanding {
     return this.scratch(async (dir) => {
       const input = join(dir, `input${scratchEnding(`x.${mediaType.split("/")[1] ?? "bin"}`)}`);
       await writeFile(input, bytes, { mode: 0o600 });
-      const notes: string[] = [];
-      const pictures = mediaType.startsWith("audio/") ? [] : await this.frames(ffmpeg, input, dir, settings.frames, seconds, signal, notes);
-      const sound = await this.soundTrack(ffmpeg, input, dir, signal, notes);
-      const transcript = sound ? await this.writeOut(owner, sound, seconds, signal, notes) : "";
-      return { pictures, transcript, seconds, notes };
+      return this.fromFile(owner, ffmpeg, settings, input, dir, mediaType, seconds, signal);
     });
+  }
+  /**
+   * The same for a file already on disk (a file attached to a message, which may be gigabytes): it is copied
+   * file to file into the private folder, never read whole into memory.
+   */
+  async understandFile(owner: string, path: string, name: string, mediaType: string, signal?: AbortSignal): Promise<Understood> {
+    const settings = this.settings(owner);
+    const ffmpeg = await this.locate("ffmpeg", settings);
+    return this.scratch(async (dir) => {
+      const input = join(dir, `input${scratchEnding(name)}`);
+      await copyFile(path, input);
+      return this.fromFile(owner, ffmpeg, settings, input, dir, mediaType, null, signal);
+    });
+  }
+  private async fromFile(owner: string, ffmpeg: string, settings: MediaPrograms, input: string, dir: string, mediaType: string,
+    seconds: number | null, signal?: AbortSignal): Promise<Understood> {
+    const notes: string[] = [];
+    const pictures = mediaType.startsWith("audio/") ? [] : await this.frames(ffmpeg, input, dir, settings.frames, seconds, signal, notes);
+    const sound = await this.soundTrack(ffmpeg, input, dir, signal, notes);
+    const transcript = sound ? await this.writeOut(owner, sound, seconds, signal, notes) : "";
+    return { pictures, transcript, seconds, notes };
   }
   private async frames(ffmpeg: string, input: string, dir: string, count: number, seconds: number | null,
     signal: AbortSignal | undefined, notes: string[]): Promise<ImagePart[]> {

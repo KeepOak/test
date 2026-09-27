@@ -20,12 +20,12 @@ import { HANDLERS } from "../dist/commands/handlers.js";
 import { lookup } from "../dist/commands/catalog.js";
 import { call, fixture, on } from "./trunks-helpers.mjs";
 
-test("every part ships off, says so in one sentence, and advertises nothing", async (t) => {
+test("every part ships when needed; switched off, it says so in one sentence and advertises nothing", async (t) => {
   const { app } = await fixture(t);
   // The owner's rule (ships on, 2026-09-26): every part but choosing a Trunk in any conversation ships "when needed";
   // what "off" does is tested by switching each part off.
-  assert.deepEqual(app.trunks.modes(), { trunks: "when-needed", rooms: "when-needed", messages: "when-needed", routines: "when-needed", teach: "when-needed", conversations: "off" });
-  for (const part of ["trunks", "rooms", "messages", "routines", "teach"]) app.trunks.setMode(part, { mode: "off" });
+  assert.deepEqual(app.trunks.modes(), { trunks: "when-needed", rooms: "when-needed", messages: "when-needed", routines: "when-needed", teach: "when-needed", conversations: "when-needed" });
+  for (const part of ["trunks", "rooms", "messages", "routines", "teach", "conversations"]) app.trunks.setMode(part, { mode: "off" });
   assert.deepEqual(app.trunks.modes(), { trunks: "off", rooms: "off", messages: "off", routines: "off", teach: "off", conversations: "off" }); // phase2/rooms
   assert.throws(() => app.trunks.create({ name: "Ada" }), /Trunks, your named assistants is switched off/);
   assert.equal(app.registry.names().includes("trunk.message"), false);

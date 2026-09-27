@@ -45,14 +45,15 @@ async function fixture(t, presets, extra = {}) {
 const events = (app, runId, kind) => app.store.events(runId).filter((e) => e.kind === kind).map((e) => e.data);
 const filler = (n) => `Turn ${n}: ` + "photo renaming details ".repeat(70);
 
-test("every card ships off, and a fresh install sends and registers nothing extra", async (t) => {
+test("every card that sends or spends ships off, and a fresh install sends and registers nothing extra", async (t) => {
+  // The ship-on rule: the service's own token count and the per-round chart only read what came back, so they ship on.
   const values = allSavings({ get: () => undefined }, owner);
   assert.deepEqual(values, {
     phases: { planModel: null, sideTier: "same" },
     openrouter: { mode: "off", sort: null, order: [], only: [], ignore: [], allowFallbacks: true, dataCollection: "allow" },
     difficulty: { mode: "off", classifierModel: null, easyModel: null, hardModel: null },
-    reportedTokens: { mode: "off" },
-    roundChart: { mode: "off" },
+    reportedTokens: { mode: "on" },
+    roundChart: { mode: "on" },
     keepAlive: { mode: "off", everyMinutes: 4, maxPings: 3, spendCapDollars: 0.05 },
     mixtures: { mixtures: [] },
   });
@@ -67,7 +68,8 @@ test("every card ships off, and a fresh install sends and registers nothing extr
   assert.equal(events(app, run.id, "model.routed").length, 0);
   const budget = contextBudget({ limit: 20000, system: 10, catalog: 100, messages: 5000 });
   noteReported(app.store, "r-off", 1000, { input: 3000, output: 1 });
-  assert.equal(withReported(app.store, owner, "r-off", budget), budget, "the service's count is not used until switched on");
+  saveSavings(app.store, owner, "reportedTokens", { mode: "off" });
+  assert.equal(withReported(app.store, owner, "r-off", budget), budget, "switched off, the service's count is not used");
 });
 
 test("R17-044 plans are drafted by the planning connection; the work and the review keep the conversation's", async (t) => {

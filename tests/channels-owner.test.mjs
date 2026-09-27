@@ -135,7 +135,9 @@ test("CO-3 the switches a household person cannot see are the switches they cann
 
   await f.asOwner();
   const before = (await f.call("GET", "/api/channels")).body;
-  assert.equal(before.live.liveStatus, "off", "the live status switch starts off");
+  // The ship-on rule: the live status line ships "when needed"; the owner puts it off so a moved switch would show.
+  assert.equal(before.live.liveStatus, "when-needed", "the live status switch ships when needed");
+  assert.equal((await f.call("POST", "/api/channels/live", { liveStatus: "off" })).body.live.liveStatus, "off");
 
   await f.asPerson();
   assert.match((await f.call("POST", "/api/channels/live", { liveStatus: "on" })).body.error, refusal);

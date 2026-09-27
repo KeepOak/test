@@ -84,7 +84,8 @@ test("with the switch off the list offers only the commands the window always ha
   await page.locator("#prompt").dispatchEvent("input");
   const menu = page.locator(".slash6");
   await menu.waitFor({ state: "visible" });
-  assert.deepEqual(await menu.locator("[role=option] b").allTextContents(), ["/help", "/model", "/goal"]);
+  // /prompts is the prompt library's own command, and that library ships on (src/prompt-library.ts).
+  assert.deepEqual(await menu.locator("[role=option] b").allTextContents(), ["/help", "/model", "/goal", "/prompts"]);
   await page.locator("#prompt").fill("/to");
   await page.locator("#prompt").dispatchEvent("input");
   await page.waitForTimeout(500);

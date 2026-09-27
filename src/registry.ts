@@ -12,6 +12,7 @@ import { resourceOf, type PolicyResource } from "./policy-resources.js";
 import { inferToolGroup, slimTool } from "./catalog.js";
 import { underTask } from "./task-scope.js"; // household-followups
 import { reachOf, type ToolReach } from "./tool-reach.js"; // Q59
+import { sourceOfTool } from "./tool-context-modes.js";
 
 /** Tools `policyTarget` reads a target for by name rather than from a `url` or `path`. */
 const targetedByName: ReadonlySet<string> = new Set(["shell.execute", "shell.session.run", "shell.session.open"]);
@@ -41,6 +42,13 @@ export const targetlessTools: Readonly<Record<string, string>> = {
   "notebook.read": "`from` and `to` are cell numbers. The notebook itself is `path`, which the rules read as they do for files.read.",
   "project.board": "`project` is a project's name. The project's folder is judged when something opens it.",
   "answer.page": "`sources[].url` are the addresses an answer cites, written into the page for a person to read; nothing is fetched.",
+  "board.cards": "`project` is a project's name. The project's folder is judged when something opens it.",
+  "board.card_add": "`project` is a project's name; a card is only written on the board, and is worked on when the owner starts it.",
+  "board.card_handoff": "`to` names who holds the card (the owner, the assistant or a specialist); nothing is sent to anyone.",
+  "addon.draft": "Drafting only saves a draft. `hosts` are the addresses the add-on would ask to reach, judged when it runs.",
+  "addon.search": "`source` is the label of an add-on's search source; each source's own tool is judged on its own when it runs.",
+  "install.request": "`server.url` is the address in a request put to the owner; asking fetches nothing and installs nothing.",
+  "sources.sync": "`source` is the name of one of the owner's own sources, set up by the owner; the permission itself is judged.",
 };
 /**
  * Q76: a target a kept rule would read as a pattern, so a standing yes on it would cover far more than
@@ -137,6 +145,11 @@ export class ToolRegistry {
   /** Whether a tool came from outside, so its description is read as untrusted text. */
   isExternal(name: string): boolean {
     return this.tools.get(name)?.external === true;
+  }
+  /** Where a tool came from ("mcp:<id>", "plugin:<id>"); the product's own tools have none (src/tool-context-modes.ts). */
+  sourceOf(name: string): string | undefined {
+    const tool = this.tools.get(name);
+    return tool ? sourceOfTool(name, tool.source) : undefined;
   }
   /** The toolbox a tool belongs to: its own answer, or one worked out from its name. */
   groupOf(name: string): string {

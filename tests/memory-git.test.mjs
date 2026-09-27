@@ -24,8 +24,11 @@ async function fixture(t) {
 }
 const remember = (app, text, kind = "preference") => app.runtime.executeTool("memory.put", { text, source: "a test", kind });
 
-test("A2317 ships off: nothing is written, the tools refuse", { skip }, async (t) => {
+test("A2317 ships when needed; switched off, nothing is written and the tools refuse", { skip }, async (t) => {
   const { app, dataDir, owner } = await fixture(t);
+  // The ship-on rule: memory history ships "when needed" (src/memory-git.ts); the owner switches it off.
+  assert.equal(app.memoryHistory.settings(owner).mode, "when-needed");
+  app.memoryHistory.configure(owner, { mode: "off" });
   assert.equal(app.memoryHistory.settings(owner).mode, "off");
   await remember(app, "Likes tea");
   assert.equal(await app.memoryHistory.record(owner), null);

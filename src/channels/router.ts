@@ -313,12 +313,25 @@ export class ChannelRouter {
     this.adapters.set(adapter.id, { adapter, policy: ChannelPolicySchema.parse(policy) });
     // This resolves once the message has been dealt with. An adapter that reads messages one by one
     // must not wait for it, or a note sent to a running task could never get through (see telegram.ts).
-    await adapter.start((message) => this.handle(message).then(() => undefined));
+    try { await adapter.start((message) => this.handle(message).then(() => undefined)); }
+    catch (error) {
+      // A channel that did not start is not connected: left in the list, it would be reported as
+      // connected and every later attempt to connect it again would be refused as a second copy.
+      if (this.adapters.get(adapter.id)?.adapter === adapter) this.adapters.delete(adapter.id);
+      throw error;
+    }
     if (!this.pump) { this.pump = setInterval(() => void this.flush(), this.pumpMs); this.pump.unref(); }
     await this.flush();
   }
   /** The connected channel with this id, for routes that must hand a request to one. */
   adapter(id: string): ChannelAdapter | undefined { return this.adapters.get(id)?.adapter; }
+  /** Stops one channel and takes it out, so it can be connected again (a Telegram bot token replaced on its card). */
+  async detach(id: string): Promise<void> {
+    const attached = this.adapters.get(id);
+    if (!attached) return;
+    this.adapters.delete(id);
+    await attached.adapter.stop();
+  }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
     this.pump = undefined;

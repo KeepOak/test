@@ -15,7 +15,7 @@ import { openSettings } from "./new-window-places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { nextSuggestion, SuggestionsSettingsSchema } from "../dist/suggestions.js";
-import { readComfort } from "../dist/comfort/settings.js";
+import { readComfort, saveComfort } from "../dist/comfort/settings.js";
 
 const ask = SuggestionsSettingsSchema.parse({});
 const facts = (over) => ({ owner: true, onboarded: true, settings: ask, installed: true, background: false, autoUpdate: "off", ...over });
@@ -31,9 +31,7 @@ test("the bar that matters most comes first, one at a time, and only for the own
   assert.equal(nextSuggestion(facts({ owner: false })), null, "never for anybody but the owner");
 });
 
-/* Updating by itself ships on (#467, src/comfort/settings.ts), so there is nothing for the update bar to ask until the
-   owner switches it off; `updates: "off"` is that owner, "shipped" leaves it as Branch ships. */
-async function fixture(t, { onboarded = true, updates = "off" } = {}) {
+async function fixture(t, { onboarded = true } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-suggestions-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
@@ -47,7 +45,6 @@ async function fixture(t, { onboarded = true, updates = "off" } = {}) {
     return { status: response.status, body: await response.json() };
   };
   if (onboarded) await call("/api/onboarding", { done: true });
-  if (updates === "off") await call("/api/comfort", { card: "notify", values: { autoUpdate: "off" } });
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
   /* The new window never opens its first run under automation (public/app/flows/flows.js:33 checks navigator.webdriver);
      the page is shown the browser a person has, so the first run is the one they would see. */
@@ -71,16 +68,11 @@ async function fixture(t, { onboarded = true, updates = "off" } = {}) {
   return { app, server, call, page, errors, open, overview };
 }
 
-test("updating by itself ships on, so the update bar has nothing to ask until the owner switches it off", async (t) => {
-  const f = await fixture(t, { updates: "shipped" });
-  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "install");
-  assert.deepEqual((await f.call("/api/deployment/suggestion")).body, { bar: null });
-  await f.call("/api/comfort", { card: "notify", values: { autoUpdate: "off" } });
-  assert.deepEqual((await f.call("/api/deployment/suggestion")).body, { bar: "updates" }, "switched off: the bar may ask once more");
-});
-
 test("the server offers the update bar to the owner, remembers Don't ask again, and offers nobody else anything", async (t) => {
   const f = await fixture(t);
+  // Updating by itself ships on (the ship-on rule), so there is nothing to offer until the owner has turned it off.
+  assert.deepEqual((await f.call("/api/deployment/suggestion")).body, { bar: null }, "on as it ships: no question");
+  saveComfort(f.app.store, f.app.runtime.owner, "notify", { autoUpdate: "off" });
   assert.deepEqual((await f.call("/api/deployment/suggestion")).body, { bar: "updates" }, "not installed here, so updates is the one");
   const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
   f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
@@ -93,6 +85,7 @@ test("the server offers the update bar to the owner, remembers Don't ask again, 
 
 test("Yes on the update bar turns on updating by itself; nothing changes before it", async (t) => {
   const f = await fixture(t);
+  saveComfort(f.app.store, f.app.runtime.owner, "notify", { autoUpdate: "off" }); // it ships on; the bar asks an owner who turned it off
   await f.open();
   await f.overview();
   const bar = f.page.locator(".recbar");
@@ -108,6 +101,7 @@ test("Yes on the update bar turns on updating by itself; nothing changes before 
 
 test("first run comes first and the bar is its last question; Not now lasts until the window opens again; Don't ask again lasts", async (t) => {
   const f = await fixture(t, { onboarded: false });
+  saveComfort(f.app.store, f.app.runtime.owner, "notify", { autoUpdate: "off" }); // it ships on; the bar asks an owner who turned it off
   await f.open();
   // Redesign: the new window's first run is "Set up Branch" (public/app/flows/setup.js); its last page, Your first Trunk
   // (pass 18c: Welcome, Models, Your first Trunk), ends it with data-act="ob-done".
@@ -119,7 +113,7 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   assert.equal(await bar.count(), 0, "never while the first-run screen is up");
   await f.page.locator("#ob-trust").check();
   // Pass 18c: Keep it running is no longer a setup step (it waits on Overview's Finish setting up), so setup leaves
-  // updating by itself as it was and the bar still has its question to ask.
+  // updating by itself as the owner left it and the bar still has its question to ask.
   for (let step = 0; step < 5 && !(await f.page.locator('[data-act="ob-done"]').isVisible()); step++) {
     await f.page.locator('[data-act="ob-next"]').click();
   }
@@ -177,7 +171,7 @@ test.skip("the background bar comes first where Branch is installed, and Yes set
 });
 
 test("Updates in Settings are three choice cards, the recommended one marked, and picking one saves it", async (t) => {
-  const f = await fixture(t, { updates: "shipped" });
+  const f = await fixture(t);
   await f.call("/api/deployment/suggestion", { id: "updates", answer: "never" });
   await f.open();
   // Redesign: replaced by the new window (prototype.html's Settings › Updates keeps one switch, "Keep Branch up to date by
@@ -187,10 +181,10 @@ test("Updates in Settings are three choice cards, the recommended one marked, an
   await auto.waitFor();
   // The page reads the engine's choice after it is drawn (GET /api/comfort); the switch shows it once that answer is in.
   await f.page.waitForFunction(() => document.getElementById("u-auto")?.checked === true, null, { timeout: 5000 }).catch(() => undefined);
-  assert.equal(await auto.isChecked(), true, "on, as shipped (#467)");
+  assert.equal(await auto.isChecked(), true, "On, as shipped (the ship-on rule)");
   await auto.uncheck();
   for (let tries = 0; tries < 40 && readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate !== "off"; tries++) await f.page.waitForTimeout(50);
-  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "off", "switched off, and kept off");
+  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "off");
   await auto.check();
   for (let tries = 0; tries < 40 && readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate === "off"; tries++) await f.page.waitForTimeout(50);
   assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "install", "the switch saves updating by itself (#441)");

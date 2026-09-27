@@ -55,6 +55,9 @@ async function fixture(t, answers) {
   const provider = scripted(answers);
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about reflection and skill drafts, not reading first
+  // Writing new skills ships "when needed" (the ship-on rule); these tests start from both switches off and turn on what
+  // each one is about.
+  app.learningLoop.configure({ newSkills: "off" });
   t.after(async () => { await app.learningLoop.idle(); await app.close(); await discardTemp(root); });
   return { app, root, provider };
 }
@@ -75,7 +78,11 @@ async function settle(app) {
   for (let i = 0; i < 5; i++) { await new Promise((resolve) => setTimeout(resolve, 20)); await app.learningLoop.idle(); }
 }
 
-test("both switches ship off: a finished task asks nothing more, and there is no learn tool", async (t) => {
+test("looking back ships off and new skills when needed; with both off a finished task asks nothing more, and there is no learn tool", async (t) => {
+  const freshRoot = await mkdtemp(join(tmpdir(), "branch-reflection-fresh-"));
+  const fresh = await createBranch({ workspace: join(freshRoot, "workspace"), dataDir: join(freshRoot, "data") });
+  t.after(async () => { await fresh.close(); await discardTemp(freshRoot); });
+  assert.deepEqual(fresh.learningLoop.settings(), { reflection: "off", everyTurns: 25, newSkills: "when-needed", retireAfterDays: 60 }, "as it ships");
   const { app, provider } = await fixture(t);
   assert.deepEqual(app.learningLoop.settings(), { reflection: "off", everyTurns: 25, newSkills: "off", retireAfterDays: 60 });
   assert.ok(!app.registry.names().includes("skills.learn"));

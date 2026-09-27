@@ -180,6 +180,9 @@ test("a flow drafted and tried for a task keeps to that task's tools", async (t)
 test("a finished flow run's limit is cleaned up, a failed one keeps it, and neither can be written from a settings file", async (t) => {
   const fx = await limitFixture(t);
   const { app, owner } = fx;
+  // Going back to a step ships when needed (the ship-on rule), and a run whose steps are kept keeps its limit for the
+  // copy going back makes; this test is about a run with no steps kept, so the owner switches it off.
+  app.store.save("settings", owner, "flowboards-time-travel", { mode: "off" });
   const graph = (name, tool) => app.flows.saveGraph({
     name, input: {}, state: { out: "text" }, entry: "a",
     nodes: [{ id: "a", name: "Box", kind: "tool", tool, args: {}, input: {}, output: { out: "text" } }], edges: [],
