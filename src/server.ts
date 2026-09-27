@@ -1893,6 +1893,8 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      // Projects are the owner's: a household person's new conversation is never filed under one of them by name.
+      ...(input.project && !input.sessionId && app.store.profiles.isOwner() ? { conversationProject: input.project } : {}),
       personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
@@ -2132,7 +2134,9 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
   if (match && request.method === "GET" && !match[2]) {
     const person = app.store.profiles.active();
     const shared = person && app.trunks.rooms.forPerson(person.id).some((room) => room.sessionId === match[1]);
-    return app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
+    const view = app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
+    // Dogfood D14: the project the conversation is filed under, so the window can say so; projects are the owner's.
+    return app.store.profiles.isOwner() ? { ...view, project: app.store.sessionProject(match[1]!) ?? null } : view;
   }
   if (match && match[2] === "skill") {
     if (!app.store.ownsSession(owner, match[1]!)) throw new HttpError(404, "Session not found");
@@ -3188,6 +3192,8 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
   }
   const one = /^\/api\/documents\/([a-f0-9-]{36})$/.exec(path);
   if (one && request.method === "DELETE") return library.remove(owner, one[1]!);
+  // Dogfood D6: Library › Documents › Open reads one document's words.
+  if (one && request.method === "GET") return library.read(owner, one[1]!);
   throw new HttpError(404, "Endpoint not found");
 }
 /**

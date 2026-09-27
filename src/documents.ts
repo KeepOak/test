@@ -78,6 +78,20 @@ export function chunkText(text: string, size = chunkSize, overlap = chunkOverlap
   return chunks;
 }
 
+/** The passages chunkText made, back as one text: each one after the first starts with the end of the one before it. */
+export function joinPassages(passages: readonly string[]): string {
+  let text = passages[0] ?? "";
+  for (const next of passages.slice(1)) {
+    let shared = 0;
+    for (let size = Math.min(next.length, text.length, chunkOverlap + chunkSize); size > 0; size--)
+      if (text.endsWith(next.slice(0, size))) { shared = size; break; }
+    text += shared ? next.slice(shared) : `
+
+${next}`;
+  }
+  return text;
+}
+
 /** One passage on its way to a second pass that puts the best first; see src/retrieval.ts. */
 export interface RerankablePassage { key: string; source: string; text: string; score: number; from: string }
 export type PassageReranker = (owner: string, query: string, passages: RerankablePassage[], signal?: AbortSignal) => Promise<RerankablePassage[]>;
@@ -300,6 +314,24 @@ export class DocumentLibrary {
     for (const row of rows)
       await this.reindex(owner, String(row.id), signal ?? AbortSignal.timeout(30000), false).catch(() => undefined);
   }
+  /**
+   * Dogfood D6: one document to read, as its words. A document made from a workspace file is read from that file
+   * while it is still there; pasted or uploaded text is put back together from its passages, whose overlaps are
+   * taken out again. A file no reader could make sense of has no words, and says why in `note`.
+   */
+  async read(owner: string, id: string): Promise<DocumentMetadata & { text: string | null }> {
+    const document = this.one(owner, id);
+    if (document.filePath && this.files) {
+      try {
+        const bytes = await this.readWorkspace(document.filePath);
+        const read = tryReadDocument(bytes, document.filePath, { byteLimit: documentBytesLimit });
+        if (read.document && !read.document.pictures) return { ...document, text: read.document.text };
+      } catch { /* the file has moved or gone: its passages below are what is left of it */ }
+    }
+    const passages = this.db.prepare("SELECT chunk_text FROM document_chunks WHERE document_id=? AND owner=? ORDER BY chunk_index")
+      .all(id, owner).map((row) => String(row.chunk_text));
+    return { ...document, text: passages.length ? joinPassages(passages) : null };
+  }
   remove(owner: string, id: string): { removed: string } {
     if (!this.db.prepare("SELECT id FROM documents WHERE id=? AND owner=?").get(id, owner))
       throw new Error("That document is not in your library");
@@ -345,6 +377,19 @@ export class DocumentLibrary {
   listFor(owner: string, outside: { source: RunSource } = { source: "owner" }): { documents: DocumentMetadata[]; leftOut?: string } {
     const rules = new WalkRules(this.files ? this.files.walkRules(outside) : allowAll);
     return rules.noted({ documents: this.list(owner).filter((document) => document.filePath === null || rules.file(document.filePath, "list")) });
+  }
+  /**
+   * Dogfood D13: the documents whose words or name hold the query, best first, one row each, for the owner's own search.
+   * Words only, on this computer: a search box never asks a meaning service anything as the owner types.
+   */
+  findByWords(owner: string, query: string, limit = 5): { id: string; name: string; snippet: string }[] {
+    const found = new Map<string, { id: string; name: string; snippet: string }>();
+    const lowered = query.trim().toLowerCase();
+    for (const document of this.list(owner))
+      if (lowered && document.name.toLowerCase().includes(lowered)) found.set(document.id, { id: document.id, name: document.name, snippet: "" });
+    for (const match of this.wordMatches(owner, query))
+      if (!found.has(match.documentId)) found.set(match.documentId, { id: match.documentId, name: match.source, snippet: match.text.slice(0, 600) });
+    return [...found.values()].slice(0, limit);
   }
   private wordMatches(owner: string, query: string): Match[] {
     const words = query.match(/[\p{L}\p{N}]+/gu)?.slice(0, 32) ?? [];
@@ -439,7 +484,8 @@ export function registerDocuments(registry: ToolRegistry, library: DocumentLibra
   });
   registry.register({
     name: "documents.add", permission: "documents.write",
-    description: "Add a workspace file (.txt, .md, .html, .csv, .json, .docx, .xlsx) or pasted text to the library. PDFs are recorded but need a helper before they can be read.",
+    // Dogfood D24: said the way a person asks for it ("save it to my Library"), so the tool search finds it first.
+    description: "Save a document in the person's Library (Library › Documents): pasted text, or a workspace file (.txt, .md, .html, .csv, .json, .docx, .xlsx). PDFs are recorded but need a helper before they can be read.",
     parameters: z.object({
       name: z.string().trim().min(1).max(200).optional(),
       path: z.string().min(1).max(500).optional(),

@@ -393,14 +393,21 @@ export class Store {
       output: "",
       createdAt: now,
       updatedAt: now,
-      // The project a task was done under is settled when it starts and never changes afterwards.
-      project: project ?? this.projects.active(owner).id,
+      // The project a task was done under is settled when it starts and never changes afterwards. Dogfood D14: a
+      // conversation stays in its own project, so opening another project never moves an older conversation into it
+      // (nor lends it that project's instructions); only a new conversation starts in the active one.
+      project: project ?? (sessionId ? this.sessionProject(sessionId) : undefined) ?? this.projects.active(owner).id,
     };
     this.db
       .prepare("INSERT INTO tasks(id,session_id,owner,prompt,status,output,created_at,updated_at,source,project) VALUES(?,?,?,?,?,?,?,?,?,?)")
       .run(run.id, session, owner, prompt, run.status, "", now, now, source, run.project!);
     this.db.prepare("INSERT INTO usage(run_id) VALUES(?)").run(run.id);
     return run;
+  }
+  /** The project a conversation is in: the one its latest task ran under, or undefined before its first task. */
+  sessionProject(sessionId: string): string | undefined {
+    const row = this.db.prepare("SELECT project FROM tasks WHERE session_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(sessionId);
+    return row?.project == null ? undefined : String(row.project);
   }
   run(id: string): Run | undefined {
     const row = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(id);

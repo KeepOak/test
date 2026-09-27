@@ -25,6 +25,7 @@ import { logo } from "../../core/logos.js";
 import { level, E, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { onPhone } from "../surface17.js";
+import { updatedWords } from "../../shell/usage.js"; // the status bar's "Updated 3 min ago", the same on both lists
 import { t, language, plural } from "../../../i18n.js";
 
 let usage = null;
@@ -165,7 +166,8 @@ function windowRow(w, estimated) {
 }
 
 export function limitRow(r) {
-  const body = (r.windows ?? []).map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(r.note)}</small>`;
+  const said = [updatedWords(r), r.note].filter(Boolean).join(" ");
+  const body = (r.windows ?? []).map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}</small>`;
   return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}</div></div>`;
 }
 
