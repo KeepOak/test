@@ -320,3 +320,16 @@ test("a household person cannot restore or delete for good the owner's conversat
   assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);
   assert.equal(app.store.conversations.inBin(mine), true);
 });
+
+test("a fact a conversation in Recently Deleted taught is not in a new conversation's memory, nor in facts by entity", async (t) => {
+  const { app, call } = await served(t);
+  const { sessionId: a, runId } = seed(app.store, "the basalt plan");
+  app.store.save("memory", "local", "fact-basalt", { text: "basalt deadline is Friday", source: "a task", sourceRunId: runId, entity: "basalt", attribute: "deadline" });
+  await call("POST", `/api/sessions/${a}/delete`, {});
+  const fresh = seed(app.store, "something new").sessionId;
+  assert.doesNotMatch(app.store.review.sessionSnapshot("local", fresh).text, /basalt/);
+  assert.equal(app.store.memories.timeline("local", "basalt").length, 0);
+  assert.equal(app.store.memories.at("local", { entity: "basalt" }).length, 0);
+  await call("POST", `/api/sessions/${a}/restore`, {});
+  assert.match(app.store.review.sessionSnapshot("local", seed(app.store, "later").sessionId).text, /basalt/);
+});

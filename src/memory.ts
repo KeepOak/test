@@ -367,7 +367,8 @@ export class MemoryFacts {
   at(owner: string, input: unknown, agent?: string) {
     const { entity, attribute, at } = AtMemorySchema.parse(input);
     const moment = at ?? new Date().toISOString();
-    return this.list(owner).filter((record) => visibleTo(record, agent)).filter((record) => {
+    const binned = binnedRuns(this.db);
+    return this.list(owner).filter((record) => visibleTo(record, agent) && !learnedInBin(binned, record.data)).filter((record) => {
       const d = record.data as MemoryData;
       if (d.entity?.toLowerCase() !== entity.toLowerCase()) return false;
       if (attribute && d.attribute?.toLowerCase() !== attribute.toLowerCase()) return false;
@@ -377,7 +378,8 @@ export class MemoryFacts {
   }
   /** Every fact about an entity in the order it became true, ended ones included. */
   timeline(owner: string, entity: string, agent?: string) {
-    return this.list(owner).filter((record) => visibleTo(record, agent) && (record.data as MemoryData).entity?.toLowerCase() === entity.toLowerCase())
+    const binned = binnedRuns(this.db);
+    return this.list(owner).filter((record) => visibleTo(record, agent) && !learnedInBin(binned, record.data) && (record.data as MemoryData).entity?.toLowerCase() === entity.toLowerCase())
       .map((record) => { const d = record.data as MemoryData; return { id: record.id, text: d.text, attribute: d.attribute, validFrom: d.validFrom ?? record.createdAt, validTo: d.validTo ?? null, scope: d.scope }; })
       .sort((a, b) => a.validFrom.localeCompare(b.validFrom));
   }
