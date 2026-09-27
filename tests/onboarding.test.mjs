@@ -163,7 +163,8 @@ test("a new install keeps running without a setup step: the gateway and starting
   await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn });
   assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "on", "the gateway is switched on");
   assert.equal(registered, 1, "starting at sign-in is registered");
-  assert.equal((await call("comfort")).data.values.notify.autoUpdate, "install", "updating by itself is switched on");
+  assert.equal((await call("comfort")).data.values.notify.autoUpdate, "install", "updating by itself ships on (src/comfort/settings.ts)");
+  assert.equal(app.store.get("settings", owner, "comfort-notify"), undefined, "keeping Branch running writes no update choice for the owner");
   assert.equal(app.store.get("settings", owner, shippedKey).data.signIn, true);
   // What the owner turns off afterwards stays off: it happens once.
   await saveGatewayConfig(options.dataDir, { ...defaultGatewayConfig(), mode: "off" });
@@ -172,15 +173,18 @@ test("a new install keeps running without a setup step: the gateway and starting
   assert.equal(registered, 1);
 });
 
-test("an install whose setup is already done keeps its own choices", async (t) => {
-  const { shipKeepRunningOn, shippedKey } = await import("../dist/keep-running.js");
-  const { loadGatewayConfig } = await import("../dist/never-break/gateway-config.js");
-  const { app, call, options } = await fixture(t, []);
-  await call("onboarding", { done: true });
-  let registered = 0;
-  await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, startAtSignIn: async () => { registered += 1; return true; } });
-  assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "off", "nothing is switched on for it");
-  assert.equal(registered, 0);
-  assert.equal((await call("comfort")).data.values.notify.autoUpdate, "off", "updating by itself stays as it was");
-  assert.equal(app.store.get("settings", app.runtime.owner, shippedKey).data.fresh, false, "and it is not asked again");
-});
+for (const [name, progress] of [["already done", { done: true }], ["started but not finished", { completed: ["welcome", "where"], step: "keep" }]]) {
+  test(`an install whose setup is ${name} keeps its own choices`, async (t) => {
+    const { shipKeepRunningOn, shippedKey } = await import("../dist/keep-running.js");
+    const { loadGatewayConfig } = await import("../dist/never-break/gateway-config.js");
+    const { app, call, options } = await fixture(t, []);
+    await call("onboarding", progress);
+    await call("comfort", { card: "notify", values: { autoUpdate: "off" } }); // the old Keep it running step, switched off
+    let registered = 0;
+    await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, startAtSignIn: async () => { registered += 1; return true; } });
+    assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "off", "nothing is switched on for it");
+    assert.equal(registered, 0, "starting at sign-in is not registered");
+    assert.equal((await call("comfort")).data.values.notify.autoUpdate, "off", "the owner's own off stays off");
+    assert.equal(app.store.get("settings", app.runtime.owner, shippedKey).data.fresh, false, "and it is not asked again");
+  });
+}

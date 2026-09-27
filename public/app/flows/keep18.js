@@ -1,5 +1,5 @@
 /* Keep it running, in Overview's "Finish setting up" (places/overview.js): one plain line each to turn off what a new
-   install ships on (src/keep-running.ts, the ship-on rule), drawn from the engine and saved at once through its route:
+   install ships on (src/keep-running.ts; updating by itself in src/comfort/settings.ts; the ship-on rule), drawn from the engine and saved at once through its route:
    - the gateway: GET/POST /api/never-break. "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so
      it reads as on and saves "on" or "off"; it takes effect the next time Branch starts, said under its line once saved.
    - starting at sign-in: GET /api/deployment autostart, POST /api/deployment/autostart. Only an installed app can be
