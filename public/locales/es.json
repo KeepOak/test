@@ -3537,6 +3537,7 @@
   "policy.preset.off.description": "Las tareas que empiezas tú siguen adelante; todo lo que empieza desde fuera (un disparador, una app de chat, otro programa) sigue preguntando antes de cambiar nada.",
   "policy.preset.ask-before-changes.description": "Leer es libre. Todo lo que cambia un archivo, ejecuta un comando o actúa en una página web espera tu sí.",
   "policy.preset.workspace.description": "Escribir archivos en tu espacio de trabajo está permitido. Ejecutar comandos y hacer clic o escribir en páginas web esperan tu sí, y un sitio web nuevo se te consulta una vez.",
+  "policy.preset.careful.description": "Todo lo que cambia un archivo, ejecuta un comando, envía un mensaje o actúa en una página web espera tu sí, y buscar algo en un sitio web nuevo se te consulta una vez.",
   "policy.preset.read-only.description": "Branch Agent puede mirar y responder, pero no puede cambiar un archivo, ejecutar un comando ni actuar en una página web.",
   "practice.body": "Branch todavía no puede hacer trabajo real. Elige cómo piensa en Ajustes y luego pídele lo que quieras.",
   "practice.connect": "Elegir cómo piensa",

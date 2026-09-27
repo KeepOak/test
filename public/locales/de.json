@@ -3537,6 +3537,7 @@
   "policy.preset.off.description": "Aufgaben, die du selbst startest, legen einfach los; alles, was von außen gestartet wird – ein Auslöser, eine Chat-App, ein anderes Programm –, fragt trotzdem, bevor es etwas ändert.",
   "policy.preset.ask-before-changes.description": "Lesen ist frei. Alles, was eine Datei ändert, einen Befehl ausführt oder auf einer Webseite handelt, wartet auf dein Ja.",
   "policy.preset.workspace.description": "Dateien in deinem Arbeitsbereich zu schreiben ist in Ordnung. Befehle ausführen und auf Webseiten klicken oder tippen wartet auf dein Ja, und eine neue Website wird einmal mit dir abgestimmt.",
+  "policy.preset.careful.description": "Alles, was eine Datei ändert, einen Befehl ausführt, eine Nachricht sendet oder auf einer Webseite handelt, wartet auf dein Ja, und etwas auf einer neuen Website nachzuschlagen wird einmal mit dir abgestimmt.",
   "policy.preset.read-only.description": "Branch Agent darf sich Dinge ansehen und antworten, aber keine Datei ändern, keinen Befehl ausführen und nicht auf einer Webseite handeln.",
   "practice.body": "Branch kann noch keine echte Arbeit leisten. Wähle in den Einstellungen, wie es denkt, und frag dann nach allem.",
   "practice.connect": "Wählen, wie es denkt",

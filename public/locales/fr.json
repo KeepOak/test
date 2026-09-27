@@ -3538,6 +3538,7 @@
   "policy.preset.off.description": "Les tâches que vous lancez vous-même avancent sans attendre ; tout ce qui est lancé de l'extérieur — un déclencheur, une application de discussion, un autre programme — demande quand même votre accord avant de modifier quoi que ce soit.",
   "policy.preset.ask-before-changes.description": "La lecture est libre. Tout ce qui modifie un fichier, lance une commande ou agit sur une page web attend votre accord.",
   "policy.preset.workspace.description": "Écrire des fichiers dans votre espace de travail est permis. Lancer des commandes, cliquer ou taper sur des pages web attend votre accord, et un nouveau site vous est soumis une fois.",
+  "policy.preset.careful.description": "Tout ce qui modifie un fichier, lance une commande, envoie un message ou agit sur une page web attend votre accord, et une recherche sur un nouveau site vous est soumise une fois.",
   "policy.preset.read-only.description": "Branch Agent peut regarder et répondre, mais ne peut ni modifier un fichier, ni lancer une commande, ni agir sur une page web.",
   "practice.body": "Branch ne peut encore rien faire de réel. Choisissez comment il réfléchit dans les Réglages, puis demandez ce que vous voulez.",
   "practice.connect": "Choisir comment il réfléchit",

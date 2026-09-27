@@ -3537,6 +3537,7 @@
   "policy.preset.off.description": "Tasks you start yourself get on with it; anything started from outside — a trigger, a chat app, another program — still asks before it changes anything.",
   "policy.preset.ask-before-changes.description": "Reading is free. Anything that changes a file, runs a command or acts on a web page waits for your yes.",
   "policy.preset.workspace.description": "Writing files in your workspace is fine. Running commands and clicking or typing on web pages wait for your yes, and a new website is checked with you once.",
+  "policy.preset.careful.description": "Anything that changes a file, runs a command, sends a message or acts on a web page waits for your yes, and looking something up on a new website is checked with you once.",
   "policy.preset.read-only.description": "Branch Agent may look at things and answer, but may not change a file, run a command or act on a web page.",
   "practice.body": "Branch can't do real work yet. Choose how it thinks in Settings, then ask for anything.",
   "practice.connect": "Choose how it thinks",
