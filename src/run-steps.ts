@@ -19,7 +19,7 @@ import type { Event, Run } from "./contracts.js";
 import { calls, rounds, type PriceRound } from "./inspect.js";
 import type { ChainEntry } from "./safety-extras/activity-chain.js";
 import type { Store } from "./store.js";
-import { STEP_ICONS, stepIcon, type Said } from "./live-steps.js";
+import { STEP_ICONS, accountMoved, stepIcon, type Said } from "./live-steps.js";
 
 export type StepKind = "model" | "tool" | "ask" | "helper" | "you";
 export type AskState = "waiting" | "allowed" | "refused" | null;
@@ -130,13 +130,15 @@ export interface SwitchedLine { at: string; icon: string; sentence: string; say:
  */
 export function switchedLines(events: Event[]): SwitchedLine[] {
   const lines: SwitchedLine[] = [];
-  const say = (at: string, to: string, from: string) =>
-    lines.push({ at, icon: STEP_ICONS.switch, sentence: `Switched to “${to}” — “${from}” reached its plan limit`, say: { key: "window.chat.live.switched", values: { to, from } } });
+  const say = (at: string, to: string, from: string, d: Record<string, unknown> = {}) => {
+    const words = accountMoved(to, from, str(d.reason) || "limit", str(d.until), d.known === true, str(d.model));
+    lines.push({ at, icon: STEP_ICONS.switch, sentence: words.english, say: words.said });
+  };
   let limited = "", moved = false;
   for (const event of events) {
     const d = event.data;
     if (event.kind === "model.account_limit") { limited = str(d.label) || str(d.account); moved = false; }
-    else if (event.kind === "model.account_moved") { say(event.createdAt, str(d.label) || str(d.account), str(d.from) || limited); limited = ""; moved = true; }
+    else if (event.kind === "model.account_moved") { say(event.createdAt, str(d.label) || str(d.account), str(d.from) || limited, d); limited = ""; moved = true; }
     else if (event.kind === "model.account") {
       const label = str(d.label) || str(d.account);
       if (limited && !moved && label !== limited) say(event.createdAt, label, limited);
