@@ -317,7 +317,9 @@ export function drawStage() {
   const browser = here && (G.kind === "browser" || (!G.kind && G.pip?.kind === "browser"));
   const computer = here && (G.kind === "computer" || (!G.kind && G.pip?.kind === "computer"));
   // This computer's screen: read only while its view is showing to the owner (on This computer, or All screens).
-  watchScreen(computer && E.profiles?.isOwner !== false && (onThis() || G.grid), (redraw) => (redraw ? drawStage() : paintFrames()));
+  // All screens reads it only when This computer is one of the screens it draws.
+  const grid = G.grid ? several("computer") : null, shows = grid ? grid.list.some((x) => x.id === "this") : onThis();
+  watchScreen(computer && E.profiles?.isOwner !== false && shows, (redraw) => (redraw ? drawStage() : paintFrames()));
   // Read while the view shows the browser (twice a second), or while a task of this conversation works (every few
   // seconds, for the card in the conversation).
   // The frames are the owner's alone (the engine refuses anyone else), so nobody else's window asks for them.
