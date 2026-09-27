@@ -2367,6 +2367,7 @@
   "glance.usedNext": "se usa a continuación",
   "glance.measuring": "se mide después de tu próximo mensaje",
   "glance.measureNow": "Medir ahora",
+  "glance.checking": "Comprobando…",
   "glance.measureNote": "Medir ahora envía a esta cuenta un mensaje diminuto. Usa un poco de la ventana del plan y nada de dinero.",
   "glance.measuredAgo": "medido {age}",
   "glance.justNow": "ahora mismo",
