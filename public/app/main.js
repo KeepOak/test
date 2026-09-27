@@ -95,6 +95,14 @@ function putBack(main, at) {
   if (at.size) boxKeys(main, (el, key) => { if (at.has(key)) el.scrollTop = at.get(key); });
 }
 
+/* Pass 18: a place's tab row scrolls sideways instead of clipping, so a fresh draw keeps the chosen tab in view. */
+function tabInView(main) {
+  for (const on of main.querySelectorAll('.place .tabs [aria-selected="true"]')) {
+    const row = on.parentElement;
+    if (row.scrollWidth > row.clientWidth) row.scrollLeft = Math.max(0, on.offsetLeft - row.offsetLeft - 24);
+  }
+}
+
 function drawMain() {
   const main = $("#main");
   const draw = VIEWS[S.view] ?? VIEWS.chat;
@@ -115,6 +123,7 @@ function drawMain() {
     /* A place's header (the prototype's placeHead) is drawn in the title-bar row at every width (shell.js). */
     greyOut(main);
     putBack(main, at);
+    tabInView(main);
     drawn.parts = null;
   }
   drawn.touched.clear();
