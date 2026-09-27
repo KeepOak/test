@@ -29,7 +29,7 @@ function memoryVault(tokens = null) {
   const vault = { tokens, read: async () => vault.tokens, write: async (next) => { vault.tokens = next; }, clear: async () => { vault.tokens = null; } };
   return vault;
 }
-const account = (id, label) => ({ id, label, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, keptSeparate: false, createdAt: "2026-09-20T00:00:00.000Z" });
+const account = (id, label) => ({ id, label, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, createdAt: "2026-09-20T00:00:00.000Z" });
 const TWIN = "abcdef12", COLLEAGUE = "12345678";
 
 async function fixture(t, { dataDir, primary } = {}) {

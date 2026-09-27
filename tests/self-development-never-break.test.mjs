@@ -27,11 +27,11 @@ const contract = { allowedPaths: ["src/ui/**"], permissions: ["files.write"], ex
 
 test("the owner's copy of Branch's source and the repository's name are not Branch's service", () => {
   assert.equal(check("branch.prepare_source_change", { name: "remove-button", repository: "https://github.com/stabrea/Branch-Agent.git",
-    base: "mac/cross-platform", contract }, worktree), null, "the real prepare_source_change target shape");
+    base: "redesign/window", contract }, worktree), null, "the real prepare_source_change target shape");
   assert.equal(check("files.write", { path: `${worktree}/src/ui/button.ts`, content: "x" }), null);
   assert.equal(check("files.write", { path: "branch-agent-source/src/ui/button.ts", content: "x" }), null);
   assert.equal(check("github.pull_request_from_changes", { name: "self-remove-button", title: "Remove the button", summary: "Why merge this",
-    targetRepository: "stabrea/Branch-Agent", base: "mac/cross-platform" }, "send changes to GitHub on branch/self-remove-button and open a pull request"), null);
+    targetRepository: "stabrea/Branch-Agent", base: "redesign/window" }, "send changes to GitHub on branch/self-remove-button and open a pull request"), null);
   assert.equal(sh("git -C branch-agent-source/.branch-worktrees/self-remove-button status"), null);
   assert.equal(sh("npm test --prefix branch-agent-source"), null);
 });
