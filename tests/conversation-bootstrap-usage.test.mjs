@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture, on } from "./trunks-helpers.mjs";
-import { conversationBootstrap } from "../dist/conversation-bootstrap.js";
+import { conversationBootstrap, conversationBootstrapIds } from "../dist/conversation-bootstrap.js";
 import { peopleUsing } from "../dist/usage-report.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { startServer } from "../dist/server.js";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { UsageStore } from "../dist/usage.js";
 
 const total = (app, scope) => app.store.usageStore().aggregateUsage("all", "day", {}, scope ? (id) => app.store.ownsSession(scope, id) : undefined).reduce((sum, day) => sum + day.runs, 0);
 const personCounts = (app) => peopleUsing(app.store.sqlite, "2000-01-01", "2200-01-01", new Map([[app.runtime.owner, "Owner"]]));
@@ -66,6 +68,32 @@ test("window state omits the ghost completed card while retaining ambiguous rows
   const real = await app.runtime.run({ prompt: bootstrap.prompt, sessionId: trunk.chatSessionId });
   assert.deepEqual((await state()).runs.map((run) => run.id).sort(), [ambiguous.id, real.id].sort());
   assert.ok(app.store.run(bootstrap.id), "the anchor remains stored for export, audit and project selection");
+});
+
+test("NULL output in otherwise matching marked or legacy rows is ambiguous and stays counted and visible", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, owner TEXT);
+      CREATE TABLE tasks(id TEXT PRIMARY KEY, session_id TEXT, owner TEXT, status TEXT, output TEXT, created_at TEXT, source TEXT);
+      CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, kind TEXT, data TEXT, created_at TEXT);
+      CREATE TABLE usage(run_id TEXT PRIMARY KEY, estimated_input INTEGER DEFAULT 0, estimated_output INTEGER DEFAULT 0,
+        reported_input INTEGER DEFAULT 0, reported_output INTEGER DEFAULT 0, reports INTEGER DEFAULT 0);
+      CREATE TABLE governance(id TEXT, owner TEXT, data TEXT);`);
+    const now = new Date().toISOString();
+    for (const id of ["marked", "legacy"]) {
+      db.prepare("INSERT INTO sessions VALUES(?,?)").run(id, "local");
+      db.prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?,?)").run(id, id, "local", "completed", null, now, "web");
+      db.prepare("INSERT INTO usage(run_id) VALUES(?)").run(id);
+      db.prepare("INSERT INTO events(run_id,kind,data,created_at) VALUES(?,?,?,?)").run(id, "run.aside", "{}", now);
+    }
+    db.prepare("INSERT INTO events(run_id,kind,data,created_at) VALUES(?,?,?,?)").run("marked", "run.bootstrap", JSON.stringify(conversationBootstrap), now);
+    db.prepare("INSERT INTO governance VALUES(?,?,?)").run("trunk:legacy", "local", JSON.stringify({ id: "legacy", chatSessionId: "legacy" }));
+    const usage = new UsageStore(db);
+    assert.equal(usage.aggregateUsage("all").reduce((sum, day) => sum + day.runs, 0), 2);
+    assert.equal(usage.getMonthlyStats().unpricedRuns, 2);
+    assert.equal(peopleUsing(db, "2000-01-01", "2200-01-01", new Map())[0].tasks, 2);
+    assert.deepEqual([...conversationBootstrapIds(db, "local")], [], "neither ambiguous row is hidden in the window");
+  } finally { db.close(); }
 });
 
 test("legacy openings require the current canonical association in the exact task owner's scope", async t => {
