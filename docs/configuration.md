@@ -28,8 +28,9 @@ off); models on this computer ("on", which starts the program when Branch starts
 videos; and language servers and debug adapters (nothing starts until you add one and a task uses it).
 
 An existing install keeps every switch you set. An "off" that was only written as the old default, beside another field
-you saved, now reads as on; your own choices are kept in `settings/ship-on-chosen`. First setup offers procedures that
-start by themselves in one sentence on *Keep it running*, since they run their steps without a yes each time.
+you saved, now reads as on; your own choices are kept in `settings/ship-on-chosen`. A save over a record Branch could not
+read writes down the offs it showed, so they stay off. Two exceptions keep an older record's own switch: updating by itself
+on the Beta channel (Beta builds every merged change on this computer), and a morning brief that names a chat.
 
 ## Model provider
 
@@ -432,7 +433,7 @@ One button takes a computer with nothing on it to a model that answers: install 
 
 ### Updates
 
-Stable is the default update channel and checks GitHub's latest final `vX.Y.Z` release. The owner can choose Beta in Settings → Updates & about; it considers published `vX.Y.Z-beta.N` releases as well as stable releases, and never installs an older version when switching back. Both channels require the download and its `.sha256`, an exact embedded `branch-agent` package version, and the canary check before the existing backup and hand-over. Automatic installation ships on (an owner who switches it off keeps it off); the desktop checks all running and awaiting-answer tasks before installation and again before stopping a background engine. A checkout installed from Git still updates with `node dist/cli.js update` (`git pull --ff-only`, `npm ci`, `npm run build`). Beta artifacts require the separate reviewed-commit publisher; selecting Beta does not turn the installed app into a source checkout.
+Stable is the default update channel and checks GitHub's latest final `vX.Y.Z` release. The owner can choose Beta in Settings → Updates & about; it considers published `vX.Y.Z-beta.N` releases as well as stable releases, and never installs an older version when switching back. Both channels require the download and its `.sha256`, an exact embedded `branch-agent` package version, and the canary check before the existing backup and hand-over. Automatic installation ships on for Stable (an owner who switches it off keeps it off, and an older Beta record keeps its own choice); the desktop checks all running and awaiting-answer tasks before installation and again before stopping a background engine. A checkout installed from Git still updates with `node dist/cli.js update` (`git pull --ff-only`, `npm ci`, `npm run build`). Beta artifacts require the separate reviewed-commit publisher; selecting Beta does not turn the installed app into a source checkout.
 
 **Updates replace the whole app, and always will.** Binary delta updates — shipping only the bytes that changed and patching the installed copy — are ruled out on macOS, and not by preference. A macOS signature seals every file in the bundle into `Contents/_CodeSignature/CodeResources`; writing into any of them afterwards breaks that seal and macOS reports the app as damaged. Patching without re-signing destroys the signature, so the identity the owner's microphone, screen recording and accessibility permissions are attached to no longer matches and every one of them is asked for again — worse than today. Re-signing on the person's own computer is not an alternative, because it would mean shipping the private signing key inside the download, which makes it public and worth nothing. The same wall is why Sparkle refuses a delta when the code signing information differs and why electron-updater's differential download does not work for a macOS zip. So the signed `.app` is immutable between releases: it is replaced whole, with `ditto` into a scratch folder and an atomic swap, or not at all. Anything that should vary without a full release belongs outside the bundle, fetched into the user data folder, not patched into the app.
 
@@ -3078,8 +3079,9 @@ the assistant works through your `checklist`. With `checkIn` set to when needed,
 A check-in runs only when you press "Check in now" or something wakes it, and a wake still keeps to the
 hours. With `checkIn` off, "Check in now" is refused. The checklist is read through one provider. When
 the `heartbeat` context file (HEARTBEAT.md in the workspace) is switched on or set to when needed, that
-file is the checklist; otherwise the text you keep here is used. That file has one switch, on the "What to
-check when it wakes" card beside the check-in; the check-in card says which list it is using and links to it. If there is no checklist file, the check-in still runs. If the
+file is the checklist; otherwise the text you keep here is used. As it ships (you never set that file's switch), the file
+is used only when there is one; without it the text you keep here still is. That file has one switch, on the "What to
+check when it wakes" card beside the check-in; the check-in card says which list it is using and links to it. If you set that file's switch and there is no file, the check-in still runs. If the
 checklist has only blank lines, headings, comments or empty boxes, the model is not asked at all. The
 assistant answers with the `heartbeat.respond` tool. That tool sits in the schedules toolbox, so ordinary
 tasks do not carry it, and a check-in is told to load it. It has its own permission, `heartbeat.respond`,
@@ -8335,7 +8337,7 @@ protocol.
 
 Seven parts, each with the owner's three-way switch (off, on, only when it is needed). All ship "only
 when it is needed" except procedures that start themselves, which ship off because their steps can run
-without a yes each time (first setup offers them). Their switches and settings are under `/api/autonomy/`, owner only; a short-lived key can read
+without a yes each time. Their switches and settings are under `/api/autonomy/`, owner only; a short-lived key can read
 some of them and change none (`tests/short-lived-key-routes.mjs`). Nothing lasting is made without the
 owner: the assistant's tools here only read or ask, and every question waits in Inbox → Needs you. A
 "no" is remembered for good, so the same thing is never asked or offered again; at most 20 questions
