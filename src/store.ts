@@ -690,8 +690,10 @@ export class Store {
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
   reconcileMessages(sessionId: string, reason: string): number {
-    const rows = this.db.prepare("SELECT body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
+    const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
+    // attach-anything: what was read out of a message's files follows the message to its new row.
+    const oldIds = new Map([...sources.keys()].map((message, i) => [message, Number(rows[i]!.id)]));
     // A repaired transcript keeps when each message was first written.
     const times = new Map([...sources.keys()].map((message, i) => [message, rows[i]!.created_at == null ? null : String(rows[i]!.created_at)]));
     const repaired = reconcileTranscript([...sources.keys()], reason);
@@ -699,7 +701,12 @@ export class Store {
     this.db.exec("BEGIN");
     try {
       this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId);
-      for (const message of repaired.messages) this.message(sessionId, message, sources.get(message), times.get(message));
+      const moveRead = this.db.prepare("UPDATE message_reads SET message_id=? WHERE message_id=? AND session_id=?");
+      for (const message of repaired.messages) {
+        const id = this.message(sessionId, message, sources.get(message), times.get(message));
+        const was = oldIds.get(message);
+        if (was !== undefined) moveRead.run(id, was, sessionId);
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

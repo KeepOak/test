@@ -336,3 +336,19 @@ test("files waiting to be sent fit everyone's room and the disk's reserve, and a
   assert.throws(() => store.staged("local", [mine.upload]), /no longer waiting to be sent/);
   await assert.rejects(stat(mineOnDisk), /ENOENT/, "its bytes are gone");
 });
+
+test("what was read out of a file stays with its message when an interrupted conversation is mended", async (t) => {
+  const { app, upload, post } = await branch(t);
+  const sent = await upload("report.pdf", "application/pdf", pdf());
+  const run = await post("/api/run", { prompt: "Summarise it", uploads: [sent.body.upload] });
+  assert.equal(run.status, 200);
+  const sessionId = run.body.sessionId;
+  const withRead = () => app.store.workingMessages(sessionId).rows.find((row) => /Summarise it/.test(row.message.content));
+  assert.match(withRead().message.content, /Quarterly figures rose/);
+  // A tool call with no result left behind: mending the conversation writes every message again, under new rows.
+  app.store.message(sessionId, { role: "assistant", content: "", toolCalls: [{ id: "call-1", name: "files.read", arguments: {} }] });
+  const before = withRead().id;
+  assert.equal(app.store.reconcileMessages(sessionId, "test"), 1);
+  assert.notEqual(withRead().id, before, "the message has a new row");
+  assert.match(withRead().message.content, /Quarterly figures rose/, "and the model still has what was read out of its file");
+});
