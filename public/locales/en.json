@@ -9648,7 +9648,7 @@
   "window.settings.data.cancel": "Cancel",
   "window.settings.data.deleted": "Deleted {conversations} conversations and {memory} remembered things.",
   "window.what.title": "What can Branch do",
-  "window.what.lede": "Everything here is read from this Branch as it is now. Try it opens a new conversation with the words in the box, not sent.",
+  "window.what.lede": "Everything Branch can do for you right now. Try it starts a new conversation with the request ready for you to send.",
   "window.what.try": "Try it",
   "window.what.prompts": "Prompts",
   "window.what.ask-tool": "Use the {name} tool. It says: {line}",

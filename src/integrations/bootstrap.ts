@@ -21,7 +21,7 @@ import { ShellSessions, registerShellSessions } from '../shell-session.js';
 import { commandTuning } from '../knobs/commands.js'; // R17-S10
 import type { Store } from '../store.js';
 import { ChannelPolicySchema, type ChannelAdapter, type ChannelRouter } from '../channels/router.js';
-import { TelegramAdapter } from '../channels/telegram.js';
+import { TelegramAdapter, telegramBotId } from '../channels/telegram.js';
 import { DiscordAdapter } from '../channels/discord.js';
 import { SlackAdapter } from '../channels/slack.js';
 import { WhatsAppAdapter } from '../channels/whatsapp.js';
@@ -509,7 +509,7 @@ async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host
     // fetching a voice note — is checked against the network settings first, so a made-up
     // apiBase cannot be used to reach somewhere the owner never allowed.
     // mac3/never-break: the read position is kept, so messages sent during a restart are answered.
-    const position = channelPosition(host.store, channel.id);
+    const position = channelPosition(host.store, channel.id, undefined, telegramBotId(token)); // kept per bot
     return new TelegramAdapter({ id: channel.id, token, fetch: guardedFetch, ...base, ...(position ? { position } : {}) });
   }
   if (channel.type === 'discord')
