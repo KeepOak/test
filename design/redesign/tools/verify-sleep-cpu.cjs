@@ -34,7 +34,7 @@ const moving = (page) => page.evaluate(async () => {
     pebblesChanging: changed.length,
     cssRunning: document.getAnimations().filter((x) => x.playState === "running").length,
     facesMoving: faces.size,
-    asleep: document.documentElement.className.match(/(doze18|still18)/)?.[1] ?? "awake",
+    asleep: document.documentElement.className.match(/\b(doze18|still18)\b/)?.[1] ?? "awake",
   };
 });
 
@@ -46,6 +46,8 @@ const moving = (page) => page.evaluate(async () => {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  page.on("crash", () => console.error(`the page crashed at ${Math.round((Date.now() - loaded) / 1000)} s`));
+  const loaded = Date.now();
   await page.goto(base + "/");
   await page.waitForSelector("#app #side .list .row", { timeout: 30000 });
   if (OPEN) await page.evaluate((id) => document.querySelector(`#side [data-id="${id}"]`)?.click(), OPEN);
