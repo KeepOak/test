@@ -81,6 +81,9 @@ test("undoing a goal puts its files back, deletes its draft and forgets its fact
   assert.deepEqual(preview.files.map((f) => [f.path, f.round, f.existed]).sort(), [["made.txt", 1, false], ["notes.txt", 1, true]]);
   assert.deepEqual(preview.drafts.map((d) => [d.id, d.to, d.round]), [["draft-goal", ["orders@example.com"], 1]]);
   assert.deepEqual(preview.facts.map((f) => f.text), ["You buy printer paper about every six weeks"]);
+  await app.memory.backend.search("local", "printer paper"); // the fact is found by search, so it is in the index
+  const indexed = app.store.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_terms WHERE memory_id=?").get(preview.facts[0].id).n;
+  assert.ok(indexed > 0, "search keeps a copy of the fact before the undo");
   const done = await undo.undo(goal.sessionId);
   assert.equal(await readFile(join(workspace, "notes.txt"), "utf8"), "before the goal");
   assert.equal(await exists(join(workspace, "made.txt")), false);
@@ -92,6 +95,9 @@ test("undoing a goal puts its files back, deletes its draft and forgets its fact
   assert.ok(app.store.messages(goal.sessionId).some((m) => m.role === "user" && /Reorder the paper/.test(m.content)), "the conversation itself stays");
   const kept = app.store.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_versions WHERE data LIKE '%printer paper%'").get().n;
   assert.equal(kept, 0, "no kept wording of the forgotten fact is left to bring back");
+  const paper = preview.facts[0].id;
+  for (const table of ["memory_terms", "memory_vectors", "memory_uses"])
+    assert.equal(app.store.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE memory_id=?`).get(paper).n, 0, `nothing of it is left in ${table}`);
 });
 
 test("a memory checkpoint taken while the goal's fact was known cannot bring it back after the undo", async (t) => {
@@ -101,6 +107,15 @@ test("a memory checkpoint taken while the goal's fact was known cannot bring it 
   assert.deepEqual(texts(app), ["The owner's office is on the third floor"]);
   app.store.review.restoreCheckpoint("local", checkpoint.id);
   assert.deepEqual(texts(app), ["The owner's office is on the third floor"], "putting the checkpoint back does not bring the goal's fact back");
+});
+
+test("a fact the memory service would not forget is said to be kept, not forgotten", async (t) => {
+  const { app, goal } = await goalThatDidThings(t);
+  const undo = new GoalUndo({ db: app.store.sqlite, owner: "local", goals: app.goals, history: app.store.workspaceHistory, files: app.files,
+    memory: { list: (owner) => app.memory.backend.list(owner), forget: async () => false }, drafts: { "gmail.draft": async () => "deleted" } });
+  const done = await undo.undo(goal.sessionId);
+  assert.deepEqual(done.facts.map((f) => [f.outcome, f.reason]), [["failed", "The memory service did not forget this fact, so it is still kept."]]);
+  assert.ok(texts(app).includes("You buy printer paper about every six weeks"));
 });
 
 test("a fact the owner edited after the goal saved it stays; a draft already sent is left alone", async (t) => {
@@ -187,15 +202,18 @@ test("Outlook: only a message that is still a draft is deleted; a sent one is ne
   const store = fakeStore();
   on(store, "microsoft");
   const web = fakeWeb([
-    [/\/messages\/still-draft\?\$select=isDraft$/, { isDraft: true }],
-    [/\/messages\/still-draft$/, () => new Response(null, { status: 204 })],
-    [/\/messages\/was-sent\?\$select=isDraft$/, { isDraft: false }],
+    [/\/messages\/still-draft\?\$select=isDraft$/, { isDraft: true, "@odata.etag": "W/\"v1\"" }],
+    [/\/messages\/still-draft$/, (url, init) => new Response(null, { status: init.headers["if-match"] === "W/\"v1\"" ? 204 : 412 })],
+    [/\/messages\/was-sent\?\$select=isDraft$/, { isDraft: false, "@odata.etag": "W/\"v9\"" }],
+    [/\/messages\/sent-meanwhile\?\$select=isDraft$/, { isDraft: true, "@odata.etag": "W/\"v1\"" }],
+    [/\/messages\/sent-meanwhile$/, () => new Response("{}", { status: 412 })],
   ]);
   const outlook = new MicrosoftConnector(store, "local", web.fetch, signedIn());
   assert.equal(await outlook.deleteDraft("still-draft"), "deleted");
   assert.equal(await outlook.deleteDraft("was-sent"), "sent");
   assert.equal(await outlook.deleteDraft("gone-now"), "gone");
-  const deletes = web.seen.filter((r) => r.method === "DELETE").map((r) => r.url);
-  assert.equal(deletes.length, 1);
-  assert.match(deletes[0], /\/messages\/still-draft$/);
+  assert.equal(await outlook.deleteDraft("sent-meanwhile"), "sent", "sent between the read and the delete: Outlook refuses, and it is left alone");
+  const deletes = web.seen.filter((r) => r.method === "DELETE");
+  assert.deepEqual(deletes.map((r) => r.url.split("/").at(-1)), ["still-draft", "sent-meanwhile"]);
+  assert.ok(deletes.every((r) => r.headers["if-match"]), "every delete names the exact draft it read");
 });

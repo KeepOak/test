@@ -89,17 +89,26 @@ export function scrubCheckpoints(db: DatabaseSync, runs: ReadonlySet<string>, re
   }
 }
 
+/** Every copy of one fact kept beside it: archived, earlier wordings, and its place in search (words, meaning, uses). */
+function dropFactCopies(db: DatabaseSync, fact: { id: string; owner: string }): void {
+  if (has(db, "memory_archive")) db.prepare("DELETE FROM memory_archive WHERE owner=? AND id=?").run(fact.owner, fact.id);
+  if (has(db, "memory_versions")) db.prepare("DELETE FROM memory_versions WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
+  if (has(db, "memory_terms")) {
+    if (has(db, "memory_search")) db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=? AND memory_id=?)").run(fact.owner, fact.id);
+    db.prepare("DELETE FROM memory_terms WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
+  }
+  for (const table of ["memory_vectors", "memory_uses"]) if (has(db, table)) db.prepare(`DELETE FROM ${table} WHERE owner=? AND memory_id=?`).run(fact.owner, fact.id);
+}
+
 /**
  * Undoing a goal (src/goal-undo.ts) forgets its facts through the memory service, which keeps each one's last wording as a
  * version so an ordinary Forget can be taken back. A goal undone is meant to be gone: these remove the kept versions, the
- * archived copies and the checkpoint copies of those facts, and the suggestions its tasks left waiting. Call in a transaction.
+ * archived copies, its place in search and the checkpoint copies of those facts, and the suggestions its tasks left waiting.
+ * Call in a transaction.
  */
 export function forgetFactCopies(db: DatabaseSync, runIds: readonly string[], facts: readonly { id: string; owner: string }[]): void {
   const runs = new Set(runIds);
-  for (const fact of facts) {
-    if (has(db, "memory_archive")) db.prepare("DELETE FROM memory_archive WHERE owner=? AND id=?").run(fact.owner, fact.id);
-    if (has(db, "memory_versions")) db.prepare("DELETE FROM memory_versions WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
-  }
+  for (const fact of facts) dropFactCopies(db, fact);
   if (has(db, "memory_archive"))
     for (const row of db.prepare("SELECT rowid AS k, data FROM memory_archive").all())
       if (learnedOnlyFrom(runs, parse(row.data))) db.prepare("DELETE FROM memory_archive WHERE rowid=?").run(Number(row.k));
@@ -112,13 +121,8 @@ export function forgetFactCopies(db: DatabaseSync, runIds: readonly string[], fa
 export function forgetResidue(db: DatabaseSync, runIds: readonly string[], residue: Residue): void {
   const runs = new Set(runIds), list = JSON.stringify(runIds);
   for (const fact of residue.facts) {
-    for (const table of ["memory", "memory_archive"]) if (has(db, table)) db.prepare(`DELETE FROM ${table} WHERE owner=? AND id=?`).run(fact.owner, fact.id);
-    if (has(db, "memory_versions")) db.prepare("DELETE FROM memory_versions WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
-    if (has(db, "memory_terms")) {
-      if (has(db, "memory_search")) db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=? AND memory_id=?)").run(fact.owner, fact.id);
-      db.prepare("DELETE FROM memory_terms WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
-    }
-    for (const table of ["memory_vectors", "memory_uses"]) if (has(db, table)) db.prepare(`DELETE FROM ${table} WHERE owner=? AND memory_id=?`).run(fact.owner, fact.id);
+    if (has(db, "memory")) db.prepare("DELETE FROM memory WHERE owner=? AND id=?").run(fact.owner, fact.id);
+    dropFactCopies(db, fact);
   }
   // An archived fact, and the earlier wordings of one that stays, are handled by the same rule.
   for (const table of ["memory", "memory_archive", "memory_versions"]) {

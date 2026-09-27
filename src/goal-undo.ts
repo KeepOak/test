@@ -51,6 +51,7 @@ export interface GoalUndoOutcome {
 }
 
 const draftTools = ["gmail.draft", "outlook.draft"];
+const notForgotten = "The memory service did not forget this fact, so it is still kept.";
 const noRounds = "This goal was started before Branch kept which tasks were its rounds, so it cannot be undone in one step.";
 const text = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -153,7 +154,8 @@ export class GoalUndo {
     const done: GoalUndoOutcome["facts"] = [], gone: { id: string; owner: string }[] = [];
     for (const { record: _record, ...fact } of await this.factsOf(runs)) {
       try {
-        await this.deps.memory.forget(this.deps.owner, fact.id);
+        // Forgotten only when the memory service says it forgot it; a service that answers no keeps it, and so does this.
+        if (!await this.deps.memory.forget(this.deps.owner, fact.id)) { done.push({ ...fact, outcome: "failed", reason: notForgotten }); continue; }
         gone.push({ id: fact.id, owner: this.deps.owner });
         done.push({ ...fact, outcome: "forgotten" });
       } catch (error) { done.push({ ...fact, outcome: "failed", reason: String((error as Error)?.message ?? error).slice(0, 300) }); }
