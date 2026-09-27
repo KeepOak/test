@@ -79,7 +79,7 @@ const responseSchema = z.object({ ok: z.boolean(), result: z.unknown().optional(
  * without a notification sound (a progress message; the reply after it is the one that rings).
  */
 const formatted = (format?: MessageFormat) => ({
-  ...(format?.spans?.length ? { entities: telegramEntities(format.spans) } : {}),
+  ...(!format?.plain && format?.spans?.length ? { entities: telegramEntities(format.spans) } : {}),
   ...(format?.quiet ? { disable_notification: true } : {}),
 });
 /** Topic addresses remain distinct in the router; Telegram receives the underlying chat and thread. */

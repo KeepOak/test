@@ -845,6 +845,13 @@ Routes: `GET/POST /api/workspace-editor/settings`, `GET /api/workspace-editor/li
 
 ### Message intake and reconnecting
 
+`GET /api/channels/formatting` returns `formats`; owner-only `POST /api/channels/formatting { channel, mode }`
+saves one supported app's `native` (default) or `plain` choice. Changes apply to the connected adapter's next send
+or edit, including live steps and queued delivery retries, and survive a restart. Plain mode removes presentation
+markers while retaining code contents and link destinations. Slack uses plain_text blocks, Matrix omits HTML, Telegram
+omits entities, and Discord escapes remaining literal symbols. Discord reserves half its text budget before
+splitting to keep escape characters inside the service's message limit.
+
 Settings › Chat apps reads `intake` from `GET /api/channels`; `POST /api/channels/intake` saves only the named
 fields and is owner-only. `edited` and `albums` default to true: edited messages replace a version still being
 gathered, and a photo album joins one turn. An edit after that turn has started is its own message.

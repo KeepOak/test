@@ -56,7 +56,10 @@ const slackEmojiNames: Record<string, string> = {
 
 /** Slack's own formatting, with code spans as fences that carry no language (Slack would show it as a first code line). */
 const slackText = (text: string, format?: MessageFormat): string =>
-  toMrkdwn(format?.spans?.length ? fenced(text, format.spans, { tag: false }) : text);
+  format?.plain ? text : toMrkdwn(format?.spans?.length ? fenced(text, format.spans, { tag: false }) : text);
+/** Plain-text blocks work for sends and edits; chat.update does not accept a mrkdwn switch. */
+const slackPlain = (text: string, format?: MessageFormat): Record<string, unknown> => format?.plain
+  ? { parse: "full", link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
   readonly id: string;
@@ -152,7 +155,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {
-      channel: chatId, text: slackText(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
     });
     const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
     return parsed.success ? parsed.data.ts : undefined;
@@ -170,7 +173,7 @@ export class SlackAdapter implements ChannelAdapter {
     await this.call("reactions.add", this.options.token, { channel: chatId, timestamp: messageId, name });
   }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
-    await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format) });
+    await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
   }
   // ---- R17-C (R17-022): a file through Slack's external upload (the older files.upload is retired).
   // 1. files.getUploadURLExternal hands out an address and a file id; 2. the bytes go to that

@@ -9380,7 +9380,7 @@
   "window.p17d.formatting-each-hint": "Las respuestas se escriben una vez y se convierten al formato propio de cada aplicación.",
   "window.p17d.when-connected": "(cuando esté conectada)",
   "window.p17d.formatting-in": "Formato en {name}",
-  "window.p17d.formatting-in-hint": "La negrita, las listas y los enlaces se convierten en lo que muestra {name}.",
+  "window.p17d.formatting-in-hint": "Usa los estilos de cada aplicación cuando estén disponibles, o conserva las respuestas y el código como texto sin formato.",
   "window.p17d.revoked-title": "Telegram se detuvo: se revocó su token de bot",
   "window.p17d.turn-telegram-off": "Desactivar Telegram",
   "window.p17d.paste-the-new-token": "Pegar el token nuevo",
