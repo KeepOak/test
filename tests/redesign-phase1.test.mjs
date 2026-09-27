@@ -148,6 +148,31 @@ const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const usageButton = (page) => page.locator('#statusbar [data-act="usagepop"]');
 /** The offer is looked for when the window starts and every 20 seconds (shell/usage.js). */
 const offer = (page) => page.getByRole("alertdialog", { name: "Save progress?" });
+/**
+ * The window looks at the limits every 20 seconds (public/app/shell/usage.js). Instead of waiting those seconds out,
+ * move the window's clock past the next look and wait until every limits read it started has come back and been drawn.
+ * The page's clock must have been installed (page.clock.install()) before the window was opened.
+ */
+async function nextLook(page) {
+  const glance = (request) => new URL(request.url()).pathname === "/api/usage/glance";
+  const open = new Set();
+  let started = 0;
+  const sent = (request) => { if (glance(request)) { open.add(request); started += 1; } };
+  const done = (request) => open.delete(request);
+  page.on("request", sent);
+  page.on("requestfinished", done);
+  page.on("requestfailed", done);
+  try {
+    await page.clock.fastForward(20_000);
+    for (let tries = 0; tries < 600 && (started === 0 || open.size); tries += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(started > 0 && open.size === 0, "the window looked at the limits again");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+  } finally {
+    page.off("request", sent);
+    page.off("requestfinished", done);
+    page.off("requestfailed", done);
+  }
+}
 
 test("the connection button opens the glass list of what each connection has left, and closes on the same click", async (t) => {
   const f = await fixture(t, { provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
@@ -217,6 +242,7 @@ test("at 95% used it asks once; Save progress steers every running task to write
   const f = await fixture(t, { provider: model.provider });
   const name = reportLeft(f.app, 3);
   const run = await runningTask(f);
+  await f.page.clock.install();
   await signedInAgain(f.page);
   const box = offer(f.page);
   await box.waitFor({ state: "visible", timeout: 30000 });
@@ -230,7 +256,7 @@ test("at 95% used it asks once; Save progress steers every running task to write
   assert.ok(steered, "the task was steered through the ordinary channel");
   assert.match(steered.data.note, /checkpoint note/);
   assert.equal(events.some((event) => /cancel|paused/.test(event.kind)), false, "nothing was paused or stopped");
-  await f.page.waitForTimeout(21000); // past the next look
+  await nextLook(f.page);
   assert.equal(await box.count(), 0, "the same window is never asked about twice");
   model.release();
   assert.deepEqual(f.errors, []);
@@ -241,13 +267,14 @@ test("with saving progress off, or nothing running, it never asks; Not now chang
   t.after(() => model.release());
   const f = await fixture(t, { provider: model.provider });
   reportLeft(f.app, 1);
+  await f.page.clock.install();
   await signedInAgain(f.page);
-  await f.page.waitForTimeout(21000);
+  await nextLook(f.page);
   assert.equal(await offer(f.page).count(), 0, "nothing running, nothing to ask");
   const run = await runningTask(f);
   await f.call("/api/usage/glance/settings", { saveProgress: "off" });
   await signedInAgain(f.page);
-  await f.page.waitForTimeout(21000);
+  await nextLook(f.page);
   assert.equal(await offer(f.page).count(), 0, "switched off, it never asks");
   await f.call("/api/usage/glance/settings", { saveProgress: "ask" });
   await signedInAgain(f.page);

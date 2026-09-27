@@ -11,6 +11,16 @@ import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js"
 import { scrubText, secretValues } from "../dist/integrations/browser-page.js";
 import { ToolRegistry, Budget, RunArtifacts } from "../dist/index.js";
 
+/** A port nothing on this computer is listening on, so test files running side by side never share one. */
+async function freePort() {
+  const probe = createServer().listen(0, "127.0.0.1");
+  await once(probe, "listening");
+  const { port } = probe.address();
+  probe.close();
+  await once(probe, "close");
+  return port;
+}
+
 /**
  * Page text handed to the assistant (browser.snapshot, browser.extract, browser.shape, browser.annotate) never carries
  * a value a box holds that the assistant must not read: a password, a one-time code, a code a saved sign-in typed (and
@@ -201,7 +211,7 @@ test("a recording does not start when a box a saved sign-in typed into cannot be
 test("in the owner's own window, only what the task typed itself is shown back; what the owner typed is taken out", async (t) => {
   const origin = await site(t);
   const { browser, run } = await harness(t, origin, "secret-text-borrow");
-  const port = 9437;
+  const port = await freePort();
   const owned = await chromium.launchPersistentContext("", { headless: true, args: [`--remote-debugging-port=${port}`] });
   t.after(() => owned.close());
   browser.store = { get: () => ({ data: { enabled: true, port, runId: "secret-text-borrow", grantedAt: new Date().toISOString() } }), save: () => undefined };
