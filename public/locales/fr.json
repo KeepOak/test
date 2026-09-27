@@ -8522,7 +8522,6 @@
   "window.applock.toast-always": "Branch demande votre code PIN à chaque ouverture.",
   "window.applock.toast-off": "Verrouillage de l’application désactivé.",
   "window.applock.toast-quiet": "Branch se verrouille après {count} minutes d’inactivité.",
-  "window.chat.a2a.talked": "{a} et {b} en ont discuté · {count} messages",
   "window.chat.room.typing": "{name} est en train d’écrire",
   "window.settings.p17-permissions.asks": "Demande",
   "window.settings.p17-permissions.check-an-address": "Vérifier une adresse",

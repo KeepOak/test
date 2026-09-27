@@ -8521,7 +8521,6 @@
   "window.applock.toast-always": "Branch asks for your PIN every time it opens.",
   "window.applock.toast-off": "App lock off.",
   "window.applock.toast-quiet": "Branch locks after {count} quiet minutes.",
-  "window.chat.a2a.talked": "{a} and {b} talked it through · {count} messages",
   "window.chat.room.typing": "{name} is typing",
   "window.settings.p17-permissions.asks": "Asks",
   "window.settings.p17-permissions.check-an-address": "Check an address",
