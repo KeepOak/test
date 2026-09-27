@@ -14,10 +14,12 @@ import { VIEWS } from "./views.js";
 import { drawShell, initShell, PLACE_VIEWS, wide } from "./shell/shell.js";
 import { showSignIn } from "./shell/signin.js";
 import { showLock, watchLock, initLock } from "./shell/applock.js";
-import { openConversation } from "./chat/chat.js";
+import { openConversation, rereadOpen } from "./chat/chat.js";
+import { forgetChips } from "./chat/chips.js";
+import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
 import { splash, splashDone } from "./shell/inperson.js";
-import { initLanguage } from "../i18n.js";
+import { initLanguage, t } from "../i18n.js";
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -206,15 +208,48 @@ async function connect(refusal = "") {
     E.error = error; render(); return;
   }
   if (await watchLock(E.state?.lock)) return;
-  link.onChange = () => renderNow();
+  link.onChange = () => { offline(); if (link.up) caughtUp(); };
   let queued = null;
   const askNow = watchPerson();
   stream([], () => {
     clearTimeout(queued);
-    queued = setTimeout(() => refresh().then(render, () => {}), 250);
+    queued = setTimeout(() => freshen(false), 250);
   }, (end) => { if (end?.reason === "profile") askNow(); });
   followLink();
   addEventListener("hashchange", () => followLink());
+}
+
+/* The engine's state read again, and the open conversation with it when something happened there (or always, `all`).
+   A read that fails while the engine is away is not shown: the offline notice already says so. */
+async function freshen(all) {
+  try {
+    await refresh();
+    await rereadOpen(all);
+  } catch (error) {
+    if (link.up) toast(error.message);
+  }
+  render();
+}
+
+/* The engine stopped answering: a notice that says so, over everything, until it answers again (the event stream and
+   the person check keep asking, ever more slowly, api.js stream). Every light that said "on" is drawn off meanwhile. */
+function offline() {
+  let note = document.getElementById("offline18");
+  if (link.up || link.quiet) note?.remove(); // an install or restart the window started: the swap screen covers it
+  else if (!note) {
+    note = Object.assign(document.createElement("div"), { id: "offline18", className: "offline18" });
+    note.setAttribute("role", "status");
+    note.textContent = t("window.shell.offline");
+    $("#app")?.appendChild(note);
+  }
+  $("#app")?.classList.toggle("offline18-on", !link.up);
+  renderNow();
+}
+
+/* Back: everything the window shows is read again, since anything may have changed while it was away. */
+function caughtUp() {
+  forgetChips();
+  freshen(true);
 }
 
 /* Who is using Branch can change from anywhere (a switch through POST /api/profiles/switch sends no event), and App lock
