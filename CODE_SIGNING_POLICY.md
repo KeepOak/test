@@ -30,7 +30,7 @@ Both are attached to the project's [releases](https://github.com/stabrea/Branch-
 
 ## Privacy
 
-This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The one exception is the automatic update check below: it is on by default, setup says so, and it can be turned off.
 
 What stays on the computer, and what leaves it only when you ask:
 
@@ -38,7 +38,9 @@ What stays on the computer, and what leaves it only when you ask:
 - **Tasks you give it.** Branch sends what the task needs to two kinds of place:
   - the model service you chose to connect (or a model running on your own computer or network);
   - the services that task uses that you connected yourself, such as a mail, calendar or chat account, or a web search.
-- **Updates.** Branch looks on GitHub (`api.github.com`, `github.com`) for a newer version only in two cases: when you press Check, or when you turned on automatic updates in Settings. You can turn automatic updates off there.
+- **Updates.** By default, Branch checks GitHub (`api.github.com`, `github.com`) for a newer version and installs it by itself. Setup tells you this is on.
+  - You can turn it off in Settings › Updates. Branch then looks for a newer version only when you press Check.
+  - The check is an ordinary request to GitHub that names Branch's version number. It carries nothing about you or your data.
   - The Beta channel is opt-in. It downloads Branch's source code from GitHub and its packages from the npm registry.
 - **Usage counts.** These are off unless the owner says yes. They go only to an address of the owner's own, never to the project.
 
