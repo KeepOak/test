@@ -1,6 +1,7 @@
 /**
  * The nightly run. It fast-forwards a dedicated clean clone to origin/redesign/window, builds, runs the full suite on
- * the local model, and commits the scorecard into the private coordination repo. No part of the evals runs in a pull
+ * the local model (and on a model on another machine when nightly.local.json names one), and commits the scorecards,
+ * with a page putting the night's models side by side, into the private coordination repo. No part of the evals runs in a pull
  * request's checks (CI is kept to 15 minutes): this can take many minutes and needs the GPU.
  *
  * Run by hand:  node evals/nightly.mjs
