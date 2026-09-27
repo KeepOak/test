@@ -15,7 +15,8 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { notATrigger, appNeedsAddress } from "../dist/trigger-words.js";
+import { notATrigger, appNeedsAddress, unreadableAnswer, proposeTrigger } from "../dist/trigger-words.js";
+import { ProviderHttpError } from "../dist/provider-retry.js";
 import { noModelWords } from "../dist/no-model.js";
 import { draftNewSkill } from "../dist/skill-authoring.js";
 
@@ -91,6 +92,24 @@ test("POST /api/triggers/propose reads a finished task, and refuses an app's mes
   const refused = await call("/api/triggers/propose", { text: "when a PDF lands in Downloads, summarise it" });
   assert.deepEqual([refused.status, refused.body.error], [400, notATrigger]);
   assert.equal((await call("/api/triggers/propose", { text: "x", extra: 1 })).status, 400, "the body is strict");
+});
+
+// qa-fixes-3 (Q047): a model that fails is said as the model failing, with one next step, never as words the engine
+// cannot watch for. Mutation: throw notATrigger again when the answer is not resolved in proposeTrigger → red.
+test("POST /api/triggers/propose says a model failure plainly, apart from words it cannot watch for", async (t) => {
+  const { call } = await engine(t, () => "Sure! I think this is a task trigger.");
+  const unread = await call("/api/triggers/propose", { text: "when a task finishes, tell me" });
+  assert.deepEqual([unread.status, unread.body.error], [400, unreadableAnswer]);
+  assert.notEqual(unread.body.error, notATrigger);
+  const fails = (error) => proposeTrigger({ text: "when a task finishes, tell me" }, async (question, shape) => {
+    const { askInShape } = await import("../dist/answer-shape.js");
+    return askInShape(async () => { throw error; }, question, shape);
+  });
+  await assert.rejects(fails(new ProviderHttpError(503)), (e) => /^The model did not answer, so nothing was made\. The model service had a problem at its end\./.test(e.message));
+  await assert.rejects(fails(new ProviderHttpError(401)), (e) => /would not accept this connection's sign-in\. You can check the connection in Settings, under Models\.$/.test(e.message));
+  await assert.rejects(fails(Object.assign(new Error("fetch failed"), { cause: new Error("connect ECONNREFUSED") })),
+    (e) => e.message === "Branch could not reach the model, so nothing was made. Check the connection in Settings, under Models, then try again.");
+  await assert.rejects(fails(new DOMException("The operation timed out.", "TimeoutError")), (e) => /took too long to answer/.test(e.message));
 });
 
 test("with no model, drafting a skill and reading a trigger both say so in the engine's words", async (t) => {
