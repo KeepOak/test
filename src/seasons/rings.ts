@@ -12,6 +12,9 @@ import { profileScope } from "../profiles.js";
 import type { Runtime } from "../runtime.js";
 import { learningTask, learningTaskPrefix } from "../skill-authoring.js";
 import type { Store } from "../store.js";
+import { typedBy } from "./evidence.js";
+import { fileProblems, type Filer } from "./code-problems.js";
+import type { Gardener } from "./gardener.js";
 import { nightOf, overnightModel, quietNow, type QuietReason } from "./overnight.js";
 import { emptyNight, missedGates, RingsBook, scoreOf, sameThought, signalsOf, type Candidate, type Night, type NightData } from "./rings-store.js";
 import { seasonsSettings } from "./settings.js";
@@ -49,6 +52,10 @@ const plain = (text: string): string => text.toLowerCase().replace(/\s+/g, " ").
 export class Rings {
   readonly book: RingsBook;
   private running: Promise<unknown> | null = null;
+  private readonly nights = new Map<string, Promise<NightOutcome>>();
+  /** Seasons: the Gardener and where code-level problems are filed, both connected at start-up. */
+  gardener?: Gardener;
+  problems?: Filer;
   constructor(private readonly store: Store, private readonly runtime: Runtime, private readonly consolidation?: MemoryConsolidation) {
     this.book = new RingsBook(store.sqlite);
   }
@@ -59,7 +66,7 @@ export class Rings {
   }
   scopeOf(scope: string): Scope | undefined { return this.scopes().find((entry) => entry.scope === scope); }
   /** Waits for a night under way, for tests and shutdown. */
-  async idle(): Promise<void> { await this.running?.catch(() => undefined); }
+  async idle(): Promise<void> { await Promise.all([this.running, ...this.nights.values()].map((work) => work?.catch(() => undefined))); }
 
   /** The scheduler's beat: starts tonight's work in the background when it is quiet and not yet done. */
   tick(now: Date = new Date()): void {
@@ -72,7 +79,15 @@ export class Rings {
       .finally(() => { this.running = null; });
   }
   /** One person's night. `asked` is the owner pressing the button: it skips the quiet check, never the model gate. */
-  async night(entry: Scope, now: Date = new Date(), asked = true): Promise<NightOutcome> {
+  night(entry: Scope, now: Date = new Date(), asked = true): Promise<NightOutcome> {
+    const key = `${entry.scope}:${nightOf(now, seasonsSettings(this.store, this.runtime.owner))}`;
+    const active = this.nights.get(key);
+    if (active) return active;
+    const work = this.runNight(entry, now, asked).finally(() => { this.nights.delete(key); });
+    this.nights.set(key, work);
+    return work;
+  }
+  private async runNight(entry: Scope, now: Date, asked: boolean): Promise<NightOutcome> {
     const settings = seasonsSettings(this.store, this.runtime.owner);
     const night = nightOf(now, settings);
     const before = this.book.night(entry.scope, night);
@@ -86,17 +101,29 @@ export class Rings {
     this.book.saveNight(record);
     // Checked again between steps, on the night's own clock moved on by the time the steps took.
     const began = Date.now();
-    const stillQuiet = (): boolean => asked || quietNow(this.store.sqlite, this.runtime.owner, settings, new Date(now.getTime() + Date.now() - began)).quiet;
+    const stillQuiet = (): boolean => {
+      const fresh = seasonsSettings(this.store, this.runtime.owner);
+      return fresh.rings !== "off" && (chosen.kind !== "billed" || fresh.paidModels)
+        && (asked || quietNow(this.store.sqlite, this.runtime.owner, fresh, new Date(now.getTime() + Date.now() - began)).quiet);
+    };
     try {
+      if (!stillQuiet()) return { night: this.finish(record, "paused", "settings-or-activity-changed") };
       await this.light(entry.scope, record.data);
       if (!stillQuiet()) return { night: this.finish(record, "paused", "owner-active") };
       const read = await this.rem(entry, chosen.preset, record);
       if (!stillQuiet()) return { night: this.finish(record, "paused", "owner-active") };
-      await this.deep(entry.scope, record, now);
-      if (read) this.book.moveCursor(entry.scope, read);
+      if (!await this.deep(entry.scope, record, now, stillQuiet)) return { night: this.finish(record, "paused", "settings-or-activity-changed") };
+      if (read) this.book.moveCursor(entry.scope, read.at, read.runId);
+      // The owner's night goes on to the garden: skills are the owner's, so a household person's never does.
+      if (entry.person === null && this.gardener && stillQuiet()) {
+        const garden = await this.gardener.night({ preset: chosen.preset, stillQuiet, now });
+        record.data.garden = { ...garden, problems: fileProblems(this.store, this.runtime.owner, this.problems) };
+      }
+      if (!stillQuiet()) return { night: this.finish(record, "paused", "settings-or-activity-changed") };
       return { night: this.finish(record, "done") };
     } catch (error) {
-      return { night: this.finish(record, "paused", error instanceof Error ? error.message.slice(0, 300) : String(error)) };
+      // A failure is not retried on every beat (that would ask the model all night); the night is over, and says why.
+      return { night: this.finish(record, "skipped", error instanceof Error ? error.message.slice(0, 300) : String(error)) };
     }
   }
   private finish(record: Night, status: Night["status"], reason?: string): Night {
@@ -117,21 +144,28 @@ export class Rings {
    */
   requests(entry: Scope): Request[] {
     const binned = binnedRuns(this.store.sqlite);
-    return this.store.sqlite.prepare(`SELECT id, session_id, prompt, created_at FROM tasks WHERE owner=? AND created_at>?
-      AND status IN ('completed','failed') AND prompt NOT LIKE '${learningTaskPrefix}%' ORDER BY created_at ASC LIMIT 400`)
-      .all(this.runtime.owner, this.book.cursor(entry.scope))
-      .map((row) => ({ runId: String(row.id), sessionId: String(row.session_id), prompt: String(row.prompt), at: String(row.created_at) }))
-      .filter((request) => !binned.has(request.runId) && !request.prompt.trim().startsWith("/") && !this.store.sessionTemporary(request.sessionId))
-      .filter((request) => {
-        const origin = runOrigin(this.store, request.runId);
-        return origin.source === "owner" && !origin.parentRunId && !origin.shortLivedKey && !origin.lentTo
-          && origin.personProfileId === entry.person;
-      })
-      .slice(0, requestsPerNight);
+    const found: Request[] = [];
+    const cursor = this.book.cursorPosition(entry.scope);
+    let at = cursor.at, id = cursor.id, first = !id;
+    while (found.length < requestsPerNight) {
+      const rows = this.store.sqlite.prepare(`SELECT id, session_id, prompt, created_at FROM tasks WHERE owner=?
+        AND (created_at>? OR (?=0 AND created_at=? AND id>?))
+        AND status IN ('completed','failed') AND prompt NOT LIKE '${learningTaskPrefix}%'
+        ORDER BY created_at ASC,id ASC LIMIT 400`).all(this.runtime.owner, at, first ? 1 : 0, at, id);
+      for (const row of rows) {
+        const request = { runId: String(row.id), sessionId: String(row.session_id), prompt: String(row.prompt), at: String(row.created_at) };
+        if (!binned.has(request.runId) && typedBy(this.store, { id: request.runId, prompt: request.prompt, sessionId: request.sessionId }, entry.person)) found.push(request);
+        if (found.length === requestsPerNight) break;
+      }
+      if (rows.length < 400 || found.length === requestsPerNight) break;
+      const last = rows.at(-1)!;
+      at = String(last.created_at); id = String(last.id); first = false;
+    }
+    return found;
   }
 
   /** REM: one question to the free model; only facts it can quote back from the person's own words are kept. */
-  private async rem(entry: Scope, preset: ModelPreset, record: Night): Promise<string | null> {
+  private async rem(entry: Scope, preset: ModelPreset, record: Night): Promise<Request | null> {
     const requests = this.requests(entry);
     record.data.read = requests.length;
     if (!requests.length) return null;
@@ -151,7 +185,7 @@ export class Rings {
     const facts = foundFacts(checked.value);
     record.data.rem.found = facts.length;
     for (const fact of facts) this.keepGrounded(entry.scope, fact, requests, record);
-    return requests.at(-1)!.at;
+    return requests.at(-1)!;
   }
   private keepGrounded(scope: string, fact: Found, requests: Request[], record: Night): void {
     if (detectInjection(fact.text).length) { record.data.rem.refused++; return; }
@@ -172,10 +206,11 @@ export class Rings {
   }
 
   /** Deep: every waiting candidate is scored; one that passes every gate is kept for good, with its evidence. */
-  private async deep(scope: string, record: Night, now: Date): Promise<void> {
-    const settings = seasonsSettings(this.store, this.runtime.owner);
+  private async deep(scope: string, record: Night, now: Date, stillQuiet: () => boolean): Promise<boolean> {
     const known = this.store.list("memory", scope).map((fact) => wordsOf(String(fact.data.text ?? "")));
     for (const entry of this.book.candidates(scope).filter((candidate) => candidate.status === "pending")) {
+      if (!stillQuiet()) return false;
+      const settings = seasonsSettings(this.store, this.runtime.owner);
       if (known.some((words) => jaccard(words, wordsOf(entry.text)) >= sameThought)) {
         this.book.saveCandidate({ ...entry, status: "known" }); record.data.deep.known++; continue;
       }
@@ -183,6 +218,7 @@ export class Rings {
       const kept = await this.promote(scope, entry, record);
       record.data.deep[kept.status === "promoted" ? "promoted" : "staged"].push(kept.id);
     }
+    return stillQuiet();
   }
   /**
    * Through the review queue, so the checks every suggestion meets are met here too. The owner's "ask me before

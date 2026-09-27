@@ -29,6 +29,20 @@ export const SeasonsSettingsSchema = z.object({
   minScore: z.number().min(0).max(1).default(0.6),
   minRecallCount: z.number().int().min(1).max(20).default(3),
   minUniqueQueries: z.number().int().min(1).max(20).default(2),
+  /**
+   * The Gardener (src/seasons/gardener.ts). It ships on: it drafts only from the owner's four triggers, on the same
+   * free model and in the same quiet night, and adopts a skill only when replaying its tasks proves a gain.
+   */
+  gardener: z.enum(["off", "on"]).default("on"),
+  /** The smallest proved gain (on a 0 to 1 grade) a new skill needs before it is adopted. */
+  minGain: z.number().min(0.01).max(1).default(0.1),
+  /** A skill the Gardener adopted and nothing used for this long is stale; after `archiveAfterDays` it is set aside. */
+  staleAfterDays: z.number().int().min(1).max(365).default(14),
+  archiveAfterDays: z.number().int().min(2).max(730).default(30),
+  /** The cap is on context cost, not on count: what every adopted skill's one-line index entry may cost, in tokens. */
+  indexBudget: z.number().int().min(50).max(4000).default(400),
+  /** An adopted skill stays short: a longer draft is discarded. */
+  maxSkillChars: z.number().int().min(400).max(8000).default(2400),
 }).strict();
 export type SeasonsSettings = z.infer<typeof SeasonsSettingsSchema>;
 

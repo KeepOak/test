@@ -104,9 +104,16 @@ test("Remove on a rule held across a re-read never takes a rule other than the o
     renderNow();
   });
   const button = page.locator(`#main [data-act="rule-rm8"]`).nth(1);
-  await button.waitFor({ state: "visible", timeout: 30000 });
-  await button.scrollIntoViewIfNeeded();
-  const box = await button.boundingBox();
+  // The page draws again as its own reads arrive, which replaces the button for a moment: it is brought into view and
+  // measured once it is back (a replaced button is looked up again; any other failure fails the test).
+  let box = null;
+  for (let tries = 0; tries < 50 && !box; tries++) {
+    await button.waitFor({ state: "visible", timeout: 30000 });
+    try { await button.scrollIntoViewIfNeeded({ timeout: 5000 }); box = await button.boundingBox(); } catch (error) {
+      if (!/not attached to the DOM/.test(error.message)) throw error;
+    }
+  }
+  assert.ok(box, "the second rule's Remove is on screen");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   assert.equal((await call("POST", "/api/rules/add", rule("zq-added-elsewhere"))).status, 200);

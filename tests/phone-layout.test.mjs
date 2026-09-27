@@ -144,7 +144,12 @@ test("a computer's window is unchanged: no bar, the side list where it always wa
   for (const [width, height] of [[1440, 950], [1024, 700]]) {
     const f = await signedIn(t, { width, height });
     await f.signIn();
-    const side = await f.page.locator("#side").boundingBox(), prompt = await f.page.locator("#prompt").boundingBox();
+    // The window draws again as its first reads arrive, so both are measured in one go once the side list has its width.
+    await f.page.waitForFunction(() => document.getElementById("side")?.getBoundingClientRect().width > 0 && document.getElementById("prompt"));
+    const [side, prompt] = await f.page.evaluate(() => ["side", "prompt"].map((id) => {
+      const box = document.getElementById(id).getBoundingClientRect();
+      return { x: box.x, width: box.width };
+    }));
     assert.ok(side.x >= 0 && side.width > 0, `${width}: the side list shows without being asked`);
     assert.ok(prompt.x >= side.x + side.width, `${width}: the conversation sits beside it`);
     assert.equal(await f.page.locator('[data-act="side"]').first().isVisible(), false, `${width}: no button to slide it over`);
