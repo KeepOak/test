@@ -41,8 +41,9 @@ function shown(got) {
   if (!V.on) return;
   if (got.frame) {
     const first = !V.frame || !!V.refusal, flipped = (got.driving === true) !== V.driving;
+    const changedTrunk = (got.cursor?.trunk ?? null) !== (V.cursor?.trunk ?? null);
     Object.assign(V, { frame: got.frame, refusal: "", cursor: got.cursor ?? null, driving: got.driving === true });
-    V.onChange?.(first || flipped);
+    V.onChange?.(first || flipped || changedTrunk);
   } else if (got.refusal) {
     const changed = V.refusal !== got.refusal;
     Object.assign(V, { frame: "", refusal: got.refusal });

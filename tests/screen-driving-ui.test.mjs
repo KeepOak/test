@@ -48,6 +48,8 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
     } };
   app.desktop = new DesktopControl(app.store, { runner, banner: { visible: false, show: async () => undefined, hide: async () => undefined } });
   saveDesktopSettings(app.store, app.runtime.owner, { enabled: true });
+  const first = app.trunks.create({ name: "Cursor One" }, { chosenColour: "#336699" });
+  const second = app.trunks.create({ name: "Cursor Two" }, { chosenColour: "#993366" });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { release(); await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
@@ -73,6 +75,13 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   });
   assert.ok(Math.abs(place.left - 0.5) < 0.01 && Math.abs(place.top - 0.5) < 0.01, `the cursor is where it clicked: ${JSON.stringify(place)}`);
   assert.ok(place.name.length > 0, "with the name of whoever is working");
+  await app.desktop.click({ window: "Notepad", point: { x: 540, y: 350 } }, { ...context(), trunk: first.id });
+  await cursor.locator("span").filter({ hasText: "Cursor One" }).waitFor();
+  assert.equal(await cursor.evaluate((el) => getComputedStyle(el).getPropertyValue("--c").trim()), "#336699");
+  await app.desktop.click({ window: "Notepad", point: { x: 540, y: 350 } }, { ...context(), trunk: second.id });
+  await cursor.locator("span").filter({ hasText: "Cursor Two" }).waitFor();
+  assert.equal(await cursor.evaluate((el) => getComputedStyle(el).getPropertyValue("--c").trim()), "#993366",
+    "the actual Trunk's selected color follows the new click");
 
   await page.locator('#stage7 [data-act="takeover"][data-v="screen"]').click();
   await page.locator("#stage7 .you7").waitFor({ timeout: 10000 });
@@ -92,4 +101,22 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   assert.equal(app.desktop.isDriving(), false);
   await page.locator("#stage7 .you7").waitFor({ state: "detached" });
   assert.deepEqual(errors, []);
+
+  // Isolate incoming frames from the app's unrelated periodic redraws: a new Trunk must request its own redraw.
+  const probe = await browser.newPage();
+  await probe.route("**/cursor-probe", (route) => route.fulfill({ contentType: "text/html", body: '<div id="stage7"><div class="st7-screen"></div></div>' }));
+  const lines = [first.id, second.id, second.id].map((trunk, i) => JSON.stringify({ frame: `data:image/png;base64,${data}`,
+    cursor: { x: 0.5, y: 0.5, at: String(i), trunk }, driving: false })).join("\n") + "\n";
+  await probe.route("**/api/panels/screen?*", (route) => route.fulfill({ contentType: "application/x-ndjson", body: lines }));
+  await probe.goto(server.url + "/cursor-probe");
+  await probe.evaluate(async () => {
+    window.redraws = [];
+    const screen = await import("/app/chat/stage-screen.js");
+    screen.watchScreen(true, (redraw) => window.redraws.push(redraw));
+  });
+  await probe.waitForFunction(() => window.redraws.length === 3);
+  assert.deepEqual(await probe.evaluate(() => window.redraws), [true, true, false],
+    "the Trunk change redraws its label immediately; another frame of the same Trunk only paints coordinates");
+  await probe.evaluate(async () => (await import("/app/chat/stage-screen.js")).watchScreen(false));
+  await probe.close();
 });

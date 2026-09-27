@@ -59,16 +59,17 @@ export class DesktopControl {
    * and by the Stop button alike.
    */
   private async begin(context: ToolContext, tool: string): Promise<AbortSignal> {
-    const settings = readDesktopSettings(this.store, context.owner);
+    let settings = readDesktopSettings(this.store, context.owner);
     if (!settings.enabled) throw new Error(switchedOffMessage);
-    // The owner's switch is not the only one: Windows has its own, and a refusal there looks like
-    // nothing happening. Ask before touching the screen, and say plainly what to turn on.
-    const windows = await this.permissions?.check('screen');
-    if (windows && !windows.allowed) throw new Error(windows.message);
     const state = this.runs.get(context.runId) ?? { actions: 0, stopped: false, controller: new AbortController() };
     this.runs.set(context.runId, state);
     if (state.stopped) throw new Error('You pressed Stop, so Branch has let go of your screen and keyboard.');
     await this.whileDriving(context, AbortSignal.any([context.signal, state.controller.signal]));
+    // A take-over may last hours: the permission that held before the wait is no longer authoritative.
+    const allowed = await this.permissions?.check('screen');
+    if (allowed && !allowed.allowed) throw new Error(allowed.message);
+    settings = readDesktopSettings(this.store, context.owner);
+    if (!settings.enabled) throw new Error(switchedOffMessage);
     if (state.stopped) throw new Error('You pressed Stop, so Branch has let go of your screen and keyboard.');
     if (state.actions >= settings.maxActionsPerRun) throw new Error(cappedMessage(settings.maxActionsPerRun));
     state.actions += 1;
@@ -369,6 +370,9 @@ export class DesktopControl {
   }
   async close(): Promise<void> {
     for (const frames of [...this.live]) frames.close(); // parity-b2: no live view outlives Branch
+    for (const state of this.runs.values()) state.controller.abort(new Error('Branch stopped.'));
+    this.handBack();
+    this.pointerAt = null;
     this.runs.clear();
     await this.banner.hide();
     await this.runner.close();

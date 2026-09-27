@@ -15,6 +15,7 @@ import { DesktopControl, drivingMessage } from "../dist/integrations/desktop.js"
 import { saveDesktopSettings } from "../dist/integrations/desktop-config.js";
 import { placeOnFrame, screenControl, screenTakeOverPath, screenHandBackPath } from "../dist/live-screen.js";
 import { desktopScript, screenBox } from "../dist/integrations/desktop-script.js";
+import { setLockdown } from "../dist/lockdown.js";
 
 const quietBanner = { visible: false, show: async () => undefined, hide: async () => undefined };
 const notepad = { title: "notes.txt - Notepad", program: "stand-in", handle: 7, minimised: false };
@@ -90,6 +91,40 @@ test("while the owner drives, every screen action waits, and carries on only onc
   assert.ok(app.store.events(run.id).some((e) => e.kind === "desktop.resumed"));
 });
 
+for (const revoke of ["settings", "permissions", "lockdown"]) {
+  test(`a queued screen action rechecks ${revoke} after the owner hands back`, async (t) => {
+    const { desktop, runner, context, app, run } = await world(t);
+    let allowed = true;
+    desktop.permissions = { async check() { return { allowed, message: "Screen permission was revoked." }; } };
+    desktop.takeOver();
+    const waiting = desktop.click({ window: "Notepad", point: { x: 1, y: 1 } }, context());
+    const outcome = assert.rejects(waiting, /not allowed|revoked|Lockdown/i);
+    while (!app.store.events(run.id).some((e) => e.kind === "desktop.paused")) await new Promise((r) => setImmediate(r));
+    if (revoke === "settings") saveDesktopSettings(app.store, app.runtime.owner, { enabled: false });
+    if (revoke === "permissions") allowed = false;
+    if (revoke === "lockdown") {
+      setLockdown(app.store, app.runtime.owner, { on: true });
+      // Lockdown must override even a stale enabled setting when the wait ends.
+      app.store.save("settings", app.runtime.owner, "desktop-control", { enabled: true });
+    }
+    desktop.handBack();
+    await outcome;
+    assert.deepEqual(runner.calls, [], "no screen action happens under the expired authorization");
+  });
+}
+
+test("closing Branch cancels a queued screen action and clears driving state", async (t) => {
+  const { desktop, runner, context, app, run } = await world(t);
+  desktop.takeOver();
+  const waiting = desktop.key({ window: "Notepad", chord: "ctrl+s" }, context());
+  const outcome = assert.rejects(waiting, /waited and let go/);
+  while (!app.store.events(run.id).some((e) => e.kind === "desktop.paused")) await new Promise((r) => setImmediate(r));
+  await desktop.close();
+  await outcome;
+  assert.equal(desktop.isDriving(), false);
+  assert.deepEqual(runner.calls, []);
+});
+
 test("the task's Stop or its own end lets go of a wait; taking over twice is one take-over", async (t) => {
   const { desktop, runner, context, run } = await world(t);
   desktop.takeOver();
@@ -109,8 +144,8 @@ test("the task's Stop or its own end lets go of a wait; taking over twice is one
 });
 
 test("only the owner at this computer's own window takes over or hands back; a key, a door or a lock is refused", async (t) => {
-  const { desktop } = await world(t);
-  const owner = { profiles: { isOwner: () => true }, viaDoor: false, locked: () => null };
+  const { desktop, app } = await world(t);
+  const owner = { store: app.store, owner: app.runtime.owner, profiles: { isOwner: () => true }, viaDoor: false, locked: () => null };
   assert.deepEqual(screenControl(owner, desktop, screenTakeOverPath), { driving: true });
   assert.deepEqual(screenControl(owner, desktop, screenHandBackPath), { driving: false });
   assert.throws(() => screenControl({ ...owner, viaDoor: true }, desktop, screenTakeOverPath), (e) => e.status === 403);
@@ -118,6 +153,9 @@ test("only the owner at this computer's own window takes over or hands back; a k
   assert.throws(() => screenControl({ ...owner, profiles: { isOwner: () => false } }, desktop, screenHandBackPath), (e) => e.status === 403);
   assert.throws(() => screenControl({ ...owner, locked: () => "Branch is locked." }, desktop, screenHandBackPath), (e) => e.status === 423);
   assert.equal(desktop.isDriving(), false, "none of those changed who drives");
+  setLockdown(app.store, app.runtime.owner, { on: true });
+  assert.throws(() => screenControl(owner, desktop, screenTakeOverPath), (e) => e.status === 403);
+  assert.throws(() => screenControl(owner, desktop, screenHandBackPath), (e) => e.status === 403);
   for (const path of [screenTakeOverPath, screenHandBackPath])
     assert.match(offLimitsToShortLivedKeys("POST", path) ?? "", /short-lived key/, `${path} is refused to every short-lived key`);
 });

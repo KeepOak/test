@@ -3897,7 +3897,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (request.method === "POST" && (path === screenTakeOverPath || path === screenHandBackPath)) {
         z.object({}).strict().parse(await readBody(request));
         try {
-          send(response, 200, screenControl({ profiles: app.store.profiles, viaDoor: throughDoor(request),
+          send(response, 200, screenControl({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
             locked: () => app.sessionLock.refusal("POST", path) }, app.desktop ?? null, path));
         } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
         return;

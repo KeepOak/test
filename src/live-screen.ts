@@ -202,9 +202,10 @@ export function streamLiveScreen(deps: LiveScreenDeps, request: IncomingMessage,
 export const screenTakeOverPath = "/api/panels/screen/take-over";
 export const screenHandBackPath = "/api/panels/screen/hand-back";
 export interface ScreenControl { takeOver(): { driving: boolean }; handBack(): { driving: boolean } }
-export function screenControl(deps: Pick<LiveScreenDeps, "viaDoor" | "profiles" | "locked">, control: ScreenControl | null, path: string): { driving: boolean } {
+export function screenControl(deps: Pick<LiveScreenDeps, "viaDoor" | "profiles" | "locked" | "store" | "owner">, control: ScreenControl | null, path: string): { driving: boolean } {
   if (deps.viaDoor) throw new LiveScreenRefusal(403, liveScreenDoorRefusal);
   if (!deps.profiles.isOwner()) throw new LiveScreenRefusal(403, "Only the owner takes over this computer's screen.");
+  if (lockdownActive(deps.store, deps.owner)) throw new LiveScreenRefusal(403, lockdownToolRefusalText);
   const locked = deps.locked();
   if (locked) throw new LiveScreenRefusal(423, locked);
   if (!control) throw new LiveScreenRefusal(404, "This Branch has no screen to show.");

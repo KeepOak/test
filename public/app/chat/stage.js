@@ -39,7 +39,7 @@
    Both are the owner's alone, at this computer's own window; the engine refuses anyone else. */
 
 import { $, esc, applyCss, onRender, render } from "../core/dom.js";
-import { ic, av, toast, app, closePop, openDlg, closeDlg } from "../core/ui.js";
+import { ic, av, faceOf, toast, app, closePop, openDlg, closeDlg } from "../core/ui.js";
 import { S, E, refresh, trunkIntro, ownName, chatFace } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -138,7 +138,7 @@ const liveScreen = () => {
 const CURSOR_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 1l11 6.5-5 1.2L5.5 14z" fill="#fff" stroke="#111" stroke-width="1.2" stroke-linejoin="round"/></svg>';
 function cursorWho(trunkId) {
   const trunk = trunkId ? E.trunks.find((x) => x.id === trunkId) : null;
-  const color = /^#[0-9a-f]{6}$/i.test(trunk?.color ?? "") ? trunk.color : "";
+  const color = trunk ? faceOf(trunk).color : "";
   return { name: trunk?.name ?? name(), css: color ? `--c:${color}` : "" };
 }
 function trunkCursor() {
