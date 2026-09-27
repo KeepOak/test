@@ -78,7 +78,7 @@ function fillDiskLater() {
 }
 const summary = (report) => ({
   report: report.map(({ resumed, ...rest }) => rest),
-  runs: app.store.runs("local").map((r) => ({ id: r.id, status: r.status, output: r.output })),
+  runs: app.store.runs("local").filter(r => r.prompt === "work through the plan").map((r) => ({ id: r.id, status: r.status, output: r.output })),
   steps: Object.fromEntries(app.store.runs("local").map((r) => [r.id, app.neverBreak.journal.steps(r.id)])),
 });
 const work = () => app.runtime.run({ prompt: "work through the plan", onTextDelta: () => undefined, onStarted: (r) => log("calls.log", `run ${r.id}`) });
