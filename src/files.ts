@@ -342,6 +342,10 @@ export function registerFiles(
     permission: "files.write",
     parameters: z.object({ from: onePathOrMany.optional(), to: onePathOrMany.optional(), moves: z.array(moveSchema).min(1).max(50).optional() }).strict()
       .refine((a) => Boolean(a.moves || (a.from && a.to)), "Give from and to for one file, or moves for several."),
+    // What the model is shown: the two plain forms. Lists in from and to are still taken (a small model writes them),
+    // without spending the tool section's room on saying so; the file tools travel in every task.
+    inputSchema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" },
+      moves: { type: "array", items: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } } } },
     // Read from whatever was sent, never throwing: a call the tool will refuse is still judged by what it names.
     target: (a) => movePaths(a, files.home())[0] ?? null,
     // Every place a move leaves and every place it goes is weighed by the rules, not only the first file.
