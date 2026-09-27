@@ -47,8 +47,9 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
     if (typeof callback !== "function") return;
     ipcRenderer.on("branch:window-updated", (_event, update: unknown) => (callback as (update: unknown) => void)(update));
   },
-  reloadLive: () => ipcRenderer.invoke("branch:reload-live"),
-  windowRestored: () => ipcRenderer.invoke("branch:window-restored"),
+  reloadLive: (commit: unknown) => ipcRenderer.invoke("branch:reload-live", commit),
+  windowRestored: (commit: unknown) => ipcRenderer.invoke("branch:window-restored", commit),
+  windowUpdateResult: (result: unknown) => ipcRenderer.invoke("branch:window-update-result", result),
   // dogfood-ux-3: shows a file Branch kept in Explorer or Finder; the app reveals only a path the engine lists.
   showInFolder: (path: unknown) => ipcRenderer.invoke("branch:show-in-folder", path),
 }));

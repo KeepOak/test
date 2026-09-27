@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, NativeImage, Rectangle } from "electron";
+import { randomUUID } from "node:crypto";
 
 /**
  * Live updates (hot-update), the window's side in main.
@@ -37,55 +38,142 @@ export interface LiveWindowOptions {
   origin: string;
   /** Lays the picture over the window, shown only once drawn (a child window of the app's own); tests hand in their own. */
   cover: () => Cover;
-  /** How long the picture may stay if the page never says it is back (it then comes away; the page is drawn by then). */
+  /** How long to wait for a real painted acknowledgment; a timeout keeps the picture in place. */
   restoreMs?: number;
+  applyMs?: number;
+  retryMs?: number;
 }
 
-export function registerLiveWindowIpc(options: LiveWindowOptions): { tell: (update: WindowUpdate) => void } {
-  const { ipc, window, origin } = options;
-  const authorized = (event: IpcMainInvokeEvent) => {
+export const windowResultChannel = "branch:window-update-result";
+export class WindowUpdateDeferred extends Error { override name = "WindowUpdateDeferred"; }
+type PageUpdate = Exclude<WindowUpdate, { engine: true }>;
+type Pending = { update: PageUpdate; resolve: () => void; reject: (error: Error) => void;
+  timer: NodeJS.Timeout; retry?: NodeJS.Timeout; message: string };
+type Paint = { commit: string | null; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+
+class LiveWindow {
+  private pending: Pending | null = null;
+  private paint: Paint | null = null;
+  private cover: Cover | null = null;
+  private reloading = false;
+  private hasReloaded = false;
+  constructor(private readonly options: LiveWindowOptions) {
+    const { ipc, window } = options;
+    ipc.handle(reloadLiveChannel, (event, commit: unknown) => { this.authorized(event); return this.reload(commit); });
+    ipc.handle(windowRestoredChannel, (event, commit: unknown) => { this.authorized(event); return this.restored(commit); });
+    ipc.handle(windowResultChannel, (event, result: unknown) => { this.authorized(event); return this.result(result); });
+    window.on("closed", () => this.close());
+  }
+  private authorized(event: IpcMainInvokeEvent): void {
+    const { window, origin } = this.options;
     if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame ||
-      new URL(event.senderFrame?.url ?? "about:blank").origin !== origin)
-      throw new Error("Live update access denied");
-  };
-  let restored: (() => void) | null = null;
-  let reloading = false;
-  ipc.handle(reloadLiveChannel, async (event) => {
-    authorized(event);
-    if (reloading) return false;
-    reloading = true;
-    let cover: Cover | null = null;
+      new URL(event.senderFrame?.url ?? "about:blank").origin !== origin) throw new Error("Live update access denied");
+  }
+  private send(update: WindowUpdate): void {
+    const { window, origin } = this.options;
+    let at: string | null = null;
+    try { at = new URL(window.webContents.getURL()).origin; } catch { /* no page */ }
+    if (window.isDestroyed() || at !== origin) throw new WindowUpdateDeferred("The window is not ready for this update yet.");
+    window.webContents.send(windowUpdatedChannel, update);
+  }
+  tell(update: WindowUpdate): Promise<void> {
+    if ("engine" in update) { this.send(update); return Promise.resolve(); }
+    if (this.pending || this.cover) return Promise.reject(new WindowUpdateDeferred("The previous window update is still being restored."));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => this.finish(new WindowUpdateDeferred(this.pending?.message ?? "The window did not confirm this update.")), this.options.applyMs ?? 120_000);
+      this.pending = { update, resolve, reject, timer, message: "The window did not confirm this update." };
+      try { this.send(update); } catch (error) { this.finish(error as Error); }
+    });
+  }
+  private finish(error?: Error): void {
+    const pending = this.pending;
+    if (!pending) return;
+    this.pending = null;
+    clearTimeout(pending.timer);
+    clearTimeout(pending.retry);
+    if (error) pending.reject(error); else pending.resolve();
+  }
+  private result(raw: unknown): boolean {
+    if (!raw || typeof raw !== "object") return false;
+    const result = raw as { commit?: unknown; ok?: unknown; deferred?: unknown; message?: unknown };
+    const pending = this.pending;
+    if (!pending || result.commit !== pending.update.commit) return false;
+    if (result.ok === true) {
+      if (pending.update.reload) return false; // A reload is confirmed only after its new page has painted.
+      this.finish(); return true;
+    }
+    if (result.ok !== false) return false;
+    pending.message = typeof result.message === "string" ? result.message.slice(0, 500) : "The window could not keep this update yet.";
+    if (result.deferred !== true) { this.finish(new WindowUpdateDeferred(pending.message)); return true; }
+    if (!pending.retry) pending.retry = setTimeout(() => {
+      delete pending.retry;
+      try { this.send(pending.update); } catch (error) { this.finish(error as Error); }
+    }, this.options.retryMs ?? 1000);
+    return true;
+  }
+  private waitPaint(commit: string | null): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.paint = null;
+        reject(new WindowUpdateDeferred("The updated page did not restore and draw in time."));
+      }, this.options.restoreMs ?? 15_000);
+      this.paint = { commit, resolve, reject, timer };
+    });
+  }
+  private restored(commit: unknown): boolean {
+    const paint = this.paint;
+    if (!paint || (paint.commit !== null && commit !== paint.commit)) return false;
+    clearTimeout(paint.timer);
+    this.paint = null;
+    paint.resolve();
+    return true;
+  }
+  private async reload(commit: unknown): Promise<boolean> {
+    if (this.reloading || commit !== this.pending?.update.commit || !this.pending?.update.reload) return false;
+    this.reloading = true;
     try {
-      // Nobody sees a hidden or minimised window: it is simply reloaded.
+      const { window } = this.options;
       if (window.isVisible() && !window.isMinimized()) {
         const image = await window.webContents.capturePage();
-        cover = options.cover();
-        await cover.show(image, window.getContentBounds());
+        this.cover = this.options.cover();
+        await this.cover.show(image, window.getContentBounds());
       }
-      const back = new Promise<void>((resolve) => {
-        restored = resolve;
-        setTimeout(resolve, options.restoreMs ?? 15_000).unref?.();
-      });
+      const painted = this.waitPaint(this.pending.update.commit);
+      this.hasReloaded = true;
       window.webContents.reloadIgnoringCache();
-      await back;
+      await painted;
+      this.closeCover();
+      this.finish();
       return true;
-    } finally {
-      restored = null;
-      cover?.close();
-      reloading = false;
-    }
-  });
-  ipc.handle(windowRestoredChannel, (event) => {
-    authorized(event);
-    restored?.();
-    return true;
-  });
-  window.on("closed", () => { ipc.removeHandler(reloadLiveChannel); ipc.removeHandler(windowRestoredChannel); });
-  return {
-    tell: (update) => {
-      if (window.isDestroyed()) return;
-      const at = (() => { try { return new URL(window.webContents.getURL()).origin; } catch { return null; } })();
-      if (at === origin) window.webContents.send(windowUpdatedChannel, update);
-    },
-  };
+    } catch (error) { if (!this.hasReloaded) this.closeCover(); this.finish(error as Error); throw error; }
+    finally { this.reloading = false; }
+  }
+  /** Called only after the previous checked files have been restored by main. */
+  async recover(): Promise<void> {
+    if (!this.hasReloaded) return;
+    this.reloading = true;
+    try {
+      const url = new URL(this.options.window.webContents.getURL());
+      const recovery = randomUUID();
+      url.searchParams.set("_branch_live_restore", recovery);
+      const painted = this.waitPaint(recovery);
+      void this.options.window.webContents.loadURL(url.href).catch((error: Error) => {
+        if (this.paint) { clearTimeout(this.paint.timer); this.paint.reject(error); this.paint = null; }
+      });
+      await painted;
+      this.closeCover();
+    } finally { this.reloading = false; }
+  }
+  private closeCover(): void { this.cover?.close(); this.cover = null; this.hasReloaded = false; }
+  private close(): void {
+    this.finish(new WindowUpdateDeferred("The window closed before it confirmed the update."));
+    if (this.paint) { clearTimeout(this.paint.timer); this.paint.reject(new WindowUpdateDeferred("The window closed.")); this.paint = null; }
+    this.closeCover();
+    for (const channel of [reloadLiveChannel, windowRestoredChannel, windowResultChannel]) this.options.ipc.removeHandler(channel);
+  }
+}
+
+export function registerLiveWindowIpc(options: LiveWindowOptions): { tell: (update: WindowUpdate) => Promise<void>; recover: () => Promise<void> } {
+  const live = new LiveWindow(options);
+  return { tell: (update) => live.tell(update), recover: () => live.recover() };
 }

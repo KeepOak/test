@@ -166,19 +166,48 @@ test("a window module update during a task keeps its draft and receives one comp
   await model.until(1);
   const conversation = await page.evaluate(async () => { const state = await (await fetch("/api/state")).json(); return state.runs.find((run) => run.prompt === "Keep working through the window update").sessionId; });
   await page.locator("#prompt").fill("a draft while the task works");
+  await page.evaluate(() => document.getElementById("prompt").setSelectionRange(2, 7));
   const update = await outcomeFor(appRoot, await source(scratch, "while-working", {
     "public/app/main.js": (text) => `${text}\ndocument.documentElement.dataset.liveProbe = "working";\n`,
   }), "e".repeat(40), "window", [{ path: "public/app/main.js", part: "window" }]);
-  const result = await apply(electron, update);
+  const applying = apply(electron, update);
+  await page.waitForFunction(() => document.body.textContent.includes("conversation to be confirmed"));
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.liveProbe), undefined, "no guessed conversation or early reload");
+  assert.equal(await page.locator("#prompt").inputValue(), "a draft while the task works");
+  const pending = await readFile(join(appRoot, "live", "current.json"), "utf8").then(JSON.parse, () => null);
+  assert.equal(pending?.window ?? null, null, "not recorded before acknowledgment");
+  model.release(0);
+  const result = await applying;
   assert.equal(result.ok, true, result.error);
   await page.waitForFunction(() => document.documentElement.dataset.liveProbe === "working", undefined, { timeout: 30000 });
   await page.waitForFunction(() => document.getElementById("prompt")?.value === "a draft while the task works", undefined, { timeout: 30000 });
+  assert.deepEqual(await page.evaluate(() => [document.getElementById("prompt").selectionStart, document.getElementById("prompt").selectionEnd]), [2, 7]);
   assert.equal(await page.evaluate(async () => (await import("/app/core/state.js")).S.chat), conversation);
-  model.release(0);
   await page.locator("#scroll").getByText("The reply after a live reload.", { exact: true }).waitFor({ timeout: 60000 });
   assert.equal(await page.locator("#scroll").getByText("The reply after a live reload.", { exact: true }).count(), 1);
   assert.equal(model.asked.length, 1, "reload does not repeat the model request");
   assert.equal(await page.locator("#prompt").inputValue(), "a draft while the task works");
   assert.equal(await page.evaluate(() => sessionStorage.getItem("hot-test-offline")), null);
   await offScreen(electron, "after the window updated during a task");
+});
+
+test("a failed page during engine adoption rolls back both engine and window before recording it", { timeout: 240000 }, async (t) => {
+  const model = await scriptedModel(t, [{ text: "The old page still works." }]);
+  const { electron, page, scratch, appRoot } = await launch(t, model);
+  const before = await electron.evaluate(() => globalThis.branchEngineForTests.pid);
+  await page.locator("#prompt").fill("a draft before a broken page");
+  const from = await source(scratch, "broken-page", { "public/app/main.js": () => 'throw new Error("isolated broken module");\n' }, { engine: true });
+  const update = await outcomeFor(appRoot, from, "f".repeat(40), "engine", [
+    { path: "src/runtime.ts", part: "engine" }, { path: "public/app/main.js", part: "window" },
+  ]);
+  const result = await apply(electron, update);
+  assert.equal(result.ok, false); assert.match(result.error, /did not restore and draw/);
+  assert.equal(await electron.evaluate(() => globalThis.branchEngineForTests.running), true);
+  assert.notEqual(await electron.evaluate(() => globalThis.branchEngineForTests.pid), before, "the original engine was restarted by rollback");
+  await page.waitForFunction(() => document.getElementById("prompt")?.value === "a draft before a broken page", undefined, { timeout: 30000 });
+  assert.equal((await readFile(join(appRoot, "live", "current.json"), "utf8").then(JSON.parse, () => null))?.engine ?? null, null);
+  await send(page, "Prove the old page works");
+  await page.locator("#scroll").getByText("The old page still works.", { exact: true }).waitFor({ timeout: 60000 });
+  assert.equal(model.asked.length, 1);
+  await offScreen(electron, "after failed-page recovery");
 });

@@ -5,8 +5,8 @@ import { proveOnce } from "../engine-proof.js";
 import { checkedInUse, pruneLive, readLiveState, writeLiveState, type InUse, type LiveState } from "../hot-update/live-folder.js";
 import { isCanaryCopy, runCanary } from "../never-break/canary.js";
 import type { EngineChild, EngineHost, HandOverOutcome } from "./engine-host.js";
-import type { LiveApplied, LiveHooks, ReleaseInfo } from "./updater.js";
-import { windowPlan, type WindowUpdate } from "./live-window-ipc.js";
+import { UpdateDeferredError, type LiveApplied, type LiveHooks, type ReleaseInfo } from "./updater.js";
+import { WindowUpdateDeferred, windowPlan, type WindowUpdate } from "./live-window-ipc.js";
 
 /**
  * Live updates (hot-update), main's part: which live build the engine and the window use at start, and how a Beta
@@ -35,7 +35,9 @@ export interface HotApplyOptions {
   /** The safety copy of the work taken before an update; the same as a packaged update's. */
   backup: () => Promise<void>;
   /** Tells the open window what changed (src/desktop/live-window-ipc.ts). */
-  tellWindow: (update: WindowUpdate) => void;
+  tellWindow: (update: WindowUpdate) => Promise<void>;
+  /** Reload the previous served page under the retained picture after a failed renderer acknowledgment. */
+  recoverWindow: () => Promise<void>;
   /** The runtime a live engine's try-out runs under (the app's own program, as Node). */
   runtime: string;
   /** Told what is in use once a live build went into use. */
@@ -85,7 +87,7 @@ export function liveHooks(options: HotApplyOptions): LiveHooks {
       hooks.onStage("checking");
       const checked = await checkedInUse(options.appRoot, inUse);
       if (!checked) throw new Error("The live build could not be checked, so nothing was changed.");
-      const applied = outcome.tier === "window" ? await applyWindow(options, inUse, hooks) : await applyEngine(options, outcome, inUse, checked.dir, hooks);
+      const applied = await applyChecked(options, outcome, inUse, checked.dir, now, hooks);
       const next: LiveState = { engine: outcome.tier === "window" ? now.engine : inUse, window: inUse, previous: { engine: now.engine, window: now.window } };
       await writeLiveState(options.appRoot, next);
       state = next;
@@ -96,6 +98,18 @@ export function liveHooks(options: HotApplyOptions): LiveHooks {
   };
 }
 
+async function applyChecked(options: HotApplyOptions, outcome: Exclude<LiveOutcome, { tier: "shell" | "none" }>, inUse: InUse,
+  dir: string, now: LiveState, hooks: { onStage: (stage: "copying" | "swapping") => void }): Promise<LiveApplied> {
+  try { return outcome.tier === "window" ? await applyWindow(options, inUse, hooks) : await applyEngine(options, outcome, inUse, dir, hooks); }
+  catch (error) {
+    // EngineHost has rolled a failed engine check back before this runs. Window-only failures still use the old engine.
+    await options.host()?.call("use-window", { appRoot: options.appRoot, inUse: now.window ?? now.engine }, 60_000);
+    await options.recoverWindow();
+    if (error instanceof WindowUpdateDeferred) throw new UpdateDeferredError(error.message);
+    throw error;
+  }
+}
+
 async function applyWindow(options: HotApplyOptions, inUse: InUse, hooks: { onStage: (stage: "copying" | "swapping") => void }): Promise<LiveApplied> {
   const host = options.host();
   if (!host?.running) throw new Error("Branch's engine is not running, so the window was not updated.");
@@ -104,7 +118,7 @@ async function applyWindow(options: HotApplyOptions, inUse: InUse, hooks: { onSt
   const started = Date.now();
   const served = await host.call<{ changed: string[]; ms: number }>("use-window", { appRoot: options.appRoot, inUse }, 60_000);
   const plan = windowPlan(inUse.commit, served.changed);
-  if (plan) options.tellWindow(plan);
+  if (plan) await options.tellWindow(plan);
   const ms = Date.now() - started;
   return { tier: "window", ms, words: "Updated the window live", version: inUse.version, commit: inUse.commit };
 }
@@ -121,18 +135,20 @@ async function applyEngine(options: HotApplyOptions, outcome: Exclude<LiveOutcom
   hooks.onStage("copying");
   await options.backup();
   hooks.onStage("swapping");
-  options.tellWindow({ engine: true });
+  await options.tellWindow({ engine: true });
+  const plan = windowPlan(inUse.commit, outcome.changed.filter((file) => file.part === "window").map((file) => file.path.replace(/^public\//, "")));
+  let refused: WindowUpdateDeferred | undefined;
   const handed: HandOverOutcome = await host.handOver({
     fork: () => options.forkLive(engineFileOf(dir)), commit: inUse.commit,
     // The new engine serves the window files of its own build, checked, from memory (src/hot-update/window-files.ts).
     config: { appRoot: options.appRoot, liveWindow: inUse },
     check: async (url) => {
       if (!(await proveOnce(url, host.token, 10_000))) throw new Error("the new engine did not prove its identity");
+      try { if (plan) await options.tellWindow(plan); }
+      catch (error) { if (error instanceof WindowUpdateDeferred) refused = error; throw error; }
     },
   });
-  if (!handed.ok) throw new Error(`The new engine did not start properly, so the engine that was running before was started again and nothing was changed (${handed.why}).`);
-  const plan = windowPlan(inUse.commit, outcome.changed.filter((file) => file.part === "window").map((file) => file.path.replace(/^public\//, "")));
-  if (plan) options.tellWindow(plan);
+  if (!handed.ok) throw refused ?? new Error(`The new engine did not start properly, so the engine that was running before was started again and nothing was changed (${handed.why}).`);
   options.log?.(`Engine handed over in ${handed.ms} ms (${handed.handedOver.length} task(s) carried on).`);
   return { tier: outcome.tier === "gateway" ? "gateway" : "engine", ms: handed.ms,
     words: "Updated Branch's engine live", version: inUse.version, commit: inUse.commit };

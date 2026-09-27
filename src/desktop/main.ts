@@ -94,7 +94,8 @@ let runningNow: () => Promise<number> = async () => 0;
 let engine: EngineHost | undefined;
 /** hot-update: the live build whose window files the engine serves (null: its own), and how the open window is told. */
 let liveWindowNow: InUse | null = null;
-let tellWindow: (update: WindowUpdate) => void = () => undefined;
+let tellWindow: (update: WindowUpdate) => Promise<void> = () => Promise.reject(new UpdateDeferredError("The window is not open yet."));
+let recoverWindow: () => Promise<void> = () => Promise.resolve();
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -319,7 +320,9 @@ async function createWindow(
     { ...update, readiness: async () => updateReadiness(url, key(), client.fetch) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
-  tellWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) }).tell;
+  const liveWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) });
+  tellWindow = liveWindow.tell;
+  recoverWindow = liveWindow.recover;
   registerRestartIpc(ipcMain, window, url, () => {
     app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
     quitReason = "restart";
@@ -481,7 +484,7 @@ async function start(): Promise<void> {
   const hot = liveHooks({ appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
     host: () => engine, forkLive: forkEngine,
     snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
-    tellWindow: (update) => tellWindow(update), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
+    tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
     log: (line) => console.error(line) });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
   await createWindow(url, key, settings, {

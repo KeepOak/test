@@ -9,14 +9,14 @@
    - The engine is being handed over: the window stays quiet while its requests wait and its streams reconnect. */
 
 import { S } from "../core/state.js";
-import { api } from "../core/api.js";
-import { sendingPrompt } from "../chat/chat.js";
+import { sendingWithoutSession } from "../chat/chat.js";
 import { toast } from "../core/ui.js";
 import { $, renderNow } from "../core/dom.js";
 import { goingAway } from "../core/api.js";
 
 const KEY = "branch-live-restore";
 const bridge = () => window.branchDesktop ?? null;
+let waitingMessage = "";
 
 /* Listens for live updates from the app (the desktop window only). */
 export function initLive() {
@@ -24,15 +24,28 @@ export function initLive() {
     if (update?.engine === true) { goingAway(true); return; }
     if (typeof update?.commit !== "string" || !/^[0-9a-f]{40}$/.test(update.commit)) return;
     if (update.reload) {
-      void keepOpen().then(() => bridge()?.reloadLive?.()).catch((error) => toast(error.message));
+      void applyModules(update.commit);
       return;
     }
-    swapStyles(Array.isArray(update.styles) ? update.styles : [], update.commit);
+    void swapStyles(Array.isArray(update.styles) ? update.styles : [], update.commit)
+      .then(() => bridge()?.windowUpdateResult?.({ commit: update.commit, ok: true }))
+      .catch((error) => defer(update.commit, error));
   });
 }
 
+async function applyModules(commit) {
+  try { await keepOpen(commit); waitingMessage = ""; await bridge()?.reloadLive?.(commit); }
+  catch (error) { await defer(commit, error); }
+}
+
+async function defer(commit, error) {
+  if (waitingMessage !== error.message) { waitingMessage = error.message; toast(error.message); }
+  await bridge()?.windowUpdateResult?.({ commit, ok: false, deferred: true, message: error.message });
+}
+
 /* Each changed stylesheet is loaded beside the one in use, which goes once the new one is ready. */
-function swapStyles(names, commit) {
+async function swapStyles(names, commit) {
+  const loaded = [], replacements = [];
   for (const name of names) {
     if (typeof name !== "string" || !/^[A-Za-z0-9_./-]+\.css$/.test(name)) continue;
     const path = `/${name}`;
@@ -40,31 +53,30 @@ function swapStyles(names, commit) {
     if (!old) continue;
     const next = old.cloneNode();
     next.href = `${path}?live=${commit}`;
-    next.addEventListener("load", () => old.remove(), { once: true });
-    next.addEventListener("error", () => next.remove(), { once: true });
+    replacements.push({ old, next });
+    loaded.push(new Promise((resolve, reject) => {
+      next.addEventListener("load", resolve, { once: true });
+      next.addEventListener("error", () => { next.remove(); reject(new Error("The new stylesheet could not load, so the update is waiting.")); }, { once: true });
+    }));
     old.after(next);
   }
+  try { await Promise.all(loaded); for (const { old } of replacements) old.remove(); }
+  catch (error) { for (const { next } of replacements) next.remove(); throw error; }
 }
 
 /* What is open, kept for the page that replaces this one (this tab only, for a minute). */
-async function keepOpen() {
-  let chat = S.chat;
-  const pending = sendingPrompt();
-  if (!chat && pending) {
-    const state = await api("state");
-    const task = (state.runs ?? []).filter((run) => run.prompt === pending && ["running", "queued", "waiting", "needs_input"].includes(run.status))
-      .sort((a, b) => b.createdAt - a.createdAt)[0];
-    if (!task?.sessionId) throw new Error("The task's conversation could not be confirmed, so the window update is waiting.");
-    chat = task.sessionId;
-  }
+async function keepOpen(commit) {
+  const chat = S.chat;
+  if (sendingWithoutSession()) throw new Error("The window update is waiting for this task's conversation to be confirmed.");
   const box = $("#prompt"), scroll = $("#scroll");
   if (box) S.drafts[chat ?? "new"] = box.value;
   const kept = {
-    at: Date.now(), view: S.view, chat, tabs: S.tabs, setPage: S.setPage, drafts: S.drafts,
+    commit, at: Date.now(), view: S.view, chat, tabs: S.tabs, setPage: S.setPage, drafts: S.drafts,
     caret: box ? { start: box.selectionStart, end: box.selectionEnd, focused: document.activeElement === box } : null,
     scroll: scroll ? { top: scroll.scrollTop, atEnd: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40 } : null,
   };
-  try { sessionStorage.setItem(KEY, JSON.stringify(kept)); } catch { /* storage refused: the page opens as it would */ }
+  try { sessionStorage.setItem(KEY, JSON.stringify(kept)); }
+  catch { throw new Error("The window could not keep your draft, so the update is waiting."); }
 }
 
 const frames = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
@@ -72,19 +84,20 @@ const frames = () => new Promise((done) => requestAnimationFrame(() => requestAn
 /* After a live reload: everything kept is put back and drawn, then the app is told, and only then does its picture of the
    old page come away. `open` opens a conversation (chat/chat.js openConversation). Answers whether anything was kept. */
 export async function restoreOpen(open) {
+  const recovery = new URL(location.href).searchParams.get("_branch_live_restore");
   let kept = null;
-  try { kept = JSON.parse(sessionStorage.getItem(KEY) || "null"); sessionStorage.removeItem(KEY); } catch { kept = null; }
+  try { kept = JSON.parse(sessionStorage.getItem(KEY) || "null"); } catch { kept = null; }
   if (!kept || typeof kept !== "object" || !(Date.now() - Number(kept.at) < 60_000)) {
     // Nothing kept (an ordinary start): the app is told all the same, in case it reloaded this page.
     await frames();
-    await bridge()?.windowRestored?.();
+    await bridge()?.windowRestored?.(recovery);
     return false;
   }
   if (typeof kept.view === "string") S.view = kept.view;
   if (kept.tabs && typeof kept.tabs === "object") Object.assign(S.tabs, kept.tabs);
   if (typeof kept.setPage === "string") S.setPage = kept.setPage;
   if (kept.drafts && typeof kept.drafts === "object") Object.assign(S.drafts, kept.drafts);
-  if (typeof kept.chat === "string") await open(kept.chat).catch(() => undefined);
+  if (typeof kept.chat === "string") await open(kept.chat);
   renderNow();
   await frames();
   const box = $("#prompt");
@@ -99,6 +112,8 @@ export async function restoreOpen(open) {
   const scroll = $("#scroll");
   if (scroll && kept.scroll) scroll.scrollTop = kept.scroll.atEnd ? scroll.scrollHeight : Number(kept.scroll.top) || 0;
   await frames();
-  await bridge()?.windowRestored?.();
+  await bridge()?.windowRestored?.(recovery ?? kept.commit);
+  if (recovery) { const url = new URL(location.href); url.searchParams.delete("_branch_live_restore"); history.replaceState(null, "", url); }
+  sessionStorage.removeItem(KEY);
   return true;
 }

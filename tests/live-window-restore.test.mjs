@@ -1,0 +1,37 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+const source = await readFile(new URL("../public/app/shell/liveupdate.js", import.meta.url), "utf8");
+const keep = source.slice(source.indexOf("async function keepOpen("), source.indexOf("const frames ="));
+function capture({ chat = null, pending = true, storageError = false } = {}) {
+  let saved;
+  const context = vm.createContext({ S: { chat, view: "chat", tabs: {}, drafts: {} }, sendingWithoutSession: () => pending,
+    $: () => null, KEY: "restore", document: {}, sessionStorage: { setItem: (_, value) => { if (storageError) throw new Error("QuotaExceededError"); saved = JSON.parse(value); } } });
+  vm.runInContext(keep, context);
+  return { keep: () => vm.runInContext(`keepOpen("${"a".repeat(40)}")`, context), saved: () => saved };
+}
+test("a first submission without its session cannot guess an older conversation with identical words", async () => {
+  const c = capture(); await assert.rejects(c.keep(), /conversation to be confirmed/); assert.equal(c.saved(), undefined);
+  assert.ok(!keep.includes("api("), "no run list or prompt matching can resolve the submission");
+});
+test("snapshot storage failure refuses reload instead of losing the draft", async () => {
+  const c = capture({ chat: "actual-session", pending: false, storageError: true });
+  await assert.rejects(c.keep(), /could not keep your draft/); assert.equal(c.saved(), undefined);
+});
+test("a confirmed session stores the exact commit for its painted acknowledgment", async () => {
+  const c = capture({ chat: "actual-session", pending: false }); await c.keep();
+  assert.equal(c.saved().chat, "actual-session"); assert.equal(c.saved().commit, "a".repeat(40));
+});
+const chatSource = await readFile(new URL("../public/app/chat/chat.js", import.meta.url), "utf8");
+const adopt = chatSource.slice(chatSource.indexOf("function adoptDraft("), chatSource.indexOf("async function sendPlain("));
+test("the first confirmed conversation adopts the pending draft and caret before redraw", () => {
+  const state = { chat: null, drafts: { new: "typed while the reply works" } }, caret = [];
+  let box = { selectionStart: 2, selectionEnd: 7 };
+  const context = vm.createContext({ C: { sessionId: null }, S: state, $: () => box });
+  vm.runInContext(adopt, context);
+  const restore = vm.runInContext("adoptDraft(\"actual-session\")", context);
+  assert.equal(state.drafts["actual-session"], "typed while the reply works"); assert.equal(state.drafts.new, undefined);
+  state.chat = "actual-session"; box = { setSelectionRange: (...range) => caret.push(...range) }; restore();
+  assert.deepEqual(caret, [2, 7]);
+});
