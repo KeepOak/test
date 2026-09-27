@@ -5,7 +5,7 @@ export interface BrowserBinding { owner: string; conversation: string; profile: 
 export interface BrowserWriter { kind: "owner" | "agent"; id: string }
 export type BrowserControlState = "owner" | "agent" | "transferring" | "stopped";
 export interface BrowserControlView {
-  id: string; binding: BrowserBinding; state: BrowserControlState; epoch: number;
+  id: string; binding: BrowserBinding; state: BrowserControlState; epoch: number; sequence: number;
   writer: BrowserWriter | null; tabs: string[]; runs: string[];
 }
 export interface BrowserCommand { epoch: number; sequence: number; writer: BrowserWriter; tabId: string }
@@ -47,7 +47,7 @@ export class BrowserControl {
     this.writer = { kind: "owner", id: clientId };
   }
   view(): BrowserControlView {
-    return { id: this.id, binding: { ...this.binding }, state: this.state, epoch: this.epoch,
+    return { id: this.id, binding: { ...this.binding }, state: this.state, epoch: this.epoch, sequence: this.sequence,
       writer: this.writer ? { ...this.writer } : null, tabs: [...this.tabs], runs: [...this.runs] };
   }
   bindRun(runId: string): void {
@@ -99,6 +99,8 @@ export class BrowserControl {
     if (this.state !== "stopped") { this.revoke(); this.state = "stopped"; this.runs.clear(); }
     return this.view();
   }
+  /** A lock or key rotation revokes grants while keeping the owned page for explicit later takeover. */
+  revokeAccess(): BrowserControlView { if (this.state !== 'stopped') this.revoke(); return this.view(); }
   private revoke(): void {
     this.epoch++;
     this.writer = this.destination = null;
@@ -206,4 +208,5 @@ export class BrowserControls {
     return view;
   }
   stopAll(): void { for (const control of this.sessions.values()) control.stop(); this.runs.clear(); }
+  revokeAll(): void { for (const control of this.sessions.values()) control.revokeAccess(); }
 }
