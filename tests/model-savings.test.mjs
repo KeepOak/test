@@ -53,7 +53,7 @@ test("every card that sends or spends ships off, and a fresh install sends and r
   assert.deepEqual(values, {
     phases: { planModel: null, sideTier: "same" },
     openrouter: { mode: "off", sort: null, order: [], only: [], ignore: [], allowFallbacks: true, dataCollection: "allow" },
-    difficulty: { mode: "off", classifierModel: null, easyModel: null, hardModel: null },
+    difficulty: { mode: "off", classifierModel: null, easyModel: null, hardModel: null, mixHard: false },
     reportedTokens: { mode: "on" },
     roundChart: { mode: "on" },
     keepAlive: { mode: "off", everyMinutes: 4, maxPings: 3, spendCapDollars: 0.05 },

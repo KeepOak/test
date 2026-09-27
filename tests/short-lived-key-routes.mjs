@@ -640,6 +640,7 @@ export const ROUTES = {
   "/api/knobs/launch-file": "owner POST", // R17-S-B
   "/api/model-savings": "owner POST", // R17-E
   "/api/model-savings/rounds": "look", // R17-E
+  "/api/model-savings/companies": "owner POST", // OpenRouter picks › Only ones I list: asks OpenRouter for its companies
   "/api/knowledge": "other POST",
   "/api/knowledge/:id": "other DELETE",
   "/api/knowledge/ask": "task POST",
@@ -1268,6 +1269,8 @@ export const OUTBOUND = [
   /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
+  // Only ones I list: OpenRouter's own documented /api/v1/providers, called outwards; not a route of ours.
+  /^src\/model-savings\/openrouter\.ts$/,
 ];
 
 export const SAMPLE_ID = "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f";
