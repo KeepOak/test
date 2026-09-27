@@ -5,7 +5,8 @@
  * - A message may be only files, with no words; with no words and no files it is still refused.
  * - Duplicating a conversation copies files of any size, off the engine thread, and keeps the disk's reserve free.
  * - What a PDF, a Word document and a text file say reaches the model's own request, through a real connection's
- *   adapter, on the turn they came with and on the turns after it (the evals' attach-file task).
+ *   adapter (OpenAI-shaped, and Branch's own Ollama connection), on the turn they came with and on the turns after it
+ *   (the evals' attach-file task).
  * Mutations, each turns a test here red:
  * - src/attachments.ts attachmentForWindow: let anybody through (drop the ownsConversation check): Sam opens the owner's.
  * - src/household-routes.ts: drop the /api/attachments/file read: Sam cannot open his own file.
@@ -27,6 +28,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { providerFromEnv } from "../dist/providers.js";
+import { OllamaProvider } from "../dist/providers/ollama.js";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const picture = { name: "photo.png", mediaType: "image/png", data: png.toString("base64") };
@@ -261,4 +263,25 @@ test("what a PDF, a Word document and a text file say reaches the model's own re
   for (const words of ["PELICAN7731", "HARBOR0942", "TANGERINE"]) assert.ok(later.includes(words), `${words} is still in the model's request on the next turn`);
   const kept = JSON.stringify(f.app.store.messages(run.body.sessionId));
   assert.equal(kept.includes("PELICAN7731"), false, "the words read out of a file are for the model only, never in the message itself");
+});
+
+test("the same words reach a model running in Ollama on this computer, through Branch's own Ollama connection", async (t) => {
+  // The evals' attach-file task runs on Ollama. Its own request (POST /api/chat) is kept here instead of sent.
+  const requests = [];
+  const fetchImpl = async (url, init) => {
+    requests.push({ url: String(url), body: JSON.parse(String(init.body)) });
+    const line = JSON.stringify({ message: { role: "assistant", content: "Answered." }, done: true, prompt_eval_count: 1, eval_count: 1 });
+    return new Response(`${line}\n`, { status: 200, headers: { "content-type": "application/x-ndjson" } });
+  };
+  const provider = new OllamaProvider({ endpoint: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b", fetchImpl });
+  const f = await branch(t, provider);
+  const inPdf = await f.upload("figures.pdf", "application/pdf", pdf("The vault code is PELICAN7731"));
+  const inDocx = await f.upload("plan.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx("The ferry leaves at HARBOR0942"));
+  const run = await f.post("/api/run", { prompt: "What is the vault code and when does the ferry leave?", uploads: [inPdf.body.upload, inDocx.body.upload] });
+  assert.equal(run.status, 200, JSON.stringify(run.body));
+  assert.equal(run.body.status, "completed", run.body.output);
+  const sent = requests.filter((one) => one.url.endsWith("/api/chat")).at(-1);
+  assert.ok(sent, "control: Branch asked the model through Ollama's own route");
+  const words = JSON.stringify(sent.body.messages.filter((one) => one.role === "user"));
+  for (const expected of ["PELICAN7731", "HARBOR0942"]) assert.ok(words.includes(expected), `${expected} is in the request Ollama was sent`);
 });
