@@ -450,6 +450,7 @@ export const ROUTES = {
   "/api/trunks/rooms/:id/answer": "owner POST",
   "/api/trunks/rooms/:id/revoke": "owner POST", // phase2/rooms (integration review): Revoke beside a yes in a room
   "/api/trunks/rooms/:id/artifacts": "other POST",
+  "/api/trunks/rooms/:id/typing": "other POST", // chatlook: "is typing" in a room, from the window only
   // phase2/rooms: who answers in a conversation is the owner's to choose.
   "/api/trunks/conversations": "owner POST",
   "/api/trunks/conversations/:id": "owner POST",

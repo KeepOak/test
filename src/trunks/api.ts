@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { Trunks } from "./index.js";
 import { characters } from "./characters.js";
+import { startedWithShortLivedKey } from "../key-context.js";
+import { currentPerson } from "../people/context.js";
 import { TrunkOffError, TrunkPartSchema, trunkLabels, trunkParts } from "./settings.js";
 
 /**
@@ -27,7 +29,7 @@ const TextSchema = z.object({ text: z.string().trim().min(1).max(16000) }).stric
 /** eng-trunk-controls: resume takes nothing. */
 const EmptySchema = z.object({}).strict().nullable().optional();
 const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers))?$/;
-const roomPath = /^\/api\/trunks\/rooms\/([a-f0-9-]{36})(?:\/(remove|send|stop|answer|revoke|artifacts))?$/; // phase2/rooms: revoke
+const roomPath = /^\/api\/trunks\/rooms\/([a-f0-9-]{36})(?:\/(remove|send|stop|answer|revoke|artifacts|typing))?$/; // phase2/rooms: revoke; chatlook: typing
 const routinePath = /^\/api\/trunks\/routines\/([a-f0-9-]{36})\/remove$/;
 /** mac7/residuals (integration): Answer / Not now on a Trunk's message that waits for the owner. */
 const messagePath = /^\/api\/trunks\/messages\/([a-f0-9-]{36})\/(answer|decline)$/;
@@ -164,11 +166,16 @@ async function roomRoute(deps: TrunksHttpDeps, id: string, action: string | unde
   trunks.require("rooms");
   rooms.requireAccess(id, deps.person?.id ?? null);
   if (!action && !post) {
-    const view = rooms.view(id);
+    // chatlook: reading it counts as being here, for whoever is at a window: the app's, or a person's own key. A
+    // script's short-lived key reads the room without putting anyone in it.
+    const atWindow = !startedWithShortLivedKey() || currentPerson() !== null;
+    const view = rooms.view(id, atWindow ? { profileId: deps.person?.id ?? null } : undefined);
     return deps.person ? householdRoomView(view) : { ...view, owner: true };
   }
   if (action === "send" && post) return rooms.send(id, await deps.readBody(), deps.person);
   if (action === "artifacts" && post) return { artifact: rooms.addArtifact(id, await deps.readBody(), deps.person) };
+  // chatlook: "is typing", for whoever the room admits; who it is comes from who is at the window, never the body.
+  if (action === "typing" && post) { EmptySchema.parse(await deps.readBody()); return rooms.typing(id, deps.person?.id ?? null); }
   deps.requireOwner("Changing a private room");
   if (!action) return { room: rooms.edit(id, await deps.readBody()) };
   if (!post) return undefined;
