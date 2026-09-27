@@ -57,7 +57,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   const browser = await chromium.launch();
   const errors = [];
   // More than 100 conversations, 60 of them in Recently Deleted: every list has to page through them all.
-  const filler = [];
+  const filler = [], binnedBefore = (await api("sessions?limit=1")).deleted;
   for (let i = 0; i < 110; i++) filler.push(await conversation(`filler ${i}`));
   for (const id of filler.slice(0, 60)) await api(`sessions/${id}/delete`, {});
   const binnedTotal = async () => (await api("sessions?limit=1")).deleted;
@@ -100,7 +100,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   pop = await menu(page, c);
   await pop.getByText("Delete", { exact: true }).click();
   check("Delete: in Recently Deleted with 30 days left", await until(async () => (await api("sessions/put-away")).deleted.some((r) => r.sessionId === c && r.daysLeft === 30)));
-  check("the engine counts every one in Recently Deleted", (await binnedTotal()) === 61, String(await binnedTotal()));
+  check("the engine counts every one in Recently Deleted", (await binnedTotal()) === binnedBefore + 61, `${await binnedTotal()} of ${binnedBefore + 61}`);
   await page.locator('.toast [data-act="undo"]').click();
   check("Undo: restored", await until(async () => !!(await listed(c))));
   pop = await menu(page, c);
@@ -115,7 +115,8 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   await shoot(page, "recently-deleted-1440");
   await dlg.locator(`[data-act="conv-restore"][data-id="${c}"]`).click();
   check("Restore: back in Recent", await until(async () => !!(await listed(c))));
-  if (await page.locator(".dlg").count()) await page.keyboard.press("Escape"); // the list stays open while it holds others
+  // The list stays open while it holds others: close it.
+  if (await page.locator(".dlg").count()) { await page.locator('.dlg [data-act="dlg-close"]').last().click(); await until(async () => !(await page.locator(".scrim.in17").count())); }
 
   pop = await menu(page, c);
   await pop.getByText("Delete", { exact: true }).click();
