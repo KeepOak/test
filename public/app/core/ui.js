@@ -66,7 +66,7 @@ const BRANCH_TINT = "#2F6F5E";
 export function av(trunk, size = 40, sessionId) {
   if (!trunk) return "";
   const branch = (trunk.kind === "main" || trunk.isBranch) && look17("branch");
-  if (branch) return figureFace(branch, agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }), `--s:${size}px;--c:${BRANCH_TINT}`);
+  if (branch) return figureFace(branch, agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }), `--s:${size}px;--c:${BRANCH_TINT}`, "", size);
   if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
@@ -81,7 +81,7 @@ export function av(trunk, size = 40, sessionId) {
   const marks = `${f.eyes ? ` ${f.eyes}` : ""}${MOVES[f.motion] ? ` ${MOVES[f.motion]}` : ""}`;
   if (f.photo) return `<span class="av photo-tl${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"><img src="${esc(f.photo)}" alt="" draggable="false"></span></span>`;
   const look = f.lookStill ? null : look17(f.character); // pass 17: the character the engine says it wears
-  if (look) return figureFace(look, agentState(trunk), css, paused);
+  if (look) return figureFace(look, agentState(trunk), css, paused, size);
   const still = f.lookStill;
   if (still) return `<span class="av look12${paused}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
   if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;

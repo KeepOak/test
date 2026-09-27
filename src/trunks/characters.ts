@@ -16,10 +16,18 @@ export interface Character {
   still: string;
   /** Its loop for each state it acts out (idle, think, work, yay, …), under /art/. */
   states: Record<string, string>;
+  /**
+   * The smaller widths every one of its loops also comes in, smallest first: the same frames encoded at that many pixels
+   * square, beside the loop as <name>.<width>.webm. The window plays the smallest one at least as wide as it draws the
+   * face, so a 40px face doesn't decode a 300px video.
+   */
+  sizes: number[];
 }
 
 const art = fileURLToPath(new URL("../../public/art/", import.meta.url));
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
+/** The widths a character's loops may also be encoded at (public/art/agents/<id>/<state>.<width>.webm). */
+const WIDTHS = [96, 160, 300];
 const FILE = /^assets\/([a-z0-9][a-z0-9/_.-]{0,120})$/;
 
 /** A manifest's "assets/<file>" as the address the window loads it from, or null when it is not on disk. */
@@ -36,6 +44,12 @@ function states(list: unknown): Record<string, string> {
     if (at) out[state] = at;
   }
   return out;
+}
+
+/** The widths every loop has a smaller encode at, on disk beside it. */
+function sizes(loops: Record<string, string>): number[] {
+  const files = Object.values(loops);
+  return WIDTHS.filter((width) => files.every((file) => existsSync(`${art}${file.slice(5).replace(/\.webm$/, `.${width}.webm`)}`)));
 }
 
 function readJson(file: string): unknown {
@@ -61,7 +75,7 @@ function read(): Character[] {
     if (!ID.test(id) || found.has(id) || !still || !loops.idle) continue;
     const name = typeof entry.name === "string" ? entry.name.trim().slice(0, 40) : "";
     const description = typeof entry.description === "string" ? entry.description.trim().slice(0, 200) : "";
-    found.set(id, { id, name: name || id, description, still, states: loops });
+    found.set(id, { id, name: name || id, description, still, states: loops, sizes: sizes(loops) });
   }
   return [...found.values()];
 }

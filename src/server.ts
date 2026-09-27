@@ -154,7 +154,7 @@ import { handlesPromptsPath, promptsApi } from "./prompt-library-api.js"; // buc
 import { handlesWikiPath, wikiApi } from "./wiki.js";
 import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"; // bucket 12
 import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
-import { policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
+import { looseningRefusal, policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
 import { PrivacyChangeRefused } from "./privacy-guard.js"; // the privacy checks are held to the same yes
 import { mayAnswerHere, nothingWaitingRefusal, personConversation, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
 import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
@@ -346,6 +346,18 @@ const budgetSchema = z
   .refine((b) => b.maxMonthlyTokens !== undefined || b.maxMonthlyDollars !== undefined, {
     message: "Set a monthly limit in tokens, in dollars, or both",
   });
+/** What a new monthly limit lets Branch spend beyond the saved one, in words, or null when it lets it spend no more. */
+function budgetLooser(before: z.infer<typeof budgetSchema> | undefined, after: z.infer<typeof budgetSchema>): string | null {
+  if (!before) return null;
+  const found: string[] = [];
+  const more = (was: number | undefined, now: number | undefined): boolean => was !== undefined && (now === undefined || now > was);
+  if (more(before.maxMonthlyDollars, after.maxMonthlyDollars))
+    found.push(after.maxMonthlyDollars === undefined ? "there would be no monthly limit in dollars" : `the monthly limit would go up from $${before.maxMonthlyDollars} to $${after.maxMonthlyDollars}`);
+  if (more(before.maxMonthlyTokens, after.maxMonthlyTokens))
+    found.push(after.maxMonthlyTokens === undefined ? "there would be no monthly limit in tokens" : `the monthly limit would go up from ${before.maxMonthlyTokens} to ${after.maxMonthlyTokens} tokens`);
+  if (before.pauseAtBudget && !after.pauseAtBudget) found.push("work would no longer pause at the monthly limit");
+  return found.length ? found.join("; ") : null;
+}
 function send(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -1992,7 +2004,12 @@ async function api(
     return { budget: budget || null };
   }
   if (request.method === "POST" && path === "/api/usage/budget") {
-    const input = budgetSchema.parse(await readBody(request));
+    // A monthly limit raised or taken away needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+    const { confirmLoosening, input: asked } = withoutConfirm(await readBody(request));
+    const input = budgetSchema.parse(asked);
+    const before = app.store.get("settings", app.runtime.owner, "usage_budget")?.data as z.infer<typeof budgetSchema> | undefined;
+    const refusal = looseningRefusal(budgetLooser(before, input), confirmLoosening, lockdownActive(app.store, app.runtime.owner));
+    if (refusal) throw new HttpError(409, refusal);
     app.store.save("settings", app.runtime.owner, "usage_budget", input);
     return { budget: input };
   }

@@ -64,8 +64,8 @@ test("codes: wrong codes are limited, so a code cannot be guessed, and even the 
   await api("POST", "/api/safety-extras/stop", { tools: ["shell.*"] });
   const right = next();
   const wrong = right === "000000" ? "111111" : "000000";
-  for (let i = 0; i < 5; i++) assert.equal((await api("POST", "/api/safety-extras/stop/release", { code: wrong })).status, 401);
-  const locked = await api("POST", "/api/safety-extras/stop/release", { code: right });
+  for (let i = 0; i < 5; i++) assert.equal((await api("POST", "/api/safety-extras/stop/release", { code: wrong, confirmLoosening: true })).status, 401);
+  const locked = await api("POST", "/api/safety-extras/stop/release", { code: right, confirmLoosening: true });
   assert.equal(locked.status, 401, "the right code is refused while wrong ones are being tried");
   assert.match(locked.body.error, /wrong codes/);
   assert.equal((await api("GET", "/api/safety-extras")).body.stop.engaged, true);
