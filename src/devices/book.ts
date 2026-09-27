@@ -39,8 +39,6 @@ export const DeviceRecordSchema = z.object({
   sharedWith: z.array(z.string().min(1).max(80)).max(20).default([]),
   /** B6: the id of the "this exact phone" secret handed over with the phone's session, forgotten with the device. */
   gatewayId: z.string().regex(/^[a-f0-9]{16}$/).nullable().default(null),
-  /** The phone collected the window's key with its session, so removing it replaces that key (src/remote/window-key.ts). */
-  windowKey: z.boolean().default(false),
 }).strict();
 export type DeviceRecord = z.infer<typeof DeviceRecordSchema>;
 
@@ -88,7 +86,7 @@ export const phonePlatforms: readonly string[] = ["ios", "android"];
 export const phoneSessionText = (requestId: string): string => `branch-phone-session-v1
 ${requestId}`;
 /** B6: what `collectPhoneSession` needs from the paired door: the phone's own "this exact phone" secret. */
-export type RememberPhone = (name: string) => { device: { id: string }; secret: string };
+export type RememberPhone = (name: string) => { device: { id: string }; secret: string; key: string };
 const same = (a: string, b: string): boolean => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 /**
@@ -272,12 +270,13 @@ export class DeviceBook {
   /**
    * B6: the phone session, handed once to the phone the owner let in from a "Pair a phone" invitation. The phone proves
    * itself with the key it paired with, signing `phoneSessionText`. What it gets is what the Tailscale invitation
-   * (POST /api/pair) hands over: the window's key, plus the phone's own "this exact phone" secret from `remember`.
+   * (POST /api/pair) hands over: a key of the phone's own (never the window's), plus its "this exact phone" secret,
+   * both from `remember` (src/remote/gateway-auth.ts).
    * Anything else — still waiting, refused, already collected, not a phone invitation, not a phone, the device removed,
    * Devices off or Lockdown on, a wrong signature, a request nobody made — is `pairingRefused`. Checked and written with nothing awaited between.
    */
-  collectPhoneSession(requestId: unknown, signature: unknown, windowKey: string, remember?: RememberPhone):
-    { token: string; deviceId?: string; deviceKey?: string } {
+  collectPhoneSession(requestId: unknown, signature: unknown, remember: RememberPhone):
+    { token: string; deviceId: string; deviceKey: string } {
     const request = this.requests().find((each) => each.id === requestId);
     if (!request || typeof signature !== "string" || !signedBy(request.publicKey, phoneSessionText(request.id), signature))
       throw new Error(pairingRefused);
@@ -288,12 +287,12 @@ export class DeviceBook {
     if (this.mode() === "off" || request.status !== "approved" || !this.phoneSessionOpen(request) || !device || !phonePlatforms.includes(device.platform))
       throw new Error(pairingRefused);
     this.phoneOpen.delete(request.id);
-    const gateway = remember?.(device.name);
+    const gateway = remember(device.name);
     this.write({ ...book,
       requests: book.requests.map((each) => (each.id === request.id ? { ...each, collected: true } : each)),
-      devices: book.devices.map((each) => (each.id === device.id ? { ...each, gatewayId: gateway?.device.id ?? null, windowKey: true } : each)) });
+      devices: book.devices.map((each) => (each.id === device.id ? { ...each, gatewayId: gateway.device.id } : each)) });
     this.note("channel.paired", device.name, "The phone the owner let in collected its session, once", "paired");
-    return { token: windowKey, ...(gateway ? { deviceId: gateway.device.id, deviceKey: gateway.secret } : {}) };
+    return { token: gateway.key, deviceId: gateway.device.id, deviceKey: gateway.secret };
   }
 
   /** One capability on or off. A capability the device's platform cannot offer stays off. */

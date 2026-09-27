@@ -407,16 +407,18 @@ test("the pairing door answers only a POST to /api/pair, and hands over the key 
     const sent = { status: 0, body: null };
     return { sent, writeHead(status) { sent.status = status; }, end(text) { sent.body = text && JSON.parse(text); } };
   };
-  assert.equal(await pairingRequest(remote, request("GET", "/api/pair", {}), reply(), "/api/pair"), false,
+  // The phone is handed a key and a secret of its own, never the window's key.
+  const gateway = { remember: () => ({ device: { id: "0123456789abcdef" }, secret: "s".repeat(48), key: "p".repeat(64) }) };
+  assert.equal(await pairingRequest(remote, request("GET", "/api/pair", {}), reply(), "/api/pair", gateway), false,
     "only a POST is a pairing attempt");
-  assert.equal(await pairingRequest(remote, request("POST", "/api/state", {}), reply(), "/api/state"), false,
+  assert.equal(await pairingRequest(remote, request("POST", "/api/state", {}), reply(), "/api/state", gateway), false,
     "no other route is opened up");
   const wrong = reply();
-  await assert.rejects(pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: "123456" === offer.code ? "654321" : "123456" }), wrong, "/api/pair"), /not right/);
+  await assert.rejects(pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: "123456" === offer.code ? "654321" : "123456" }), wrong, "/api/pair", gateway), /not right/);
   assert.equal(wrong.sent.status, 0, "nothing is sent back on a wrong number");
   const right = reply();
-  assert.equal(await pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: offer.code }), right, "/api/pair"), true);
-  assert.deepEqual(right.sent.body, { token: "k".repeat(64) });
+  assert.equal(await pairingRequest(remote, request("POST", "/api/pair", { id: offer.id, code: offer.code }), right, "/api/pair", gateway), true);
+  assert.deepEqual(right.sent.body, { token: "p".repeat(64), deviceId: "0123456789abcdef", deviceKey: "s".repeat(48) });
 });
 
 test("the pairing door is shut on this computer's own address", async (t) => {

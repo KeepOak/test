@@ -60,6 +60,8 @@ export interface CommandHost {
   goals?: GoalHost;
   /** The owner's own profile check; throws while someone else's profile is in use. */
   requireOwner: (what: string) => void;
+  /** Said instead of switching Lockdown off, for a command that came through a door (src/remote/window-key.ts). */
+  lockdownOffRefusal?: string;
 }
 export interface Call {
   host: CommandHost;
@@ -142,6 +144,7 @@ function lockdown(call: Call): Reply {
   const { store, owner } = call.host.runtime, wanted = onOff(call.argument);
   if (!call.argument) return say(lockdownState(store, owner).on ? "Lockdown is on. Commands are refused; all else asks you." : "Lockdown is off.");
   if (wanted === null) return say("Send /lockdown on or /lockdown off.");
+  if (wanted === false && call.host.lockdownOffRefusal && lockdownState(store, owner).on) return say(call.host.lockdownOffRefusal);
   const state = setLockdown(store, owner, { on: wanted }, "owner-by-command");
   // As the route does: turning it on also ends the yeses already given.
   if (state.on) call.host.runtime.approvals.forgetAll();

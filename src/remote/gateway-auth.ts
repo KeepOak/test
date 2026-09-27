@@ -59,6 +59,11 @@ export const DeviceSchema = z.object({
   /** The secret's fingerprint. The secret itself is shown once, on the computer, and never kept. */
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   pairedAt: z.string().max(40),
+  /**
+   * The fingerprint of the phone's own key, which it sends in place of the window's key. A phone paired before
+   * phones had keys of their own has none, and was handed the window's key (src/remote/window-key.ts).
+   */
+  keyFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 export type Device = z.infer<typeof DeviceSchema>;
 const DevicesSchema = z.object({ devices: z.array(DeviceSchema).max(20).default([]) }).strict();
@@ -92,11 +97,12 @@ export class GatewayAuth {
    * Writes one phone down at the moment it accepts an invitation, and hands back the secret it must
    * send from then on. The secret exists once, here; only its fingerprint is kept.
    */
-  remember(name: string): { device: Device; secret: string } {
+  remember(name: string): { device: Device; secret: string; key: string } {
     const secret = randomBytes(24).toString("hex");
+    const key = randomBytes(32).toString("hex");
     const device: Device = {
       id: randomBytes(8).toString("hex"), name: name.slice(0, 80) || "A phone",
-      fingerprint: fingerprintOf(secret), pairedAt: new Date().toISOString(),
+      fingerprint: fingerprintOf(secret), pairedAt: new Date().toISOString(), keyFingerprint: fingerprintOf(key),
     };
     const kept = [...this.devices().filter((each) => each.name !== device.name), device].slice(-20);
     this.store.save("settings", this.owner, devicesKey, { devices: kept });
@@ -104,7 +110,36 @@ export class GatewayAuth {
       action: "channel.paired", actor: this.owner, subject: device.name,
       reason: "A phone was let in, and given a secret of its own to send back each time", outcome: "paired",
     });
-    return { device, secret };
+    return { device, secret, key };
+  }
+
+  /**
+   * A new key of its own for a phone already on the list, replacing any it had. A phone paired before phones had
+   * keys of their own collects one this way, so the window's key is never handed over again.
+   */
+  newKey(id: string): string | null {
+    const devices = this.devices();
+    if (!devices.some((each) => each.id === id)) return null;
+    const key = randomBytes(32).toString("hex");
+    this.store.save("settings", this.owner, devicesKey,
+      { devices: devices.map((each) => (each.id === id ? { ...each, keyFingerprint: fingerprintOf(key) } : each)) });
+    return key;
+  }
+
+  /**
+   * The phone on the list whose own key this is, unless the one allowlist says never to it; null for anything else.
+   * A phone's key counts as the owner's, as the window's key does, and marks the request as the phone's.
+   */
+  keyDevice(supplied: string): Device | null {
+    if (!/^[a-f0-9]{64}$/.test(supplied)) return null;
+    const print = fingerprintOf(supplied);
+    const device = this.devices().find((each) => each.keyFingerprint !== undefined && sameText(print, each.keyFingerprint));
+    if (!device || decide(readSenderAllowlist(this.store, this.owner), remoteChannel, device.id) === "block") return null;
+    return device;
+  }
+  /** Whether this phone was handed the window's key rather than a key of its own (paired before phones had keys). */
+  heldWindowKey(id: string): boolean {
+    return this.devices().find((each) => each.id === id)?.keyFingerprint === undefined;
   }
 
   /** Takes one phone back off the list; it cannot reach Branch again without a new invitation. */

@@ -59,3 +59,13 @@ export function keyMayTravel(request: Pick<IncomingMessage, "socket" | "headers"
   if (fromThisComputer(request.socket?.remoteAddress, request.headers)) return true;
   return isTailnetAddress(bare(request.socket?.localAddress)) && isTailnetAddress(bare(request.socket?.remoteAddress));
 }
+
+/**
+ * Requests that came through a door rather than this computer's own window: the paired door, a paired phone's own
+ * key, or a caller beyond this computer. Switching Lockdown off is refused to them (src/other-api.ts): a phone's
+ * screen greys it, and the engine holds to it whatever the phone sends.
+ */
+const doorRequests = new WeakSet<object>();
+export const markDoorRequest = (request: object): void => { doorRequests.add(request); };
+export const throughADoor = (request: object): boolean => doorRequests.has(request);
+export const lockdownOffHereOnly = "Lockdown can only be switched off in the app on this computer.";

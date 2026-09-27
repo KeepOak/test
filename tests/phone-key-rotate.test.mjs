@@ -1,16 +1,19 @@
 /**
- * Removing a phone that was handed the window's key takes the key away (src/remote/window-key.ts).
+ * A paired phone holds a key of its own, never the window's (src/remote/gateway-auth.ts, src/remote/window-key.ts).
  *
- *   1. the removed phone's key is refused on every route, on this computer's listener and on the paired door;
- *   2. a phone that still belongs collects the new key over its paired door with its own secret; the removed one cannot;
- *   3. the owner's window keeps working without typing the key again: the browser window that asks is handed the new
- *      key, and the desktop app reads it again from the data folder, where it replaced the old one;
- *   4. the window's key is never handed over as plain HTTP from beyond this computer that is not Tailscale.
+ *   1. no pairing answer (Pair a phone, the Tailscale invitation, collecting again) carries the window's key; removing
+ *      a phone makes its own key refused on every route, on this computer's listener and on the paired door;
+ *   2. a phone that still belongs keeps working;
+ *   3. the owner's window keeps working without typing the key again: removing a phone leaves the window's key alone,
+ *      and removing a phone paired before phones had keys (which holds the window's key) replaces it, handing the new
+ *      key to the browser window that asks and to the desktop app through the data folder;
+ *   4. neither key is handed over as plain HTTP from beyond this computer that is not Tailscale;
+ *   5. a phone may switch Lockdown on and never off, whichever way it asks.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +22,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { pairingRefused, phoneSessionText } from "../dist/devices/book.js";
 import { windowKeyReader } from "../dist/desktop/signed-headers.js";
-import { keyMayTravel } from "../dist/remote/window-key.js";
+import { keyMayTravel, lockdownOffHereOnly } from "../dist/remote/window-key.js";
 import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
 
 function phoneKey() {
@@ -48,12 +51,12 @@ async function served(t) {
   const call = (method, path, body, key = server.token, base = server.url, extra = {}) => fetch(base + path, {
     method, headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...(method === "GET" ? {} : { "content-type": "application/json" }), ...extra },
     ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-  }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
+  }).then(async (response) => { const text = await response.text(); let body = {}; try { body = JSON.parse(text); } catch { /* not JSON */ } return { status: response.status, body, text }; });
   assert.equal((await call("POST", "/api/devices/mode", { mode: "when-needed" })).status, 200);
   return { app, server, call, doorBase, dataDir };
 }
 
-/** A phone paired from the window's "Pair a phone" code, let in, holding its session: { deviceId, session, headers }. */
+/** A phone paired from the window's "Pair a phone" code, let in, holding its session. */
 async function pairedPhone(call, name, extra = {}) {
   const invite = (await call("POST", "/api/devices/invite", { phone: true })).body;
   const key = phoneKey();
@@ -65,89 +68,127 @@ async function pairedPhone(call, name, extra = {}) {
     headers: { "x-branch-device": collected.body.deviceId, "x-branch-device-key": collected.body.deviceKey } };
 }
 
+/** Makes a phone look paired before phones had keys of their own: it holds the window's key, and its record has no key. */
+function asBefore(app, server, phone) {
+  const saved = app.store.get("settings", app.runtime.owner, "remote-devices").data;
+  app.store.save("settings", app.runtime.owner, "remote-devices",
+    { devices: saved.devices.map(({ keyFingerprint, ...each }) => (each.id === phone.session.deviceId ? each : { ...each, keyFingerprint })) });
+  phone.session.token = server.token;
+}
+
 /** Every address in the route table a key is asked for, made concrete, with the method that reaches it. */
 function keyedRoutes() {
   return Object.entries(ROUTES).map(([path, value]) => ({ path, ...entry(value) }))
     .filter(({ kind, path }) => kind !== "prefix" && kind !== "pre-auth" && !/[[\]{}()\\|?*+^$]/.test(path))
     .map(({ path, methods }) => ({ path: path.replaceAll(":id", SAMPLE_ID), method: methods[0] ?? "GET" }));
 }
+async function refusedEverywhere(call, key, headers, bases) {
+  const letThrough = [];
+  for (const { path, method } of keyedRoutes())
+    for (const base of bases) {
+      const answer = await call(method, path, method === "GET" ? undefined : {}, key, base, headers);
+      if (answer.status !== 401) letThrough.push(`${method} ${path} on ${base}: ${answer.status}`);
+    }
+  return letThrough;
+}
 
-test("the removed phone's key is refused on every route, on this computer's listener and on the paired door", async (t) => {
+test("no pairing answer carries the window's key, and a removed phone's own key is refused on every route", async (t) => {
   const { server, call, doorBase } = await served(t);
+  const window = server.token;
   const removed = await pairedPhone(call, "Removed phone");
   assert.equal(removed.collected.status, 200);
-  const old = removed.session.token;
-  assert.equal(old, server.token);
+  const offer = server.remote.pairing.create();
+  const tailscale = await call("POST", "/api/pair", { id: offer.id, code: offer.code, name: "Tailscale phone" }, null, doorBase);
+  assert.equal(tailscale.status, 200, tailscale.text);
+  const renewed = await call("POST", "/api/pair/renew", {}, null, doorBase, removed.headers);
+  assert.equal(renewed.status, 200, renewed.text);
+  for (const [why, answer] of [["Pair a phone", removed.collected], ["the Tailscale invitation", tailscale], ["collecting again", renewed]]) {
+    assert.equal(answer.text.includes(window), false, `${why} never carries the window's key`);
+    assert.match(answer.body.token, /^[a-f0-9]{64}$/, why);
+  }
+  const own = renewed.body.token;
+  assert.equal((await call("GET", "/api/state", undefined, own, doorBase, removed.headers)).status, 200, "the phone's own key works");
+  assert.equal((await call("GET", "/api/state", undefined, removed.session.token)).status, 401, "collecting again replaced the one before");
   assert.equal((await call("POST", `/api/devices/${removed.deviceId}/revoke`, {})).status, 200);
-  assert.notEqual(server.token, old, "a new key replaced the one the phone was handed");
   const routes = keyedRoutes();
   assert.ok(routes.length > 300, `every route: ${routes.length}`);
-  const let_through = [];
-  for (const { path, method } of routes)
-    for (const base of [server.url, doorBase]) {
-      const answer = await call(method, path, method === "GET" ? undefined : {}, old, base, removed.headers);
-      if (answer.status !== 401) let_through.push(`${method} ${path} on ${base === doorBase ? "the door" : "this computer"}: ${answer.status}`);
-    }
-  assert.deepEqual(let_through, [], "the old key opens nothing");
-  assert.equal((await call("GET", "/api/state")).status, 200, "the new key does");
+  assert.deepEqual(await refusedEverywhere(call, own, removed.headers, [server.url, doorBase]), [], "the removed phone's key opens nothing");
+  assert.equal(server.token, window, "the window's key was never handed over, so it stays");
+  assert.equal((await call("GET", "/api/state")).status, 200);
 });
 
-test("a phone that still belongs collects the new key over its paired door; the removed one cannot", async (t) => {
-  const { server, call, doorBase } = await served(t);
+test("a phone that still belongs keeps working when another is removed", async (t) => {
+  const { call, doorBase, server } = await served(t);
   const staying = await pairedPhone(call, "Staying phone");
   const removed = await pairedPhone(call, "Removed phone");
   assert.equal((await call("POST", `/api/devices/${removed.deviceId}/revoke`, {})).status, 200);
-  assert.equal((await call("GET", "/api/state", undefined, staying.session.token, doorBase, staying.headers)).status, 401, "its old key is old");
-  const renewed = await call("POST", "/api/pair/renew", {}, null, doorBase, staying.headers);
-  assert.equal(renewed.status, 200, JSON.stringify(renewed.body));
-  assert.equal(renewed.body.token, server.token);
-  assert.equal((await call("GET", "/api/state", undefined, renewed.body.token, doorBase, staying.headers)).status, 200, "it keeps working");
+  assert.equal((await call("GET", "/api/state", undefined, staying.session.token, doorBase, staying.headers)).status, 200, "on its paired door");
+  assert.equal((await call("GET", "/api/state", undefined, staying.session.token)).status, 200, "on this computer's listener");
+  assert.equal((await call("GET", "/api/state", undefined, removed.session.token, doorBase, removed.headers)).status, 401);
   for (const [why, headers] of [["the removed phone", removed.headers], ["no secret", {}],
-    ["another phone's id with a wrong secret", { ...staying.headers, "x-branch-device-key": "0".repeat(48) }]]) {
+    ["a wrong secret", { ...staying.headers, "x-branch-device-key": "0".repeat(48) }]]) {
     const refused = await call("POST", "/api/pair/renew", {}, null, doorBase, headers);
     assert.equal(refused.status, 401, `${why}: ${refused.status}`);
     assert.equal(refused.body.token, undefined, why);
   }
   const plain = await call("POST", "/api/pair/renew", {}, null, undefined, { ...staying.headers, "x-branch-tunnel": "1" });
   assert.equal(plain.status, 401, "never as plain HTTP from beyond this computer");
+  assert.notEqual(staying.session.token, server.token);
 });
 
-test("the owner's window keeps working after the key is replaced, without typing it again", async (t) => {
-  const { server, call, doorBase, dataDir } = await served(t);
+test("the owner's window keeps working, also when a phone paired before phones had keys is removed", async (t) => {
+  const { app, server, call, doorBase, dataDir } = await served(t);
   const first = server.token;
   const desktop = windowKeyReader(dataDir, first);
-  assert.equal(desktop(), first);
-  const phone = await pairedPhone(call, "Removed phone");
-  const answer = await call("POST", `/api/devices/${phone.deviceId}/revoke`, { keepKey: true });
-  assert.equal(answer.status, 200, JSON.stringify(answer.body));
+  const phone = await pairedPhone(call, "Phone with its own key");
+  const plain = await call("POST", `/api/devices/${phone.deviceId}/revoke`, { keepKey: true });
+  assert.equal(plain.status, 200, plain.text);
+  assert.equal(plain.body.key, undefined, "nothing to hand over: the window's key never left");
+  assert.equal(server.token, first);
+
+  const before = await pairedPhone(call, "Phone paired before");
+  const staying = await pairedPhone(call, "Staying phone paired before");
+  asBefore(app, server, before);
+  asBefore(app, server, staying);
+  const answer = await call("POST", `/api/devices/${before.deviceId}/revoke`, { keepKey: true });
+  assert.equal(answer.status, 200, answer.text);
+  assert.notEqual(server.token, first, "the window's key it held was replaced");
   assert.equal(answer.body.key, server.token, "the browser window that asked is handed the new key");
   assert.equal((await call("GET", "/api/state", undefined, answer.body.key)).status, 200);
-  assert.equal((await call("GET", "/api/state", undefined, first)).status, 401);
+  assert.deepEqual(await refusedEverywhere(call, first, before.headers, [server.url, doorBase]), [], "the old window key opens nothing");
   assert.equal((await readFile(join(dataDir, "session-token"), "utf8")).trim(), server.token, "saved where the first one was");
+  assert.equal((await readdir(dataDir)).some((name) => name.includes("session-token.")), false, "no half-written copy is left");
   assert.equal(desktop(), server.token, "the desktop app reads the new key again");
   assert.equal((await call("GET", "/api/state", undefined, desktop())).status, 200);
 
-  const second = await pairedPhone(call, "Second phone");
-  const unasked = await call("POST", `/api/devices/${second.deviceId}/revoke`, {});
-  assert.equal(unasked.status, 200);
-  assert.equal(unasked.body.key, undefined, "a window that did not ask (the desktop app holds none) is not handed it");
+  // The phone paired before that still belongs moves to a key of its own; the removed one cannot.
+  const moved = await call("POST", "/api/pair/renew", {}, null, doorBase, staying.headers);
+  assert.equal(moved.status, 200, moved.text);
+  assert.notEqual(moved.body.token, server.token);
+  assert.equal((await call("GET", "/api/state", undefined, moved.body.token, doorBase, staying.headers)).status, 200);
+  assert.equal((await call("POST", "/api/pair/renew", {}, null, doorBase, before.headers)).status, 401);
+
+  const unasked = await pairedPhone(call, "Unasked");
+  asBefore(app, server, unasked);
+  const quiet = await call("POST", `/api/devices/${unasked.deviceId}/revoke`, {});
+  assert.equal(quiet.body.key, undefined, "a window that did not ask (the desktop app holds none) is not handed it");
   assert.equal(desktop(), server.token);
-  const third = await pairedPhone(call, "Third phone");
-  const staying = await pairedPhone(call, "Staying phone");
-  const fromDoor = await call("POST", `/api/devices/${third.deviceId}/revoke`, { keepKey: true }, staying.session.token, doorBase, staying.headers);
-  assert.equal(fromDoor.status, 200, JSON.stringify(fromDoor.body));
+  const third = await pairedPhone(call, "Third");
+  asBefore(app, server, third);
+  const fromDoor = await call("POST", `/api/devices/${third.deviceId}/revoke`, { keepKey: true }, moved.body.token, doorBase, staying.headers);
+  assert.equal(fromDoor.status, 200, fromDoor.text);
   assert.equal(fromDoor.body.key, undefined, "only this computer's own window is handed the key in the answer");
 });
 
-test("the window's key is never collected as plain HTTP from beyond this computer", async (t) => {
+test("a phone's session is never collected as plain HTTP from beyond this computer", async (t) => {
   const { call, server } = await served(t);
   const lan = await pairedPhone(call, "Phone on the home network", { "x-branch-tunnel": "1" });
-  assert.equal(lan.collected.status, 403, JSON.stringify(lan.collected.body));
+  assert.equal(lan.collected.status, 403, lan.collected.text);
   assert.equal(lan.collected.body.error, pairingRefused);
   assert.equal(lan.collected.body.token, undefined);
   const again = await call("POST", "/api/devices/pair/session", { requestId: lan.requestId, signature: lan.key.sign(phoneSessionText(lan.requestId)) }, null);
   assert.equal(again.status, 200, "the same phone on this computer's own address still can");
-  assert.equal(again.body.token, server.token);
+  assert.notEqual(again.body.token, server.token);
 
   const socket = (localAddress, remoteAddress) => ({ socket: { localAddress, remoteAddress }, headers: {} });
   assert.equal(keyMayTravel(socket("192.168.1.20", "192.168.1.30"), false), false, "a home network");
@@ -158,4 +199,35 @@ test("the window's key is never collected as plain HTTP from beyond this compute
   assert.equal(keyMayTravel(socket("127.0.0.1", "127.0.0.1"), false), true, "this computer");
   assert.equal(keyMayTravel({ socket: { localAddress: "127.0.0.1", remoteAddress: "127.0.0.1" }, headers: { "x-branch-tunnel": "1" } }, false), false, "the webhook door");
   assert.equal(keyMayTravel(socket("192.168.1.20", "192.168.1.30"), true), true, "the paired door");
+});
+
+test("a phone may switch Lockdown on and never off, through its door or with its own key", async (t) => {
+  const { call, doorBase } = await served(t);
+  const phone = await pairedPhone(call, "Phone");
+  const own = phone.session.token;
+  const on = await call("POST", "/api/lockdown", { on: true }, own, doorBase, phone.headers);
+  assert.equal(on.status, 200, `on from the door: ${on.text}`);
+  for (const [why, base] of [["through the paired door", doorBase], ["with its own key on this computer's listener", undefined]]) {
+    const off = await call("POST", "/api/lockdown", { on: false }, own, base, phone.headers);
+    assert.equal(off.status, 403, `${why}: ${off.text}`);
+    assert.equal(off.body.error, lockdownOffHereOnly, why);
+  }
+  const elsewhere = await call("POST", "/api/lockdown", { on: false }, undefined, undefined, { "x-branch-tunnel": "1" });
+  assert.equal(elsewhere.status, 403, `the window's key from beyond this computer: ${elsewhere.text}`);
+  assert.equal((await call("GET", "/api/lockdown")).body.on, true, "still on");
+  assert.equal((await call("POST", "/api/lockdown", { on: false })).status, 200, "the window on this computer switches it off");
+  assert.equal((await call("POST", "/api/commands/settings", { mode: "on" })).status, 200);
+  assert.equal((await call("POST", "/api/lockdown", { on: true })).status, 200);
+  const command = await call("POST", "/api/commands/run", { surface: "phone", line: "/lockdown off" }, own, doorBase, phone.headers);
+  assert.equal((await call("GET", "/api/lockdown")).body.on, true, `a /lockdown off command from the phone changes nothing: ${command.text}`);
+});
+
+test("the phone app calls no native look neither platform has, and a failed switch save says why", async () => {
+  const web = new URL("../apps/mobile/web/", import.meta.url);
+  for (const name of await readdir(web)) {
+    if (!name.endsWith(".js")) continue;
+    assert.equal((await readFile(new URL(name, web), "utf8")).includes("setLook"), false, `${name} calls no setLook`);
+  }
+  const switches = await readFile(new URL("ph-switches.js", web), "utf8");
+  assert.match(switches, /\.catch\(async \(error\) => \{\s*(\/\/[^\n]*\n\s*)*toast\(String\(error\?\.message \?\? error\)\);/, "the engine's words are shown");
 });

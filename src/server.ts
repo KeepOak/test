@@ -225,7 +225,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
-import { keyMayTravel, renewPath, writeNewWindowKey } from "./remote/window-key.js";
+import { keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
 import { devicesApi, DevicesHttpError, handlesDevicesPath, openDevicePaths, openDevicesApi } from "./devices/api.js";
@@ -3329,17 +3329,18 @@ function mcpConnectionSnippets(app: Branch, request: IncomingMessage, dataDir: s
 /** The pairing door, open only on the phone's listener and only for the invitation on offer. */
 export async function pairingRequest(
   remote: RemoteAccess, request: IncomingMessage, response: ServerResponse, path: string,
-  /** Batch 20 (wave 8): writes the phone down and hands it a secret of its own, when asked to. */
-  gateway?: GatewayAuth,
+  /** Batch 20 (wave 8): writes the phone down and hands it a secret and a key of its own. */
+  gateway: Pick<GatewayAuth, "remember">,
 ): Promise<boolean> {
   if (request.method !== "POST" || path !== "/api/pair") return false;
   const body = z.object({ id: z.string().max(64), code: z.string().max(16), name: z.string().trim().max(80).default("A phone") })
     .strict().parse(await readBody(request, 1024));
-  const redeemed = remote.pairing.redeem(body.id, body.code);
+  remote.pairing.redeem(body.id, body.code);
   // The phone is remembered the moment it is let in, so the "this exact phone" step of the chain
-  // has something to check against from the very next request.
-  const device = gateway?.remember(body.name);
-  send(response, 200, device ? { ...redeemed, deviceId: device.device.id, deviceKey: device.secret } : redeemed);
+  // has something to check against from the very next request. It is handed a key of its own, never
+  // the window's: removing it takes that key away and nothing else (src/remote/window-key.ts).
+  const device = gateway.remember(body.name);
+  send(response, 200, { token: device.key, deviceId: device.device.id, deviceKey: device.secret });
   return true;
 }
 /**
@@ -3420,6 +3421,17 @@ export async function startServer(
   const allowedHosts = (): string[] => [...remote.allowedHosts(), ...listen.extraHosts];
   // Batch 20 (wave 8): what a phone must satisfy on the extra door, as a chain of named steps.
   const gateway = new GatewayAuth(app.store, app.runtime.owner);
+  /** Requests let in with a paired phone's own key (src/remote/gateway-auth.ts keyDevice), which counts as the owner's. */
+  const phoneKeyed = new WeakSet<IncomingMessage>();
+  const bearerOf = (request: IncomingMessage): string => /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "";
+  /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
+  const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
+  /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
+  const socketPhoneKey = (request: IncomingMessage): boolean => {
+    const offered = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((part) => part.trim());
+    const supplied = offered[0] === "bearer" ? offered[1] ?? "" : bearerOf(request);
+    return gateway.keyDevice(supplied) !== null;
+  };
   // Wrong keys, PINs and pairing codes are counted per place they came from; five in a row and that
   // place is made to wait, with a line written into the record of what the assistant was allowed to do.
   const authLimiter = new AuthLimiter(options.authLimits);
@@ -3522,7 +3534,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // and its own "this exact phone" secret. Once, signed with its pairing key; src/devices/book.ts collectPhoneSession.
         const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096),
           // The window's key never travels as plain HTTP across a home network: src/remote/window-key.ts keyMayTravel.
-          ...(keyMayTravel(request, viaRemote) ? { phone: { windowKey: token, remember: (name: string) => gateway.remember(name) } } : {}) },
+          ...(keyMayTravel(request, viaRemote) ? { phone: { remember: (name: string) => gateway.remember(name) } } : {}) },
           path, from).catch((error: unknown) => {
           if (!(error instanceof DevicesHttpError)) throw error;
           if (error.status !== 403) throw new HttpError(error.status, error.message);
@@ -3563,6 +3575,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         limiter: authLimiter,
         onFailure: (from) => noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the local key"),
       }, (supplied) => {
+        // A paired phone's own key counts as the owner's, as the window's key does; the request is marked as the phone's.
+        if (gateway.keyDevice(supplied)) { phoneKeyed.add(request); return null; }
         // bucket 19: a person's own key reaches only their own page (src/people/access.ts).
         if (People.isPersonKey(supplied)) {
           const refused = app.people.admit(supplied, request.method, path);
@@ -3584,6 +3598,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         return refusal;
       }, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied) !== null
         || app.people.keys.working(supplied)); // bucket 19
+      // A phone's own key, the paired door, or a caller beyond this computer: what only this computer's window may do
+      // (switching Lockdown off, src/other-api.ts) is refused to it.
+      if (viaRemote || phoneKeyed.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers)) markDoorRequest(request);
       // The extra door has its own chain on top of the key: see src/remote/gateway-auth.ts. The
       // window on this computer never goes through it.
       if (viaRemote) {
@@ -3618,7 +3635,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
         // The key was already checked and its use counted above; this only reads what it may do.
-        const access = dashboardAccess(request, token, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
+        const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
         const answer = await dashboardApi(app, request, path, {
           dataDir: options.dataDir, access, readBody: () => readBody(request),
         }).catch((error: unknown) => {
@@ -3637,9 +3654,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // dashboard (src/commands/api.ts). What the key may do is read the way the dashboard reads it,
         // and checked command by command; running one takes a place like any other task. ----
         if (handlesCommandsPath(path)) {
-          const access = dashboardAccess(request, token, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
+          const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
           const answer = await commandsApi(app, path, {
             method: request.method ?? "GET", url: new URL(request.url ?? "/", "http://local"), access, readBody: () => readBody(request),
+            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly } : {}),
           }).catch((error: unknown) => {
             throw error instanceof CommandApiError ? new HttpError(error.status, error.message) : error;
           });
@@ -3709,6 +3727,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url,
             trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
             forgetGateway: (id) => void gateway.forget(id),
+            heldWindowKey: (id) => gateway.heldWindowKey(id),
             // A removed phone that was handed this window's key takes it with it: a new key replaces it.
             rotateKey: () => rotateWindowKey(request.socket),
             keyHere: !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers),
@@ -3962,7 +3981,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       const match = /^\/api\/runs\/([a-f0-9-]{36})\/ws$/.exec(path);
       const run = match && app.store.run(match[1]!);
       const sameHost = hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts());
-      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !tokenFromSocket(request, token)) {
+      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !(tokenFromSocket(request, token) || socketPhoneKey(request))) {
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         return;
       }
@@ -4019,8 +4038,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       throw new HttpError(wait ? 429 : 401, wait ?? "This phone is not the one that was let in. Accept a fresh invitation on the computer.");
     }
     authLimiter.succeed(from);
-    await rotating;
-    send(response, 200, { token, deviceId: device.id });
+    // A key of the phone's own, never the window's; a phone paired before phones had keys moves to one here.
+    const key = gateway.newKey(device.id);
+    if (!key) throw new HttpError(401, "This phone is not the one that was let in. Accept a fresh invitation on the computer.");
+    send(response, 200, { token: key, deviceId: device.id });
   }
   await listenOn(server, options.port ?? 3210, listen.address, options.anyPortIfTaken === true);
   const address = server.address();

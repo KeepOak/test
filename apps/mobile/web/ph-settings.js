@@ -119,8 +119,9 @@ async function stopLending() {
 export function initSettings(onForgotten) {
   on("ph-chf", (el) => { P.chF = el.dataset.v; draw(); });
   on("ph-ch", (el) => { P.chApp = el.dataset.v; go("chatapp"); });
-  on("theme", (el) => attempt(async () => { E.look = await post("/api/look", { theme: el.dataset.v }); applyTheme({ ...E.look, mode: document.documentElement.dataset.mode }); await plugin.setLook?.({ theme: E.look.theme, mode: document.documentElement.dataset.mode, language: language() }); }));
-  on("language", (el) => attempt(async () => { E.look = await post("/api/look", { language: el.dataset.v }); P.sheet = null; await setLanguage(el.dataset.v); await plugin.setLook?.({ theme: E.look.theme, mode: document.documentElement.dataset.mode, language: language() }); }));
+  // The look and language are saved in the engine and worn by this page; neither native side has a look to set.
+  on("theme", (el) => attempt(async () => { E.look = await post("/api/look", { theme: el.dataset.v }); applyTheme({ ...E.look, mode: document.documentElement.dataset.mode }); }));
+  on("language", (el) => attempt(async () => { E.look = await post("/api/look", { language: el.dataset.v }); P.sheet = null; await setLanguage(el.dataset.v); }));
   on("forget-go", async () => { P.sheet = null; await phone.vault.forget(); onForgotten(); });
   on("lend-stop", () => stopLending());
   void toast; void ic;
