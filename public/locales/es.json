@@ -9981,5 +9981,12 @@
   "window.chat.live.moved-limit-at": "Pasó a “{to}”: “{from}” llegó a su límite, se renueva a las {time}",
   "window.chat.live.moved-credit": "Pasó a “{to}”: “{from}” se quedó sin saldo",
   "window.chat.live.moved-refused": "Pasó a “{to}”: el servicio rechazó “{from}”",
-  "window.chat.live.moved-model": "Pasó a “{to}”: “{from}” no puede usar {model}"
+  "window.chat.live.moved-model": "Pasó a “{to}”: “{from}” no puede usar {model}",
+  "gatewayPower.title": "Keep this computer awake while the gateway runs",
+  "gatewayPower.description": "Off respects your usual sleep settings. On asks the running desktop gateway to keep the system awake; the screen can turn off. Closing a laptop lid, battery limits or OS policy may still put it to sleep.",
+  "gatewayPower.active": "Keeping the system awake now.",
+  "gatewayPower.off": "Your usual sleep settings apply.",
+  "gatewayPower.waiting": "Saved on; an active desktop blocker is not confirmed.",
+  "gatewayPower.suspended": "The computer suspended; the gateway will reconnect after resume.",
+  "gatewayPower.failed": "The desktop could not apply the awake request."
 }
