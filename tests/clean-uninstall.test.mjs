@@ -135,13 +135,14 @@ test("C4 where a system installer is the only honest option, the plan says it wi
     "choosing the system-wide copy is a different plan, so a yes to one is never a yes to the other");
 });
 
-test("C4b the card itself says where it goes, how much room is left, and what will be left behind", async () => {
-  const card = await readFile(join(import.meta.dirname, "..", "public", "local-oneclick.js"), "utf8");
-  for (const [words, key] of [["plan.where", "local.install.inside"], ["plan.leavesBehindNote", "local.install.leaves-behind"],
-    ["shown.modelsFolder", "local.install.room"]]) {
-    assert.ok(card.includes(words), `${words} is worked out but never drawn on the card`);
-    assert.ok(card.includes(key), `${key} is not used`);
-  }
+// Redesign: the old window's one-click card (public/local-oneclick.js) left with it. The new window's local picker
+// (public/app/flows/localpick.js) draws the install plan as the prototype does: the engine's own lines, escaped, among
+// them what will be left behind. Where it goes and the room left are not on the prototype's plan, so none is drawn.
+test("C4b the install plan says what will be left behind, in the engine's own words", async () => {
+  const card = await readFile(join(import.meta.dirname, "..", "public", "app", "flows", "localpick.js"), "utf8");
+  const plan = card.slice(card.indexOf("function planPanel()"), card.indexOf("function waitPanel("));
+  assert.match(plan, /i\?\.leavesBehindNote/, "what will be left behind is worked out but never drawn on the plan");
+  assert.match(plan, /<li>\$\{esc\(x\)\}<\/li>/, "each of the engine's lines is escaped");
   const en = JSON.parse(await readFile(join(import.meta.dirname, "..", "public", "locales", "en.json"), "utf8"));
   const fr = JSON.parse(await readFile(join(import.meta.dirname, "..", "public", "locales", "fr.json"), "utf8"));
   for (const key of ["local.install.inside", "local.install.leaves-behind", "local.install.room",
