@@ -195,16 +195,18 @@ test("/help lists only what that surface can do", () => {
 
 // ---- the switch -----------------------------------------------------------------------------------
 
-test("the switch ships off: the window keeps /model and /help, and anything else is a message as before", async (t) => {
+test("the switch ships off (on only in the terminal and this computer's window): the phone keeps /model and /help, and anything else is a message as before", async (t) => {
   const f = await fixture(t);
   assert.equal(commandSettings(f.app.store, f.owner).mode, "off");
-  const list = await (await f.call("/api/commands?surface=window")).json();
+  const list = await (await f.call("/api/commands?surface=phone")).json();
   assert.deepEqual(list.commands.map((c) => c.name), ["help", "model", "goal"]);
-  const model = await (await f.call("/api/commands/run", f.server.token, { surface: "window", line: "/model" })).json();
+  const model = await (await f.call("/api/commands/run", f.server.token, { surface: "phone", line: "/model" })).json();
   assert.equal(model.handled, true);
   assert.match(model.text, /Type \/model followed by a name/);
-  const tokens = await (await f.call("/api/commands/run", f.server.token, { surface: "window", line: "/tokens" })).json();
+  const tokens = await (await f.call("/api/commands/run", f.server.token, { surface: "phone", line: "/tokens" })).json();
   assert.deepEqual(tokens, { handled: false });
+  const windowed = await (await f.call("/api/commands?surface=window")).json();
+  assert.equal(windowed.mode, "on", "this computer's own window ships it on (tests/window-commands-ship-on.test.mjs)");
   assert.equal(parseChatCommand("/tokens"), null, "a chat reads /tokens as an ordinary message");
   assert.equal(parseChatCommand("/clear"), null);
   assert.deepEqual(parseChatCommand("/reset"), { name: "new", argument: "" });
