@@ -829,6 +829,14 @@ export async function createBranch(options: {
       }))[name] ?? null,
   });
   const channels = new ChannelRouter(store, runtime);
+  channels.appLocked = () => sessionLock.locked();
+  const priorToolGuard = registry.beforeTool;
+  registry.beforeTool = async (name, args, context) => {
+    const held = await priorToolGuard?.(name, args, context);
+    if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
+      && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
+    return held;
+  };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
     const settings = voice.settings(runtime.owner);
@@ -2270,3 +2278,4 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
+import { runOrigin } from "./key-context.js";

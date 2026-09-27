@@ -38,6 +38,7 @@ export function ownerCommands(store: Pick<Store, "get">, owner: string): OwnerCo
 }
 /** Saves the whole setting and writes down that it changed. The caller has already checked who is asking. */
 export function saveOwnerCommands(store: Store, owner: string, input: unknown): OwnerCommands {
+  store.profiles.requireOwner("Commands from your own chat");
   const next = OwnerCommandsSchema.parse(input);
   store.save("settings", owner, settingKey, next);
   audit(store, owner, { action: "policy.changed", actor: owner, subject: "commands from your own chat",
@@ -77,7 +78,7 @@ const quoted = (arg: string) => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : JSON.strin
  */
 export function commandShown(bytes: string | undefined): string | null {
   if (!bytes) return null;
-  let input: { executable?: unknown; args?: unknown; cwd?: unknown; secrets?: unknown };
+  let input: { executable?: unknown; args?: unknown; cwd?: unknown; secrets?: unknown; timeoutMs?: unknown; netless?: unknown };
   try { input = JSON.parse(bytes) as typeof input; } catch { return null; }
   if (typeof input.executable !== "string" || !input.executable) return null;
   const args = input.args === undefined ? [] : input.args;
@@ -85,6 +86,8 @@ export function commandShown(bytes: string | undefined): string | null {
   const lines = [[input.executable, ...args].map(quoted).join(" ")];
   if (typeof input.cwd === "string" && input.cwd && input.cwd !== ".") lines.push(`in ${input.cwd}`);
   if (Array.isArray(input.secrets) && input.secrets.length) lines.push(`with the saved keys ${input.secrets.map(String).join(", ")}`);
+  if (typeof input.timeoutMs === "number") lines.push(`timeout ${input.timeoutMs} ms`);
+  if (typeof input.netless === "boolean") lines.push(`no internet (best effort): ${input.netless ? "yes" : "no"}`);
   const shown = lines.join("\n");
   return shown.length <= shownAtMost && !invisible.test(shown) ? shown : null;
 }
