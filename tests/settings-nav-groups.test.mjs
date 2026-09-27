@@ -1,7 +1,7 @@
-/* DG-076: the Settings nav's group headings ("General", "Your assistant", "Safety", "Care") are the prototype's
-   (design/redesign/prototype.html pass 17, `.set-nav .grp`): 10.5px at weight 500 in the quiet text colour, slightly
-   spaced, their words 17px below the page link above (21px below the search box for the first) and 5.6px above the one
-   below, 10px in from the links' own edge, as the prototype renders them. On a phone the prototype folds them away with
+/* DG-076: the Settings nav's group headings are pass 18's five plain groups ("You", "Assistant", "Reach", "Safety",
+   "Care"), drawn in the list's place (design/redesign/prototype.html pass 18c, `#side.set18c > .set-nav`): 10.5px at
+   weight 500 in the quiet text colour, slightly spaced, their words 18px below the page link above (22px below the
+   search box for the first) and 6.6px above the one below, 10px in from the links' own edge, as the prototype renders them. On a phone the prototype folds them away with
    the rest of the nav, and so does the window. Headless. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -45,7 +45,7 @@ for (const width of [1440, 1024]) {
     for (const mode of ["dark", "light"]) {
       await wear(page, mode);
       const seen = await headings(page);
-      assert.deepEqual(seen.map((h) => h.name), ["General", "Your assistant", "Safety", "Care"], `${mode}: the group headings show`);
+      assert.deepEqual(seen.map((h) => h.name), ["You", "Assistant", "Reach", "Safety", "Care"], `${mode}: the group headings show`);
       for (const heading of seen) {
         const where = `${mode}, ${heading.name}`;
         assert.equal(heading.size, "10.5px", `${where}: 10.5px`);
@@ -53,9 +53,9 @@ for (const width of [1440, 1024]) {
         assert.equal(heading.line, "12.6px", `${where}: the prototype's line`);
         assert.equal(heading.tracking, "0.735px", `${where}: the prototype's letter spacing`);
         assert.equal(heading.quiet, true, `${where}: in the theme's quiet text colour`);
-        const gap = heading.first ? 21 : 17;
+        const gap = heading.first ? 22 : 18;
         assert.ok(Math.abs(heading.above - gap) <= 0.5, `${where}: ${gap}px below what is above (${heading.above})`);
-        assert.ok(Math.abs(heading.below - 5.59) <= 0.5, `${where}: 5.6px above the link below (${heading.below})`);
+        assert.ok(Math.abs(heading.below - 6.59) <= 0.5, `${where}: 6.6px above the link below (${heading.below})`);
         assert.ok(Math.abs(heading.indent - 10) <= 0.5, `${where}: 10px in from the links' edge (${heading.indent})`);
       }
     }
@@ -66,6 +66,6 @@ for (const width of [1440, 1024]) {
 test("DG-076 on a phone the group headings fold away with the nav, as the prototype's do", async (t) => {
   const { page, errors } = await settings(t, 390);
   assert.deepEqual(await headings(page), [], "no group heading shows at 390 px");
-  assert.ok(await page.locator(".settings .grp").count() >= 4, "they are there, folded away, not missing");
+  assert.ok(await page.locator(".settings .grp").count() >= 5, "they are there, folded away, not missing");
   assert.deepEqual(errors, []);
 });
