@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { _electron } from "playwright";
-import { connected, desktopOptions, onboarded, send } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, offScreen, onboarded, send } from "./fixtures/desktop-options.mjs";
 import { DesktopSettings } from "../dist/desktop/settings.js";
 
 test("desktop settings reject key reuse across destinations and unavailable encryption", async () => {
@@ -44,18 +44,19 @@ async function fixtureProvider() {
     for await (const chunk of request) body += chunk;
     const asked = JSON.parse(body);
     requests.push({ authorization: request.headers.authorization, body: asked });
-    // As an OpenAI-shaped server does: a stream when asked for one (the window's tasks ask, for their live steps).
+    const usage = { prompt_tokens: 12, completion_tokens: 6 };
+    // The engine asks an OpenAI-compatible connection for a stream; it is answered in that stream's frames.
     if (asked.stream) {
       response.writeHead(200, { "content-type": "text/event-stream" });
-      response.end([{ choices: [{ index: 0, delta: { role: "assistant", content: "Saved connection is working." }, finish_reason: null }] },
-        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
-        { choices: [], usage: { prompt_tokens: 12, completion_tokens: 6 } }].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n");
+      for (const frame of [{ choices: [{ index: 0, delta: { role: "assistant", content: "Saved connection is working." }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage }]) response.write(`data: ${JSON.stringify(frame)}\n\n`);
+      response.end("data: [DONE]\n\n");
       return;
     }
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: {
       role: "assistant", content: "Saved connection is working.",
-    } }], usage: { prompt_tokens: 12, completion_tokens: 6 } }));
+    } }], usage }));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -93,7 +94,7 @@ async function refusesWithoutKeyStore(t, page, home, connection) {
 test("native settings encrypt a key, keep IPC narrow, and connect after restart", {
   timeout: 360000,
 }, async (t) => {
-  const { home, options } = await desktopOptions();
+  const { home, options } = await desktopOptions({ hidden: true });
   delete options.env.BRANCH_PROVIDER;
   const provider = await fixtureProvider();
   const connection = { provider: "openai", endpoint: provider.endpoint, model: "fixture-model", apiKey: "fixture-device-key-82743" };
@@ -104,6 +105,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     const page = await electron.firstWindow();
     page.setDefaultTimeout(10000);
     await onboarded(page);
+    await offScreen(electron, "opened");
     if (await refusesWithoutKeyStore(t, page, home, connection)) return;
     const { summary: saved, error } = await saveConnection(page, connection);
     assert.equal(error, undefined);
@@ -129,6 +131,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     const restarted = await electron.firstWindow();
     restarted.setDefaultTimeout(10000);
     await connected(restarted);
+    await offScreen(electron, "restarted");
     await send(restarted, "Test the saved model connection.");
     await restarted.locator("#conversation .b").filter({ hasText: "Saved connection is working." }).waitFor({ timeout: 30000 });
     assert.equal(provider.requests.length, 1);
@@ -167,7 +170,7 @@ async function verifyOtherWindowDenied(electron, url) {
 test("native settings remain usable after a corrupt file or undecryptable key", {
   timeout: 360000,
 }, async () => {
-  const { home, options } = await desktopOptions();
+  const { home, options } = await desktopOptions({ hidden: true });
   delete options.env.BRANCH_PROVIDER;
   const path = join(home, "model-settings.json");
   const cases = ["{broken", ...["http://127.0.0.1:1234/v1", "broken-url"].map(

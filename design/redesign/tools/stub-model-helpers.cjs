@@ -4,7 +4,7 @@
      specialists seed-helpers.mjs made; their ids come from the file it wrote). When that tool's toolbox is still
      closed, it opens it first with the engine's own "Open a toolbox" tool.
    - Each helper reads notes.txt (a real tool step, so the frame has a newest step), then works for HELPERS_WAIT_MS
-     (default 90 s, under the engine's two-minute helper limit), reads again and answers, so it stays "running" meanwhile and can
+     (default 45 s: a model call and a helpers tool call are both cut at 90 s, QA Q053), reads again and answers, so it stays "running" meanwhile and can
      be steered or stopped. A helper steered mid-work reads the note on its next round and says so in its answer.
    Nothing leaves this computer. start(port, idsFile) returns { port, close }.
    Run: node design/redesign/tools/stub-model-helpers.cjs <port> <data dir>/helpers-seed.json */
@@ -12,7 +12,7 @@ const http = require("node:http");
 const { readFileSync } = require("node:fs");
 
 const words = (m) => (typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? ""));
-const wait = Number(process.env.HELPERS_WAIT_MS ?? 90000);
+const wait = Number(process.env.HELPERS_WAIT_MS ?? 45000);
 
 function reply(input, seed) {
   const messages = input.messages ?? [], system = words(messages.find((m) => m.role === "system"));
