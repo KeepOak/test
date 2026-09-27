@@ -174,7 +174,7 @@ test("agreeing a plan in a Plan conversation lets it act, asking first", async (
 
 /* ---------------------------------------------------------------- the chip in the window */
 
-async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] })) {
+async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] }), route = null) {
   const { chromium } = await import("playwright");
   const { app, server, call } = await served(t, script);
   await call("/api/onboarding", { done: true });
@@ -183,6 +183,7 @@ async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  if (route) await route(page);
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -355,6 +356,25 @@ test("in the window, a new conversation on Ask first stops before its first writ
   await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
   assert.match(await f.page.locator("#live-ask").innerText(), /note\.txt/);
   assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
+  assert.deepEqual(f.errors, []);
+});
+
+/* The window reads what new conversations start on (GET /api/conversation-mode) after it draws; a first message sent
+   before that answer came started a conversation with no mode, which then followed the owner's No approvals. The read
+   is held back here so the message is sent first; the conversation must still start on Ask first. */
+test("in the window, a first message sent before the mode was read still starts on Ask first", async (t) => {
+  const f = await windowFixture(t, (turn, asked) => (asked.includes("note") && turn % 2 === 1
+    ? { content: "", toolCalls: [{ id: `w${turn}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] }
+    : { content: "Written.", toolCalls: [] }), (page) => page.route(/\/api\/conversation-mode(\?|$)/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await route.continue();
+  }));
+  await f.page.locator("#prompt").fill("write a note for me");
+  await f.page.locator("#send").click();
+  await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
+  assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "the conversation holds Ask first");
   assert.deepEqual(f.errors, []);
 });
 

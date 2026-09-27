@@ -348,7 +348,7 @@ async function sendPlain(prompt) {
   watchThinking(true);
   renderNow();
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : startMode()) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : await startMode()) });
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
