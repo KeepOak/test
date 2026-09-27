@@ -75,7 +75,7 @@ export function empty18(key, { off = false } = {}) {
   const [pose, line, btn, act, extra = "", held = false] = EMPTY18[key];
   const hold = held ? ' data-held="security" aria-disabled="true" disabled' : off ? ' aria-disabled="true" disabled' : "";
   const art = media17(`/art/branch-${pose}.webp`, sized(`/art/anim-${LOOP18[pose]}.webm`, look17("branch")?.sizes, 120), "gate17");
-  const why = off && !held ? reason(act) : ""; // its exact reason, as its tip and under it (core/why.js)
+  const why = off || held ? reason(act) : ""; // its exact reason, as its tip and under it (core/why.js)
   const tip = why ? ` data-tip="${esc(why)}"` : "", whyText = why ? ` data-why-text="${esc(why)}"` : "";
   return `<div class="empty18c"${whyText}>${art}<p>${t(line)}</p><button class="btn pri${held ? " held18" : ""}" type="button" data-act="${act}" ${extra}${hold}${tip}>${t(btn)}</button></div>`;
 }

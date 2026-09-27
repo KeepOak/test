@@ -1,5 +1,5 @@
 /* Counts the controls each page draws greyed with only the "Coming soon" hover (QA Q002), at the Technical level, on
-   every Settings page (each of Models' five tabs), Team › Rules, and every tab of Library, Automations and Customize.
+   every Settings page (each of Models' five tabs), Overview, and every tab of Inbox, Team, Library, Automations and Customize.
    A control greyed with its exact reason (core/why.js: the reason is its tip and is shown under its row) is counted apart
    as "explained"; one whose reason is only the stand-in "isn't wired to the engine … yet" is counted as "vague".
    Exits 1 while any "Coming soon" or vague reason is left. Run against a throwaway engine only:
@@ -17,7 +17,8 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const SETTINGS = ["general", "people", "appearance", "notifications", "instructions", "models", "accounts", "local", "voice", "chatapps",
   "permissions", "computer", "secrets", "usage", "gateway", "self", "updates", "achievements", "advanced", "developer"];
 const MODEL_TABS = ["defaults", "local", "second", "media"];
-const PLACES = [["team", ["rules"]], ["library", ["memory", "documents", "made"]],
+const PLACES = [["overview", ["main"]], ["inbox", ["needs", "finished", "history", "later"]],
+  ["team", ["live", "people", "groups", "shared", "agents", "activity", "usage", "rules", "signin"]], ["library", ["memory", "documents", "made"]],
   ["automations", ["scheduled", "procedures", "triggers", "checkins", "board"]],
   ["customize", ["trunks", "tools", "specialists", "channels", "everywhere"]]];
 
@@ -34,7 +35,7 @@ const count = (page) => page.evaluate((SOON) => {
   const root = document.querySelector(".set-col") ?? document.querySelector("#main");
   const out = { soon: [], vague: [], why: 0, hidden: 0, hiddenList: [] };
   for (const el of root.querySelectorAll('[aria-disabled="true"], .soon')) {
-    const row = el.matches(".pat15") ? el : el.closest(".ctl, .prow, .tile, .fld, .row, .cl-offer17d, .ko-banner, .comp7-card, .status") ?? el.closest(".acts, .chips8");
+    const row = el.matches(".pat15") ? el : el.closest(".ctl, .prow, .tile, .fld, .row, .cl-offer17d, .ko-banner, .comp7-card, .status, .empty18c") ?? el.closest(".acts, .chips8");
     const name = `${el.dataset.why || el.id || el.dataset.act || el.tagName.toLowerCase()} | ${(row?.querySelector("b")?.textContent || el.textContent || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 70)}`;
     if (el.dataset.tip && /isn.t wired to the engine/.test(el.dataset.tip)) { out.vague.push(name); continue; }
     if (el.dataset.tip && el.dataset.tip !== SOON) { out.why += 1; if (!row?.dataset.whyText && !el.closest(".chk")) { out.hidden += 1; out.hiddenList.push(name); } continue; }
