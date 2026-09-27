@@ -28,10 +28,15 @@ export function assertPrivateAddress(address: string): void {
     throw new Error("Branch only listens on a private Tailscale address, never on every network address.");
 }
 
-/** Closes one door and forgets it; a door already closed counts as closed. */
+/**
+ * Closes one door and forgets it; a door already closed counts as closed. Connections still open through it are cut
+ * too, so nothing keeps talking through a closed door and switching off never waits on a phone.
+ */
 function closeDoor(server: Server, opened: Set<Server>): Promise<void> {
   opened.delete(server);
-  return new Promise<void>((resolve) => server.close(() => resolve()));
+  const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+  server.closeAllConnections();
+  return closed;
 }
 
 export class RemoteAccess {

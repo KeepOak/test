@@ -10,6 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
+import http from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -140,4 +141,48 @@ test("under Lockdown the door is refused and a door already open is closed; swit
   assert.equal((await pending).body.enabled, false, "Lockdown turning on while Tailscale is asked keeps the door shut");
   await tick();
   assert.equal(openDoors(), 0);
+});
+
+/** A request straight to the phone door, as a phone on the private network sends it; `hold` sends the head only. */
+function viaDoor(port, method, path, headers, body, hold = false) {
+  const request = http.request({ host: "127.0.0.1", port, method, path,
+    headers: { host: `${TAILNET}:${port}`, ...headers, ...(body === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(body) }) } });
+  const answer = new Promise((resolve) => {
+    request.on("response", (response) => { let text = ""; response.on("data", (c) => { text += c; }); response.on("end", () => resolve(response.statusCode)); });
+    request.on("error", () => resolve("cut"));
+  });
+  if (hold) request.flushHeaders(); else request.end(body);
+  return { request, answer };
+}
+
+test("a phone let in through the door can neither switch it nor hold it open once the owner switches it off", async (t) => {
+  const probe = tailscale();
+  const { call } = await engine(t, probe);
+  const on = call("/api/deployment/remote", { enabled: true });
+  await probe.asked();
+  probe.answer();
+  assert.equal((await on).body.enabled, true);
+  const port = doors.find((server) => server.listening).address().port;
+  const invitation = (await call("/api/deployment/remote/invite", {})).body;
+  const pair = viaDoor(port, "POST", "/api/pair", {}, JSON.stringify({ id: new URL(invitation.url).searchParams.get("id"), code: invitation.code }));
+  let phone = "";
+  pair.request.on("response", (response) => response.on("data", (c) => { phone += c; }));
+  assert.equal(await pair.answer, 200);
+  const { token, deviceId, deviceKey } = JSON.parse(phone);
+  const key = { authorization: `Bearer ${token}`, "x-branch-device": deviceId, "x-branch-device-key": deviceKey };
+  assert.equal(await viaDoor(port, "GET", "/api/deployment", key).answer, 200, "the phone is let in");
+  assert.equal(await viaDoor(port, "POST", "/api/deployment/remote", key, JSON.stringify({ enabled: false })).answer, 403, "the phone cannot switch the door");
+
+  const held = viaDoor(port, "POST", "/api/deployment/remote", key, JSON.stringify({ enabled: true }), true);
+  await tick(100);
+  const off = await Promise.race([call("/api/deployment/remote", { enabled: false }), tick(3000).then(() => null)]);
+  assert.ok(off, "switching off answers while a phone still holds a connection");
+  assert.equal(off.body.enabled, false);
+  held.request.end(JSON.stringify({ enabled: true }));
+  assert.ok([403, "cut"].includes(await held.answer), "the held switch-on is refused or cut with the door");
+  await tick(100);
+  probe.answer();
+  await tick(100);
+  assert.equal(openDoors(), 0, "nothing reopened the door");
+  assert.equal((await call("/api/deployment")).body.remote.enabled, false);
 });

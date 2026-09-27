@@ -3813,6 +3813,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             send(response, 200, answer);
             return;
           }
+          // The phone door is switched on and off at this computer only: a phone it let in may not reopen or hold it.
+          if (viaRemote && path === "/api/deployment/remote")
+            throw new HttpError(403, "Reaching Branch from your phone is switched on and off on this computer only.");
           const result = await deploymentApi(app, request, path, deployment(), (r) => readBody(r), remoteHandler);
           if (result !== undefined) { send(response, 200, result); return; }
         }
