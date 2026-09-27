@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext } from 'playwright';
 
 /**
  * A recording of everything the browser did during one task, kept as a single file the owner can
@@ -17,23 +17,11 @@ import type { BrowserContext, Page } from 'playwright';
  */
 export const traceOptions = { screenshots: true, snapshots: false, sources: false } as const;
 
-/**
- * Empties every password box on the page. This is done before each step while a recording is being
- * made, because the recorder writes down a description of whatever a step points at — and that
- * description carries a password box's contents with it, blacked out on screen or not.
- *
- * It only ever runs while the owner has asked for a recording, and Branch never types into a
- * password box anyway, so nothing of its own is lost. Anything a website had already put in one is
- * cleared, which is said plainly on the settings card and in the documentation.
+/*
+ * While a recording is being made, every box page text leaves out (passwords and one-time codes) is emptied before each
+ * step, because the recorder writes down a description of whatever a step points at or reads, and that carries a box's
+ * contents with it, blacked out on screen or not (clearSecretValues, src/integrations/browser-page.ts).
  */
-export async function clearPasswordValues(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    for (const box of document.querySelectorAll('input[type="password" i]')) {
-      (box as HTMLInputElement).value = '';
-      box.removeAttribute('value');
-    }
-  }).catch(() => undefined);
-}
 
 /** One recording, while it is being made. */
 export interface BrowserRecording {
