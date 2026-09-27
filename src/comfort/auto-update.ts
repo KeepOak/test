@@ -89,7 +89,7 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
   const now = (facts.now ?? new Date()).getTime();
   const interval = settings.releaseChannel === "stable" ? checkEveryMs : betaCheckEveryMs;
   const due = lastCheckedAt === null || now - Date.parse(lastCheckedAt) >= interval;
-  /* Dev builds Branch on this computer from every merged change (dogfood F1, the owner's decision): with "update by
+  /* Beta builds Branch on this computer from every merged change (dogfood F1, the owner's decision): with "update by
      itself" on it is built and installed like any other update, once no task is working, so each fix is seen live. */
   const install = mode === "install";
   if (install && facts.updaterPhase === "available") {
@@ -104,8 +104,8 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
   // starts idle, so look again even if yesterday's check timestamp is still fresh.
   if (install && facts.updaterPhase === "idle")
     return plan("check", "Checking for an update that may have waited through the last restart.");
-  if (!due) return plan("nothing", settings.releaseChannel !== "stable"
-    ? `${settings.releaseChannel === "dev" ? "Dev" : "Beta"} updates were looked for less than five minutes ago.`
+  if (!due) return plan("nothing", settings.releaseChannel === "beta"
+    ? "Beta updates were looked for less than five minutes ago."
     : "Updates were looked for less than a day ago.");
   return plan("check", install ? "Looking for a newer version to install." : "Looking for a newer version to tell you about.");
 }

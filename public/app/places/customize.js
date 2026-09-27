@@ -8,7 +8,7 @@
 
 import { esc, renderNow, paint } from "../core/dom.js";
 import { S, E, refresh } from "../core/state.js";
-import { ic, av, toast } from "../core/ui.js";
+import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -57,7 +57,7 @@ function itemsOf(k) {
   if (k === "skills") return [learnItem(), ...(E.state?.skills ?? []).map((s) => ({ id: s.id, name: s.activeName || s.name, sub: s.description ?? "", on: s.activeVersion != null }))]; // pass 17 part D §3: learn-this first
   /* A plugin file as the engine lists it (GET /api/plugins {id, enabled, summary}); its summary is what the owner was
      shown when it was inspected, null before. */
-  if (k === "plugins") return plugins.map((p) => ({ id: p.id, name: p.summary?.name || p.id, sub: p.summary?.description ?? "", tools: (p.summary?.tools ?? []).map((x) => x.name ?? x), on: p.enabled === true }));
+  if (k === "plugins") return plugins.map((p) => ({ id: p.id, name: p.summary?.name || p.id, sub: p.summary?.description ?? "", tools: (p.summary?.tools ?? []).map((x) => x.name ?? x), on: p.enabled === true, shelf: !!p.fromShelf }));
   if (k === "agents") return agents.map((a) => ({ id: a.id, name: a.name, sub: a.description ?? a.cardUrl ?? "", skills: a.skills ?? [], on: true }));
   return [];
 }
@@ -110,12 +110,14 @@ function toolPerms(x) {
 }
 /* A server that would not start says why, in the engine's words; trying again and its log stay greyed. */
 const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="tool-retry">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
-/* Remove is live for skills, another assistant (POST /api/agents/remote/remove {agent}), and your own servers and
-   command-line tools (tool-rm). A launch-file server or a plugin has no removal this window checks, so theirs is drawn
-   disabled. Test it would start the server's
-   program without the approval gate, and no route checks a server or a tool for updates, so both stay greyed. */
+/* Remove is live for skills, for your own servers and command-line tools, for another agent you connected and for a
+   plugin installed as an add-on package; the last two ask first (tool-rm, then POST /api/agents/remote/remove or
+   POST /api/plugin-catalog/add-ons/remove). A launch-file server or tool is written in your own launch file, and a plugin
+   you put in the plugins folder yourself is your own file, so no route removes either: theirs is drawn greyed. Test it
+   would start the server's program without the approval gate, and no route checks a server or a tool for updates, so
+   both stay greyed. */
 function detailActs(k, x) {
-  const rmOff = k === "skills" || k === "agents" || x.own ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
+  const rmOff = k === "skills" || k === "agents" || x.own || x.shelf ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
   return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm${rmOff ? " soon" : ""}" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}"${rmOff}>${t("accounts.action.remove")}</button></div>`;
 }
@@ -263,9 +265,11 @@ const read = (path) => api(path).catch((error) => { if (!said.has(path)) { said.
    person may not read; their Tools tab draws from empty lists instead of asking. */
 const owners = (path) => (E.profiles?.isOwner === false ? Promise.resolve(null) : read(path));
 async function readTools() {
-  const [mcp, own, cl, plugs, ag, sug, rev, pol] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy")]);
+  const [mcp, own, cl, plugs, ag, sug, rev, pol, shelf] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy"), owners("plugin-catalog/add-ons")]);
+  // finish-soon-a: a plugin installed as an add-on package can be removed through the add-on shelf; one you put in the folder yourself cannot.
+  const fromShelf = new Set(listOf(shelf, "installed").filter((r) => r.plugin).map((r) => r.id));
   return { mcpServers: listOf(mcp, "servers"), ownServers: listOf(own, "servers"), clis: { programs: listOf(cl, "programs"), launch: listOf(cl, "launch") },
-    plugins: listOf(plugs, "plugins"), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules") };
+    plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules") };
 }
 /* The picked skill's SKILL.md, once. */
 async function readDoc() {
@@ -309,18 +313,28 @@ const REMOVE = {
   mcp: (id) => api(`mcp/servers/${encodeURIComponent(id)}/remove`, {}),
   clis: (id) => api("clis/remove", { name: id }),
   agents: (id) => api("agents/remote/remove", { agent: id }),
+  plugins: (id) => api("plugin-catalog/add-ons/remove", { id }),
 };
+/* Another agent and a plugin are asked about first. A plugin goes through the add-on shelf, which takes out only the files
+   it installed and leaves a plugin file changed since in the folder, saying so. */
+function confirmRemove(k, id) {
+  const name = itemsOf(k).find((x) => x.id === id)?.name ?? "";
+  openDlg({ title: t("studio.remove.title", { name }), body: "",
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn bad" type="button" data-act="tool-rm" data-k="${esc(k)}" data-id="${esc(id)}" data-sure="1">${t("accounts.action.remove")}</button>` });
+}
 async function removeTool(el) {
   const { k, id } = el.dataset;
+  if ((k === "agents" || k === "plugins") && !el.dataset.sure) return confirmRemove(k, id);
+  if (el.dataset.sure) closeDlg();
   try {
     if (!REMOVE[k]) return;
     const name = itemsOf(k).find((x) => x.id === id)?.name ?? "";
-    await REMOVE[k](id);
+    const done = await REMOVE[k](id);
     T9.sel = null;
     await refresh();
     await after();
     renderNow();
-    toast(t("window.places.customize.name-removed", { name }));
+    toast(done?.kept?.[0] ?? t("window.places.customize.name-removed", { name })); // a changed plugin file is left where it is, in the engine's words
   } catch (error) { toast(error.message); }
 }
 

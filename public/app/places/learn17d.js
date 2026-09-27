@@ -15,6 +15,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { ic, toast, openDlg, dialog } from "../core/ui.js";
 import { t, formatDate } from "../../i18n.js";
+import { art17Slot } from "../core/art17.js"; // the prototype's SPOTS17: the learn and workbook pictures
 
 export const LEARN_ID = "learn17d";
 const W = { mode: null, list: [], open: null, tab: "must", what: "", timer: null, waiting: new Map() };
@@ -29,7 +30,7 @@ const tally = (w) => { const n = (s) => w.must.filter((m) => m.status === s).len
 export const learnItem = () => ({ id: LEARN_ID, name: "learn-this", sub: k("learn-desc"), icon: "book17d" });
 
 /** The card at the top of the list whenever another skill is selected. */
-export const learnTile = () => `<div class="tile wb-tile17d"><div class="th"><span class="ico-tile">${ic("book17d", "s")}</span><b>${esc(k("learn-tile"))}</b></div><p>${esc(k("learn-tile-hint"))}</p><div class="acts"><button class="btn sm" type="button" data-act="t9-sel" data-v="${LEARN_ID}">${esc(t("prompts.action.try"))}</button></div></div>`;
+export const learnTile = () => `<div class="tile wb-tile17d has-art17e"><div class="th"><span class="ico-tile ico17e">${ic("book17d", "s")}</span>${art17Slot("art17-learn", false, "spot17e tile17e")}<b>${esc(k("learn-tile"))}</b></div><p>${esc(k("learn-tile-hint"))}</p><div class="acts"><button class="btn sm" type="button" data-act="t9-sel" data-v="${LEARN_ID}">${esc(t("prompts.action.try"))}</button></div></div>`;
 
 async function loadBooks() {
   if (E.profiles?.isOwner === false) return; // the owner's alone: the engine refuses anyone else
@@ -71,7 +72,7 @@ export function learnDetail() {
     const sub = w.status === "failed" ? w.error : `${w.source || w.name} · ${when(w.updatedAt)}`;
     return `<div class="prow wb-row17d"><span class="grow"><b>${esc(w.name)}</b><small>${esc(sub)}</small></span>${state}${w.status === "ready" ? `<button class="btn sm" type="button" data-act="wbopen17d" data-id="${esc(w.id)}">${esc(t("ov.open"))}</button>` : ""}</div>`;
   }).join("");
-  return `<div class="t9-detail wb17d"><div class="t9-dh"><span class="ico-tile t9i" data-css="width:40px;height:40px">${ic("book17d", "s")}</span><span class="grow"><b>learn-this</b><small>${esc(k("learn-built-in"))}</small></span><input type="checkbox" class="sw" id="wb-on17d" ${W.mode === "on" ? "checked" : ""} aria-label="${esc(k("learn-on-off"))}"></div>
+  return `<div class="t9-detail wb17d"><div class="t9-dh has-art17e"><span class="ico-tile t9i ico17e" data-css="width:40px;height:40px">${ic("book17d", "s")}</span>${art17Slot("art17-branch-workbook", false, "spot17e tile17e")}<span class="grow"><b>learn-this</b><small>${esc(k("learn-built-in"))}</small></span><input type="checkbox" class="sw" id="wb-on17d" ${W.mode === "on" ? "checked" : ""} aria-label="${esc(k("learn-on-off"))}"></div>
     <div class="sec"><h2>${esc(k("how-it-works"))}</h2><ol class="wb-how17d">${STAGES().map(([title, sub], i) => `<li><em>${i + 1}</em><span><b>${esc(title)}</b><small>${esc(sub)}</small></span></li>`).join("")}</ol><p class="hint">${esc(k("how-it-works-hint"))}</p></div>
     <div class="sec"><h2>${esc(k("learn-new"))}</h2><label class="fld"><span>${esc(k("learn-what"))}</span><input class="inp" id="wb-what17d" value="${esc(W.what)}" autocomplete="off"></label>
       <div class="fld"><span>${esc(k("learn-where"))}</span><span class="seg"><button type="button" data-act="wbwhere17d" data-v="private" aria-pressed="false">${esc(k("private-computer"))}</button><button type="button" aria-pressed="${browser}" disabled>${esc(k("sealed-browser"))}</button></span><small class="hint">${esc(k("never-run"))}</small></div>

@@ -21,8 +21,12 @@ export const RoutineSchema = z.object({
   dueAt: z.iso.datetime().optional(),
   intervalMs: z.number().int().min(60000).max(31536000000).optional(),
   dailyAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  /** finish-soon-a: with dailyAt, only these weekdays (0 Sunday to 6 Saturday), or this day of each month, as a schedule has. */
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+  monthDay: z.number().int().min(1).max(31).optional(),
   timezone: z.string().min(1).max(64).optional(),
-}).strict();
+}).strict().refine((value) => (!value.weekdays && !value.monthDay) || value.dailyAt, "Days of the week or of the month need a time of day")
+  .refine((value) => !(value.weekdays && value.monthDay), "Choose days of the week or a day of the month, not both");
 
 const linksKey = "trunk-routines";
 
@@ -31,7 +35,7 @@ const linksKey = "trunk-routines";
  * one interval from now — so saving one (or teaching one) never sets it going straight away.
  */
 function firstTurn(value: z.infer<typeof RoutineSchema>, now = new Date()): string {
-  if (value.dailyAt) return nextTurn({ dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC" }, now);
+  if (value.dailyAt) return nextTurn({ dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC", weekdays: value.weekdays, monthDay: value.monthDay }, now);
   return new Date(now.getTime() + (value.intervalMs ?? 60000)).toISOString();
 }
 interface Link { trunkId: string; name: string }
@@ -70,6 +74,8 @@ export class TrunkRoutines {
       dueAt: value.dueAt ?? firstTurn(value),
       ...(value.intervalMs ? { intervalMs: value.intervalMs } : {}),
       ...(value.dailyAt ? { dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC" } : {}),
+      ...(value.weekdays ? { weekdays: value.weekdays } : {}),
+      ...(value.monthDay ? { monthDay: value.monthDay } : {}),
     });
     this.saveLinks({ ...this.links(), [saved.id]: { trunkId, name: value.name } });
     return { id: saved.id, name: value.name };

@@ -41,6 +41,14 @@ export const DeviceRecordSchema = z.object({
   gatewayId: z.string().regex(/^[a-f0-9]{16}$/).nullable().default(null),
 }).strict();
 export type DeviceRecord = z.infer<typeof DeviceRecordSchema>;
+/** finish-soon-a: the glyphs the window draws a device with, and a colour as #rrggbb. */
+export const deviceGlyphs = ["laptop", "desktop", "server", "phone"] as const;
+export const DeviceLookSchema = z.object({
+  glyph: z.enum(deviceGlyphs).nullable().default(null),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "A colour is # and six hex digits").nullable().default(null),
+}).strict();
+export type DeviceLook = z.infer<typeof DeviceLookSchema>;
+const looksKey = "devices-looks";
 
 const RequestSchema = z.object({
   id: z.string().regex(/^[a-f0-9]{32}$/),
@@ -318,6 +326,21 @@ export class DeviceBook {
   rename(id: string, name: unknown): DeviceRecord {
     const next = z.string().trim().min(1).max(80).parse(name);
     return this.update(id, (device) => ({ ...device, name: next }));
+  }
+  /**
+   * finish-soon-a: how each device shows in the window (a glyph and a colour), kept in its own record by device id, so the
+   * strict device list is never widened and an older Branch reading it keeps every paired device.
+   */
+  looks(): Record<string, DeviceLook> {
+    const saved = z.record(z.string(), DeviceLookSchema).safeParse(this.store.get("settings", this.owner, looksKey)?.data ?? {});
+    const kept = new Set(this.devices().map((device) => device.id));
+    return saved.success ? Object.fromEntries(Object.entries(saved.data).filter(([id]) => kept.has(id))) : {};
+  }
+  setLook(id: string, input: unknown): DeviceLook {
+    if (!this.device(id)) throw new Error("That device is not on the list.");
+    const look = DeviceLookSchema.parse({ ...this.looks()[id], ...(input as object) });
+    this.store.save("settings", this.owner, looksKey, { ...this.looks(), [id]: look });
+    return look;
   }
   /** What the device says it can do now, kept to what its platform can. Switches never widen here. */
   noteOffers(id: string, offers: readonly Capability[]): void {

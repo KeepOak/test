@@ -314,7 +314,7 @@ export class TrunkRooms {
     const room = this.append(id, { kind: "user", text, ...(person ? { personId: person.id, personName: person.name } : {}),
       ...(startedWithShortLivedKey() ? { byKey: shortLivedKeyMark() } : {}) }); // phase2/rooms
     this.put({ ...room, needsYou: this.waiting(id).length > 0 });
-    this.deps.store.message(room.sessionId, { role: "user", content: text });
+    this.deps.store.message(room.sessionId, { role: "user", content: text, ...(person ? { person: { id: person.id, name: person.name } } : {}) });
     this.kick(id);
     return { seq: room.seq };
   }

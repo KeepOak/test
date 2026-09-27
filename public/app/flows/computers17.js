@@ -15,6 +15,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { ic, av, toast, openPop, closePop, mi, radio } from "../core/ui.js";
 import { t } from "../../i18n.js";
+import { art17Slot } from "../core/art17.js"; // the prototype's SPOTS17: the cloud picture in the offer
 
 const DESKTOP = ["win32", "darwin", "linux"];
 const PLATFORM = { win32: "Windows", darwin: "macOS", linux: "Linux" };
@@ -89,7 +90,7 @@ export function itsTab(id) {
 /* The cloud offer: a cloud computer is made and billed by an outside provider Branch has no account with, so Set one up
    stays greyed (cloudnew17d has no handler). */
 function cloudOffer(title, sub, id = "") {
-  return `<div class="cl-offer17d" role="note"><span class="ico-tile">${ic("cloud17d", "s")}</span><span class="grow"><b>${title}</b><small>${sub}</small></span><button class="btn sm" type="button" data-act="cloudnew17d"${id ? ` data-id="${esc(id)}"` : ""}>${t("window.places.automations17.set-one-up")}</button></div>`;
+  return `<div class="cl-offer17d has-art17e" role="note"><span class="ico-tile ico17e">${ic("cloud17d", "s")}</span>${art17Slot("art17-cloud", false, "spot17e tile17e")}<span class="grow"><b>${title}</b><small>${sub}</small></span><button class="btn sm" type="button" data-act="cloudnew17d"${id ? ` data-id="${esc(id)}"` : ""}>${t("window.places.automations17.set-one-up")}</button></div>`;
 }
 /** Settings › Computer, above Add a computer, while no cloud computer exists (none can, in this build). */
 export const settingsCloudOffer = () => cloudOffer(t("window.p17d.cloud-offer"), t("window.p17d.cloud-offer-hint"));

@@ -74,52 +74,48 @@ test("version comparison handles tags, prefixes and uneven lengths", () => {
 const beforeTheMove = (fake) => async (url, ...rest) => String(url).includes("/repos/KeepOak/Branch-Agent/")
   ? { ok: false, status: 404, json: async () => ({ message: "Not Found" }) } : fake(url, ...rest);
 
-test("beta sees newest published prerelease, stable ignores it, and switching back never downgrades", async () => {
+/* Two channels: Stable reads GitHub's newest final release; Beta builds every merged change (tests/dev-channel.test.mjs)
+   and is never downloaded. A Beta build of 0.19.2's line is 0.19.3-dev.<time>-g<change> (src/desktop/dev-build.ts), so
+   switching back to Stable waits for a newer Stable instead of installing an older version. */
+test("Stable takes only final releases, and switching from Beta back never installs an older version", async () => {
   const asset = (tag) => [
     { name: "Branch-Agent-windows-x64.zip", browser_download_url: `https://github.com/stabrea/Branch-Agent/releases/download/${tag}/Branch-Agent-windows-x64.zip`, size: 100 },
     { name: "Branch-Agent-windows-x64.zip.sha256", browser_download_url: `https://github.com/stabrea/Branch-Agent/releases/download/${tag}/Branch-Agent-windows-x64.zip.sha256`, size: 96 },
   ];
-  const release = (tag, prerelease) => ({ tag_name: tag, name: tag, body: "", published_at: "2026-09-23T00:00:00Z",
+  const release = (tag, prerelease = false) => ({ tag_name: tag, name: tag, body: "", published_at: "2026-09-23T00:00:00Z",
     html_url: `https://github.com/stabrea/Branch-Agent/releases/tag/${tag}`, prerelease, draft: false, assets: asset(tag) });
-  const stable = release("v0.19.1", false);
-  const beta9 = release("v0.19.2-beta.9", true);
-  const beta10 = release("v0.19.2-beta.10", true);
-  const call = async (url) => ({ ok: true, status: 200, json: async () => url.endsWith("/latest") ? stable :
-    [beta9, { ...release("v0.19.2-beta.11", true), draft: true }, beta10, stable] });
-  const updater = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.1", channel: "stable",
+  const asked = [];
+  const make = (currentVersion, latest, channel = "stable") => new Updater({ repo: "stabrea/Branch-Agent", currentVersion, channel,
     installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
-    scratchDir: "C:/scratch", fetch: beforeTheMove(call) });
-  assert.equal((await updater.check()).phase, "current");
-  updater.setChannel("beta");
-  assert.equal((await updater.check()).release.latestVersion, "0.19.2-beta.10");
-  const onBeta = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.2-beta.10", channel: "beta",
-    installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
-    scratchDir: "C:/scratch", fetch: beforeTheMove(call) });
-  assert.equal((await onBeta.check()).phase, "current");
-  onBeta.setChannel("stable");
-  assert.equal((await onBeta.check()).phase, "current", "returning to stable does not install the older version");
-  const final = release("v0.19.2", false);
-  const finalAhead = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.2-beta.10", channel: "beta",
-    installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
-    scratchDir: "C:/scratch", fetch: beforeTheMove(async () => ({ ok: true, status: 200, json: async () => [beta10, final, stable] })) });
-  assert.equal((await finalAhead.check()).release.latestVersion, "0.19.2", "the final stable release outranks its betas");
+    scratchDir: "C:/scratch", fetch: beforeTheMove(async (url) => { asked.push(String(url)); return { ok: true, status: 200, json: async () => latest }; }) });
+  assert.equal((await make("0.19.1", release("v0.19.2")).check()).phase, "available", "control: a newer Stable is offered");
+  assert.ok(asked.every((url) => url.endsWith("/releases/latest")), "Stable asks for the newest final release only");
+  const pre = await make("0.19.1", release("v0.19.3-beta.2", true)).check();
+  assert.equal(pre.phase, "error");
+  assert.match(pre.message, /not a published final release/);
+  const betaBuild = "0.19.3-dev.1758600000-gaaaaaaaaaaaa";
+  const back = make(betaBuild, release("v0.19.2"), "beta");
+  back.setChannel("stable");
+  const waits = await back.check();
+  assert.equal(waits.phase, "current", "returning to Stable does not install the older version");
+  assert.equal(waits.release.available, false);
+  assert.equal((await make(betaBuild, release("v0.19.3")).check()).phase, "available", "the next Stable release is newer than the Beta build");
 });
 
 /* After the move KeepOak answers with releases of its own: each check asks it once, takes the release from it, and
-   says so; a Beta whose files live under the new name belongs to it. When neither name has a release, it says so. */
-test("after the move each channel reads KeepOak once and takes the release from it", async () => {
+   says so. When neither name has a release, it says so. */
+test("after the move Stable reads KeepOak once and takes the release from it", async () => {
   const at = "https://github.com/KeepOak/Branch-Agent/releases";
-  const release = (tag, prerelease) => ({ tag_name: tag, name: tag, body: "", published_at: "2026-09-24T00:00:00Z",
-    html_url: `${at}/tag/${tag}`, prerelease, draft: false, assets: [
+  const release = (tag) => ({ tag_name: tag, name: tag, body: "", published_at: "2026-09-24T00:00:00Z",
+    html_url: `${at}/tag/${tag}`, prerelease: false, draft: false, assets: [
       { name: "Branch-Agent-windows-x64.zip", browser_download_url: `${at}/download/${tag}/Branch-Agent-windows-x64.zip`, size: 100 },
       { name: "Branch-Agent-windows-x64.zip.sha256", browser_download_url: `${at}/download/${tag}/Branch-Agent-windows-x64.zip.sha256`, size: 96 },
     ] });
-  const stable = release("v0.20.0", false), beta = release("v0.20.1-beta.1", true);
   const asked = [];
   const fetch = async (url) => {
     asked.push(String(url));
     if (!String(url).includes("/repos/KeepOak/Branch-Agent/")) return { ok: false, status: 500, json: async () => ({}) };
-    return { ok: true, status: 200, json: async () => String(url).endsWith("/latest") ? stable : [beta, stable] };
+    return { ok: true, status: 200, json: async () => release("v0.20.0") };
   };
   const updater = new Updater({ repo: "KeepOak/Branch-Agent", currentVersion: "0.19.1", channel: "stable",
     installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
@@ -129,80 +125,43 @@ test("after the move each channel reads KeepOak once and takes the release from 
   assert.equal(onStable.release.latestVersion, "0.20.0");
   assert.equal(onStable.release.sourceRepo, "KeepOak/Branch-Agent");
   assert.deepEqual(asked, ["https://api.github.com/repos/KeepOak/Branch-Agent/releases/latest"], "one question, to the new name");
-  asked.length = 0;
-  updater.setChannel("beta");
-  const onBeta = await updater.check();
-  assert.equal(onBeta.phase, "available", onBeta.message);
-  assert.equal(onBeta.release.latestVersion, "0.20.1-beta.1");
-  assert.equal(onBeta.release.sourceRepo, "KeepOak/Branch-Agent");
-  assert.equal(asked.length, 1, asked.join(" "));
-  assert.match(asked[0], /^https:\/\/api\.github\.com\/repos\/KeepOak\/Branch-Agent\/releases\?/);
 });
 
 test("when neither name has a release yet, the check says so rather than guessing", async () => {
-  for (const channel of ["stable", "beta"]) {
-    const updater = new Updater({ repo: "KeepOak/Branch-Agent", currentVersion: "0.19.1", channel,
-      installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
-      scratchDir: "C:/scratch", fetch: async () => ({ ok: false, status: 404, json: async () => ({ message: "Not Found" }) }) });
-    const status = await updater.check();
-    assert.equal(status.phase, "error", channel);
-    assert.match(status.message, /No release has been published yet\./, channel);
-  }
+  const updater = new Updater({ repo: "KeepOak/Branch-Agent", currentVersion: "0.19.1", channel: "stable",
+    installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
+    scratchDir: "C:/scratch", fetch: async () => ({ ok: false, status: 404, json: async () => ({ message: "Not Found" }) }) });
+  const status = await updater.check();
+  assert.equal(status.phase, "error");
+  assert.match(status.message, /No release has been published yet\./);
 });
 
-/* Q37: measured on v0.19.3-beta.2, minutes after publication GitHub's release list showed no assets while the
-   release's own assets list had all nine; the installed Beta check then said the download was missing. */
-test("a newest release whose listed assets lag is read from its own assets list, or skipped", async () => {
+/* Q37: measured minutes after publication, GitHub's release answer showed no assets while the release's own assets
+   list had all nine; the installed check then said the download was missing. */
+test("a newest release whose listed assets lag is read from its own assets list", async () => {
   const repo = "stabrea/Branch-Agent", name = "Branch-Agent-windows-x64.zip";
   const files = (tag) => [
     { name, browser_download_url: `https://github.com/${repo}/releases/download/${tag}/${name}`, size: 100 },
     { name: `${name}.sha256`, browser_download_url: `https://github.com/${repo}/releases/download/${tag}/${name}.sha256`, size: 96 },
   ];
-  const release = (id, tag, prerelease, assets) => ({ id, tag_name: tag, name: tag, body: "", published_at: "2026-09-23T09:42:16Z",
-    html_url: `https://github.com/${repo}/releases/tag/${tag}`, prerelease, draft: false, assets });
   const asked = [];
-  const make = (channel, own, current = "0.19.2") => new Updater({ repo, currentVersion: current, channel,
+  const make = (own) => new Updater({ repo, currentVersion: "0.19.1", channel: "stable",
     installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: name, scratchDir: "C:/scratch",
     fetch: beforeTheMove(async (url) => {
       asked.push(url.replace(`https://api.github.com/repos/${repo}/`, ""));
       const assets = /releases\/(\d+)\/assets/.exec(url);
       if (assets) return { ok: true, status: 200, json: async () => own[assets[1]] ?? [] };
-      if (url.endsWith("/latest")) return { ok: true, status: 200, json: async () => release(2, "v0.19.2", false, []) };
-      return { ok: true, status: 200, json: async () => [release(3, "v0.19.3-beta.2", true, []), release(2, "v0.19.2", false, files("v0.19.2"))] };
+      return { ok: true, status: 200, json: async () => ({ id: 2, tag_name: "v0.19.2", name: "v0.19.2", body: "", published_at: "2026-09-23T09:42:16Z",
+        html_url: `https://github.com/${repo}/releases/tag/v0.19.2`, prerelease: false, draft: false, assets: [] }) };
     }) });
-  /* The list lags, the release's own list is current: the Beta is found, with its own files. */
-  const found = await make("beta", { 3: files("v0.19.3-beta.2") }).check();
+  const found = await make({ 2: files("v0.19.2") }).check();
   assert.equal(found.phase, "available", found.message);
-  assert.equal(found.release.latestVersion, "0.19.3-beta.2");
-  assert.equal(found.release.assetUrl, `https://github.com/${repo}/releases/download/v0.19.3-beta.2/${name}`);
-  assert.deepEqual(asked, ["releases?per_page=100", "releases/3/assets?per_page=100"]);
-  /* Still nothing there: the next valid release answers instead of an error, and says you are current. */
-  asked.length = 0;
-  const skipped = await make("beta", {}).check();
-  assert.equal(skipped.phase, "current", skipped.message);
-  assert.deepEqual(asked, ["releases?per_page=100", "releases/3/assets?per_page=100"], "the complete release needs no second look");
-  /* Stable reads its own assets list too when /latest lags. */
-  const stable = await make("stable", { 2: files("v0.19.2") }, "0.19.1").check();
-  assert.equal(stable.phase, "available", stable.message);
-  assert.equal(stable.release.latestVersion, "0.19.2");
-  /* The fresh list is held to the same rule: files from another release are still refused. */
-  const foreign = await make("beta", { 3: files("v0.19.1") }).check();
-  assert.equal(foreign.phase, "error");
-  assert.match(foreign.message, /does not belong/);
-});
-
-test("beta refuses an asset URL outside the selected repo and tag", async () => {
-  const release = { tag_name: "v0.19.2-beta.1", prerelease: true, draft: false,
-    html_url: "https://github.com/stabrea/Branch-Agent/releases/tag/v0.19.2-beta.1", assets: [
-      { name: "Branch-Agent-windows-x64.zip", browser_download_url: "https://github.com/elsewhere/fork/releases/download/v0.19.2-beta.1/Branch-Agent-windows-x64.zip", size: 100 },
-      { name: "Branch-Agent-windows-x64.zip.sha256", browser_download_url: "https://github.com/elsewhere/fork/releases/download/v0.19.2-beta.1/Branch-Agent-windows-x64.zip.sha256", size: 96 },
-    ] };
-  const updater = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.1", channel: "beta",
-    installDir: "C:/installed", executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
-    scratchDir: "C:/scratch", fetch: async () => ({ ok: true, status: 200, json: async () => [release] }) });
-  const status = await updater.check();
-  assert.equal(status.phase, "error");
-  assert.match(status.message, /does not belong/);
+  assert.equal(found.release.latestVersion, "0.19.2");
+  assert.equal(found.release.assetUrl, `https://github.com/${repo}/releases/download/v0.19.2/${name}`);
+  assert.deepEqual(asked, ["releases/latest", "releases/2/assets?per_page=100"]);
+  const missing = await make({}).check();
+  assert.equal(missing.phase, "error");
+  assert.match(missing.message, /missing its .* download or checksum/);
 });
 
 test("switching channels discards a check that was still in flight", async () => {
@@ -394,7 +353,8 @@ test("an install held for its hand-over refuses a second one until it is release
 test("the Update button holds the claim through the hand-over and gives it back only on failure", async () => {
   const ipc = await readFile(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
   const handler = ipc.slice(ipc.indexOf('ipcMain.handle("branch:update-install"'), ipc.indexOf('ipcMain.handle("branch:open-external"'));
-  assert.match(handler, /updater\.install\(\{ hold: true \}\)/, "the handler asks for the claim to be held");
+  // A confirmed move to another Dev line of work is passed beside it (src/desktop/update-readiness.ts confirmedChange).
+  assert.match(handler, /updater\.install\(\{ hold: true(?: \}|, \.\.\.\(confirmed \? \{ confirm: confirmed \} : \{\}\) \})\)/, "the handler asks for the claim to be held");
   const failure = handler.slice(handler.indexOf("} catch (error) {"));
   // Q55: `failed` gives the claim back and says what is still installed (tests/update-outcome.test.mjs).
   assert.match(failure, /^\} catch \(error\) \{\s*(?:\/\/[^\n]*\n\s*)*updater\.failed\([^;]*\);\s*throw error;/, "a hand-over that fails gives it back");

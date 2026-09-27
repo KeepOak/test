@@ -12,7 +12,7 @@ import { usageGlance } from "./usage-limits-api.js";
  * read from the same records the window reads and only for the owner; a household profile or a
  * short-lived key gets neither. Nothing here draws or writes anything.
  */
-export interface RailItem { kind: "computer" | "phone" | "trunk"; name: string; detail: string; on: boolean }
+export interface RailItem { kind: "computer" | "phone" | "trunk"; name: string; detail: string; on: boolean; sessionId?: string }
 export interface UsageBar { name: string; percentLeft: number; note: string }
 
 interface DeviceLike { name: string; platform: string; lastSeen: string | null }
@@ -42,7 +42,7 @@ export function railItems(app: EverywhereApp, words: Words, sessionId?: string, 
   const shown = trunks && trunks.mode("trunks") !== "off" ? trunks.records.list().filter((trunk) => !trunk.hidden) : [];
   const faces = shown.map((trunk): RailItem => ({
     kind: "trunk", name: clip(trunk.name, 40), detail: trunk.title ? clip(trunk.title, 60) : `@${trunk.handle}`,
-    on: !!sessionId && trunk.chatSessionId === sessionId,
+    on: !!sessionId && trunk.chatSessionId === sessionId, sessionId: trunk.chatSessionId,
   }));
   here.on = !faces.some((face) => face.on);
   return [here, ...devices, ...faces];

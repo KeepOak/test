@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { Trunks } from "./index.js";
 import { characters } from "./characters.js";
+import { startedWithShortLivedKey } from "../key-context.js";
+import { currentPerson } from "../people/context.js";
 import { TrunkOffError, TrunkPartSchema, trunkLabels, trunkParts } from "./settings.js";
 
 /**
@@ -165,7 +167,10 @@ async function roomRoute(deps: TrunksHttpDeps, id: string, action: string | unde
   trunks.require("rooms");
   rooms.requireAccess(id, deps.person?.id ?? null);
   if (!action && !post) {
-    const view = rooms.view(id, { profileId: deps.person?.id ?? null }); // chatlook: reading it counts as being here
+    // chatlook: reading it counts as being here, for whoever is at a window: the app's, or a person's own key. A
+    // script's short-lived key reads the room without putting anyone in it.
+    const atWindow = !startedWithShortLivedKey() || currentPerson() !== null;
+    const view = rooms.view(id, atWindow ? { profileId: deps.person?.id ?? null } : undefined);
     return deps.person ? householdRoomView(view) : { ...view, owner: true };
   }
   if (action === "send" && post) return rooms.send(id, await deps.readBody(), deps.person);

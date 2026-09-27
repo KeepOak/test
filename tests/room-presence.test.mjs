@@ -14,9 +14,9 @@ async function served(t) {
   const { startServer } = await import("../dist/server.js");
   const server = await startServer(made.app, { dataDir: join(made.root, "data"), port: 0, host: "127.0.0.1" });
   closeServer = () => server.close();
-  const call = async (path, body) => {
+  const call = async (path, body, key = server.token) => {
     const response = await fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST",
-      headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      headers: { authorization: `Bearer ${key}`, origin: server.url, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, body: await response.json() };
   };
   return { ...made, call };
@@ -99,4 +99,32 @@ test("typing and being here end by themselves, and a person taken out of the roo
   rooms.edit(a.id, { people: [] });
   const after = rooms.presenceFor(room(), null);
   assert.deepEqual([after.typing, after.here], [[], []], "a person no longer admitted is dropped");
+});
+
+test("only who is at the window counts: a script's key is nobody here, and a person's key reaches no room", async (t) => {
+  const { app, call, sam, lee, a, b, as } = await twoRooms(t);
+  for (const scope of ["read", "run"]) {
+    as(null);
+    const made = await call("/api/tokens", { name: `script-${scope}`, scope, minutes: 5 });
+    assert.equal(made.status, 200, JSON.stringify(made.body));
+    const key = made.body.token ?? made.body.key;
+    assert.equal((await call(`/api/trunks/rooms/${a.id}/typing`, {}, key)).status, 401, `${scope}: a script's key never types`);
+    assert.equal((await call(`/api/trunks/rooms/${a.id}`, undefined, key)).status, 200, `${scope}: it may still read the room`);
+    as(sam); // the window switched to Sam: a script reading the room is still not Sam at it
+    assert.equal((await call(`/api/trunks/rooms/${a.id}`, undefined, key)).status, 200);
+  }
+  const seats = app.trunks.rooms.presenceFor(app.trunks.rooms.get(a.id), null);
+  assert.deepEqual([seats.typing, seats.here], [[], []], "a script's key marks nobody here or typing");
+
+  as(null);
+  assert.equal((await call("/api/people/settings", { mode: "on" })).status, 200);
+  const samKey = app.people.keys.issue(sam.id, 60, "pin", "test").key;
+  as(lee); // a person's own key reaches only their own page: it can neither type nor be here, as Sam or anyone
+  assert.equal((await call(`/api/trunks/rooms/${a.id}/typing`, {}, samKey)).status, 401);
+  assert.equal((await call(`/api/trunks/rooms/${b.id}/typing`, { profileId: lee.id }, samKey)).status, 401);
+  assert.equal((await call(`/api/trunks/rooms/${a.id}`, undefined, samKey)).status, 401);
+  for (const room of [a, b]) {
+    const left = app.trunks.rooms.presenceFor(app.trunks.rooms.get(room.id), null);
+    assert.deepEqual([left.typing, left.here], [[], []], "no key marks anyone");
+  }
 });

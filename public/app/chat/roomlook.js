@@ -22,9 +22,9 @@ import { text } from "./markdown.js";
 import { msgActs, pinnedClass } from "./messages.js";
 import { outClass, outBadge } from "./leaveout.js";
 import { flagBadge } from "./flag.js";
-import { roomView, readRoom, replyWords } from "./rooms.js";
+import { roomView, readRoom, replyWords, authorOf } from "./rooms.js";
 
-const L = { info: null, sid: null, sign: "", sentAt: 0, timer: 0, reading: false };
+const L = { info: null, sid: null, sign: "", sentAt: 0, timer: 0, reading: false, reread: async () => [] };
 const me = () => E.profiles?.active?.id ?? null;
 /* The room is the conversation on screen now: only then does the box speak for it, or the room get read again. */
 const onScreen = () => !!L.info?.room && S.view === "chat" && !!S.chat && E.rooms.find((r) => r.id === L.info.room.id)?.sessionId === S.chat;
@@ -65,16 +65,44 @@ const trunkFace = (tr, size, sid, needs) => (needs ? `<span class="nd18">${av(tr
 const mention = (s) => esc(s).replace(/@([a-z0-9][\w-]*)/gi, '<span class="mention">@$1</span>');
 
 /* ---------- matching the transcript to the room's record ---------- */
+/* The room keeps only its newest events (src/trunks/rooms.ts maxKeptEvents), while its conversation keeps every message:
+   they are lined up from the newest back, so each message finds its own event and nothing older is lost. */
+const said = (m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !m.system && !m.toolCalls?.length;
 function matchMessages(events, messages, info) {
-  const byEvent = new Map();
-  let at = 0;
-  for (const m of messages) {
-    if (m.role !== "user" && m.role !== "assistant") continue;
+  const byEvent = new Map(), byMessage = new Map();
+  let at = events.length - 1;
+  for (const m of [...messages].reverse()) {
+    if (!said(m)) continue;
     const kind = m.role === "user" ? "user" : "member", words = m.role === "user" ? m.content : replyWords(m, info);
-    const i = events.findIndex((e, n) => n >= at && e.kind === kind && e.text === words);
-    if (i >= 0) { byEvent.set(events[i], m); at = i + 1; }
+    let i = at;
+    while (i >= 0 && !(events[i].kind === kind && events[i].text === words)) i--;
+    if (i >= 0) { byEvent.set(events[i], m); byMessage.set(m, events[i]); at = i - 1; }
   }
-  return byEvent;
+  return { byEvent, byMessage };
+}
+/* A message the room's record no longer holds, read from the conversation itself: who wrote it comes from the message
+   (a person's own mark, or the Trunk's @name at the start of a reply). */
+function fromMessage(m, info) {
+  if (m.role === "user") return { kind: "user", text: m.content, at: m.at, ...(m.person ? { personId: m.person.id, personName: m.person.name } : {}) };
+  return { kind: "member", text: replyWords(m, info), at: m.at, memberId: authorOf(m, 0, info)?.id };
+}
+/* Everything in order: the conversation's messages, with the room's own outcomes (passes, stops, failures) and any event
+   the conversation lacks drawn where they happened. */
+function merged(events, messages, info) {
+  const { byEvent, byMessage } = matchMessages(events, messages, info);
+  const items = [];
+  let next = 0;
+  for (const m of messages) {
+    if (!said(m)) continue;
+    const e = byMessage.get(m);
+    if (!e) { items.push({ e: fromMessage(m, info), m }); continue; }
+    const i = events.indexOf(e);
+    for (; next < i; next++) items.push({ e: events[next], m: byEvent.get(events[next]) });
+    items.push({ e, m });
+    next = i + 1;
+  }
+  for (; next < events.length; next++) items.push({ e: events[next], m: byEvent.get(events[next]) });
+  return items;
 }
 
 /* ---------- Trunks talking it through ---------- */
@@ -92,17 +120,20 @@ function talks(events, view) {
     if (!later.length) continue;
     const opener = said.filter((e) => e.round === 0 && e.seq < later[0].seq).at(-1);
     const lines = [opener, ...later].filter(Boolean);
-    if (lines.length < 2) continue;
+    // A card names at least two Trunks; otherwise every reply stays in the thread on its own.
+    if (new Set(lines.map((e) => trunkOf(view, e.memberId)?.name).filter(Boolean)).size < 2) continue;
     cards.set(lines[0], lines);
     for (const e of lines.slice(1)) inside.add(e);
   }
   return { cards, inside };
 }
-function card(view, lines, sid) {
+function card(view, lines, sid, byEvent) {
   const names = [...new Set(lines.map((e) => trunkOf(view, e.memberId)?.name).filter(Boolean))];
-  if (names.length < 2) return null;
   const words = t("window.chat.a2a.talked", { a: names.slice(0, -1).join(", "), b: names.at(-1), count: lines.length });
-  const rows = lines.map((e) => { const tr = trunkOf(view, e.memberId); return `<div class="a2a-l">${av(tr, 22, sid)}<span><b>${esc(tr?.name ?? "")}</b> ${mention(e.text)}</span></div>`; }).join("");
+  const rows = lines.map((e) => {
+    const tr = trunkOf(view, e.memberId), m = byEvent.get(e);
+    return `<div class="a2a-l${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}>${av(tr, 22, sid)}<span><b>${esc(tr?.name ?? "")}</b> ${mention(e.text)}</span>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
+  }).join("");
   return `<div class="b"><div class="gut"></div><div><details class="a2a10" open><summary>${ic("branch", "s")}${esc(words)}</summary>${rows}</details></div></div>`;
 }
 
@@ -141,18 +172,18 @@ export function roomThread(info, messages, sid) {
   const view = roomView(info);
   if (!view) return null;
   const events = [...(view.events ?? [])].sort((a, b) => a.seq - b.seq);
-  const byEvent = matchMessages(events, messages, info), { cards, inside } = talks(events, view), needs = needing(view);
+  const items = merged(events, messages, info), byEvent = new Map(items.map(({ e, m }) => [e, m]));
+  const { cards, inside } = talks(events, view), needs = needing(view);
   const here = new Set((view.here ?? []).map((p) => p.id));
   let prev = null, lastWho = null;
   const out = [];
-  for (const e of events) {
+  for (const { e, m } of items) {
     if (inside.has(e)) continue;
-    const drawn = cards.has(e) ? card(view, cards.get(e), sid) : null;
     out.push(stamp(e, prev));
     prev = e;
-    if (drawn) { out.push(drawn); lastWho = null; continue; }
-    if (e.kind === "user") { out.push(userRow(view, e, byEvent.get(e), here, sid)); lastWho = null; }
-    else if (e.kind === "member" || (e.kind === "waiting" && e.text)) { out.push(memberRow(view, e, byEvent.get(e), sid, needs, lastWho !== e.memberId)); lastWho = e.memberId; }
+    if (cards.has(e)) { out.push(card(view, cards.get(e), sid, byEvent)); lastWho = null; continue; }
+    if (e.kind === "user") { out.push(userRow(view, e, m, here, sid)); lastWho = null; }
+    else if (e.kind === "member" || (e.kind === "waiting" && e.text)) { out.push(memberRow(view, e, m, sid, needs, lastWho !== e.memberId)); lastWho = e.memberId; }
     else if (e.kind === "pass") out.push(passRow(view, e));
     else if ((e.kind === "failed" || e.kind === "stopped") && e.text) out.push(`<div class="pass10">${esc(e.text)}</div>`);
   }
@@ -181,16 +212,19 @@ async function look() {
   if (!onScreen() || L.reading || document.visibilityState !== "visible") return;
   L.reading = true;
   try {
-    const view = await readRoom(L.info);
-    const sign = JSON.stringify([view?.typing, view?.here, view?.seq, view?.waiting?.length, view?.outside?.map((a) => a.online)]);
+    const [view, messages] = await Promise.all([readRoom(L.info), L.reread()]);
+    const sign = JSON.stringify([view?.typing, view?.here, view?.seq, view?.waiting?.length, messages?.length, messages?.at(-1)?.messageId,
+      view?.outside?.map((a) => a.online)]);
     if (view && sign !== L.sign) { L.sign = sign; render(); }
   } finally { L.reading = false; }
 }
 
-/** The conversation open now (chat.js): a room is watched while it is open, anything else is not. */
-export function watchRoom(info) {
+/** The conversation open now (chat.js): a room is watched while it is open, anything else is not. `reread` reads the
+    room's conversation again (so a new reply comes with its message tools) and answers its messages. */
+export function watchRoom(info, reread) {
   const room = info?.kind === "room" && info.room ? info : null;
   L.info = room;
+  if (reread) L.reread = reread;
   if (room && !L.timer) L.timer = setInterval(look, 3000);
   if (!room && L.timer) { clearInterval(L.timer); L.timer = 0; L.sign = ""; }
 }
