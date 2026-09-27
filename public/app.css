@@ -3967,6 +3967,7 @@ p.ic-t,div.ic-t{display:flex}
   .app.set18c .main{position:static}
   .app.set18c #main>.settings{grid-template-columns:minmax(0,1fr);height:calc(100% - var(--tb-h,52px))}
   .app.set18c .settings>.set-nav{position:absolute;left:0;top:var(--tb-h,52px);bottom:0;z-index:2;width:max(var(--side-w,292px),232px);box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:12px 8px;border:0;background:transparent;overflow:auto}
+  .app.set18c .settings .set-level{grid-template-columns:minmax(0,1fr)}
   .app.set18c.side-hidden .settings>.set-nav,.app.set18c.rail9 .settings>.set-nav{background:var(--side);border-right:1px solid var(--line)}
   .app.set18c.side-hidden .set-page,.app.set18c.rail9 .set-page{padding-left:max(0px,calc(232px - var(--side-w,0px)))}
 }
