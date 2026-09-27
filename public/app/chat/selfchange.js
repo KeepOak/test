@@ -76,6 +76,8 @@ async function answer(route) {
   try {
     const done = await api(route, {});
     if (done.note) toast(done.note);
+    /* Hook (PARITY.md setup-delight-031, B4's leaf bursts): an accepted change is announced as the event "branch-made". */
+    if (route.endsWith("/accept")) document.dispatchEvent(new CustomEvent("branch-made", { detail: { kind: "self-change" } }));
   } catch (error) { toast(error.message); }
   await readGateway();
   renderNow();

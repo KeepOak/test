@@ -2,13 +2,13 @@
    this computer against that one reply (POST /api/reply-flags; the engine reads the reply's words itself). A flagged
    reply shows its flag under it with Remove (POST /api/reply-flags/{id}/remove), and its flag button is pressed; both are
    read from GET /api/reply-flags. Sending a flag to the Branch team has no engine route, so "Also send to the Branch
-   team" and "Open that setting" stay greyed: nothing leaves this computer. */
+   team" stays greyed: nothing leaves this computer. "Open that setting" opens Settings › Data & usage. */
 
 import { $, esc, render } from "../core/dom.js";
 import { openDlg, closeDlg, toast, ic } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { E } from "../core/state.js";
-import { on } from "../core/actions.js";
+import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
 
@@ -71,7 +71,10 @@ async function remove(el) {
 }
 
 export function initFlag() {
-  markLive(["flag", "flr17c", "flsave17c", "flrm17c", "sw:fl-note17c"]);
+  markLive(["flag", "flr17c", "flsave17c", "flrm17c", "sw:fl-note17c", "flgo17c"]);
+  /* Open that setting: Settings › Data & usage, where sending flags would be allowed (hook for PARITY.md settings-b-007,
+     built by B5); the switch itself stays greyed, since nothing is sent anywhere. */
+  on("flgo17c", () => { closeDlg(); const go = document.createElement("button"); go.dataset.v = "usage"; run("setgo", go); });
   on("flag", (el) => openFlag(el));
   on("flr17c", (el) => pick(el));
   on("flsave17c", () => save());

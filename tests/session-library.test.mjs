@@ -30,6 +30,8 @@ function seed(store, content = "Original cedar 🌳", owner = "local") {
   return run.sessionId;
 }
 function strip(messages) { return messages.map(({ messageId, ...value }) => value); }
+/** An archive carries no times: an imported message is stamped when it lands, so only its words are compared. */
+function words(messages) { return strip(messages).map(({ at, ...value }) => value); }
 function counts(db) {
   return ["sessions", "messages", "session_origins"].map(table => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n);
 }
@@ -208,7 +210,7 @@ test("session export imports into a clean instance and resumes exact history wit
   const exported = original.app.store.exportSession("local", id);
   const imported = target.app.store.importSession("local", JSON.parse(JSON.stringify(exported)));
   assert.notEqual(imported.sessionId, id);
-  assert.deepEqual(strip(target.app.store.sessionView("local", imported.sessionId).messages), strip(before.messages));
+  assert.deepEqual(words(target.app.store.sessionView("local", imported.sessionId).messages), words(before.messages));
   assert.equal(target.app.store.sessionView("local", imported.sessionId).imported, true);
   const run = await target.app.runtime.run({ sessionId: imported.sessionId, prompt: "Continue this" });
   assert.equal(run.status, "completed", run.output);
