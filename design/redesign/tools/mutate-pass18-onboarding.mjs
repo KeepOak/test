@@ -34,6 +34,12 @@ const MUTATIONS = [
   ["no phone in Reach it anywhere", "public/app/places/overview.js",
     'reach: () => `<button class="btn sm" type="button" data-act="pair">${ic("phone", "s")}${t("studio.tab.phone")}</button>`,',
     'reach: () => "",'],
+  ["Where Branch runs no longer on General", "public/app/settings/pages/general.js",
+    '${ownerHere() ? where() : ""}', ""],
+  ["a sign-in address opened on any host", "public/app/settings/more18.js",
+    'u.protocol === "https:" && u.hostname === host ? u.href : null', 'u.protocol === "https:" ? u.href : null'],
+  ["a restore that replaces what is there", "public/app/settings/more18.js",
+    'apiBytes("restore", ', 'apiBytes("restore?replace=1", '],
 ];
 
 const run = () => spawnSync(process.execPath, ["--test", "--test-concurrency=1", TEST], { encoding: "utf8", timeout: 300000 }).status;

@@ -4220,3 +4220,8 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
   .app.focus:not(.merged14){grid-template-rows:52px minmax(0,1fr) 0}
   .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
 }
+
+/* area: finish-setting-up (Settings › Accounts: email and calendar, bringing back a backup) */
+.more18-svc{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+.more18-svc .th{display:flex;align-items:center;gap:10px}
+.more18-svc .th .pill{margin-left:auto}

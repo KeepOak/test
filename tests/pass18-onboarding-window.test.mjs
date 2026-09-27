@@ -144,3 +144,50 @@ test("Finish setting up keeps what setup did for a new person one tap away, each
   await page.locator(".scrim").first().waitFor();
   assert.deepEqual(errors, []);
 });
+
+/* The two rows whose design page could not do what they promise now can: Where Branch runs adds a computer from
+   Settings › General, and Two more things signs in to mail and calendar and brings back a backup from Settings › Accounts. */
+test("Where Branch runs: Open goes to General, whose Add a computer opens the pairing choices", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  const place = await openPlace(page, "overview");
+  await place.locator('.fin18c [data-act="fin18c"][data-v="where"]').click();
+  const add = page.locator('.set-col [data-act="comp-add"]');
+  await add.waitFor();
+  await until(async () => (await call("/api/onboarding")).completed.includes("where"), "Open recorded the step");
+  await add.click();
+  await page.locator('.dlg [data-act="comp-add-go"][data-v="pair"]:not([disabled])').waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test("Two more things: Accounts saves your own Google app, signs in on Google's own page, and brings back a backup", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  const backup = await call("/api/backup"); // this Branch has no conversations yet, so its own backup may come back
+  await page.evaluate(() => { window.__opened = []; window.open = (url) => { window.__opened.push(url); return null; }; });
+  const place = await openPlace(page, "overview");
+  await place.locator('.fin18c [data-act="fin18c"][data-v="more"]').click();
+  const client = page.locator("#more18-google-client");
+  await client.waitFor();
+  await client.fill("1234-abc.apps.googleusercontent.com");
+  await page.locator('[data-act="more18-save"][data-v="google"]').click();
+  await until(async () => (await call("/api/personal/signin/google")).settings.clientId === "1234-abc.apps.googleusercontent.com", "saved through POST /api/personal/signin/google");
+  await page.locator('[data-act="more18-signin"][data-v="google"]').click();
+  await until(() => page.evaluate(() => window.__opened.length === 1), "the sign-in page was opened");
+  const opened = new URL(await page.evaluate(() => window.__opened[0]));
+  assert.equal(opened.origin, "https://accounts.google.com", "only Google's own sign-in page");
+  assert.equal(opened.searchParams.get("client_id"), "1234-abc.apps.googleusercontent.com");
+  assert.equal(await page.locator("#more18-google-secret").inputValue(), "", "a secret is only ever a saved secret's name");
+  // An address that is not Google's own sign-in page is never opened, whatever the answer says.
+  await page.route("**/api/personal/signin/google/start", (route) => route.fulfill({ json: { id: "personal-google", url: "https://accounts.google.com.example.net/o/oauth2/v2/auth" } }));
+  await page.locator('[data-act="more18-signin"][data-v="google"]').click();
+  await page.waitForResponse((response) => response.url().endsWith("/api/personal/signin/google/start"));
+  await page.unroute("**/api/personal/signin/google/start");
+  assert.equal(await page.evaluate(() => window.__opened.length), 1, "nothing more was opened");
+  const restores = [];
+  page.on("request", (request) => { if (request.url().includes("/api/restore")) restores.push(request.url()); });
+  await page.locator("#more18-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
+  await page.locator(".toast").filter({ hasText: /^Brought back \d+ items\./ }).first().waitFor();
+  await page.locator("#more18-file").setInputFiles({ name: "not-a-backup.json", mimeType: "application/json", buffer: Buffer.from("{}") });
+  await page.locator(".toast").filter({ hasText: /backup/i }).last().waitFor();
+  assert.ok(restores.length >= 2 && restores.every((url) => !/replace=/.test(url)), "a restore never replaces what is there");
+  assert.deepEqual(errors, []);
+});
