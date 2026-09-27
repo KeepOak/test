@@ -129,6 +129,7 @@ export class Store {
       .exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, owner TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), owner TEXT NOT NULL, prompt TEXT NOT NULL, status TEXT NOT NULL, output TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id), body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS message_reads(message_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, read TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES tasks(id), kind TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS usage(run_id TEXT PRIMARY KEY REFERENCES tasks(id), estimated_input INTEGER NOT NULL DEFAULT 0, estimated_output INTEGER NOT NULL DEFAULT 0, reported_input INTEGER NOT NULL DEFAULT 0, reported_output INTEGER NOT NULL DEFAULT 0, reports INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS compactions(session_id TEXT PRIMARY KEY REFERENCES sessions(id), through_id INTEGER NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -324,6 +325,17 @@ export class Store {
     }
     return removed;
   }
+  /**
+   * privacy (Settings › Your data, Delete everything): removes one of this person's conversations for good, wherever it
+   * is (Recent, Archived or Recently Deleted), exactly as "Delete now" does, with what goes with it. Work still going
+   * refuses it.
+   */
+  deleteConversationForGood(owner: string, sessionId: string): void {
+    if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
+    if (this.conversations.busy([sessionId, ...this.conversationCompanions(sessionId)]))
+      throw new Error("A task is still working. Stop it or wait for it, then try again.");
+    this.purgeForGood(sessionId);
+  }
   private purgeForGood(sessionId: string): void {
     const companions = [...this.conversationCompanions(sessionId)], runIds = this.runIdsOf([sessionId, ...companions]);
     const residue = findResidue(this.db, runIds);
@@ -511,6 +523,7 @@ export class Store {
       forgetTeamResults(this.db, sessionId);
       this.db.prepare("DELETE FROM tasks WHERE session_id=?").run(sessionId);
       const messages = this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId).changes;
+      this.db.prepare("DELETE FROM message_reads WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM compactions WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM session_pins WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM session_left_out WHERE session_id=?").run(sessionId);
@@ -616,6 +629,15 @@ export class Store {
       .get(owner, sessionId);
     return row ? this.toRun(row) : undefined;
   }
+  /**
+   * Q050: a task that stopped to ask goes on working under its own id once it is answered. Only a task still waiting
+   * is taken back up, in one step, so a second answer to the same question never revives a task that has moved on.
+   */
+  reopenAsked(id: string): Run | undefined {
+    const changed = this.db.prepare("UPDATE tasks SET status='running',updated_at=? WHERE id=? AND status='needs_input'")
+      .run(new Date().toISOString(), id);
+    return Number(changed.changes) === 1 ? this.run(id) : undefined;
+  }
   finish(id: string, status: RunStatus, output: string, options: { mend?: boolean } = {}): Run {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");
@@ -653,7 +675,19 @@ export class Store {
         AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id`)
       .all(sessionId, after, ...pinned, sessionId)
       .map((row) => ({ id: Number(row.id), message: JSON.parse(String(row.body)) as Message }));
+    // attach-anything: what was read out of a message's files goes to the model after the message, and only here.
+    const reads = new Map(this.db.prepare("SELECT message_id, read FROM message_reads WHERE session_id=?").all(sessionId)
+      .map((row) => [Number(row.message_id), String(row.read)]));
+    for (const row of rows) if (reads.has(row.id)) row.message = { ...row.message, content: row.message.content + reads.get(row.id) };
     return { summary: compaction ? String(compaction.summary) : null, rows };
+  }
+  /**
+   * attach-anything: what Branch read out of a message's files (words, a transcript), kept beside the message rather
+   * than in it. A message is read back by many ways out (the window, exports, copies, a script's key); the words of the
+   * files are for the model alone, so they never ride along with the message itself.
+   */
+  saveRead(sessionId: string, messageId: number, read: string): void {
+    this.db.prepare("INSERT OR REPLACE INTO message_reads(message_id, session_id, read) VALUES(?,?,?)").run(messageId, sessionId, read);
   }
   /** Message rows the owner pinned in this conversation, by their current row identifier. */
   pinnedMessageIds(sessionId: string): Set<number> { return this.summaries.pinnedMessageIds(sessionId); }
@@ -683,8 +717,10 @@ export class Store {
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
   reconcileMessages(sessionId: string, reason: string): number {
-    const rows = this.db.prepare("SELECT body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
+    const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
+    // attach-anything: what was read out of a message's files follows the message to its new row.
+    const oldIds = new Map([...sources.keys()].map((message, i) => [message, Number(rows[i]!.id)]));
     // A repaired transcript keeps when each message was first written.
     const times = new Map([...sources.keys()].map((message, i) => [message, rows[i]!.created_at == null ? null : String(rows[i]!.created_at)]));
     const repaired = reconcileTranscript([...sources.keys()], reason);
@@ -692,7 +728,12 @@ export class Store {
     this.db.exec("BEGIN");
     try {
       this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId);
-      for (const message of repaired.messages) this.message(sessionId, message, sources.get(message), times.get(message));
+      const moveRead = this.db.prepare("UPDATE message_reads SET message_id=? WHERE message_id=? AND session_id=?");
+      for (const message of repaired.messages) {
+        const id = this.message(sessionId, message, sources.get(message), times.get(message));
+        const was = oldIds.get(message);
+        if (was !== undefined) moveRead.run(id, was, sessionId);
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -1038,3 +1079,4 @@ export class Store {
     };
   }
 }
+

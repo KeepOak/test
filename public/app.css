@@ -4027,6 +4027,26 @@ p.ic-t,div.ic-t{display:flex}
 .talk-tr{display:flex;justify-content:center;max-width:760px;margin:0 auto 6px}
 .row.lift-tr,.prow.lift-tr{opacity:.5}
 .row.over-tr,.prow.over-tr{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:12px}
+
+/* attach-anything (public/app/chat/attach.js): each file waiting to go is a chip with its own preview and progress. */
+.att-row{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}
+.att{position:relative;display:flex;align-items:center;gap:10px;padding:6px 32px 6px 6px;border:1px solid var(--line);border-radius:12px;background:var(--raise);max-width:260px;min-width:0;overflow:hidden}
+.att .fi{width:40px;height:40px}
+.att-img{width:40px;height:40px;border-radius:8px;object-fit:cover;flex:none;display:grid;place-items:center;position:relative;overflow:hidden;background:var(--line)}
+.att-vid img{width:100%;height:100%;object-fit:cover}
+.att-vid .i{position:absolute;color:#fff}
+.att-t{min-width:0}
+.att-t b{display:block;font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.att-t small{display:block;color:var(--ink-3);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.att-t .att-err{color:var(--bad,#c0392b);white-space:normal}
+.att-x{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:var(--ink-3)}
+.att-x:hover{background:var(--line);color:var(--ink)}
+.att-bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--line)}
+.att-bar u{display:block;height:100%;background:var(--ok)}
+.att.failed{border-color:var(--bad,#c0392b)}
+.composer.drop-on{outline:2px dashed var(--ok);outline-offset:2px}
+.u-files{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin:4px 0 0}
+.u-files img{min-width:64px;min-height:64px;max-width:220px;max-height:180px;object-fit:cover;border-radius:10px;display:block}
 /* area: branch-from-here dialog */
 .brm17d{display:grid;gap:4px;padding:13px 0;border-bottom:1px solid var(--line)}
 .brm17d b{font-weight:500}
@@ -4095,6 +4115,35 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .upd18-sb{color:var(--ink-2)}.upd18-sb time{font:11.5px var(--mono);color:var(--ink-3);margin-left:2px}
 .upd18-why summary{cursor:pointer;color:var(--ink-3);font-size:12.5px}.upd18-why[open] summary{margin-bottom:4px}
 
+/* area: privacy (Settings › Your data) */
+.where-p18{display:block;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere}
+.prog-p18{grid-column:1/-1;width:100%;height:6px;margin-top:8px;appearance:none;border:0;border-radius:3px;background:var(--fill);overflow:hidden}
+.prog-p18::-webkit-progress-bar{background:var(--fill);border-radius:3px}
+.prog-p18::-webkit-progress-value{background:var(--accent);border-radius:3px;transition:width .16s ease-out}
+.prog-p18::-moz-progress-bar{background:var(--accent);border-radius:3px}
+.bad-p18{color:var(--bad)}
+@media (prefers-reduced-motion:reduce){.prog-p18::-webkit-progress-value{transition:none}}
+
+/* area: what can Branch do */
+.wc-b{display:grid;gap:10px;min-width:0}
+.wc-top{display:flex;align-items:center;gap:12px;animation:rise18 .16s ease-out both}
+.wc-top .hint{margin:0}
+.wc-b .tabs{margin:0}
+.wc-b .tab small{color:inherit;opacity:.7;font-size:11.5px;margin-left:2px}
+.wc-h{margin:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-3)}
+.wc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.wc-card{display:flex;align-items:center;gap:10px;min-width:0;padding:10px 12px;background:var(--raise);border:1px solid var(--line);border-radius:12px;animation:rise18 .16s ease-out both;transition:transform .16s ease-out,border-color .16s ease-out;content-visibility:auto;contain-intrinsic-size:auto 58px}
+.wc-card:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.wc-card .grow{flex:1;min-width:0}
+.wc-card b,.wc-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-card b{font-size:13.5px}
+.wc-card small{color:var(--ink-3);font-size:12.5px}
+.wc-card .btn{flex:none}
+.empty-chat .wc-go{margin-top:12px}
+.lede .wc-go{margin-left:4px}
+@media (max-width:760px){.wc-grid{grid-template-columns:minmax(0,1fr)}.wc-top{align-items:flex-start}}
+@media (prefers-reduced-motion:reduce){.wc-top,.wc-card{animation:none;transition:none}}
+
 /* area: one frame and Settings in five groups (pass 18c, design/redesign/pass18/patch18.css) */
 /* One 52px title row on every wide window: Settings shares the floating row (shell.js set18c), and focus mode keeps 52px. */
 @media (min-width:761px){
@@ -4146,3 +4195,22 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .proj-chip18{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink-2);font-size:12.5px;cursor:pointer;max-width:220px}
 .proj-chip18 span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .proj-chip18:hover{background:var(--fill)}
+
+/* area: title bar and the window's own controls */
+/* Windows and Linux draw minimise, maximise and close over the title row's right end (shell.js reserveControls): the row
+   keeps that width clear at every width and in every mode, and the space stays part of the row, so it still moves the
+   window. The Mac's traffic lights sit on the left and keep their spacing. */
+:root{--wco-env:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
+.app .titlebar{padding-right:var(--wco-r,var(--wco-env))}
+.app.mac .titlebar{padding-right:max(12px,var(--wco-r,var(--wco-env)))}
+/* A title row of its own (a narrow window, focus mode) is never shorter than the controls drawn over it, so nothing
+   under the row (the Settings strip, the side panel, the list drawer) reaches under them either. */
+.app:not(.merged14){--row1:max(34px,var(--wco-h,env(titlebar-area-height,0px)));grid-template-rows:var(--row1) minmax(0,1fr) 28px}
+.app:not(.merged14).no-status,.app:not(.merged14).focus{grid-template-rows:var(--row1) minmax(0,1fr) 0}
+.app:not(.merged14) .stage7,.app:not(.merged14) .surface{top:var(--row1)}
+@media (max-width:1100px){.app:not(.merged14) .pane{top:var(--row1)}}
+@media (max-width:760px){.app:not(.merged14) .side{top:var(--row1)}}
+@media (min-width:761px){
+  .app.focus:not(.merged14){grid-template-rows:52px minmax(0,1fr) 0}
+  .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
+}

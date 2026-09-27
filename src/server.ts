@@ -4,6 +4,7 @@ import {
   type ServerResponse,
   type Server,
 } from "node:http";
+import { changeContextMode, contextSources } from "./tool-context-api.js";
 import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
@@ -191,7 +192,9 @@ import { People } from "./people/index.js";
 import { peopleEnabled } from "./people/settings.js";
 import { interopMode } from "./interop/settings.js";
 import { requireBoundSession } from "./people/access.js";
-import { keyAnswerRefusal, keyStopRefusal, runOrigin, shortLivedKeyMark } from "./key-context.js";
+import { keyAnswerRefusal, keyStopRefusal, shortLivedKeyMark } from "./key-context.js";
+import { ownersOwnTask } from "./asked-task.js"; // Q050
+import { helperMark, needsYou } from "./needs-you.js"; // Q050
 import { currentPerson, enterPairedDoor } from "./people/context.js";
 // ---- end bucket 19 ----
 // bucket-18: code editor (A0098)
@@ -206,6 +209,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { handlesYourDataPath, yourDataApi } from "./your-data.js";
 import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
@@ -776,14 +780,12 @@ function toolInventory(app: Branch) {
  * and it can be continued. Read with store.waitingRuns, as the Activity list reads its waiting tasks, so the two lists
  * agree and a question stays listed however much other work finishes after it.
  */
-/** What a yes to the owner's own waiting task says in the conversation, as if the owner had typed it. */
-export const carryOnWords = "Yes, go ahead.";
 /**
  * Dogfood A6/B6: an answer settles the task that stopped to ask. A task stops on its question, so a yes alone
  * carried nothing on, and the task went on waiting in the banner. Now a yes to the owner's own task, given in the
- * owner's window, carries it on in that conversation as pressing Send would; any other answer (a no, or a yes to a
- * chat's or a schedule's task, which carries on from where it came) ends its wait. A task with another question
- * still waiting is left for that one.
+ * owner's window, carries that same task on (Q050: under its own id, with no words written for the owner and no second
+ * task beside it); any other answer (a no, or a yes to a chat's or a schedule's task, which carries on from where it
+ * came) ends its wait. A task with another question still waiting is left for that one.
  */
 /** What an answer did to the task that asked (NAS bd6cf44): the window says so, rather than always "it carries on". */
 type Settled = "carrying-on" | "still-waiting" | "settled";
@@ -792,11 +794,9 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
   if (!run || run.status !== "needs_input" || app.runtime.approvals.waiting(asked.sessionId).length) return "still-waiting";
   // Only the owner's own task, answered by the owner at the window: never a key's (it records source "owner" too,
   // and a carry-on would lose its key mark), a household person's, or one that came from elsewhere (NAS 618407c).
-  const origin = runOrigin(app.store, run.id);
   // Pass 17 (Helpers): nor a helper's. Its carry-on would start in the helper's conversation as a task of the owner's
   // own, without the narrower reach the helper was given; its question is answered and the helper is settled instead.
-  const owners = asked.source === "owner" && origin.source === "owner" && !origin.shortLivedKey && !origin.keyIds.length
-    && !origin.personProfileId && !origin.lentTo && !origin.parentRunId;
+  const owners = asked.source === "owner" && ownersOwnTask(app.store, run.id);
   if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) {
     // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
     // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
@@ -805,10 +805,10 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
     const plan = app.runtime.orchestration.plan(run.sessionId);
     if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return "still-waiting";
     // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
-    // question (`user.ask` takes the owner's next message as the answer), and "Yes, go ahead." would answer it.
+    // question (`user.ask` takes the owner's next message as the answer), and carrying on would talk over it.
     if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return "still-waiting";
     // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
-    // report): the carry-on's model reads the conversation, so "Yes, go ahead." would answer them. A task with no
+    // report): the carry-on's model reads the conversation, so it would take the yes as their answer. A task with no
     // record of where it stopped (asked before this was kept) is left for the owner too.
     const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
     if (typeof stopped !== "number" || app.store.lastMessageId(run.sessionId) !== stopped) return "still-waiting";
@@ -817,7 +817,9 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
     // A carry-on refused as it starts (the monthly budget, the owner's inlet filter, a closing app) leaves the task waiting
     // and writes down why, where the task's own record shows it (NAS bd6cf44).
     let refused = false;
-    const carry = runForCurrentPerson(app, { prompt: carryOnWords, sessionId: run.sessionId, onTextDelta: () => undefined })
+    // Q050: the task that asked carries on itself, told of the yes to its exact request; nothing is said in the owner's
+    // name, and no second task starts.
+    const carry = app.runtime.continueAsked(run.id)
       .catch((error: unknown) => { refused = true; app.store.event(run.id, "run.carry_on_refused", { reason: errorText(error).slice(0, 300) }); });
     // NAS 0adb368: a refusal as it starts (the budget, an inlet filter, a busy conversation) settles within microtasks,
     // so one turn of the event loop tells it apart, and the window never says "it carries on" when nothing did.
@@ -854,15 +856,6 @@ function attention(app: Branch) {
       ...(by ? { who: by.name, open: by.sessionId, ...(by.room ? { room: by.room } : {}) } : {}) };
   });
 }
-/**
- * Pass 17 (Helpers): a helper's question (a task another task started, "run.started" parentRunId) names the task that
- * started it. It is answered in that task's Activity › Helpers, so the window keeps it out of the Inbox's counts and list.
- * Only a task that exists counts: the learning passes mark their own rows "learning".
- */
-function helperMark(app: Branch, runId: string): { parentRunId?: string } {
-  const parent = app.store.events(runId).find((event) => event.kind === "run.started")?.data.parentRunId;
-  return typeof parent === "string" && app.store.run(parent) ? { parentRunId: parent } : {};
-}
 /** What a waiting task says: its question, or for one Branch closed on, the note that it can be continued. */
 function waitingWords(app: Branch, run: Run): string {
   if (run.status !== "interrupted") return run.output;
@@ -893,6 +886,7 @@ function state(app: Branch): unknown {
     modelNeeded: app.runtime.models.configured ? null : noModelWords,
     onboarding: onboardingState(app),
     attention: attention(app),
+    needsYou: needsYou(app), // Q050: the one count every "needs you" in the window reads
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
     version: app.version,
@@ -1708,6 +1702,14 @@ async function api(
       available: reader !== null,
       explanation: meaningSearchExplanation(meaningSearchReceiver(app, reader)) };
   }
+  // Which servers, plugins and skills travel with every request and which wait until a task needs them, with what each
+  // costs a request (src/tool-context-api.ts). The owner's setup: a household profile or a short-lived key is refused.
+  if (path === "/api/tools/context") {
+    app.store.profiles.requireOwner("What goes with every request");
+    const deps = { store: app.store, registry: app.registry, owner: app.runtime.owner };
+    if (request.method === "GET") return contextSources(deps);
+    if (request.method === "POST") return changeContextMode(deps, await readBody(request));
+  }
   if (request.method === "POST" && path === "/api/tools/forget") {
     app.store.profiles.requireOwner("What the assistant has learned about its tools");
     const { what } = z.object({ what: z.enum(["history", "notes", "all"]).default("all") }).strict().parse(await readBody(request));
@@ -1881,12 +1883,15 @@ async function api(
       // A picture that was attached is also shown to the model, so the page sends its bytes once.
       ...picturesFor(input),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      // Files sent ahead are taken only for the one who sent them (src/attachments.ts staged).
+      ...(input.uploads?.length ? { uploads: { who: app.store.profiles.scope(), ids: input.uploads } } : {}),
       ...(input.plan !== undefined ? { plan: input.plan } : {}),
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
       // Projects are the owner's: a household person's new conversation is never filed under one of them by name.
       ...(input.project && !input.sessionId && app.store.profiles.isOwner() ? { conversationProject: input.project } : {}),
+      personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
       // works (runtime.thoughtsOf); the words themselves still arrive with the finished answer, as before.
@@ -4078,6 +4083,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const answer = await securityCheckApi(app.security, request.method ?? "GET", path, () => readBody(request), remote.status().enabled);
           if (answer !== undefined) { send(response, 200, answer); return; }
         }
+        // privacy: Settings › Your data (src/your-data.ts), which needs the phone door, the paired phones and where Branch listens.
+        if (handlesYourDataPath(path)) {
+          const answer = await yourDataApi(app, request, response, path, { phoneDoor: () => remote.status().enabled,
+            beyondThisComputer: () => listen.beyond === true, phones: () => gateway.devices() });
+          if (answer !== undefined) send(response, 200, answer);
+          return;
+        }
         send(response, 200, await api(app, request, path, options.dataDir, listen));
       } finally {
         place?.();
@@ -4312,11 +4324,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   }
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
+  settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
-    void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); });
+    void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
+      (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
     await writeRunning(options.dataDir, { port: address.port, pid: process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
@@ -4352,6 +4366,27 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       await stopServer(app, server);
     },
   };
+}
+/** Q050: the plain words a task left waiting on an answer already given is closed with. */
+export const supersededAskNote = "This question was answered, or overtaken by a later message in the conversation, so it no longer waits for you.";
+/**
+ * Q050: a yes carried a task on as a second task, so the task that asked was left waiting for good, and the Inbox,
+ * Overview and Health kept asking for an answer already given. On start, a task still waiting that is no longer the
+ * newest in its conversation (the conversation went on from it) stops waiting, with the reason on its record. Its
+ * question is never answered for it: nothing is allowed, and a question still open in this engine is left alone.
+ */
+export function settleSupersededAsks(app: Branch): number {
+  const waiting = app.store.sqlite.prepare("SELECT id FROM tasks WHERE status='needs_input'").all() as { id: unknown }[];
+  let settled = 0;
+  for (const row of waiting) {
+    const run = app.store.run(String(row.id));
+    if (!run || app.store.newestIn(run.owner, run.sessionId)?.id === run.id) continue;
+    if (app.runtime.approvals.waiting(run.sessionId).some((question) => question.runId === run.id)) continue;
+    app.store.event(run.id, "run.ask_resolved", { reason: "superseded", note: supersededAskNote, by: app.store.newestIn(run.owner, run.sessionId)?.id ?? null });
+    app.store.finish(run.id, "cancelled", supersededAskNote, { mend: false });
+    settled++;
+  }
+  return settled;
 }
 /** What a stop leaves a task waiting on: the last of these events says which question it was. */
 const askedKinds = new Set(["policy.ask", "user.ask", "attention.needed", "plan.awaiting_approval", "folder.trust_needed", "web.challenge"]);
@@ -4490,6 +4525,31 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     response.end(played.bytes);
     return true;
   }
+  // attach-anything: a file sent ahead of its message, streamed straight to disk as it arrives (never held whole in
+  // memory), counted as it goes and cut off at the limit. It is bound to whoever sent it (the owner, or the household
+  // person at the window), and only a message of theirs can take it. Nothing here is a path: the name is words and
+  // the file is kept under a random id. Short-lived keys never reach this (offLimitsToShortLivedKeys: /api/attachments/).
+  if (path === "/api/attachments/upload" && (request.method === "POST" || request.method === "DELETE")) {
+    const wanted = new URL(request.url ?? "/", "http://local").searchParams;
+    if (!app.attachments) throw new HttpError(503, "Files cannot be attached here.");
+    const who = app.store.profiles.scope();
+    if (request.method === "DELETE") {
+      send(response, 200, { removed: await app.attachments.unstage(who, wanted.get("id") ?? "") });
+      return true;
+    }
+    const length = request.headers["content-length"] ? Number(request.headers["content-length"]) : null;
+    try {
+      send(response, 200, await app.attachments.stage(who, {
+        name: wanted.get("name") ?? "", mediaType: wanted.get("type") || "application/octet-stream",
+        length: Number.isFinite(length) ? length : null,
+      }, request));
+      return true;
+    } catch (error) {
+      // The rest of a refused file is not read; the connection is closed once the answer is written.
+      response.setHeader("connection", "close");
+      throw new HttpError(/too big|does not fit/.test((error as Error).message) ? 413 : 400, (error as Error).message);
+    }
+  }
   // A file a person attached, handed back to their own window (src/attachments.ts). The owner's alone,
   // checked first so the guard moves with the route; nothing the caller sends is ever used as a path.
   if (request.method === "GET" && path === "/api/attachments/file") {
@@ -4509,7 +4569,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       "content-type": found.ref.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox",
       "accept-ranges": "bytes",
-      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${found.ref.name.replace(/[^\w. -]/g, "_")}"`,
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${(found.ref.name.split("/").pop() ?? "file").replace(/[^\w. -]/g, "_")}"`,
     };
     const part = rangeWanted(request.headers.range, found.size);
     if (part === "outside") {
@@ -4892,6 +4952,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // mac5/key-sweep: a few reads hand back a secret or everybody's data (src/short-lived-keys.ts).
   // mac7/diagnostics: the activity log and problem reports are the owner's alone, reading included.
   // A person's attached files are the owner's alone, like everything else kept beside the database.
+  // privacy: Settings › Your data is the app window's alone, reading included: the summary names the owner's webhooks,
+  // phones and folder, and an export's progress and file hand back everything kept, the full backup among it.
+  if (handlesYourDataPath(path))
+    return "A short-lived key cannot read, export or delete everything kept here. Do that in the app window.";
   if (path.startsWith("/api/attachments/"))
     return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
   if (path.startsWith("/api/diagnostics/"))
@@ -5039,7 +5103,7 @@ async function vetTriedServer(app: Branch, input: unknown): Promise<void> {
 }
 function isExecution(request: IncomingMessage, path: string): boolean {
   return (
-    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin|servers)(\/|$)/.test(path) || /^\/api\/clis(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
+    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/tools/context", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin|servers)(\/|$)/.test(path) || /^\/api\/clis(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
     // mac4/bucket-20: an Agent Protocol step, and every change under /api/interop, start or change work.
     || (request.method !== "GET" && handlesInteropPath(path))
     // mac6/bucket-23: every change under /api/asks may start work (an answer, an article, a send).
