@@ -174,6 +174,7 @@ export class GeminiProvider implements Provider {
   constructor(private readonly options: GeminiOptions) {
     validateOptions(options);
   }
+  get model(): string { return this.options.model; }
 
   /**
    * Gemini writes speech out and reads text aloud through the same address, so the voice service

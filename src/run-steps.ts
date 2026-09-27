@@ -19,7 +19,7 @@ import type { Event, Run } from "./contracts.js";
 import { calls, rounds, type PriceRound } from "./inspect.js";
 import type { ChainEntry } from "./safety-extras/activity-chain.js";
 import type { Store } from "./store.js";
-import { stepIcon } from "./live-steps.js";
+import { STEP_ICONS, stepIcon } from "./live-steps.js";
 
 export type StepKind = "model" | "tool" | "ask" | "helper" | "you";
 export type AskState = "waiting" | "allowed" | "refused" | null;
@@ -121,6 +121,31 @@ const steerSteps = (events: Event[]): Step[] => events.filter((e) => e.kind === 
   kind: "you" as const, at: event.createdAt, seconds: null, cost: null, title: str(event.data.note), detail: "", hash: null,
 }));
 
+/** One move of the work to another account after a plan limit, in the engine's words (src/accounts/pool-provider.ts). */
+export interface SwitchedLine { at: string; icon: string; sentence: string }
+/**
+ * Where the work moved to another account because one reached its plan limit, kept with the task after it ends (the live
+ * steps say it while it happens, src/live-steps.ts stateLines). "model.account_moved" is noted the moment it moves; a
+ * task from before that note says the same with a limit followed by an answer from another account.
+ */
+export function switchedLines(events: Event[]): SwitchedLine[] {
+  const lines: SwitchedLine[] = [];
+  const say = (at: string, to: string, from: string) =>
+    lines.push({ at, icon: STEP_ICONS.switch, sentence: `Switched to “${to}” — “${from}” reached its plan limit` });
+  let limited = "", moved = false;
+  for (const event of events) {
+    const d = event.data;
+    if (event.kind === "model.account_limit") { limited = str(d.label) || str(d.account); moved = false; }
+    else if (event.kind === "model.account_moved") { say(event.createdAt, str(d.label) || str(d.account), str(d.from) || limited); limited = ""; moved = true; }
+    else if (event.kind === "model.account") {
+      const label = str(d.label) || str(d.account);
+      if (limited && !moved && label !== limited) say(event.createdAt, label, limited);
+      limited = ""; moved = false;
+    }
+  }
+  return lines;
+}
+
 /** The model a task ran on: the one it chose (or fell back to), else the last one that answered. */
 function modelOf(events: Event[]): { provider: string | null; model: string | null } {
   const chosen = events.filter((e) => e.kind === "model.selected" || e.kind === "model.fallback").at(-1)
@@ -184,7 +209,7 @@ export function runSteps(store: Store, runId: string, deps: StepsDeps) {
   return {
     runId: run.id, sessionId: run.sessionId, title: store.runTitles([run]).get(run.id) ?? firstLine(run.prompt), status: run.status,
     seconds: Math.max(0, Math.round((Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 100) / 10),
-    cost: deps.cost(run.id), steps, helpers,
+    cost: deps.cost(run.id), steps, helpers, switched: switchedLines(events),
     chain: { mode: deps.chain.mode, entries: deps.chain.entries.length, tip },
   };
 }

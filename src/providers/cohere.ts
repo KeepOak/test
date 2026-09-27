@@ -70,6 +70,8 @@ export class CohereProvider implements Provider {
   /** Cohere's command models take text only, so a picture is refused in words rather than dropped. */
   readonly acceptsImages = false;
   private readonly fetchImpl: typeof globalThis.fetch;
+  /** The model this connection asks for (src/contracts.ts Provider.model). */
+  get model(): string { return this.options.model; }
   constructor(private readonly options: CohereOptions) {
     if (!options.model || !options.apiKey) throw new Error("Cohere model and API key are required");
     const url = new URL(options.endpoint);

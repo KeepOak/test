@@ -13,7 +13,7 @@ import {
 } from "../dist/index.js";
 import { OllamaProvider } from "../dist/providers/ollama.js";
 import { LocalRuntimes } from "../dist/local-runtimes.js";
-import { announcedEnding, unofferedEnding } from "../dist/runtime.js";
+import { announcedEnding, unofferedEnding, textCallEnding, writesToolCallAsText } from "../dist/runtime.js";
 
 // ---------------------------------------------------------------- wire names
 
@@ -245,6 +245,92 @@ test("asked once, a model that then does the step finishes as done", async (t) =
   const branch = await app(t, provider);
   const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
   assert.equal(run.status, "completed");
+});
+
+// ---------------------------------------------------------------- a tool call written out as text (qa-fixes-4)
+
+const textCall = '{"name": "memory.search", "arguments": {"query": "Roman Empire", "limit": 1}}';
+test("a tool call written out as text is kept nowhere a person reads; asked once, the real call then works", async (t) => {
+  // Mutation: drop the writesToolCallAsText check in the runtime → the JSON is the task's answer, red.
+  const { requests, provider } = standIn([{ content: textCall }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, "It says eggs.");
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes('"arguments"')), "in no message");
+  assert.match(requests[1].messages.at(-1).content, /tool call written out as text/);
+  assert.match(requests[1].messages.at(-1).content, /files\.read/);
+  assert.equal(events(branch, run, "model.text_call").length, 1);
+});
+
+test("a model that keeps writing tool calls out as text ends failed in plain words", async (t) => {
+  // Mutation: let the second text call through (no textCallEnding) → the fenced JSON is the answer, red.
+  const { provider } = standIn([{ content: "```json\n" + textCall + "\n```" }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "find a fact about Rome", permissions: ["files.read"] });
+  assert.equal(run.status, "failed");
+  assert.equal(run.output, textCallEnding);
+  assert.equal(events(branch, run, "model.text_call").length, 2);
+});
+
+test("a call written out as text never reaches a stream; an answer that begins with { still streams whole", async (t) => {
+  // Codex P2 on #512: streamed words went out before the reply was read. Mutation: hand the model call `preview`, not
+  // the gate → the JSON is in the stream, red.
+  const { provider } = standIn([{ content: textCall }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." },
+    { content: '{"name": "Rome", "founded": -753}' }]);
+  const branch = await app(t, provider);
+  const streamed = [];
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], onTextDelta: (text) => streamed.push(text) });
+  assert.equal(run.output, "It says eggs.");
+  assert.ok(!streamed.join("").includes('"arguments"'), streamed.join(""));
+  assert.ok(streamed.join("").includes("It says eggs."));
+  const answer = [];
+  const json = await branch.runtime.run({ prompt: "give me Rome as JSON", permissions: ["files.read"], onTextDelta: (text) => answer.push(text) });
+  assert.equal(answer.join(""), json.output, "held while it began like a call, then passed on whole");
+});
+
+test("a real call beside its own written-out copy runs; the copy is kept nowhere", async (t) => {
+  // Codex P2 on #512. Mutation: check only replies with no real call → the JSON is in the conversation, red.
+  const { provider } = standIn([{ content: '{"name": "files.read", "arguments": {"path": "list.txt"}}', calls: [["files.read", { path: "list.txt" }]] },
+    { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
+  assert.equal(run.output, "It says eggs.");
+  assert.deepEqual(events(branch, run, "tool.completed").map((event) => event.name), ["files.read"]);
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes('"arguments"')));
+});
+
+test("an example call a person asked for is an answer: it names no tool Branch has", async (t) => {
+  // Mutation: drop the registered-name check (isTool) in the runtime → the example fails the task, red.
+  const example = '```json\n{"name": "get_weather", "arguments": {"city": "Atlanta"}}\n```';
+  const { provider } = standIn([{ content: example }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "Show me what a tool call looks like", permissions: ["files.read"] });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, example);
+  assert.equal(events(branch, run, "model.text_call").length, 0);
+});
+
+test("a text call naming a tool by its hashed wire name is still one", async (t) => {
+  const { provider } = standIn([{ content: JSON.stringify({ name: wireName("memory.search"), arguments: { query: "Rome" } }) }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "find a fact about Rome", permissions: ["files.read"] });
+  assert.equal(run.output, textCallEnding);
+});
+
+test("only a whole reply shaped like a call is one", () => {
+  for (const text of [textCall, `[${textCall}]`, '<tool_call>{"name":"files.read","arguments":{}}</tool_call>',
+    '{"tool_calls":[{"type":"function","function":{"name":"files.read","arguments":"{}"}}]}', '{"name":"files.read","parameters":{"path":"a"}}'])
+    assert.ok(writesToolCallAsText(text), text);
+  for (const text of ["Here is the call: " + textCall, '{"name":"Rome","founded":-753}', '{"name":"x"}', "[]", "{}", "The answer is 42.",
+    '{"kind":"task","when":"a task","what":"x","name":"y","words":"z"}',
+    // A shaped answer that happens to have a name and arguments. Mutation: drop the call-keys-only rule in isCallShape → red.
+    '{"name":"Pasta","arguments":["cheap","fast"],"verdict":"yes"}'])
+    assert.ok(!writesToolCallAsText(text), text);
+  const isTool = (name) => name === "memory.search";
+  assert.ok(writesToolCallAsText(textCall, isTool));
+  assert.ok(!writesToolCallAsText('{"name":"get_weather","arguments":{}}', isTool), "not one of Branch's tools");
+  assert.ok(!writesToolCallAsText(`[${textCall}, {"name":"get_weather","arguments":{}}]`, isTool), "every call must name one");
 });
 
 test("offers of help and plain answers are not promises", () => {
