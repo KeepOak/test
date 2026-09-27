@@ -396,3 +396,35 @@ test("a phone a Tailscale invitation let in is listed and removed from this comp
   assert.equal((await call("GET", "/api/state", undefined, keyed.token, doorBase, keyed.headers)).status, 401, "its own key opens nothing");
   assert.deepEqual((await call("GET", "/api/devices")).body.doorPhones, []);
 });
+
+test("a phone reads no chat service's secret address, no trigger's or webhook's secret, and switches none back on", async (t) => {
+  const { server, call, doorBase } = await served(t);
+  const phone = await pairedPhone(call, "Phone");
+  const trigger = await call("POST", "/api/triggers", { name: "Build done", prompt: "Say the build is done." });
+  assert.equal(trigger.status, 200, trigger.text);
+  const webhook = await call("POST", "/api/webhooks", { name: "Out", url: "https://example.com/hook", secret: "signing-word-1234", events: ["run.completed"] });
+  assert.equal(webhook.status, 200, webhook.text);
+  const doors = [["through the paired door", doorBase, phone.session.token, phone.headers],
+    ["with its own key on this computer's listener", undefined, phone.session.token, phone.headers],
+    ["the window's key from beyond this computer", undefined, server.token, { "x-branch-tunnel": "1" }]];
+  for (const [why, base, key, headers] of doors) {
+    for (const [method, path, body] of [["GET", "/api/channels/addresses"], ["GET", "/api/channels/addresses/"],
+      ["POST", "/api/channels/addresses/rotate", { channel: "telegram" }], ["POST", "/api/channels/addresses/settings", { acceptOldAddresses: true }],
+      ["POST", `/api/webhooks/${webhook.body.id}/enable`, {}], ["POST", `/api/triggers/${trigger.body.id}/enabled`, { enabled: true }]]) {
+      const answer = await call(method, path, body, key, base, headers);
+      assert.equal(answer.status, 403, `${method} ${path} ${why}: ${answer.status} ${answer.text}`);
+      assert.equal(answer.body.error, hereOnly, `${path} ${why}`);
+    }
+    for (const path of ["/api/triggers", `/api/triggers/${trigger.body.id}`, "/api/webhooks", `/api/webhooks/${webhook.body.id}`]) {
+      const answer = await call("GET", path, undefined, key, base, headers);
+      assert.equal(answer.status, 200, `${path} ${why}: ${answer.text}`);
+      assert.ok(!answer.text.includes(trigger.body.secret) && !answer.text.includes("signing-word-1234"), `${path} ${why} carries no secret: ${answer.text}`);
+    }
+    const off = await call("POST", `/api/triggers/${trigger.body.id}/enabled`, { enabled: false }, key, base, headers);
+    assert.equal(off.status, 200, `switching one off stays open ${why}: ${off.text}`);
+    assert.ok(!off.text.includes(trigger.body.secret), "and its answer carries no secret");
+  }
+  assert.equal((await call("GET", "/api/channels/addresses")).status, 200, "the window on this computer still reads the addresses");
+  assert.equal((await call("GET", `/api/triggers/${trigger.body.id}`)).body.secret, trigger.body.secret, "and a trigger's secret");
+  assert.equal((await call("POST", `/api/triggers/${trigger.body.id}/enabled`, { enabled: true })).status, 200, "and switches it back on");
+});

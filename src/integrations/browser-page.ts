@@ -112,6 +112,21 @@ export async function holdsSecret(page: Page, filled: Locator[] = []): Promise<b
   return found.some(Boolean);
 }
 
+/**
+ * While a recording is kept: empties every box whose value page text handed to the assistant leaves out (the secret
+ * boxes of every frame that can be searched and the rest of a split code beside a code box, as `secretValues` reads
+ * them), before each step, so a step that reads the page (snapshot, extract) writes no such value into the recording.
+ */
+export async function clearSecretValues(page: Page): Promise<void> {
+  const main = page.mainFrame();
+  await Promise.all(page.frames().map(async frame => {
+    if (frame !== main && !(await reachable(frame))) return;
+    for (const boxes of secretBoxes(frame))
+      await boxes.evaluateAll(found => { for (const box of found) { (box as HTMLInputElement).value = ''; box.removeAttribute('value'); } })
+        .catch(() => undefined);
+  }));
+}
+
 /** What stands in, in page text handed to the assistant, for a value a box holds that the assistant must not read. */
 export const hiddenValue = '(hidden)';
 /** A value the way page text shows it: the spaces run together, as the page's accessibility tree does. */
@@ -184,10 +199,11 @@ export function scrubText(text: string, hidden: readonly string[]): string {
 /**
  * A page's address with every secret value taken out, as it is and as an address carries it (percent-encoded, a space
  * as +). A page can copy what a box holds into its own address (?otp=...), or a form sent that way lands on one.
- * `hidden` null means the page could not be asked: only where it is is kept, never what follows (the ? and the #).
+ * `hidden` null means the page could not be asked: only the site is kept, never the path, the ? or the # (a page can
+ * put a code in its path as well); an address with no site (data:, about:) keeps only its scheme.
  */
 export function scrubAddress(address: string, hidden: readonly string[] | null): string {
-  if (hidden === null) return address.split(/[?#]/)[0] ?? '';
+  if (hidden === null) { try { const at = new URL(address); return at.host ? at.origin : at.protocol; } catch { return ''; } }
   let out = address;
   for (const value of [...hidden].sort((a, b) => b.length - a.length)) if (value.length >= 4) {
     const encoded = encodeURIComponent(value);

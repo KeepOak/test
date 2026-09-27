@@ -9,7 +9,7 @@ import type { RunArtifacts } from '../artifacts.js';
 import { BrowserSession, type BrowserRequest, type DownloadRecord } from './browser-session.js';
 import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
 import {
-  CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
+  CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, clearSecretValues, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
   screenshot, scrubAddress, scrubAddresses, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
 } from './browser-page.js';
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
@@ -17,7 +17,7 @@ import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
 import { attach, attachRefusal, attachedAddressRefusal, readAttachSettings, saveAttachSettings, type AttachedBrowser } from './browser-attach.js';
-import { clearPasswordValues, startRecording } from './browser-trace.js';
+import { startRecording } from './browser-trace.js';
 import { registerPageNotes } from './browser-notes-tool.js'; // w911 (A2144)
 import { registerBrowserFlow } from './browser-flow.js'; // FQ-execution.browser
 import type { MarkChecks } from './browser-heal.js'; // w911 (A2144)
@@ -227,8 +227,11 @@ export class BranchBrowser {
     try {
       const { result, hidden } = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
       const events = entry.session.takeEvents();
-      return scrubAddresses({ ...result, ...(events.dialogs.length ? { messageBoxes: events.dialogs } : {}),
-        ...(events.downloads.length ? { downloads: events.downloads } : {}) }, hidden);
+      // A message box's words are page text and a download's source is an address: scrubbed the same way.
+      const dialogs = events.dialogs.map(box => ({ ...box, message: hidden === null ? '' : scrubText(box.message, hidden) }));
+      const downloads = events.downloads.map(file => ({ ...file, from: scrubAddress(file.from, hidden) }));
+      return scrubAddresses({ ...result, ...(dialogs.length ? { messageBoxes: dialogs } : {}),
+        ...(downloads.length ? { downloads } : {}) }, hidden);
     } finally { if (context.signal.aborted) await this.closeRun(context); }
   }
   /**
@@ -544,9 +547,10 @@ export class BranchBrowser {
     if (entry.borrowed)
       throw new Error('This task is working in your own browser, so a recording would photograph your other tabs too. Give your browser back first, then start a recording.');
     await entry.session.record(startRecording);
-    entry.session.options.beforeAction = page => clearPasswordValues(page);
+    // The same boxes page text leaves out (secretValues), so what a step reads is what the recording writes down.
+    entry.session.options.beforeAction = page => clearSecretValues(page);
     return { recording: true,
-      note: 'Pictures of each step are kept; the page\'s own markup is not, and password boxes are emptied before every step, so no password can get into the file.' };
+      note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
   }
   /** Ends the recording and keeps it beside the task's other files. */
   async keepRecording(context: ToolContext) {
