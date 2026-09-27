@@ -63,6 +63,7 @@ import { supportsImages } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { contextOverflow, learnWindow, modelWindow } from "./model-context.js"; // dogfood D22
 import { contractHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
@@ -263,6 +264,19 @@ export const contextLimit = 20000;
 /** Toolboxes the model is always shown, before the guess at what this task needs. */
 const alwaysOpenGroups = ["core", "files"] as const;
 const tooLong = "This conversation has grown too long to continue. Start a new conversation and mention what matters from this one.";
+/** dogfood D22: what the model is asked when a task has run out of room. */
+const outOfRoomRequest = "This task has run out of room for more work, so you cannot ask for anything else. "
+  + "Using only what is below, write the best answer you can for the person now: what you found, with any sources you "
+  + "have, and what you could not get to. Plain words, no tool calls.";
+/** dogfood D22: what the owner is told after that answer, so the end of the task is never silent. */
+export const outOfRoomSentence = "I ran out of room in this conversation before I could finish, so this is what I have so far. "
+  + "Start a new conversation to carry on, or ask me to go on from here in fewer steps.";
+/** dogfood D22: how this task's own earlier work is summed up to make room. */
+const taskFoldInstructions = "Summarise the work below for yourself, to carry on the same task with less room. Keep every "
+  + "fact found, every source address and file path exactly, what is still to do, and anything the person told you. "
+  + "Plain text, at most twenty short lines.";
+/** dogfood D22: the line in front of that summary. */
+const taskFoldNote = "Your work so far in this task was summed up to make room. Carry on from it:";
 /** What is written into the conversation in place of the picture itself; the bytes are never stored. */
 export function picturesNote(images?: ImagePart[]): string {
   if (!images?.length) return "";
@@ -445,6 +459,8 @@ export class Runtime {
   private readonly steers = new Map<string, { note: string; from: string | undefined }[]>();
   /** The catalog each running task is showing the model, so a tool it found stays loaded. */
   private readonly catalogs = new Map<string, ToolLoader>();
+  /** Dogfood D4: conversations where the owner has said yes to using their screen; kept only while Branch runs. */
+  private readonly screenApproved = new Set<string>();
   /** Dogfood D5: per task carrying on after a No, the fingerprint of the request the owner refused. */
   private readonly refusedAsks = new Map<string, string>();
   /** Dogfood D4: per task at the top of a delegation, whether the owner's own words asked for the screen (src/screen-guard.ts). */
@@ -1705,7 +1721,7 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
-      const completion = await this.completeWithRetries(run, notes.every ? [...messages, notes.every] : messages, context, route, preview);
+      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, preview);
       const filterModels = [this.provider.name, ...namesOf(route.candidates[route.index])];
       // A think-then-act specialist writes one line of reasoning first. The transcript keeps it, so
       // the model can see its own trail; the owner reads it in the events; the answer never has it.
@@ -1866,14 +1882,14 @@ ${run.output.slice(0, 6000)}`;
    * conversation, and spends from a small budget of its own: one bounded question at the end of a
    * task that has already stopped, rather than nothing at all.
    */
-  private async lastWord(run: Run, context: ToolContext, route: ModelRoute, messages: readonly Message[]): Promise<string> {
+  private async lastWord(run: Run, context: ToolContext, route: ModelRoute, messages: readonly Message[], request?: string): Promise<string> {
     const scoped: ToolContext = {
       ...context, permissions: new Set(),
       budget: new Budget({ maxSteps: 2, maxTokens: lastWordTokens }),
       signal: AbortSignal.any([context.signal, AbortSignal.timeout(60000)]),
     };
     const preset = route.candidates[route.index]!;
-    return (await this.complete(run, lastWordMessages(run.prompt, messages), scoped, preset, null)).content;
+    return (await this.complete(run, lastWordMessages(run.prompt, messages, request), scoped, preset, null)).content;
   }
   /**
    * mac7/speed: how a stopped task reads to the person who asked for it. A model service refusing
@@ -2386,27 +2402,97 @@ ${run.output.slice(0, 6000)}`;
     return this.catalogs.get(context.runId)?.descriptions() ?? this.registry.descriptions(context.permissions);
   }
   /** What this round costs and what is left, so compaction can be decided on the conversation alone. */
-  private budgetOf(messages: Message[], context: ToolContext): ContextBudget {
+  private budgetOf(messages: Message[], context: ToolContext, preset?: ModelPreset): ContextBudget {
     const plain = messages.map(textOnly);
     // R17-048: with the card on, the service's own count of the last request can only raise the figure.
     return savings.withReported(this.store, this.owner, context.runId, contextBudget({
-      limit: knobs.contextWindow(this.store, this.owner, contextLimit), // R17-S08
+      limit: this.contextWindowFor(preset), // R17-S08, dogfood D22: the model's own room
       system: estimateTokens(plain.filter((message) => message.role === "system")),
       catalog: catalogTokens(this.toolsFor(context)),
       messages: estimateTokens(plain),
       reserve: answerReserve,
     }));
   }
-  /** Keeps the working context under the limit: compaction first, then shrinking older tool results. */
+  /**
+   * dogfood D22: how much room a model has, in estimated tokens: the owner's own figure in Settings, else the model's
+   * (what its service refused before, what the connection reports, else where it runs; src/model-context.ts).
+   */
+  contextWindowFor(preset?: ModelPreset): number {
+    const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
+    const local = chosen ? presetRunsLocally(chosen) : false;
+    return knobs.contextWindow(this.store, this.owner, modelWindow(this.store, this.owner, chosen, local));
+  }
+  /**
+   * Keeps the working context under the limit: older turns are folded first, then this task's own earlier work
+   * (dogfood D22: one turn of thirty page reads has no older turn to fold), then older tool results are shrunk. When
+   * even that cannot make room, the task ends with its best answer and says why, never in silence.
+   */
   private async fitContext(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute): Promise<void> {
-    const before = this.budgetOf(messages, context);
+    const preset = route.candidates[route.index];
+    const before = this.budgetOf(messages, context, preset);
     this.store.event(run.id, "context.budget", { ...before });
     await this.maybeCompact(run, messages, ids, context, route, before);
-    if (this.budgetOf(messages, context).headroom >= 0) return;
-    const shrunk = shrinkToolResults(messages, 4);
-    const after = this.budgetOf(messages, context);
+    if (this.budgetOf(messages, context, preset).headroom >= 0) return;
+    await this.foldTaskWork(run, messages, ids, context, route);
+    if (this.budgetOf(messages, context, preset).headroom >= 0) return;
+    let shrunk = shrinkToolResults(messages, 4);
+    if (this.budgetOf(messages, context, preset).headroom < 0) shrunk += shrinkToolResults(messages, 1);
+    const after = this.budgetOf(messages, context, preset);
     this.store.event(run.id, "context.shrunk", { shrunkResults: shrunk, estimatedBefore: before.messages, estimatedAfter: after.messages });
-    if (after.headroom < 0) throw new BudgetError(tooLong);
+    if (after.headroom < 0) return await this.outOfRoom(run, context, route, messages);
+  }
+  /**
+   * dogfood D22: one round's question to the model. When the service refuses it for being longer than its context
+   * window, that teaches the connection's real room (src/model-context.ts); the conversation is fitted to it and the
+   * question asked once more.
+   */
+  private async completeFitted(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute,
+    every: Message | undefined, preview?: (text: string) => void): Promise<Completion> {
+    try {
+      return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
+    } catch (error) {
+      if (!contextOverflow(error)) throw error;
+      const preset = route.candidates[route.index]!;
+      const sent = this.budgetOf(messages, context, preset);
+      const room = learnWindow(this.store, this.owner, preset.id, sent.catalog + sent.messages, sent.limit);
+      this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room });
+      await this.fitContext(run, messages, ids, context, route);
+      return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
+    }
+  }
+  /**
+   * dogfood D22: this task's own earlier work (its tool calls and what they gave back) folded into one note, so a long
+   * turn of reading carries on instead of running out of room. The newest call and its results stay as they are, and
+   * a call is never separated from its results.
+   */
+  private async foldTaskWork(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute): Promise<void> {
+    const from = ids.findLastIndex((id) => id !== null) + 1;
+    const to = messages.findLastIndex((m, at) => at >= from && m.role === "assistant" && (m.toolCalls?.length ?? 0) > 0);
+    if (from < 1 || to - from < 2) return;
+    const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!);
+    const room = Math.max(2000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4);
+    const transcript = messages.slice(from, to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n");
+    this.store.event(run.id, "context.folding_task", { messages: to - from });
+    const summariser: Message[] = [
+      { role: "system", content: taskFoldInstructions },
+      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${transcript.slice(-room)}` },
+    ];
+    const summary = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim().slice(0, 6000);
+    if (!summary) return;
+    messages.splice(from, to - from, { role: "user", from: "branch", content: `${taskFoldNote}\n\n${summary}` });
+    ids.splice(from, to - from, null);
+    this.store.event(run.id, "context.folded_task", { droppedMessages: to - from, summaryChars: summary.length,
+      estimatedAfter: estimateTokens(messages.map(textOnly)) });
+  }
+  /**
+   * dogfood D22: nothing more can be folded or shrunk. The task ends with the best answer the model can give from
+   * what it has, then says plainly that the conversation ran out of room and what to do next. Never silent.
+   */
+  private async outOfRoom(run: Run, context: ToolContext, route: ModelRoute, messages: readonly Message[]): Promise<never> {
+    let best = "";
+    try { best = (await this.lastWord(run, context, route, messages, outOfRoomRequest)).trim(); } catch { /* the sentence below is still said */ }
+    this.store.event(run.id, "context.out_of_room", { answered: Boolean(best) });
+    throw new BudgetError([best, outOfRoomSentence].filter(Boolean).join("\n\n"));
   }
   /**
    * When the working context grows past the threshold, older stored turns are summarised by the
@@ -2423,7 +2509,9 @@ ${run.output.slice(0, 6000)}`;
     if (!split) return;
     this.store.event(run.id, "context.compacting", { estimatedBefore: before, threshold: budget.threshold }); // R17-049
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!); // R17-S11
-    const transcript = messages.slice(split.from, split.to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n").slice(0, 60000);
+    // dogfood D22: the summariser's own question fits the room of the model that answers it.
+    const room = Math.max(2000, Math.min(60000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4));
+    const transcript = messages.slice(split.from, split.to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n").slice(0, room);
     const previous = messages.slice(1, split.from).filter((m) => m.role === "system").map((m) => m.content).join("\n");
     const summariser: Message[] = [
       { role: "system", content: compactionInstructions },
@@ -2605,7 +2693,7 @@ ${run.output.slice(0, 6000)}`;
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
-    if (input > knobs.contextWindow(this.store, this.owner, contextLimit)) throw new BudgetError(tooLong); // R17-S08
+    if (input > this.contextWindowFor(preset)) throw new BudgetError(tooLong); // R17-S08, dogfood D22: this model's room
     // The same question asked twice. The kept answer is looked for before anything is charged or
     // written down as an attempt, so a round that never reached the provider really does cost
     // nothing — in the inspector and in the figures alike. The step count still applies, so a task
@@ -2981,7 +3069,8 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args);
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
-    const screen = reachesScreen(tool, permission, args); // dogfood D4
+    // dogfood D4: the owner's screen asks first until the owner has said yes to it in this conversation.
+    const screen = reachesScreen(tool, permission, args) && !this.screenApproved.has(this.sessionOf(context));
     // What the call is about — a folder, a website, a messaging account, a command — so a rule the
     // owner wrote about that one thing is considered before the broad ones.
     const resource = this.registry.resourceOf(tool, target, args); // integration (hardening-3): with the workspace-written path
@@ -3492,6 +3581,7 @@ ${run.output.slice(0, 6000)}`;
     // at the window (a household profile) answers just now or for the conversation; setting Branch up is the owner's.
     if (remember === "always" && !mayGiveStandingYes(this.store)) throw new Error(ownersStandingYes);
     if (remember === "always" && waiting.screen) throw new Error(screenStandingRefusal); // dogfood D4
+    if (decision === "allow" && waiting.screen) this.screenApproved.add(sessionId); // dogfood D4: approved for this conversation
     if (remember === "always" && waiting.noStanding) throw new Error(noStandingRefusal); // Q59
     // Redesign: "Always allow for <Trunk>" is kept for that Trunk only, and only when that Trunk's work is what asked.
     if (forTrunk !== undefined && waiting.trunk !== forTrunk) throw new Error(notThatTrunkRefusal);
@@ -3872,14 +3962,14 @@ const lastWordMessageCount = 10, lastWordCharsEach = 800;
  * the end of what happened. Bounded on purpose — about 2,000 tokens whatever the task did — so the
  * question can always be afforded.
  */
-export function lastWordMessages(prompt: string, messages: readonly Message[]): Message[] {
+export function lastWordMessages(prompt: string, messages: readonly Message[], request = lastWordRequest): Message[] {
   const said = (message: Message): string =>
     message.role === "tool" ? "a tool answered" : message.role === "assistant" ? "you said" : "you were told";
   const recent = messages.filter((message) => message.role !== "system").slice(-lastWordMessageCount)
     .map((message) => `${said(message)}: ${(message.content ?? "").slice(0, lastWordCharsEach)}`)
     .join("\n\n");
   return [
-    { role: "system", content: lastWordRequest },
+    { role: "system", content: request },
     { role: "user", content: digest(prompt, recent) },
   ];
 }

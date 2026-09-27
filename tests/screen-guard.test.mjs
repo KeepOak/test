@@ -72,7 +72,7 @@ test("the classifier: the screen, keyboard, mouse, clipboard and computer.* on a
   assert.equal(asksForScreen("press ctrl+s on my desktop"), true);
 });
 
-test("under every mode and every owner yes, the screen asks and never goes ahead unasked", async (t) => {
+test("under every mode and every owner yes, the first screen use asks and never goes ahead unasked", async (t) => {
   const { app } = await scripted(t, [done]);
   const owner = app.runtime.owner;
   const run = await app.runtime.run({ prompt: "take a screenshot of my screen" });
@@ -129,7 +129,7 @@ test("a screen call on a window through computer.* is refused during research; t
 
 test("the owner asking for the screen is offered it, is asked first even under Full access, and a yes runs it", async (t) => {
   const shot = call("desktop.screenshot", {}, "p1");
-  const { app, seen, calls } = await scripted(t, [shot, shot, { content: "Here is your screen.", toolCalls: [] }]);
+  const { app, seen, calls } = await scripted(t, [shot, shot, { content: "Here is your screen.", toolCalls: [] }, call("desktop.open", { app: "notepad" }, "o1"), done]);
   const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
   assert.ok(offeredNames(seen[0]).includes("desktop.screenshot"), "asked for in the owner's words, the tool is offered");
   assert.equal(first.status, "needs_input", "it stops to ask, even under Full access");
@@ -143,6 +143,9 @@ test("the owner asking for the screen is offered it, is asked first even under F
   const next = await app.runtime.run({ prompt: "Yes, go ahead.", sessionId: first.sessionId });
   assert.equal(next.status, "completed");
   assert.equal(calls.length, 1, "after the owner's yes, the screenshot ran once");
+  const elsewhere = await app.runtime.run({ prompt: "open notepad", conversationMode: "full" });
+  assert.equal(elsewhere.status, "needs_input", "another conversation asks again: a screen yes is never carried over");
+  assert.equal(calls.length, 1);
 });
 
 test("work the owner did not start (a schedule, a chat app) is never offered the screen, whatever its words say", async (t) => {

@@ -51,10 +51,10 @@ export async function loadPlan(run) {
   }
 }
 
-/** The newest task of this conversation, when it failed, with the engine's words. */
+/** The newest task of this conversation, when it failed or stopped at a limit (dogfood D22: out of room), with the engine's words. */
 export function failedLine(runs, sessionId, sending) {
   if (!sessionId || sending) return "";
   const last = (runs ?? []).filter((r) => r.sessionId === sessionId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
-  if (last?.status !== "failed" || !String(last.output ?? "").trim()) return "";
+  if (!["failed", "budget_exceeded"].includes(last?.status) || !String(last.output ?? "").trim()) return "";
   return `<div class="b"><div class="gut"></div><div><div class="txt">${esc(last.output)}</div></div></div>`;
 }

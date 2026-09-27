@@ -23,6 +23,8 @@ export interface ModelPreset {
   reasoning?: ReasoningEffort;
   /** Which line of the provider catalog this connection came from, when it came from one. */
   catalogId?: string;
+  /** dogfood D22: how much context the model was loaded with, in tokens, when its connection reports it (src/model-context.ts). */
+  contextWindow?: number;
 }
 export interface ModelChoice {
   presetId: string;

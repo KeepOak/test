@@ -12,8 +12,9 @@
  *     conversation ask for them (`asksForScreen`). Page text, tool results, project instructions, a helper's brief and
  *     anything a chat app, schedule or trigger sent never count. Elsewhere those tools are not listed, not searchable,
  *     not pre-loaded, and a call to one is refused in plain words without asking the owner or touching anything.
- *   - Where they are offered, every call still asks the owner first, whatever the mode or rules say (Full access
- *     included). A yes counts for this conversation at most: never "always", so no later task inherits it.
+ *   - Where they are offered, the first use in a conversation asks the owner, whatever the mode or rules say (Full
+ *     access and Auto included); after that yes the usual rules apply there. A yes is never kept "always", so no
+ *     later conversation inherits it.
  */
 
 /** The permissions that reach this computer's own screen, keyboard, mouse or clipboard (src/integrations/desktop-tools.ts). */
@@ -32,15 +33,18 @@ export function reachesScreen(tool: string, permission: string, args: unknown): 
 export const screenTool = (tool: string, permission: string): boolean =>
   screenPermissions.has(permission) || tool.startsWith("desktop.");
 
-const screenWords = /\b(screens?|screenshots?|desktop|clipboard|mouse|keyboard)\b|\b(my computer|computer use|take over)\b/i;
+const screenWords = /\b(screens?|screenshots?|desktop|clipboard|mouse|keyboard)\b|\b(my computer|this computer|my pc|computer use|take over)\b/i;
+/** Starting, closing or switching to a program on this computer ("open notepad"), which is the screen too. */
+const programWords = /\b(open|launch|start|close|quit|switch to|bring up|minimi[sz]e|maximi[sz]e)\s+(?:the\s+|my\s+|a\s+)?(?:\w+\s+)?(apps?|applications?|programs?|window|notepad|calculator|calc|paint|explorer|finder|terminal|powershell|command prompt|word|excel|outlook|teams|spotify|vs ?code|visual studio code)\b/i;
 
-/** Whether the owner's own words ask for the screen, keyboard, mouse or clipboard. */
+/** Whether the owner's own words ask for the screen, keyboard, mouse, clipboard or a program on this computer. */
 export function asksForScreen(text: string): boolean {
-  return screenWords.test(String(text ?? ""));
+  const words = String(text ?? "");
+  return screenWords.test(words) || programWords.test(words);
 }
 
 /** What the approval card adds to the label, so the owner knows why a yes is asked for under every mode. */
-export const screenHoldReason = "Branch asks every time before it looks at or uses your own screen, keyboard, mouse or clipboard";
+export const screenHoldReason = "Branch asks before it first looks at or uses your own screen, keyboard, mouse or clipboard in a conversation";
 
 /** The words for "Yes, always" to a screen question. */
 export const screenStandingRefusal =
