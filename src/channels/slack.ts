@@ -55,11 +55,14 @@ const slackEmojiNames: Record<string, string> = {
 };
 
 /** Slack's own formatting, with code spans as fences that carry no language (Slack would show it as a first code line). */
+// Plain: the notification text has Slack's three control characters escaped, so "<!channel>" shows as written and
+// pings nobody. No `parse: "full"`: it reads the words as a person's typing and turns a written @channel into a ping.
 const slackText = (text: string, format?: MessageFormat): string =>
-  format?.plain ? text : toMrkdwn(format?.spans?.length ? fenced(text, format.spans, { tag: false }) : text);
+  format?.plain ? text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : toMrkdwn(format?.spans?.length ? fenced(text, format.spans, { tag: false }) : text);
 /** Plain-text blocks work for sends and edits; chat.update does not accept a mrkdwn switch. */
 const slackPlain = (text: string, format?: MessageFormat): Record<string, unknown> => format?.plain
-  ? { parse: "full", link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
+  ? { link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
   readonly id: string;
