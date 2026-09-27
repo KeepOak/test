@@ -278,7 +278,9 @@ test("only a whole reply shaped like a call is one", () => {
     '{"tool_calls":[{"type":"function","function":{"name":"files.read","arguments":"{}"}}]}', '{"name":"files.read","parameters":{"path":"a"}}'])
     assert.ok(writesToolCallAsText(text), text);
   for (const text of ["Here is the call: " + textCall, '{"name":"Rome","founded":-753}', '{"name":"x"}', "[]", "{}", "The answer is 42.",
-    '{"kind":"task","when":"a task","what":"x","name":"y","words":"z"}'])
+    '{"kind":"task","when":"a task","what":"x","name":"y","words":"z"}',
+    // A shaped answer that happens to have a name and arguments. Mutation: drop the call-keys-only rule in isCallShape → red.
+    '{"name":"Pasta","arguments":["cheap","fast"],"verdict":"yes"}'])
     assert.ok(!writesToolCallAsText(text), text);
 });
 
