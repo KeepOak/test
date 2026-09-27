@@ -268,13 +268,19 @@ export const unofferedEnding = "The model kept asking for tools it was not offer
  * "Let me know…", "I'll wait…", "I'll be here…" and "I'm here if…" offer help; they promise nothing.
  */
 export function announcesNextStep(text: string): boolean {
-  const sentences = String(text ?? "").trim().split(/(?<=[.!:])\s+/).filter((one) => one.trim());
+  // qa-fixes-5: a room member's call for the owner at the end ("I will find a fact. @you") is not what it said it would do
+  // (src/trunks/room-plan.ts withoutOwnerCall); a question to the owner ("…, @you?") keeps its question mark.
+  const said = String(text ?? "").trim().replace(/[\s,]*@(?:you|owner|user)\b[.!]?\s*$/i, "");
+  const sentences = said.split(/(?<=[.!:])\s+/).filter((one) => one.trim());
   // qa-fixes-5: a lead-in word first ("Alright, I'll find a fact…", "Okay — let me check.", "Sure, I'll read it.") is still a promise.
   const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
   if (!last || last.endsWith("?")) return false;
   if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
   const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
-  return Boolean(promise && nextStepVerbs.test(promise[1]!));
+  if (promise) return nextStepVerbs.test(promise[1]!);
+  // qa-fixes-5: qwen2.5:7b in a room, "I'm looking for a fact about the Roman Empire." with no call: saying it is under
+  // way is the same promise. "I'm looking forward to it." is not.
+  return /^(?:i['’]?m|i am)\s+(?:now\s+|currently\s+|just\s+|still\s+)?(?:looking (?!forward)|working on\b|(?:searching|checking|reading|fetching|finding|gathering|researching|scanning|reviewing|examining|analy[sz]ing|browsing|opening|loading|downloading)\b)/i.test(last);
 }
 /** Words a reply may open with before what it says it will do (qa-fixes-5). */
 const leadIn = /^(?:(?:okay|ok|sure thing|sure|alright|all right|right|great|got it|certainly|absolutely|of course|perfect|understood|no problem|yes|yep|yeah|sounds good|good|so|well|then)\b[\s,;—–*_-]*)+/i;
