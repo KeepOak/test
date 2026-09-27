@@ -36,17 +36,27 @@ async function frame(stream) {
 }
 
 /** A few seconds from the microphone, in the kind this web view records (iOS: audio/mp4). */
-function record(stream, ms) {
+function record(stream, ms, signal) {
   return new Promise((done, failed) => {
     const recorder = new MediaRecorder(stream), chunks = [];
+    let timer;
+    const stop = () => {
+      clearTimeout(timer);
+      if (recorder.state !== "inactive") recorder.stop();
+    };
+    signal?.addEventListener("abort", stop, { once: true });
     recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-    recorder.onerror = (event) => failed(event.error ?? new Error("The recording stopped."));
+    const clean = () => { clearTimeout(timer); signal?.removeEventListener("abort", stop); };
+    recorder.onerror = (event) => { clean(); failed(event.error ?? new Error("The recording stopped.")); };
     recorder.onstop = async () => {
+      clean();
+      if (signal?.aborted) { failed(new Error("Lending stopped.")); return; }
       const blob = new Blob(chunks, { type: recorder.mimeType || chunks[0]?.type || "audio/webm" });
       done({ data: await blob.arrayBuffer(), mime: blob.type });
     };
     recorder.start();
-    setTimeout(() => recorder.state !== "inactive" && recorder.stop(), ms);
+    timer = setTimeout(stop, ms);
+    if (signal?.aborted) stop();
   });
 }
 
@@ -66,6 +76,12 @@ function environment() {
   return {
     platform: ios ? "ios" : "android", now: Date.now, say,
     media: navigator.mediaDevices, frame, record, speak,
+    stopOutput: () => globalThis.speechSynthesis?.cancel(),
+    onHidden: (stop) => {
+      const changed = () => { if (document.hidden) stop(); };
+      document.addEventListener("visibilitychange", changed);
+      return () => document.removeEventListener("visibilitychange", changed);
+    },
   };
 }
 

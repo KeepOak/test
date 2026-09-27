@@ -102,19 +102,40 @@ async function answerInvitation(env, link, code, name, never) {
   throw new Error(env.say("phone.node.late", "Nobody answered in time. Make a new invitation and try again."));
 }
 
+/** Cancels an outstanding browser operation even when its promise never settles. */
+function cancellable(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const stop = () => reject(new Error("Lending stopped."));
+    if (signal.aborted) { void Promise.resolve(promise).catch(() => undefined); return stop(); }
+    signal.addEventListener("abort", stop, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
+}
+
 async function capture(env, capability, args) {
-  if (capability === "camera") {
-    const stream = await env.media.getUserMedia({ video: { facingMode: args.facing === "front" ? "user" : "environment" } });
-    try { return { mime: "image/jpeg", name: "camera.jpg", data: await env.frame(stream) }; } finally { stream.getTracks().forEach((track) => track.stop()); }
-  }
-  const stream = await env.media.getUserMedia({ audio: true });
+  const signal = env.signal;
+  const pending = env.media.getUserMedia(capability === "camera"
+    ? { video: { facingMode: args.facing === "front" ? "user" : "environment" } } : { audio: true });
+  const stopTracks = (stream) => stream.getTracks().forEach((track) => track.stop());
+  // Permission can finish after stopping: a late stream must never stay open.
+  void pending.then((stream) => { if (signal?.aborted) stopTracks(stream); }, () => undefined);
+  const stream = await cancellable(pending, signal);
+  const stop = () => stopTracks(stream);
+  signal?.addEventListener("abort", stop, { once: true });
   try {
+    if (signal?.aborted) throw new Error("Lending stopped.");
+    if (capability === "camera") {
+      return { mime: "image/jpeg", name: "camera.jpg", data: await cancellable(env.frame(stream, signal), signal) };
+    }
     // PH-03: the recording's own kind (iOS records audio/mp4, others audio/webm), with any codec detail taken off.
-    const made = await env.record(stream, Math.min(30, Number(args.seconds ?? 5)) * 1000);
+    const seconds = Number(args.seconds ?? 5);
+    if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("Give a recording length between 0 and 30 seconds.");
+    const made = await cancellable(env.record(stream, Math.min(30, seconds) * 1000, signal), signal);
     const data = made?.data ?? made, mime = String(made?.mime ?? "audio/webm").split(";")[0].trim().toLowerCase();
     const kind = /^audio\/[a-z0-9.+-]{1,60}$/.test(mime) ? mime : "audio/webm";
     return { mime: kind, name: `listen.${kind === "audio/mp4" ? "m4a" : kind.slice(6)}`, data };
-  } finally { stream.getTracks().forEach((track) => track.stop()); }
+  } finally { signal?.removeEventListener("abort", stop); stop(); }
 }
 
 /** Does one switched-on thing. Arguments are checked again here, whatever Branch sent. */
@@ -130,7 +151,7 @@ export async function perform(env, capability, args = {}) {
     return { value: { done: "opened" } };
   }
   // PH-03: "spoken" only once the phone said it started; a speaker that never starts is an error, not a success.
-  if (capability === "speak") { await env.speak(String(args.text ?? "").slice(0, 2000)); return { value: { done: "spoken" } }; }
+  if (capability === "speak") { await cancellable(env.speak(String(args.text ?? "").slice(0, 2000), env.signal), env.signal); return { value: { done: "spoken" } }; }
   if (capability === "canvas") {
     // Integration review: checked here too, so a hub that was taken over cannot show a javascript: or file: address.
     const html = typeof args.html === "string" && args.html ? args.html.slice(0, 60000) : null;
@@ -158,9 +179,10 @@ export async function answerInvoke(env, lent, frame) {
   // this phone offered, so a refused one can still arrive. The phone turns it away itself.
   if (lent.never.includes(frame.capability)) return refuse("This phone never allows that.");
   if (!lent.offers.includes(frame.capability) || !lent.enabled.has(frame.capability)) return refuse("That is switched off on this phone.");
-  if (typeof frame.deadline !== "number" || frame.deadline < env.now()) return refuse("The request came too late.");
+  if (!Number.isFinite(frame.deadline) || frame.deadline < env.now()) return refuse("The request came too late.");
   try {
     const result = await perform(env, frame.capability, frame.args ?? {});
+    if (env.signal?.aborted || frame.deadline < env.now() || !lent.enabled.has(frame.capability)) return refuse("Lending stopped or the request expired.");
     if (!result.media) return { result: { type: "result", id: frame.id, ok: true, value: result.value } };
     const bytes = new Uint8Array(result.media.data);
     if (bytes.length > MEDIA_LIMIT) return refuse("The picture or sound was larger than Branch accepts.");
@@ -180,20 +202,43 @@ export async function answerInvoke(env, lent, frame) {
 export async function serveLending(env, bridge, onState = () => undefined) {
   const status = await bridge.deviceStatus();
   const never = readNever(status?.never), lent = { never, offers: offersLess(never, env.offers ?? APP_OFFERS[env.platform] ?? []), enabled: new Set(), seen: new Set() };
+  const active = new Map();
+  let stopped = false;
+  const cancel = () => { for (const request of active.values()) request.controller.abort(); env.stopOutput?.(); };
+  const hidden = env.onHidden?.(() => { lent.enabled.clear(); cancel(); });
   const handles = [
     await bridge.addListener("lendState", (state) => {
-      lent.enabled = new Set((state?.enabled ?? []).filter((c) => lent.offers.includes(c)));
+      lent.enabled = new Set(state?.connected && !stopped ? (state.enabled ?? []).filter((c) => lent.offers.includes(c)) : []);
+      if (!state?.connected || !lent.enabled.has("speak")) env.stopOutput?.();
+      for (const request of active.values()) if (!lent.enabled.has(request.capability)) request.controller.abort();
       onState({ connected: Boolean(state?.connected), enabled: [...lent.enabled] });
     }),
     await bridge.addListener("lendInvoke", async (frame) => {
-      const answer = await answerInvoke(env, lent, frame);
-      if (!answer) return;
-      const { result, bytes } = answer;
-      await bridge.lendResult({ ...result, ...(bytes ? { media: { ...result.media, data: b64Large(bytes) } } : {}) });
+      if (stopped || !hexOk(frame?.id, 32) || lent.seen.has(frame.id)) return;
+      if (active.size) {
+        lent.seen.add(frame.id);
+        if (lent.seen.size > 500) lent.seen.delete(lent.seen.values().next().value);
+        await bridge.lendResult({ type: "result", id: frame.id, ok: false, error: "This phone is already answering a request." }).catch(() => undefined);
+        return;
+      }
+      const controller = new AbortController(), request = { controller, capability: frame.capability };
+      active.set(frame.id, request);
+      const timer = setTimeout(() => controller.abort(), Math.max(0, Math.min(2_147_483_647, frame.deadline - env.now())));
+      try {
+        const answer = await answerInvoke({ ...env, signal: controller.signal }, lent, frame);
+        if (!answer || stopped || controller.signal.aborted) return;
+        const { result, bytes } = answer;
+        await bridge.lendResult({ ...result, ...(bytes ? { media: { ...result.media, data: b64Large(bytes) } } : {}) });
+      } catch { /* The native connection may already have discarded this request. */ }
+      finally { clearTimeout(timer); active.delete(frame.id); }
     }),
   ];
   if (status?.paired) await bridge.lendStart();
   return async () => {
+    stopped = true;
+    lent.enabled.clear();
+    cancel();
+    hidden?.();
     await bridge.lendStop();
     for (const handle of handles) await handle?.remove?.();
   };

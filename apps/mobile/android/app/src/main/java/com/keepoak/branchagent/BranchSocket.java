@@ -49,13 +49,17 @@ final class BranchSocket {
         }
     }
 
-    private final Socket socket;
+    private final Socket transport;
     private final InputStream in;
     private final OutputStream out;
     private final SecureRandom random = new SecureRandom();
 
     private BranchSocket(Socket socket) throws IOException {
-        this.socket = socket;
+        this(socket, socket);
+    }
+
+    private BranchSocket(Socket socket, Socket transport) throws IOException {
+        this.transport = transport;
         this.in = socket.getInputStream();
         this.out = socket.getOutputStream();
     }
@@ -175,6 +179,7 @@ final class BranchSocket {
         int port = url.getPort() == -1 ? (tls ? 443 : 80) : url.getPort();
         Socket raw = new Socket();
         raw.connect(new InetSocketAddress(bare, port), 15000);
+        raw.setSoTimeout(15_000); // Includes TLS negotiation, before a lend connection exists to close.
         Socket socket = raw;
         try {
             if (tls) {
@@ -189,7 +194,7 @@ final class BranchSocket {
             }
             // The hub pings every 25 seconds; three minutes of nothing at all means the line is gone.
             socket.setSoTimeout(180_000);
-            BranchSocket client = new BranchSocket(socket);
+            BranchSocket client = new BranchSocket(socket, raw);
             byte[] nonce = new byte[16];
             client.random.nextBytes(nonce);
             String key = base64(nonce);
@@ -199,7 +204,7 @@ final class BranchSocket {
             if (!accepted(head(client.in), key)) throw new IOException("Branch did not open the device socket.");
             return client;
         } catch (Exception error) {
-            socket.close();
+            raw.close();
             throw error;
         }
     }
@@ -220,13 +225,10 @@ final class BranchSocket {
     }
 
     void close() {
+        // Closing the transport interrupts a blocked send/read. Never acquire the send monitor here:
+        // lifecycle pause runs on the main thread, even when the peer stopped reading a media frame.
         try {
-            send(0x8, new byte[0]);
-        } catch (IOException ignored) {
-            // already gone: closing below is all that is left to do
-        }
-        try {
-            socket.close();
+            transport.close(); // The raw socket also interrupts TLS; no close-notify write can wait for the peer.
         } catch (IOException ignored) {
             // closed either way
         }

@@ -122,10 +122,10 @@ export function paintSwatches(root) {
 async function stopLending() {
   await attempt(async () => {
     const lent = S.lend;
-    if (lent?.nodeId && /^[a-f0-9]{16}$/.test(lent.nodeId) && lent.origin === phone.session?.origin) await post(`/api/devices/${lent.nodeId}/revoke`, {});
     await plugin.deviceForget();
     S.lend = await plugin.deviceStatus?.().catch(() => null) ?? null;
     go("settings");
+    if (lent?.nodeId && /^[a-f0-9]{16}$/.test(lent.nodeId) && lent.origin === phone.session?.origin) await post(`/api/devices/${lent.nodeId}/revoke`, {});
   });
 }
 export function initSettings(onForgotten) {

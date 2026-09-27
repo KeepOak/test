@@ -128,11 +128,11 @@ final class BranchLend {
             open = socket;
             thread = null;
             socket = null;
+            enabled = Collections.emptyList();
+            waiting.clear();
         }
         if (open != null) open.close();
         if (was != null) was.interrupt();
-        enabled = Collections.emptyList();
-        waiting.clear();
         page.state(false, Collections.emptyList());
     }
 
@@ -181,6 +181,7 @@ final class BranchLend {
         try {
             while (current()) {
                 BranchSocket.Frame frame = open.next();
+                if (!current()) return proven; // A frame read before pause cannot affect the replacement connection.
                 if (!frame.fin || frame.opcode == 0x0 || frame.opcode == 0x8) return proven;
                 if (frame.opcode == 0x9) open.send(0xA, frame.payload);
                 if (frame.opcode != 0x1) continue;
@@ -205,6 +206,7 @@ final class BranchLend {
     }
 
     private boolean onMessage(BranchSocket open, String deviceId, JSONObject message) throws Exception {
+        if (!current()) return false;
         String type = message.optString("type", "");
         List<String> never = node.never();
         if (type.equals("challenge")) {
@@ -242,7 +244,10 @@ final class BranchLend {
             open.sendText(new JSONObject().put("type", "result").put("id", id).put("ok", false).put("error", why).toString());
             return;
         }
-        waiting.put(id, ((Number) deadline).longValue());
+        synchronized (lock) {
+            if (socket != open || thread != Thread.currentThread()) return;
+            waiting.put(id, ((Number) deadline).longValue());
+        }
         JSONObject args = ask.optJSONObject("args");
         page.invoke(new JSONObject().put("id", id).put("capability", capability).put("args", args == null ? new JSONObject() : args)
             .put("deadline", ((Number) deadline).longValue()));
@@ -254,9 +259,14 @@ final class BranchLend {
      */
     void answer(JSONObject from) throws Exception {
         String id = from.optString("id", "");
-        Long deadline = waiting.remove(id);
-        BranchSocket open = socket;
+        Long deadline;
+        BranchSocket open;
+        synchronized (lock) {
+            deadline = waiting.remove(id);
+            open = socket;
+        }
         if (deadline == null || open == null) throw new IllegalStateException("That request is not waiting.");
+        if (deadline < System.currentTimeMillis() || !page.showing()) throw new IllegalStateException("Lending stopped or the request expired.");
         boolean ok = from.optBoolean("ok", false);
         JSONObject result = new JSONObject().put("type", "result").put("id", id).put("ok", ok);
         byte[] bytes = null;
