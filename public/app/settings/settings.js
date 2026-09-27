@@ -30,6 +30,7 @@ import * as self from "./pages/self.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import * as chatapps from "./pages/chatapps.js"; // pass 17 part D §8
+import * as data from "./pages/data.js"; // privacy: Settings › Your data
 import { noticed } from "../shell/scene.js";
 import { initKit } from "./kit17.js";
 import { initDemosB5 } from "./demos-b5.js";
@@ -37,7 +38,7 @@ import { initDemosB5 } from "./demos-b5.js";
 const PAGES = {
   general, people, appearance, notifications, instructions, models, local,
   accounts, voice, permissions, computer, secrets, usage, gateway, updates,
-  advanced, developer, achievements, self, chatapps
+  advanced, developer, achievements, self, chatapps, data
 };
 
 /* Whether the window has a Settings page by this id (an engine command may name one). */
@@ -47,7 +48,7 @@ export const NAV = [
   ["General", [["general", "General"], ["people", "People"], ["appearance", "Appearance"], ["notifications", "Notifications"]]],
   ["Your assistant", [["instructions", "Instructions & personality"], ["models", "Models"], ["accounts", "Accounts"], ["local", "On this computer"], ["voice", "Voice"], ["chatapps", "Chat apps"]]],
   ["Safety", [["permissions", "Permissions"], ["computer", "Computer & browser"], ["secrets", "Saved sign-ins"]]],
-  ["Care", [["usage", "Data & usage"], ["gateway", "Gateway"], ["self", "Branch itself"], ["updates", "Updates & about"], ["achievements", "Achievements"]]]
+  ["Care", [["usage", "Data & usage"], ["data", "Your data"], ["gateway", "Gateway"], ["self", "Branch itself"], ["updates", "Updates & about"], ["achievements", "Achievements"]]]
 ];
 
 let searchText = "";
