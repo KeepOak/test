@@ -89,6 +89,7 @@ export const ROUTES = {
   "/api/workbooks/:id/markdown": "look",
   "/api/decisions/settings": "owner POST",
   "/api/decisions/decide": "owner POST",
+  "/api/decisions/urgency": "owner POST",
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
   "/api/artifacts/file": "look",

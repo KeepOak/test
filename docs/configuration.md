@@ -2374,6 +2374,14 @@ owner-only. `model` is the connection that decides, by preset id (empty means th
 is the longest list filtered at once, and a longer list is split. Every answer is checked, never trusted: a pick must
 be one of the choices offered, a filter may keep only lines it was given, and a score must be 1 to 10.
 
+The additional `route` and `inbox` switches both default to false because each decision uses a model call.
+`route` picks a room member by their written job only when the message names nobody and the room uses
+Everyone answers or Only who I tag. A checked, sufficiently confident pick is written on the message so replay
+does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
+`inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
+1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+Switching it off refuses scoring with 409 and restores the inbox's original order.
+
 ## Teams, linked chats, registries and evaluation
 
 `POST /api/teams { name, purpose, members: [{ specialistId, role, brief }] }` creates a team with a room; `POST /api/teams/:id/run { prompt }` fans the task out to every member and appends answers to the room (`GET /api/teams/:id/room`). `POST /api/channels/link { channel, chatId, sessionId }` makes a chat continue an existing conversation. `POST /api/registry/browse { url }` and `POST /api/registry/install { url, skillId }` work with a `branch-skill-registry` JSON index; installed skills stay disabled until activated. `POST /api/evaluation` (empty body for the standard suite) or `branch eval` records accuracy, latency and cost; energy is reported unavailable.
