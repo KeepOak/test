@@ -273,7 +273,7 @@ import { handlesHostBridgePath, hostBridgeApi, HostBridgeApiError } from "./host
 // Wave mac2 (move-in): bringing chats and memory over from another assistant.
 import { contextFileSinkFor, defaultMoveInOptions, handlesMoveInPath, moveInApi, MoveInApiError } from "./migrate-api.js";
 // Wave mac2 (guards): which workspace folders are trusted, and the loop guard switch.
-import { guardsApi, handlesGuardsPath } from "./run-guards.js";
+import { guardsApi, GuardsApiError, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
@@ -1064,7 +1064,8 @@ async function api(
       throw error instanceof MoveInApiError ? new HttpError(error.status, error.message) : error;
     });
   // Wave mac2 (guards): which workspace folders are trusted, what each carries, and both switches.
-  if (handlesGuardsPath(path)) return guardsApi(app, request, path, readBody);
+  if (handlesGuardsPath(path))
+    return guardsApi(app, request, path, readBody).catch((error: unknown) => { throw error instanceof GuardsApiError ? new HttpError(error.status, error.message) : error; });
   // R17-S-B: the hidden knobs. Every change is the owner's (see offLimitsToShortLivedKeys).
   if (handlesKnobsPath(path))
     return knobsApi(app, request, path, readBody, () => (process.env.BRANCH_INTEGRATIONS ? resolvePath(process.env.BRANCH_INTEGRATIONS) : null))
