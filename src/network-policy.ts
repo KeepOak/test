@@ -193,7 +193,41 @@ export class NetworkPolicy {
   ) {
     this.config = NetworkPolicySchema.parse(input);
   }
-  configure(input: unknown): NetworkPolicyConfig { return (this.config = NetworkPolicySchema.parse(input)); }
+  configure(input: unknown): NetworkPolicyConfig { this.lookups.clear(); return (this.config = NetworkPolicySchema.parse(input)); }
+  /**
+   * The browser checks every request a page makes, pictures and scripts included, so one page can ask about the same
+   * site dozens of times at once. Those checks share one lookup per site for a few seconds (`lookupTtlMs`); a lookup
+   * still in flight is shared too. Only the browser's checks use it, and each of them connects to exactly the addresses
+   * it judged (src/integrations/browser-pin-proxy.ts), so a cached answer can never send a page somewhere unjudged.
+   * The host and path rules are read afresh on every check; only the looked-up addresses are kept.
+   */
+  private readonly lookups = new Map<string, { until: number; answer: Promise<string[]> }>();
+  static readonly lookupTtlMs = 15_000;
+  static readonly lookupsKept = 256;
+  private cachedResolve(host: string): Promise<string[]> {
+    const now = Date.now(), had = this.lookups.get(host);
+    if (had && had.until > now) return had.answer;
+    const answer = this.resolve(host).catch((): string[] => []);
+    const entry = { until: now + NetworkPolicy.lookupTtlMs, answer };
+    this.lookups.delete(host);
+    this.lookups.set(host, entry);
+    while (this.lookups.size > NetworkPolicy.lookupsKept) this.lookups.delete(this.lookups.keys().next().value!);
+    // A name that could not be found is asked again next time rather than kept.
+    void answer.then((found) => { if (!found.length && this.lookups.get(host) === entry) this.lookups.delete(host); });
+    return answer;
+  }
+  /**
+   * The browser's check (src/integrations/browser.ts, any-website mode): the same judgement as `assertAllowed`, with the
+   * site's lookup shared for a few seconds, returning the addresses judged so the connection can be held to them, or
+   * null when it is reached as written (an address written out, or private addresses allowed). `scope: "host"` leaves
+   * out the path rules, for a tunnel that only ever says which site and port it goes to; the page's own request was
+   * already held to them.
+   */
+  async allowedAddresses(target: URL, what = "address", scope: "address" | "host" = "address"): Promise<string[] | null> {
+    return this.judge(target, what, { cached: true, hostOnly: scope === "host" });
+  }
+  /** Where a judged address is really dialled; only tests change it. */
+  dialAddress(address: string): string { return this.dial(address); }
   settings(): NetworkPolicyConfig { return this.config; }
   /** mac7/r17-g: the emergency stop's own check, set by the app; it can only refuse. */
   emergencyStop: (target: URL) => void = () => undefined;
@@ -207,20 +241,20 @@ export class NetworkPolicy {
    * nothing to hold a connection to: an address written out is reached as written, and with private
    * addresses allowed no answer a name gives is refused while the host and path rules go by the name.
    */
-  private async judge(target: URL, what: string): Promise<string[] | null> {
+  private async judge(target: URL, what: string, options: { cached?: boolean; hostOnly?: boolean } = {}): Promise<string[] | null> {
     this.emergencyStop(target); // mac7/r17-g
     if (!["http:", "https:"].includes(target.protocol)) throw new Error(`Only http and https ${what}es can be reached`);
     if (target.username || target.password) throw new Error("Addresses with embedded credentials are refused");
     const host = target.hostname.replace(/^\[|\]$/g, "").toLowerCase(), pathname = target.pathname || "/";
     if (this.config.blockedHosts.some((p) => hostMatches(host, p))) throw new Error(`${host} is on the blocked list`);
     if (this.config.allowedHosts && !this.config.allowedHosts.some((p) => hostMatches(host, p))) throw new Error(`${host} is not on the allowed list`);
-    if (this.config.blockedPaths.some((rule) => pathRuleMatches(host, pathname, rule))) throw new Error(`${host}${pathname} is on the blocked list`);
-    if (this.config.allowedPaths && !this.config.allowedPaths.some((rule) => pathRuleMatches(host, pathname, rule))) throw new Error(`${host}${pathname} is not on the allowed list`);
+    if (!options.hostOnly && this.config.blockedPaths.some((rule) => pathRuleMatches(host, pathname, rule))) throw new Error(`${host}${pathname} is on the blocked list`);
+    if (!options.hostOnly && this.config.allowedPaths && !this.config.allowedPaths.some((rule) => pathRuleMatches(host, pathname, rule))) throw new Error(`${host}${pathname} is not on the allowed list`);
     if (this.config.allowPrivateAddresses) return null;
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal"))
       throw new Error(`${host} points at this computer or a private network, which the assistant may not reach`);
     const literal = isIP(host) !== 0;
-    const addresses = literal ? [host] : await this.resolve(host);
+    const addresses = literal ? [host] : await (options.cached ? this.cachedResolve(host) : this.resolve(host));
     if (!addresses.length) throw new Error(`${host} could not be resolved`);
     const refused = literal ? addresses.filter(isPrivateAddress) : refusedAnswers(addresses, this.config.fakeIpProxy === true);
     if (refused.length) throw new Error(refusedReason(host, addresses, refused, literal));

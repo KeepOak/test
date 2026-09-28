@@ -89,18 +89,22 @@ test("S6 Regular shows the essentials; each level shows more; the choice is kept
   // Show everything; each level adds the prototype's sections to a page.
   const f = await fixture(t);
   await openSettingsPage(f.page, "models");
+  /* A level's cards are drawn as the engine's reads arrive, so each count is read once it has grown past the level
+     below (or the wait times out and the assertion names the counts). */
+  const grown = async (than) => { await f.page.waitForFunction((n) => [...document.querySelectorAll(".set-col :is(h1, h2, h3)")].filter((node) => node.checkVisibility()).length > n, than, { timeout: 10000 }).catch(() => {}); return headings(f.page); };
   await setLevel(f.page, "regular");
   const regular = await headings(f.page);
   await setLevel(f.page, "advanced");
-  const advanced = await headings(f.page);
+  const advanced = await grown(regular.length);
   await setLevel(f.page, "technical");
-  const technical = await headings(f.page);
+  const technical = await grown(advanced.length);
   assert.ok(advanced.length > regular.length && technical.length > advanced.length, `each level shows more (${regular.length}, ${advanced.length}, ${technical.length})`);
   assert.ok(regular.every((one) => advanced.includes(one)) && advanced.every((one) => technical.includes(one)), "and keeps what the level below shows");
   await f.page.reload();
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await openSettingsPage(f.page, "models");
   await f.page.locator('[data-act="setlevel"][data-v="technical"][aria-pressed="true"]').waitFor();
+  await f.page.waitForFunction((want) => JSON.stringify([...document.querySelectorAll(".set-col :is(h1, h2, h3)")].filter((node) => node.checkVisibility()).map((node) => node.textContent.trim())) === want, JSON.stringify(technical), { timeout: 10000 }).catch(() => {});
   assert.deepEqual(await headings(f.page), technical, "the choice is kept");
   assert.deepEqual(f.errors, []);
 });
