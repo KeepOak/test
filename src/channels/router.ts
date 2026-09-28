@@ -1033,6 +1033,9 @@ export class ChannelRouter {
     const { channel, chatId } = message;
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
+    // held back when the owner turned steering off, and answered as the next turn if the task never read it.
+    if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());

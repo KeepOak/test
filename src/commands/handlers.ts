@@ -22,6 +22,7 @@ import { REACH_HANDLERS } from "../reach/commands.js"; // r17-i
 import { learnCommand } from "../learn/commands.js"; // mac7/learn
 import { adaptCommand } from "../adapt/commands.js"; // mac7/adapt
 import { householdHere, mayUseConversation, runsHere } from "./household.js"; // Q259
+import { skill, steer } from "./steer-skill.js"; // CHAT-192, CHAT-205
 import { conversationHolder } from "../household-approvals.js"; // Q261
 
 /**
@@ -282,4 +283,5 @@ export const HANDLERS: Record<string, Handler> = {
   ...REACH_HANDLERS, // r17-i: /platform
   ...BOARD_HANDLERS, // r17-h: /queue, /busy, /focus, /installs
   learn: learnCommand, // mac7/learn
+  steer, skill, // CHAT-192, CHAT-205
 };
