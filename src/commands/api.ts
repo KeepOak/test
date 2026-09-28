@@ -97,7 +97,7 @@ export async function commandsApi(app: Branch, path: string, deps: CommandApiDep
     app.store.profiles.requireOwner("Which commands are offered");
     const input = await deps.readBody();
     const saved = recordedWrite(app.store, app.runtime.owner, byCard("command-catalog"), ["command-catalog"], () => saveCommandSettings(app.store, app.runtime.owner, input));
-    void app.channels.refreshCommandMenus();
+    void app.channels.refreshCommandMenus(); // CHAT-161: the apps' own pickers follow the switch
     return saved;
   }
   throw new CommandApiError(404, "Not found");

@@ -111,6 +111,18 @@ test("command arguments pass the secret scrub before anything is sent", async (t
   assert.ok(sent.every((one) => !one.text.includes("1+1")));
   assert.ok(!sent.some((one) => one.buttons?.some((button) => button.value.startsWith("y:"))));
 });
+test("bytes the runtime scrubbed before asking cannot acquire a Yes, even with a manual fingerprint", async (t) => {
+  const { app, sent, executed } = await fixture(t);
+  // The runtime hides key-shaped values and private details in a question's bytes; what runs is still the original.
+  const deepHide = (value) => typeof value === "string" ? value.replaceAll("1+1", "[hidden]") : value;
+  app.runtime.hideSecrets = deepHide;
+  await app.channels.handle(message("run"));
+  const question = waiting(app);
+  assert.match(question.bytes, /\[hidden\]/);
+  assert.ok(!sent.some((one) => one.buttons?.some((button) => button.value.startsWith("y:"))), "no Yes for bytes that differ from what runs");
+  assert.equal((await app.channels.answerApproval("chat", "dm", `y:${question.fingerprint}`, message(""))).decision, "in-window");
+  assert.equal(executed(), 0);
+});
 test("a truncated command cannot acquire a Yes", async (t) => {
   const { app, sent } = await fixture(t, { maxTextLength: 50 });
   await app.channels.handle(message("run"));

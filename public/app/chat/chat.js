@@ -11,7 +11,8 @@ import { markLive } from "../core/features.js";
 import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
-import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, readyWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
@@ -58,6 +59,7 @@ import { stillOutOfSight } from "../core/still.js";
 import { liveRun as engineRun } from "./timeline.js"; // household: the task the engine says works here
 
 const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null };
+const routingSends = new Set();
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
@@ -308,7 +310,7 @@ function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
   return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" aria-expanded="false" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
-    ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
+    ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${practiceFlag()}${costLine(C.sessionId)}</span>`}
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
@@ -497,16 +499,33 @@ async function carryOut(client) {
 /* Sends what is in the box, or `words` when given (an earlier message edited and sent again). While a task works, the
    message joins the conversation's waiting line instead; a message for a room or naming a Trunk goes where the engine
    expects it (rooms.js). */
+async function destinationReady(sid, prompt) {
+  if (sid && ((ownerHere() && E.trunkModes?.trunks !== "off") || E.rooms.some((room) => room.sessionId === sid))) {
+    if (routingSends.has(sid)) return false;
+    routingSends.add(sid);
+    try { await readyWho(); } catch (error) {
+      if (!S.drafts[sid]) S.drafts[sid] = prompt;
+      toast(error.message);
+      if (C.sessionId === sid) renderNow();
+      return false;
+    } finally { routingSends.delete(sid); }
+  }
+  return true;
+}
+
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
   if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
   if (!prompt && !(words === undefined && hasFiles())) return;
+  const busy = C.sending || ["running", "queued"].includes(liveRun()?.status);
+  if (refusePracticeRoute(prompt, busy, !!routeFor(prompt, C.sessionId, whoHere(), HOOKS))) return;
   /* While a task works, words join its waiting line; files wait on their chips for the next message. */
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
+  if (prompt.startsWith("/") && (await command(prompt))) return;
+  if (!(await destinationReady(C.sessionId, prompt))) return;
   /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
   if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain(""); return; }
-  if (prompt.startsWith("/") && (await command(prompt))) return;
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
   if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
   /* Ask me questions first (chat/askfirst.js): the engine's questions come first, and their dialog sends the words. */
@@ -530,6 +549,7 @@ async function send(words, answered = false) {
 async function answerChoice(words) {
   const prompt = String(words ?? "").trim();
   if (!prompt || C.sending) return;
+  if (refusePracticeRoute(prompt, ["running", "queued"].includes(liveRun()?.status), whoHere()?.kind === "room")) return;
   if (["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, false); return; }
   const info = whoHere();
   if (info?.kind === "room") {
@@ -589,6 +609,7 @@ async function sendPlain(prompt) {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     filesSent();
+    practiceSent();
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
@@ -599,7 +620,10 @@ async function sendPlain(prompt) {
     await loadWaiting();
   } catch (error) {
     if (error.offline && !started) keepForLater(prompt);
-    else C.messages.push({ role: "assistant", content: error.message });
+    else {
+      C.messages.push({ role: "assistant", content: error.message });
+      if (!started) S.drafts[C.sessionId ?? "new"] = prompt;
+    }
   } finally {
     C.sending = false;
     watchThinking(false);
@@ -794,7 +818,7 @@ export function init() {
   initFurniture({ send: (words) => answerChoice(words) });
   initComfort();
   // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
-  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render, onShow: render });
   initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);

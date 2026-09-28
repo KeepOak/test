@@ -59,11 +59,12 @@ test("typing / lists the window's commands, and Tab fills one in", async (t) => 
 /* Redesign: a command's answer is drawn in the conversation, not in a toast. */
 test("a command runs without reaching the model, and a place command opens the place", async (t) => {
   const { app, page, errors, provider } = await fixture(t);
+  const before = app.store.runs(app.runtime.owner).map((run) => run.id).sort();
   await page.locator("#prompt").fill("/status");
   await submit(page);
   await answered(page, "When to check with you");
   assert.equal(provider.calls, 0, "nothing was sent to the model");
-  assert.equal(app.store.runs(app.runtime.owner).length, 0, "no task was started");
+  assert.deepEqual(app.store.runs(app.runtime.owner).map((run) => run.id).sort(), before, "no command started a task");
   await page.locator("#prompt").fill("/lockdown on");
   await submit(page);
   await answered(page, "Lockdown is on");
@@ -129,4 +130,3 @@ test("the dashboard's command line answers, and a key that may only look can sti
   assert.equal(sideways, false);
   assert.deepEqual(errors, []);
 });
-

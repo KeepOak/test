@@ -6,7 +6,7 @@ import { render } from "./dom.js";
 import { t } from "../../i18n.js";
 
 const SAVED_KEY = "branch-window";
-const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden"];
+const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "simple", "simpleFrom", "advLevel"];
 
 export const S = {
   view: "chat",
@@ -14,6 +14,9 @@ export const S = {
   tabs: { inbox: "needs", automations: "scheduled", library: "memory", customize: "trunks" },
   setPage: "general",
   level: "regular",
+  simple: false, // RES-704: Simple on (shell/simple.js), what it put away, and the last Advanced or Technical level
+  simpleFrom: null,
+  advLevel: null,
   drafts: {},
   placesShut: false,
   theme: null,
@@ -60,7 +63,7 @@ export async function refresh() {
   E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
   E.trunksRead = !!trunks; // pass 18: an empty Trunks list is a welcome only when the engine answered
   E.trunkModes = trunks?.modes ?? {};
-  E.defaultTrunkId = trunks?.defaultId ?? null;
+  E.defaultTrunkId = trunks?.defaultId ?? null; // the default Trunk answers every chat nobody routed elsewhere
   E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
   if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   E.sessions = sessions?.sessions ?? [];

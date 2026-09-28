@@ -33,7 +33,8 @@ export function keepRecent(store: Reader, owner: string): number {
 
 /** R17-S09: the step and token budget a new task of the owner's gets. */
 export function taskBudget(store: Reader, owner: string): { maxSteps: number; maxTokens: number } {
-  return { maxSteps: readKnobs(store, owner, "limits").maxSteps, maxTokens: 200000 };
+  const limits = readKnobs(store, owner, "limits");
+  return { maxSteps: limits.maxSteps, maxTokens: limits.maxTaskTokens ?? 200000 };
 }
 
 /** R17-S09: the retry policy, with the owner's count in place of the launch setting's. */

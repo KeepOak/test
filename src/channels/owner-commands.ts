@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { audit } from "../audit.js";
 import type { Store } from "../store.js";
+import { argumentFingerprint } from "../question-fingerprint.js";
 
 /**
  * Commands from the owner's own chat (parity with Hermes Agent, which runs commands from Telegram).
@@ -90,4 +91,13 @@ export function commandShown(bytes: string | undefined): string | null {
   if (typeof input.netless === "boolean") lines.push(`no internet (best effort): ${input.netless ? "yes" : "no"}`);
   const shown = lines.join("\n");
   return shown.length <= shownAtMost && !invisible.test(shown) ? shown : null;
+}
+
+/**
+ * The question's bytes are the exact request, not a scrubbed or shortened copy: the runtime hides key-shaped values
+ * and private details in the bytes it hands out, and a chat must never approve a command whose shown words differ from
+ * what runs. The keyed fingerprint is of the request as sent, so only the untouched bytes reproduce it.
+ */
+export function commandBytesExact(tool: string, bytes: string | undefined, fingerprint: string | undefined): boolean {
+  return !!bytes && !!fingerprint && argumentFingerprint(tool, bytes) === fingerprint;
 }
