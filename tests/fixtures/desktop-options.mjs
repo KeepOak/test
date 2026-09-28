@@ -52,6 +52,8 @@ export async function desktopOptions({ hidden = !process.env.CI } = {}) {
         BRANCH_DESKTOP_HOME: home,
         BRANCH_DATA_DIR: join(home, "state"),
         BRANCH_WORKSPACE: join(home, "workspace"),
+        // PLAT-192: a quiet start makes no window until it is opened; these tests drive the page, so they ask for it.
+        ...(hidden ? { BRANCH_TEST_WINDOW_AT_START: "1" } : {}),
       },
     },
   };

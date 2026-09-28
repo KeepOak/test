@@ -103,6 +103,8 @@ export async function setLanguage(next) {
   dictionary = chosen === "en" ? english : await load(chosen).catch(() => ({}));
   current = chosen;
   try { localStorage.setItem(STORAGE, chosen); } catch { /* a private window simply forgets */ }
+  /* The desktop app keeps it too, so its tray notifications speak it before the window is opened (src/desktop/window-language.ts). */
+  globalThis.branchDesktop?.windowLanguage?.(chosen)?.catch?.(() => {});
   /* A language whose words never arrived is not applied, so asking for it again tries again rather
      than sitting silently on an empty dictionary. */
   applied = chosen === "en" || Object.keys(dictionary).length > 0 ? chosen : null;

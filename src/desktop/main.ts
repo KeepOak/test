@@ -63,7 +63,12 @@ import { isPasteKeys, PasteGate } from "./clipboard-paths.js";
 import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 // Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
 import { globalShortcut } from "electron";
-import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
+import { quickAskKeys, registerQuickAsk, type QuickAskDeps } from "./quick-ask.js";
+// PLAT-192: a tray start makes no window until it is opened; the owner is still told what needs them.
+import { Notification } from "electron";
+import { TrayNotifier, type NotifyRules } from "./tray-notify.js";
+import { playTraySound, type TraySoundRules } from "./tray-sound.js";
+import { localeWord, readWindowLanguage, registerWindowLanguageIpc } from "./window-language.js";
 // The engine runs in a process of its own, so nothing it does can freeze the window (src/desktop/engine-host.ts).
 import { utilityProcess } from "electron";
 import { EngineHost } from "./engine-host.js";
@@ -168,8 +173,89 @@ function protectWindow(
   });
 }
 
+/**
+ * PLAT-192: a quiet start in the tray makes no window until the owner first opens it: the page, its graphics and its
+ * drawing are about 55 MB that nobody would see. The tray, the quick-ask keys and the owner's notifications
+ * (src/desktop/tray-notify.ts) work without it. Any other start opens the window at once, as before. Tests that need
+ * the page of a quiet start ask for it with BRANCH_TEST_WINDOW_AT_START.
+ */
+const windowWaits = () => startsMinimized(process.argv) && process.env.BRANCH_TEST_WINDOW_AT_START !== "1";
+/** The owner's notifications while no window has been made (src/desktop/tray-notify.ts). */
+let trayNotifier: TrayNotifier | undefined;
+/** Settles once the window's page has loaded (never, before the window is made). */
+let pageLoaded: Promise<void> = new Promise(() => undefined);
+
+/**
+ * The window as the quick-ask keys see it, before and after it is made: a press opens it (made on first use) and
+ * tells its page once the page has loaded; only the page of a window that exists can ask for the keys again.
+ */
+function lazyWindow(): QuickAskDeps["window"] {
+  const pending = { send: (channel: string) => { void pageLoaded.then(() => window?.webContents.send(channel)); } };
+  return {
+    get webContents() { return (window && !window.isDestroyed() && !window.webContents.isLoading() ? window.webContents : pending) as BrowserWindow["webContents"]; },
+    on: ((name: string, listener: () => void) => { if (name === "closed") app.once("will-quit", listener); }) as BrowserWindow["on"],
+    show: () => { if (!window) void showWindow(); else window.show(); },
+    focus: () => window?.focus(),
+    isDestroyed: () => false,
+  };
+}
+
+/** PLAT-192: the words and the sound the tray's notifications need, and the notifier itself. */
+async function startTrayNotifier(url: string, key: () => string): Promise<TrayNotifier> {
+  const rules = await import(new URL("../../public/app/shell/notify-rules.js", import.meta.url).href) as NotifyRules & TraySoundRules;
+  const language = readWindowLanguage(app.getPath("userData"));
+  const testing = !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1";
+  const told = ((globalThis as { branchTrayNotesForTests?: unknown[] }).branchTrayNotesForTests = []) as unknown[];
+  const notifier = new TrayNotifier({
+    rules, url, key,
+    words: (word) => localeWord(fileURLToPath(new URL("../../public/locales/", import.meta.url)), language, word),
+    notify: (title, body, sessionId) => {
+      told.push({ kind: "notification", title, body, sessionId });
+      if (testing) return; // a test never puts a notification on the screen
+      const note = new Notification({ title, body, silent: true, icon: trayIcon() });
+      note.on("click", () => void showWindow(sessionId ? `#open=${encodeURIComponent(sessionId)}` : ""));
+      note.show();
+    },
+    sound: (kind) => {
+      told.push({ kind: "sound", sound: kind });
+      void playTraySound(rules, kind, testing).then((played) => told.push({ kind: "sound-played", sound: kind, ...played }));
+    },
+    log: (line) => console.error(line),
+  });
+  notifier.start();
+  return notifier;
+}
+
+/** Opens the window (made on first use) and brings it forward; `hash` names a conversation to open it at. */
+let makeWindow: ((hash?: string) => Promise<void>) | undefined;
+async function showWindow(hash = ""): Promise<void> {
+  if (!window && makeWindow) await makeWindow(hash);
+  window?.show();
+  window?.focus();
+}
+
 async function createWindow(
   url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean = () => true,
+): Promise<void> {
+  let making: Promise<void> | undefined;
+  makeWindow = (hash = "") => (making ??= buildWindow(url, key, settings, update, reachable, hash).then(() => {
+    trayNotifier?.stop();
+    trayNotifier = undefined;
+  }));
+  // The quick-ask keys work from any app whether or not the window has been made yet (src/desktop/quick-ask.ts).
+  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window: lazyWindow(), origin: url, keys: async () => quickAskKeys(url, key()),
+    log: (line) => console.error(line) });
+  if (windowWaits()) {
+    createTray();
+    trayNotifier = await startTrayNotifier(url, key);
+    return;
+  }
+  await makeWindow();
+  createTray();
+}
+
+async function buildWindow(
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean, hash: string,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -189,7 +275,8 @@ async function createWindow(
     autoHideMenuBar: true,
     // Started in the tray, the page stays hidden until the window is first shown: otherwise it counts as visible and
     // draws, decodes its loops and holds its tiles for a window nobody can see.
-    paintWhenInitiallyHidden: !startsMinimized(process.argv),
+    // A window made when the owner opens it from the tray is shown at once, so it draws from the start.
+    paintWhenInitiallyHidden: !startsMinimized(process.argv) || windowWaits(),
     webPreferences: {
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       nodeIntegration: false,
@@ -264,8 +351,7 @@ async function createWindow(
     quitReason = "restart";
     app.quit();
   });
-  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: async () => quickAskKeys(url, key()),
-    log: (line) => console.error(line) });
+  registerWindowLanguageIpc(ipcMain, window, url, app.getPath("userData"));
   // Redesign phase 1 (integration review): Windows ending the session never waits for the quit question.
   window.on("query-session-end", () => { quitReason = "system"; });
   window.on("session-end", () => { quitReason = "system"; });
@@ -277,13 +363,14 @@ async function createWindow(
   });
   // "Start quietly in the corner of the taskbar" keeps the window hidden until the tray icon is used.
   window.once("ready-to-show", () => { if (!startsMinimized(process.argv)) window?.show(); });
+  const loaded = new Promise<void>((done) => window?.webContents.once("did-finish-load", () => done()));
+  pageLoaded = loaded;
   // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the
   // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
   // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
-  await window.loadURL(`${url}/?desktop=1`).catch((error: unknown) => {
+  await window.loadURL(`${url}/?desktop=1${hash}`).catch((error: unknown) => {
     if ((error as { code?: unknown }).code !== "ERR_ABORTED") throw error;
   });
-  createTray();
 }
 
 /**
@@ -305,19 +392,13 @@ function createTray(): void {
     Menu.buildFromTemplate([
       {
         label: "Open Branch Agent",
-        click: () => {
-          window?.show();
-          window?.focus();
-        },
+        click: () => void showWindow(),
       },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() },
     ]),
   );
-  tray.on("click", () => {
-    window?.show();
-    window?.focus();
-  });
+  tray.on("click", () => void showWindow());
 }
 
 /**
@@ -523,7 +604,7 @@ async function askThenQuit(runningTasks: number): Promise<void> {
     if (quitting) return; // an update, `branch quit` or the computer shutting down came first
     if (choice === "quit") return shutDown();
     if (choice === "keep") window?.hide();
-    else { window?.show(); window?.focus(); }
+    else void showWindow();
     quitReason = "person";
   } finally {
     askingToQuit = false;
@@ -618,11 +699,8 @@ if (process.argv.includes(refreshShortcutsFlag)) {
     .then((code) => app.exit(code), () => app.exit(1));
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on("second-instance", () => {
-    window?.show();
-    window?.focus();
-  });
-  app.on("activate", () => window?.show());
+  app.on("second-instance", () => void showWindow());
+  app.on("activate", () => void showWindow());
   app.on("will-quit", () => globalShortcut.unregisterAll()); // pass 17: quick-ask keys go with the app
   app.on("before-quit", (event) => {
     if (quitting) return;

@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   restartBranch: () => ipcRenderer.invoke("branch:restart"),
   // Light, dark, or the title row's own colour (#rrggbb): the window controls' glyphs follow it (window-chrome-ipc.ts).
   windowLook: (look: unknown) => ipcRenderer.invoke("branch:window-look", look),
+  // PLAT-192: the chosen language, so the tray's notifications speak it before the window is opened.
+  windowLanguage: (language: unknown) => ipcRenderer.invoke("branch:window-language", language),
   // Pass 17: the quick-ask keys pressed in any app open the box; the page never sees the event itself.
   onQuickAsk: (callback: unknown) => {
     if (typeof callback !== "function") return;

@@ -20,10 +20,9 @@ import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { CF } from "../chat/comfort.js";
 import { t } from "../../i18n.js";
+import { quietNow as quietAt, playOn, waitingNews, doneNews } from "./notify-rules.js";
 
 const STAY_MS = 9000;
-const LONG_MS = 120000;
-const ENDED = new Set(["completed", "failed", "cancelled", "budget_exceeded", "interrupted"]);
 let seen = null, timer = null, runs = null;
 
 const sessionTitle = (id) => { const s = E.sessions.find((x) => (x.sessionId ?? x.id) === id); return s?.title || s?.opening || ""; };
@@ -35,17 +34,7 @@ const onScreen = (id) => S.view === "chat" && S.chat === id && !document.hidden;
 const faceHere = (id) => { const face = chatFace(id); return face.kind === "main" ? `<span class="ico-tile">${ic("bell", "s")}</span>` : av(face, 30, id); };
 
 /* The owner's quiet hours or whole day off, in the quiet hours' own time zone (src/calendar.ts inQuietHours). */
-export function quietNow(quiet = CF.quiet, at = new Date()) {
-  if (!quiet) return false;
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: quiet.timezone || "UTC", hourCycle: "h23", hour: "2-digit", minute: "2-digit", weekday: "short" })
-    .formatToParts(at).map((p) => [p.type, p.value]));
-  const weekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(parts.weekday) + 1;
-  if ((quiet.days ?? []).includes(weekday)) return true;
-  if (!quiet.enabled) return false;
-  const now = Number(parts.hour) * 60 + Number(parts.minute), mins = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3));
-  const from = mins(quiet.from), to = mins(quiet.to);
-  return from === to || (from < to ? now >= from && now < to : now >= from || now < to);
-}
+export const quietNow = (quiet = CF.quiet, at = new Date()) => quietAt(quiet, at);
 
 /* A chime (two rising notes) or a knock (two short low taps), made on the spot. */
 let audio = null;
@@ -53,19 +42,7 @@ export function playSound(kind) {
   if (kind !== "chime" && kind !== "knock") return false;
   try {
     audio ??= new AudioContext();
-    const at = audio.currentTime;
-    const notes = kind === "chime" ? [[880, 0, 0.35], [1320, 0.16, 0.45]] : [[150, 0, 0.09], [150, 0.16, 0.09]];
-    for (const [freq, start, length] of notes) {
-      const osc = audio.createOscillator(), gain = audio.createGain();
-      osc.type = kind === "chime" ? "sine" : "triangle";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, at + start);
-      gain.gain.exponentialRampToValueAtTime(0.25, at + start + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + start + length);
-      osc.connect(gain).connect(audio.destination);
-      osc.start(at + start); osc.stop(at + start + length + 0.02);
-    }
-    return true;
+    return playOn(audio, kind);
   } catch { return false; }
 }
 
@@ -99,13 +76,9 @@ function show(w) {
 }
 
 function watch() {
-  const list = Array.isArray(E.state?.attention) ? E.state.attention : null;
-  if (!list) return;
-  const ids = list.map((w) => w.runId);
-  if (seen === null) { seen = new Set(ids); return; } // what already waited when the window opened is the Inbox's, not news
-  const fresh = list.filter((w) => !seen.has(w.runId) && !w.parentRunId && !w.canContinue);
-  for (const id of ids) seen.add(id);
-  const w = fresh.filter((x) => !onScreen(x.open || x.sessionId)).at(-1);
+  const told = waitingNews(E.state?.attention, seen, onScreen);
+  seen = told.seen;
+  const w = told.news;
   if (!w || quiet() || CF.notify?.needsYes === false) return;
   show(w);
   alertOwner(w.who || ownName(w.open || w.sessionId) || sessionTitle(w.open || w.sessionId), w.question ?? "");
@@ -113,14 +86,11 @@ function watch() {
 
 /* A task of the owner's that ran two minutes or more and has just ended, told once, only for one not on screen. */
 function watchDone() {
-  const list = Array.isArray(E.state?.runs) ? E.state.runs : null;
-  if (!list) return;
-  const before = runs;
-  runs = new Map(list.map((r) => [r.id, r.status]));
-  if (before === null || CF.notify?.taskDone === false || quiet()) return; // what had ended before the window opened is not news
-  const done = list.filter((r) => ENDED.has(r.status) && ["running", "needs_input"].includes(before.get(r.id)) && !r.aside
-    && Date.parse(r.updatedAt) - Date.parse(r.createdAt) >= LONG_MS && !onScreen(r.sessionId)).at(-1);
-  if (!done) return;
+  const told = doneNews(E.state?.runs, runs, onScreen);
+  const first = runs === null;
+  runs = told.before;
+  const done = told.news;
+  if (first || !done || CF.notify?.taskDone === false || quiet()) return; // what had ended before the window opened is not news
   const words = t(done.status === "completed" ? "window.shell.notify.done" : "window.shell.notify.stopped");
   const who = ownName(done.sessionId) || sessionTitle(done.sessionId) || done.title || "";
   show({ sessionId: done.sessionId, who, question: words });
