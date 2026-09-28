@@ -58,9 +58,14 @@ async function fixture(t, provider) {
 
 /** Where an element of the engine's page is drawn in the window: the frame is drawn whole, centred across, from the top. */
 async function onFrame(w, selector) {
-  await framed(w.page);
+  // The view may be drawn again as control changes hands; measure a frame that is on screen now.
+  let img = null;
+  for (let i = 0; i < 50 && !img; i++) {
+    await framed(w.page);
+    img = await w.page.locator('#stage7 .owner-browser7-img[src^="data:image/jpeg"]:not([hidden])').boundingBox({ timeout: 1000 }).catch(() => null);
+  }
+  assert.ok(img, "the page's picture is on screen");
   const box = await w.enginePage().locator(selector).boundingBox(), size = w.enginePage().viewportSize();
-  const img = await w.page.locator("#stage7 .owner-browser7-img").boundingBox();
   const scale = Math.min(img.width / size.width, img.height / size.height), left = img.x + (img.width - size.width * scale) / 2;
   return { x: left + (box.x + box.width / 2) * scale, y: img.y + (box.y + box.height / 2) * scale };
 }
@@ -121,9 +126,9 @@ test("Take over a working task's own window, type, and Hand back: the task carri
     if (rounds === 2) { thinking.resolve(); await gate.promise; return { content: "", toolCalls: [{ id: "save", name: "browser.click", arguments: JSON.stringify({ role: "button", name: "Save" }) }] }; }
     return { content: "Saved.", toolCalls: [] };
   } };
+  t.after(() => gate.resolve()); // first, so a failed test never leaves its task waiting while the engine closes
   const w = await fixture(t, provider);
   origin = w.origin;
-  t.after(() => gate.resolve());
   const { page, app, sid } = w;
   const pending = app.runtime.run({ prompt: "Save the form", sessionId: sid });
   await thinking.promise;
