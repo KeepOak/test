@@ -224,7 +224,9 @@ async function inspect(el) {
   if (!rec) return;
   const last = rec.rounds?.at(-1);
   const rows = [[t("coding.ci.model"), last?.model], [t("window.chat.msg.words"), last?.promptTokens != null ? contextWords(last.promptTokens) : ""], ...readRows(rec),
-    [t("window.chat.msg.time"), rec.seconds != null ? t("window.chat.msg.seconds", { n: rec.seconds }) : ""], [t("window.chat.msg.cost"), rec.cost?.display]].filter(([, v]) => v);
+    [t("window.chat.msg.time"), rec.seconds != null ? t("window.chat.msg.seconds", { n: rec.seconds }) : ""], [t("window.chat.msg.cost"), rec.cost?.display],
+    /* models-ui: the second opinion's note (Settings › Models › Second opinion), kept beside the answer, never in it. */
+    [t("window.chat.msg.second-opinion"), rec.advice?.line]].filter(([, v]) => v);
   const steps = (await loadSteps(runId))?.steps?.length ?? 0;
   if (steps) rows.push([t("window.chat.msg.steps"), t("window.chat.msg.steps-in", { count: steps })]);
   M.record = rec;
