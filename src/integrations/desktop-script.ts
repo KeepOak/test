@@ -310,8 +310,22 @@ function Read-Tree($root, $limit) {
 
 function Find-Named($root, $name) {
   $condition = New-Object System.Windows.Automation.PropertyCondition($auto::NameProperty, $name)
-  $found = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-  if ($found -ne $null) { return $found }
+  # computer-control: a control's own window (a Pane) and the control inside it can share a name; the one that can be
+  # pressed, toggled, selected or expanded is the one meant, so it is preferred over its plain container.
+  $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+  foreach ($each in $all) {
+    foreach ($able in @($auto::IsInvokePatternAvailableProperty, $auto::IsTogglePatternAvailableProperty,
+      $auto::IsSelectionItemPatternAvailableProperty, $auto::IsExpandCollapsePatternAvailableProperty)) {
+      try { if ($each.GetCurrentPropertyValue($able)) { return $each } } catch { }
+    }
+  }
+  if ($all.Count -gt 0) {
+    # A named container whose one pressable part carries no name of its own (a button drawn inside its own window).
+    $pressable = New-Object System.Windows.Automation.PropertyCondition($auto::IsInvokePatternAvailableProperty, $true)
+    $inside = $all[0].FindAll([System.Windows.Automation.TreeScope]::Descendants, $pressable)
+    if ($inside.Count -eq 1) { return $inside[0] }
+    return $all[0]
+  }
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $queue = New-Object System.Collections.Queue
   $queue.Enqueue($root)
@@ -389,6 +403,9 @@ function Spot-Of($handle, $spec) {
 # What is really on top at that spot must be this window: never a click through onto something covering it (another
 # program, a password prompt, or Branch's own window).
 function Assert-Uncovered($handle, $at) {
+  # A spot off every display would be clamped to a screen edge by Windows and pressed there instead: refused.
+  $shown = @([System.Windows.Forms.Screen]::AllScreens | Where-Object { $_.Bounds.Contains([int]$at.x, [int]$at.y) })
+  if ($shown.Count -eq 0) { throw 'That spot is not on any screen (the window is off screen), so nothing was done. Bring the window onto a screen first.' }
   if ([BranchDesktop]::RootAt($at.x, $at.y) -ne $handle) { throw 'Another window covers that spot, so nothing was done. Bring this window up or move what covers it.' }
 }
 function Scroll-Part($node, $direction, $amount) {

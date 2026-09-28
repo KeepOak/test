@@ -138,7 +138,7 @@ test("the real script reads parts with refs, presses a named button without the 
   assert.equal(pressed.how, "invoke", "pressed through UI Automation: the pointer never moved");
   assert.match(await titled(proof.handle, /^Branch proof 1 /), /^Branch proof 1 /, "the button's own handler ran once");
 
-  // A spot on this window is off every screen, so nothing of it is on top there: the pointer click is refused unsent.
+  // A spot on this window is off every screen: Windows would press a screen edge instead, so the pointer click is refused unsent.
   await assert.rejects(runner.run("pointer", { handle: proof.handle, kind: "click", at: { ref: button.ref }, button: "left", count: 1, modifiers: [] }, signal()),
     /nothing was done/i);
   await new Promise((done) => setTimeout(done, 400));

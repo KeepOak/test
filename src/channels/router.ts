@@ -595,11 +595,11 @@ export class ChannelRouter {
    */
   refreshCommandMenus(): Promise<void> {
     return this.menuChain = this.menuChain.then(async () => {
-      // #603: /new and /trunk work while chat commands are off, so the picker always offers them.
-      const commands = [{ command: "new", description: "Start a fresh thread and keep earlier conversations" },
+      // #603's /new and /trunk join the table's commands; while chat commands are off the picker offers none (they
+      // still work when typed).
+      const commands = this.switches().commands === "off" ? [] : [{ command: "new", description: "Start a fresh thread and keep earlier conversations" },
         { command: "trunk", description: "Which Trunk answers here" },
-        ...(this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
-          .map((one) => ({ command: one.name, description: one.description })))];
+        ...chatCommandsFor(commandMode(this.store, this.runtime.owner)).map((one) => ({ command: one.name, description: one.description }))];
       const unique = [...new Map(commands.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
       await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
         try { await adapter.setCommands?.(unique); }

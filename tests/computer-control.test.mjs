@@ -254,3 +254,10 @@ test("reading a window takes each part in one round trip and keeps to a time bud
   const node = /function Read-Node\(\$node\) \{([\s\S]*?)\n\}\n/.exec(desktopScript)?.[1] ?? "";
   assert.doesNotMatch(node, /\.Current\.|TryGetCurrentPattern/, "a part's properties come from the cache, never one call each");
 });
+
+test("a spot off every screen is refused before the pointer moves, and a name finds the part that can be pressed", () => {
+  const uncovered = /function Assert-Uncovered\(\$handle, \$at\) \{([\s\S]*?)\n\}/.exec(desktopScript)?.[1] ?? "";
+  assert.ok(uncovered.indexOf("AllScreens") >= 0 && uncovered.indexOf("AllScreens") < uncovered.indexOf("RootAt"), "on a screen first, then on top");
+  const named = /function Find-Named\(\$root, \$name\) \{([\s\S]*?)\n\}/.exec(desktopScript)?.[1] ?? "";
+  assert.match(named, /IsInvokePatternAvailableProperty/, "the pressable part with that name is preferred to its container");
+});
