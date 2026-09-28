@@ -521,6 +521,8 @@ npx playwright install chromium --only-shell
 
 Branch's browser is on with no configuration file: it may open any website the network rules allow (`"anyWebsite": true`), and every picture, script and request a page makes is held to those rules too, so a page cannot reach this computer or your home network unless the network rules allow private addresses. The owner's approval rules and the per-task caps below still apply.
 
+In this mode Chromium never looks a site's name up itself: it connects through a local door that dials only the addresses the network rules judged for that name, so a site cannot pass the check with one answer and then be reached at a private one (DNS rebinding). The checks of one page share one lookup per site for about 15 seconds, so a page with many pictures and scripts does not wait on the network rules for each. This holding does not reach a browser running in the sandbox (Docker or a remote Playwright server) or your own borrowed browser; those keep the per-request check only.
+
 To hold it to a list of websites instead, create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
 
 ```json
