@@ -19,8 +19,8 @@ test("the lead writes its memory file without a question and every new conversat
   let step = 0;
   const provider = { name: "scripted", async complete(request) {
     systems.push(request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n"));
-    const said = [...request.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const last = request.messages.filter((m) => m.role !== "system").at(-1);
+    const said = [...request.messages].reverse().find((m) => m.role === "user" && !String(m.content).startsWith("<system-reminder>"))?.content ?? "";
+    const last = request.messages.filter((m) => m.role !== "system" && !String(m.content).startsWith("<system-reminder>")).at(-1);
     if (last?.role === "tool" && /"path":"MEMORY.md","content"/.test(last.content) && /Update the rule/.test(said))
       return { content: "", toolCalls: [{ id: `e${++step}`, name: "files.edit",
         arguments: JSON.stringify({ path: "MEMORY.md", find: "exact-head green checks", replace: "exact-head green checks; never into redesign/window from a proof" }) }] };

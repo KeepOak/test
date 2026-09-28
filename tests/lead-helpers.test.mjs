@@ -25,7 +25,7 @@ async function fixture(t) {
   const seen = { helperSawNote: false, leadPrompts: [] };
   const provider = { name: "scripted", async complete(request) {
     const system = request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    const last = request.messages.filter((m) => m.role !== "system").at(-1);
+    const last = request.messages.filter((m) => m.role !== "system" && !String(m.content).startsWith("<system-reminder>")).at(-1);
     const toolTurns = request.messages.filter((m) => m.role === "tool").length;
     if (/You are a helper working in the background/.test(system)) {
       if (toolTurns === 0) return call("helpers.tell_lead", { text: "Found the failing shard: linux 3." }, "tell");
