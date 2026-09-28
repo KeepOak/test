@@ -1,5 +1,6 @@
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
+import { lookup } from "../commands/catalog.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
@@ -134,6 +135,7 @@ export class SlackAdapter implements ChannelAdapter {
     const { envelope_id: id, payload, type } = envelope.data;
     if (id) this.socket?.send(JSON.stringify({ envelope_id: id }));
     if (type === "disconnect") { this.socket?.close(); return; }
+    if (type === "slash_commands") { const typed = this.fromSlash(payload); if (typed) void onMessage(typed).catch(() => undefined); return; }
     const eventId = payload?.event_id;
     if (!payload?.event || (eventId && this.seen.has(eventId))) return;
     if (eventId) { this.seen.add(eventId); if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!); }
@@ -171,9 +173,31 @@ export class SlackAdapter implements ChannelAdapter {
       ...(event.thread_ts && event.ts ? { reactTo: event.ts } : {}),
     };
   }
+  /**
+   * CHAT-164: `/branch <command> [words]` from Slack's own picker (Slack keeps an app's slash commands in its settings,
+   * and many plain names such as /status are Slack's own, so Branch has one). It reaches the router as `/<command>
+   * words` from the person who typed it, with every rule a typed command meets; `/branch` alone is `/help`, and words
+   * that are not a command are an ordinary message.
+   */
+  private fromSlash(payload: unknown): InboundMessage | null {
+    const parsed = z.object({ command: z.string(), text: z.string().default(""), user_id: z.string(), user_name: z.string().optional(),
+      channel_id: z.string(), trigger_id: z.string().optional() }).passthrough().safeParse(payload);
+    if (!parsed.success || parsed.data.command !== "/branch" || parsed.data.user_id === this.user?.id) return null;
+    const { text, user_id: user, channel_id: channel } = parsed.data;
+    if (this.options.channels?.length && !this.options.channels.includes(channel)) return null;
+    const words = text.trim().slice(0, 4000);
+    const direct = channel.startsWith("D");
+    return {
+      channel: this.id, chatId: channel, chatKind: direct ? "direct" : "group", ...(direct ? {} : { chatTitle: `channel ${channel}` }),
+      senderId: user, senderName: parsed.data.user_name ?? user,
+      // Only a word that is one of the chat's commands becomes one; anything else is the person's own words.
+      text: !words ? "/help" : lookup(words.split(/\s/)[0]!)?.surfaces.includes("chat") ? `/${words}` : words, addressed: true,
+      messageId: `slash:${parsed.data.trigger_id ?? Date.now()}`,
+    };
+  }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {
-      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId && /^\d+\.\d+$/.test(replyToMessageId) ? { thread_ts: replyToMessageId } : {}),
     });
     const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
     return parsed.success ? parsed.data.ts : undefined;
