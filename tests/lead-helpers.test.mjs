@@ -78,3 +78,19 @@ test("a task can message only its own helpers, and only a helper has a lead to t
   await assert.rejects(app.registry.execute("helpers.tell_lead", { text: "hi" }, otherContext), /not a helper/);
   release();
 });
+
+test("a later turn of the same conversation lists and messages a helper an earlier turn started", async (t) => {
+  const { app, run, seen, release } = await fixture(t);
+  const lead = await run({ prompt: "Fix CI", mode: "full" });
+  const helper = app.store.events(lead.id).find((event) => event.kind === "delegation.background_started").data.childRunId;
+  // The helper's message arrives as a new task in the lead's conversation: that later turn is the one that acts.
+  const later = () => app.store.runs(app.runtime.owner).find((one) => one.sessionId === lead.sessionId && one.id !== lead.id);
+  assert.ok(await until(() => later() && app.store.run(later().id).status === "completed"));
+  const next = later();
+  const context = app.runtime.context({ runId: next.id });
+  assert.deepEqual((await app.registry.execute("helpers.list", {}, context)).helpers.map((one) => one.helper), [helper]);
+  assert.deepEqual(await app.registry.execute("helpers.message", { helper, text: "also check windows" }, context), { sent: true });
+  release();
+  assert.ok(await until(() => app.store.run(helper).status === "completed"));
+  assert.equal(seen.helperSawNote, true);
+});

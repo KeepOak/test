@@ -106,5 +106,87 @@ test("wake-ups are per conversation: another one can neither see nor cancel them
   assert.deepEqual((await app.registry.execute("schedules.wakeups", {}, theirs)).wakeups, []);
   await assert.rejects(app.registry.execute("schedules.cancel_wake", { id: entry.id }, theirs), /no wake-up with that number/);
   assert.deepEqual(await app.registry.execute("schedules.cancel_wake", { id: entry.id }, mine), { cancelled: true });
-  await assert.rejects(app.registry.execute("schedules.wake_later", { message: "x" }, mine), /inMinutes or at/);
+  await assert.rejects(app.registry.execute("schedules.wake_later", { message: "x" }, mine), /one of inMinutes, at or cron/);
+});
+
+test("the default Trunk's wake-up survives a restart and arrives in its conversation as that Trunk", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-wakeups-restart-"));
+  let after;
+  t.after(async () => { await after?.close(); await discardTemp(root); });
+  const systems = [];
+  let first = true;
+  const provider = { name: "scripted", async complete(request) {
+    systems.push(request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n"));
+    const said = [...request.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    if (request.messages.at(-1)?.role === "tool") return { content: "Set.", toolCalls: [] };
+    if (first && /sync the plan/.test(said)) { first = false; return { content: "", toolCalls: [{ id: "w1", name: "schedules.wake_later",
+      arguments: JSON.stringify({ message: "Sync the master plan.", cron: "*/30 * * * *", timezone: "America/New_York", times: 3 }) }] }; }
+    return { content: `Heard: ${said.slice(0, 80)}`, toolCalls: [] };
+  } };
+  const open = () => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  const before = await open();
+  const home = before.trunks.ensureDefault(true);
+  before.trunks.files.edit(home.id, { name: "USER.md", text: "WAKE-TRUNK-MARK-4410" });
+  const set = await before.runtime.run({ prompt: "every 30 minutes sync the plan", trunkId: home.id, mode: "full" });
+  assert.equal(set.status, "completed", set.output);
+  const [entry] = (await before.registry.execute("schedules.wakeups", {}, before.runtime.context({ runId: set.id }))).wakeups;
+  assert.equal(entry.cron, "*/30 * * * *");
+  assert.equal(new Date(entry.nextAt).getUTCMinutes() % 30, 0, "a cron wake-up is due on its clock times");
+  await before.close();
+
+  after = await open();
+  const context = after.runtime.context({ runId: set.id });
+  assert.equal((await after.registry.execute("schedules.wakeups", {}, context)).wakeups.length, 1, "kept across the restart");
+  await after.scheduler.tick(new Date(Date.parse(entry.nextAt) + 1000));
+  const woken = () => after.store.runs(after.runtime.owner).filter((one) => one.sessionId === set.sessionId && one.id !== set.id);
+  assert.ok(await until(() => woken().length === 1 && after.store.run(woken()[0].id).status === "completed"), "the wake-up ran after the restart");
+  const run = after.store.run(woken()[0].id);
+  assert.match(run.prompt, /^Wake-up you set \(on "\*\/30 \* \* \* \*" \(America\/New_York\); 2 more to come\): Sync the master plan\./);
+  assert.match(systems.at(-1), /WAKE-TRUNK-MARK-4410/, "it runs as the default Trunk, with its own files");
+  const [moved] = (await after.registry.execute("schedules.wakeups", {}, context)).wakeups;
+  assert.equal(moved.left, 2);
+  assert.ok(Date.parse(moved.nextAt) > Date.parse(entry.nextAt));
+});
+
+test("a wake-up that cannot be delivered is noted and tried again, and one whose conversation is gone is dropped", async () => {
+  const { Wakeups, WakeLaterSchema } = await import("../dist/wakeups.js");
+  const saved = new Map(), events = [];
+  let owns = true, now = Date.parse("2026-09-28T12:00:00Z");
+  const store = {
+    run: () => ({ sessionId: "s1" }), ownsSession: () => owns,
+    list: () => [...saved.entries()].map(([id, data]) => ({ id, data })),
+    save: (_table, _owner, id, data) => saved.set(id, data), delete: (_table, _owner, id) => saved.delete(id),
+    event: (runId, kind, data) => events.push({ runId, kind, data }),
+  };
+  let fail = true;
+  const delivered = [];
+  const wakeups = new Wakeups(store, "owner", (sessionId, text) => { if (fail) throw new Error("busy"); delivered.push(text); }, () => now);
+  wakeups.set({ runId: "r1" }, { message: "Look again.", inMinutes: 1 });
+  await wakeups.tick(new Date(now + 2 * 60_000));
+  assert.equal(events.at(-1).kind, "wakeup.not_delivered");
+  assert.equal(events.at(-1).data.willRetry, true);
+  assert.equal(wakeups.list("s1").length, 1, "kept for another try");
+  fail = false;
+  await wakeups.tick(new Date(now + 8 * 60_000));
+  assert.deepEqual(delivered, ["Wake-up you set: Look again."]);
+  assert.equal(wakeups.list("s1").length, 0);
+  fail = true;
+  wakeups.set({ runId: "r1" }, { message: "Gone.", inMinutes: 1 });
+  owns = false;
+  await wakeups.tick(new Date(now + 2 * 60_000));
+  assert.equal(wakeups.list("s1").length, 0, "its conversation is gone, so it is dropped");
+  assert.equal(WakeLaterSchema.safeParse({ message: "x", cron: "0 9 * * *" }).success, false, "a cron needs a timezone");
+  assert.equal(WakeLaterSchema.safeParse({ message: "x", cron: "0 9 * * *", timezone: "UTC", everyMinutes: 30 }).success, false);
+});
+
+test("a program commands may run can be left running and wakes its conversation, with no separate list", async (t) => {
+  const { app, run, prompts } = await fixture(t, { name: "process.start",
+    arguments: JSON.stringify({ program: "node", args: ["-e", "console.log('tests passed')"], name: "the tests", wakeOnExit: true }) });
+  assert.deepEqual(app.processes.commandPrograms(), {}, "nothing while no shell is set up");
+  // What the launch does when it sets up shell.execute (src/integrations/bootstrap.ts): the same list reaches process.start.
+  app.ownClis.attach({ extra: () => ({}) }, ["node"], { node: { path: process.execPath, args: [] } });
+  const started = await run({ prompt: "Run the tests in the background", mode: "full" });
+  assert.equal(started.status, "completed", started.output);
+  assert.ok(await until(() => prompts.length >= 2), JSON.stringify(prompts));
+  assert.match(prompts[1], /"the tests", finished \(exit code 0\)\. Its last lines:\ntests passed/);
 });

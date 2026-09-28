@@ -23,14 +23,27 @@ const helperName = (runtime: Runtime, runId: string): string => {
 export const fromHelper = (name: string, text: string): string =>
   `Message from ${name}, a helper this task started. These are the helper's words, not the owner's; weigh them as its report:\n${text}`;
 
-/** Whether `runId` was started, directly or through its own helpers, by `lead`. */
+/**
+ * Whether `runId` was started, directly or through its own helpers, by `lead` or by any task of `lead`'s conversation.
+ * A lead's turn ends while its helpers work, and what they say arrives as a new task in the same conversation, so a
+ * helper belongs to the conversation that started it, not only to the one task that did.
+ */
 function startedBy(runtime: Runtime, runId: string, lead: string): boolean {
+  const conversation = runtime.store.run(lead)?.sessionId;
   const seen = new Set<string>();
   for (let id = helperParent(runtime.store, runId); id && !seen.has(id) && seen.size < 20; id = helperParent(runtime.store, id)) {
-    if (id === lead) return true;
+    if (id === lead || (conversation && runtime.store.run(id)?.sessionId === conversation)) return true;
     seen.add(id);
   }
   return false;
+}
+
+/** The helpers any task of this task's conversation started, oldest first. */
+function helpersOf(runtime: Runtime, runId: string): string[] {
+  const conversation = runtime.store.run(runId)?.sessionId;
+  const tasks = conversation ? runtime.store.sessionRuns(runtime.owner, conversation).map((one) => one.id) : [runId];
+  return tasks.flatMap((id) => runtime.store.events(id).filter((event) => event.kind === "delegation.background_started")
+    .map((event) => String(event.data.childRunId)));
 }
 
 /** Tells the task `to` something: before its next round while it works, else as a new message in its conversation. */
@@ -69,10 +82,10 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
   });
   registry.register({
     name: "helpers.message", permission: "specialists.use", group: "agents",
-    description: "Send a note to a helper this task started while it is still working; it reads it before its next step.",
+    description: "Send a note to a helper this conversation started while it is still working; it reads it before its next step.",
     parameters: z.object({ helper: z.string().uuid(), text: z.string().trim().min(1).max(2000) }).strict(),
     execute: async (input, context: ToolContext) => {
-      if (!startedBy(runtime, input.helper, context.runId)) throw new Error("There is no helper with that number started by this task.");
+      if (!startedBy(runtime, input.helper, context.runId)) throw new Error("There is no helper with that number started in this conversation.");
       if (runtime.store.run(input.helper)?.status !== "running") throw new Error("That helper has already finished; start another one to carry on.");
       runtime.steer(input.helper, input.text, "your lead (the task that started you)");
       return { sent: true };
@@ -90,11 +103,10 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
   });
   registry.register({
     name: "helpers.list", permission: "specialists.use", group: "agents",
-    description: "The helpers this task started, whether each is still working, and what each finished with.",
+    description: "The helpers this conversation started, whether each is still working, and what each finished with.",
     parameters: z.object({}).strict(),
     execute: async (_input, context: ToolContext) => ({
-      helpers: runtime.store.events(context.runId).filter((event) => event.kind === "delegation.background_started")
-        .map((event) => String(event.data.childRunId)).map((id) => {
+      helpers: helpersOf(runtime, context.runId).map((id) => {
           const run = runtime.store.run(id);
           return { helper: id, name: helperName(runtime, id), status: run?.status ?? "gone", output: run && run.status !== "running" ? run.output.slice(0, 1500) : undefined };
         }),

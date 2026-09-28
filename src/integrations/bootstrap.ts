@@ -192,7 +192,8 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
   /** The owner's own MCP servers, kept in the store (src/mcp-own-servers.ts); started with the launch file's. */
   ownMcp?: { startSaved(launchIds: readonly string[]): Promise<void>; closeAll(): Promise<void> };
   /** The command-line tools the owner allowed (src/own-clis.ts), handed to the shell for each command. */
-  ownClis?: { attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[]): void } }
+  ownClis?: { attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[],
+    launchPrograms?: Record<string, { path: string; args: string[] }>): void } }
 
 /** Sending work to a server is off until the owner turns it on; GitHub needs a saved token too. */
 export const GitConfigSchema = z.object({
@@ -356,7 +357,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       if (tunedStore && tunedOwner) created.tuning = () => commandTuning(tunedStore, tunedOwner, env);
       await created.ready();
       registerShell(registry, created); closers.push(() => created.close());
-      channels?.ownClis?.attach(created, Object.keys(config.shell.executables));
+      channels?.ownClis?.attach(created, Object.keys(config.shell.executables), config.shell.executables);
       // A command line the owner can keep open, from the very same list of programs. It is closed
       // with everything else here, so nothing it started outlives the app.
       const store = channels?.store as Store | undefined;

@@ -1008,6 +1008,8 @@ ${result.output || "(it said nothing)"}`;
   scheduler.onTick.add((now) => wakeups.tick(now));
   // wave mac2 (quiet-jobs follow-up): a program left running that finishes wakes the check-in; wake() does nothing while it is off.
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
+  // workbench (SELF-304): a command the assistant may run once it may also leave running, and be woken when it ends.
+  processes.commandPrograms = () => ownClis.commandPrograms();
   // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
   // of the task that started it, so the assistant is told instead of checking on it.
   processes.waker = ({ sessionId, runId, text }) => {

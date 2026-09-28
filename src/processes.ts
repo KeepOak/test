@@ -164,7 +164,7 @@ class Running {
 }
 
 export const StartInputSchema = z.object({
-  program: alias.describe("The short name of one of the programs the owner allows to be left running."),
+  program: alias.describe("The short name of a program the owner allows to be left running, or of one shell.execute may run (such as npm, node or git)."),
   args: z.array(z.string().max(500).refine((value) => !value.includes("\0"), "NUL is not permitted")).max(40).default([]),
   cwd: z.string().min(1).max(500).default("."),
   /** A name the owner will see in the list, such as "website preview". */
@@ -187,6 +187,15 @@ export class BackgroundProcesses {
   readonly finished = new Set<(view: ProcessView) => void>();
   /** selfdev: wakes a conversation with a follow-up message (Runtime.followUp); set by createBranch. */
   waker: ProcessWaker | null = null;
+  /** workbench (SELF-304): the programs `shell.execute` may run (src/own-clis.ts commandPrograms); set by createBranch. */
+  commandPrograms: () => Record<string, { path: string; args: string[] }> = () => ({});
+  /** A program by its short name: the owner's list of programs to leave running first, then the ones commands may run. */
+  private program(name: string): { path: string; args: string[] } | undefined {
+    const own = this.settings().programs;
+    if (Object.hasOwn(own, name)) return own[name];
+    const commands = this.commandPrograms();
+    return Object.hasOwn(commands, name) ? commands[name] : undefined;
+  }
   constructor(
     private readonly store: Store, private readonly owner: string, private readonly workspace: string,
     private readonly jobs: JobObjects = defaultJobObjects(),
@@ -200,8 +209,7 @@ export class BackgroundProcesses {
    * listed arguments, then the call's. Null for a short name that is not on the list (refused anyway).
    */
   commandLine(input: { program: string; args: readonly string[] }): string | null {
-    const programs = this.settings().programs;
-    const program = Object.hasOwn(programs, input.program) ? programs[input.program] : undefined;
+    const program = this.program(input.program);
     if (!program) return null;
     const name = program.path.replace(/^.*[\\/]/, "").replace(/\.(exe|cmd|bat|com)$/i, "");
     return [name, ...program.args, ...input.args].join(" ").trim();
@@ -209,8 +217,8 @@ export class BackgroundProcesses {
   /** Starts a program and leaves it running; the tool call is over long before the program is. */
   async start(input: z.infer<typeof StartInputSchema>, context: ToolContext): Promise<ProcessView & { sandbox: SandboxChoice; backend: SandboxBackendName }> {
     const settings = this.settings();
-    const program = Object.hasOwn(settings.programs, input.program) ? settings.programs[input.program] : undefined;
-    if (!program) throw new Error(`"${input.program}" is not one of the programs allowed to be left running. The owner adds those in Settings.`);
+    const program = this.program(input.program);
+    if (!program) throw new Error(`"${input.program}" is not one of the programs allowed to be left running or run as a command. The owner adds those in Settings.`);
     if (this.list({ active: true }).length >= settings.maxRunning)
       throw new Error(`${settings.maxRunning} programs are already running; stop one before starting another.`);
     const cwd = await new WorkspaceFiles(this.workspace).checked(input.cwd, true);
