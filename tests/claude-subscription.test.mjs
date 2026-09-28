@@ -191,3 +191,24 @@ test("production connector pins the first-party TLS identity and does not follow
     assert.equal(attempts[0].headers.authorization, "Bearer fixture-native-account");
   } finally { https.request = saved; syncBuiltinESMExports(); }
 });
+
+test("selfdev/prompt-cache: every round of one conversation runs in the same private folder, so its request front never moves", async (t) => {
+  const f = await fixture(t);
+  const first = [{ role: "system", content: "Owner's instructions" }, { role: "user", content: "Read the file" }];
+  const later = [...first, { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "files.read", arguments: '{"path":"a.txt"}' }] },
+    { role: "tool", toolCallId: "c1", content: "a" }];
+  await scope(() => f.provider.complete(request(first)));
+  await scope(() => f.provider.complete(request(later)));
+  await scope(() => f.provider.complete(request([{ role: "system", content: "Owner's instructions" }, { role: "user", content: "Something else" }])));
+  const folders = f.launches.map((launch) => launch.cwd);
+  assert.equal(folders[0], folders[1], "the same conversation, the same folder");
+  assert.notEqual(folders[2], folders[0], "another conversation, another folder");
+  for (const folder of folders) await assert.rejects(stat(folder), /ENOENT/);
+  // Two rounds of one conversation at once never share a folder.
+  const both = await Promise.all([scope(() => f.provider.complete(request(later))), scope(() => f.provider.complete(request(later)))]);
+  assert.equal(both.length, 2);
+  assert.notEqual(f.launches[3].cwd, f.launches[4].cwd);
+  // The relay marks the history the next round sends again: the answer before the newest turn.
+  const marked = f.seen[1].body.messages.findLast((message) => message.role === "assistant");
+  assert.deepEqual(marked.content.at(-1).cache_control, { type: "ephemeral", ttl: "1h" });
+});
