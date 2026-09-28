@@ -71,20 +71,26 @@ export function classifyTask(prompt: string, toolCount = 0): TaskShape {
   return { tokens, long, toolHeavy, personal, simple: !long && !toolHeavy };
 }
 
-export type RouteKind = "local" | "cloud" | "unchanged";
+export type RouteKind = "local" | "cloud" | "unchanged" | "refused";
 export interface RouteChoice {
   /** The preset to use, or null to leave the ordinary choice alone. */
   preset: string | null;
   kind: RouteKind;
   /** Plain-language reason, shown in the task's record. */
   reason: string;
+  /**
+   * True when the task must stay on this computer (personal details, with "keep personal tasks here" on). Such a task
+   * never falls back to a model elsewhere: with the model here down it fails with that model's own error, and with no
+   * model here it is refused (kind "refused"), rather than being sent to the cloud.
+   */
+  private?: boolean;
 }
 export interface RouteInputs {
   /** A connection that runs on this computer, when there is one. */
   localPreset: string | null;
   /** The cloud connection to prefer for hard work, when there is one. */
   cloudPreset: string | null;
-  /** False when the local server is not answering, so local choices fall back to the cloud. */
+  /** False when the local server is not answering: a cheap local choice falls back to the cloud, a private one never does. */
   localUp: boolean;
   /** What the cloud model would probably cost for this task, or null when no price is on file. */
   cloudCost: number | null;
@@ -94,26 +100,43 @@ export interface RouteInputs {
 export function chooseRoute(settings: RoutingSettings, shape: TaskShape, inputs: RouteInputs): RouteChoice {
   if (!settings.enabled) return { preset: null, kind: "unchanged", reason: "Task routing is switched off" };
   const local = inputs.localPreset, cloud = inputs.cloudPreset;
-  const wantsLocal = (settings.localForPrivate && shape.personal)
-    || (shape.simple && inputs.cloudCost !== null && inputs.cloudCost > settings.costCeilingDollars);
+  if (settings.localForPrivate && shape.personal) return privateRoute(local, inputs.localUp);
+  const wantsLocal = shape.simple && inputs.cloudCost !== null && inputs.cloudCost > settings.costCeilingDollars;
   if (settings.cloudForHard && (shape.long || shape.toolHeavy) && !shape.personal && cloud)
     return { preset: cloud, kind: "cloud", reason: "This is a long or tool-heavy task, so the cloud model takes it" };
   if (wantsLocal && local && inputs.localUp)
-    return { preset: local, kind: "local", reason: reasonForLocal(settings, shape, inputs) };
+    return { preset: local, kind: "local", reason: reasonForLocal(inputs) };
   if (wantsLocal && local && !inputs.localUp && cloud)
     return { preset: cloud, kind: "cloud", reason: "The model on this computer is not answering, so the cloud model takes it" };
   if (wantsLocal && !local)
     return { preset: null, kind: "unchanged", reason: "No model is set up on this computer yet" };
   return { preset: null, kind: "unchanged", reason: "Nothing about this task asks for a different model" };
 }
-function reasonForLocal(settings: RoutingSettings, shape: TaskShape, inputs: RouteInputs): string {
-  if (settings.localForPrivate && shape.personal) return "This task mentions personal details, so it stays on this computer";
+/**
+ * The route for a later turn of a conversation that already held personal details: its history goes with every turn,
+ * so it stays on this computer too, whatever the new words say. Null while routing or the rule is off.
+ */
+export function privateConversationRoute(store: Store, models: ModelRouter, owner: string): RouteChoice | null {
+  const settings = routingSettings(store, owner);
+  if (!settings.enabled || !settings.localForPrivate) return null;
+  const choice = privateRoute(pickLocalPreset(models, settings.localPreset), true);
+  return { ...choice, reason: choice.preset ? "Earlier in this conversation there were personal details, so it stays on this computer" : choice.reason };
+}
+/** A task with personal details, while the owner keeps those on this computer: here, or nowhere. */
+function privateRoute(local: string | null, localUp: boolean): RouteChoice {
+  if (!local) return { preset: null, kind: "refused", private: true,
+    reason: "This task mentions personal details, so it has to stay on this computer, and no model is set up here. Set one up, or switch off keeping personal tasks on this computer." };
+  return { preset: local, kind: "local", private: true, reason: localUp
+    ? "This task mentions personal details, so it stays on this computer"
+    : "This task mentions personal details, so it stays on this computer. The model here is not answering, and the task is not sent anywhere else." };
+}
+function reasonForLocal(inputs: RouteInputs): string {
   return `A simple task, and the cloud model would cost about $${(inputs.cloudCost ?? 0).toFixed(4)}, so the free model on this computer takes it`;
 }
 
-/** A preset id that runs on this computer, preferring the owner's choice. */
+/** A preset id that runs on this computer, preferring the owner's choice (only when it really runs here). */
 export function pickLocalPreset(models: ModelRouter, chosen: string | null): string | null {
-  if (chosen && models.presets.has(chosen)) return chosen;
+  if (chosen && models.presets.has(chosen) && models.runsLocally(chosen)) return chosen;
   for (const preset of models.presets.values()) if (models.runsLocally(preset.id)) return preset.id;
   return null;
 }
