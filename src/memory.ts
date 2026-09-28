@@ -699,12 +699,14 @@ function detailFromRequest(request: string | undefined, text: string): { entity?
   return {};
 }
 /**
- * The names the owner goes by here, as a model may write them for the owner: the first word of this computer's name,
- * which every task is shown ("Taofiks_Legion" gives "Taofiks"). Nothing else is read.
+ * The names the owner goes by here, as a model may write them for the owner: this computer's name, which every task is
+ * shown as "the owner's own computer", and its first word ("Taofiks_Legion" gives both). qwen2.5:7b wrote each as the
+ * entity of the owner's own fact. A generic machine name ("DESKTOP-4KQ7") names nobody. Nothing else is read.
  */
 export function ownerNames(host = hostname()): string[] {
   const first = host.split(/[_\-. ]+/)[0] ?? "";
-  return /^[\p{L}]{3,}$/u.test(first) && !/^(desktop|laptop|pc|computer|localhost|mac|macbook|windows|linux)$/i.test(first) ? [first] : [];
+  if (!/^[\p{L}]{3,}$/u.test(first) || /^(desktop|laptop|pc|computer|localhost|mac|macbook|windows|linux|ubuntu|runner|ip)$/i.test(first)) return [];
+  return [...new Set([host.trim(), first])];
 }
 /**
  * SELF-202: whether a fact is still true. A fact a newer one ended (closeEarlier sets its `validTo`) stays in the record

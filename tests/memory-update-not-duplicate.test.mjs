@@ -32,7 +32,9 @@ test("what the fact and the owner's own words say fills in what the model left o
   assert.deepEqual(detail({ text: "Denver", entity: "person", attribute: "Current_Residence" }, {}), { entity: "me", attribute: "home" });
   assert.deepEqual(detail({ text: "I moved to Denver.", entity: "Alice" }, about), { entity: "Alice", attribute: undefined }, "someone else stays someone else");
   assert.deepEqual(detail({ text: "Pizza", entity: "owner" }, about), { entity: "me", attribute: undefined }, "a fact that shares no word with the request gets nothing from it");
-  assert.deepEqual(ownerNames("Taofiks_Legion"), ["Taofiks"]);
+  assert.deepEqual(ownerNames("Taofiks_Legion"), ["Taofiks_Legion", "Taofiks"]);
+  assert.deepEqual(detail({ text: "I live in Atlanta", entity: "Taofiks_Legion" }, { ownerNames: ownerNames("Taofiks_Legion") }), { entity: "me", attribute: "home" },
+    "the whole computer name, as qwen wrote it");
   assert.deepEqual(ownerNames("DESKTOP-4KQ7"), [], "a machine's generic name is nobody's");
   assert.equal(isCurrentFact({ data: { validTo: null } }), true);
   assert.equal(isCurrentFact({ data: { validTo: new Date(Date.now() - 1000).toISOString() } }), false);
