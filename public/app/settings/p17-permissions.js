@@ -19,8 +19,8 @@
    words are shown in a confirm, and only "Turn it off" there sends it again with confirmLoosening. Lockdown refuses
    both in its own words. The switch is drawn again from the engine after every answer.
    App lock: live, from ./applock17.js (GET /api/lock, POST /api/lock/pin and /api/lock/settings).
-   Greyed: "Hold back keys found in answers" (the engine's leak guard is always on and has no switch; an off switch
-   would weaken a guard). The rows under "Guards that are always on" open the engine's readouts (./demos-b5.js) where it
+   "Hold back keys found in answers" is words, not a switch: the engine's leak guard is always on and has none, and an off
+   switch would weaken a guard (rows15.js fact15). The rows under "Guards that are always on" open the engine's readouts (./demos-b5.js) where it
    keeps one. */
 import { esc, render } from "../core/dom.js";
 import { api, token } from "../core/api.js";
@@ -28,7 +28,7 @@ import { onDemo17 } from "../places/demo17.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { toast, openDlg, closeDlg, dialog, $ } from "../core/ui.js";
-import { sw15, seg15 } from "./rows15.js";
+import { sw15, seg15, fact15 } from "./rows15.js";
 import { demos17, demo17, row17, sec17, pill17 } from "./rows17.js";
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
@@ -59,7 +59,7 @@ export function sections17(lv) {
     + row17(t("window.settings.p17-permissions.what-trunks-may-reach-in-sentences"), t("window.settings.p17-permissions.every-site-and-network-rule-written"), t("window.settings.p17-permissions.read-it"), "fwb17")
     + row17(t("window.settings.p17-permissions.why-is-this-set"), t("window.settings.p17-permissions.each-setting-that-differs-from-the"), n == null ? t("window.settings.p17-permissions.see") : t("window.settings.p17-permissions.see-count", { count: n }), "whyb17")
     + sw15("A second look before approvals", "Another model reads risky actions first and says what worries it.", (kitMode("approval_reviewer") ?? "off") !== "off")
-    + sw15("Hold back keys found in answers", "A key or password in a reply is hidden before it is sent anywhere.", false)
+    + fact15("Hold back keys found in answers", "f15-hold-back-keys-found-in-answers")
     + demo17("trust"));
   html += sec17(t("window.settings.p17-permissions.locks-and-records"),
     applockRow()

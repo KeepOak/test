@@ -289,7 +289,7 @@ const SURFACES = {
   conversation: ["window.chat.composer.message", "window.chat.head.find", "window.chat.composer.plus", "window.chat.composer.voice", "window.chat.more.label", "window.chat.branches.from-here", "window.chat.head.more"],
   plus: ["window.chat.plus.attach", "window.chat.plus.temporary", "window.chat.plus.goal"],
   model: ["window.chat.mode.which-model"],
-  mode: ["window.chat.mode.everywhere"],
+  mode: ["window.chat.mode.this-conversation"],
   find: ["window.chat.find.close"],
   pane: ["window.chat.pane.timeline", "pane.close"],
   account: ["window.flows.acct.search"],

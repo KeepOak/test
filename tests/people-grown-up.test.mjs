@@ -56,8 +56,14 @@ async function cardOf(page, name) {
   await card.filter({ hasText: name }).waitFor();
   return card;
 }
-/* What a person may do, as the card's Permissions ticks, and its facts. */
-const mayOf = (card) => card.locator(".acts10 label").evaluateAll((items) => items.map((item) => `${item.textContent.trim()}:${item.querySelector("input")?.checked ? "yes" : "no"}`));
+/* What a person may do, as the card's Permissions: ticks, or in Settings › People words with a tick or a cross (.may15,
+   its screen-reader "Yes"/"No" left out), and its facts. */
+const mayOf = (card) => card.locator(".acts10 label, .acts10 .may15").evaluateAll((items) => items.map((item) => {
+  if (!item.matches(".may15")) return `${item.textContent.trim()}:${item.querySelector("input")?.checked ? "yes" : "no"}`;
+  const words = item.cloneNode(true);
+  words.querySelector(".sr13")?.remove();
+  return `${words.textContent.trim()}:${item.classList.contains("no10") ? "no" : "yes"}`;
+}));
 const factsOf = (card) => card.locator("dl.kv").evaluate((list) => [...list.querySelectorAll("dt")].map((term) => `${term.textContent}=${term.nextElementSibling.textContent}`));
 
 test.skip("People opens on the eyebrow, the title and + Invite someone; the dialog checks, cancels and adds", async (t) => {

@@ -12,7 +12,7 @@
    Groups, Shared, Teams of specialists, Activity, Usage and Rules: places/team-tabs.js.
    Signing in: the prototype's signinTab, drawn from the owner's sign-in card (GET /api/people/settings: settings.mode,
    settings.chain, settings.sessionMinutes, waiting) and GET /api/profiles ownerPin; a profile always locks after five
-   wrong PINs (src/profiles.ts maximumPinAttempts), so that switch only shows it. Who may sign in, how they prove it and
+   wrong PINs (src/profiles.ts maximumPinAttempts), so that row says it in words, with no switch. Who may sign in, how they prove it and
    how long they stay signed in are POST /api/people/settings {mode | chain | sessionMinutes} (it keeps the rest), and
    Confirm on a waiting account is POST /api/people/links/confirm {provider, profileId, subject}; both answer with the
    card again, which is drawn as the engine says. Only the owner reaches either (src/people/api.ts requireOwner, refused
@@ -28,6 +28,7 @@ import { markLive } from "../core/features.js";
 import { on } from "../core/actions.js";
 import { tabBar } from "./parts.js";
 import { ctl } from "../settings/parts.js";
+import { fact15 } from "../settings/rows15.js";
 import { people, peopleBody, startPeople, loadSignin } from "../settings/pages/people.js";
 import { tabBody, readTab, setCard, initTeamTabs } from "./team-tabs.js";
 import { api } from "../core/api.js";
@@ -114,10 +115,9 @@ function waitingRows(waiting) {
 function signinTab() {
   const s = card?.settings;
   if (!s || !ownerHere()) return "";
-  const locks = true; // a profile always locks after five wrong PINs (src/profiles.ts maximumPinAttempts)
   return `${seg(t("people.admin.mode"), t("window.places.team.they-open-this-branchs-address-on"), [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], (v) => s.mode === v, "si-mode")}
     ${seg(t("window.places.team.how-they-prove-its-them"), t("window.places.team.everyone-passes-this-check"), PROVE.map(([v, l]) => [v, say(l)]), (v) => (s.chain ?? []).includes(v), "si-chain")}${seg(t("window.places.team.stay-signed-in-for"), t("window.places.team.then-they-sign-in-again"), STAY.map(([v, l]) => [v, say(l)]), (v) => s.sessionMinutes === v, "si-stay")}
-    ${ctl("si-lock", t("window.places.team.lock-a-profile-after-five-wrong"), t("window.places.team.for-five-minutes"), locks)}${ctl("si-owner", t("window.places.team.ask-for-my-pin-when-switching"), t("window.places.team.off-by-default"), Boolean(E.profiles?.ownerPin))}
+    ${fact15(t("window.places.team.lock-a-profile-after-five-wrong"), "si-lock")}${ctl("si-owner", t("window.places.team.ask-for-my-pin-when-switching"), t("window.places.team.off-by-default"), Boolean(E.profiles?.ownerPin))}
     ${waitingRows(card.waiting)}`;
 }
 

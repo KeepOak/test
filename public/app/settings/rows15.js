@@ -4,9 +4,16 @@
    caller's key, else the title's id15), the key of the reason it stays greyed when it does (core/why.js). */
 import { esc } from "../core/dom.js";
 import { say } from "../core/words.js";
+import { reason } from "../core/why.js";
 
 /** The prototype's switch id: "f15-" and the title, lowercased, every run of other characters a dash, at most 40. */
 export const id15 = (title) => "f15-" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+
+/** A row about how Branch always works, not a setting ("Real or greyed, never fake"): its title and the sentence kept as
+    window.why.<key>, and no control. `value` is what the engine says it is now, shown as words on the right (how it
+    listens), when there is one. */
+export const fact15 = (title, key, value = "") =>
+  `<div class="ctl fact15" data-fact="${esc(key)}"><b>${esc(say(title))}</b>${value ? `<span class="right"><span class="fact15-v">${esc(value)}</span></span>` : ""}<small>${esc(reason(key))}</small></div>`;
 
 export const sw15 = (title, sub, on = false) =>
   `<div class="ctl"><b>${esc(say(title))}</b><input class="sw" type="checkbox" id="${id15(title)}" ${on ? "checked" : ""} aria-label="${esc(say(title))}" data-sw="set"><small>${esc(say(sub))}</small></div>`;

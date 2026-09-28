@@ -2,7 +2,8 @@
    - General › Message times › Never had no setting. The display card keeps hideTimes now, and a message then shows no
      time, not even in its action row.
    - Developer › Status line had all three choices greyed. Default and Minimal are the display card's statusLine (null,
-     or the model and the room used), which the terminal view draws; My script stays greyed with its own reason.
+     or the model and the room used), which the terminal view draws. There is no My script: the row says in words that
+     Branch runs no script of yours for it (tests/not-a-setting-plain-text.test.mjs).
    Mutation: in public/app/chat/messages.js drop "|| CF.hideTimes" and the first case goes red. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -38,7 +39,7 @@ test("Message times › Never is saved and takes the time off every message", as
   assert.deepEqual(errors, []);
 });
 
-test("Status line › Default and Minimal are saved; My script says why it stays greyed", async (t) => {
+test("Status line › Default and Minimal are saved; the row says no script of yours runs", async (t) => {
   const { page, errors, call } = await settingsWindow(t, { provider, name: "wire-status-line" });
   await openSettingsPage(page, "general");
   await setLevel(page, "technical"); // Developer is listed at Technical only
@@ -52,8 +53,7 @@ test("Status line › Default and Minimal are saved; My script says why it stays
   await page.locator('[data-act="dv-status"][data-v="default"]').click();
   await page.locator('[data-act="dv-status"][data-v="default"][aria-pressed="true"]').waitFor();
   assert.equal((await call("/api/comfort")).values.display.statusLine, null);
-  const script = page.locator('[data-act="dv-status-script"]');
-  assert.equal(await isSoon(script), true);
-  assert.match(await script.getAttribute("data-tip"), /no script of yours/);
+  assert.equal(await page.locator('[data-act="dv-status-script"]').count(), 0, "no greyed My script");
+  assert.match(await minimal.locator("xpath=ancestor::div[contains(@class,'ctl')]").innerText(), /no script of yours/);
   assert.deepEqual(errors, []);
 });
