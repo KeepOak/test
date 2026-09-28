@@ -19,6 +19,8 @@ export interface DiscordOptions {
   fetch?: typeof fetch;
   connect?: WebSocketConnect;
   reconnectBaseMs?: number;
+  /** How often the socket is pinged to show it is still there (20 s; tests shorten it). */
+  keepaliveMs?: number;
   /** Overrides the interval Discord asks for, so a test does not wait forty seconds. */
   heartbeatMs?: number;
 }
@@ -81,6 +83,16 @@ export class DiscordAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.user?.name ?? null; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when Discord last answered at all (any gateway payload, or a pong to our own ping). */
+  private contactAt = Date.now();
+  private keepalive: ReturnType<typeof setInterval> | undefined;
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled connection again, resuming the session where it can. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     this.loop = this.run(onMessage);
     // Give the first connection a moment so a wrong token is reported while the owner is watching.
@@ -89,6 +101,7 @@ export class DiscordAdapter implements ChannelAdapter {
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.keepalive) clearInterval(this.keepalive);
     this.socket?.close();
     await this.loop?.catch(() => undefined);
   }
@@ -115,11 +128,17 @@ export class DiscordAdapter implements ChannelAdapter {
       onMessage: (text) => void this.receive(text, onMessage).catch(() => undefined),
     });
     this.socket = socket;
+    this.contactAt = Date.now();
+    // A socket that went quiet after a sleep never says it closed; a ping every 20 s shows whether anyone is there.
+    if (this.keepalive) clearInterval(this.keepalive);
+    this.keepalive = setInterval(() => socket.ping?.(() => { this.contactAt = Date.now(); }), this.options.keepaliveMs ?? 20_000);
+    this.keepalive.unref?.();
     // mac7/linux-fixes: a stop that arrived while this was still being opened found nothing to
     // close, and the loop then waited for a close nobody would ask for. Let it go straight away.
     if (this.stopping) socket.close();
     await socket.closed;
     if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.keepalive) clearInterval(this.keepalive);
     if (!this.stopping) this.state = { state: "reconnecting", reason: "Discord closed the connection; reconnecting" };
   }
   private async gateway(): Promise<string> {
@@ -130,6 +149,7 @@ export class DiscordAdapter implements ChannelAdapter {
   /** Handles one gateway payload: the handshake ones itself, a new message through the router. */
   private async receive(text: string, onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     const payload = payloadSchema.parse(JSON.parse(text));
+    this.contactAt = Date.now();
     if (typeof payload.s === "number") this.sequence = payload.s;
     if (payload.op === 10) return this.hello(payload.d);
     if (payload.op === 1) return this.beat();

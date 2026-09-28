@@ -426,7 +426,7 @@ export class ChannelRouter {
     }
     if (!this.pump) { this.pump = setInterval(() => void this.flush(), this.pumpMs); this.pump.unref(); }
     void this.refreshCommandMenus(); // CHAT-161: the app's own command picker lists what this chat can send
-    if (!this.watchdog) { this.watchdog = setInterval(() => void this.checkStalled(), this.watchdogMs); this.watchdog.unref(); }
+    if (!this.watchdog) { this.watchdog = setInterval(() => void this.watchTick(), this.watchdogMs); this.watchdog.unref(); }
     if (this.intake().presence) void this.presence(adapter, presenceWords.online);
     await this.flush();
   }
@@ -459,6 +459,29 @@ export class ChannelRouter {
    * wait), and one still stalled after being started again, or that could not start, says so on its card. An app
    * that is reached with nothing new is never restarted.
    */
+  /**
+   * CHAT-134: one beat of the watchdog. A beat that comes far later than it should means this computer slept: every
+   * connection is then started again at once (a socket or long poll from before a sleep usually never says it died),
+   * rather than waiting for "stalled after" to pass. Otherwise the usual stall check.
+   */
+  async watchTick(now = Date.now()): Promise<void> {
+    const slept = this.lastBeat !== 0 && now - this.lastBeat > Math.max(60_000, this.watchdogMs * 4);
+    this.lastBeat = now;
+    if (slept && this.intake().watchdog) await this.wake();
+    else await this.checkStalled(now);
+  }
+  private lastBeat = 0;
+  /** After a sleep: every connected app that can start again does, each on its own so one failure stops no other. */
+  async wake(): Promise<void> {
+    await Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
+      if (!adapter.restart) return;
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      this.watch.set(id, state);
+      try { await adapter.restart(this.handlerFor()); state.lastRestartAt = Date.now(); state.problem = null; }
+      catch (error) { state.problem = `${adapter.kind} could not reconnect after this computer woke: ${error instanceof Error ? error.message : String(error)}`; }
+      if (this.adapters.get(id)?.adapter !== adapter) await adapter.stop().catch(() => undefined);
+    }));
+  }
   async checkStalled(now = Date.now()): Promise<void> {
     const intake = this.intake();
     for (const [id, { adapter }] of this.adapters) {
