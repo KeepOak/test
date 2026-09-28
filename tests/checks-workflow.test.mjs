@@ -7,10 +7,13 @@ const read = async (name) => YAML.parse(await readFile(new URL(`../.github/workf
 const workflow = await read("checks.yml");
 const fast = await read("pr-fast.yml");
 
+/* A pull request's newer run cancels its older one; nothing else is ever cancelled or replaced. A group shared by the
+   pushes to one branch let each merge into redesign/window cancel the run before it (no base run finished, so promote
+   never ran), and GitHub drops all but the newest pending run of a group even without cancel-in-progress. */
 test("the whole suite runs on every pull request and keeps every integration-trunk result", () => {
-  assert.equal(workflow.concurrency.group, "checks-${{ github.ref }}");
-  assert.equal(workflow.concurrency["cancel-in-progress"],
-    "${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/mac/cross-platform' }}");
+  assert.equal(workflow.concurrency.group,
+    "${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || format('checks-run-{0}', github.run_id) }}");
+  assert.equal(workflow.concurrency["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}");
   assert.ok(Object.hasOwn(workflow.on, "pull_request"));
   assert.ok(workflow.on.push.branches.includes("mac/**"), "release and beta gates read push runs on mac/cross-platform");
   assert.equal(workflow.on.schedule[0].cron, "17 3 * * *");

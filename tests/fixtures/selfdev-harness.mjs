@@ -63,6 +63,20 @@ export async function seedScratchRepo(root) {
   return { bare, head: await git(bare, "rev-parse", "main") };
 }
 
+/**
+ * A CI machine has no Git identity, and Branch reports that rather than inventing one, so the engine's own commits
+ * would fail there. Only then, this process's home becomes a folder of the run's own with a test identity in it
+ * (Git reads HOME; Branch passes HOME on to Git). A computer with an identity is left exactly as it is.
+ */
+async function gitIdentity(root) {
+  const known = await git(root, "config", "--get", "user.email").catch(() => "");
+  if (known) return;
+  const home = join(root, "home");
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, ".gitconfig"), "[user]\n\tname = Selfdev Proof\n\temail = selfdev@example.invalid\n");
+  process.env.HOME = home;
+}
+
 /** Where git, node and npm live on this computer, for the command aliases. */
 async function executablePath(name) {
   const finder = process.platform === "win32" ? "where.exe" : "which";
@@ -79,6 +93,7 @@ async function executablePath(name) {
 export async function startEngine(root, options) {
   const workspace = join(root, "workspace"), dataDir = join(root, "data");
   await mkdir(workspace, { recursive: true });
+  await gitIdentity(root);
   const executables = {
     git: { path: await executablePath("git"), args: [] },
     node: { path: process.execPath, args: [] },

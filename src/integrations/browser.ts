@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { chromium, type Browser, type Download, type Locator, type Page } from 'playwright';
+import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
+import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
@@ -27,7 +28,10 @@ import { browserCare, browserCareDefaults, uploadsBlocked, type BrowserCare } fr
 import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) hook: import
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
 import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
+import { BrowserPinProxy, type PinRules } from './browser-pin-proxy.js';
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
+import { OwnerInputSchema, ownerPageInput, type OwnerInput } from './browser-owner-input.js';
+import { platformFetch } from '../pinned-fetch.js';
 
 export const BrowserConfigSchema = z.object({
   /** The only websites the browser may open, as exact origins. */
@@ -125,7 +129,7 @@ interface RunEntry {
 export interface WatchedWindow {
   url: string;
   title: string;
-  tabs: { url: string; title: string; active: boolean }[];
+  tabs: { url: string; title: string; active: boolean; loading?: boolean; icon?: string }[];
   /** A JPEG of the tab being worked in, or null (a borrowed window, or no frame could be taken). */
   frame: Buffer | null;
   borrowed: boolean;
@@ -159,15 +163,28 @@ export class BranchBrowser {
   readonly controls = new BrowserControls();
   private readonly controlled = new Map<string, RunEntry>();
   private readonly controlledOpening = new Map<string, Promise<RunEntry>>();
-  private readonly ownerCommands = new WeakMap<object, { command: BrowserCommand; authorize?: () => void }>();
+  private readonly ownerCommands = new WeakMap<object, { command: BrowserCommand; authorize?: () => void; effectStarted?: () => void }>();
+  /**
+   * Which tasks may work in a conversation's kept browser on their own: set by the owner's browser controls
+   * (src/browser-control-api.ts) to the owner's own running tasks in that conversation. Unset, none do.
+   */
+  sharesWith: ((owner: string, conversation: string, runId: string) => boolean) | undefined;
+  /** Each site's small icon for the owner's tabs, as a data: address ("" while unknown or when it has none). */
+  private readonly icons = new Map<string, string>();
   constructor(input: unknown) {
     this.config = BrowserConfigSchema.parse(input);
     this.origins = originsOf(this.config.allowedOrigins ?? []);
   }
   /** Any website the network rules allow, rather than a list. */
   get anyWebsite(): boolean { return this.config.anyWebsite === true; }
-  /** Shared network policy; when set, navigation is checked against it as well as the origin list. */
-  policy: { assertAllowed(target: URL, what?: string): Promise<void> } | undefined;
+  /**
+   * Shared network policy; when set, navigation is checked against it as well as the origin list. Any-website mode also
+   * needs `allowedAddresses`, which holds Chromium's connections to the addresses the check judged (browser-pin-proxy.ts).
+   */
+  policy: ({ assertAllowed(target: URL, what?: string): Promise<void> } & Partial<PinRules>) | undefined;
+  /** Any-website mode: the local door every connection of Branch's own Chromium goes through. */
+  private pinProxy: BrowserPinProxy | undefined;
+  private pinServer: Promise<string> | undefined;
   /** Saved sign-ins, encrypted beside the private database. */
   profiles: BrowserProfiles | undefined;
   /** Where screenshots and saved pages are kept. */
@@ -206,7 +223,7 @@ export class BranchBrowser {
     const target = new URL(request.url);
     // With no list, nothing but the network rules keeps a page's pictures, scripts and fetches away from this computer
     // and the home network, so every request is held to them, not only the page itself.
-    if (this.anyWebsite && entry?.granted !== target.origin) await this.networkRules().assertAllowed(target, 'browser address');
+    if (this.anyWebsite && entry?.granted !== target.origin) await this.pinRules().allowedAddresses(target, 'browser address');
     // Playwright says 'document' and Chromium's pause says 'Document'; both are the same navigation.
     if (request.resourceType.toLowerCase() !== 'document') return;
     if (entry?.granted !== target.origin && !this.anyWebsite)
@@ -226,10 +243,32 @@ export class BranchBrowser {
     if (!this.policy) throw new Error('The browser opens any website only under the network rules, and none are set');
     return this.policy;
   }
+  /** The network rules as any-website mode uses them: every check, and every connection held to what it judged. */
+  private pinRules(): PinRules {
+    const rules = this.networkRules() as Partial<PinRules>;
+    if (typeof rules.allowedAddresses !== 'function')
+      throw new Error('The browser opens any website only under network rules that hold its connections to the addresses they checked');
+    return rules as PinRules;
+  }
+  /**
+   * Any-website mode: Chromium connects only through the local door, which dials the addresses the network rules judged
+   * for that name, so a site cannot pass the check with one answer and be reached at another (DNS rebinding).
+   * `<-loopback>` sends this computer's own addresses through the door too, and WebRTC is kept to proxied connections.
+   */
+  private async pinning(): Promise<Pick<LaunchOptions, 'proxy' | 'args'>> {
+    if (!this.anyWebsite) return {};
+    const rules = this.pinRules();
+    this.pinProxy ??= new BrowserPinProxy({ rules: () => rules,
+      granted: (host, port) => [...this.sessions.values()].some(entry => entry.granted === `http://${host}:${port}`) });
+    const server = await (this.pinServer ??= this.pinProxy.start().catch((error: unknown) => { this.pinServer = undefined; throw error; }));
+    return { proxy: { server, bypass: '<-loopback>' },
+      args: ['--force-webrtc-ip-handling-policy', '--webrtc-ip-handling-policy=disable_non_proxied_udp'] };
+  }
   private async launch(): Promise<Browser> {
     const env = Object.fromEntries(['PATH', 'SystemRoot', 'LOCALAPPDATA', 'TEMP', 'TMP', 'HOME']
       .flatMap(key => process.env[key] ? [[key, process.env[key]!]] : []));
-    const browser = await chromium.launch({ headless: true, env,
+    const pinned = await this.pinning();
+    const browser = await (await chromium()).launch({ headless: true, env, ...pinned,
       ...(this.config.channel ? { channel: this.config.channel } : {}) }).catch((error: unknown) => {
       // Said the way `branch doctor` says it (src/doctor-fix.ts), not as Playwright's own instructions.
       if (!this.config.channel && /Executable doesn't exist/i.test(error instanceof Error ? error.message : String(error)))
@@ -246,7 +285,7 @@ export class BranchBrowser {
   }
   private entry(context: ToolContext): RunEntry {
     if (this.closed) throw new Error('Browser is closed');
-    const key = this.key(context), existing = this.sessions.get(key);
+    const key = this.key(context), existing = this.sessions.get(key) ?? this.sharedFor(context);
     if (existing) {
       if (existing.control?.view().state === 'stopped') throw new Error('This browser was stopped.');
       return existing;
@@ -269,6 +308,46 @@ export class BranchBrowser {
     return created;
   }
 
+  /**
+   * A Trunk's task works in its conversation's kept browser (the one the owner opened or took over), so what the owner
+   * signed into and left open is where the task carries on. Only the owner's own tasks in that conversation, and never
+   * one using another Trunk's saved sign-in.
+   */
+  private sharedFor(context: ToolContext): RunEntry | undefined {
+    const run = typeof this.store?.run === 'function' ? this.store.run(context.runId) : undefined;
+    if (!run?.sessionId || run.owner !== context.owner) return undefined;
+    const control = this.controls.forConversation(context.owner, run.sessionId), entry = control && this.controlled.get(control.id);
+    if (!control || !entry || !this.sharesWith?.(context.owner, run.sessionId, context.runId)) return undefined;
+    const profile = control.binding.profile;
+    if (profile && isTrunkProfile(profile) && profile !== trunkProfileName(context.trunk ?? '')) return undefined;
+    this.controls.bindRun(control.binding, control.id, context.runId, true);
+    this.sessions.set(this.key(context), entry);
+    return entry;
+  }
+  /**
+   * The owner takes over a running task's own window: it becomes the conversation's kept browser, the task keeps its
+   * limits so far, and its next step waits for Hand back. A borrowed browser, a benchmark window and a window being
+   * recorded are never taken over.
+   */
+  adoptRun(owner: string, conversation: string, runId: string, clientId: string): BrowserControl {
+    const key = this.key({ owner, runId }), entry = this.sessions.get(key);
+    if (entry?.control) {
+      if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
+      return entry.control;
+    }
+    if (!entry || !entry.session.started()) throw new Error('That task has no browser page open.');
+    if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
+    if (entry.held) throw new Error('A benchmark window cannot be taken over.');
+    if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
+    const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
+    entry.control = control;
+    entry.tabIds = control.view().tabs;
+    entry.budgets = new Map([[runId, { actions: entry.actions, origins: entry.origins }]]);
+    entry.trunkChecked = true;
+    this.controlled.set(control.id, entry);
+    this.sessions.set(this.key({ owner, runId: `browser-control:${control.id}` }), entry);
+    return control;
+  }
   /** Creates a kept Branch-owned session before its first page; routes retain their existing caller/tool gates. */
   async createControlled(binding: BrowserBinding, clientId: string, context: ToolContext) {
     this.controlledScope(binding, context);
@@ -333,12 +412,13 @@ export class BranchBrowser {
   }
   /** A route supplies an exact owner command around one existing manually gated browser operation. */
   async ownerCommand<T>(binding: BrowserBinding, id: string, command: BrowserCommand, context: ToolContext,
-    action: (scoped: ToolContext) => Promise<T>, authorize?: () => void): Promise<T> {
+    action: (scoped: ToolContext) => Promise<T>, authorize?: () => void, effectStarted?: () => void): Promise<T> {
     this.controlledScope(binding, context);
     const control = this.controls.get(binding, id), entry = this.sessions.get(this.key(context));
     if (entry?.control !== control || command.writer.kind !== 'owner') throw new Error('This task is not bound to the owner browser command.');
     const token = {};
-    this.ownerCommands.set(token, { command: { ...command, writer: { ...command.writer } }, ...(authorize ? { authorize } : {}) });
+    this.ownerCommands.set(token, { command: { ...command, writer: { ...command.writer } },
+      ...(authorize ? { authorize } : {}), ...(effectStarted ? { effectStarted } : {}) });
     try { return await action({ ...context, [ownerCommandScope]: token } as ToolContext); }
     finally { this.ownerCommands.delete(token); }
   }
@@ -355,16 +435,27 @@ export class BranchBrowser {
   async watchControlled(binding: BrowserBinding, id: string): Promise<WatchedWindow | null> {
     const control = this.controls.get(binding, id);
     const before = control.view(), page = this.controlled.get(id)?.session.watched()?.page;
+    const url = page?.url();
     if (before.state === 'stopped') return null;
     const frame = await this.watch(binding.owner, `browser-control:${id}`), after = control.view();
-    if (before.epoch !== after.epoch || after.state === 'stopped' || this.controlled.get(id)?.session.watched()?.page !== page) return null;
+    if (before.epoch !== after.epoch || after.state === 'stopped' || this.controlled.get(id)?.session.watched()?.page !== page
+      || page?.url() !== url) return null;
     return frame;
   }
-  private writeFor<T>(context: ToolContext, action: (write: BrowserWrite | null, signal: AbortSignal) => Promise<T>): Promise<T> {
+  /** The exact native page behind a stable owned tab, used only to reject stale owner input. */
+  controlledPageTarget(binding: BrowserBinding, id: string, tabId: string): { page: object; url: string } | null {
+    const control = this.controls.get(binding, id), entry = this.controlled.get(id);
+    if (!entry || entry.control !== control || control.view().state === 'stopped') return null;
+    const index = entry.tabIds?.indexOf(tabId) ?? -1, page = entry.session.tabPage(index);
+    return page && !page.isClosed() ? { page, url: page.url() } : null;
+  }
+  private async writeFor<T>(context: ToolContext, action: (write: BrowserWrite | null, signal: AbortSignal) => Promise<T>): Promise<T> {
     const entry = this.entry(context), control = entry.control;
     if (!control) return action(null, context.signal);
     const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
-    const own = token && this.ownerCommands.get(token), view = control.view();
+    const own = token && this.ownerCommands.get(token);
+    if (!own) await control.agentTurn(context.runId, context.signal);
+    const view = control.view();
     own?.authorize?.();
     const sequence = entry.agentSequence?.epoch === view.epoch ? entry.agentSequence.next : 1;
     const active = entry.session.tabs().find(tab => tab.active)?.index ?? 0;
@@ -386,6 +477,19 @@ export class BranchBrowser {
     if (!own) entry.agentSequence = { epoch: view.epoch, next: sequence + 1 };
     return result;
   }
+  /** Available only inside an exact ownerCommand capability; model arguments never provide this grant. */
+  async ownerInput(input: OwnerInput, context: ToolContext) {
+    const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
+    if (!token || !this.ownerCommands.has(token) || !this.entry(context).control)
+      throw new Error('Page input requires the owner window\'s current browser grant.');
+    if (this.entry(context).session.isRecording()) throw new Error('Stop the browser recording before typing directly into this page.');
+    const control = this.entry(context).control!;
+    try { return await this.operation(context, (page, check) => ownerPageInput(page, input, check)); }
+    catch {
+      if (input.kind === 'drag') await this.stopControlled(control.binding, control.id).catch(() => undefined);
+      throw new Error('The page input did not finish. Refresh browser control before continuing.');
+    }
+  }
   /**
    * Browser profiles that stay signed in, per Trunk: a Trunk's task opens its first page with that Trunk's own saved
    * sign-in when it has kept one (browser.profile "keep"), and writes it back when the task ends, so it doesn't sign in
@@ -399,6 +503,10 @@ export class BranchBrowser {
     entry.session.options.storageState = state;
     entry.profile = name;
   }
+  private markOwnerEffect(context: ToolContext): void {
+    const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
+    if (token) this.ownerCommands.get(token)?.effectStarted?.();
+  }
   private async operation<T extends object>(context: ToolContext, action: (page: Page, check: () => void) => Promise<T>, graceMs = 0, before?: () => Promise<void>): Promise<T> {
     return this.writeFor(context, async (write, signal) => {
       signal.throwIfAborted();
@@ -410,6 +518,7 @@ export class BranchBrowser {
       try {
       const { result, hidden } = await entry.session.use({ ...context, signal }, page => this.scrubbingErrors(context, page, async page => {
         write?.check(); signal.throwIfAborted();
+        this.markOwnerEffect(context);
         return action(page, () => { write?.check(); signal.throwIfAborted(); });
       }), graceMs);
       const events = entry.session.takeEvents();
@@ -458,7 +567,9 @@ export class BranchBrowser {
     const target = new URL(url);
     if (target.username || target.password) throw new Error('Browser destination is not an allowed origin');
     // w911 (A1726): the one loopback page Branch itself serves to this window skips the network policy.
-    if (known?.granted !== target.origin) await (this.anyWebsite ? this.networkRules() : this.policy)?.assertAllowed(new URL(url), 'browser address');
+    if (known?.granted === target.origin) return;
+    if (this.anyWebsite) await this.pinRules().allowedAddresses(target, 'browser address');
+    else await this.policy?.assertAllowed(target, 'browser address');
   }
   async navigate(url: string, context: ToolContext) {
     const entry = this.entry(context);
@@ -744,6 +855,8 @@ export class BranchBrowser {
   async startRecording(context: ToolContext) {
     return this.writeFor(context, async (write) => {
     const entry = this.entry(context);
+    if (entry.control && await this.ownedRecordingPrivate(entry))
+      throw new Error('This shared browser holds or has handled private values, so a recording cannot start.');
     // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
     // value is still in a box of the window.
     // A box that cannot be asked counts as holding one, as it does for a saved page (holdsSecret).
@@ -763,6 +876,13 @@ export class BranchBrowser {
     return { recording: true,
       note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
     });
+  }
+  private async ownedRecordingPrivate(entry: RunEntry): Promise<boolean> {
+    if (entry.seen.size) return true;
+    const pages = entry.session.tabs().map(tab => entry.session.tabPage(tab.index)).filter((page): page is Page => !!page);
+    const privatePages = Promise.all(pages.map(page => holdsSecret(page, entry.filled.get(page)?.boxes ?? []).catch(() => true)));
+    return Promise.race([privatePages.then(found => found.some(Boolean)),
+      new Promise<boolean>(done => { setTimeout(() => done(true), 1000).unref?.(); })]);
   }
   /** Ends the recording and keeps it beside the task's other files. */
   async keepRecording(context: ToolContext) {
@@ -858,7 +978,7 @@ export class BranchBrowser {
     await this.policy?.assertAllowed(new URL(url), 'browser address');
     // parity-b2: this window is on the screen for as long as the owner signs in, so the live view of it takes no frame.
     return whileSignInShows(async () => {
-      const browser = await chromium.launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
+      const browser = await (await chromium()).launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
       try {
         const context = await browser.newContext(), page = await context.newPage();
         await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -931,9 +1051,10 @@ export class BranchBrowser {
     // A tab whose page is busy may not answer; its title is left empty after a second rather than holding up the view.
     const titleOf = (tab: Page) => Promise.race([tab.title().catch(() => ''), new Promise<string>(done => { setTimeout(() => done(''), 1000).unref?.(); })]);
     const tabs = await Promise.all(seen.tabs.map(async (tab, index) => {
-      const [title, hidden] = await Promise.all([titleOf(tab), entry.control ? this.watchedSecrets(entry, tab) : undefined]);
+      const [title, hidden, extra] = await Promise.all([titleOf(tab), entry.control ? this.watchedSecrets(entry, tab) : undefined,
+        entry.control ? this.tabExtras(tab) : undefined]);
       return { url: hidden === undefined ? tab.url() : scrubAddress(tab.url(), hidden),
-        title: hidden === undefined ? title : hidden === null ? '' : scrubText(title, hidden), active: index === seen.active };
+        title: hidden === undefined ? title : hidden === null ? '' : scrubText(title, hidden), active: index === seen.active, ...extra };
     }));
     const borrowed = entry.session.isBorrowed();
     // A box a saved sign-in was typed into holds that secret whatever kind of box it is (a code goes into a plain one).
@@ -941,9 +1062,49 @@ export class BranchBrowser {
     const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
     return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
   }
+  /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
+  private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
+    const state = await Promise.race([tab.evaluate(() => document.readyState).catch(() => 'complete'),
+      new Promise<string>(done => { setTimeout(() => done('loading'), 300).unref?.(); })]);
+    return { loading: state !== 'complete', icon: this.iconFor(tab) };
+  }
+  /**
+   * A site's icon, fetched once per site under the same network rules as every other request (the policy's own
+   * checked fetch, held to the addresses it judged), no bigger than 16 KB and only an image. Never blocks the view:
+   * the first read says "" and a later one has the icon.
+   */
+  private iconFor(tab: Page): string {
+    let origin: string;
+    try { const url = new URL(tab.url()); if (!['http:', 'https:'].includes(url.protocol)) return ''; origin = url.origin; } catch { return ''; }
+    const known = this.icons.get(origin);
+    if (known !== undefined) return known;
+    this.icons.set(origin, '');
+    while (this.icons.size > 64) this.icons.delete(this.icons.keys().next().value!);
+    const guard = (this.policy as { guard?: (base: typeof fetch) => typeof fetch } | undefined)?.guard;
+    if (!guard) return '';
+    void (async () => {
+      const href = await Promise.race([tab.evaluate(() => (document.querySelector('link[rel~="icon"]') as HTMLLinkElement | null)?.href ?? '').catch(() => ''),
+        new Promise<string>(done => { setTimeout(() => done(''), 1000).unref?.(); })]);
+      const target = new URL(/^https?:\/\//.test(href) ? href : '/favicon.ico', origin);
+      if (!this.allowed(target.href)) return;
+      const answer = await guard.call(this.policy, platformFetch)(target, { redirect: 'manual', signal: AbortSignal.timeout(3000) });
+      const type = answer.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+      if (!answer.ok || Number(answer.headers.get('content-length') ?? 0) > 16_384) { void answer.body?.cancel().catch(() => undefined); return; }
+      const bytes = Buffer.from(await answer.arrayBuffer());
+      if (answer.ok && /^image\/[\w.+-]+$/.test(type) && bytes.length > 0 && bytes.length <= 16_384)
+        this.icons.set(origin, `data:${type};base64,${bytes.toString('base64')}`);
+    })().catch(() => undefined);
+    return '';
+  }
   /** The website the run's page is on, so the approval policy can match on it. */
   hostFor(context: Pick<ToolContext, 'owner' | 'runId'>): string {
-    try { return this.sessions.get(this.key(context))?.host ?? ''; } catch { return ''; }
+    try {
+      const entry = this.sessions.get(this.key(context));
+      // The page in front now (the owner may have moved it), with its port, as the approval rules name a site.
+      let now = '';
+      try { const at = new URL(entry?.session.watched()?.page.url() ?? ''); if (at.protocol === 'http:' || at.protocol === 'https:') now = at.host; } catch { /* no page yet */ }
+      return now || entry?.host || '';
+    } catch { return ''; }
   }
   /**
    * Gives every borrowed browser back at once, without stopping anything else. Used when Branch
@@ -1066,6 +1227,7 @@ export class BranchBrowser {
     await this.starting?.catch(() => undefined);
     await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
     await this.browser?.close();
+    await this.pinProxy?.close();
     this.sessions.clear();
     this.controlled.clear();
     const failures = results.filter(result => result.status === 'rejected');
@@ -1129,6 +1291,9 @@ export function pageKey(value: string | undefined): string {
 export function registerBrowser(registry: ToolRegistry, browser: BranchBrowser): void {
   registry.onRunFinished(context => browser.closeRun(context));
   const host = (_a: unknown, c: ToolContext) => browser.hostFor(c);
+  registry.register({ name: 'browser.owner_input', permission: 'browser.interact',
+    description: 'Page input reserved for the owner window holding the browser controls.', parameters: OwnerInputSchema,
+    execute: (input, context) => browser.ownerInput(input, context), target: host });
   registry.register({ name: 'browser.navigate', reach: 'outbound', permission: 'browser.read',
     description: 'Open a configured origin in an isolated browser.',
     parameters: z.object({ url: z.string().url().max(2000) }).strict(), execute: (a, c) => browser.navigate(a.url, c) });

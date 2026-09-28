@@ -239,7 +239,7 @@ export function supportsImages(provider: Provider): boolean {
   return said.acceptsImages === true;
 }
 /** Address and key for a provider's other OpenAI-shaped routes, such as `/embeddings`. */
-export interface EmbeddingEndpoint { endpoint: string; apiKey: string }
+export interface EmbeddingEndpoint { endpoint: string; apiKey: string; fetchImpl?: typeof fetch }
 /** The embeddings route of a provider that offers one; every other provider gives nothing. */
 export function providerEmbeddings(provider: Provider): EmbeddingEndpoint | null {
   const accessor = (provider as { embeddings?: () => EmbeddingEndpoint | null }).embeddings;
