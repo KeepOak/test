@@ -900,9 +900,10 @@ ${mayApprove ? approvalFallbackNote : "Reply n (or /deny) for no."}`,
     const sessionId = this.sessionFor(message.channel, message.chatId);
     let name = "Branch";
     try { name = (sessionId ? this.trunkName(sessionId) : null) ?? assistantIdentity(this.store, this.runtime.owner).name; } catch { /* the plain name */ }
-    const commands = this.switches().commands;
-    const hint = commands === "on" ? "Tap Menu or type / for commands: /new starts afresh, /stop stops a task, /help lists the rest."
-      : commands === "when-needed" ? "While I work, /stop stops me and /status says what I am doing." : "";
+    // The commands this person may use here, as the router reads them (the switch, or the owner's own paired DM).
+    const reads = (text: string) => this.commandIn({ ...message, text }) !== null;
+    const hint = reads("/help") ? "Tap Menu or type / for commands: /new starts afresh, /stop stops a task, /help lists the rest."
+      : this.switches().commands === "when-needed" ? "While I work, /stop stops me and /status says what I am doing." : "";
     // The computer's name is for the owner's own chats; a group only hears that this is Branch.
     const where = message.chatKind === "direct" ? ` on ${hostname()}` : "";
     const text = [`Hi, I'm ${name}, running in Branch${where}.`,
