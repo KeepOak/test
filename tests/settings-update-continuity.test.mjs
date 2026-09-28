@@ -22,7 +22,7 @@ for (const releaseChannel of ["stable", "beta", "dev"]) {
     const saved = saveComfort(app.store, owner, "notify", {
       method: "window", sound: "chime", autoUpdate: "install", releaseChannel,
     });
-    assert.deepEqual(saved, { method: "window", sound: "chime", autoUpdate: "install", releaseChannel: kept });
+    assert.deepEqual(saved, { method: "window", sound: "chime", needsYes: true, taskDone: true, autoUpdate: "install", releaseChannel: kept });
 
     const run = app.store.createRun(owner, "change notification sound");
     app.store.event(run.id, "run.started", { source: "owner" });
@@ -31,7 +31,7 @@ for (const releaseChannel of ["stable", "beta", "dev"]) {
       changes: [{ setting: "comfort-notify.sound", value: "knock" }],
     }, context);
     assert.equal(changed.changed.length, 1);
-    const expected = { method: "window", sound: "knock", autoUpdate: "install", releaseChannel: kept };
+    const expected = { method: "window", sound: "knock", needsYes: true, taskDone: true, autoUpdate: "install", releaseChannel: kept };
     assert.deepEqual(readComfort(app.store, owner, "notify"), expected);
 
     await app.close();
