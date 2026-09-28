@@ -44,10 +44,16 @@ async function ruleTester(page) {
   check("rule tester: a command is answered with the engine's own reason", (await dlg(page).locator(".res-line-b17 b").textContent()) === engine.because, engine.because);
   const words = { allow: "Allowed", ask: "Asks", deny: "Never" }[engine.decision];
   check("rule tester: the pill is the engine's decision", (await dlg(page).locator(".res-line-b17 .pill").textContent()) === words, engine.decision);
-  await page.locator('[data-act="rulepickb17"][data-v="https://unknown.example"]').click();
+  // The one example chip is a command (the prototype's example addresses were example data); a site is typed.
+  await page.locator('[data-act="rulepickb17"][data-v="git status"]').click();
+  await settle(page, 900);
+  const picked = await api("rules/test", { tool: "shell.session.run", target: "git status" });
+  check("rule tester: the example chip is asked as a command", (await dlg(page).locator(".res-line-b17 b").textContent()) === picked.because, picked.because);
+  await page.locator("#rule-in-b17").fill("https://unknown.example");
+  await page.locator('[data-act="rulerunb17"]').click();
   await settle(page, 900);
   const site = await api("rules/test", { tool: "web.fetch", target: "https://unknown.example" });
-  check("rule tester: a picked address is asked as a site", (await dlg(page).locator(".res-line-b17 b").textContent()) === site.because, site.because);
+  check("rule tester: an address is asked as a site", (await dlg(page).locator(".res-line-b17 b").textContent()) === site.because, site.because);
   await closeDlg(page);
 }
 
@@ -71,7 +77,9 @@ async function firewall(page) {
    a tightening is done; putting back one that would loosen is refused by the engine and nothing changes. */
 async function whyIsThisSet(page) {
   await api("settings-kit/apply", { plan: { source: "set", key: "policy", field: "unmatchedCommands", value: "allow" }, accept: ["policy.unmatchedCommands"], confirmLoosening: true });
-  await api("settings-kit/apply", { plan: { source: "set", key: "loop_guard", field: "mode", value: "on" }, accept: ["loop_guard.mode"] });
+  // A guard that ships off, switched on: putting it back would loosen it. (The loop guard ships on now, so on is no
+  // change from what shipped.)
+  await api("settings-kit/apply", { plan: { source: "set", key: "approval_reviewer", field: "mode", value: "on" }, accept: ["approval_reviewer.mode"] });
   await openPage(page, "general");
   await openPage(page, "permissions");
   const kit = await api("settings-kit");
@@ -79,20 +87,20 @@ async function whyIsThisSet(page) {
   check("why: the row counts the engine's changed settings", (await page.locator('[data-act="whyb17"]').textContent()) === `See ${n}`, `See ${n}`);
   await page.locator('[data-act="whyb17"]').click();
   await settle(page, 1500);
-  const words = (await api("settings-kit/why/loop_guard.mode")).words;
-  const row = dlg(page).locator('.why-b17:has([data-key="loop_guard"])');
+  const words = (await api("settings-kit/why/approval_reviewer.mode")).words;
+  const row = dlg(page).locator('.why-b17:has([data-key="approval_reviewer"])');
   check("why: each row carries the engine's own words", (await row.locator("small").textContent()) === words, words);
   await dlg(page).locator('[data-act="whyputb17"][data-key="policy"][data-field="unmatchedCommands"]').click();
   await settle(page, 1500);
   const initial = kit.settings.find((s) => s.key === "policy").fields.find((f) => f.field === "unmatchedCommands").initial;
   check("put back: the engine holds the shipped value again", (await kitValue("policy", "unmatchedCommands")) === initial, initial);
-  await dlg(page).locator('[data-act="whyputb17"][data-key="loop_guard"]').click();
+  await dlg(page).locator('[data-act="whyputb17"][data-key="approval_reviewer"]').click();
   await settle(page, 1500);
   const toast = (await page.locator(".toast").last().textContent().catch(() => "")) ?? "";
   check("put back never loosens: the engine's refusal is shown", /careful/i.test(toast), toast);
-  check("put back never loosens: the guard stays on", (await kitValue("loop_guard", "mode")) === "on");
+  check("put back never loosens: the guard stays on", (await kitValue("approval_reviewer", "mode")) === "on");
   await closeDlg(page);
-  await api("settings-kit/apply", { plan: { source: "set", key: "loop_guard", field: "mode", value: "off" }, accept: ["loop_guard.mode"], confirmLoosening: true });
+  await api("settings-kit/apply", { plan: { source: "set", key: "approval_reviewer", field: "mode", value: "off" }, accept: ["approval_reviewer.mode"], confirmLoosening: true });
 }
 
 /* Data & usage › Move in: what the engine found, its preview, and bringing it in. */
@@ -156,7 +164,7 @@ async function compare(page) {
   check("savings: the dialog opens from the engine's figures", (await dlg(page).count()) === 1);
   check("savings: mixing stays greyed", await greyed(dlg(page).locator('[data-act="mixb17"]')));
   await closeDlg(page);
-  check("model arena stays greyed", await greyed(page.locator('.set-col button:has-text("Open the arena")')));
+  check("model arena: Open the arena is live", !(await greyed(page.locator('[data-act="arenab17"]'))));
 }
 
 async function flip(page, pageId, id, engine) {
@@ -210,24 +218,33 @@ async function auditRecord(page) {
   await closeDlg(page);
 }
 
-/* Held back for review: the emergency stop, pressed and let go. The stop's row still follows the engine: pressed through
-   the API, it offers "Let them resume", which stays greyed too. The app lock is live (verify-app-lock.cjs presses it) and
-   the password manager is live (unhold-approvals, verify-unhold-approvals.cjs); only Windows, which the engine cannot
-   ask, stays greyed. */
+/* The password manager is live (unhold-approvals); Windows Credential Manager is offered where the engine runs on Windows
+   (GET /api/credentials/settings platform) and greyed elsewhere. The key names are live (Saved sign-ins › Keys Branch
+   holds). The emergency stop is live: Stop everything asks first and then holds every task, and letting it go asks for
+   a yes before it makes Branch less careful (settings/p17-permissions.js resume). */
 async function heldBack(page) {
   await openPage(page, "secrets");
-  check("password manager: Bitwarden and 1Password live, Windows greyed", (await page.locator('[data-act="vaultb17"]').count()) === 2
-    && !(await greyed(page.locator('[data-act="vaultb17"]')))
-    && await greyed(page.locator('[data-act="vaultwinb17"]')));
-  check("a row with no readout yet stays greyed", await greyed(page.locator('[data-act="demob17-soon"][data-k="keys"]')));
+  const { platform } = await api("credentials/settings");
+  const offered = await page.locator('[data-act="vaultb17"]').count(), live = !(await greyed(page.locator('[data-act="vaultb17"]')));
+  check(`password manager: live, Windows ${platform === "win32" ? "offered here" : "greyed off Windows"} (${platform})`,
+    live && (platform === "win32" ? offered === 3 : offered === 2 && await greyed(page.locator('[data-act="vaultwinb17"]'))));
+  check("keys Branch holds: the readout is live", !(await greyed(page.locator('[data-act="demob17"][data-k="keys"]'))));
   await openPage(page, "permissions");
   check("app lock is live, not greyed", !(await greyed(page.locator('[data-act="applockb17"]'))));
-  check("emergency stop: pressing it stays greyed", await greyed(page.locator('[data-act="estopb17"]')));
-  await api("safety-extras/stop", { everything: true });
-  await openPage(page, "general");
-  await openPage(page, "permissions");
-  check("emergency stop: the row follows the engine, and letting go stays greyed", await greyed(page.locator('[data-act="estoprelb17"]')));
-  await api("safety-extras/stop/release", {});
+  const stopped = async () => (await api("safety-extras")).stop?.everything === true;
+  await page.locator('[data-act="estopb17"]').click();
+  await dlg(page).locator('[data-act="estopgob17"]').click();
+  let held = false;
+  for (let i = 0; i < 30 && !(held = await stopped()); i++) await settle(page, 200);
+  check("emergency stop: Stop everything asks first, then holds every task (GET /api/safety-extras)", held);
+  await page.locator('[data-act="estoprelb17"]').waitFor({ timeout: 10000 });
+  await page.locator('[data-act="estoprelb17"]').click();
+  await dlg(page).locator('[data-act="estopyesb17"]').waitFor({ timeout: 10000 });
+  check("emergency stop: letting go asks for a yes first (it makes Branch less careful)", await stopped());
+  await dlg(page).locator('[data-act="estopyesb17"]').click();
+  let free = false;
+  for (let i = 0; i < 30 && !(free = !(await stopped())); i++) await settle(page, 200);
+  check("emergency stop: after the yes, every task may resume", free);
 }
 
 (async () => {
