@@ -44,7 +44,29 @@ export async function useFingerprintKey(dataDir: string): Promise<void> {
   }
 }
 
-/** The fingerprint of `argumentBytes` asked of `tool`: 32 hex characters. */
+/**
+ * The fingerprint of `argumentBytes` asked of `tool`: 32 hex characters.
+ *
+ * Bytes that are JSON are read first and written back with their keys in order and no spacing, because a tool is run
+ * on what the JSON says, not on how it was spelled. A model that is told to make the call it was allowed "again,
+ * exactly as before" and sends the same object with its keys in another order (local models do) is making the very
+ * same request, and a yes given for it must cover it; any change to a key or a value is still a new question. Bytes
+ * that are not JSON are kept exactly as they came.
+ */
 export function argumentFingerprint(tool: string, argumentBytes: string): string {
-  return createHmac("sha256", key).update(`${tool}\u0000${argumentBytes}`, "utf8").digest("hex").slice(0, 32);
+  return createHmac("sha256", key).update(`${tool}\u0000${sameRequest(argumentBytes)}`, "utf8").digest("hex").slice(0, 32);
+}
+
+/** JSON bytes written one way whatever order their keys came in; anything else unchanged. */
+function sameRequest(argumentBytes: string): string {
+  // Too deep to write back (a call built to be) is kept exactly, as bytes that are not JSON are.
+  try { return ordered(JSON.parse(argumentBytes)); } catch { return argumentBytes; }
+}
+function ordered(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(ordered).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([name, inner]) => `${JSON.stringify(name)}:${ordered(inner)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
