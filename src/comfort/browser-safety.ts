@@ -57,7 +57,7 @@ export interface BrowserCare {
   dialogs: "dismiss" | "accept";
   numberMarks: boolean;
   recordTasks: boolean;
-  downloadsFrom: "anywhere" | "known";
+  downloadsFrom: "anywhere" | "known" | "ask";
 }
 export const browserCareDefaults: BrowserCare = { blockUploads: false, dialogs: "dismiss", numberMarks: true, recordTasks: false, downloadsFrom: "anywhere" };
 
@@ -75,6 +75,18 @@ export const downloadNotKnown = (host: string): string =>
  * rule that would let browser.navigate go anywhere (match "*"); a rule the owner already has for one site (an earlier
  * "always" answered here writes one) still comes first, so a site said yes to is not asked about again.
  */
+/**
+ * Downloads may come from › Ask each time: keeping a held file is put to the owner every time, ahead of every other rule,
+ * so a broad "allow" preset never keeps one without a yes. A yes is for that one file only.
+ */
+export function withDownloadQuestion(policy: Policy, store: Pick<Store, "get">, owner: string): Policy {
+  if (readComfort(store, owner, "browser").downloadsFrom !== "ask") return policy;
+  const question: PolicyRule = { tool: "browser.keep_download", match: "*", applies: "any", decision: "ask", remember: "never" };
+  return { ...policy, rules: [question, ...policy.rules] };
+}
+export const downloadHeld = (name: string): string =>
+  `${name} is waiting outside the workspace: Settings › Permissions says to ask each time. Call browser.keep_download with its held id to ask the owner.`;
+
 export function withNewSiteQuestion(policy: Policy, store: Pick<Store, "get">, owner: string): Policy {
   if (!readComfort(store, owner, "browser").askNewSites) return policy;
   const question: PolicyRule = { tool: "browser.navigate", match: "*", applies: "any", decision: "ask", remember: "always" };

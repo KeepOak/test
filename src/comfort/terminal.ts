@@ -43,7 +43,7 @@ export const comfortControls: readonly Control[] = [
   { name: "openFullSize", card: "browser", field: "openFullSize", page: "computer", key: "comfort.field.openFullSize", english: "Open the browser full size when a task starts", choices: onOff, ownerOnly: true },
   { name: "numberMarks", card: "browser", field: "numberMarks", page: "computer", key: "comfort.field.numberMarks", english: "Number the clickable things", choices: onOff, ownerOnly: true },
   { name: "recordBrowser", card: "browser", field: "recordTasks", page: "computer", key: "comfort.field.recordTasks", english: "Record browser tasks", choices: onOff, ownerOnly: true },
-  { name: "downloadsFrom", card: "browser", field: "downloadsFrom", page: "permissions", key: "comfort.field.downloadsFrom", english: "Downloads may come from", choices: ["anywhere", "known"], ownerOnly: true },
+  { name: "downloadsFrom", card: "browser", field: "downloadsFrom", page: "permissions", key: "comfort.field.downloadsFrom", english: "Downloads may come from", choices: ["anywhere", "known", "ask"], ownerOnly: true },
   { name: "proxy", card: "network", field: "proxy", page: "computer", key: "comfort.field.proxy", english: "Proxy", choices: [null],
     parse: (word) => (word === "off" ? null : word), ownerOnly: true },
   { name: "gitignore", card: "files", field: "respectGitignore", page: "general", key: "comfort.field.respectGitignore", english: "Searches skip what .gitignore lists", choices: [true, false] },

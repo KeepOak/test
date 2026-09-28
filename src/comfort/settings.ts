@@ -137,8 +137,11 @@ export const ComfortBrowserSchema = z.object({
   numberMarks: z.boolean().default(true),
   /** Keep a step-by-step browser trace of every task that opens a page, beside its other files. Off: it writes a file per task. */
   recordTasks: z.boolean().default(false),
-  /** Where a file a page sends may come from: anywhere the network rules allow, or only a site the task's pages were on. */
-  downloadsFrom: z.enum(["anywhere", "known"]).default("anywhere"),
+  /**
+   * Where a file a page sends may come from: anywhere the network rules allow, only a site the task's pages were on, or
+   * held outside the workspace until the owner says yes to keeping it (browser.keep_download, asked every time).
+   */
+  downloadsFrom: z.enum(["anywhere", "known", "ask"]).default("anywhere"),
 }).strict();
 
 const hostName = z.string().trim().min(1).max(253).regex(/^[a-z0-9.*-]+$/i, "Write a host name such as intranet.example.com");

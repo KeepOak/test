@@ -86,7 +86,7 @@ import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
-import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation, withNewSiteQuestion } from "./comfort/browser-safety.js"; // R17-S19
+import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation, withDownloadQuestion, withNewSiteQuestion } from "./comfort/browser-safety.js"; // R17-S19
 // mac5/manual-actions: the gate for tools run outside a conversation.
 import { gateToolUse, type ToolGateOptions } from "./tool-gate.js";
 import * as safetyExtras from "./safety-extras/hooks.js"; // mac7/r17-g: the safety extras' hooks
@@ -3689,7 +3689,7 @@ ${run.output.slice(0, 6000)}`;
     // R17-S19: with "confirm sensitive browser steps" on, those steps ask every time (src/comfort/browser-safety.ts).
     // mac7/outside-resume: held by the task's own record too, so work carried on from outside stays held.
     const held = source !== "owner" ? source : this.recordedSource(runId) ?? "owner";
-    const policy = withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner);
+    const policy = withDownloadQuestion(withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner), this.store, this.owner);
     // An address the owner opens by hand in their own browser view is their own choice, never asked about as a new site.
     return runId && this.ownerDriven.has(runId) ? policy : withNewSiteQuestion(policy, this.store, this.owner);
   }

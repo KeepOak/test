@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join as joinPath } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
@@ -25,7 +25,9 @@ import { registerBrowserFlow } from './browser-flow.js'; // FQ-execution.browser
 import type { MarkChecks } from './browser-heal.js'; // w911 (A2144)
 import type { Store } from '../store.js';
 import { audit } from '../audit.js';
-import { browserCare, browserCareDefaults, downloadNotKnown, marksOff, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
+import { browserCare, browserCareDefaults, downloadHeld, downloadNotKnown, marksOff, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
+import { tmpdir } from 'node:os';
+import { copyFile } from 'node:fs/promises';
 import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) hook: import
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
 import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
@@ -176,6 +178,13 @@ export class BranchBrowser {
    * (src/browser-control-api.ts) to the owner's own running tasks in that conversation. Unset, none do.
    */
   sharesWith: ((owner: string, conversation: string, runId: string) => boolean) | undefined;
+  /**
+   * Downloads ask each time: files a page sent, waiting outside the workspace for the owner's yes, by id. Kept in
+   * memory for an hour (a task that stopped to ask carries on under its own conversation when the owner answers).
+   */
+  private readonly heldDownloads = new Map<string, { path: string; name: string; from: string; owner: string; conversation: string; at: number }>();
+  /** Where held files wait: this computer's temporary folder, never the workspace. Replaced in tests. */
+  heldFolder = joinPath(tmpdir(), 'branch-held-downloads');
   /** Each site's small icon for the owner's tabs, as a data: address ("" while unknown or when it has none). */
   private readonly icons = new Map<string, string>();
   constructor(input: unknown) {
@@ -311,7 +320,7 @@ export class BranchBrowser {
     const session: BrowserSession = new BrowserSession(
       () => this.sandbox?.pick(context.owner, !!session.options.storageState) ?? (this.starting ??= this.launch()),
       request => this.guardRequest(request, created), redirectHops);
-    session.options.saveDownload = download => this.saveDownload(download, context.owner, created);
+    session.options.saveDownload = download => this.saveDownload(download, context, created);
     session.options.dialogAnswer = () => this.care(context.owner).dialogs; // R17-S19
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
@@ -1014,8 +1023,12 @@ export class BranchBrowser {
     });
   }
   /** Saves a file a website sent into the workspace's downloads folder, within the size and type limits. */
-  private async saveDownload(download: Download, owner: string, entry?: RunEntry): Promise<DownloadRecord> {
+  private async saveDownload(download: Download, context: Pick<ToolContext, 'owner' | 'runId'>, entry?: RunEntry): Promise<DownloadRecord> {
+    const owner = context.owner;
     if (!this.files) throw new Error('saving files from websites needs the workspace');
+    // Settings › Permissions › Downloads may come from › Ask each time. A file the owner downloaded while driving their
+    // own browser view is their own doing and is kept at once.
+    if (this.care(owner).downloadsFrom === 'ask' && entry?.control?.view().writer?.kind !== 'owner') return this.holdDownload(download, context);
     // Settings › Permissions › Downloads may come from: only a site this task's pages were on.
     if (this.care(owner).downloadsFrom === 'known') {
       let origin = '', host = '';
@@ -1058,6 +1071,45 @@ export class BranchBrowser {
     }
     await handle.close();
     return { file: relative, bytes, from: download.url().slice(0, 300) };
+  }
+  /** Ask each time: the file is written outside the workspace, with the same name and size limits, until the owner answers. */
+  private async holdDownload(download: Download, context: Pick<ToolContext, 'owner' | 'runId'>): Promise<DownloadRecord> {
+    const name = safeDownloadName(download.suggestedFilename());
+    const ending = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
+    if (!this.config.downloadTypes.includes(ending)) throw new Error(`files ending in .${ending || '(nothing)'} are not saved`);
+    for (const [id, held] of this.heldDownloads) if (Date.now() - held.at > 3_600_000) this.dropHeld(id);
+    if (this.heldDownloads.size >= 20) throw new Error('twenty files are already waiting for your yes; answer those first');
+    await mkdir(this.heldFolder, { recursive: true });
+    const id = randomUUID(), path = joinPath(this.heldFolder, id);
+    const record = await this.stream(download, path, name);
+    const conversation = this.store?.run(context.runId)?.sessionId ?? '';
+    this.heldDownloads.set(id, { path, name, from: record.from, owner: context.owner, conversation, at: Date.now() });
+    return { file: '', bytes: record.bytes, from: `${record.from} — ${downloadHeld(name)}`, held: id, name };
+  }
+  private dropHeld(id: string): void {
+    const held = this.heldDownloads.get(id);
+    this.heldDownloads.delete(id);
+    if (held) void rm(held.path, { force: true }).catch(() => undefined);
+  }
+  /** browser.keep_download: once the owner said yes, the held file moves into the workspace; keep false throws it away. */
+  async keepDownload(input: { id: string; keep: boolean }, context: ToolContext) {
+    const held = this.heldDownloads.get(input.id);
+    const conversation = this.store?.run(context.runId)?.sessionId ?? '';
+    if (!held || held.owner !== context.owner || held.conversation !== conversation)
+      throw new Error('No file with that id is waiting for this conversation.');
+    if (!input.keep) { this.dropHeld(input.id); return { discarded: held.name }; }
+    if (!this.files) throw new Error('saving files from websites needs the workspace');
+    for (let attempt = 0; ; attempt++) {
+      const relative = await this.freeName(held.name), target = await this.files.checked(relative);
+      await mkdir(dirname(target), { recursive: true });
+      try { await copyFile(held.path, target, 1 /* COPYFILE_EXCL */); this.dropHeld(input.id); return { file: relative, from: held.from }; }
+      catch (error) { if (attempt > 0 || (error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    }
+  }
+  /** Where a held file came from, so the approval names the site. */
+  heldHost(id: unknown): string {
+    const held = typeof id === 'string' ? this.heldDownloads.get(id) : undefined;
+    try { return held ? new URL(held.from.split(' ')[0]!).host : ''; } catch { return ''; }
   }
   /** A name inside the downloads folder that is not taken yet. */
   private async freeName(name: string): Promise<string> {
@@ -1376,6 +1428,10 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   registry.register({ name: 'browser.screenshot', permission: 'browser.read',
     description: 'Take a picture of the current page. Password boxes are blacked out before the picture is taken. Use this when the page is visual and the text snapshot is not enough.',
     parameters: ScreenshotSchema, execute: (a, c) => browser.screenshot(a, c) });
+  registry.register({ name: 'browser.keep_download', permission: 'browser.interact',
+    description: 'Keep (or throw away, keep false) a file a page sent that is waiting outside the workspace because Settings says to ask each time. The owner is asked before it is kept.',
+    parameters: z.object({ id: z.string().uuid(), keep: z.boolean().default(true) }).strict(),
+    execute: (a, c) => browser.keepDownload(a, c), target: a => browser.heldHost(a.id) });
   registry.register({ name: 'browser.pdf', permission: 'browser.read',
     description: 'Save the current page as a PDF file.',
     parameters: z.object({}).strict(), execute: (_a, c) => browser.pdf(c) });

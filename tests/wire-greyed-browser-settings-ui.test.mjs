@@ -3,7 +3,7 @@
    - Computer & browser › The browser: Ask before a site it hasn't visited, Open the browser full size when a task starts.
    - › The browser, more: Record browser tasks, Number the clickable things, and Run the browser in a sandbox (the
      sandbox's own mode, GET/POST /api/browser/container).
-   - Permissions › Isolation › Downloads may come from: Anywhere and Known sites; Ask each time stays greyed with its reason.
+   - Permissions › Isolation › Downloads may come from: Anywhere, Known sites and Ask each time (tests/browser-download-hold.test.mjs).
    - Which browser stays greyed: your own Chrome is lent one task at a time, never as a standing choice. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -49,7 +49,7 @@ test("the browser's switches and the sandbox's mode are live, save, and read bac
   assert.deepEqual(errors, []);
 });
 
-test("Downloads may come from: Known sites is saved; Ask each time says why it stays greyed", async (t) => {
+test("Downloads may come from: Known sites and Ask each time are saved", async (t) => {
   const { page, errors, call } = await settingsWindow(t, { name: "wire-downloads-from" });
   await openSettingsPage(page, "permissions");
   await setLevel(page, "technical");
@@ -59,8 +59,8 @@ test("Downloads may come from: Known sites is saved; Ask each time says why it s
   await known.click();
   await page.locator('[data-act="p-dl"][data-v="known"][aria-pressed="true"]').waitFor();
   assert.equal((await call("/api/comfort")).values.browser.downloadsFrom, "known");
-  const ask = page.locator('[data-act="p-dl-ask"]');
-  assert.equal(await isSoon(ask), true);
-  assert.match(await ask.getAttribute("data-tip"), /Known sites/);
+  await page.locator('[data-act="p-dl"][data-v="ask"]').click();
+  await page.locator('[data-act="p-dl"][data-v="ask"][aria-pressed="true"]').waitFor();
+  assert.equal((await call("/api/comfort")).values.browser.downloadsFrom, "ask");
   assert.deepEqual(errors, []);
 });
