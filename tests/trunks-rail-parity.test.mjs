@@ -51,7 +51,7 @@ test("the drawn face is retired, and every Trunk's row opens one menu by right-c
   const { page } = f;
   // DG-108: a stored or sent drawn face comes back as the pixel pattern.
   const roster = await f.call("/api/trunks");
-  assert.deepEqual(roster.trunks.map((trunk) => trunk.look.face), ["pattern", "pattern"]);
+  assert.deepEqual(f.trunks.map(({ id }) => roster.trunks.find(trunk => trunk.id === id).look.face), ["pattern", "pattern"], "both seeded drawn faces migrate independently of the default roster entry");
   const [scout, ledger] = f.trunks;
   const row = (trunk) => page.locator(`#side .row[data-id="${trunk.chatSessionId}"]`);
   await row(scout).waitFor();
@@ -87,4 +87,3 @@ test("the drawn face is retired, and every Trunk's row opens one menu by right-c
   await page.keyboard.press("Escape");
   assert.deepEqual(f.errors, []);
 });
-

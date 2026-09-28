@@ -11,6 +11,7 @@ import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
+import { gsel } from "../../core/gsel.js";
 import { ctl } from "../parts.js";
 import { A, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { localPicker, freshPick, initLocalPick } from "../../flows/localpick.js";
@@ -22,9 +23,11 @@ import { decisions17d, initDecisions17d, loadDecisions17d } from "../decisions17
 const TABS = [["connections", "Connections"], ["defaults", "Defaults"], ["local", "On this computer"], ["second", "Second opinion"], ["media", "Media"]];
 let tab = "connections";
 
+/* QA retest 2026-09-28 pass 2: "Answers first" and "Next in line" are said only of the list the next answer comes from
+   (GET /api/accounts pools[].answering, #748); a Claude Code list said "Answers first" while qwen on this computer answered. */
 function group(p) {
   const n = p.accounts.length;
-  const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, p.name ?? p.pool))}</small></span>${a.ready === true ? p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
+  const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, p.name ?? p.pool))}</small></span>${a.ready === true && p.answering === true ? p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
   return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}
     <button class="add-row" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${ownerOnly()}>${ic("plus", "s")}${n ? t("window.settings.models.add-another-value-account", { value: esc(p.name ?? p.pool) }) : t("window.settings.models.sign-in-to-value", { value: esc(p.name ?? p.pool) })}</button></div>`;
 }
@@ -109,15 +112,92 @@ const local = () => localPicker();
 
 const BODIES = {
   connections, defaults, local,
-  /* The engine's second opinion reads one finished answer and writes a note beside it (src/second-opinion.ts), which this
-     window does not show, so the row stays greyed with that reason, without the design's "Shows both answers side by side". */
-  second: () => ctl("m-second", t("window.settings.models.ask-a-second-model-on-hard"), "", false),
-  /* Pictures have no switch in the engine (media.image is always offered; a ChatGPT sign-in has no picture route), so the
-     row stays greyed with that reason and without the design's "Uses your ChatGPT account". Videos are the engine's reach
-     part "video" (a paid service, off until switched on); "Off until you choose a service" is left out: the window has no
-     service picker and the engine uses OpenAI's unless told otherwise (src/reach/video.ts). */
-  media: () => ctl("m-img", t("window.settings.models.make-pictures"), "", false) + swRow("m-vid", esc(t("window.settings.models.make-short-videos")), "", SW["m-vid"][0]()),
+  second: () => secondTab(),
+  media: () => mediaTab(),
 };
+
+/* Second opinion (src/second-opinion.ts, GET/POST /api/second-opinion): a second connection reads each finished answer and
+   says whether it stands up; its note is kept beside the answer, never written into it, and Look inside shows it
+   (chat/messages.js). The engine saves the whole card at once (every field it is not given goes back to its default), so
+   each change is sent over what the engine said last. Off by default: every answer costs one more request. */
+/* One save at a time, each over what the engine said after the one before, so two quick changes never undo each other. */
+let secondSaving = Promise.resolve();
+const setSecond = (change) => (secondSaving = secondSaving.then(() => saveSecond(change)));
+async function saveSecond(change) {
+  if (!X.second) { await loadMore(); return; } // never send a card the engine has not been read for
+  try { X.second = await api("second-opinion", { ...X.second, ...change }); } catch (error) { toast(error.message); }
+  renderNow();
+}
+/* A token box for one of the card's ceilings (advisorMaxTokens, debateMaxTokens), saved on change. */
+function tokenBox(field, id, label) {
+  const value = X.second?.[field];
+  if (value == null) return "";
+  return `<span class="right num15"><input class="inp" ${ownerHere() ? `id="${id}" data-field="${field}"` : 'data-why="knobs-owner-only"'} value="${esc(value)}" aria-label="${label}"><small>${t("window.settings.models.second-tokens")}</small></span>`;
+}
+const secondCeiling = () => tokenBox("advisorMaxTokens", "m-second-max", t("window.settings.models.second-ceiling"));
+/* Debate (the delegate.debate tool, src/second-opinion-tools.ts): two connections argue a hard question when a task asks
+   for it. Its limits are the same card's: how many times each side answers, and the most the whole debate may spend. */
+function debateRows() {
+  const rounds = t("window.settings.models.debate-rounds"), most = t("window.settings.models.debate-ceiling");
+  return `<div class="sec x15-sec"><h2>${t("window.settings.models.debate")}</h2>`
+    + row(rounds, knobSeg(rounds, "m-debate-rounds", [[1, "1"], [2, "2"], [3, "3"]], X.second?.debateExchanges), t("window.settings.models.debate-rounds-sub"))
+    + row(most, tokenBox("debateMaxTokens", "m-debate-max", most), t("window.settings.models.debate-ceiling-sub")) + "</div>";
+}
+/* Who checks: the same model or one of the connections, one choice per connection, so a glass list: as a row of buttons
+   it wrapped onto two lines at 1400 px (QA pass 2). Drawn once the engine has said which it is; a household person
+   sees it greyed with why. */
+function whoChecks(by) {
+  if (by === undefined) return "";
+  const owner = ownerHere(), label = t("window.settings.models.second-who");
+  const options = [["", t("window.settings.models.second-same")], ...(E.state?.models?.presets ?? []).map((p) => [p.id, p.name])]; // gsel escapes them
+  return `<span class="right">${gsel({ id: owner ? "m-second-by" : "m-second-by-owner", label, options, value: by, attrs: owner ? "" : 'data-why="knobs-owner-only"' })}</span>`;
+}
+function secondTab() {
+  const by = X.second ? X.second.advisorPreset ?? "" : undefined;
+  return swRow("m-second", esc(t("window.settings.models.second-check")), esc(t("window.settings.models.second-check-sub")), SW["m-second"][0]())
+    + row(t("window.settings.models.second-who"), whoChecks(by), t("window.settings.models.second-who-sub"))
+    + row(t("window.settings.models.second-ceiling"), secondCeiling(), t("window.settings.models.second-ceiling-sub"))
+    + debateRows();
+}
+async function saveSecondCeiling(box) {
+  const typed = box.value.trim();
+  if (!/^\d+$/.test(typed)) { renderNow(); return; }
+  await setSecond({ [box.dataset.field]: Number(typed) }); // the engine refuses a figure outside its limits, in its own words
+}
+
+/* Media. Pictures (src/media.ts): the connection making pictures now is the owner's own (GET /api/media/settings pictures:
+   its name and the kind of picture route it has, or null when it has none, as a ChatGPT sign-in or a Claude connection);
+   the picture model is the engine's imageModel (empty is that route's own default), offered from the models Branch knows
+   for that kind of route, plus whatever the owner saved before. The engine saves the whole media card at once, so the
+   change is sent over what it said last. Videos are the reach part "video" (a paid service, off until switched on), and
+   its service is the engine's video settings (POST /api/reach/video/settings { service }), which it takes only while
+   videos are on. */
+async function setPictureModel(v) {
+  if (!X.media) { await loadMore(); return; }
+  try { X.media = { ...X.media, ...(await api("media/settings", { ...X.media.settings, imageModel: v })) }; } catch (error) { toast(error.message); }
+  renderNow();
+}
+function pictureRow() {
+  const m = X.media, where = m?.pictures, title = t("window.settings.models.make-pictures");
+  if (!m) return row(title, "", "");
+  if (!where) return ctl("m-img", title, "", false); // greyed with its reason (window.why.m-img)
+  const saved = m.settings.imageModel ?? "", known = m.pictureModels?.[where.kind] ?? [];
+  /* The route's own model is the first choice already; it is listed again only when the owner saved it by name. */
+  const models = [...new Set([...known, ...(saved ? [saved] : [])])].filter((v) => v !== where.defaultModel || v === saved).map((v) => [v, esc(v)]);
+  const own = t("window.settings.models.picture-own", { model: where.defaultModel });
+  return row(title, knobSeg(title, "m-img", [["", esc(own)], ...models], saved), esc(t("window.settings.models.picture-through", { name: where.connection })));
+}
+function videoRow() {
+  const on = SW["m-vid"][0](), cur = X.reach?.video?.service, title = t("window.settings.models.video-service");
+  const opts = [["openai", "OpenAI"], ["google", "Google"]];
+  const seg = on ? knobSeg(title, "m-vid-svc", opts, cur) : knobSeg(title, "seg", opts, cur, "m-vid-svc-off");
+  return swRow("m-vid", esc(t("window.settings.models.make-short-videos")), esc(t("window.settings.models.video-costs")), on) + row(title, seg, t("window.settings.models.video-service-sub"));
+}
+async function setVideoService(v) {
+  try { await api("reach/video/settings", { service: v }); X.reach = await api("reach"); } catch (error) { toast(error.message); }
+  renderNow();
+}
+const mediaTab = () => pictureRow() + videoRow();
 
 export function draw() {
   const lv = level();
@@ -152,6 +232,8 @@ export function init() {
   loadMore();
   document.addEventListener("change", (e) => {
     if (e.target.id === "m-steps") saveSteps(e.target);
+    else if (e.target.id === "m-second-max" || e.target.id === "m-debate-max") saveSecondCeiling(e.target);
+    else if (e.target.id === "m-second-by") setSecond({ advisorPreset: e.target.value || null });
     else if (KNOB[e.target.id]) saveKnob(e.target);
     else if (SW[e.target.id]) SW[e.target.id][1](e.target.checked);
   });
@@ -166,24 +248,28 @@ export function init() {
   on("m-orlist", () => { OR.open = true; if (OR.list) renderNow(); else loadCompanies(); });
   on("m-orco", (el) => toggleCompany(el.dataset.v));
   on("m-def", (el) => setDefault(el));
+  on("m-debate-rounds", (el) => setSecond({ debateExchanges: Number(el.dataset.v) }));
+  on("m-img", (el) => setPictureModel(el.dataset.v));
+  on("m-vid-svc", (el) => setVideoService(el.dataset.v));
+  markLive(["sw:m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
   markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "m-orco", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
 export function load() { loadAccounts(); loadKnobs(); loadMore(); loadDecisions17d(); return freshPick(); }
 
 export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
-  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:f15-slow-down-near-a-rate-limit": true };
+  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "sw:m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
 
 /* Q002: the engine's other settings these rows keep, each the owner's: the R17-E cards (GET /api/model-savings: the
    planning model, OpenRouter's picks, keeping Claude's cache warm), each saved alone with POST /api/model-savings
    { card, values }, which keeps the card's other values; the coding part "fewer-rounds" (GET /api/coding, POST
    /api/coding/switch) and the reach part "video" (GET /api/reach, POST /api/reach/switch). */
-const X = { savings: null, coding: null, reach: null };
+const X = { savings: null, coding: null, reach: null, second: null, media: null };
 async function loadMore() {
-  if (!ownerHere()) { Object.assign(X, { savings: null, coding: null, reach: null }); renderNow(); return; }
+  if (!ownerHere()) { Object.assign(X, { savings: null, coding: null, reach: null, second: null, media: null }); renderNow(); return; }
   const read = (path) => api(path).catch((error) => { toast(error.message); return null; });
-  const [savings, coding, reach] = await Promise.all([read("model-savings"), read("coding"), read("reach")]);
-  Object.assign(X, { savings, coding, reach });
+  const [savings, coding, reach, second, media] = await Promise.all([read("model-savings"), read("coding"), read("reach"), read("second-opinion"), read("media/settings")]);
+  Object.assign(X, { savings, coding, reach, second, media });
   renderNow();
   if (savings?.values?.openrouter?.only?.length) loadCompanies(); // a saved list shows its chips
 }
@@ -204,6 +290,7 @@ const SW = {
   "f15-keep-claude-s-cache-warm": [() => X.savings?.values?.keepAlive?.mode === "on", (on) => setSavings("keepAlive", { mode: on ? "on" : "off" })],
   "f15-fewer-rounds": [() => onMode(X.coding?.modes?.["fewer-rounds"]), (on) => setPart("coding", "fewer-rounds", on)],
   "m-vid": [() => onMode(X.reach?.modes?.video), (on) => setPart("reach", "video", on)],
+  "m-second": [() => !!X.second?.advisor, (on) => setSecond({ advisor: on })],
   "f15-pick-the-model-per-task": [byTask, setByTask],
   /* The engine's pacing card (src/model-savings/pacing.ts): below a tenth of a service's allowance, requests are spread out. */
   "f15-slow-down-near-a-rate-limit": [() => X.savings?.values?.pacing?.mode === "on", (on) => setSavings("pacing", { mode: on ? "on" : "off" })],

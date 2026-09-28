@@ -10,6 +10,7 @@ import { activationJournalName, databaseFormat, openActivationJournal } from "./
 import { storeMigrations } from "./migrations.js";
 import { assessRollback, observeForRollback } from "./rollback.js";
 import { databaseName } from "../install/layout.js";
+import { openGatewayRecord } from "./flight-record.js";
 
 /**
  * The engine's side of the gateway. When the engine was started by a gateway it says where it is
@@ -38,6 +39,9 @@ export function joinGateway(host: Channel = process): GatewayLink | null {
     });
   };
   host.on("disconnect", stop);
+  // QA retest 2026-09-28 (X1): on macOS and Linux an engine sent SIGTERM closed its server but the open channel to the
+  // gateway kept it running, closed, and never restarted; it now leaves, so the gateway sees it stop and starts another.
+  host.on("SIGTERM", stop);
   host.on("message", (message: unknown) => {
     const parsed = GatewayMessageSchema.safeParse(message);
     if (parsed.success && parsed.data.type === "stop") stop();
@@ -58,23 +62,31 @@ export async function runGatewayIfSwitchedOn(input: { dataDir: string; script: s
   if (process.env.BRANCH_GATEWAY_CHILD === "1") return false;
   const { config } = await loadGatewayConfig(input.dataDir);
   if (config.mode === "off") return false;
+  // QA retest 2026-09-28 (X1): the gateway's own flight record (src/never-break/flight-record.ts).
+  const record = openGatewayRecord(input.dataDir, input.version);
+  let closing = false;
+  const stop = (why: string, code = 0) => {
+    record.asked(why);
+    if (closing) return;
+    closing = true;
+    void gateway.stop().finally(() => process.exit(code));
+  };
   const gateway: Gateway = new Gateway({ ...input, presence: true,
     rollBack: async (watch) => {
       const allowed = await rollbackAllowed(watch, input.dataDir);
-      if (!allowed.ok) { console.error(allowed.message); return; }
+      if (!allowed.ok) { console.error(allowed.message); record.log.write({ level: "warn", component: "gateway", message: "Going back was refused", fields: { reason: allowed.message } }); return; }
       await rollBackUpdate(watch, input.dataDir);
-      void gateway.stop().finally(() => process.exit(1));
+      stop("the update was put back", 1);
+    },
+    quit: () => stop("branch quit"),
+    onWorker: (event) => {
+      if (event.kind === "ready") record.log.write({ level: "info", component: "gateway", message: "The engine is ready", fields: { pid: event.ready.pid ?? null, version: event.ready.version } });
+      else record.log.write({ level: "error", component: "gateway", message: "The engine stopped unexpectedly", fields: { code: event.code, signal: event.signal, tripped: event.tripped } });
     } });
   const url = await gateway.start();
   console.log(`Branch gateway listening at ${url}\nThe engine runs behind it and is started again if it stops.`);
-  let closing = false;
-  const stop = () => {
-    if (closing) return;
-    closing = true;
-    void gateway.stop().finally(() => process.exit(0));
-  };
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
+  process.once("SIGINT", () => stop("Ctrl+C"));
+  process.once("SIGTERM", () => stop("asked to stop"));
   return true;
 }
 

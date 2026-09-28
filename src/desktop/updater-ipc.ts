@@ -2,7 +2,7 @@ import { app, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
-import { Updater, UpdateDeferredError, type UpdateChannel, type UpdateStatus } from "./updater.js";
+import { Updater, UpdateDeferredError, type LiveHooks, type UpdateChannel, type UpdateStatus } from "./updater.js";
 import { changedMind, confirmedChange, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
 import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.js";
 import { readFileSync } from "node:fs";
@@ -11,6 +11,7 @@ import { openableSettingsPages } from "../os-permissions.js";
 import { isOfferUrl } from "../usage-offers.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
+import { watchForOwner } from "./quiet-build.js";
 
 /** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
 export const updateScratchDir = (): string => join(app.getPath("temp"), "branch-agent-update");
@@ -40,7 +41,7 @@ const settingsPages = openableSettingsPages(process.platform);
  */
 export interface UpdateHooks {
   /** Authenticated current channel and full task count from the local or joined engine. */
-  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
+  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "workingTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
   stopDaemon?: () => Promise<number | null>;
   /** mac3/never-break: the new version's check on a copy of the data (see src/never-break/canary.ts). */
@@ -57,6 +58,8 @@ export interface UpdateHooks {
   buildDir?: string;
   /** Beta channel: the commit this copy was built from (src/desktop/build-identity.ts), found before the window opens. */
   currentCommit?: string | null;
+  /** hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts). */
+  live?: LiveHooks;
 }
 
 /**
@@ -68,7 +71,7 @@ export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250
   let last = 0, lastKey = "", waiting: NodeJS.Timeout | null = null, latest: UpdateStatus | null = null;
   const flush = () => { waiting = null; if (latest) { last = now(); send(latest); latest = null; } };
   return (status) => {
-    const key = JSON.stringify([status.phase, status.stages?.map((stage) => stage.state), status.target?.version ?? null, status.failure]);
+    const key = JSON.stringify([status.phase, status.stages?.map((stage) => stage.state), status.target?.version ?? null, status.failure, status.paused]);
     latest = status;
     if (key !== lastKey || now() - last >= everyMs) {
       lastKey = key;
@@ -85,12 +88,13 @@ export function registerUpdaterIpc(
 ): Updater {
   // Dogfood F1 (NAS): what the owner had chosen when the install under way began; the last gate reads it again.
   let started: InstallStart | null = null;
-  const ensureIdle = async () => {
+  // hot-update: a live update needs no quiet moment (work is handed over, not stopped); the packaged swap still does (beforeStop).
+  const ensureIdle = async (idleNeeded = true) => {
     if (!hooks?.readiness) throw new UpdateDeferredError("Branch cannot verify that work is idle, so the update is waiting.");
     const state = await hooks.readiness().catch(() => {
       throw new UpdateDeferredError("Branch cannot confirm that work is idle, so the update is waiting.");
     });
-    if (state.busyTasks > 0) throw new UpdateDeferredError("An update is ready, but Branch will wait until every task finishes or is answered.");
+    if (idleNeeded && state.busyTasks > 0) throw new UpdateDeferredError("An update is ready, but Branch will wait until every task finishes or is answered.");
     const why = changedMind(state, started);
     if (why) throw new UpdateDeferredError(why);
   };
@@ -108,7 +112,8 @@ export function registerUpdaterIpc(
     ...(hooks?.stopDaemon ? { stopDaemon: hooks.stopDaemon } : {}),
     ...(hooks?.canary ? { canary: hooks.canary } : {}),
     ...(hooks?.tryOut ? { tryOut: hooks.tryOut } : {}),
-    beforeStop: ensureIdle,
+    beforeStop: () => ensureIdle(),
+    ...(hooks?.live ? { live: hooks.live } : {}),
     devBuildDir: hooks?.buildDir ?? null,
     onChange: statusSender((status) => {
       if (window.isDestroyed()) return;
@@ -157,14 +162,28 @@ export function registerUpdaterIpc(
       // automatic look ignores a deferral.
       if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
       started = { channel: readiness.channel, automatic: automatic === true };
-      await ensureIdle();
+      await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
+      // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
+      const stopWatching = watchForOwner(window, updater, async () => {
+        const state = await hooks.readiness!();
+        // Dogfood F1 while it builds or waits: a changed channel, or update by itself switched off, calls it off now.
+        const why = changedMind(state, started);
+        if (why) updater.callOff(why);
+        return state.workingTasks ?? state.busyTasks;
+      });
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
-      const { script, stagedDir } = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
+      const installed = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
         diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
-      });
+      }).finally(stopWatching);
+      // hot-update: applied live; nothing to hand over, nothing restarts.
+      if ("live" in installed) {
+        diagnose("updater", "info", "Updated live", { fields: { tier: installed.live.tier, ms: String(installed.live.ms), to: installed.live.version } });
+        return updater.status;
+      }
+      const { script, stagedDir } = installed;
       try {
         // mac7/safe-rollback: recorded here, marked as landed by the next start (`settleActivation`),
         // because this process quits into the hand-over and never sees how it went.
