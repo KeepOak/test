@@ -131,13 +131,25 @@ export async function assembleWindowsApp({ source, dist, into, executableName, i
 }
 
 /**
- * `node scripts/assemble-app.mjs --app <folder>`: the app alone (resources/app) of this built checkout, as the Beta
+ * `node scripts/assemble-app.mjs --app <folder>` (or `--runtime <folder> --name <program>`): the app alone (resources/app) of this built checkout, as the Beta
  * update puts a new version's folder together beside the running one (src/desktop/dev-build.ts): the mascot icon the
  * shortcuts name first, then the app, pruned as above. The runtime is the updater's to lay out (a link to the one in use).
  */
 async function main(argv) {
-  const at = argv.indexOf("--app"), into = at >= 0 ? argv[at + 1] : undefined;
-  if (!into || into.startsWith("--")) throw new Error("usage: node scripts/assemble-app.mjs --app <folder>");
+  const value = (flag) => { const at = argv.indexOf(flag), found = at >= 0 ? argv[at + 1] : undefined; return found && !found.startsWith("--") ? found : undefined; };
+  // `--runtime <folder> --name <program>`: Electron's own stock folder, when a new version brings another Electron.
+  const runtime = value("--runtime");
+  if (runtime) {
+    const name = value("--name");
+    if (!name) throw new Error("--runtime needs --name <program>");
+    // Asking for Electron's program fetches it into node_modules the first time, as packaging always has.
+    const dist = dirname((await import("electron")).default);
+    const made = await assembleRuntime({ dist, into: runtime, executableName: name });
+    console.log(`${made.executable} sha256 ${made.sha256}`);
+    return;
+  }
+  const into = value("--app");
+  if (!into) throw new Error("usage: node scripts/assemble-app.mjs --app <folder> | --runtime <folder> --name <program>");
   const { includedInApp } = await import("./package-desktop.mjs");
   const { isJunk } = await import("junk");
   if (process.platform === "win32") await (await import("./make-icons.mjs")).writeWindowsIcon();
