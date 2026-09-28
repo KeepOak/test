@@ -261,7 +261,7 @@ const outlastsAPhone: readonly RegExp[] = [
  * What a door may not even read, nor change: the address each chat service posts to carries that service's own secret
  * word, which a phone would keep after it is removed, and its settings keep the old addresses without one answered.
  */
-const secretToADoor: readonly RegExp[] = [/^\/api\/channels\/addresses(\/|$)/];
+const secretToADoor: readonly RegExp[] = [/^\/api\/channels\/addresses(\/|$)/, /^\/api\/panels\/browser(\/|$)/];
 /**
  * A coding assistant's own sign-in (src/accounts/sign-ins.ts) opens its page in this computer's browser, so only the
  * person at this computer can start it or paste its code. Checking and stopping stay open to a door.

@@ -6,7 +6,7 @@
    counts them when achievements are on). */
 
 import { $, esc, render } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, S, ownerHere, ownName } from "../core/state.js";
 import { api } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
@@ -15,12 +15,15 @@ import { media17 } from "../core/art17.js";
 import { PETS, petOf, petLabel, petKindName, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
 import { windowRest, onRest } from "../core/sleep.js";
+import { play17 } from "../core/held.js";
 import { say as inWords } from "../core/words.js";
 import { binding, spoken } from "./keys.js";
+import { petLine, hintLine, hintDue } from "./pettalk.js";
+import { popupsOn } from "../flows/guides.js";
 
 const KEY = "branch-scene";
 export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side" };
-export const D = { settings: null, earned: null, asked: false };
+export const D = { settings: null, earned: null, rank: null, asked: false };
 
 /* The painted scenes: the four groves and the night from /art, and the extra scenes in /art/bg. */
 export const SCENES = [["auto", "By the season", ""], ["spring", "Spring grove", "/art/grove-spring.webp"], ["autumn", "Autumn grove", "/art/grove-autumn.webp"],
@@ -57,7 +60,7 @@ export async function loadDelight() {
   D.asked = true;
   seenState = E.state;
   loadWindow();
-  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; } catch (error) { toast(error.message); }
+  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
   try { await loadOwn(); } catch (error) { toast(error.message); }
 }
 /* Read again after each refresh (the engine's events refresh the window), so a switch changed elsewhere, such as in
@@ -71,7 +74,7 @@ export function followDelight() {
 }
 async function rereadDelight() {
   const before = JSON.stringify(D.settings);
-  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; } catch (error) { toast(error.message); }
+  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
   if (JSON.stringify(D.settings) !== before) render();
 }
 /* Changes only the parts named; the engine merges each part into what it has. */
@@ -183,7 +186,8 @@ onRest(() => drawPet());
 export function petHTML(where) {
   if (!petShown() || W.petWhere !== where) return "";
   const p = D.settings.pets, pet = petOf(p.kind), speaking = P.say && Date.now() < P.until;
-  const label = esc(t("window.shell.scene.name-the-kind-click-for-a", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
+  const tips = hintDue({ ...facts(), lastHint: 0 }); // "Click for a tip" only while this rank still gets them
+  const label = esc(t(tips ? "window.shell.scene.name-the-kind-click-for-a" : "window.shell.scene.name-the-kind", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
   const button = `role="button" tabindex="0" aria-label="${label}" data-act="pat"`;
   const body = pet.pixel ? pixelCanvas(pet.kind, `id="pet-cv" ${button}`)
     : `<span class="pet17" ${button}>${media17(pet.still, pet.walk, "pet-vid11 pet12")}</span>`;
@@ -218,17 +222,29 @@ function applyMood() {
   if (!v) return;
   if (m === "sleep") { if (!v.paused) v.pause(); return; }
   v.playbackRate = m === "work" ? 1.6 : 1;
-  if (v.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
+  if (v.paused && !v.dataset.off13 && !document.hidden) play17(v).catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
 }
 
-/* What the pet says: a Trunk that needs a yes first, else a tip that is true of this window. */
-function petWords() {
-  const waiting = (E.state?.attention ?? []).find((w) => !w.parentRunId); // a helper's question is not in the Inbox
-  if (waiting) return t("window.shell.scene.who-needs-a-yes-its-in", { who: waiting.who || "Branch" });
-  const key = binding("palette"); // the owner may have moved it, or taken it away (shell/keys.js)
-  const tips = [key ? t("window.shell.scene.find-anything", { key: spoken(key) }) : "", t("window.shell.scene.hover-anything-to-see-what-it")].filter(Boolean);
-  return tips[Math.floor(Date.now() / 60000) % tips.length];
+/* What is happening, for the pet's words (shell/pettalk.js): who waits for a yes (a helper's question is not in the Inbox),
+   Lockdown, whether a model can answer, the work going on, where the owner is, the owner's rank (GET /api/delight rank)
+   and when the last hint was said (kept in this browser, so an hour is an hour across reloads). */
+const HINT_KEY = "branch-pet-hint";
+const lastHint = () => { try { return Number(localStorage.getItem(HINT_KEY)) || 0; } catch { return 0; } };
+const hintSaid = () => { try { localStorage.setItem(HINT_KEY, String(Date.now())); } catch { /* storage refused: the hour is kept only while open */ } P.hintAt = Date.now(); };
+function facts() {
+  const runs = (E.state?.runs ?? []).filter((r) => r.status === "running" && !r.parentRunId);
+  const key = (action) => { const combo = binding(action); return combo ? spoken(combo) : ""; }; // the owner may move a key, or take it away
+  return {
+    waiting: (E.state?.attention ?? []).filter((w) => !w.parentRunId),
+    lockdown: !!document.getElementById("app")?.classList.contains("locked"),
+    noModel: !!E.state?.modelNeeded, // the engine's own "no model yet" (chat/nomodel.js reads the same)
+    running: runs.map((r) => ({ who: ownName(r.sessionId) || E.state?.identity?.name || "" })),
+    view: S.view, owner: ownerHere(),
+    keys: { palette: key("palette"), sideList: key("sideList") },
+    rank: D.rank ?? "Bronze", tipsOn: popupsOn(), lastHint: Math.max(lastHint(), P.hintAt ?? 0), at: Date.now(),
+  };
 }
+const words = (key, values) => t(key, values);
 export function say(text) {
   P.say = text;
   P.until = Date.now() + 6500;
@@ -249,18 +265,30 @@ export async function noticed(what) {
     if (answer?.kept && what.what === "flag") toldFlags.add(what.flag);
   } catch (error) { toast(error.message); }
 }
+/* A pat: the news of the moment, else a hint when one is due; with nothing to say it only hops. */
 export async function pat() {
-  say(petWords());
+  const line = petLine(facts(), words);
+  if (line) say(line.text);
+  if (line?.kind === "hint") hintSaid();
   await noticed({ what: "pat" });
 }
 
 /* It walks, unless things are kept still or it naps; it speaks up by itself when a Trunk needs you, at most every five
-   minutes. The timer runs only while the pet is shown. */
+   minutes, and with a hint when one is due (at most hourly, and never in its first two minutes on screen). The timer
+   runs only while the pet is shown. */
 let walker = null;
 function syncWalker() {
   const want = petShown() && windowRest() === "awake"; // asleep, it naps where it stands
   if (want && !walker) walker = setInterval(walk, 360);
   else if (!want && walker) { clearInterval(walker); walker = null; }
+}
+function speakUp() {
+  const now = facts();
+  if (Date.now() > P.cool && now.waiting.length) { P.cool = Date.now() + 300000; say(petLine(now, words).text); return; }
+  P.shownAt ??= Date.now();
+  if (Date.now() - P.shownAt < 120000) return;
+  const hint = hintLine(now, words);
+  if (hint) { say(hint.text); hintSaid(); }
 }
 function walk() {
   const box = $(".petbox");
@@ -268,7 +296,7 @@ function walk() {
   applyMood();
   const bubble = $("#pet-say");
   if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;
-  if (Date.now() > P.cool && bubble?.hidden && (E.state?.attention ?? []).some((w) => !w.parentRunId)) { P.cool = Date.now() + 300000; say(petWords()); }
+  if (bubble?.hidden) speakUp();
   if (calm() || P.mood === "sleep") return;
   const max = Math.max(8, (box.parentElement?.clientWidth ?? 120) - 56);
   P.x += P.dir * 6;
