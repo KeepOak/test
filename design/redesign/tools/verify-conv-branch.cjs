@@ -5,11 +5,13 @@
 // Use a throwaway engine (fresh BRANCH_DATA_DIR, the offline demo provider). It makes conversations, a Trunk, paths and
 // read marks there, and changes the quick-ask keys, then puts the keys back. The demo provider cannot write a diagram, so
 // Save to Library is also proved on a second, in-process engine with a scripted model (its own temp folder, a free port).
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
 const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
+const { withStandIn } = require("./stand-in-model.cjs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("PORT and TOKEN are required"); process.exit(2); }
@@ -140,8 +142,8 @@ async function verifyBranch(page, ctx) {
   check("Switch in the Branches tab opens that path", switched);
   await page.locator(".ptab[data-p='branches']").click();
   await page.locator(".brp17c [data-act='brcmp17c']").click();
-  await page.locator(".dlg .cmpsel17c select").first().waitFor();
-  await page.locator("#br-sel117c").selectOption(again.sessionId);
+  await page.locator(".dlg .cmpsel17c .gsel").first().waitFor();
+  await pickGsel(page.locator("#br-sel117c"), again.sessionId);
   check("with more than two paths, the pickers choose which to compare", (await page.locator(".dlg .cmpc17c h3").allInnerTexts()).includes("Again"));
   await page.locator(".dlg [data-act='dlg-close']").click();
   await page.locator(".brp17c [data-act='br17c']").click();
@@ -272,8 +274,11 @@ async function verifyDiagramSave(browser) {
   }
 }
 
+let standIn = null;
 async function setup() {
   const stamp = Date.now().toString(36);
+  // A fresh engine has no model (the demo model left in #359): a stand-in answers, so there are replies to branch from.
+  if ((await api("state")).modelNeeded) standIn = await withStandIn(api);
   await api("trunks/switch", { part: "trunks", mode: "on" });
   await api("trunks/switch", { part: "conversations", mode: "on" });
   const trunk = (await api("trunks", { name: `Verify ${stamp}`, title: "Checks quick ask" })).trunk;
@@ -306,6 +311,7 @@ async function setup() {
     for (const part of ["conversations", "trunks"])
       await api("trunks/switch", { part, mode: modesBefore[part] ?? "off" }).catch((e) => console.log(`restore ${part}:`, e.message));
     check("no page errors", errors.length === 0, errors.join(" | "));
+    await standIn?.close();
     await browser.close();
   }
   const failed = results.filter((r) => !r.ok);
