@@ -1,4 +1,10 @@
 {
+  "window.chat-command.title": "Comandos desde tu chat",
+  "window.chat-command.on": "Tus cuentas vinculadas seleccionadas pueden pedir comandos. Cada comando exacto pide aprobación.",
+  "window.chat-command.off": "Desactivado. Los comandos esperan aprobación en la ventana de Branch.",
+  "window.chat-command.warning": "Selecciona solo tus propias cuentas vinculadas. Quien controle una de estas cuentas puede aprobar programas en este ordenador. Cada comando muestra todos sus argumentos y pide aprobación. Se rechazan grupos y bloqueos.",
+  "window.chat-command.pair": "Vincula primero tu cuenta de Telegram o Discord. Las otras aplicaciones necesitan botones asociados al comando exacto.",
+  "window.chat-command.pin": "Confirma con el PIN del bloqueo",
   "seasons.branch-arrived": "El cambio revisado está instalado — terminar mi tarea",
   "seasons.connector-approve": "Aprobar este conector",
   "seasons.next-rung": "Probar una herramienta aislada",
