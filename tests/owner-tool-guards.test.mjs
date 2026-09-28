@@ -89,11 +89,10 @@ const NOT_TOOL_GUARDS = {
   "src/sessions.ts": "its requireOwner is about owning a conversation, not the profile switch",
   "src/runtime.ts": "startedFor decides whom a new task is for; it records the person, it guards nothing",
   "src/web-pages.ts": "the owner check guards the HTTP switch, not the tool",
-  "src/owner-browse.ts": "the owner check guards the browser's address field (POST /api/panels/browse), not a tool; the page opens through tryTool's gate",
+  "src/browser-control-api.ts": "its isOwner check refuses the owner's browser controls (/api/panels/browser) to anybody else; it defines no tool, and every page action goes through that tool's own hand-pressed gate",
   "src/sdk-kit.ts": "the owner check guards the HTTP switch, not a tool",
   "src/index.ts": "hands store.profiles.requireOwner to the guards listed above",
   "src/integrations/bootstrap.ts": "hands store.profiles.requireOwner to signin.fill (listed above)",
-  "src/owner-browse.ts": "its isOwner check refuses the owner's address field (POST /api/panels/browse) to anybody else; it defines no tool, and the page it opens goes through browser.navigate's own hand-pressed gate",
   "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
 };
 
