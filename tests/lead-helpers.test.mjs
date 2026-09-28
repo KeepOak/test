@@ -56,7 +56,8 @@ test("a lead starts a helper, messages it, hears from it while it works, and is 
   // The helper's message reaches the finished lead's conversation, labelled as the helper's words.
   assert.ok(await until(() => seen.leadPrompts.some((p) => /Found the failing shard: linux 3/.test(p))), JSON.stringify(seen.leadPrompts));
   const told = seen.leadPrompts.find((p) => /Found the failing shard/.test(p));
-  assert.match(told, /These are the helper's words, not the owner's/);
+  // Read while the lead still works (a steer) or after it finished (a new message): either way, never as the owner's.
+  assert.match(told, /These are the helper's words, not the owner's|NOT THE OWNER \(they call themselves "helper [0-9a-f]{8}/);
   // The lead messages the helper while it still works; the note reaches it before its next round.
   const context = app.runtime.context({ runId: lead.id });
   assert.deepEqual(await app.registry.execute("helpers.message", { helper, text: "also check windows" }, context), { sent: true });
@@ -83,8 +84,10 @@ test("a later turn of the same conversation lists and messages a helper an earli
   const { app, run, seen, release } = await fixture(t);
   const lead = await run({ prompt: "Fix CI", mode: "full" });
   const helper = app.store.events(lead.id).find((event) => event.kind === "delegation.background_started").data.childRunId;
-  // The helper's message arrives as a new task in the lead's conversation: that later turn is the one that acts.
-  const later = () => app.store.runs(app.runtime.owner).find((one) => one.sessionId === lead.sessionId && one.id !== lead.id);
+  // The owner's next message in the same conversation is a later turn. (The helper's own message may arrive while the
+  // lead still works, and is then read in that turn, so this test does not rely on it starting one.)
+  app.runtime.followUp(lead.sessionId, "How is it going?");
+  const later = () => app.store.runs(app.runtime.owner).find((one) => one.sessionId === lead.sessionId && one.prompt === "How is it going?");
   assert.ok(await until(() => later() && app.store.run(later().id).status === "completed"));
   const next = later();
   const context = app.runtime.context({ runId: next.id });
