@@ -56,12 +56,32 @@ export class SignalAdapter implements ChannelAdapter {
   private nextId = 1;
   /** Who sent each recent message (by its timestamp), for a reaction or a quote on it. */
   private readonly authors = new Map<string, string>();
-  /** When each of Branch's sends was made (signal-cli's timestamp), by the request id `send` returned. */
+  /** Which method each request still waiting for signal-cli's answer called, so only a `send` is taken as a message. */
+  private readonly asked = new Map<string, string>();
+  /** When each of Branch's recent sends was made (signal-cli's timestamp), by the request id `send` returned. */
   private readonly sentAt = new Map<string, number>();
+  /**
+   * The same for sends that carry a question, kept apart so replies and status reactions in a busy chat never push a
+   * waiting question out (coordinator review of #729); only another question can.
+   */
+  private readonly questionAt = new Map<string, number>();
   /** Questions a 👍 / 👎 reaction may answer, by the question's send request id (src/channels/reaction-answers.ts). */
   private readonly answers = new ReactionAnswers();
   watchAnswers(chatId: string, messageId: string, senderId: string, fingerprint: string): void {
     this.answers.watch(messageId, chatId, senderId, fingerprint);
+    const at = this.sentAt.get(messageId);
+    if (at !== undefined) { this.sentAt.delete(messageId); this.remember(this.questionAt, messageId, at); }
+  }
+  private remember(map: Map<string, number>, id: string, at: number): void {
+    map.set(id, at);
+    while (map.size > 200) map.delete(map.keys().next().value!);
+  }
+  /** signal-cli's answer to a request: a `send`'s timestamp is kept; typing and reactions are not messages anyone answers. */
+  private answered(id: string, timestamp: number): void {
+    const method = this.asked.get(id);
+    this.asked.delete(id);
+    if (method !== undefined && method !== "send") return;
+    this.remember(this.answers.watching(id) ? this.questionAt : this.sentAt, id, timestamp);
   }
   constructor(private readonly options: SignalOptions) { this.id = options.id; }
   botName(): string | null { return this.options.account; }
@@ -91,8 +111,7 @@ export class SignalAdapter implements ChannelAdapter {
     try { raw = JSON.parse(line); parsed = envelopeSchema.parse(raw); } catch { return null; }
     const result = resultSchema.safeParse(raw);
     if (result.success) {
-      this.sentAt.set(String(result.data.id), result.data.result.timestamp);
-      while (this.sentAt.size > 200) this.sentAt.delete(this.sentAt.keys().next().value!);
+      this.answered(String(result.data.id), result.data.result.timestamp);
       return null;
     }
     const envelope = parsed.params?.envelope;
@@ -119,7 +138,7 @@ export class SignalAdapter implements ChannelAdapter {
     targetSentTimestamp?: number | undefined; isRemove?: boolean | undefined }): InboundMessage | null {
     const author = reaction.targetAuthorNumber ?? reaction.targetAuthor;
     if (!envelope.source || reaction.isRemove || author !== this.options.account || reaction.targetSentTimestamp === undefined) return null;
-    const request = [...this.sentAt].find(([, at]) => at === reaction.targetSentTimestamp)?.[0];
+    const request = [...this.questionAt].find(([, at]) => at === reaction.targetSentTimestamp)?.[0];
     const group = envelope.dataMessage?.groupInfo?.groupId, chatId = group ?? envelope.source;
     const said = request ? this.answers.read(request, chatId, envelope.source, reaction.emoji ?? "") : null;
     return said ? { channel: this.id, chatId, chatKind: group ? "group" : "direct", ...(group ? { chatTitle: `group ${group.slice(0, 12)}` } : {}),
@@ -148,6 +167,8 @@ export class SignalAdapter implements ChannelAdapter {
   private request(method: string, params: Record<string, unknown>): string {
     if (!this.child?.stdin?.writable) throw new Error("signal-cli is not running, so the message could not be sent");
     const id = this.nextId++;
+    this.asked.set(String(id), method);
+    while (this.asked.size > 200) this.asked.delete(this.asked.keys().next().value!);
     this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params, id }) + "\n");
     return String(id);
   }

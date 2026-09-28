@@ -55,6 +55,46 @@ test("Signal: typing, a reaction and a quoted reply on a message it received, th
   await signal.stop();
 });
 
+// Coordinator review of #729: every status reaction and every reply is a signal-cli request with its own timestamp, so
+// a busy chat once pushed a waiting question out of the send-timestamp list and a late 👍 no longer answered it.
+test("Signal: status reactions and many replies never push a waiting question out, whichever order its timestamp arrives in", async () => {
+  const { signal, stdout, written } = signalWorld();
+  const [yes, no] = ["a".repeat(16), "b".repeat(16)];
+  const inbound = [];
+  await signal.start(async (message) => { inbound.push(message); });
+  const line = (value) => stdout.write(JSON.stringify(value) + "\n");
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+  line({ jsonrpc: "2.0", method: "receive", params: { envelope: { source: "+15550199", timestamp: 1790000000555, dataMessage: { message: "go" } } } });
+  await settle();
+  const [asked] = inbound.splice(0);
+  // One question watched before its timestamp comes back, one after.
+  const early = await signal.send(asked.chatId, "Allow files.read?");
+  signal.watchAnswers(asked.chatId, early, asked.senderId, yes);
+  const late = await signal.send(asked.chatId, "Allow files.write?");
+  line({ jsonrpc: "2.0", id: Number(early), result: { timestamp: 1790000001000 } });
+  line({ jsonrpc: "2.0", id: Number(late), result: { timestamp: 1790000002000 } });
+  await settle();
+  signal.watchAnswers(asked.chatId, late, asked.senderId, no);
+  for (let i = 0; i < 250; i++) {
+    const reply = await signal.send(asked.chatId, `step ${i}`);
+    await signal.react(asked.chatId, asked.messageId, "⚙️");
+    await signal.sendTyping(asked.chatId);
+    const [reaction, typing] = [written.at(-2).id, written.at(-1).id];
+    line({ jsonrpc: "2.0", id: Number(reply), result: { timestamp: 1790000100000 + i } });
+    line({ jsonrpc: "2.0", id: reaction, result: { timestamp: 1790000500000 + i } });
+    line({ jsonrpc: "2.0", id: typing, result: {} });
+  }
+  await settle();
+  const react = (at, emoji) => line({ jsonrpc: "2.0", method: "receive", params: { envelope: { source: "+15550199", timestamp: at + 7,
+    dataMessage: { reaction: { emoji, targetAuthorNumber: "+15550100", targetSentTimestamp: at } } } } });
+  react(1790000500003, "👍"); // a thumbs up on Branch's own status reaction answers nothing
+  react(1790000001000, "👍");
+  react(1790000002000, "👎");
+  await settle();
+  assert.deepEqual(inbound.map((one) => one.text), [`y:${yes}`, `n:${no}`]);
+  await signal.stop();
+});
+
 test("Matrix: a reply quotes the person's message in the same room, and only there", async () => {
   const bodies = [];
   const matrix = new MatrixAdapter({ id: "matrix", homeserver: "https://matrix.test", accessToken: "t", userId: "@branch:matrix.test",
