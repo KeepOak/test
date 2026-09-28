@@ -41,9 +41,10 @@ function startedBy(runtime: Runtime, runId: string, lead: string): boolean {
 /** The helpers any task of this task's conversation started, oldest first. */
 function helpersOf(runtime: Runtime, runId: string): string[] {
   const conversation = runtime.store.run(runId)?.sessionId;
-  const tasks = conversation ? runtime.store.sessionRuns(runtime.owner, conversation).map((one) => one.id) : [runId];
-  return tasks.flatMap((id) => runtime.store.events(id).filter((event) => event.kind === "delegation.background_started")
-    .map((event) => String(event.data.childRunId)));
+  if (!conversation) return [];
+  return runtime.store.sqlite.prepare(`SELECT json_extract(e.data,'$.childRunId') AS child FROM events e JOIN tasks t ON t.id=e.run_id
+    WHERE t.session_id=? AND t.owner=? AND e.kind='delegation.background_started' ORDER BY e.id`).all(conversation, runtime.owner)
+    .map((row) => String(row.child));
 }
 
 /** Tells the task `to` something: before its next round while it works, else as a new message in its conversation. */
