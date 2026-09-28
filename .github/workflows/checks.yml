@@ -71,9 +71,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN: ${{ github.run_id }}
-          ATTEMPT: ${{ github.run_attempt }}
+          ACTOR: ${{ github.triggering_actor }}
           PR: ${{ github.event.pull_request.number }}
-        run: node scripts/ci-queue.mjs admit --run="$RUN" --attempt="$ATTEMPT" --pr="$PR"
+        run: node scripts/ci-queue.mjs admit --run="$RUN" --actor="$ACTOR" --pr="$PR"
       - name: Waiting for a CI slot (this run is being cancelled, not failed)
         if: steps.slot.outputs.held == 'true'
         run: |
