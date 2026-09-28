@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
-import { HelperSelectionSchema } from "./delegation.js";
+import { HelperSelectionSchema, helperRouteTarget } from "./delegation.js";
 import { helperParent } from "./helper-control.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
@@ -74,6 +74,8 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
     name: "helpers.start", permission: "specialists.use", group: "agents",
     description: "Start a helper that works on a brief in the background while you carry on, with some or all of your tools, on a chosen model or account. You are told when it finishes; message it with helpers.message while it works.",
     parameters: StartHelperSchema,
+    // The rules judge the exact model and account a helper is sent to, as for every other hand-off.
+    target: (a) => helperRouteTarget([{ specialist: "helper", ...(a.model ? { model: a.model } : {}), ...(a.accountRef ? { accountRef: a.accountRef } : {}) }]),
     execute: async (input, context: ToolContext) => {
       const permissions = input.permissions ?? [...context.permissions];
       const started = await runtime.delegateBackground(input.brief, context, permissions, helperInstructions,
