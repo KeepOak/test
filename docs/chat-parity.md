@@ -129,6 +129,7 @@ proved against stand-in adapters and providers; real account connections remain 
 | IM | ? | ? | — typed |
 | MX | ✅ reactions, limited to the requester | ✅ | — typed |
 | EM, SMS | — | — | — typed |
+| All apps | ✅ `/approve`, `/deny` | ✅ `/approve`, `/deny` | ✅ typed `/approve` (`/approve always` is refused in a chat, as ever) and `/deny`, answering exactly what a typed y or n answers: the question the chat was shown. Never a command's own Yes button |
 
 ### Voice notes in (transcribed) and out (spoken replies)
 | | H in / out | O in / out | B today |

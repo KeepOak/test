@@ -200,7 +200,15 @@ export function approvalButtons(fingerprint: string, canAlways: boolean): Approv
 }
 
 /** Reads a pressed button, or a typed letter, back into a decision. */
+/**
+ * Typed commands for an answer (Hermes Agent and OpenClaw both have them), for apps with no buttons and for anybody
+ * who prefers typing: /approve is "y", /approve always is "a" (which a chat is refused, as ever), /deny is "n". They
+ * answer exactly what a typed letter answers: the question this chat was shown, never a command's own Yes button.
+ */
+const typedAnswer = /^\/(approve|deny)(?:@[\w.-]{1,64})?(?:\s+(always|once|session))?\s*$/i;
 export function readApprovalAnswer(value: string): { decision: "allow" | "deny"; remember: PolicyRemember; fingerprint: string; nonce?: string } | null {
+  const typed = typedAnswer.exec(String(value ?? "").trim());
+  if (typed) return readApprovalAnswer(typed[1]!.toLowerCase() === "deny" ? "n" : typed[2]?.toLowerCase() === "always" ? "a" : "y");
   const [letter, fingerprint = "", nonce] = String(value ?? "").trim().toLowerCase().split(":");
   const identity = { fingerprint, ...(nonce ? { nonce } : {}) };
   if (letter === "y") return { decision: "allow", remember: "session", ...identity };
@@ -216,7 +224,7 @@ export function readApprovalAnswer(value: string): { decision: "allow" | "deny";
  * never give a standing yes, so the letter for one is not offered. It used to be, and typing it did
  * not refuse in words — it fell through and sent the assistant the letter "a".
  */
-export const approvalFallbackNote = "Reply y for yes, or n for no.";
+export const approvalFallbackNote = "Reply y for yes, or n for no (or /approve, /deny).";
 /** PR #289: a typed answer that cannot be matched to the question this chat was shown, while several wait. */
 export const severalWaitingInChat = "More than one request is waiting in this conversation. Answer them with their own buttons, or in the app.";
 /** PR #289: the question the chat was shown no longer waits, so a "y" cannot answer it. */
