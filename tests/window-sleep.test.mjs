@@ -26,7 +26,10 @@ async function syncSetup(page, delayRefresh) {
   let release = () => {}, received = () => {}, finished = false;
   const held = new Promise((resolve) => { release = resolve; });
   const captured = new Promise((resolve) => { received = resolve; });
-  const delayed = async (route) => { const response = await route.fetch(); received(); await held; await route.fulfill({ response }); };
+  const delayed = async (route) => {
+    const response = await bounded("the held engine refresh's own answer", route.fetch());
+    received(); await held; await route.fulfill({ response });
+  };
   if (delayRefresh) await page.route("**/api/state", delayed, { times: 1 });
   const ready = page.evaluate(async () => {
     const { refresh, E } = await import("/app/core/state.js"), { renderNow } = await import("/app/core/dom.js");
@@ -43,7 +46,7 @@ async function syncSetup(page, delayRefresh) {
       release();
     }
     await bounded("the setup's refresh and draw in the page", ready);
-  } finally { release(); if (delayRefresh) await page.unroute("**/api/state", delayed); }
+  } finally { release(); if (delayRefresh) await bounded("letting go of the held engine refresh", page.unroute("**/api/state", delayed)); }
 }
 
 async function fixture(t, { delayRefresh = false } = {}) {
@@ -58,7 +61,14 @@ async function fixture(t, { delayRefresh = false } = {}) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   const browser = await chromium.launch({ headless: true });
-  t.after(async () => { release(); await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  /* Ending the test is bounded too: a report comes only once it has ended, so a stuck close looked like a silent hang. */
+  t.after(async () => {
+    release();
+    await bounded("closing the browser", browser.close());
+    await bounded("closing the server", server.close());
+    await bounded("closing the engine", app.close());
+    await discardTemp(root);
+  });
   const call = (path, body) => fetch(new URL(path, server.url), {
     method: body === undefined ? "GET" : "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
