@@ -225,7 +225,10 @@ function accountsTab(tr) {
   const notes = [view.note, ...(view.plan?.notes ?? [])].filter(Boolean).map((n) => `<li>${esc(n)}</li>`).join("");
   return `<div class="tk-accounts"><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.acc-lede")}</p>${copy}${rows}${notes ? `<ul class="hint tk-notes">${notes}</ul>` : ""}</div>`;
 }
-async function saveKeys(id, change) {
+/* One save at a time: each reads the Trunk afresh, so two quick picks never write over each other. */
+let keysSaving = Promise.resolve();
+const saveKeys = (id, change) => (keysSaving = keysSaving.then(() => saveKeysNow(id, change)));
+async function saveKeysNow(id, change) {
   try {
     const { trunk } = await api(`trunks/${encodeURIComponent(id)}`);
     const had = trunk?.keys ?? { copyFromOwner: true, accounts: {} };
@@ -241,7 +244,10 @@ function pickAccount(el) {
     return keys;
   });
 }
-const setCopy = (el) => saveKeys(el.dataset.id, (keys) => ({ ...keys, copyFromOwner: el.checked }));
+function setCopy(el) {
+  const on = el.checked;
+  saveKeys(el.dataset.id, (keys) => ({ ...keys, copyFromOwner: on }));
+}
 
 /* Drawn as the design has it and greyed, bar Which model: reading files, the browser and sending without asking each loosen
    the Trunk (reviewed apart, not done from here); the engine's Spend money category holds no tool in this build (GET
