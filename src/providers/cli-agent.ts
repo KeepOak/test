@@ -198,6 +198,9 @@ function failedResult(row: CliAgentRow, stdout: string): string | null {
 function programFailure(row: CliAgentRow, code: number, evidence: string): string {
   if (/not inside a trusted directory|untrusted (?:directory|folder)|directory.*not trusted/i.test(evidence))
     return `${row.name} refused the current folder because it is not trusted. Open that folder in ${row.command} and approve it there, then try again. Branch keeps the program's trust checks enabled.`;
+  // QA retest 2026-09-28: Codex set (in its own settings) to a model its ChatGPT sign-in cannot use says so in its failed turn.
+  if (/\bmodel\b[^\n]{0,80}\b(?:is not supported|not supported|is not available|does not exist)|model_not_found|unsupported model/i.test(evidence))
+    return `${row.name} is set to use a model this sign-in cannot use. Choose another model in ${row.command}'s own settings, then retry the task.`;
   if (/\b401\b|unauthori[sz]ed|authentication (?:required|failed)|not (?:logged|signed) in|(?:oauth|access|refresh) token.*(?:expired|invalid)|invalid.*(?:oauth|access|refresh) token/i.test(evidence))
     return `${row.name} could not use its saved sign-in. Open Settings → Accounts and sign in again to ${row.name}, then retry the task.`;
   if (limitWords.test(evidence))
@@ -357,7 +360,9 @@ export class CliAgentProvider implements Provider {
     if (outcome.code === null)
       throw new Error(`${this.row.name} took too long and was stopped. Ask again, or pick another model.`);
     const failed = failedResult(this.row, outcome.stdout);
-    const evidence = `${outcome.stderr}\n${failed ?? (outcome.code !== 0 ? outcome.stdout : "")}`;
+    // What the program itself said failed decides: its error output also carries warnings about other things (one of
+    // Codex's own MCP servers failing to refresh its OAuth token) that must never read as this sign-in failing.
+    const evidence = failed ?? `${outcome.stderr}\n${outcome.code !== 0 ? outcome.stdout : ""}`;
     if ((outcome.code !== 0 || failed !== null) && (this.home || this.detectLimits) && limitWords.test(evidence))
       throw new ProgramLimitError(`${this.row.name} says this account has reached its plan limit.`);
     if (outcome.code !== 0 || failed !== null)

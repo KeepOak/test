@@ -39,13 +39,15 @@ export const demoRow17 = (key, [title, sub, label]) =>
 export const demoPlace17 = (key, icon, [title, sub, label]) =>
   `<div class="prow"><span class="ico-tile">${ic(icon, "s")}</span><span class="grow"><b>${esc(say(title))}</b><small>${esc(say(sub))}</small></span><button class="btn sm" type="button" data-act="${actFor(key)}" data-k="${esc(key)}"${whyFor(key)}>${esc(say(label))}</button></div>`;
 
-/* The dialog: a lead line, rows of [title, line, [pill kind, pill words] | null], and the primary when a handler goes. */
-export function demoDlg17(key, { title, lead, rows, go, empty = "" }) {
+/* The dialog: a lead line, rows of [title, line, [pill kind, pill words] | null], and the primary when a handler goes.
+   `field` is the markup of the one thing the primary needs (a date, which address), drawn under the rows; the handler's
+   go(el) reads it, and the area marks its id live ("sw:<id>"). */
+export function demoDlg17(key, { title, lead, rows, go, empty = "", field = "" }) {
   const list = rows.map(([a, b, p]) => `<div class="prow"><span class="grow"><b>${esc(a)}</b><small>${esc(b)}</small></span>${p ? pill17(p[0], p[1]) : ""}</div>`).join("");
   const goAct = HANDLERS.get(key)?.go ? "demodob17" : "demodob17-soon";
   openDlg({
     title,
-    body: `${lead ? `<p class="lead-b17">${esc(lead)}</p>` : ""}<div class="rows demo-b17">${list || (empty ? `<p class="empty">${esc(empty)}</p>` : "")}</div>`,
+    body: `${lead ? `<p class="lead-b17">${esc(lead)}</p>` : ""}<div class="rows demo-b17">${list || (empty ? `<p class="empty">${esc(empty)}</p>` : "")}</div>${field}`,
     foot: `<button class="btn ${go ? "ghost" : ""}" type="button" data-act="dlg-close">${go ? t("updates.busy.cancel") : t("delight.ach.close")}</button>${go ? `<button class="btn pri" type="button" data-act="${goAct}" data-k="${esc(key)}"${goAct === "demodob17-soon" ? whyFor(key, "-go") : ""}>${esc(go)}</button>` : ""}`,
   });
 }
