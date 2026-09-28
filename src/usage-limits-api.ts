@@ -32,7 +32,7 @@ export class UsageLimitsError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-interface LimitsApp {
+export interface LimitsApp {
   store: Store;
   runtime: { owner: string; models: ModelRouter; steer?: (runId: string, text: string) => unknown };
 }
@@ -116,7 +116,7 @@ export async function usageLimits(app: LimitsApp): Promise<LimitsView> {
   return limitsNow(app);
 }
 /** The rows from what Branch already holds. Asks nobody anything, so the ring may read it often. */
-function limitsNow(app: LimitsApp): LimitsView {
+export function limitsNow(app: LimitsApp): LimitsView {
   const reader = readerFor(app.runtime.models);
   const busy = new Map(app.runtime.models.requests.rates().map((rate) => [rate.connection, rate.lastMinute]));
   return limitsView({
