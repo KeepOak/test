@@ -83,6 +83,12 @@ test("a paired friend cannot turn on spoken replies for every message, and the o
   assert.equal(chatVoiceMode(app.store, app.runtime.owner, "tg", "dm-friend"), "voice", "nothing saved");
   await say("/voice always");
   assert.match(sent.at(-1).text, /Spoken replies are off in Settings › Voice/, "it says why nothing will be spoken yet");
+  // On an app that cannot vouch for its senders (email here), even an account named as the owner's is not trusted with it.
+  const mail = { id: "mail", kind: "email", botName: () => "me@x", async start() {}, async stop() {}, async send(chatId, text) { sent.push({ chatId, text }); return "e"; } };
+  await app.channels.attach(mail, { activation: "always", pairing: false, allowlist: ["owner@x"] });
+  app.channels.setOwnerCommandSettings({ on: false, accounts: [{ channel: "tg", sender: "owner" }, { channel: "mail", sender: "owner@x" }] });
+  await app.channels.handle({ channel: "mail", chatId: "owner@x", chatKind: "direct", senderId: "owner@x", senderName: "Owner", addressed: true, messageId: "e1", text: "/voice always" });
+  assert.match(sent.at(-1).text, /Only the owner/);
   app.store.save("settings", app.runtime.owner, "voice", { replyWithVoiceOnChannels: true, keepAudioOnThisComputer: true });
   await say("/voice");
   assert.match(sent.at(-1).text, /Keep audio on this computer is on/);

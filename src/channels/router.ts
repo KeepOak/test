@@ -31,7 +31,7 @@ import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usa
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { chatVoiceMode, speaksHere } from "./chat-voice.js"; // CHAT-096
 import { lockedDown } from "../lockdown.js";
-import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
+import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 
 /**
@@ -983,7 +983,8 @@ export class ChannelRouter {
       runtime: this.runtime, channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
-      ownAccount: this.ownAccount(channel, message.senderId),
+      // As for the owner's commands from a chat (#727): only on an app whose servers vouch for who sent it.
+      ownAccount: vouchedSenderKinds.includes(this.adapters.get(channel)?.adapter.kind ?? "") && this.ownAccount(channel, message.senderId),
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
         turn.dropped = true;
