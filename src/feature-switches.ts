@@ -140,7 +140,7 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // Bucket 17 hook.
   { reason: "watching and saving videos is switched on", tools: videoProgramTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "media-programs", "mode", mediaProgramsShipsAs, true) },
   // w911 (A0374) hook: fixing a failed command (src/troubleshoot.ts; the name is written here to avoid an import loop).
-  { reason: "fixing failed commands is switched on", tools: ["troubleshoot.run"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "troubleshoot") },
+  { reason: "fixing failed commands is switched on", tools: ["troubleshoot.run"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "troubleshoot", "mode", "when-needed", true) }, // ships on: src/troubleshoot.ts troubleshootShipsAs
   // Optional JEV judgments send the bounded state to the provider the owner configured in JEV.
   { reason: "JEV decision support is switched on", tools: ["decisions.judge"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "jev-decisions") },
   // w911 (A2144) hook: page notes.

@@ -87,6 +87,10 @@ let runningNow: () => Promise<number> = async () => 0;
 let engine: EngineHost | undefined;
 /** computer-control: lets go of every capture lease the current engine holds (src/desktop/capture-service.ts). */
 let closeCapture: () => void = () => undefined;
+/** Tells the engine whether the window is shown, so a chat's answer can say where Branch is (src/environment.ts). */
+function tellWindow(): void {
+  if (window && !window.isDestroyed()) engine?.tell("window", { shown: window.isVisible() && !window.isMinimized() });
+}
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -217,6 +221,10 @@ async function createWindow(
   window.on("resize", soon);
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
+  // The engine tells the model whether Branch's window is open or hidden in the tray (src/environment.ts).
+  for (const change of ["show", "hide", "minimize", "restore"] as const) window.on(change as "show", tellWindow);
+  window.on("closed", () => engine?.tell("window", { shown: false }));
+  tellWindow();
   const mic = new TalkLiveMic(url, window.webContents.id);
   protectWindow(window, url, key, mic, reachable);
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
@@ -487,6 +495,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
       // Back at another address (its port was taken meanwhile): the window's page belongs to the old one, so the
       // whole app starts again, which opens the window at the new address.
+      tellWindow(); // an engine started again knows nothing of the window yet
       if (url !== host.url) { app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) }); quitReason = "restart"; app.quit(); return; }
       // A page that went away meanwhile (its reload was held back while the engine was down) is opened again.
       if (window && !window.isDestroyed() && new URL(window.webContents.getURL() || "about:blank").origin !== url)

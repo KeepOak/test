@@ -46,6 +46,30 @@ function refuse(response: ServerResponse, status: number): void {
   response.writeHead(status, { "content-type": "application/json", connection: "close" });
   response.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "BRANCH_NATIVE_ADMISSION_REFUSED" } }));
 }
+/**
+ * selfdev: Claude Code attaches its context reminders to the newest user turn, so the turn that carried them last
+ * round no longer matches this round, and the cache marker it puts at the very end is never reached again: every
+ * round of a long task paid for its whole history. One more marker, on the message just before the newest user
+ * turn (the history that stays the same next round), lets the next round read that history from the cache. Nothing
+ * else in the request changes; a request that cannot be read, or already has the four markers allowed, is sent as is.
+ */
+export function cacheHistory(payload: Buffer): Buffer {
+  let body: { messages?: { role?: string; content?: unknown }[] };
+  try { body = JSON.parse(payload.toString("utf8")); } catch { return payload; }
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const markers = (payload.toString("utf8").match(/"cache_control":/g) ?? []).length;
+  let newest = -1;
+  for (let at = messages.length - 1; at >= 0; at--) if (messages[at]?.role === "user") { newest = at; break; }
+  const target = newest > 0 ? messages[newest - 1] : undefined;
+  if (!target || markers >= 4 || target.role !== "assistant") return payload;
+  const blocks = typeof target.content === "string" ? [{ type: "text", text: target.content }] : target.content;
+  const last = Array.isArray(blocks) ? blocks.at(-1) as Record<string, unknown> | undefined : undefined;
+  if (!last || typeof last !== "object" || "cache_control" in last || !["text", "tool_use"].includes(String(last.type))
+    || (last.type === "text" && !String(last.text ?? "").trim())) return payload; // Claude refuses a mark on thinking or empty text
+  last.cache_control = { type: "ephemeral", ttl: "1h" };
+  target.content = blocks;
+  return Buffer.from(JSON.stringify(body), "utf8");
+}
 /** Exactly one Messages generation. Native authentication is forwarded in memory and never logged or saved. */
 export class NativeAdmission {
   readonly capture: NativeCapture;
@@ -56,14 +80,16 @@ export class NativeAdmission {
   status: number | null = null;
   completion: Completion | null = null;
   failure: string | null = null;
+  /** selfdev: why the response could not be read, kept so a reply cut off at its ceiling is told apart. */
+  error: unknown = null;
   private readonly server: Server;
   private readonly active = new Set<Promise<void>>();
   constructor(private readonly request: CompletionRequest, inventory: NativeInventory,
     private readonly authorize: () => void, private readonly connect: NativeConnector = connectNative) {
     this.capture = new NativeCapture(inventory, request);
     this.server = createServer((incoming, response) => {
-      const work = this.receive(incoming, response).catch(() => {
-        this.failure = "Native admission or response failed";
+      const work = this.receive(incoming, response).catch((error: unknown) => {
+        this.failure = "Native admission or response failed"; this.error = error;
         if (!response.headersSent) refuse(response, 502); else response.destroy();
       }).finally(() => this.active.delete(work));
       this.active.add(work);
@@ -88,7 +114,7 @@ export class NativeAdmission {
     this.authorize(); this.request.signal.throwIfAborted(); this.used = true;
     const body = await boundedBody(incoming, this.request.signal);
     this.authorize(); this.request.signal.throwIfAborted();
-    const upstream = await this.connect(forwardHeaders(incoming), body, path.search, this.request.signal);
+    const upstream = await this.connect(forwardHeaders(incoming), cacheHistory(body), path.search, this.request.signal);
     this.status = upstream.status;
     const headers: Record<string, string> = {};
     upstream.headers.forEach((value, key) => { if (!omittedHeaders.has(key) && key !== "content-length") headers[key] = value; });

@@ -235,11 +235,16 @@ for (const [kind, Provider] of [["openai", OpenAIProvider], ["anthropic", Anthro
       const run = await pending;
       const usage = app.store.usage(run.id);
       assert.equal(run.status, limited ? "failed" : "cancelled");
-      assert.equal(usage.attempts, 1);
-      assert.equal(usage.reports, 1);
-      assert.equal(usage.reportedInput, 33);
-      assert.equal(usage.reportedOutput, 17);
-      assert.equal(usage.incompleteCalls, 1);
+      // A reply Claude cut off at its ceiling is asked again with more room (src/runtime.ts, model.ceiling_raised), up
+      // to the most a reply may have; every one of those attempts is accounted for exactly as the first.
+      const raised = app.store.events(run.id).filter((event) => event.kind === "model.ceiling_raised").length;
+      if (kind === "anthropic" && limited) assert.ok(raised > 0, "a cut-off reply is asked again with more room");
+      const attempts = 1 + raised;
+      assert.equal(usage.attempts, attempts);
+      assert.equal(usage.reports, attempts);
+      assert.equal(usage.reportedInput, 33 * attempts);
+      assert.equal(usage.reportedOutput, 17 * attempts);
+      assert.equal(usage.incompleteCalls, attempts);
       assert.equal(usage.unreportedCalls, 0);
       assert.ok(usage.estimatedOutput > 0);
       assert.deepEqual(app.store.messages(run.sessionId), [{ role: "user", content: "Stream" }]);

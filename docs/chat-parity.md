@@ -237,7 +237,7 @@ scrubbing and a lock that starts during speech generation. Actual Telegram playb
 | IM | ✅ | ✅ | — / — |
 | MX | ✅ | ? | — / — |
 | EM | ✅ attachments | ? | — / — |
-| SMS | — | ◐ MMS | — / — |
+| SMS | — | ◐ MMS | ✅ in: MMS pictures and files from Twilio's Media list, fetched only when answered / — out: Twilio fetches an MMS from a public web address, which Branch does not have |
 
 ### Forum topics and threads
 | | H | O | B today |
@@ -422,7 +422,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | teams-bot | yes | — | — | — | — | — | — | — | — | 3500 |
 | telegram | yes | yes | yes | yes | yes | yes | yes | yes | yes | default |
 | threema | yes | — | — | — | — | — | — | — | — | 3500 |
-| twilio-sms | yes | — | — | — | — | — | — | — | — | 1600 |
+| twilio-sms | yes | — | — | — | — | — | — | yes (MMS) | — | 1600 |
 | twist | yes | — | — | — | — | — | — | — | — | 3500 |
 | vk | yes | — | — | — | — | — | — | — | — | default |
 | webex | yes | — | — | — | — | — | — | — | — | 3500 |
