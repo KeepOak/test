@@ -1,6 +1,6 @@
 /* UI-223: an automated accessibility check of the window's main places, in CI. axe-core (the standard engine, a
    dev-only dependency) runs in one headless window over a new conversation, a conversation with a reply, every place
-   the list offers, Settings' pages at Technical, the Ctrl K palette and the keyboard-shortcuts dialog, then the places
+   the list offers, Settings' pages at Technical, Settings' search results, the Ctrl K palette and the keyboard-shortcuts dialog, then the places
    and the main Settings pages again in the other light (the title bar's flip). Only violations
    fail it; "incomplete" (what axe cannot decide, such as contrast over the glass and the wallpaper) is not a failure.
    Every violation of the whole run is listed at once, with the place and the element.
@@ -64,6 +64,10 @@ test("the window's main places pass an automated accessibility check", { timeout
     await page.locator(`.set-nav [data-act="setpage"][data-v="${id}"][aria-current="true"]`).waitFor();
     await check(page, `Settings › ${id}`, found);
   }
+  await page.locator("#set-q").fill("theme");
+  await page.locator(".set-found .set-hit").first().waitFor();
+  await check(page, "Settings search results", found);
+  await page.locator("#set-q").fill("");
   await page.locator(".set-back").click();
 
   await page.keyboard.press("ControlOrMeta+k");
