@@ -5,6 +5,7 @@ import { addOnLabels, addOnMode, addOnTools, type AddOnPart } from "./add-ons/se
 import { askToolFeatures } from "./asks/settings.js"; // mac6/bucket-23
 import { interopShipsOn, type InteropPart } from "./interop/settings.js"; // ships-on sweep
 import { lockdownOverrides } from "./lockdown.js"; // mac7/lockdown-fix
+import { localIndexKey, localIndexShipsAs, localIndexTools } from "./personal/local-index-switch.js"; // RES-718
 import { deviceTools } from "./devices/capabilities.js"; // mac7/nodes
 import { autonomyToolFeatures } from "./autonomy/settings.js"; // r17-b
 import { trunkToolFeatures } from "./trunks/settings.js"; // R17-A
@@ -171,6 +172,8 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // mac7/vault-autofill (R17-068): filling a saved sign-in (src/vault-autofill.ts). Written out here
   // rather than imported, because that module reads this one for the three-way switch.
   { reason: "filling a saved sign-in is switched on", tools: signInFillTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "vault-autofill") },
+  // RES-718: searching the local index of mail and calendars (src/personal/local-index.ts); ships off, (e).
+  { reason: "the local index of mail and calendars is switched on", tools: localIndexTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, localIndexKey, "mode", localIndexShipsAs) },
   // Bucket 21 hook: tools for people building on Branch (src/sdk-kit.ts).
   { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit", "mode", "when-needed") }, // ships on: src/sdk-kit-switch.ts sdkKitShipsAs
   // ── bucket-15: add-ons other people wrote (src/add-ons/settings.ts keeps these lists). ──

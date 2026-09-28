@@ -168,6 +168,21 @@ test("R17-031: search keys are quoted, dates are IMAP dates, and nothing becomes
   assert.equal(safeFileName("...", 2), "attachment-2");
 });
 
+// RES-718: the local index reads the inbox since a day, and a message it already holds (by uid) is not fetched again.
+test("RES-718: the inbox's messages since a day, for the local index, skipping ones already held", async (t) => {
+  const imap = await fakeImap(t);
+  const { files } = await workspace(t);
+  const store = fakeStore();
+  const mail = new MailSearch({ store, owner: "local", files, secret: async () => "pw", assertHost: async () => {},
+    imap: (server) => new ImapClient({ ...server, host: "127.0.0.1", port: imap.port, tls: false }) });
+  on(store, "mail-search");
+  mail.save({ host: "imap.example.com", user: "me@example.com" });
+  const items = await mail.forIndex("2026-09-01", 50, new Set(["3"]));
+  assert.deepEqual(items.map((item) => [item.id, item.title]), [["7", "Plans"]]);
+  assert.ok(imap.commands.includes("UID SEARCH SINCE 1-Sep-2026"));
+  assert.equal(imap.commands.filter((command) => command.startsWith("UID FETCH 3 ")).length, 0, "uid 3 is held, so it is not fetched");
+});
+
 test("R17-031: the inbox is searched and opened without marking anything read, and an attachment is saved in the workspace", async (t) => {
   const imap = await fakeImap(t);
   const { root, files } = await workspace(t);

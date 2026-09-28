@@ -5,6 +5,7 @@ import { ImapClient, type MailMessage, type MailServer } from "../channels/mail-
 import type { WorkspaceFiles } from "../files.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
+import type { IndexItem } from "./local-index.js";
 import { attachmentsOf, mimeParts, textOf } from "./mime.js";
 import { clip, outsideTextNote, partSettings, requirePersonal, savePartSettings, secretNameSchema } from "./settings.js";
 
@@ -105,6 +106,19 @@ export class MailSearch {
     });
     return { note: outsideTextNote, messages: found.map((m) => ({ uid: m.uid, from: m.from, name: m.fromName,
       subject: clip(m.subject, 200), snippet: clip(m.text.replace(/\s+/g, " "), 240) })) };
+  }
+
+  /** RES-718: the inbox's messages since a day, for the local index; ones it already holds (by uid) are not fetched again. */
+  async forIndex(since: string, limit: number, known: ReadonlySet<string>): Promise<IndexItem[]> {
+    return this.withInbox(async (client) => {
+      const items: IndexItem[] = [];
+      for (const uid of await client.searchUids(`SINCE ${imapDate(since)}`, limit)) {
+        if (known.has(String(uid))) continue;
+        const m = await client.summary(uid);
+        items.push({ id: String(uid), at: null, who: m.fromName || m.from, title: clip(m.subject, 300), body: clip(m.text.replace(/\s+/g, " "), 2000), address: "" });
+      }
+      return items;
+    });
   }
 
   async open(input: unknown) {

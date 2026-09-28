@@ -7,6 +7,7 @@ import { markLive } from "../../core/features.js";
 import { toast, openDlg } from "../../core/ui.js";
 import { seg15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
+import { initLocalIndex, localIndexRow } from "../local-index.js"; // RES-718
 import { t } from "../../../i18n.js";
 
 /* The engine's own values: show the thinking (GET/POST /api/knobs, reasoning card, merged), the activity log
@@ -144,7 +145,7 @@ export function draw() {
 
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.library-more")}</h2>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.search-documents-by-meaning")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-search-documents-by-meaning\" aria-label=\"${t("window.settings.advanced.search-documents-by-meaning")}\" data-sw=\"set\"><small>${t("window.settings.advanced.finds-the-lease-clause-about-repairs")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.a-local-index-of-mail-calendar")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-a-local-index-of-mail-calendar-and-messa\" aria-label=\"${t("window.settings.advanced.a-local-index-of-mail-calendar")}\" data-sw=\"set\"><small>${t("window.settings.advanced.built-and-kept-on-this-computer")}</small></div>`;
+    html += localIndexRow(); // RES-718 (settings/local-index.js)
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.keep-versions-of-what-trunks-make")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-keep-versions-of-what-trunks-make\" aria-label=\"${t("window.settings.advanced.keep-versions-of-what-trunks-make")}\" data-sw=\"set\"><small>${t("window.settings.advanced.every-file-in-made-for-you")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.rewrite-short-notes")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"rewrite-short-notes\">${t("personal.signin.try")}</button></span><small>${t("window.settings.advanced.clearer-shorter-fixed-or-more-formal")}</small></div>`;
     html += "</div>";
@@ -198,6 +199,7 @@ async function chooseOutside(el) {
 }
 
 export function init() {
+  initLocalIndex(); // RES-718
   init17();
   on("adv-logs", () => openLogs());
   on("ad-orders", () => openOrders());

@@ -30,7 +30,7 @@ const outbound: readonly string[] = [
   "browser.interact", "signin.fill", "desktop.control", "desktop.clipboard",
 ];
 const local: readonly string[] = [
-  "files.read", "files.write", "code.execute", "shell.execute", "process.read", "process.manage",
+  "files.read", "files.write", "index.read", "code.execute", "shell.execute", "process.read", "process.manage",
   "git.read", "git.write", "documents.read", "documents.write", "data.read", "data.write",
   "memory.read", "memory.write", "history.read", "scratch.read", "scratch.write", "media.read", "media.write",
   "skills.read", "skills.write", "skills.manage", "workbooks.write", "specialists.read", "specialists.use", "specialists.manage",

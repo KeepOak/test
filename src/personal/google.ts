@@ -4,6 +4,7 @@ import type { Store } from "../store.js";
 import { buildPlainMail, stripTags } from "./mime.js";
 import { clip, outsideTextNote, requirePersonal } from "./settings.js";
 import { signedCall, signedText, type SignIn } from "./signin.js";
+import type { IndexItem } from "./local-index.js";
 
 /**
  * R17-029: the owner's Gmail (read, search, and drafts when allowed), Google Calendar (read) and
@@ -105,6 +106,33 @@ export class GoogleConnector {
         unread: message.labelIds?.includes("UNREAD") ?? false, snippet: clip(message.snippet ?? "", 300) });
     }
     return { messages, note: outsideTextNote };
+  }
+
+  /** RES-718: Gmail's messages of the last `days` days for the local index; ones it already holds are not fetched again. */
+  async mailForIndex(days: number, limit: number, known: ReadonlySet<string>): Promise<IndexItem[]> {
+    const list = z.object({ messages: z.array(z.object({ id: z.string() }).passthrough()).default([]) }).passthrough()
+      .parse(await this.call(`${gmail}/messages?${new URLSearchParams({ q: `newer_than:${days}d`, maxResults: String(limit) })}`));
+    const meta = "format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date";
+    const items: IndexItem[] = [];
+    for (const { id } of list.messages.slice(0, limit)) {
+      if (known.has(id)) continue;
+      const m = MessageSchema.parse(await this.call(`${gmail}/messages/${encodeURIComponent(id)}?${meta}`));
+      const date = Date.parse(header(m.payload, "Date"));
+      items.push({ id: m.id, at: Number.isFinite(date) ? new Date(date).toISOString() : null, who: header(m.payload, "From"),
+        title: clip(header(m.payload, "Subject"), 300), body: clip(m.snippet ?? "", 2000), address: "" });
+    }
+    return items;
+  }
+  /** RES-718: Google Calendar's events from `days` days back to 60 days ahead, for the local index. */
+  async eventsForIndex(days: number, limit: number, now = new Date()): Promise<IndexItem[]> {
+    const from = new Date(now.getTime() - days * 86_400_000).toISOString(), to = new Date(now.getTime() + 60 * 86_400_000).toISOString();
+    const query = new URLSearchParams({ timeMin: from, timeMax: to, singleEvents: "true", orderBy: "startTime", maxResults: String(limit) });
+    const Time = z.object({ dateTime: z.string().optional(), date: z.string().optional() }).passthrough().optional();
+    const body = z.object({ items: z.array(z.object({ id: z.string(), summary: z.string().optional(), location: z.string().optional(),
+      description: z.string().optional(), start: Time, htmlLink: z.string().optional() }).passthrough()).default([]) }).passthrough()
+      .parse(await this.call(`${calendar}?${query}`));
+    return body.items.map((e) => ({ id: e.id, at: e.start?.dateTime ?? e.start?.date ?? null, who: clip(e.location ?? "", 200),
+      title: clip(e.summary ?? "(no title)", 300), body: clip(stripTags(e.description ?? ""), 2000), address: e.htmlLink ?? "" }));
   }
 
   async readMail(input: unknown) {
