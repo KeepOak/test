@@ -163,6 +163,8 @@ owner GET /api/decisions/settings | here=ok remote=ok phone=ok legacy=ok person=
 owner POST /api/decisions/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1133,6 +1135,8 @@ owner GET /api/model-savings | here=ok remote=ok phone=ok legacy=ok person=401/3
 owner POST /api/model-savings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
 owner GET /api/model-savings/rounds | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/model-savings/rounds | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
+owner GET /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
 owner GET /api/knowledge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/knowledge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/knowledge/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2301,6 +2305,8 @@ owner+lockdown GET /api/decisions/settings | here=ok remote=ok phone=ok legacy=o
 owner+lockdown POST /api/decisions/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3271,6 +3277,8 @@ owner+lockdown GET /api/model-savings | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown POST /api/model-savings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
 owner+lockdown GET /api/model-savings/rounds | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/model-savings/rounds | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
+owner+lockdown GET /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/model-savings/companies | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
 owner+lockdown GET /api/knowledge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/knowledge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/knowledge/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4439,6 +4447,8 @@ household GET /api/decisions/settings | here=400/f6e21c remote=400/f6e21c read=4
 household POST /api/decisions/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/approvals/categories | here=ok remote=ok read=ok run=ok
 household POST /api/approvals/categories | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/artifacts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -5409,6 +5419,8 @@ household GET /api/model-savings | here=400/f6e21c remote=400/f6e21c read=400/f6
 household POST /api/model-savings | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
 household GET /api/model-savings/rounds | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/model-savings/rounds | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
+household GET /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
 household GET /api/knowledge | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/knowledge | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/knowledge/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6577,6 +6589,8 @@ household+lockdown GET /api/decisions/settings | here=400/f6e21c remote=400/f6e2
 household+lockdown POST /api/decisions/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/approvals/categories | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/approvals/categories | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/artifacts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7547,6 +7561,8 @@ household+lockdown GET /api/model-savings | here=400/f6e21c remote=400/f6e21c re
 household+lockdown POST /api/model-savings | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
 household+lockdown GET /api/model-savings/rounds | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/model-savings/rounds | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
+household+lockdown GET /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/model-savings/companies | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
 household+lockdown GET /api/knowledge | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/knowledge | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/knowledge/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8715,6 +8731,8 @@ applock GET /api/decisions/settings | here=423/a8f863
 applock POST /api/decisions/settings | here=423/a8f863
 applock GET /api/decisions/decide | here=423/a8f863
 applock POST /api/decisions/decide | here=423/a8f863
+applock GET /api/decisions/urgency | here=423/a8f863
+applock POST /api/decisions/urgency | here=423/a8f863
 applock GET /api/approvals/categories | here=423/a8f863
 applock POST /api/approvals/categories | here=423/a8f863
 applock GET /api/artifacts | here=423/a8f863
@@ -9685,6 +9703,8 @@ applock GET /api/model-savings | here=423/a8f863
 applock POST /api/model-savings | here=423/a8f863
 applock GET /api/model-savings/rounds | here=423/a8f863
 applock POST /api/model-savings/rounds | here=423/a8f863
+applock GET /api/model-savings/companies | here=423/a8f863
+applock POST /api/model-savings/companies | here=423/a8f863
 applock GET /api/knowledge | here=423/a8f863
 applock POST /api/knowledge | here=423/a8f863
 applock GET /api/knowledge/:id | here=423/a8f863

@@ -224,6 +224,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **MiniMax** — International keys use api.minimax.io (the usual choice); keys from the Chinese platform use api.minimax.cn. Branch keeps no price on file for it.
 - **ModelScope** — Alibaba's model hub in its OpenAI-compatible mode. Branch keeps no price on file for it.
 - **Moonshot (Kimi)** — Kimi models. International keys use api.moonshot.ai (the usual choice); keys from the Chinese platform use api.moonshot.cn. Branch keeps no price on file for it.
+- **Ollama** — Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed. An Ollama on another machine at home works too: give its address.
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.
 - **Qwen (Alibaba DashScope)** — Alibaba Model Studio in its OpenAI-compatible mode. International (Singapore) is the usual choice; the US and mainland China addresses are offered too. A workspace address works through "Something else". Branch keeps no price on file.
@@ -2378,6 +2379,14 @@ owner-only. `model` is the connection that decides, by preset id (empty means th
 is the longest list filtered at once, and a longer list is split. Every answer is checked, never trusted: a pick must
 be one of the choices offered, a filter may keep only lines it was given, and a score must be 1 to 10.
 
+The additional `route` and `inbox` switches both default to false because each decision uses a model call.
+`route` picks a room member by their written job only when the message names nobody and the room uses
+Everyone answers or Only who I tag. A checked, sufficiently confident pick is written on the message so replay
+does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
+`inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
+1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+Switching it off refuses scoring with 409 and restores the inbox's original order.
+
 ## Teams, linked chats, registries and evaluation
 
 `POST /api/teams { name, purpose, members: [{ specialistId, role, brief }] }` creates a team with a room; `POST /api/teams/:id/run { prompt }` fans the task out to every member and appends answers to the room (`GET /api/teams/:id/room`). `POST /api/channels/link { channel, chatId, sessionId }` makes a chat continue an existing conversation. `POST /api/registry/browse { url }` and `POST /api/registry/install { url, skillId }` work with a `branch-skill-registry` JSON index; installed skills stay disabled until activated. `POST /api/evaluation` (empty body for the standard suite) or `branch eval` records accuracy, latency and cost; energy is reported unavailable.
@@ -3362,7 +3371,7 @@ A task is a plain Branch task: it shows in Activity with the same signed receipt
 
 `agents.ask { agent, task, timeoutMs }` sends one piece of work and waits. The request body contains the words of the task and nothing else — no files, no secrets, nothing the assistant has read. The wait is 60 seconds by default and 120 at most, one assistant can be asked 10 times a minute, and the answer is charged against the task's own token allowance. The call is an ordinary tool call, so it carries a receipt and shows in Activity as "Asking *name*, an assistant elsewhere".
 
-**Routes.** `GET /api/agents/remote` lists them and `POST` the same path adds one (`{ cardUrl, key? }`); `POST /api/agents/remote/remove` takes `{ agent }` (an id or a name). `GET /api/agents/discover?targets=127.0.0.1:3211,example.local:3210` asks each address you type in — and only those; nothing is scanned or broadcast — for its card, and answers `{ found, refused }` with a plain reason for each one it could not reach. `GET /api/agents/pairing` returns `{ code, cardUrl, shareUrl }`; the share link is `branch://add-agent?card=…&key=…&code=…` and **carries this install's session key — the one key to everything Branch serves, not a pairing code of its own. Whoever holds it can do anything you can do here, so share it only with an install you would trust with your own account, and only over something private.** The other install adds you with `POST /api/agents/pair { link }`.
+**Routes.** `GET /api/agents/remote` lists them and `POST` the same path adds one (`{ cardUrl, key? }`); `POST /api/agents/remote/remove` takes `{ agent }` (an id or a name). `GET /api/agents/discover?targets=127.0.0.1:3211,example.local:3210` asks each address you type in — and only those; nothing is scanned or broadcast — for its card, and answers `{ found, refused }` with a plain reason for each one it could not reach. `POST /api/agents/pairing {}` makes a link and answers `{ code, cardUrl, shareUrl, expiresAt, keyId }`; the share link is `branch://add-agent?card=…&key=…&code=…`. **The key in it is a pairing key of its own, never this install’s session key: it reaches only the assistant-to-assistant door (`POST /a2a` and the card), stops working after 30 days, and is listed and taken back with the other short-lived keys (`branch token list`, `branch token revoke <keyId>`). It is still a secret, so share the link only over something private.** Making a link is the owner’s: a key that may only look cannot make one. The other install adds you with `POST /api/agents/pair { link }`.
 
 ### Working inside a code editor (ACP)
 
@@ -5990,6 +5999,22 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
   sentence the settings screen shows.
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
+
+### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
+
+The commands a chat can send are listed in the app's own command picker, from the same table every surface reads,
+and only while chat commands are on (with them off the picker is emptied, so it never offers a command that would be
+read as an ordinary message); a change to either switch updates it.
+
+- **Discord**: registered as global application commands (one overwrite, so a command taken out of the list leaves
+  Discord's picker too), each with one optional text option for what follows it. Invite the bot with the `bot` and
+  `applications.commands` scopes. Choosing one is answered at once to that person alone ("Running /status") and then
+  read as the typed command from them, so pairing, the allowlist and each command's own level still decide.
+- **Slack** keeps an app's slash commands in the app's settings, and many plain names (/status, /remind) are Slack's
+  own, so the wizard's Slack app has one, `/branch` (with the `commands` scope): `/branch status` is `/status`,
+  `/branch` alone is `/help`, and words that are not a command are an ordinary message. An app made from the older
+  manifest needs `/branch` added under Slash Commands.
+- Telegram's "/" menu is filled the same way by the Telegram menu work (#590).
 
 ### Answering an approval from a chat app
 When a task started from Telegram or Discord stops to ask whether it may go ahead, the question is
@@ -8925,6 +8950,15 @@ rounds are read from `/api/model-savings/rounds?session=<id>`.
 Setting names: `planModel` and `sideTier` (planning model and flex for side questions), `easyModel`, `hardModel` and
 `classifierModel` (choose by difficulty), `maxPings` (keep-alive), `allowFallbacks` and `dataCollection` (OpenRouter),
 and `mixtures` (mixtures of models).
+
+`difficulty.mixHard` defaults to false. When enabled with two different easy and hard connections,
+hard tasks use both as a mixture and the hard connection writes the combined answer. Easy tasks continue
+to use the easy connection. Clearing the switch or choosing the same connection twice removes the mixture.
+
+OpenRouter's **Only ones I list** reads `POST /api/model-savings/companies` on demand and keeps the company's
+plain slugs for one day. The request sends no key and goes only to OpenRouter's own provider-list address.
+It requires a configured OpenRouter connection and refuses while Lockdown is on. The chosen `only` list
+is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
 
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
