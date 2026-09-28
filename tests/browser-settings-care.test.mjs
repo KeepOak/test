@@ -77,6 +77,8 @@ test("Number the clickable things off: numbering and pressing by number refuse, 
   await assert.rejects(app.registry.execute("browser.annotate", {}, run), /Numbering what's on a page is switched off/);
   await assert.rejects(app.registry.execute("browser.act", { action: "click", mark: 1 }, run), /switched off/);
   await app.registry.execute("browser.act", { action: "fill", name: "Name", value: "ok" }, run);
+  // Every other step that finds a thing by its number refuses too.
+  if (app.registry.names().includes("browser.hover")) await assert.rejects(app.registry.execute("browser.hover", { mark: 1 }, run), /switched off/);
 });
 
 test("Downloads from known sites only: a file from the page's own site is kept, one from another site is not", async (t) => {
