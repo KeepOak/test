@@ -61,10 +61,11 @@ async function removeUnderPress(page, call, line, meanwhile) {
     S.tabs.automations = "checkins";
     renderNow();
   });
-  const button = page.locator(`#main [data-act="hb-rm"]`).nth(1);
-  await button.waitFor({ state: "visible", timeout: 30000 });
-  const box = await button.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  /* The Remove of `line`, by the words it names. The list is drawn again when a re-read lands, so the pointer is put on
+     it with hover(), which waits until the button is visible and still and tries again if a draw replaced it, rather
+     than measuring a node a draw may already have taken away (its box was null on a busy build machine). */
+  const button = page.locator(`#main [data-act="hb-rm"][data-v="${line}"]`);
+  await button.hover({ timeout: 30000 });
   await page.mouse.down();
   await setChecklist(call, meanwhile);
   await page.evaluate(async () => (await import("/app/places/automations.js")).after());
