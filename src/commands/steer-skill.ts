@@ -42,7 +42,7 @@ export function skill(call: Call): Reply {
   }
   if (word.toLowerCase() === "off") {
     if (!pinnedId) return say("No skill is pinned here.");
-    store.delete("settings", owner, key);
+    store.delete("settings", owner, `pinned-skill:${call.sessionId}`);
     return say("Unpinned. No skill applies to every turn here now.");
   }
   const wanted = word.toLowerCase();
@@ -51,6 +51,6 @@ export function skill(call: Call): Reply {
   if (found.length !== 1)
     return say(found.length ? `More than one skill starts with "${word}": ${found.map((one) => one.name).sort().join(", ")}.`
       : `There is no switched-on skill called "${word}". /skill on its own lists them.`);
-  store.save("settings", owner, key, { skillId: found[0]!.id });
+  store.save("settings", owner, `pinned-skill:${call.sessionId}`, { skillId: found[0]!.id }); // pinnedSkillKey, written out so the settings scans read it
   return say(`Pinned ${found[0]!.name} to this conversation: its instructions apply to every turn until /skill off.`);
 }
