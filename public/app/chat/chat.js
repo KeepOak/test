@@ -329,6 +329,10 @@ const OUT = { notes: [], dock: [] };
 export const addThreadNote = (draw) => { OUT.notes.push(draw); };
 /** setup-delight-024 (B5): something drawn by the message box (the pet walking there), from the conversation's id. */
 export const addDockItem = (draw) => { OUT.dock.push(draw); };
+/** RES-701: words that go in front of the next plain message here (the Home panel's "Working on", carried to the full
+    page), from the conversation's id (null for a new one); each answers "" when it has nothing for this conversation. */
+const PREFIX = [];
+export const addSendPrefix = (take) => { PREFIX.push(take); };
 const hooked = (list) => list.map((draw) => { try { return draw(C.sessionId) || ""; } catch (error) { toast(error.message); return ""; } }).join("");
 /** pane-stage-006 (B2): who this conversation is (its Trunk, its room, its name), for the stage's name and dock. */
 export const conversationWho = () => ({ sessionId: C.sessionId, trunk: speaker() ?? null, room: E.rooms.find((r) => r.sessionId === C.sessionId) ?? null, title: title() });
@@ -518,7 +522,7 @@ async function send(words, answered = false) {
   /* While a task works, words join its waiting line; files wait on their chips for the next message. */
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
   /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
-  if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain(""); return; }
+  if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain("", true); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
   if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
@@ -534,7 +538,7 @@ async function send(words, answered = false) {
     }
     return;
   }
-  await sendPlain(prompt);
+  await sendPlain(prompt, true);
 }
 
 /* The box's words (and its files, sent ahead) to another pane's conversation (chat/panes.js); a command there runs
@@ -621,7 +625,11 @@ const HOOKS = {
   readAloud: (before) => readNewReply(before, C.messages),
 };
 
-async function sendPlain(prompt) {
+/* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
+   card's answer and a room's route are sent word for word. */
+async function sendPlain(said, withLead = false) {
+  const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
+  const prompt = lead ? `${lead}\n\n${said}` : said;
   const before = replyMark(C.messages);
   C.messages.push({ role: "user", content: prompt });
   C.atBottom = true;
