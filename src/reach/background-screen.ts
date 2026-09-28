@@ -189,7 +189,12 @@ type Win = { handle: string; title: string; program: string };
  */
 export class BackgroundScreen {
   private readonly runs = new Map<string, number>();
-  constructor(private readonly host: { store: Store; owner: string; exec: PosixExec; platform: NodeJS.Platform }) {}
+  /**
+   * `held`: waits while the owner has taken over this computer's screen (DesktopControl.whileDriving), so a background
+   * press or typing never reaches an app the owner is using. Ends with the task's own stop or time limit.
+   */
+  constructor(private readonly host: { store: Store; owner: string; exec: PosixExec; platform: NodeJS.Platform;
+    held?: (runId: string, signal: AbortSignal) => Promise<void> }) {}
 
   closeRun(runId: string): void { this.runs.delete(runId); }
 
@@ -235,6 +240,7 @@ export class BackgroundScreen {
   async run(input: unknown, context: { runId: string; signal: AbortSignal }): Promise<Record<string, unknown>> {
     const request = BackgroundSchema.parse(input);
     backgroundCommand(this.host.platform, request); // refuses what cannot be done before anything runs
+    await this.host.held?.(context.runId, context.signal); // the owner drives: wait, then check the switch afresh
     this.begin(context.runId, request.text);
     if (request.action === "windows") {
       const all = await this.windows(context.signal);

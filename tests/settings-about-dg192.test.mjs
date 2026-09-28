@@ -51,6 +51,12 @@ test("DG-192 Updates & about has the prototype's sections at every width and lev
     for (const one of ["regular", "advanced", "technical"]) {
       await openSettingsPage(page, "updates");
       await setLevel(page, one);
+      // The page's title is on the screen before its sections are read: a slow runner once read them between draws (the
+      // Checks on daf53cc3 saw none at all). If the page never draws, the failure says what the window shows instead.
+      await page.locator(".set-col h1").first().waitFor({ state: "visible", timeout: 10000 }).catch(async (error) => {
+        const shown = await page.evaluate(async () => { const { S } = await import("/app/core/state.js"); return { view: S.view, setPage: S.setPage, cols: document.querySelectorAll(".set-col").length }; });
+        throw new Error(`${width} px, ${one}: no Updates & about title (${JSON.stringify(shown)}): ${error.message}`);
+      });
       const heads = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
         all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // Pass 17 adds "Help and updates, more" from Advanced up (whereB17("updates", 1, ...)).

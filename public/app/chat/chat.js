@@ -814,7 +814,7 @@ export function init() {
   initFurniture({ send: (words) => answerChoice(words) });
   initComfort();
   // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
-  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render, onShow: render });
   initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
