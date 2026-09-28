@@ -2861,7 +2861,7 @@ ${run.output.slice(0, 6000)}`;
       // owner's Settings switch that would put them back. Under it they read as absent rather than
       // as "here but switched off — tell the person they can switch it on", which would be wrong.
       nameHidden: !lockdownActive(this.store, context.owner),
-      budgetTokens: this.reliability.toolBudgetTokens,
+      budgetTokens: this.toolBudgetFor(),
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),
       noteOf: (name) => notes.get(name) ?? "",
@@ -2999,6 +2999,18 @@ ${run.output.slice(0, 6000)}`;
    * (what its service refused before, what the connection reports, else where it runs; src/model-context.ts). Never
    * more than the room a model on this computer was really given for this run (Provider.contextTokens).
    */
+  /**
+   * selfdev: the tool section's ceiling. A signed-in subscription (Claude Code, Codex) calls only the tools its list
+   * holds, costs nothing more per token and has a large window, so it holds more of Branch's tools in full (4% of its
+   * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
+   * billed per token, and a model on this computer, keep the launch figure.
+   */
+  private toolBudgetFor(): number {
+    const base = this.reliability.toolBudgetTokens;
+    const chosen = this.models.presets.get(this.models.summary(this.owner).defaultPreset);
+    if (!chosen || presetRunsLocally(chosen) || !isSignInConnection(chosen)) return base;
+    return Math.max(base, Math.min(12_000, Math.floor(this.contextWindowFor(chosen) * 0.04)));
+  }
   contextWindowFor(preset?: ModelPreset, runId?: string): number {
     const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
     const local = chosen ? presetRunsLocally(chosen) : false;

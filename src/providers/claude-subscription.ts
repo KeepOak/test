@@ -7,6 +7,7 @@ import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js";
 import { strippedEnvironment, ProgramLimitError, type AccountHome } from "./cli-agent.js";
 import { NativeAdmission, type NativeConnector } from "./claude-subscription-admission.js";
+import { ProviderHttpError } from "../provider-retry.js";
 import { NativeProcess, type NativeInvocation, type NativeSpawn, type NativeEvent } from "./claude-subscription-process.js";
 import { boundedNativeJson, nativeGeneration, nativeHistory, nativeInventory, type NativeFrame } from "./claude-subscription-history.js";
 
@@ -69,7 +70,10 @@ async function nativeResult(native: NativeProcess, signal: AbortSignal): Promise
 function completed(relay: NativeAdmission, result: { event: NativeEvent; code: number | null; authenticationFailed: boolean }): Completion {
   if (relay.status === 429) throw new ProgramLimitError("Claude subscription has reached its plan limit; wait or choose another account");
   if (relay.status === 401 || relay.status === 403 || result.authenticationFailed) throw new Error("Claude subscription could not use its saved sign-in; open Settings → Accounts and sign in again");
-  if (relay.status !== 200 || !relay.completion || relay.failure) throw new Error("Claude subscription did not receive a complete response from its official service");
+  // selfdev: a busy or failing service (5xx, 529 overloaded) is tried again like any other provider's; the status is named.
+  if (relay.status !== null && relay.status >= 500) throw new ProviderHttpError(relay.status);
+  if (relay.status !== 200 || !relay.completion || relay.failure)
+    throw new Error(`Claude subscription did not receive a complete response from its official service${relay.status !== null && relay.status !== 200 ? ` (HTTP ${relay.status})` : ""}`);
   const boundary = result.code === 1 && result.event.subtype === "error_max_turns" && relay.completion.toolCalls.length > 0;
   if (!boundary && !relay.denied && (result.code !== 0 || result.event.is_error || result.event.subtype !== "success"))
     throw new Error("Claude subscription native request failed; check the official Claude Code sign-in and try again");
