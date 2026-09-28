@@ -19,7 +19,9 @@ const patterns: [RegExp, string][] = [
   [/\b(?:send|post|upload|forward|email|exfiltrate)\b[^\n]{0,80}\b(?:secrets?|tokens?|api keys?|passwords?|credentials?|memory|memories|conversation|history|files?)\b[^\n]{0,80}\b(?:to|at)\b[^\n]{0,60}(?:https?:\/\/|@|webhook)/i, "asks the assistant to send private data somewhere"],
   [/\bsystem prompt\b[^\n]{0,40}\b(?:reveal|print|output|leak|repeat|show)\b/i, "tries to extract the assistant's instructions"],
   [/\b(?:run|execute|call)\b[^\n]{0,30}\b(?:shell|command|tool)\b[^\n]{0,60}\b(?:rm -rf|del \/|format|curl [^\n]*\|\s*(?:sh|bash))/i, "instructs a destructive command"],
-  [/<!--[^\n]{0,200}\b(?:assistant|ai|agent|instruction)\b[^\n]{0,200}-->/i, "hidden comment aimed at the assistant"],
+  [/<!--[^\n]{0,200}\b(?:assistant|ai|agent|instructions?|system|ignore|disregard|reply|respond)\b[^\n]{0,200}-->/i, "hidden comment aimed at the assistant"],
+  [/\bignore (?:the |what the |everything the )?(?:user|person|owner|human)\b/i, "tells the assistant to ignore the person"],
+  [/^\s*(?:<!--\s*)?\[?\s*(?:system|assistant|developer)(?:\s+(?:message|prompt|note|override))?\s*\]?\s*:[^\n]{0,160}\b(?:ignore|disregard|forget|reply|respond|answer only|say only|output only|instead|you must)\b/i, "poses as a message to the assistant"],
 ];
 
 export function detectInjection(text: string): ContentWarning[] {
