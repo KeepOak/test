@@ -257,6 +257,14 @@ export class SlackAdapter implements ChannelAdapter {
       await this.call("reactions.remove", this.options.token, { channel: chatId, timestamp: messageId, name: old }).catch(() => undefined);
     await this.call("reactions.add", this.options.token, { channel: chatId, timestamp: messageId, name });
   }
+  /**
+   * Slack's assistant status under the person's message ("Branch is thinking…"), as Hermes Agent and OpenClaw show it.
+   * It needs the app's Agents & AI Apps setting and the assistant:write scope; without them Slack refuses and the live
+   * status stops asking. "" clears it (posting the reply clears it too).
+   */
+  async setStatus(chatId: string, threadId: string, words: string): Promise<void> {
+    await this.call("assistant.threads.setStatus", this.options.token, { channel_id: chatId, thread_ts: threadId, status: words.slice(0, 100) });
+  }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
   }
