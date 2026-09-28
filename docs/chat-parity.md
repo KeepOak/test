@@ -246,6 +246,24 @@ Piece 5 builds this. Its rules:
 - every action audited;
 - stand-in-desktop tests only.
 
+### Commands in the owner's paired DM
+
+Telegram and Discord now have a dedicated opt-in in Settings › Chat apps › Commands from your own chat. The owner
+selects their own approved pairing IDs and confirms the current App lock PIN when set. The task remains a channel
+task with every other owner-only tool refused. It gets only the configured `shell.execute` permission.
+
+The command prompt shows the complete argument list, directory, key names and explicit execution options. Its Yes
+names the exact fingerprint, works in the originating DM only, and is consumed by one execution. It continues the
+task immediately. Plain `y`, truncated or redacted commands, groups, catch-up messages, other senders, revoked pairings,
+Lockdown and App lock cannot approve it. Settings changes and resumed/helper executions recheck access.
+
+Evidence: `tests/chat-owner-commands.test.mjs`, the existing channel security suites and the headless
+`design/redesign/tools/verify-chat-owner-commands.cjs` exercise the real engine with stand-in chat, model and command
+implementations. Actual account traffic is not proven by those tests. Slack/Matrix still need their button transport;
+apps without authenticated sender identities continue to require the Branch window for command approval.
+Discord's callback transport follows its [interaction documentation](https://docs.discord.com/developers/interactions/receiving-and-responding):
+Gateway component events are acknowledged before work starts, and bot DMs are distinguished from private group channels.
+
 ## Every Branch adapter, by what it can do today
 
 Read from `src/channels/*.ts`: which optional adapter methods each one has (router.ts `ChannelAdapter`). The ten
