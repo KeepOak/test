@@ -28,13 +28,30 @@ const here = fileURLToPath(new URL(".", import.meta.url));
 const weightsFile = join(here, "..", "tests", "shard-weights.json");
 const posix = (file) => file.replace(/\\/g, "/");
 export const LANES = { linux: "linux", windows: "win32", macos: "darwin" };
+/** A browser file's launches share one Chromium per file, each test in contexts of its own (tests/shared-browser.mjs). */
+export const sharedBrowser = new URL("../tests/shared-browser.mjs", import.meta.url).href;
+
+/**
+ * Whether a file starts a browser: it imports Playwright itself, or through a helper beside it (`./x.mjs`), as the
+ * files that open the window with tests/new-window-places.mjs do.
+ */
+export function startsBrowser(file, read, seen = new Set()) {
+  if (seen.has(file)) return false;
+  seen.add(file);
+  let source;
+  try { source = read(file); } catch { return false; }
+  if (browserImport.test(source)) return true;
+  const folder = file.slice(0, Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1);
+  return [...source.matchAll(/^\s*import\b[^\n]*from\s+["']\.\/([\w.-]+\.mjs)["']/gm)]
+    .some(([, helper]) => startsBrowser(folder + helper, read, seen));
+}
 
 /** Test files in a stable order, split by how much real browser machinery each starts. */
 export function testGroups(list = (folder) => readdirSync(folder), read = (file) => readFileSync(file, "utf8")) {
   const files = folders.flatMap((folder) =>
     list(folder).filter((name) => name.endsWith(".test.mjs")).sort().map((name) => join(folder, name)));
   const desktopFiles = files.filter(desktop);
-  const browser = files.filter((file) => !desktop(file) && browserImport.test(read(file)));
+  const browser = files.filter((file) => !desktop(file) && startsBrowser(file, read));
   return { shared: files.filter((file) => !desktop(file) && !browser.includes(file)), browser, desktop: desktopFiles };
 }
 
@@ -196,9 +213,10 @@ function ownEnv() {
  * and printed whole, so files running side by side do not interleave. It resolves when the file's own process exits,
  * not when every program it started lets go of the output: whatever it left running is ended then.
  */
-export function runFile(file, { limit = 0, spawnTest = spawn, now = Date.now } = {}) {
+export function runFile(file, { limit = 0, preload = [], spawnTest = spawn, now = Date.now } = {}) {
   const started = now();
-  const child = spawnTest(process.execPath, ["--test", "--test-concurrency=1", "--test-reporter=spec", file],
+  const child = spawnTest(process.execPath, [...preload.flatMap((module) => ["--import", module]), "--test", "--test-concurrency=1",
+    "--test-reporter=spec", file],
     { stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32", env: ownEnv() });
   const chunks = [];
   live.add(child);
@@ -291,7 +309,8 @@ async function main() {
   const limit = Number(process.env.BRANCH_TEST_FILE_TIMEOUT) || 0;
   const results = await runPool(files, {
     kindOf: (file) => kind.get(file), limits: { shared: shared || 3, browser: browser || 1, desktop: 1 },
-    cost: costOf(weights), runOne: (file) => runFile(file, { limit }), onDone: report,
+    cost: costOf(weights), runOne: (file) => runFile(file, { limit, preload: kind.get(file) === "browser" ? [sharedBrowser] : [] }),
+    onDone: report,
   });
   const failed = results.filter((result) => testProcessStatus(result, [result.file], () => {}) !== 0);
   if (process.env.BRANCH_TEST_TIMINGS) {

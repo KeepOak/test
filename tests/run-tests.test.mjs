@@ -1,10 +1,11 @@
+import { EventEmitter } from "node:events";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, runFile, runPool, shareFiles, shards, testGroups,
+import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, runFile, runPool, shareFiles, shards, sharedBrowser, testGroups,
   testProcessStatus } from "../scripts/run-tests.mjs";
 import { mergeWeights, readTimings } from "../scripts/test-weights.mjs";
 import { FULL_MATRIX, planMatrix } from "../scripts/select-affected-tests.mjs";
@@ -28,6 +29,36 @@ test("npm test isolates browser and desktop files while keeping ordinary tests t
   assert.ok(real.browser.includes(join("tests", "settings-grown-1.test.mjs")));
   assert.equal(real.shared.some((file) => real.browser.includes(file)), false);
   assert.ok(real.shared.includes(join("tests", "run-tests.test.mjs")));
+  // A file that opens the window through a helper beside it starts a browser too (it runs in the browser slot and
+  // shares one Chromium per file); a helper that imports nothing browser-like does not make a file a browser file.
+  const sources = {
+    [join("tests", "uses-window.test.mjs")]: 'import { newWindow } from "./window-helper.mjs";',
+    [join("tests", "window-helper.mjs")]: 'import { chromium } from "playwright";',
+    [join("tests", "plain.test.mjs")]: 'import { root } from "./paths.mjs";\nimport { x } from "./missing.mjs";',
+    [join("tests", "paths.mjs")]: 'import { root } from "./plain.test.mjs";',
+  };
+  const viaHelper = testGroups((folder) => (folder === "tests" ? ["uses-window.test.mjs", "plain.test.mjs"] : []), (file) => {
+    if (!(file in sources)) throw new Error(`ENOENT ${file}`);
+    return sources[file];
+  });
+  assert.deepEqual(viaHelper.browser, [join("tests", "uses-window.test.mjs")]);
+  assert.deepEqual(viaHelper.shared, [join("tests", "plain.test.mjs")], "an import cycle and a missing helper end the search");
+  assert.ok(real.browser.includes(join("tests", "pass18-window.test.mjs")), "opens the window through new-window-places.mjs");
+});
+
+test("a browser file's process loads the one-Chromium harness first, and no other file's does", async () => {
+  const spawned = [];
+  const spawnTest = (command, args) => {
+    spawned.push(args);
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 0, null));
+    return child;
+  };
+  await runFile("tests/a.test.mjs", { preload: [sharedBrowser], spawnTest });
+  await runFile("tests/b.test.mjs", { spawnTest });
+  assert.deepEqual(spawned[0].slice(0, 3), ["--import", sharedBrowser, "--test"]);
+  assert.equal(spawned[1][0], "--test");
+  assert.match(sharedBrowser, /^file:.*\/tests\/shared-browser\.mjs$/);
 });
 
 test("the shares the build machines run cover every test file exactly once, for any number of shares", () => {
