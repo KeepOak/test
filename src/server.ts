@@ -300,7 +300,7 @@ import { conversationModeApi, ConversationModeError, handlesConversationModePath
 import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
-import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
+import { handlesUsageLimitsPath, readUsageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
@@ -2204,7 +2204,7 @@ async function api(
   // --- end bucket 14 ---
   // --- mac7/usage-bar: what each connection has left, in its honest state; src/usage-limits-api.ts ---
   // Redesign phase 1: the ring under the message box. Somebody other than the owner gets an empty answer, never an error.
-  if (path === usageGlancePath && request.method === "GET") return usageGlance(app);
+  if (path === usageGlancePath && request.method === "GET") return readUsageGlance(app);
   if (handlesUsageLimitsPath(path))
     return usageLimitsRoute(app, request, path, () => readBody(request))
       .catch((error: unknown) => { throw error instanceof UsageLimitsError ? new HttpError(error.status, error.message) : error; });
