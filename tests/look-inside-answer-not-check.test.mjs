@@ -34,7 +34,7 @@ test("Look inside shows the answer's own words of context, and a check that coul
 
   await page.reload();
   await page.locator("#app #side").waitFor({ state: "visible" });
-  await page.locator('#side [data-act="chat"]').first().click();
+  await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).click(); // the answer's own conversation, not the default Trunk's
   await page.getByText("391", { exact: true }).last().hover();
   await page.locator('#main [data-act="inspect"]').last().click({ force: true });
   const dialog = page.locator(".dlg").last();
