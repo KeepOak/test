@@ -78,7 +78,7 @@
    },
    "create": {
     "url": "https://discord.com/developers/applications?new_application=true",
-    "how": "Name the application, open Bot, press Reset Token and copy it. Switch on Message Content Intent on the same page.",
+    "how": "Name the application, open Bot, press Reset Token and copy it. Switch on Message Content Intent on the same page. To invite it, pick the bot and applications.commands scopes under OAuth2, URL Generator, so Branch's commands show in Discord's / picker.",
     "prefilled": false
    },
    "paste": [
@@ -142,7 +142,15 @@
      "bot_user": {
       "display_name": "Branch",
       "always_online": true
-     }
+     },
+     "slash_commands": [
+      {
+       "command": "/branch",
+       "description": "Send Branch a command: /branch status, /branch new, /branch help",
+       "usage_hint": "[command] [words]",
+       "should_escape": false
+      }
+     ]
     },
     "oauth_config": {
      "scopes": {
@@ -156,7 +164,8 @@
        "groups:history",
        "files:read",
        "files:write",
-       "reactions:write"
+       "reactions:write",
+       "commands"
       ]
      }
     },
@@ -168,6 +177,9 @@
        "message.channels",
        "message.groups"
       ]
+     },
+     "interactivity": {
+      "is_enabled": true
      },
      "socket_mode_enabled": true,
      "org_deploy_enabled": false,
