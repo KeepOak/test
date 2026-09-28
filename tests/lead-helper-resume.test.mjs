@@ -26,7 +26,7 @@ async function fixture(t, { holdFirst = false } = {}) {
   const seen = { helperRequests: [], leadPrompts: [] };
   const provider = { name: "scripted", async complete(request) {
     const system = request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    const last = request.messages.filter((m) => m.role !== "system").at(-1);
+    const last = request.messages.filter((m) => m.role !== "system" && !String(m.content).startsWith("<system-reminder>")).at(-1);
     if (/You are a helper working in the background/.test(system)) {
       seen.helperRequests.push(request.messages.map((m) => `${m.role}: ${m.content}`).join("\n"));
       const carriedOn = request.messages.some((m) => m.role === "user" && /Carry on from where you stopped/.test(m.content));
