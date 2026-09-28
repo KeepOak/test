@@ -3013,6 +3013,15 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
+  if (request.method === "POST" && path === "/api/channels/owner-commands") {
+    if (throughDoor(request)) throw new HttpError(403, "Commands from your own chat are enabled in Branch's window on this computer.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing commands from your own chat.");
+    const { pin, ...settings } = z.object({ pin: z.string().max(64).optional(), on: z.boolean(),
+      accounts: z.array(z.object({ channel: z.string(), sender: z.string() }).strict()).max(10) }).strict().parse(await readBody(request));
+    // Re-authenticate even an unlocked window whenever a PIN is set. Wrong attempts share the lock's backoff.
+    if (app.sessionLock.pinSet()) await appLockAnswer(async () => app.sessionLock.unlock({ pin }));
+    return { ownerCommands: app.channels.setOwnerCommandSettings(settings) };
+  }
   // Settings › Chat apps: what the Trunk sees and staying connected (src/channels/intake-settings.ts).
   if (path === "/api/channels/intake") {
     if (request.method === "GET") return { intake: readChatIntake(app.store, owner) };
