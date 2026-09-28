@@ -69,6 +69,15 @@ export class MatrixAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.options.userId; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when the home server last answered a sync (an empty one counts; it answers every 30 s). */
+  private contactAt = Date.now();
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled sync again from where it had got to. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     this.loop = this.run(onMessage);
     await Promise.race([this.loop, new Promise((resolve) => setTimeout(resolve, 50))]);
@@ -88,6 +97,7 @@ export class MatrixAdapter implements ChannelAdapter {
     for (let attempt = 0; !this.stopping; attempt++) {
       try {
         const synced = await this.sync();
+        this.contactAt = Date.now();
         const batch = resumed ? catchUpBatch(synced) : synced;
         resumed = false;
         this.state = { state: "connected", ...(this.encryptedSeen ? { reason: `${this.encryptedSeen} message(s) arrived in an encrypted room, which this assistant cannot read` } : {}) };

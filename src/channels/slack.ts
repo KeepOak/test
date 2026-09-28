@@ -25,6 +25,8 @@ export interface SlackOptions {
   fetch?: typeof fetch;
   connect?: WebSocketConnect;
   reconnectBaseMs?: number;
+  /** How often the socket is pinged to show it is still there (20 s; tests shorten it). */
+  keepaliveMs?: number;
   /** mac6/bucket-16: every event Slack sends, for Slack-started automations (src/channels/slack-automations.ts). */
   onEvent?: (event: unknown, botUserId: string | null) => void;
 }
@@ -98,6 +100,16 @@ export class SlackAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.user?.name ?? null; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when Slack last answered at all (any envelope, or a pong to our own ping). */
+  private contactAt = Date.now();
+  private keepalive: ReturnType<typeof setInterval> | undefined;
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled connection again, resuming the session where it can. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     const me = await this.call("auth.test", this.options.token, {}).catch(() => undefined);
     const parsed = z.object({ user_id: z.string(), user: z.string().optional() }).passthrough().safeParse(me);
@@ -108,6 +120,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   async stop(): Promise<void> {
     this.stopping = true;
+    if (this.keepalive) clearInterval(this.keepalive);
     this.socket?.close();
     await this.loop?.catch(() => undefined);
   }
@@ -117,6 +130,11 @@ export class SlackAdapter implements ChannelAdapter {
         const address = this.options.socketUrl ?? await this.open();
         const socket = await this.connect(address, { onMessage: (text) => this.receive(text, onMessage) });
         this.socket = socket;
+        this.contactAt = Date.now();
+        // A socket that went quiet after a sleep never says it closed; a ping every 20 s shows whether anyone is there.
+        if (this.keepalive) clearInterval(this.keepalive);
+        this.keepalive = setInterval(() => socket.ping?.(() => { this.contactAt = Date.now(); }), this.options.keepaliveMs ?? 20_000);
+        this.keepalive.unref?.();
         // mac7/linux-fixes: a stop that arrived while this was still being opened found nothing to
         // close, and the loop then waited for a close nobody would ask for. Let it go straight away.
         if (this.stopping) socket.close();
@@ -138,6 +156,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   /** Acknowledges the envelope first, then decides whether the event is one to answer. */
   private receive(text: string, onMessage: (message: InboundMessage) => Promise<void>): void {
+    this.contactAt = Date.now();
     const envelope = envelopeSchema.safeParse(JSON.parse(text));
     if (!envelope.success) return;
     const { envelope_id: id, payload, type } = envelope.data;
