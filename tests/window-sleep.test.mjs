@@ -97,8 +97,17 @@ async function fixture(t, { delayRefresh = false } = {}) {
 }
 
 const face = (page, trunk) => page.locator(`#side [data-rk="t:${trunk.id}"]`).first();
-/* A face held still has let its file go (core/held.js): data-held17 names the loop it shows. */
-const loopOf = (page, trunk) => face(page, trunk).evaluate((el) => { const v = el.querySelector("video"); return v?.getAttribute("src") ?? v?.dataset.held17 ?? el.querySelector("img")?.getAttribute("src") ?? ""; });
+/* A face read in one call in the page: its loop (a face held still has let its file go, core/held.js, and data-held17
+   names the loop it shows), whether it rests, or whether its loop is paused. The side list is drawn again as the
+   engine's reads land, and a face found first and read after (locator.evaluate) could be the row just replaced, whose
+   loop had already moved to the new row: that read "" for a Trunk at work on a busy runner. */
+const onFace = (page, trunk, what) => page.evaluate(([id, what]) => {
+  const el = document.querySelector(`#side [data-rk="t:${id}"]`), v = el?.querySelector("video");
+  if (what === "rest") return !!el?.classList.contains("rest18");
+  if (what === "paused") return !!v?.paused;
+  return v?.getAttribute("src") ?? v?.dataset.held17 ?? el?.querySelector("img")?.getAttribute("src") ?? "";
+}, [trunk.id, what]);
+const loopOf = (page, trunk) => onFace(page, trunk, "loop");
 const playing = (page) => page.evaluate(() => [...document.querySelectorAll("video")].filter((v) => !v.paused).length);
 async function waitFor(page, predicate, arg) {
   try { await page.waitForFunction(predicate, arg); }
@@ -130,7 +139,7 @@ test("left alone, every face, the pet and the scene fall asleep; after ten minut
   await waitFor(page, () => document.documentElement.classList.contains("doze18") && !!document.querySelector("#side .petbox.zz11"));
   await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "a character plays its sleeping loop");
-  assert.equal(await face(page, trunks.Ledger).evaluate((el) => el.classList.contains("rest18")), true);
+  assert.equal(await onFace(page, trunks.Ledger, "rest"), true);
   assert.equal(await page.locator("#side .petbox.zz11").count(), 1, "the pet naps");
   assert.equal(await page.locator("#bgLayer .paint11").evaluate((el) => el.getAnimations().every((a) => a.playState === "paused")), true, "the scene's drift holds");
   await page.clock.fastForward(8 * MIN + 5000);
@@ -153,7 +162,7 @@ test("only the open conversation's Trunk stays awake while you use the window; h
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains("doze18")), false, "the window is awake while you use it");
   assert.match(await loopOf(page, trunks.Ledger), /ember\/idle/, "the open conversation's face stays awake");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a face whose conversation is not open sleeps");
-  assert.equal(await face(page, trunks.Scout).evaluate((el) => el.querySelector("video").paused), true, "and, fallen asleep, lies still");
+  assert.equal(await onFace(page, trunks.Scout, "paused"), true, "and, fallen asleep, lies still");
   assert.equal(await page.evaluate(() => [...document.querySelectorAll("#side [data-rk] video")].filter((v) => !v.paused).map((v) => v.closest("[data-rk]").dataset.rk).every((k, _, all) => k === all[0])), true, "only the open conversation's face moves in the list");
   await face(page, trunks.Scout).hover();
   await settled(page, trunks.Scout, /kite\/idle/);
@@ -201,7 +210,7 @@ test("a Trunk at work never sleeps", async (t) => {
   await page.clock.fastForward(10 * MIN + 5000);
   await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Busy), /tide\/work/, "its working loop stays");
-  assert.equal(await face(page, trunks.Busy).evaluate((el) => el.classList.contains("rest18")), false);
+  assert.equal(await onFace(page, trunks.Busy, "rest"), false);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "the others sleep");
   assert.deepEqual(errors, []);
 });
