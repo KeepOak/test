@@ -255,6 +255,18 @@ export function connectionName(service: AccountsService, pool: string): string {
   return program?.name ?? pool;
 }
 
+/**
+ * QA retest 2026-09-28 (m8): the list of the model that answers now (the owner's default), or null when that model has no
+ * list (one on this computer). A list's "used next" is only true of the list the next answer comes from.
+ */
+function answeringPool(service: AccountsService): string | null {
+  const models = service.deps.models;
+  if (!models.configured) return null;
+  const id = models.plan(service.deps.owner, "").choice.presetId;
+  const preset = models.presets.get(id);
+  return preset ? service.poolFor(preset)?.pool ?? null : null;
+}
+
 /** Every connection that can have several accounts, with its list (a list of one until more are added). */
 export async function viewAll(service: AccountsService) {
   const settings = service.settings();
@@ -271,7 +283,7 @@ export async function viewAll(service: AccountsService) {
   if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
   await service.readIdentities();
   if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
-  const pools = [];
+  const pools = [], answering = answeringPool(service);
   for (const [id, about] of seen) {
     const draft = { ...settings, pools: [...settings.pools] };
     const view = viewPool(service, poolOf(draft, id, about.kind, new Date(service.now())));
@@ -283,7 +295,7 @@ export async function viewAll(service: AccountsService) {
       ? { key: "accounts.notice.own-plans", service: about.name, text: poolingNotice(about.name) } : null;
     // An extra ChatGPT account whose sign-in turned out to be one Branch already had was merged into it (src/accounts/dedupe.ts).
     const merged = about.kind === "chatgpt" && service.mergedInto.size ? { mergedInto: Object.fromEntries(service.mergedInto) } : {};
-    pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
+    pools.push({ ...view, name: about.name, answering: id === answering, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
   }
   if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
   return { mode: settings.mode, pools };
