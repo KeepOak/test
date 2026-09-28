@@ -118,16 +118,24 @@ test("pausing from the window: ask while working, the paused chip and list, the 
   assert.equal(trunk(app, fi.id).paused, undefined, "Fi is no longer paused");
   assert.equal(runs(app, fi.id), 1, "and its task still runs");
   await note.waitFor({ state: "detached" });
-  await chip.filter({ hasText: en["window.flows.pause.count-chip"].replace("{count}", "1") }).waitFor();
+  const remaining = app.trunks.records.list().filter(one => one.paused);
+  assert.ok(remaining.some(one => one.id === jo.id), "Jo remains paused when only Fi resumes");
+  await chip.filter({ hasText: en["window.flows.pause.count-chip"].replace("{count}", String(remaining.length)) }).waitFor();
 
-  // The Paused list: Jo, "Nothing new starts", Resume.
+  // The Paused list contains every remaining Trunk, including the idle default, with its own Resume.
   await chip.click();
   const row = page.locator(".pop .pzrow17c");
-  assert.equal(await row.count(), 1);
-  assert.match(await row.textContent(), /Jo/);
-  assert.match(await row.textContent(), new RegExp(en["window.flows.pause.nothing-new-row"]));
-  await row.locator('[data-act="pausetrunk"]').click();
+  assert.deepEqual((await row.locator('[data-act="pausetrunk"]').evaluateAll(nodes => nodes.map(node => node.dataset.id))).sort(), remaining.map(one => one.id).sort());
+  const joRow = row.filter({ has: page.locator(`[data-id="${jo.id}"]`) });
+  assert.match(await joRow.textContent(), /Jo/);
+  assert.match(await joRow.textContent(), new RegExp(en["window.flows.pause.nothing-new-row"]));
+  await joRow.locator('[data-act="pausetrunk"]').click();
   assert.ok(await until(() => !trunk(app, jo.id).paused), "Jo resumed");
+  for (const one of remaining.filter(one => one.id !== jo.id)) {
+    await chip.click(); // each Resume closes its menu, as the existing single-row action did
+    await row.locator(`[data-act="pausetrunk"][data-id="${one.id}"]`).click();
+    assert.ok(await until(() => !trunk(app, one.id).paused), `${one.name} resumed by its own control`);
+  }
   await chip.waitFor({ state: "detached" });
 
   // Pause Fi while it works, choosing Now: its task is stopped, and its note says it is paused, with Resume.
