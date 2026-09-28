@@ -220,7 +220,8 @@ const contractDescription = "contract: the terms this change is held to, written
  * context a tool call carries: a helper a chat's task set going carries its own context, but its record leads back
  * to the chat (src/key-context.ts, `runOrigin`).
  */
-function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: ToolContext) => boolean): void {
+export function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: ToolContext) => boolean,
+  doing = "prepare Branch Agent source changes"): void {
   const origin = context.runId ? runOrigin(store, context.runId) : null;
   // A household person's task records source "owner" too, so it is told apart by whose it is (NAS c7bbf84), and
   // the window must be on the owner's profile, as `ownerWorkOnly` and `Runtime.ownersOwnTask` ask.
@@ -230,7 +231,7 @@ function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: T
   if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk
     || (context.trunkKeys && defaultTurn?.(context) !== true)
     || (origin && (origin.source !== "owner" || origin.shortLivedKey || origin.keyIds.length > 0 || origin.personProfileId || origin.lentTo)))
-    throw new Error("Only the owner in the Branch app can prepare Branch Agent source changes.");
+    throw new Error(`Only the owner in the Branch app can ${doing}.`);
   if (lockdownActive(store, context.owner)) throw new Error(selfDevelopmentLockdownRefusal);
 }
 

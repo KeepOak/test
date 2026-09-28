@@ -158,6 +158,14 @@ export class Gateway {
     worker.state = "stopped";
     if (this.settle) clearTimeout(this.settle);
     if (this.stopping || worker !== this.worker) return;
+    // selfdev: exit code 75 is the engine restarting itself on request (Restart the engine, branch.restart_engine), not
+    // a crash: it is started again at once and never counted toward slowing down or putting the previous version back.
+    if (code === 75 && wasReady) {
+      this.note("The engine restarted itself on request.");
+      worker.state = "waiting";
+      this.relaunch = setTimeout(() => { this.relaunch = null; this.launch(); }, 0);
+      return;
+    }
     this.restarts++;
     const verdict = await recordCrash(this.options.dataDir, this.config);
     this.tripped = this.tripped || verdict.tripped;
