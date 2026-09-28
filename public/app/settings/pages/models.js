@@ -109,15 +109,83 @@ const local = () => localPicker();
 
 const BODIES = {
   connections, defaults, local,
-  /* The engine's second opinion reads one finished answer and writes a note beside it (src/second-opinion.ts), which this
-     window does not show, so the row stays greyed with that reason, without the design's "Shows both answers side by side". */
-  second: () => ctl("m-second", t("window.settings.models.ask-a-second-model-on-hard"), "", false),
-  /* Pictures have no switch in the engine (media.image is always offered; a ChatGPT sign-in has no picture route), so the
-     row stays greyed with that reason and without the design's "Uses your ChatGPT account". Videos are the engine's reach
-     part "video" (a paid service, off until switched on); "Off until you choose a service" is left out: the window has no
-     service picker and the engine uses OpenAI's unless told otherwise (src/reach/video.ts). */
-  media: () => ctl("m-img", t("window.settings.models.make-pictures"), "", false) + swRow("m-vid", esc(t("window.settings.models.make-short-videos")), "", SW["m-vid"][0]()),
+  second: () => secondTab(),
+  media: () => mediaTab(),
 };
+
+/* Second opinion (src/second-opinion.ts, GET/POST /api/second-opinion): a second connection reads each finished answer and
+   says whether it stands up; its note is kept beside the answer, never written into it, and Look inside shows it
+   (chat/messages.js). The engine saves the whole card at once (every field it is not given goes back to its default), so
+   each change is sent over what the engine said last. Off by default: every answer costs one more request. */
+/* One save at a time, each over what the engine said after the one before, so two quick changes never undo each other. */
+let secondSaving = Promise.resolve();
+const setSecond = (change) => (secondSaving = secondSaving.then(() => saveSecond(change)));
+async function saveSecond(change) {
+  if (!X.second) { await loadMore(); return; } // never send a card the engine has not been read for
+  try { X.second = await api("second-opinion", { ...X.second, ...change }); } catch (error) { toast(error.message); }
+  renderNow();
+}
+/* A token box for one of the card's ceilings (advisorMaxTokens, debateMaxTokens), saved on change. */
+function tokenBox(field, id, label) {
+  const value = X.second?.[field];
+  if (value == null) return "";
+  return `<span class="right num15"><input class="inp" ${ownerHere() ? `id="${id}" data-field="${field}"` : 'data-why="knobs-owner-only"'} value="${esc(value)}" aria-label="${label}"><small>${t("window.settings.models.second-tokens")}</small></span>`;
+}
+const secondCeiling = () => tokenBox("advisorMaxTokens", "m-second-max", t("window.settings.models.second-ceiling"));
+/* Debate (the delegate.debate tool, src/second-opinion-tools.ts): two connections argue a hard question when a task asks
+   for it. Its limits are the same card's: how many times each side answers, and the most the whole debate may spend. */
+function debateRows() {
+  const rounds = t("window.settings.models.debate-rounds"), most = t("window.settings.models.debate-ceiling");
+  return `<div class="sec x15-sec"><h2>${t("window.settings.models.debate")}</h2>`
+    + row(rounds, knobSeg(rounds, "m-debate-rounds", [[1, "1"], [2, "2"], [3, "3"]], X.second?.debateExchanges), t("window.settings.models.debate-rounds-sub"))
+    + row(most, tokenBox("debateMaxTokens", "m-debate-max", most), t("window.settings.models.debate-ceiling-sub")) + "</div>";
+}
+function secondTab() {
+  const by = X.second ? X.second.advisorPreset ?? "" : undefined;
+  return swRow("m-second", esc(t("window.settings.models.second-check")), esc(t("window.settings.models.second-check-sub")), SW["m-second"][0]())
+    + row(t("window.settings.models.second-who"), knobSeg(t("window.settings.models.second-who"), "m-second-by", [["", t("window.settings.models.second-same")], ...presetChoices()], by), t("window.settings.models.second-who-sub"))
+    + row(t("window.settings.models.second-ceiling"), secondCeiling(), t("window.settings.models.second-ceiling-sub"))
+    + debateRows();
+}
+async function saveSecondCeiling(box) {
+  const typed = box.value.trim();
+  if (!/^\d+$/.test(typed)) { renderNow(); return; }
+  await setSecond({ [box.dataset.field]: Number(typed) }); // the engine refuses a figure outside its limits, in its own words
+}
+
+/* Media. Pictures (src/media.ts): the connection making pictures now is the owner's own (GET /api/media/settings pictures:
+   its name and the kind of picture route it has, or null when it has none, as a ChatGPT sign-in or a Claude connection);
+   the picture model is the engine's imageModel (empty is that route's own default), offered from the models Branch knows
+   for that kind of route, plus whatever the owner saved before. The engine saves the whole media card at once, so the
+   change is sent over what it said last. Videos are the reach part "video" (a paid service, off until switched on), and
+   its service is the engine's video settings (POST /api/reach/video/settings { service }), which it takes only while
+   videos are on. */
+async function setPictureModel(v) {
+  if (!X.media) { await loadMore(); return; }
+  try { X.media = { ...X.media, ...(await api("media/settings", { ...X.media.settings, imageModel: v })) }; } catch (error) { toast(error.message); }
+  renderNow();
+}
+function pictureRow() {
+  const m = X.media, where = m?.pictures, title = t("window.settings.models.make-pictures");
+  if (!m) return row(title, "", "");
+  if (!where) return ctl("m-img", title, "", false); // greyed with its reason (window.why.m-img)
+  const saved = m.settings.imageModel ?? "", known = m.pictureModels?.[where.kind] ?? [];
+  /* The route's own model is the first choice already; it is listed again only when the owner saved it by name. */
+  const models = [...new Set([...known, ...(saved ? [saved] : [])])].filter((v) => v !== where.defaultModel || v === saved).map((v) => [v, esc(v)]);
+  const own = t("window.settings.models.picture-own", { model: where.defaultModel });
+  return row(title, knobSeg(title, "m-img", [["", esc(own)], ...models], saved), esc(t("window.settings.models.picture-through", { name: where.connection })));
+}
+function videoRow() {
+  const on = SW["m-vid"][0](), cur = X.reach?.video?.service, title = t("window.settings.models.video-service");
+  const opts = [["openai", "OpenAI"], ["google", "Google"]];
+  const seg = on ? knobSeg(title, "m-vid-svc", opts, cur) : knobSeg(title, "seg", opts, cur, "m-vid-svc-off");
+  return swRow("m-vid", esc(t("window.settings.models.make-short-videos")), esc(t("window.settings.models.video-costs")), on) + row(title, seg, t("window.settings.models.video-service-sub"));
+}
+async function setVideoService(v) {
+  try { await api("reach/video/settings", { service: v }); X.reach = await api("reach"); } catch (error) { toast(error.message); }
+  renderNow();
+}
+const mediaTab = () => pictureRow() + videoRow();
 
 export function draw() {
   const lv = level();
@@ -152,6 +220,7 @@ export function init() {
   loadMore();
   document.addEventListener("change", (e) => {
     if (e.target.id === "m-steps") saveSteps(e.target);
+    else if (e.target.id === "m-second-max" || e.target.id === "m-debate-max") saveSecondCeiling(e.target);
     else if (KNOB[e.target.id]) saveKnob(e.target);
     else if (SW[e.target.id]) SW[e.target.id][1](e.target.checked);
   });
@@ -162,27 +231,35 @@ export function init() {
   on("m-tier", (el) => setKnob("reasoning", { serviceTier: el.dataset.v }));
   on("m-effort", (el) => setEffort(el.dataset.v));
   on("m-planning", (el) => setSavings("phases", { planModel: el.dataset.v || null }));
-  on("m-openrouter", (el) => setSavings("openrouter", { mode: "on", sort: el.dataset.v }));
+  on("m-openrouter", (el) => { OR.open = false; setSavings("openrouter", { mode: "on", sort: el.dataset.v, only: [] }); });
+  on("m-orlist", () => { OR.open = true; if (OR.list) renderNow(); else loadCompanies(); });
+  on("m-orco", (el) => toggleCompany(el.dataset.v));
   on("m-def", (el) => setDefault(el));
-  markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
+  on("m-second-by", (el) => setSecond({ advisorPreset: el.dataset.v || null }));
+  on("m-debate-rounds", (el) => setSecond({ debateExchanges: Number(el.dataset.v) }));
+  on("m-img", (el) => setPictureModel(el.dataset.v));
+  on("m-vid-svc", (el) => setVideoService(el.dataset.v));
+  markLive(["m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
+  markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "m-orco", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
 export function load() { loadAccounts(); loadKnobs(); loadMore(); loadDecisions17d(); return freshPick(); }
 
-export const live = { mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
-  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:f15-slow-down-near-a-rate-limit": true };
+export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
+  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
 
 /* Q002: the engine's other settings these rows keep, each the owner's: the R17-E cards (GET /api/model-savings: the
    planning model, OpenRouter's picks, keeping Claude's cache warm), each saved alone with POST /api/model-savings
    { card, values }, which keeps the card's other values; the coding part "fewer-rounds" (GET /api/coding, POST
    /api/coding/switch) and the reach part "video" (GET /api/reach, POST /api/reach/switch). */
-const X = { savings: null, coding: null, reach: null };
+const X = { savings: null, coding: null, reach: null, second: null, media: null };
 async function loadMore() {
-  if (!ownerHere()) { Object.assign(X, { savings: null, coding: null, reach: null }); renderNow(); return; }
+  if (!ownerHere()) { Object.assign(X, { savings: null, coding: null, reach: null, second: null, media: null }); renderNow(); return; }
   const read = (path) => api(path).catch((error) => { toast(error.message); return null; });
-  const [savings, coding, reach] = await Promise.all([read("model-savings"), read("coding"), read("reach")]);
-  Object.assign(X, { savings, coding, reach });
+  const [savings, coding, reach, second, media] = await Promise.all([read("model-savings"), read("coding"), read("reach"), read("second-opinion"), read("media/settings")]);
+  Object.assign(X, { savings, coding, reach, second, media });
   renderNow();
+  if (savings?.values?.openrouter?.only?.length) loadCompanies(); // a saved list shows its chips
 }
 async function setSavings(card, values) {
   try { X.savings = await api("model-savings", { card, values }); } catch (error) { toast(error.message); }
@@ -196,25 +273,55 @@ async function setPart(area, part, on) {
 const onMode = (mode) => (mode ? mode !== "off" : false);
 /* Each live switch: its value from the engine, and the route that changes it. */
 const SW = {
+  /* Mix models on hard questions (difficulty.mixHard): a hard task is asked of both picks, the hard one writes the answer. */
+  "f15-mix-models-on-hard-questions": [() => X.savings?.values?.difficulty?.mixHard === true, (on) => setSavings("difficulty", { mixHard: on })],
   "f15-keep-claude-s-cache-warm": [() => X.savings?.values?.keepAlive?.mode === "on", (on) => setSavings("keepAlive", { mode: on ? "on" : "off" })],
   "f15-fewer-rounds": [() => onMode(X.coding?.modes?.["fewer-rounds"]), (on) => setPart("coding", "fewer-rounds", on)],
   "m-vid": [() => onMode(X.reach?.modes?.video), (on) => setPart("reach", "video", on)],
+  "m-second": [() => !!X.second?.advisor, (on) => setSecond({ advisor: on })],
   "f15-pick-the-model-per-task": [byTask, setByTask],
   /* The engine's pacing card (src/model-savings/pacing.ts): below a tenth of a service's allowance, requests are spread out. */
   "f15-slow-down-near-a-rate-limit": [() => X.savings?.values?.pacing?.mode === "on", (on) => setSavings("pacing", { mode: on ? "on" : "off" })],
 };
+/* Mixing needs Pick the model per task on, with two different connections picked for easy and hard tasks. */
+const mixReady = () => { const d = X.savings?.values?.difficulty; return byTask() && !!d?.easyModel && !!d?.hardModel && d.easyModel !== d.hardModel; };
 /* Only the connections the engine keeps warm (keptWarmProviders: Claude with an API key) can be; with none set up the
    switch is greyed with that reason. */
 const noneKeptWarm = () => !!X.savings && !X.savings.connections.some((c) => (X.savings.keptWarmProviders ?? []).includes(c.provider));
 /* OpenRouter's picks: Cheapest is sort "price", Fastest is sort "throughput" (OpenRouter's own fastest), each with the card
-   on. "Only ones I list" needs a list of companies the design has no box for, so it stays greyed with that reason. */
+   on and no list; "Only ones I list" opens OpenRouter's companies below (companiesRow). With no OpenRouter connection it
+   stays greyed with that reason. */
 function openRouterSeg() {
   const o = X.savings?.values?.openrouter, cur = o?.mode === "on" ? (o.sort ?? (o.only?.length ? "only" : null)) : null;
   const label = t("window.settings.models.openrouter-picks");
   const opts = [["price", t("settings-kit.preset.cheapest")], ["throughput", t("window.settings.models.fastest")], ["only", t("window.settings.models.only-ones-i-list")]];
-  const actOf = (v) => (!ownerHere() ? ["seg", "knobs-owner-only"] : v === "only" ? ["seg", "m-openrouter-only"] : ["m-openrouter", ""]);
+  const actOf = (v) => (!ownerHere() ? ["seg", "knobs-owner-only"] : v === "only" ? (X.savings?.openRouter ? ["m-orlist", ""] : ["seg", "m-openrouter-only"]) : ["m-openrouter", ""]);
   return `<span class="right"><span class="seg" role="group" aria-label="${label}">${opts.map(([v, w]) => { const [act, why] = actOf(v); return `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}"${why ? ` data-why="${why}"` : ""}>${w}</button>`; }).join("")}</span></span>`;
 }
+/* Only ones I list: OpenRouter's own list of companies (POST /api/model-savings/companies, asked only when this is
+   pressed, or when a list is already saved), each a chip; pressing one adds it to or takes it from the card's `only`
+   (POST /api/model-savings { card: "openrouter", values: { mode: "on", sort: null, only } }). A saved company OpenRouter
+   no longer lists is still shown, by its slug, so it can be taken off. */
+const OR = { open: false, list: null, busy: false };
+async function loadCompanies() {
+  if (OR.list || OR.busy || !X.savings?.openRouter) return;
+  OR.busy = true;
+  try { OR.list = (await api("model-savings/companies", {})).companies; } catch (error) { OR.open = false; toast(error.message); }
+  OR.busy = false;
+  renderNow();
+}
+function companiesRow() {
+  const only = X.savings?.values?.openrouter?.only ?? [];
+  if (!ownerHere() || !X.savings?.openRouter || !(OR.open || only.length) || !OR.list) return "";
+  const known = new Set(OR.list.map((c) => c.slug)), all = [...OR.list, ...only.filter((slug) => !known.has(slug)).map((slug) => ({ slug, name: slug }))];
+  /* A row of its own across the whole card (no title column to share), and a long list scrolls inside it. */
+  return `<div class="ctl"><span class="chips8" role="group" aria-label="${esc(t("window.settings.models.only-ones-i-list"))}" data-css="grid-column:1 / -1;max-height:220px;overflow:auto">${all.map((c) => `<button type="button" class="chip6" data-act="m-orco" data-v="${esc(c.slug)}" aria-pressed="${only.includes(c.slug)}">${esc(c.name)}</button>`).join("")}</span></div>`;
+}
+function toggleCompany(slug) {
+  const only = X.savings?.values?.openrouter?.only ?? [], next = only.includes(slug) ? only.filter((s) => s !== slug) : [...only, slug].slice(0, 16);
+  setSavings("openrouter", { mode: "on", sort: null, only: next });
+}
+
 /* Q002: the knobs the engine keeps for these rows (GET /api/knobs), each saved alone with POST /api/knobs { card,
    values: { field } }, which keeps the card's other values. An empty box is null: the engine's launch setting, shown
    as the box's placeholder (GET /api/knobs launched). */
@@ -287,11 +394,11 @@ function effortSeg() {
   return knobSeg(t("window.settings.models.thinking-effort"), levels.length ? "m-effort" : "seg", ["low", "medium", "high"].filter((v) => !levels.length || levels.includes(v)).map((v) => [v, words[v]]), p ? knob("reasoning", "effortByModel")?.[p.id] : null, levels.length ? "" : "m-effort-none");
 }
 const advanced = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.budgets")}</h2>${row(t("knobs.field.maxSteps"), steps(), t("window.settings.models.it-stops-and-asks-when-it"))}${row(t("window.settings.models.spend-cap-per-task"), num(t("window.settings.models.spend-cap-per-task"), "USD", "m-spend"), t("window.settings.models.only-for-accounts-that-bill-per"))}${row(t("window.settings.models.sub-tasks-at-once"), knobSeg(t("window.settings.models.sub-tasks-at-once"), "m-par", [[1, "1"], [3, "3"], [5, "5"]], knob("subtasks", "parallelSubtasks")), t("window.settings.models.parts-of-a-big-task-that"))}</div>`
-  + `<div class="sec x15-sec"><h2>${t("window.settings.models.models-for-smaller-jobs")}</h2>${row(t("knobs.subtasks.title"), knobSeg(t("knobs.subtasks.title"), "m-sub", [["", t("window.settings.models.same-model")], ...presetChoices()], knobs ? knob("subtasks", "subtaskModel") ?? "" : undefined), t("window.settings.models.titles-summaries-and-searches-inside-a"))}${sw("f15-pick-the-model-per-task", "Pick the model per task", "Easy tasks go to a quick model, hard ones to the best you have.", byTask(), X.savings && knobs && (byTask() || byTaskReady()) ? "" : "f15-pick-the-model-per-task")}${row(t("window.settings.models.planning-model"), knobSeg(t("window.settings.models.planning-model"), "m-planning", [["", t("window.settings.models.same-model")], ...presetChoices()], X.savings ? X.savings.values.phases.planModel ?? "" : undefined), t("window.settings.models.writes-the-plan-in-plan-first"))}${sw("f15-mix-models-on-hard-questions", "Mix models on hard questions", "Asks two and merges the best of each. Off until you choose: it doubles the cost.")}</div>`
+  + `<div class="sec x15-sec"><h2>${t("window.settings.models.models-for-smaller-jobs")}</h2>${row(t("knobs.subtasks.title"), knobSeg(t("knobs.subtasks.title"), "m-sub", [["", t("window.settings.models.same-model")], ...presetChoices()], knobs ? knob("subtasks", "subtaskModel") ?? "" : undefined), t("window.settings.models.titles-summaries-and-searches-inside-a"))}${sw("f15-pick-the-model-per-task", "Pick the model per task", "Easy tasks go to a quick model, hard ones to the best you have.", byTask(), X.savings && knobs && (byTask() || byTaskReady()) ? "" : "f15-pick-the-model-per-task")}${row(t("window.settings.models.planning-model"), knobSeg(t("window.settings.models.planning-model"), "m-planning", [["", t("window.settings.models.same-model")], ...presetChoices()], X.savings ? X.savings.values.phases.planModel ?? "" : undefined), t("window.settings.models.writes-the-plan-in-plan-first"))}${sw("f15-mix-models-on-hard-questions", "Mix models on hard questions", "Asks two and merges the best of each. Off until you choose: it doubles the cost.", SW["f15-mix-models-on-hard-questions"][0](), mixReady() ? "" : "f15-mix-models-on-hard-questions")}</div>`
   + `<div class="sec x15-sec"><h2>${t("window.settings.p17-models.compare-models")}</h2>${row(t("reach.arena.title"), `<span class="right"><button class="btn sm" type="button" data-act="arenab17">${t("window.settings.models.open-the-arena")}</button></span>`, t("window.settings.models.the-same-task-to-two-models"))}${ownerHere() ? row(t("window.settings.models.test-suites"), `<span class="right"><button class="btn sm" type="button" data-act="compareb17">${t("window.settings.models.see-history")}</button></span>`, t("window.settings.models.your-own-tasks-with-a-check")) : ""}</div>`; // Q262: the test suites are the owner's
 
 const TECHNICAL = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.retries-and-timeouts")}</h2>${row(t("window.settings.models.retries-when-a-service-fails"), num(t("window.settings.models.retries-when-a-service-fails"), "", "m-retries"))}${row(t("window.settings.models.wait-for-the-first-word"), num(t("window.settings.models.wait-for-the-first-word"), "s", "m-first"), t("window.settings.models.then-it-tries-the-next-account"))}${row(t("window.settings.models.model-rounds-per-step"), num(t("window.settings.models.model-rounds-per-step"), "", "m-rounds"))}${row(t("window.settings.models.tool-and-command-timeout"), num(t("window.settings.models.tool-and-command-timeout"), "s", "m-tooltime"))}${row(t("window.settings.models.largest-tool-answer-kept-whole"), num(t("window.settings.models.largest-tool-answer-kept-whole"), "KB", "m-toolkb"), t("window.settings.models.bigger-answers-are-saved-to-a"))}</div>`
-  + `<div class="sec x15-sec"><h2>${t("window.settings.models.per-connection")}</h2>${row(t("window.settings.models.thinking-effort"), effortSeg(), t("window.settings.models.for-the-connection-in-use-others"))}${row(t("window.settings.models.service-tier"), knobSeg(t("window.settings.models.service-tier"), "m-tier", [["standard", t("window.settings.models.standard")], ["priority", t("window.settings.models.priority")], ["flex", t("window.settings.models.flex")]], knob("reasoning", "serviceTier")), t("window.settings.models.priority-costs-more-flex-is-cheaper"))}${sw("f15-slow-down-near-a-rate-limit", "Slow down near a rate limit", "Spreads requests out instead of hitting the wall.", SW["f15-slow-down-near-a-rate-limit"][0]())}${sw("f15-keep-claude-s-cache-warm", "Keep Claude’s cache warm", "A tiny request every 4 minutes during long tasks, so repeats cost less.", SW["f15-keep-claude-s-cache-warm"][0](), noneKeptWarm() ? "keep-warm-no-claude" : "")}${row(t("window.settings.models.openrouter-picks"), openRouterSeg(), t("window.settings.models.which-provider-serves-an-openrouter-model"))}${sw("f15-fewer-rounds", "Fewer rounds", "Groups tool calls that don’t depend on each other.", SW["f15-fewer-rounds"][0]())}</div>`;
+  + `<div class="sec x15-sec"><h2>${t("window.settings.models.per-connection")}</h2>${row(t("window.settings.models.thinking-effort"), effortSeg(), t("window.settings.models.for-the-connection-in-use-others"))}${row(t("window.settings.models.service-tier"), knobSeg(t("window.settings.models.service-tier"), "m-tier", [["standard", t("window.settings.models.standard")], ["priority", t("window.settings.models.priority")], ["flex", t("window.settings.models.flex")]], knob("reasoning", "serviceTier")), t("window.settings.models.priority-costs-more-flex-is-cheaper"))}${sw("f15-slow-down-near-a-rate-limit", "Slow down near a rate limit", "Spreads requests out instead of hitting the wall.", SW["f15-slow-down-near-a-rate-limit"][0]())}${sw("f15-keep-claude-s-cache-warm", "Keep Claude’s cache warm", "A tiny request every 4 minutes during long tasks, so repeats cost less.", SW["f15-keep-claude-s-cache-warm"][0](), noneKeptWarm() ? "keep-warm-no-claude" : "")}${row(t("window.settings.models.openrouter-picks"), openRouterSeg(), t("window.settings.models.which-provider-serves-an-openrouter-model"))}${companiesRow()}${sw("f15-fewer-rounds", "Fewer rounds", "Groups tool calls that don’t depend on each other.", SW["f15-fewer-rounds"][0]())}</div>`;
 
 /* Settings search (settings/find.js) reads every tab's rows, and a found row opens its tab. */
 export const TAB_LIST = () => TABS.map(([id, l]) => ({ id, name: say(l) }));

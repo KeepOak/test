@@ -45,22 +45,39 @@ function check(c, w) {
   if (w.error) return `<div class="status"><span class="sdot bad"></span><div><b>${t("window.flows.chw.not-accepted", { name: esc(c.name) })}</b><p>${esc(w.error)}</p></div></div>`;
   if (!w.result) return `<div class="chw-ok12 run12"><span class="spin12"></span><span><b>${t("window.flows.chw.checking", { name: esc(c.name) })}</b><small>${t("window.flows.chw.read-only")}</small></span></div>`;
   const said = w.result.botName ? t("window.flows.chw.found-bot", { name: w.result.botName }) : w.result.checkNote || t("window.flows.chw.accepted");
-  return `<div class="chw-ok12">${ic("check", "s")}<span><b>${t("window.flows.chw.answers")}</b><small>${esc(said)}</small></span></div>`;
+  return `<div class="chw-ok12">${ic("check", "s")}<span><b>${t("window.flows.chw.answers")}</b><small>${esc(said)}</small></span></div>${liveLine(c, w.result)}`;
+}
+
+/* CHAT-147: what connecting it to the running Branch came to, as the engine said it. Connected needs no restart; an app
+   that posts to Branch is listening but needs its address pasted in; anything else says why it is not connected. */
+function liveLine(c, r) {
+  if (!r || r.connected == null) return "";
+  if (!r.connected) return `<div class="status" role="alert"><span class="sdot bad"></span><div><b>${t("window.flows.chw.not-connected", { name: esc(c.name) })}</b><p>${esc(r.connectNote ?? "")}</p></div></div>`;
+  const note = r.address ? `<small>${esc(r.connectNote ?? "")}</small>` : `<small>${t("window.flows.chw.no-restart")}</small>`;
+  return `<div class="chw-ok12" role="status">${ic("check", "s")}<span><b>${r.address ? t("window.flows.chw.listening", { name: esc(c.name) }) : t("window.flows.chw.live-now", { name: esc(c.name) })}</b>${note}</span></div>`;
 }
 
 function pair(c, w) {
   return `<p data-css="margin:0 0 10px">${esc(c.pairing)}</p><div class="code12">${[0, 1, 2, 3, 4, 5].map((i) => `<input inputmode="numeric" maxlength="1" data-sw="code" data-code="${i}" value="${esc(w.code[i] ?? "")}" aria-label="${t("window.flows.chw.digit", { n: i + 1 })}">`).join("")}</div>${w.error ? `<p class="hint" role="alert">${esc(w.error)}</p>` : `<p class="hint">${t("window.flows.chw.code-once")}</p>`}`;
 }
 
+/* Who answers: the owner's Trunks, the default one chosen, never a brand-voiced "Branch" (owner rule). Routing a chat,
+   group or topic to another Trunk is set later under "Who answers here". */
+function whoAnswers() {
+  const trunks = E.trunks ?? [], home = trunks.find((tr) => tr.id === E.defaultTrunkId)?.id ?? trunks[0]?.id;
+  if (!trunks.length) return `<small>${t("window.flows.chw.default-answers")}</small>`;
+  return trunks.map((tr) => `<button type="button" data-act="chw-who" data-v="${esc(tr.id)}" aria-pressed="${tr.id === home}">${esc(tr.name)}${tr.id === E.defaultTrunkId ? ` · ${t("window.flows.chw.default-trunk")}` : ""}</button>`).join("");
+}
+
 function save(c, w) {
-  const who = [...E.trunks.map((tr) => tr.name), "Branch"].map((n, i, all) => `<button type="button" data-act="chw-who" aria-pressed="${i === all.length - 1}">${esc(n)}</button>`).join("");
+  const who = whoAnswers();
   const may = [t("window.flows.chw.only-me"), t("window.flows.chw.approved"), t("window.flows.chw.workspace")].map((l, i) => `<button type="button" aria-pressed="${i === 0}" data-act="chw-may">${l}</button>`).join("");
   /* Telegram always keeps forum topics apart (src/channels/telegram.ts topicAddress) and always passes photos and files on
      to the task; the engine has no switch for either, so both are drawn on and greyed. */
   const tg = c.id === "telegram" ? `<div class="tg15"><div class="ctl"><b>${t("window.flows.chw.topics")}</b><input class="sw" type="checkbox" id="tg-topics15" checked aria-label="${t("window.flows.chw.topics")}" data-sw="set"><small>${t("window.flows.chw.topics-hint")}</small></div><div class="ctl"><b>${t("window.flows.chw.media")}</b><input class="sw" type="checkbox" id="tg-media15" checked aria-label="${t("window.flows.chw.media")}" data-sw="set"><small>${t("window.flows.chw.media-hint")}</small></div></div>` : ""; // state: both are how the Telegram adapter always works
   return `<div class="chw-ok12">${ic("check", "s")}<span><b>${t("window.flows.chw.ready", { name: esc(c.name) })}</b><small>${t("window.flows.chw.choose")}</small></span></div>
     <div class="fld"><span>${t("window.flows.chw.who-answers", { name: esc(c.name) })}</span><span class="seg">${who}</span></div>
-    <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.no-answer")}</small></div>${tg}${w?.connected ? manage17d(c, w.health) : ""}`; // pass 17 part D §8: the app's own page
+    <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.no-answer")}</small></div>${tg}${w?.result ? liveLine(c, w.result) : ""}${w?.connected ? manage17d(c, w.health) : ""}${c.setUpHere ? `<div class="acts"><button class="btn ghost sm" type="button" data-act="chw-remove">${t("window.flows.chw.remove", { name: esc(c.name) })}</button></div>` : ""}`; // pass 17 part D §8: the app's own page
 }
 
 const BODIES = { Create: create, Paste: paste, Check: check, Pair: pair, Save: save };
@@ -105,6 +122,7 @@ async function runCheck(w) {
     result = await api(`channel-setup/${encodeURIComponent(w.id)}/check`, { values: sent, enable: "on" });
   } catch (e) { error = e.message; }
   if (S.chw !== w || w.ask !== ask) return;
+  if (result && result.connected != null) w.recipe.setUpHere = true; // kept by the engine, so it can be disconnected here
   w.result = result;
   w.error = error;
   draw();
@@ -127,13 +145,27 @@ async function next() {
   draw();
 }
 
+/* The toast says what really happened: connected, listening for an app that posts to Branch, or saved but not connected. */
 async function finish() {
-  const name = S.chw.recipe.name;
+  const name = S.chw.recipe.name, r = S.chw.result;
   S.chw = null;
   vals = {};
   closeDlg();
   await refresh().catch(() => {});
-  toast(t("window.flows.chw.connected", { name }));
+  toast(r?.connected === false ? t("window.flows.chw.saved-not-connected", { name }) : r?.address ? t("window.flows.chw.listening", { name }) : t("window.flows.chw.connected", { name }));
+}
+
+/* Disconnects an app set up here (DELETE /api/channel-setup/<id>); what was pasted stays in the locker. */
+async function remove() {
+  const w = S.chw;
+  if (!w) return;
+  try { await api(`channel-setup/${encodeURIComponent(w.id)}`, undefined, "DELETE"); }
+  catch (error) { toast(error.message); return; }
+  S.chw = null;
+  vals = {};
+  closeDlg();
+  await refresh().catch(() => {});
+  toast(t("window.flows.chw.removed", { name: w.recipe.name }));
 }
 
 function onInput(e) {
@@ -155,9 +187,10 @@ function onInput(e) {
 }
 
 export function init() {
-  markLive(["sw:chf", "sw:code", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d"]); // the eye shows only what the owner just pasted, never a saved secret
+  markLive(["sw:chf", "sw:code", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
   on("ch-open", (el) => openChatWizard(el.dataset.v));
-  on("revfix17d", () => openChatWizard("telegram", "Paste")); // pass 17 part D §8
+  on("revfix17d", () => openChatWizard(S.chw?.id ?? "telegram", "Paste")); // pass 17 part D §8: the app whose page this is
+  on("chw-remove", () => remove());
   on("chw-next", () => next());
   on("chw-back", () => { const w = S.chw; vals = {}; w.ask = (w.ask ?? 0) + 1; w.step = Math.max(0, w.step - 1); w.error = ""; w.result = null; draw(); });
   on("chw-save", () => finish());
