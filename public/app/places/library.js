@@ -22,6 +22,7 @@ import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
 import { seasonsTab, readSeasons, initSeasons } from "./seasons.js";
+import { lockdownOn } from "../chat/approvals.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -95,7 +96,7 @@ export function draw() {
     ["seasons", "Seasons", 0]
   ];
 
-  const lockBanner = E.state.lock ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
+  const lockBanner = lockdownOn() ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
 
   let html = `<main class="main enter11" id="main">${lockBanner}<div class="scroll"><div class="place">
     <h1>${t("place.library")}</h1><p class="lede">${t("window.places.library.what-your-trunks-remember-the-documents")}</p>
