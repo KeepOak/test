@@ -129,7 +129,7 @@ test("DG-093 a Trunk's conversation offers a new conversation with it, and New c
 });
 
 test("DG-093 without Trunks a conversation's menu offers no Trunk to start with", async (t) => {
-  const { page, errors } = await signedIn(t, 1440, {}, async (app) => { await app.runtime.run({ prompt: "Plain one" }); });
+  const { page, errors } = await signedIn(t, 1440, {}, async (app) => { app.trunks.setMode("trunks", { mode: "off" }); await app.runtime.run({ prompt: "Plain one" }); });
   const row = page.locator("#side .row[data-id]").first();
   await row.waitFor();
   await row.click({ button: "right" });
@@ -194,4 +194,3 @@ test.skip("DG-094 in French the icon line speaks French", async (t) => {
   assert.equal((await page.locator('.lx-place-link[data-place="overview"]').innerText()).trim().length > 0, true);
   assert.deepEqual(errors, []);
 });
-
