@@ -302,6 +302,65 @@ test("Gotify, for real: a local Gotify server (it can only be sent to)", { skip:
   assert.ok(inbox.messages.some((m) => m.message === text), "the phone's client reads exactly what was sent");
 });
 
+// ---- Mumble: the person is a minimal Mumble client (TLS, protobuf written by hand) on the same server ----
+const varint = (value) => { const out = []; let left = BigInt(value); do { let byte = Number(left & 127n); left >>= 7n; if (left) byte |= 128; out.push(byte); } while (left); return Buffer.from(out); };
+const pbInt = (field, value) => Buffer.concat([varint(field << 3), varint(value)]);
+const pbText = (field, text) => { const bytes = Buffer.from(text, "utf8"); return Buffer.concat([varint((field << 3) | 2), varint(bytes.length), bytes]); };
+/** Reads one protobuf message into field number → values (numbers, or Buffers for length-delimited fields). */
+function pbRead(body) {
+  const fields = new Map();
+  const readVarint = (at) => { let value = 0n, shift = 0n; for (;;) { const byte = body[at++]; value |= BigInt(byte & 127) << shift; shift += 7n; if (!(byte & 128)) return [value, at]; } };
+  for (let at = 0; at < body.length;) {
+    const [key, next] = readVarint(at); at = next;
+    const field = Number(key >> 3n), wire = Number(key & 7n);
+    let value;
+    if (wire === 0) { const [v, n] = readVarint(at); value = Number(v); at = n; }
+    else if (wire === 2) { const [length, n] = readVarint(at); value = body.subarray(n, n + Number(length)); at = n + Number(length); }
+    else if (wire === 5) { value = body.readUInt32LE(at); at += 4; }
+    else if (wire === 1) { at += 8; continue; }
+    else break;
+    fields.set(field, [...(fields.get(field) ?? []), value]);
+  }
+  return fields;
+}
+const mumbleFrame = (type, body) => { const head = Buffer.alloc(6); head.writeUInt16BE(type, 0); head.writeUInt32BE(body.length, 2); return Buffer.concat([head, body]); };
+async function mumblePerson({ host, port }, name) {
+  // Accepting the server's self-signed certificate is what a Mumble client does on first connecting.
+  const socket = tlsConnect({ host, port, rejectUnauthorized: false });
+  await opened(socket, "secureConnect");
+  const users = new Map(), texts = [];
+  let buffer = Buffer.alloc(0);
+  socket.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    while (buffer.length >= 6 && buffer.length >= 6 + buffer.readUInt32BE(2)) {
+      const type = buffer.readUInt16BE(0), body = buffer.subarray(6, 6 + buffer.readUInt32BE(2));
+      buffer = buffer.subarray(6 + body.length);
+      const fields = pbRead(body);
+      if (type === 9 && fields.has(3)) users.set(fields.get(3)[0].toString("utf8"), fields.get(1)?.[0]);
+      if (type === 11) texts.push(fields.get(5)?.[0]?.toString("utf8") ?? "");
+    }
+  });
+  socket.write(mumbleFrame(0, Buffer.concat([pbInt(1, 0x010500), pbText(2, "real-chat person"), pbText(3, "test")])));
+  socket.write(mumbleFrame(2, Buffer.concat([pbText(1, name), pbInt(5, 1)])));
+  const ping = setInterval(() => socket.write(mumbleFrame(3, pbInt(1, Date.now()))), 5000);
+  socket.on("close", () => clearInterval(ping));
+  return { socket, users, texts, say: (session, text) => socket.write(mumbleFrame(11, Buffer.concat([pbInt(2, session), pbText(5, text)]))) };
+}
+const htmlText = (value) => value.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  .replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+test("Mumble, for real: a local Mumble server", { skip: state.servers.mumble ? false : notRunning("Mumble") }, async (t) => {
+  const server = state.servers.mumble;
+  const context = await engine(t);
+  saveParitySwitches(context.app.store, context.app.runtime.owner, { mumble: "on" }, ["mumble"]);
+  const run = Date.now() % 100000, bot = `branch${run}`;
+  await connect(context.app, { type: "mumble", id: "mumble", server: server.host, port: server.port, username: bot, allowSelfSigned: true,
+    activation: "mention", pairing: true, allowlist: [] }, {});
+  const person = await mumblePerson(server, `sam${run}`);
+  t.after(() => person.socket.destroy());
+  const session = await until(() => person.users.get(bot), "Mumble: the assistant is on the server");
+  await ownerWalk(context, { label: "Mumble", heard: () => person.texts.map(htmlText), say: async (text) => person.say(session, text) });
+});
+
 // ---- Every other app: why it is not tested for real ----
 for (const [app, reason] of Object.entries(SKIPPED)) test(`${app}, for real`, { skip: reason }, () => undefined);
 test("every app in the setup catalog is either tested for real or says why not", async () => {

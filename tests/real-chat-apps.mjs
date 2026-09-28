@@ -11,6 +11,7 @@ export const LOCAL = {
   email: "GreenMail 2.1.14 (one Java jar, 11 MB) SMTP 127.0.0.1:13025 and IMAP 127.0.0.1:13143",
   mqtt: "Mosquitto (apt, under 1 MB) in the BranchCI WSL distro on 127.0.0.1:11883",
   ntfy: "ntfy 2.28.0 (one Go binary, 30 MB; its server does not run on Windows) in the BranchCI WSL distro on 127.0.0.1:18090",
+  mumble: "Mumble server 1.5 (apt, 7.5 MB with its libraries) in the BranchCI WSL distro on 127.0.0.1:16473, its own self-signed certificate",
   gotify: "Gotify 3.1.1 (one Go binary, 12 MB) on 127.0.0.1:18080; send-only, so the walk is a delivery the person's client reads",
 };
 const account = (what) => `needs ${what}; there is no local or sandbox server for it`;
@@ -61,7 +62,6 @@ export const SKIPPED = {
   "qq-bot": account("a QQ bot registration"),
   guilded: account("a Guilded bot token"),
   revolt: "a local Revolt server is a Docker install of several services (over the 100 MB limit without asking)",
-  mumble: "a local Mumble server is possible (apt mumble-server, a few MB) but is not in this harness yet",
   kook: account("a KOOK bot token"),
   "wechat-mp": account("a WeChat Official Account"),
   "wecom-app": account("a WeCom organisation and self-built app"),

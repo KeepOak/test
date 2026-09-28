@@ -24,7 +24,7 @@ const home = process.env.BRANCH_REAL_CHAT_HOME
 const distro = process.env.BRANCH_REAL_CHAT_WSL ?? "BranchCI";
 const inWsl = "/opt/branch-real-chat";
 const stateFile = process.env.BRANCH_REAL_CHAT_STATE ?? join(home, "state.json");
-const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167, mqtt: 11883, gotify: 18080, ntfy: 18090 };
+const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167, mqtt: 11883, gotify: 18080, ntfy: 18090, mumble: 16473 };
 const registrationToken = "branch-real-chat-local";
 const downloads = {
   ergo: { file: "ergo-2.19.1-windows-x86_64.zip", sha256: "5397fac56f7110839aac2d8ab436279eb2a00dddfcc07032605b423e85ea40b6",
@@ -221,6 +221,24 @@ async function ntfyUp() {
   await listening(ports.ntfy, "ntfy");
   return { state: { base: `http://127.0.0.1:${ports.ntfy}` } };
 }
+/** Mumble: the apt server (7.5 MB with its libraries), loopback only, its own self-signed certificate, no Ice. */
+async function mumbleUp() {
+  aptInstall("mumble-server", "mumble-server");
+  const config = `; Branch real-chat harness: a throwaway Mumble server on this computer only.
+database=${inWsl}/mumble/mumble.sqlite
+logfile=${inWsl}/mumble/mumble.log
+host=127.0.0.1
+port=${ports.mumble}
+users=10
+bonjour=false
+ice=
+welcometext=
+`;
+  wsl(`set -e; mkdir -p ${inWsl}/mumble; cat > ${inWsl}/mumble/mumble.ini; chown -R mumble-server ${inWsl}/mumble
+setsid -f runuser -u mumble-server -- mumble-server -ini ${inWsl}/mumble/mumble.ini -fg > /dev/null 2>&1 < /dev/null`, config);
+  await listening(ports.mumble, "Mumble");
+  return { state: { host: "127.0.0.1", port: ports.mumble } };
+}
 
 async function up() {
   mkdirSync(home, { recursive: true });
@@ -233,9 +251,9 @@ async function up() {
     }
   }
   const irc = await ircUp(), email = await emailUp(), xmpp = await xmppUp(), matrix = await matrixUp();
-  const mqtt = await mqttUp(), gotify = await gotifyUp(), ntfy = await ntfyUp();
+  const mqtt = await mqttUp(), gotify = await gotifyUp(), ntfy = await ntfyUp(), mumble = await mumbleUp();
   const state = { pids: [irc.pid, email.pid, gotify.pid], servers: { irc: irc.state, email: email.state, xmpp: xmpp.state,
-    matrix: matrix.state, mqtt: mqtt.state, gotify: gotify.state, ntfy: ntfy.state } };
+    matrix: matrix.state, mqtt: mqtt.state, gotify: gotify.state, ntfy: ntfy.state, mumble: mumble.state } };
   writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
   console.log(`Up. State in ${stateFile}. Run: node scripts/real-chat/servers.mjs test`);
 }
@@ -243,7 +261,7 @@ function down({ quiet = false } = {}) {
   const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8")) : { pids: [] };
   for (const pid of state.pids ?? []) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
   spawnSync("wsl.exe", ["-d", distro, "-u", "root", "-e", "bash", "-c",
-    `pkill -f '${inWsl}/[p]rosody.cfg.lua' ; pkill -f '[t]uwunel -c tuwunel.toml' ; pkill -f '${inWsl}/[m]osquitto.conf' ; pkill -f '[n]tfy serve --listen-http' ; true`], { windowsHide: true });
+    `pkill -f '${inWsl}/[p]rosody.cfg.lua' ; pkill -f '[t]uwunel -c tuwunel.toml' ; pkill -f '${inWsl}/[m]osquitto.conf' ; pkill -f '[n]tfy serve --listen-http' ; pkill -f '${inWsl}/mumble/[m]umble.ini' ; true`], { windowsHide: true });
   if (existsSync(stateFile)) writeFileSync(stateFile, `${JSON.stringify({ servers: {} })}\n`);
   if (!quiet) console.log("Down.");
 }

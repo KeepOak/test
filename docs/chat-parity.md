@@ -39,8 +39,9 @@ node scripts/real-chat/servers.mjs down
 ```
 
 - Every server listens on 127.0.0.1 only, with no federation and throwaway passwords that exist only there.
-- Downloads come to about 95 MB in all, each checked against a pinned SHA-256: Ergo 7 MB, GreenMail 11 MB,
-  tuwunel 32 MB, ntfy 30 MB, Gotify 12 MB, and Prosody and Mosquitto about 3 MB together from apt.
+- Downloads come to about 103 MB in all, no single one over 32 MB, each checked against a pinned SHA-256: Ergo 7 MB, GreenMail 11 MB,
+  tuwunel 32 MB, ntfy 30 MB, Gotify 12 MB, and from apt Prosody and Mosquitto about 3 MB and the Mumble server
+  7.5 MB with its libraries.
 - Java 11 or later must already be installed for GreenMail; the script does not download it.
 - CI has no servers, so there the real walks are skipped with a reason. The check that every catalog app has
   either a real test or a reason still runs in CI, and so does the check that this table is current.
@@ -52,7 +53,7 @@ node scripts/real-chat/servers.mjs down
 
 <!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
 
-7 of 56 apps are tested for real; every other one says why not.
+8 of 56 apps are tested for real; every other one says why not.
 
 | App | Result | Server, or why not |
 | --- | --- | --- |
@@ -108,7 +109,7 @@ node scripts/real-chat/servers.mjs down
 | QQ (official bot) | Skipped | needs a QQ bot registration; there is no local or sandbox server for it |
 | Guilded | Skipped | needs a Guilded bot token; there is no local or sandbox server for it |
 | Revolt (Stoat) | Skipped | a local Revolt server is a Docker install of several services (over the 100 MB limit without asking) |
-| Mumble | Skipped | a local Mumble server is possible (apt mumble-server, a few MB) but is not in this harness yet |
+| Mumble | **Real-tested** | Mumble server 1.5 (apt, 7.5 MB with its libraries) in the BranchCI WSL distro on 127.0.0.1:16473, its own self-signed certificate |
 | KOOK | Skipped | needs a KOOK bot token; there is no local or sandbox server for it |
 | WeChat Official Account | Skipped | needs a WeChat Official Account; there is no local or sandbox server for it |
 | WeCom app | Skipped | needs a WeCom organisation and self-built app; there is no local or sandbox server for it |
