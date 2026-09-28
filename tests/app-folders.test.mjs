@@ -104,7 +104,8 @@ test("the switch script waits for this window, switches in one rename, starts th
   assert.match(text, /set "BRANCH_NEW_EXE=C:\\P\\Branch 100%%\\app-2\.0\.0\\Branch Agent\.exe"/);
   assert.ok(at(/^move \/y ".*current\.rollback\.json" ".*current\.json"/) > at(/ExecutablePath/), "a new version that never came up is ended, then the pointer goes back");
   assert.ok(at(/^move \/y ".*f\.draft" ".*f\.json"/) > 0, "and the old version is told why");
-  assert.match(lines.at(-6) ?? "", /^start "" ".*app-1\.0\.0\\Branch Agent\.exe"$/, "and the old version is started again");
+  const restart = lines.findLastIndex((line) => /^start "" ".*app-1\.0\.0\\Branch Agent\.exe"$/.test(line));
+  assert.ok(restart > at(/^move \/y ".*f\.draft"/) && restart < at(/^:done$/), "and the old version is started again");
   assert.match(windowsSwitchScript(plan("C:\\P", { minimized: true })), /app-2\.0\.0\\Branch Agent\.exe" --start-minimized/, "a window that was in the tray comes back in the tray");
   assert.match(windowsSwitchScript(plan("C:\\P", { rollback: null })), /del \/q "C:\\P\\current\.json"/, "going back to a flat copy removes the pointer");
 });
