@@ -494,6 +494,27 @@ const namesNoModel = (preset: Pick<ModelPreset, "model"> & { provider?: { name: 
   unnamedModels.has(preset.model) || preset.provider?.name === mixtureProviderName
   || /^(cli-agent|app-server|retired):/.test(preset.provider?.name ?? "");
 /** Dogfood B18: the first system message, with the line that says which model and connection are answering. */
+/**
+ * selfdev (SELF-314): a task carried on after a restart starts again with a fresh catalog, and a model that had loaded
+ * its tools by name (tools.describe) would find its next call "not offered". So the carried-on task starts with the
+ * tools its conversation had been calling or had named, newest last, at most 24; only ones this task is offered.
+ */
+export function carriedOnTools(store: Pick<Store, "events">, runId: string, messages: readonly Message[],
+  tools: readonly { name: string }[], hidden: ReadonlySet<string> | readonly string[]): { name: string; reason: string }[] {
+  const resumed = store.events(runId).find((event) => event.kind === "run.started")?.data.resumedFrom;
+  if (typeof resumed !== "string") return [];
+  const offered = new Set(tools.map((tool) => tool.name)), off = new Set(hidden);
+  const lastSeen = new Map<string, number>(); // each name at its newest mention
+  let at = 0;
+  for (const message of messages) for (const call of message.toolCalls ?? []) {
+    let named: unknown[] = [];
+    if (call.name === "tools.describe") try { named = (JSON.parse(call.arguments) as { names?: unknown[] }).names ?? []; } catch { /* not a list */ }
+    for (const name of [call.name, ...named]) if (typeof name === "string") lastSeen.set(name, at++);
+  }
+  const newestLast = [...lastSeen.entries()].sort((a, b) => a[1] - b[1]).map(([name]) => name);
+  return newestLast.filter((name) => offered.has(name) && !off.has(name)).slice(-24)
+    .map((name) => ({ name, reason: "used before Branch was restarted" }));
+}
 export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset, "name" | "model"> & { provider?: { name: string } }): Message[] {
   const first = messages[0];
   if (first?.role !== "system") return messages;
@@ -2958,6 +2979,9 @@ ${run.output.slice(0, 6000)}`;
       // nothing about the request ever leaves this computer.
       ...this.meaningOption(run.id),
     });
+    // selfdev (SELF-314): a task carried on after a restart has its tools loaded again, as it had named them.
+    const carried = carriedOnTools(this.store, run.id, messages, tools, switched.hidden).map((entry) => entry.name);
+    if (carried.length) catalog.describe(carried);
     this.catalogs.set(run.id, catalog);
     // Only the owner's own task, read from what the task recorded at its start, never from whoever is at the window
     // now: never a household person's (or one in a conversation lent from them), a short-lived key's, a chat app's or
