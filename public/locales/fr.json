@@ -10057,5 +10057,8 @@
   "window.places.library17.import-spreadsheet": "Importer une feuille de calcul",
   "window.places.library17.import-spreadsheet-hint": "Choisissez un fichier CSV, TSV, JSON ou Excel. Branch le garde dans la Bibliothèque et prépare une question SELECT que vous pouvez lancer.",
   "window.places.library17.import-spreadsheet-limit": "Choisissez une feuille de calcul de moins de 8 Mo.",
-  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau."
+  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau.",
+  "window.shell.simple.label": "Vue simple",
+  "window.shell.simple.on": "Vue simple : masquer les outils de développement",
+  "window.shell.simple.off": "Revenir à votre espace de travail complet"
 }
