@@ -13,6 +13,7 @@ import { startServer } from "../dist/server.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
 import { setMode } from "../dist/accounts/manage.js";
+import { gselChoices, pickGsel } from "./gsel.mjs";
 
 test("Codex's model is picked in Settings › Models › Connections, saved in the engine and kept after a reload", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-codex-picker-"));
@@ -35,20 +36,20 @@ test("Codex's model is picked in Settings › Models › Connections, saved in t
     await page.locator('#side [data-act="view"][data-v="settings"]').first().click();
     await page.locator('[data-act="setpage"][data-v="models"]').click();
     await page.locator('[data-act="mtab"][data-v="connections"]').click();
-    await page.waitForSelector("#m-codex:not([disabled])", { timeout: 30000 });
+    await page.waitForSelector("#m-codex:not(.soon)", { timeout: 30000 });
   };
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await open();
   const picker = page.locator("#m-codex");
-  assert.equal(await picker.inputValue(), "", "starts on the best it takes");
-  assert.deepEqual(await picker.locator("option").evaluateAll((os) => os.map((o) => o.value)), ["", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5"]);
-  await picker.selectOption("gpt-5.5");
+  assert.equal(await picker.getAttribute("value"), "", "starts on the best it takes");
+  assert.deepEqual((await gselChoices(picker)).map((c) => c.value), ["", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5"]);
+  await pickGsel(picker, "gpt-5.5");
   for (let i = 0; i < 100 && (await call("/api/codex-models")).chosen !== "gpt-5.5"; i++) await new Promise((r) => setTimeout(r, 100));
   assert.equal((await call("/api/codex-models")).inUse, "gpt-5.5");
   await page.reload();
   await open();
-  assert.equal(await page.locator("#m-codex").inputValue(), "gpt-5.5");
+  assert.equal(await page.locator("#m-codex").getAttribute("value"), "gpt-5.5");
   assert.deepEqual(errors, []);
 });

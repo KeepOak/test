@@ -5,6 +5,7 @@
    (flows/localpick.js): what Ollama and LM Studio have, the engine's pick for this hardware, its three sizes, and one
    click that installs, downloads with progress, connects and selects. */
 import { esc, renderNow } from "../../core/dom.js";
+import { gsel } from "../../core/gsel.js";
 import { level, E, ownerHere, refresh } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -35,10 +36,9 @@ async function loadCodex() {
 function codexRow() {
   if (!codex) return "";
   const title = t("window.settings.models.codex-model"), cur = codex.chosen ?? "";
-  const opts = codex.offered.map((m) => `<option value="${esc(m)}" ${m === cur ? "selected" : ""}>${esc(m)}</option>`).join("");
-  const best = `<option value="" ${cur ? "" : "selected"}>${esc(t("window.settings.models.codex-best", { model: codex.offered[0] ?? codex.inUse }))}</option>`;
+  const options = [["", t("window.settings.models.codex-best", { model: codex.offered[0] ?? codex.inUse })], ...codex.offered.map((m) => [m, m])];
   const checked = codex.checkedAt ? t("window.settings.models.codex-checked", { when: new Date(codex.checkedAt).toLocaleString(), version: codex.version ?? "" }) : t("window.settings.models.codex-unchecked");
-  const select = ownerHere() ? `<select class="inp" id="m-codex" aria-label="${esc(title)}">${best}${opts}</select>` : "";
+  const select = ownerHere() ? gsel({ id: "m-codex", label: title, options, value: cur }) : "";
   return `<div class="ctl codex-model"><b>${esc(title)}</b><span class="right">${select}<button class="btn sm ghost" type="button" data-act="m-codex-check" ${ownerOnly()}>${t("window.settings.models.codex-check")}</button></span><small>${esc(checked)}</small></div>`;
 }
 async function setCodexModel(el) {
