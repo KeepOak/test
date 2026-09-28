@@ -8435,6 +8435,8 @@
   "window.settings.gateway.the-gateway-is-off": "Das Gateway ist aus",
   "window.settings.gateway.the-gateway-is-off-so-a": "Das Gateway ist aus, eine gestoppte Engine bleibt also gestoppt",
   "window.settings.gateway.the-gateway-is-on": "Das Gateway ist an",
+  "window.settings.gateway.the-gateway-is-switched-on": "Das Gateway ist eingeschaltet, läuft aber noch nicht",
+  "window.settings.gateway.switched-on-takes-over-next-start": "Es übernimmt beim nächsten Start von Branch. Bis dahin startet nichts die Engine neu, wenn sie stoppt, und deine Trunks halten an, wenn du Branch schließt.",
   "window.settings.gateway.the-gateway-is-when-needed": "Das Gateway läuft bei Bedarf",
   "window.settings.gateway.tried-on-a-test-gateway-passed": "An einem Test-Gateway getestet · bestanden",
   "window.settings.gateway.what-it-has-been-doing": "Was es getan hat",

@@ -8436,6 +8436,8 @@
   "window.settings.gateway.the-gateway-is-off": "La passerelle est désactivée",
   "window.settings.gateway.the-gateway-is-off-so-a": "La passerelle est désactivée, donc un moteur arrêté le reste",
   "window.settings.gateway.the-gateway-is-on": "La passerelle est activée",
+  "window.settings.gateway.the-gateway-is-switched-on": "La passerelle est activée, mais ne tourne pas encore",
+  "window.settings.gateway.switched-on-takes-over-next-start": "Elle prend le relais au prochain démarrage de Branch. D’ici là, rien ne relance le moteur s’il s’arrête, et vos Trunks s’arrêtent quand vous fermez Branch.",
   "window.settings.gateway.the-gateway-is-when-needed": "La passerelle démarre au besoin",
   "window.settings.gateway.tried-on-a-test-gateway-passed": "Essayée sur une passerelle de test · réussi",
   "window.settings.gateway.what-it-has-been-doing": "Ce qu’elle a fait",
