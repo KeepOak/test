@@ -183,6 +183,9 @@ async function createWindow(
     show: false,
     icon: branchIcon(),
     autoHideMenuBar: true,
+    // Started in the tray, the page stays hidden until the window is first shown: otherwise it counts as visible and
+    // draws, decodes its loops and holds its tiles for a window nobody can see.
+    paintWhenInitiallyHidden: !startsMinimized(process.argv),
     webPreferences: {
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       nodeIntegration: false,

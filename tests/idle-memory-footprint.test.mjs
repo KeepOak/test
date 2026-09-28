@@ -49,6 +49,13 @@ test("the engine loads Playwright only when a browser is started or joined", () 
   assert.equal(loaded.includes("package:playwright-core"), false);
 });
 
+test("a window started in the tray does not draw until it is first shown", () => {
+  // Electron counts a window that was never shown as visible (paintWhenInitiallyHidden), so a tray start drew, decoded
+  // its loops and held its tiles for nobody: 390 MB instead of 774 MB working set when it does not.
+  const main = readFileSync(resolve(dist, "desktop/main.js"), "utf8");
+  assert.match(main, /paintWhenInitiallyHidden: !startsMinimized\(process\.argv\)/);
+});
+
 test("comments are not shipped in the built code, where V8 would keep them with each module's source", () => {
   const { compilerOptions } = JSON.parse(readFileSync(resolve(root, "tsconfig.json"), "utf8"));
   assert.equal(compilerOptions.removeComments, true);
