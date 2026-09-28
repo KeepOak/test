@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { _electron } from "playwright";
-import { backToConversation, connected, desktopOptions, offScreen, onboarded, openSettingsPage, send, taskDone, tokenNotExposed } from "./fixtures/desktop-options.mjs";
+import { backToConversation, connected, desktopOptions, offScreen, onboarded, openSettingsPage, send, taskDone, tokenNotExposed, STARTUP_MS } from "./fixtures/desktop-options.mjs";
 
 /* Redesign: the old window's identity form (Assistant name, Working instructions, Save identity) is gone. The prototype
    names the assistant in Settings › Instructions & personality instead: IDENTITY.md, "Its name and how it introduces
@@ -20,7 +20,7 @@ test("native identity settings survive restart and apply to a new task without e
   const { home, options } = await desktopOptions({ hidden: true });
   const first = await _electron.launch(options);
   try {
-    const page = await first.firstWindow();
+    const page = await first.firstWindow({ timeout: STARTUP_MS });
     await onboarded(page);
     await offScreen(first, "opened");
     await (await openIdentityFile(page)).fill(IDENTITY);
@@ -30,7 +30,7 @@ test("native identity settings survive restart and apply to a new task without e
   } finally { await first.close(); }
   const second = await _electron.launch(options);
   try {
-    const page = await second.firstWindow();
+    const page = await second.firstWindow({ timeout: STARTUP_MS });
     await connected(page);
     await offScreen(second, "restarted");
     assert.equal(await (await openIdentityFile(page)).inputValue(), IDENTITY);
