@@ -395,6 +395,7 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .status{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:14px;background:var(--raise);border:1px solid var(--line)}
 .status .sdot{width:10px;height:10px;border-radius:50%;background:var(--ok);margin-top:6px;flex:none;box-shadow:0 0 0 4px var(--ok-tint)}
 .status .sdot.bad{background:var(--bad);box-shadow:0 0 0 4px var(--bad-tint)}
+.status .sdot.warn{background:var(--warn);box-shadow:0 0 0 4px var(--warn-tint)}
 .status b{display:block;font-weight:600}
 .status p{margin:2px 0 0;color:var(--ink-2);font-size:13.5px}
 .sec{margin-top:26px}

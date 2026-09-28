@@ -8399,6 +8399,8 @@
   "window.settings.gateway.the-gateway-is-off": "La pasarela está desactivada",
   "window.settings.gateway.the-gateway-is-off-so-a": "La pasarela está desactivada, así que un motor detenido sigue detenido",
   "window.settings.gateway.the-gateway-is-on": "La pasarela está activada",
+  "window.settings.gateway.the-gateway-is-switched-on": "La pasarela está activada, pero aún no funciona",
+  "window.settings.gateway.switched-on-takes-over-next-start": "Se encarga la próxima vez que Branch arranque. Hasta entonces nada reinicia el motor si se detiene, y tus Trunks se paran al cerrar Branch.",
   "window.settings.gateway.the-gateway-is-when-needed": "La pasarela está en «cuando haga falta»",
   "window.settings.gateway.tried-on-a-test-gateway-passed": "Probado en una pasarela de prueba · superado",
   "window.settings.gateway.what-it-has-been-doing": "Lo que ha estado haciendo",

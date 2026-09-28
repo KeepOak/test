@@ -8399,6 +8399,8 @@
   "window.settings.gateway.the-gateway-is-off": "The gateway is off",
   "window.settings.gateway.the-gateway-is-off-so-a": "The gateway is off, so a stopped engine stays stopped",
   "window.settings.gateway.the-gateway-is-on": "The gateway is on",
+  "window.settings.gateway.the-gateway-is-switched-on": "The gateway is switched on, not running yet",
+  "window.settings.gateway.switched-on-takes-over-next-start": "It takes over the next time Branch starts. Until then nothing starts the engine again if it stops, and your Trunks stop when you close Branch.",
   "window.settings.gateway.the-gateway-is-when-needed": "The gateway is when-needed",
   "window.settings.gateway.tried-on-a-test-gateway-passed": "Tried on a test gateway · passed",
   "window.settings.gateway.what-it-has-been-doing": "What it has been doing",
