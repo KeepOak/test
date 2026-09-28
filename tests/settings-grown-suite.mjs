@@ -262,8 +262,12 @@ test("S13 Appearance: light and dark pictures of the window, each wearing its lo
     await f.page.locator(`.set-col .mirrors [data-act="themeset"][data-v="${mode}"]`).click();
     await f.page.waitForFunction((value) => document.documentElement.dataset.theme === value, mode);
     await f.page.locator(`.set-col .mirrors [data-act="themeset"][data-v="${mode}"][aria-pressed="true"]`).waitFor();
-    // The engine names the two looks by their themes: Daylight, and Forest for the dark one.
-    assert.equal((await f.call("/api/state")).preferences.appearance, mode === "light" ? "daylight" : "forest", "the engine keeps the choice");
+    // The engine names the two looks by their themes: Daylight, and Forest for the dark one. The window wears the look at
+    // once and saves it after, so the engine is asked until the save has landed (seen read before it on Linux CI).
+    const want = mode === "light" ? "daylight" : "forest";
+    let kept = null;
+    for (let i = 0; i < 100 && kept !== want; i++) { kept = (await f.call("/api/state")).preferences.appearance; if (kept !== want) await f.page.waitForTimeout(50); }
+    assert.equal(kept, want, "the engine keeps the choice");
   }
   assert.equal(await f.page.locator(".set-col .mirrors #prompt, .set-col .mirrors iframe").count(), 0, "the pictures are drawings, not copies of the window");
   assert.deepEqual(f.errors, []);
