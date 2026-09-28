@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -172,6 +173,25 @@ test("input wakes the window and the open conversation's face at once, gently", 
   assert.match(await page.locator(".hero11 video").getAttribute("src"), /anim-idle/, "Branch, whose conversation is open, wakes");
   assert.ok(await playing(page) > 0, "loops play again");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a Trunk whose conversation is not open sleeps on");
+  assert.deepEqual(errors, []);
+});
+
+test("the first press wakes the window and still opens the conversation it pressed", async (t) => {
+  const { page, errors, trunks } = await fixture(t);
+  const row = page.locator(`#side .row[data-id="${trunks.Ledger.chatSessionId}"]`);
+  const box = await row.boundingBox();
+  assert.ok(box);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.clock.fastForward(10 * MIN + 5000);
+  await waitFor(page, () => document.documentElement.classList.contains("still18"));
+  await page.evaluate(() => addEventListener("pointerdown", (event) => {
+    window.sleepPressedTarget = event.target.closest(".row");
+  }, { capture: true, once: true }));
+  await page.mouse.down();
+  assert.equal(await page.evaluate(() => window.sleepPressedTarget?.isConnected), true, "waking keeps the pressed row until its click");
+  await page.mouse.up();
+  await waitInPage(page, async (id) => (await import("/app/core/state.js")).S.chat === id,
+    trunks.Ledger.chatSessionId, { timeout: 5000 });
   assert.deepEqual(errors, []);
 });
 
