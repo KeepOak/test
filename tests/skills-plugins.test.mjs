@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { crc32 } from "node:zlib";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -250,6 +251,9 @@ test("a plugin adds nothing until the owner switches it on, and its tool is stil
   const { app, api, dataDir } = await fixture(t);
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "example.mjs"), pluginSource());
+  await writeFile(join(dataDir, "plugins", "example.plugin.json"), JSON.stringify({ id: "example", name: "Example plugin",
+    description: "Repeats what it is told.", permissions: ["files.read"],
+    tools: [{ name: "plugin.example.echo", description: "Repeat a word.", permission: "files.read" }], hooks: ["run.finished"] }));
   await writeFile(join(dataDir, "plugins", "greedy.mjs"), pluginSource("shell.execute").replace('id: "example"', 'id: "greedy"').replaceAll("plugin.example.echo", "plugin.greedy.echo"));
   const listed = await api("plugins");
   assert.deepEqual(listed.plugins.map((plugin) => [plugin.id, plugin.enabled]).sort(), [["example", false], ["greedy", false]]);
@@ -289,6 +293,33 @@ test("suggestions come from the words in recent tasks and never switch anything 
   assert.ok(suggestions[0].matched.includes("invoices"));
   assert.equal(app.store.skills.view("local", invoices.id).activeVersion, null, "a suggestion never switches a skill on");
 });
+
+test("inspecting a plugin reads its manifest and never runs its code; switching it on does", async (t) => {
+  const { app, api, dataDir } = await fixture(t);
+  const folder = join(dataDir, "plugins"), marker = join(dataDir, "ran.txt");
+  await mkdir(folder, { recursive: true });
+  const code = (id, permissions) => `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, ${JSON.stringify(id)});
+export default { id: ${JSON.stringify(id)}, name: "Marker", permissions: ${JSON.stringify(permissions)},
+  tools: [{ name: "plugin.${id}.look", description: "look", permission: "files.read", run: async () => "looked" },
+    { name: "plugin.${id}.shell", description: "shell", permission: "shell.execute", run: async () => "ran a shell" }] };
+`;
+  await writeFile(join(folder, "marker.mjs"), code("marker", ["files.read", "shell.execute"]));
+  await writeFile(join(folder, "marker.plugin.json"), JSON.stringify({ id: "marker", name: "Marker", permissions: ["files.read"] }));
+  await writeFile(join(folder, "bare.mjs"), code("bare", ["files.read"]));
+  const shown = await api("plugins/marker/inspect", {});
+  assert.deepEqual([shown.manifest, shown.permissions], [true, ["files.read"]], "what the manifest says");
+  const bare = await api("plugins/bare/inspect", {});
+  assert.equal(bare.manifest, false);
+  assert.match(bare.leftOut[0], /no manifest/);
+  assert.equal(existsSync(marker), false, "looking at either plugin ran none of its code");
+  const on = await api("plugins/marker/enable", {});
+  assert.equal(readFileSync(marker, "utf8"), "marker", "switching it on is what runs it");
+  assert.ok(app.registry.names().includes("plugin.marker.look"));
+  assert.ok(!app.registry.names().includes("plugin.marker.shell"), "a permission the manifest did not list is never granted");
+  assert.ok(on.leftOut.some((line) => /plugin\.marker\.shell/.test(line)));
+});
+
 
 test("a skill package's hooks fire only while its skill is switched on", async (t) => {
   const { app, api } = await fixture(t);
