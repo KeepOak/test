@@ -256,6 +256,11 @@ export interface BackgroundResult { childRunId: string; parentRunId: string; sta
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
+/**
+ * selfdev: a signed-in subscription (Claude Code, Codex) is not billed per token and its models write long edits, so
+ * its replies start at 8,192 tokens and may grow to 32,768 when one is cut off; a billed or local model keeps the above.
+ */
+const signInReplyCeiling = 8192, signInMaxReplyCeiling = 32768;
 /** mac7/coding-next: how long a model on this computer is silent before the person is told it may be loading. */
 const localQuietMs = 10_000;
 /** What the model is told after a reply that was all thinking: act on it now. */
@@ -497,6 +502,22 @@ export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset,
     : `The model answering now is ${preset.model}, through the connection "${preset.name}".`;
   const line = `\n\n${who} If asked which model you are, say so.`;
   return [{ ...first, content: first.content + line }, ...messages.slice(1)];
+}
+/**
+ * selfdev/prompt-cache: a model service serves a request's front from its prompt cache only while it is byte for byte
+ * what the round before sent. Branch adds some notes partway through a conversation (the task's checklist and the
+ * project's rules, fresh every round; the @ material), and most connections gather every instruction into one block
+ * at the very start, so a note that changed each round changed the front of every request and nothing after it could
+ * be read from the cache. A note partway through is sent where it stands instead, as Branch's own note in the
+ * conversation, so the standing instructions at the start stay the same for the whole task.
+ */
+export function notesInPlace(messages: Message[]): Message[] {
+  const start = messages.findIndex((message) => message.role !== "system");
+  if (start < 0 || !messages.some((message, at) => at > start && message.role === "system")) return messages;
+  return messages.map((message, at): Message => at > start && message.role === "system"
+    ? { role: "user", from: "branch", content: `<system-reminder>
+${message.content}
+</system-reminder>` } : message);
 }
 const summaryMessage = (summary: string): Message => ({ role: "system", content: `Earlier in this conversation (compacted summary):\n${summary}` });
 const compactionInstructions = "Summarize the conversation below for a handoff to yourself. Reply with JSON only: {\"goals\":[\"what we are trying to do\"],\"decisions\":[\"what was settled, with the turn it was settled in\"],\"instructions\":[\"what the person told you to always or never do, in their own words\"],\"todos\":[\"what is still to be done, in order\"],\"openQuestions\":[\"what is still unanswered\"],\"filesTouched\":[\"paths that were read or changed\"]}. Be concrete, keep identifiers and paths exactly, and use at most eight short entries per list. Keep every decision and instruction from an earlier summary.";
@@ -2926,7 +2947,7 @@ ${run.output.slice(0, 6000)}`;
       // owner's Settings switch that would put them back. Under it they read as absent rather than
       // as "here but switched off — tell the person they can switch it on", which would be wrong.
       nameHidden: !lockdownActive(this.store, context.owner),
-      budgetTokens: this.reliability.toolBudgetTokens,
+      budgetTokens: this.toolBudgetFor(),
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),
       noteOf: (name) => notes.get(name) ?? "",
@@ -3068,6 +3089,23 @@ ${run.output.slice(0, 6000)}`;
    * (what its service refused before, what the connection reports, else where it runs; src/model-context.ts). Never
    * more than the room a model on this computer was really given for this run (Provider.contextTokens).
    */
+  /**
+   * selfdev: the tool section's ceiling. A signed-in subscription (Claude Code, Codex) calls only the tools its list
+   * holds, costs nothing more per token and has a large window, so it holds more of Branch's tools in full (4% of its
+   * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
+   * billed per token, and a model on this computer, keep the launch figure.
+   */
+  /** selfdev: where a reply's token ceiling starts and how far it may grow, by the kind of connection. */
+  private replyCeiling(preset: ModelPreset): { base: number; max: number } {
+    return !presetRunsLocally(preset) && isSignInConnection(preset) ? { base: signInReplyCeiling, max: signInMaxReplyCeiling }
+      : { base: baseReplyCeiling, max: maxReplyCeiling };
+  }
+  private toolBudgetFor(): number {
+    const base = this.reliability.toolBudgetTokens;
+    const chosen = this.models.presets.get(this.models.summary(this.owner).defaultPreset);
+    if (!chosen || presetRunsLocally(chosen) || !isSignInConnection(chosen)) return base;
+    return Math.max(base, Math.min(12_000, Math.floor(this.contextWindowFor(chosen) * 0.04)));
+  }
   contextWindowFor(preset?: ModelPreset, runId?: string): number {
     const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
     const local = chosen ? presetRunsLocally(chosen) : false;
@@ -3277,8 +3315,8 @@ ${run.output.slice(0, 6000)}`;
         if (outage.back) this.store.event(run.id, outage.back, { preset: preset.id }); // long-work
         return answered;
       } catch (error) {
-        const ceiling = this.replyCeilings.get(run.id) ?? baseReplyCeiling;
-        if (isOutOfRoomThinking(error) && ceiling < maxReplyCeiling && !context.signal.aborted) {
+        const ceiling = this.replyCeilings.get(run.id) ?? this.replyCeiling(preset).base;
+        if (isOutOfRoomThinking(error) && ceiling < this.replyCeiling(preset).max && !context.signal.aborted) {
           this.replyCeilings.set(run.id, ceiling * 2);
           this.store.event(run.id, "model.ceiling_raised", { from: ceiling, to: ceiling * 2 });
           retriesUsed = -1;
@@ -3443,7 +3481,7 @@ ${run.output.slice(0, 6000)}`;
     // written down as an attempt, so a round that never reached the provider really does cost
     // nothing — in the inspector and in the figures alike. The step count still applies, so a task
     // cannot go round for ever on kept answers.
-    const maxTokens = Math.min(this.replyCeilings.get(run.id) ?? baseReplyCeiling, Math.max(0, context.budget.remaining() - input));
+    const maxTokens = Math.min(this.replyCeilings.get(run.id) ?? this.replyCeiling(preset).base, Math.max(0, context.budget.remaining() - input));
     const cacheKey: CacheKeyParts = {
       provider: preset.provider.name, model: preset.model, reasoning: reasoning ?? null, maxTokens,
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
@@ -3472,7 +3510,7 @@ ${run.output.slice(0, 6000)}`;
       this.models.requests.record(preset.id);
       // mac2/leak-guard: the copy that is sent has key-shaped values hidden; `messages` stays as it was.
       // mac7/r17-g: the sent copy is also tidied (orphaned results, missing ones, repeats) when the owner asks.
-      const request = { messages: this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages)), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
+      const request = { messages: notesInPlace(this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages))), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
         ...knobs.serviceTierFor(this.store, this.owner), // R17-S12
         ...savings.requestExtras(this.store, this.owner, preset, !context.permissions.size), // R17-045 / R17-046
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
@@ -3745,7 +3783,7 @@ ${run.output.slice(0, 6000)}`;
   ownerFullAccessFor(context: ToolContext, direct = false): string | null {
     const run = this.store.run(context.runId), caller = currentCaller();
     if (!run || run.owner !== this.owner || !this.store.ownsSession(this.owner, run.sessionId)
-      || context.owner !== this.owner || context.trunk || context.trunkKeys || context.isolated || context.dryRun
+      || context.owner !== this.owner || context.trunk || context.isolated || context.dryRun
       || (direct && (context.depth !== 0 || context.agent)) || this.fullAccessLocked()
       || !this.store.profiles.isOwner() || currentPerson() || throughPairedDoor() || startedWithShortLivedKey()
       || caller.throughDoor || caller.household || caller.appLocked || !["owner-here", "system"].includes(caller.kind)
@@ -3757,8 +3795,26 @@ ${run.output.slice(0, 6000)}`;
     const rootId = this.fullAccessRoot(run.id, context);
     const root = rootId ? this.store.run(rootId) : null;
     if (!root || readConversationMode(this.store, this.owner, root.sessionId)?.mode !== "full") return null;
+    // selfdev: a Trunk's keys mean a Trunk's turn; only the owner's designated default Trunk (their own assistant) keeps the owner's mode.
+    if (context.trunkKeys && !this.ownersDefaultRoot(root.id)) return null;
     return `${this.owner} (Full Access in conversation ${root.sessionId})`;
   }
+  /** selfdev: the task's root ran as the owner's designated default Trunk, in its own (not a room's) conversation, checked now. */
+  private ownersDefaultRoot(rootId: string): boolean {
+    const root = this.store.run(rootId);
+    const turn = this.store.events(rootId).find((event) => event.kind === "trunk.turn")?.data.trunkId;
+    return !!root && typeof turn === "string" && this.ownersDefaultIn(root.sessionId, turn);
+  }
+  /** selfdev: whether the task behind this context is the owner's own turn through their default Trunk; false when no Trunk is involved. */
+  ownersDefaultTurn(context: ToolContext): boolean {
+    if (!context.trunkKeys || context.trunk) return false;
+    const seen = new Set<string>();
+    let id = context.runId;
+    for (let parent = this.parentOf(id); parent && !seen.has(parent) && seen.size < 20; parent = this.parentOf(parent)) { seen.add(parent); id = parent; }
+    return this.ownersDefaultRoot(id);
+  }
+  /** Bound by Trunks (src/trunks/index.ts); absent wiring fails closed. */
+  ownersDefaultIn: (sessionId: string, trunkId: string) => boolean = () => false;
   /** Bound to the actual App lock after it is created; absent wiring fails closed. */
   fullAccessLocked: () => boolean = () => true;
   /**
@@ -4182,7 +4238,9 @@ ${run.output.slice(0, 6000)}`;
     const patternNo = decision === "deny" ? null : this.patternRefusal(call, context); // eng-trunk-controls
     if (patternNo) return { refusal: { ok: false, error: patternNo }, ...held };
     const aside = decision === "deny" ? null
-      : this.offPlanQuestion(context, { label, target, readOnly }) ?? this.retriedCommandQuestion(call, args, context)
+      : this.offPlanQuestion(context, { label, target, readOnly })
+        // selfdev (owner ruling 09-27): the owner's selected Full Access never asks, so a corrected command just runs.
+        ?? (this.ownerFullAccessFor(context) !== null ? null : this.retriedCommandQuestion(call, args, context))
         ?? this.patternAside(call, context); // eng-trunk-controls
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
@@ -4697,9 +4755,11 @@ ${run.output.slice(0, 6000)}`;
     // one can honour the owner's rule without knowing anything about the policy.
     // wave mac3 (os-sandbox, integration review): the wall comes only from wallContextFor below, never
     // from whatever context this call was handed, so an outer wall (and its key sites) cannot ride along.
-    const { osSandbox: _outerWall, ...unwalled } = context;
+    const { osSandbox: _outerWall, ownerFullAccess: _outerAccess, ...unwalled } = context;
     // Q250: a model's own call is always held to read-before-edit, whatever context it was started from.
     const scoped: ToolContext = { ...unwalled, askable: true, readFirstExempt: false, signal: AbortSignal.any([context.signal, timeout]),
+      // selfdev: the owner's selected Full Access reaches a held command too: the network, never wider writes.
+      ...(call.name === "shell.execute" && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
       ...(gated.sandbox ? { sandbox: gated.sandbox } : {}),
       ...(gated.backend ? { sandboxBackend: gated.backend } : {}),
       ...(gated.paths?.length ? { sandboxPaths: gated.paths } : {}),

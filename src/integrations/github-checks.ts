@@ -1,7 +1,7 @@
 type Request = (method: string, path: string) => Promise<unknown>;
 type Row = Record<string, unknown>;
 type Page = { total_count?: unknown; check_runs?: unknown; statuses?: unknown; sha?: unknown };
-export type GitHubCheck = { name: string; status: string; result: string; address: string };
+export type GitHubCheck = { id: number; source: "check" | "status"; appId: number | null; name: string; status: string; result: string; address: string };
 export type GitHubChecks = {
   repository: string; ref: string; sha: string; checks: GitHubCheck[]; complete: boolean;
   allPassed: boolean; requiredChecksVerified: false; summary: string;
@@ -41,12 +41,15 @@ async function pages(request: Request, path: string, key: "check_runs" | "status
 }
 
 function check(row: Row): GitHubCheck {
-  return { name: String(row.name ?? "").slice(0, 120), status: String(row.status ?? ""),
+  const app = row.app as Row | undefined;
+  return { id: row.id as number, source: "check", appId: Number.isSafeInteger(app?.id) ? app!.id as number : null,
+    name: String(row.name ?? "").slice(0, 120), status: String(row.status ?? ""),
     result: String(row.conclusion ?? "still going"), address: String(row.details_url ?? "") };
 }
 function status(row: Row): GitHubCheck {
   const state = String(row.state ?? "");
-  return { name: String(row.context ?? "").slice(0, 120), status: state === "pending" ? "in_progress" : "completed",
+  return { id: row.id as number, source: "status", appId: null,
+    name: String(row.context ?? "").slice(0, 120), status: state === "pending" ? "in_progress" : "completed",
     result: state, address: String(row.target_url ?? "") };
 }
 

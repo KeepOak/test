@@ -10822,3 +10822,54 @@ applock GET /api/workspace-editor/save | here=423/a8f863
 applock POST /api/workspace-editor/save | here=423/a8f863
 applock GET /api/workspace-editor/settings | here=423/a8f863
 applock POST /api/workspace-editor/settings | here=423/a8f863
+# 681aee Lockdown is on, so Branch does not work on its own source: nothing is prepared, changed, widened or sent. Turn Lockdown off in Settings to allow this again.
+owner GET /api/self-development/merge | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/runner | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/runner | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/review | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/review | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/approve | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/approve | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/finish | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/finish | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/runner | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/runner | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/review | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/review | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/approve | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/approve | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/finish | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/finish | here=403/681aee remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+household GET /api/self-development/merge | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/self-development/merge/runner | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/runner | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/self-development/merge/review | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/review | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/self-development/merge/approve | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/approve | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/self-development/merge/finish | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/finish | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/runner | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/runner | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/review | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/review | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/approve | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/approve | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/finish | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/finish | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+applock GET /api/self-development/merge | here=423/a8f863
+applock POST /api/self-development/merge | here=423/a8f863
+applock GET /api/self-development/merge/runner | here=423/a8f863
+applock POST /api/self-development/merge/runner | here=423/a8f863
+applock GET /api/self-development/merge/review | here=423/a8f863
+applock POST /api/self-development/merge/review | here=423/a8f863
+applock GET /api/self-development/merge/approve | here=423/a8f863
+applock POST /api/self-development/merge/approve | here=423/a8f863
+applock GET /api/self-development/merge/finish | here=423/a8f863
+applock POST /api/self-development/merge/finish | here=423/a8f863
