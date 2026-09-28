@@ -175,7 +175,12 @@ export const accountHomeVariables: Record<string, string> = {
 export interface AccountHome { name: string; path: string }
 /** The program said it has reached its plan's limit. */
 export class ProgramLimitError extends Error { override name = "ProgramLimitError"; }
-const limitWords = /usage limit|rate limit|limit reached|quota exceeded|exceeded your (?:current )?quota|too many requests/i;
+// QA retest 2026-09-28 pass 2: Claude Code at its weekly cap says "You've hit your weekly limit · resets 5am (America/New_York)",
+// which none of these words matched, so the owner was told to check the program's setup and no other account was tried.
+const limitWords = /usage limit|rate limit|limit reached|quota exceeded|exceeded your (?:current )?quota|too many requests|hit your (?:[\w-]+ )?limit|\b(?:weekly|daily|monthly|session|5-hour) limit/i;
+/** When the program said its limit resets, in the only shape repeated back: a clock time and, if given, a time zone name. */
+const resetsAt = (evidence: string): string | null =>
+  /\bresets? (?:at )?(\d{1,2}(?::\d{2})?\s?(?:am|pm)(?: \([A-Za-z_]+(?:\/[A-Za-z_]+){0,2}\))?)/i.exec(evidence)?.[1] ?? null;
 
 /** Explicit failed protocol events, never ordinary answer text discussing an error. */
 function failedResult(row: CliAgentRow, stdout: string): string | null {
@@ -203,8 +208,10 @@ function programFailure(row: CliAgentRow, code: number, evidence: string): strin
     return `${row.name} is set to use a model this sign-in cannot use. Choose another model in ${row.command}'s own settings, then retry the task.`;
   if (/\b401\b|unauthori[sz]ed|authentication (?:required|failed)|not (?:logged|signed) in|(?:oauth|access|refresh) token.*(?:expired|invalid)|invalid.*(?:oauth|access|refresh) token/i.test(evidence))
     return `${row.name} could not use its saved sign-in. Open Settings → Accounts and sign in again to ${row.name}, then retry the task.`;
-  if (limitWords.test(evidence))
-    return `${row.name} has reached its plan limit. Wait for the limit to reset or choose another account or model.`;
+  if (limitWords.test(evidence)) {
+    const when = resetsAt(evidence);
+    return `${row.name} has reached its plan limit${when ? `; it resets at ${when}` : ""}. Wait for the limit to reset or choose another account or model.`;
+  }
   return `${row.name} could not finish the task (exit code ${code}). Run ${row.command} in a terminal to check its setup, then retry or choose another model.`;
 }
 // ---- end mac6/accounts ----
