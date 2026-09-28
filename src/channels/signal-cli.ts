@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { createInterface, type Interface } from "node:readline";
 import { z } from "zod";
+import { ReactionAnswers } from "./reaction-answers.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
 
@@ -29,12 +30,17 @@ export interface SignalOptions {
   /** Checks the program is there; tests replace it so no real program is needed. */
   exists?: (path: string) => Promise<boolean>;
 }
+/** signal-cli's answer to one of Branch's own requests: a send says the timestamp that names the message it made. */
+const resultSchema = z.object({ id: z.union([z.number(), z.string()]), result: z.object({ timestamp: z.number() }).passthrough() }).passthrough();
 const envelopeSchema = z.object({
   method: z.string().optional(),
   params: z.object({
     envelope: z.object({
       source: z.string().optional(), sourceName: z.string().optional(), timestamp: z.number().optional(),
-      dataMessage: z.object({ message: z.string().optional(), groupInfo: z.object({ groupId: z.string().optional() }).passthrough().optional() }).passthrough().optional(),
+      dataMessage: z.object({ message: z.string().optional(), groupInfo: z.object({ groupId: z.string().optional() }).passthrough().optional(),
+        reaction: z.object({ emoji: z.string().max(40).optional(), targetAuthor: z.string().optional(), targetAuthorNumber: z.string().optional(),
+          targetSentTimestamp: z.number().optional(), isRemove: z.boolean().optional() }).passthrough().optional(),
+      }).passthrough().optional(),
     }).passthrough().optional(),
   }).passthrough().optional(),
 }).passthrough();
@@ -75,6 +81,13 @@ export class SignalAdapter implements ChannelAdapter {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   /** Signal takes files up to 100 MB; Branch writes each one inline on a single line, so it keeps well under that. */
   readonly maxFileBytes = 50 * 1024 * 1024;
+  /** When each of Branch's sends was made (signal-cli's timestamp), by the request id `send` returned. */
+  private readonly sentAt = new Map<string, number>();
+  /** Questions a 👍 / 👎 reaction may answer, by the question's send request id (src/channels/reaction-answers.ts). */
+  private readonly answers = new ReactionAnswers();
+  watchAnswers(chatId: string, messageId: string, senderId: string, fingerprint: string): void {
+    this.answers.watch(messageId, chatId, senderId, fingerprint);
+  }
   constructor(private readonly options: SignalOptions) { this.id = options.id; }
   botName(): string | null { return this.options.account; }
   health(): ChannelHealth { return this.state; }
@@ -104,9 +117,17 @@ export class SignalAdapter implements ChannelAdapter {
     this.child = undefined;
   }
   private inbound(line: string): InboundMessage | null {
-    let parsed: z.infer<typeof envelopeSchema>;
-    try { parsed = envelopeSchema.parse(JSON.parse(line)); } catch { return null; }
+    let parsed: z.infer<typeof envelopeSchema>, raw: unknown;
+    try { raw = JSON.parse(line); parsed = envelopeSchema.parse(raw); } catch { return null; }
+    const result = resultSchema.safeParse(raw);
+    if (result.success) {
+      this.sentAt.set(String(result.data.id), result.data.result.timestamp);
+      while (this.sentAt.size > 200) this.sentAt.delete(this.sentAt.keys().next().value!);
+      return null;
+    }
     const envelope = parsed.params?.envelope;
+    const reaction = envelope?.dataMessage?.reaction;
+    if (reaction) return this.answer(envelope, reaction);
     const text = envelope?.dataMessage?.message ?? "";
     const files = attachmentsOf(envelope?.dataMessage);
     if (!envelope?.source || (!text && !files.length)) return null;
@@ -176,6 +197,20 @@ export class SignalAdapter implements ChannelAdapter {
     if (audio.byteLength > this.maxFileBytes) throw new Error("That spoken reply is larger than the 50 MB Branch sends through Signal");
     const extension = /ogg|opus/.test(mediaType) ? "ogg" : /mpeg|mp3/.test(mediaType) ? "mp3" : /wav/.test(mediaType) ? "wav" : "m4a";
     return this.write(chatId, "", [`data:${mimeOf(mediaType)};filename=reply.${extension};base64,${Buffer.from(audio).toString("base64")}`], true);
+  }
+  /** A reaction on one of Branch's own questions (sent by this account, at that timestamp), by the person it asked. */
+  private answer(envelope: { source?: string | undefined; sourceName?: string | undefined; timestamp?: number | undefined;
+    dataMessage?: { groupInfo?: { groupId?: string | undefined } | undefined } | undefined },
+  reaction: { emoji?: string | undefined; targetAuthor?: string | undefined; targetAuthorNumber?: string | undefined;
+    targetSentTimestamp?: number | undefined; isRemove?: boolean | undefined }): InboundMessage | null {
+    const author = reaction.targetAuthorNumber ?? reaction.targetAuthor;
+    if (!envelope.source || reaction.isRemove || author !== this.options.account || reaction.targetSentTimestamp === undefined) return null;
+    const request = [...this.sentAt].find(([, at]) => at === reaction.targetSentTimestamp)?.[0];
+    const group = envelope.dataMessage?.groupInfo?.groupId, chatId = group ?? envelope.source;
+    const said = request ? this.answers.read(request, chatId, envelope.source, reaction.emoji ?? "") : null;
+    return said ? { channel: this.id, chatId, chatKind: group ? "group" : "direct", ...(group ? { chatTitle: `group ${group.slice(0, 12)}` } : {}),
+      senderId: envelope.source, senderName: envelope.sourceName ?? envelope.source, text: said, addressed: true,
+      messageId: String(envelope.timestamp ?? Date.now()) } : null;
   }
   async send(chatId: string, text: string): Promise<string | undefined> {
     return this.write(chatId, text.slice(0, this.maxTextLength));
