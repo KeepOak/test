@@ -9,9 +9,15 @@ test("Settings controls stay inside the resized desktop sidebar", async (t) => {
   for (const viewport of [900, 1100, 1440]) {
     await page.setViewportSize({ width: viewport, height: 1100 });
     for (const width of [232, 270, 336]) {
-      await page.evaluate((width) => {
-        document.getElementById("body").style.setProperty("--side-w", `${width}px`);
+      // Seed the window's saved width; a normal engine draw restores it over any CSS-only override.
+      await page.evaluate(async (width) => {
+        const { S } = await import("/app/core/state.js");
+        S.sideW = width;
+        const { renderNow } = await import("/app/core/dom.js");
+        renderNow();
       }, width);
+      // Exercise another redraw before measuring, so live refresh cannot invalidate the fixture.
+      await page.evaluate(async () => (await import("/app/core/dom.js")).renderNow());
       const measured = await page.evaluate(() => {
         const nav = document.querySelector(".set-nav"), bounds = nav.getBoundingClientRect();
         return { width: bounds.width, overflow: nav.scrollWidth - nav.clientWidth,
