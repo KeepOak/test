@@ -52,6 +52,14 @@ const ownCommandTerms = {
   warning: "Branch cannot know this program's terms. Check that its maker allows it to be run by another app.",
 };
 
+/**
+ * models-ui (owner, DOGFOOD C2): what a Claude subscription answers with when nothing else was chosen: Opus 5.5 at
+ * medium effort. Only Branch's own default moves; a model the connection names, and an effort the owner picked (per
+ * conversation, per connection in Settings › Models, or Branch-wide), still come first (src/models.ts plan).
+ */
+export const claudeDefaultModel = "claude-opus-5-5";
+export const claudeDefaultEffort = "medium" as const;
+
 /** The coding assistants Branch knows the command line of. Data, not code: correct it and move on. */
 export const cliAgentCatalog: CliAgentRow[] = [
   // Anthropic lets a person sign in to its unmodified Claude Code program with their own plan, and
@@ -556,11 +564,13 @@ export function rowFor(input: unknown): CliAgentRow {
  * offered, never made the one in use: the owner picks it the same way as any other connection.
  */
 export function registerCliAgent(
-  models: { register(preset: { id: string; name: string; provider: Provider; model: string }): void },
+  models: { register(preset: { id: string; name: string; provider: Provider; model: string; reasoning?: typeof claudeDefaultEffort }): void },
   input: unknown, limits: CliAgentLimits = {}, spawnAgent: SpawnAgent = runCliAgent,
 ): { id: string; name: string; note: string; terms: CliAgentRow["terms"] } {
   const row = rowFor(input);
   const id = `cli-${row.id}`;
-  models.register({ id, name: row.name, provider: new CliAgentProvider(row, limits, spawnAgent), model: row.command });
+  const claude = row.id === "claude-code";
+  models.register({ id, name: row.name, provider: new CliAgentProvider(row, limits, spawnAgent), model: claude ? claudeDefaultModel : row.command,
+    ...(claude ? { reasoning: claudeDefaultEffort } : {}) });
   return { id, name: row.name, note: row.note, terms: row.terms };
 }
