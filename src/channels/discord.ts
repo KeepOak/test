@@ -365,6 +365,28 @@ export class DiscordAdapter implements ChannelAdapter {
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
     return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio }, replyToMessageId);
   }
+  /** The live browser in a chat: an attachment with buttons, then the same message's attachment replaced. */
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    return this.pictureMessage("POST", `/channels/${encodeURIComponent(chatId)}/messages`, file, buttons,
+      replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {});
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string }[]): Promise<void> {
+    await this.pictureMessage("PATCH", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`, file, buttons, {});
+  }
+  private async pictureMessage(method: "POST" | "PATCH", path: string, file: OutgoingFile, buttons: { label: string; value: string }[],
+    extra: Record<string, unknown>): Promise<string | undefined> {
+    const wait = this.readyAt - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
+    const form = new FormData();
+    form.append("payload_json", JSON.stringify({ content: (file.caption ?? "").slice(0, this.maxTextLength),
+      attachments: [{ id: 0, filename: file.name }], components: buttons.length ? DiscordAdapter.components(buttons) : [], ...extra }));
+    form.append("files[0]", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    const response = await this.fetch(`${this.base}${path}`, { method, headers: this.headers(), body: form, signal: AbortSignal.timeout(60000) });
+    this.noteLimits(response);
+    if (!response.ok) throw new Error(`Discord refused the picture (${response.status})`);
+    const parsed = z.object({ id: z.string() }).passthrough().safeParse(await response.json().catch(() => ({})));
+    return parsed.success ? parsed.data.id : undefined;
+  }
   /** "typing…" for about ten seconds; the router asks again while the task works. */
   async sendTyping(chatId: string): Promise<void> {
     await this.rest("POST", `/channels/${encodeURIComponent(chatId)}/typing`);
