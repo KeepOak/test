@@ -16,11 +16,18 @@ import type { Store } from "./store.js";
  * deliberate: a mistake here must be able to lock out a script, and never the owner.
  */
 export const tokenScopes = ["read", "run"] as const;
-export type TokenScope = (typeof tokenScopes)[number];
+/**
+ * "a2a" is never offered to `branch token create`: it is the key a pairing link carries (src/a2a-client.ts), and it
+ * reaches exactly the door another assistant uses, POST /a2a and the card at GET /.well-known/agent.json.
+ */
+export type TokenScope = (typeof tokenScopes)[number] | "a2a";
+/** How long a key handed out in a pairing link works for. Pairing again makes a new one. */
+export const pairingKeyDays = 30;
 
 export const scopeDescriptions: Record<TokenScope, string> = {
   read: "May look at things only. It cannot start a task or change a setting.",
   run: "May look at things and start a task, but cannot change what Branch is allowed to do.",
+  a2a: "May only hand this assistant a task the way another assistant does, and read its card.",
 };
 
 export const TokenRequestSchema = z.object({
@@ -78,12 +85,22 @@ export class SessionTokens {
   /** Makes one key. The text is handed back once and never stored; only its hash is kept. */
   create(owner: string, input: unknown = {}): IssuedToken {
     const value = TokenRequestSchema.parse(input ?? {});
+    return this.issue(owner, { name: value.name, scope: value.scope, minutes: value.minutes, sessionId: value.sessionId ?? null });
+  }
+  /**
+   * The key a pairing link carries: it reaches only the assistant-to-assistant door, stops working after
+   * `pairingKeyDays`, and is listed and taken back like any other short-lived key. Never the master key.
+   */
+  createPairingKey(owner: string): IssuedToken {
+    return this.issue(owner, { name: "An assistant paired by link", scope: "a2a", minutes: pairingKeyDays * 24 * 60, sessionId: null });
+  }
+  private issue(owner: string, value: { name: string; scope: TokenScope; minutes: number; sessionId: string | null }): IssuedToken {
     const token = prefix + randomBytes(24).toString("hex");
     const id = randomBytes(8).toString("hex"), now = new Date();
     const entry: TokenEntry = {
       id, name: value.name, scope: value.scope, createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + value.minutes * 60_000).toISOString(),
-      revokedAt: null, lastUsedAt: null, uses: 0, sessionId: value.sessionId ?? null,
+      revokedAt: null, lastUsedAt: null, uses: 0, sessionId: value.sessionId,
     };
     this.db.prepare("INSERT INTO session_tokens(id,owner,name,scope,hash,created_at,expires_at,session_id) VALUES(?,?,?,?,?,?,?,?)")
       .run(id, owner, entry.name, entry.scope, digest(token), entry.createdAt, entry.expiresAt, entry.sessionId);
@@ -163,10 +180,16 @@ export class SessionTokens {
   }
 }
 
+/** What a pairing key is told anywhere but the assistant-to-assistant door. */
+export const a2aKeyRefusal = "That key only lets another assistant hand this one a task. It reaches nothing else.";
+function a2aKeyReaches(use: TokenUse): boolean {
+  return (use.method === "POST" && use.path === "/a2a") || (use.method === "GET" && use.path === "/.well-known/agent.json");
+}
 /** What a read key is told when it asks for anything but a look. */
 export const readKeyRefusal = "That key may only look at things. Make one with --scope run to start a task.";
 /** What each scope may not do, in one sentence the holder of the key can act on. */
 export function scopeRefusal(scope: TokenScope, use: TokenUse): string | null {
+  if (scope === "a2a") return a2aKeyReaches(use) ? null : a2aKeyRefusal;
   if (scope === "read" && use.method !== "GET")
     return readKeyRefusal;
   if (scope === "run") return null;
