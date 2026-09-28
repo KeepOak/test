@@ -13,6 +13,7 @@
      + menu, the @ list's other computers and material, and Room left's Round by round and Tidy up (/compact).
    Branch from here and More are chat/branches.js and chat/more.js (pass 17). */
 
+import { withBlanksFilled } from "../flows/whatcan.js";
 import { $, esc, render, renderNow, afterDraw } from "../core/dom.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
@@ -224,7 +225,9 @@ async function inspect(el) {
   const last = rec.rounds?.at(-1);
   const rows = [[t("coding.ci.model"), last?.model], [t("window.chat.msg.words"), last?.promptTokens != null ? contextWords(last.promptTokens) : ""], ...readRows(rec),
     [t("window.chat.msg.time"), rec.seconds != null ? t("window.chat.msg.seconds", { n: rec.seconds }) : ""], [t("window.chat.msg.timing"), timingLine(rec.timing)],
-    [t("window.chat.msg.cost"), rec.cost?.display]].filter(([, v]) => v);
+    [t("window.chat.msg.cost"), rec.cost?.display],
+    /* models-ui: the second opinion's note (Settings › Models › Second opinion), kept beside the answer, never in it. */
+    [t("window.chat.msg.second-opinion"), rec.advice?.line]].filter(([, v]) => v);
   const steps = (await loadSteps(runId))?.steps?.length ?? 0;
   if (steps) rows.push([t("window.chat.msg.steps"), t("window.chat.msg.steps-in", { count: steps })]);
   M.record = rec;
@@ -514,10 +517,13 @@ async function usePrompt(el) {
   const got = await api("prompts").catch(report);
   const p = (got?.prompts ?? []).find((x) => x.id === el.dataset.v || x.command === el.dataset.v);
   if (!p) return;
-  S.view = "chat";
-  S.drafts[S.chat ?? "new"] = p.body;
-  renderNow();
-  $("#prompt")?.focus();
+  // QA retest 2026-09-28 (m16): its blanks are asked for first, as What can Branch do's Try it asks them.
+  withBlanksFilled(p.title ?? "", p.body, (text) => {
+    S.view = "chat";
+    S.drafts[S.chat ?? "new"] = text;
+    renderNow();
+    $("#prompt")?.focus();
+  });
 }
 
 export function initMessages(context) {
