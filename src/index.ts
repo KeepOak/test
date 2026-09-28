@@ -145,6 +145,7 @@ import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
 import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
+import { registerTrunkMemoryFiles } from "./trunks/memory-files.js"; // workbench (SELF-311)
 import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.js"; // selfdev (SELF-303)
 import { askForHandoffs, registerLeadUsage } from "./lead-usage.js"; // workbench (SELF-307)
 import { openWork } from "./open-work.js"; // workbench (SELF-307)
@@ -1381,6 +1382,7 @@ ${result.output || "(it said nothing)"}`;
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  registerTrunkMemoryFiles(registry, store, trunks); // workbench (SELF-311): a Trunk's own memory files
   // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
   trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
