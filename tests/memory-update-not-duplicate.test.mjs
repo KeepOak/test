@@ -115,7 +115,10 @@ test("a start date is kept only when the owner's words name that year; a day is 
   const { withSaidStart } = await import("../dist/memory.js");
   assert.deepEqual(withSaidStart({ text: "x", validFrom: "2023-10-01" }, "Update where I live: I moved to Denver."), { text: "x" }, "a made-up date is dropped");
   assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01" }, "Remember: I lived in Paris from 2019."), { text: "x", validFrom: "2019-05-01T00:00:00.000Z" });
-  assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01T10:00:00Z" }, "since May 2019"), { text: "x", validFrom: "2019-05-01T10:00:00Z" });
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01T10:00:00Z" }, "since May 2019"), { text: "x", validFrom: "2019-05-01T10:00:00.000Z" });
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "now" }, "Remember: I live in Atlanta."), { text: "x" }, "\"now\" is taken as now");
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01T14:29:00-04:00" }, "in 2019"), { text: "x", validFrom: "2019-05-01T18:29:00.000Z" }, "an offset is read");
+  assert.deepEqual(detail({ text: "Denver", entity: "person", attribute: "currentCity" }, {}), { entity: "me", attribute: "home" }, "camelCase");
   // qwen2.5:7b's own call: a day nobody said. It used to be refused ("validFrom is not in the right format") until the loop
   // guard stopped it, and nothing was saved; now the move is saved and ends Atlanta.
   const { app, current } = await branch(t, [{ entity: "owner", text: "I live in Atlanta.", source: "owner" },

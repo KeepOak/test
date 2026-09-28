@@ -93,8 +93,11 @@ export const PutMemorySchema = z.object({
   source: z.string().trim().min(1).max(500).optional(),
   entity: z.string().trim().min(1).max(120).optional(),
   attribute: z.string().trim().min(1).max(80).optional(),
-  /** SELF-202: a day ("2026-09-28") is taken as well as a moment; qwen2.5:7b wrote days, and every save was refused. */
-  validFrom: z.union([z.iso.datetime(), z.iso.date()]).optional(),
+  /**
+   * SELF-202: any short text, read by withSaidStart. qwen2.5:7b wrote days ("2026-09-28"), moments with an offset, and
+   * "now"; each was refused, and sometimes the model gave up, so nothing was remembered.
+   */
+  validFrom: z.string().trim().max(40).optional(),
   scope: z.enum(["private", "shared"]).optional(),
   /** What kind of thing this is. A task-scratch note is cleared when the job that made it ends. */
   kind: FactKindSchema.optional(),
@@ -686,8 +689,10 @@ export function withSaidStart<T extends { validFrom?: string | undefined }>(valu
   if (!value.validFrom) return value;
   const { validFrom: said, ...rest } = value;
   const year = /^(\d{4})-/.exec(said)?.[1];
-  if (!year || !request?.includes(year)) return rest as T;
-  return { ...rest, validFrom: /^\d{4}-\d{2}-\d{2}$/.test(said) ? `${said}T00:00:00.000Z` : said } as T;
+  const when = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(said) ? `${said}T00:00:00.000Z` : said);
+  // Unreadable ("now"), or a year the words never named: the fact is kept, from now.
+  if (!year || Number.isNaN(when) || !request?.includes(year)) return rest as T;
+  return { ...rest, validFrom: new Date(when).toISOString() } as T;
 }
 /** The detail the owner's own request names, clause by clause ("Remember: I live in Atlanta."), when the fact shares a word with it. */
 function detailFromRequest(request: string | undefined, text: string): { entity?: string; attribute?: string } {
@@ -742,7 +747,7 @@ const attributeAliases: Readonly<Record<string, string>> = {
 };
 /** SELF-202: an attribute as it is compared: lower case, "_" and "-" as spaces, and a leading "current", "the" or "my" left off. */
 function plainAttribute(attribute: string): string {
-  return attribute.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").replace(/^(?:(?:current|present|the|my)\s+)+/, "");
+  return attribute.trim().replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").replace(/^(?:(?:current|present|the|my)\s+)+/, "");
 }
 /**
  * The person is one entity however a model names them ("owner", "user", "me"), and a few details go by several names
