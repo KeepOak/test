@@ -1,4 +1,10 @@
 {
+  "window.what.server-config": "Konfiguration des Tool-Servers",
+  "window.what.server-config-hint": "Verbinde dieses Beispiel unter Anpassen → Werkzeuge → Konnektoren, bevor du den Prompt ausprobierst. Diese Konfiguration nutzt den Beispielserver, der in dieser Kopie von Branch enthalten ist.",
+  "window.what.fill-blanks": "Fülle zuerst den Prompt aus. Branch legt ihn in eine neue Unterhaltung, damit du ihn vor dem Senden prüfen kannst.",
+  "window.what.your-text": "Dein Text",
+  "window.what.prepare-draft": "Entwurf vorbereiten",
+  "window.what.fill-required": "Fülle jedes Feld aus, bevor du den Entwurf vorbereitest.",
   "window.chat-command.title": "Befehle aus deinem eigenen Chat",
   "window.chat-command.on": "Deine ausgewählten gekoppelten Konten können Befehle anfordern. Jeder genaue Befehl fragt zuerst.",
   "window.chat-command.off": "Aus. Befehle aus Chats warten auf Freigabe im Branch-Fenster.",
