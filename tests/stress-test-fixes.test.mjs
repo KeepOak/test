@@ -123,8 +123,8 @@ test("B003 and B004: greyed controls say why, steps in plain words", async () =>
 
 test("B008 window: a Trunk's picker greys sign-in connections, and a message is held back with its words kept", async () => {
   const trunk = await read("public/app/flows/trunk.js");
-  assert.match(trunk, /\$\{trunkCanUse\(p\) \? "" : "disabled"\}/);
-  assert.match(trunk, /<select class="inp" id="tm-model-sel"/, "the window's ordinary select, not a floating grid");
+  assert.match(trunk, /\[p\.id, p\.name, !trunkCanUse\(p\)\]/);
+  assert.match(trunk, /gsel\(\{ id: "tm-model-sel"/, "the window's own dropdown (core/gsel.js), not a floating grid");
   const chips = await read("public/app/chat/chips.js");
   assert.match(chips, /\$\{trunk && !trunkCanUse\(x\) \? " disabled" : ""\}/);
   const chat = await read("public/app/chat/chat.js");

@@ -163,3 +163,54 @@ test('a dispatched tab effect reconciles during transfer, but bookkeeping expire
   control.stop();
   assert.throws(() => write.closeTab(control.view().tabs[0]), /stopped/);
 });
+
+test('a task in the conversation takes the browser only when nobody drives it, and waits (never fails) while the owner has it', async () => {
+  const controls = new BrowserControls(), control = controls.ensure(binding, 'window-a');
+  controls.bindRun(binding, control.id, 'task-a', true);
+  const stop = new AbortController();
+  let turned = false;
+  const turn = control.agentTurn('task-a', stop.signal).then(() => { turned = true; });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(turned, false, 'the owner window holds it, so the step waits');
+  assert.equal(control.view().waiting, 'task-a', 'the window can offer Hand back to the waiting task');
+  await control.handBack(control.view().epoch, 'window-a', 'task-a');
+  await turn;
+  assert.deepEqual(control.view().writer, { kind: 'agent', id: 'task-a' });
+  assert.equal(control.view().waiting, null);
+  await control.takeOver(control.view().epoch, 'window-a');
+  assert.equal(control.view().paused, 'task-a', 'taking over from the task pauses it');
+  control.disconnect('window-a');
+  assert.equal(control.view().writer, null);
+  const late = control.agentTurn('task-a', stop.signal, 50);
+  await assert.rejects(late, /haven't handed it back/, 'a lapsed owner window never resumes a paused task by itself');
+  await control.handBack(control.view().epoch, 'window-b', 'task-a'); // nobody holds it: the owner's window hands back
+  await control.agentTurn('task-a', stop.signal);
+  assert.equal(control.view().paused, null);
+  controls.bindRun(binding, control.id, 'task-b', true);
+  await assert.rejects(control.agentTurn('task-b', stop.signal), /Another task/);
+  controls.finishRun(binding.owner, 'task-a');
+  await control.agentTurn('task-b', stop.signal);
+  assert.deepEqual(control.view().writer, { kind: 'agent', id: 'task-b' }, 'nobody driving: the task takes it');
+  const carrier = new AbortController();
+  controls.bindRun(binding, control.id, 'owner-command');
+  await control.agentTurn('owner-command', carrier.signal); // a run bound for one owner command gets no turn of its own
+  assert.deepEqual(control.view().writer, { kind: 'agent', id: 'task-b' });
+  await control.takeOver(control.view().epoch, 'window-a');
+  const waiting = control.agentTurn('task-b', stop.signal);
+  stop.abort(new Error('Cancelled by user'));
+  await assert.rejects(waiting, /Cancelled/);
+});
+
+test('an owner takeover of a task window starts with the task as writer, one id per open tab', async () => {
+  const controls = new BrowserControls();
+  const control = controls.adopt(binding, 'window-a', 'task-a', 3);
+  assert.equal(control.view().tabs.length, 3);
+  assert.deepEqual(control.view().writer, { kind: 'agent', id: 'task-a' });
+  assert.equal(controls.forRun(binding.owner, 'task-a'), control);
+  assert.equal(controls.forConversation(binding.owner, binding.conversation), control);
+  assert.throws(() => controls.adopt(binding, 'window-a', 'task-b', 1), /already has a Branch browser/);
+  await control.takeOver(control.view().epoch, 'window-a');
+  assert.equal(control.view().paused, 'task-a');
+  control.stop();
+  assert.equal(controls.forConversation(binding.owner, binding.conversation), null);
+});

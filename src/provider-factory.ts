@@ -14,7 +14,8 @@ import { OpenAIResponsesProvider } from "./providers/openai-responses.js";
 import { PerplexityAgentProvider } from "./providers/perplexity-agent.js";
 import { AnthropicVertexProvider } from "./providers/anthropic-vertex.js";
 import { RetiredProvider } from "./providers/retired.js";
-import { connectionFetch } from "./local-connection-policy.js";
+import { connectionFetch, ownModelOrigin } from "./local-connection-policy.js";
+import { ollamaAddress } from "./local-models.js";
 import { onOwnNetwork } from "./network-policy.js";
 
 /**
@@ -54,7 +55,7 @@ export function buildConnection(input: ConnectionInput): BuiltConnection {
   if (missing.length) throw new Error(`${entry.name} still needs: ${missing.join(", ")}`);
   if (entry.auth !== "none" && !input.key.trim())
     throw new Error(`${entry.name} needs a key before it can be used`);
-  const baseUrl = resolveBaseUrl(entry, extras);
+  const baseUrl = entry.shape === "ollama" ? ollamaBase(entry, extras) : resolveBaseUrl(entry, extras);
   assertAddressAllowed(baseUrl);
   const model = (input.model ?? entry.defaultModel).trim();
   if (!model) throw new Error(`${entry.name} needs the name of a model`);
@@ -62,6 +63,26 @@ export function buildConnection(input: ConnectionInput): BuiltConnection {
   const call = input.policy
     ? connectionFetch(input.policy, entry, baseUrl, input.fetchImpl ?? globalThis.fetch) : input.fetchImpl;
   return { entry, model, baseUrl, provider: adapterFor(entry, baseUrl, model, input.key, extras, call, input.now) };
+}
+
+/**
+ * Where a native Ollama connection talks: the address the connection was given, else BRANCH_OLLAMA_URL (on this
+ * computer only; src/local-models.ts), else the catalog's usual one (127.0.0.1:11434). The
+ * address must be this computer or the owner's own network, as for any model server the owner points at
+ * (src/local-connection-policy.ts); "/v1" is Branch's to add.
+ */
+export function ollamaBase(entry: CatalogEntry, extras: Record<string, string>): string {
+  const given = (extras.baseUrl ?? "").trim();
+  const moved = process.env.BRANCH_OLLAMA_URL;
+  const root = (given || (moved ? ollamaAddress(moved) : entry.baseUrl)).replace(/\/+$/, "").replace(/\/v1$/i, "");
+  let url: URL;
+  try { url = new URL(root); } catch { throw new Error(`${given} is not an address`); }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Ollama's address must start with http:// or https://");
+  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== ""))
+    throw new Error("Ollama's address is only its computer and port, such as http://192.168.1.20:11434");
+  if (!ownModelOrigin(entry, url.origin))
+    throw new Error(`${url.host} is not this computer or an address on your own network, so Branch does not use it for Ollama`);
+  return `${url.origin}/v1`;
 }
 
 function retiredConnection(entry: CatalogEntry, model: string | undefined): BuiltConnection {

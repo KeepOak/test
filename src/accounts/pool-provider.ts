@@ -233,7 +233,10 @@ export class AccountPoolProvider {
     }
     if (last && !limitLike(failureFor(last, this.hooks.now()), pool)) throw last;
     const on = usable.filter((account) => !account.disabled);
-    const limited = on.filter((account) => this.state(account.id).limitedUntil > this.hooks.now());
+    // An account whose limit ended while the others were tried still counts: its known reset (now past) makes the task
+    // wait a moment and ask it again, rather than end naming a later account whose reset is unknown.
+    const now = this.hooks.now(), justEnded = (state: AccountState): boolean => state.limitKnown === true && state.limitedUntil > now - 60_000;
+    const limited = on.filter((account) => this.state(account.id).limitedUntil > now || justEnded(this.state(account.id)));
     const soonest = [...limited].sort((a, b) => this.state(a.id).limitedUntil - this.state(b.id).limitedUntil)[0] ?? on[0]!;
     throw this.limitError(pool, on, soonest);
   }
