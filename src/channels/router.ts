@@ -17,7 +17,7 @@ import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } fr
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
-import { chatLiveSwitches, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
+import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
 import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAllowed, chatExtraPermissions,
   chatApprovablePermissions, standingYesInWindow,
@@ -30,6 +30,7 @@ import { platformGate } from "../reach/platform.js"; // r17-i
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
+import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -253,6 +254,7 @@ interface ChatTurnState extends ChatTurn {
   notes: TurnNote[];
   waiters: ((outcome: Outcome) => void)[];
   live: LiveStatus | null;
+  reply: ReplyStream | null;
 }
 const chatKey = (message: InboundMessage): string => `${message.channel}\u0001${message.chatId}`;
 /** One turn gathers at most this many messages, and never more words than a task may start with. */
@@ -830,10 +832,13 @@ export class ChannelRouter {
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
     const setting = this.switches().commands;
-    if (setting === "off" || message.voice) return null;
+    // As shipped, the owner's paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    const pairedDm = setting === "off" && message.chatKind === "direct" && this.pair(message.channel, message.senderId)?.status === "approved"
+      && commandsInPairedDm(this.store, this.runtime.owner);
+    if ((setting === "off" && !pairedDm) || message.voice) return null;
     // Wave mac3 (commands): which of the shared table's commands a chat may read follows the owner's switch.
     const command = parseChatCommand(message.text, commandMode(this.store, this.runtime.owner));
-    if (!command || setting === "on") return command;
+    if (!command || setting === "on" || pairedDm) return command;
     // "When needed": only the commands for a task that is working, and only while one is; and, at any time, "/new"
     // (or "/reset"), which starts a fresh thread in this chat and keeps the one before (defaulttrunk, src/channels/threads.ts).
     const busy = this.turns.has(chatKey(message));
@@ -1014,8 +1019,9 @@ export class ChannelRouter {
     const messages = followUp ? all.filter((m, index) => index === 0 || fitsTurn(all.slice(0, index), m)) : all;
     const notes = all.filter((m) => !messages.includes(m)).map((message) => ({ text: message.text, message }));
     const turn: ChatTurnState = { phase: "gathering", runId: null, startedAt: Date.now(), passed: 0, dropped: false,
-      messages, notes, waiters: [], live: null };
+      messages, notes, waiters: [], live: null, reply: null };
     turn.live = this.liveFor(first, () => turn.runId);
+    turn.reply = this.replyFor(first);
     this.turns.set(key, turn);
     turn.live?.start();
     const wait = this.gatherMs(first);
@@ -1023,7 +1029,7 @@ export class ChannelRouter {
     let outcome: Outcome = "ignored";
     try {
       // A dropped message only gets the "Dropped that" words; nothing more is shown for it.
-      if (turn.dropped) turn.live?.cancel();
+      if (turn.dropped) { turn.live?.cancel(); turn.reply?.cancel(); }
       else { turn.phase = "running"; outcome = await this.withSlot(() => this.runTurn(turn)); }
     } finally {
       this.turns.delete(key);
@@ -1056,7 +1062,11 @@ export class ChannelRouter {
       await this.deliver(message.channel, message.chatId, held, `replay-held:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
       return "ignored";
     }
-    const off = this.store.onEvent((runId, kind, data) => { if (runId === turn.runId) live?.event(kind, data); });
+    const off = this.store.onEvent((runId, kind, data) => {
+      if (runId !== turn.runId) return;
+      live?.event(kind, data);
+      if (kind === "model.started") turn.reply?.round();
+    });
     try {
       const sessionId = this.sessionFor(message.channel, message.chatId);
       // defaulttrunk: a chat with no conversation yet starts its one thread with the Trunk it is routed to.
@@ -1110,7 +1120,7 @@ export class ChannelRouter {
           if (turn.dropped) this.runtime.cancel(started.id);
           this.passNotes(turn);
         },
-        onTextDelta: (delta) => live?.text(delta), // stream so a silent model is noticed
+        onTextDelta: (delta) => turn.reply?.text(delta),
       });
       return await this.finishTurn(turn, run, heard.quoted);
     } catch (error) {
@@ -1122,6 +1132,7 @@ export class ChannelRouter {
       return "failed";
     } finally {
       off();
+      turn.reply?.cancel();
     }
   }
   /**
@@ -1163,6 +1174,7 @@ export class ChannelRouter {
     const own = run.status === "needs_input" ? this.runtime.waitingApprovals(run.sessionId).find((one) => one.runId === run.id) : undefined;
     if (own) {
       await live?.finish("done");
+      if (turn.reply) await turn.reply.finish("Waiting for your answer.");
       await this.askInChat(message, run.sessionId, own, quoted, `ask:${run.id}:${own.fingerprint ?? "none"}`);
       return "replied";
     }
@@ -1170,7 +1182,8 @@ export class ChannelRouter {
     const ok = run.status === "completed" || run.status === "needs_input";
     const steps = this.stepsLine(message, run, ok);
     const text = (steps ? `${steps}\n\n` : "") + quoted + said + (footer ? `\n\n${footer}` : "");
-    await this.sendReply(message, run.id, text, await live?.finish(ok ? "done" : "error", text) ?? null);
+    await live?.finish(ok ? "done" : "error");
+    await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null);
     if (message.voice) await this.voiceReply(message, said).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
@@ -1179,12 +1192,14 @@ export class ChannelRouter {
    * same trace even though the task itself has already settled. When the progress message already
    * became the reply, it is only written down.
    */
-  private async sendReply(message: InboundMessage, runId: string, text: string, placed: { messageId: string; text: string } | null): Promise<void> {
+  private async sendReply(message: InboundMessage, runId: string, text: string, placed: PlacedReply | null): Promise<void> {
     const span = this.runtime.tracer.startAfter(runId, "delivery", `branch.delivery ${message.channel}`, {
       "branch.channel": message.channel, "branch.delivery.characters": text.length,
     });
     if (placed) {
       this.deliveries.recordSent(message.channel, message.chatId, placed.text, `reply:${runId}`, placed.messageId, message.messageId);
+      for (const [index, part] of (placed.rest ?? []).entries())
+        await this.deliver(message.channel, message.chatId, part, `reply:${runId}:rest:${index}`, message.messageId);
       span?.end("ok", "", { "branch.delivery.queued": 0 });
       return;
     }
@@ -1209,7 +1224,7 @@ export class ChannelRouter {
   }
   /** Whether a chat may be shown typing, reactions and progress right now. */
   private liveOn(): boolean {
-    return this.liveAllowed() && !this.deliveries.holdUntil(new Date());
+    return !this.appLocked() && this.liveAllowed() && !this.deliveries.holdUntil(new Date());
   }
   private liveFor(message: InboundMessage, runOf: () => string | null = () => null): LiveStatus | null {
     const adapter = this.adapters.get(message.channel)?.adapter, switches = this.switches(), setting = switches.liveStatus;
@@ -1219,7 +1234,14 @@ export class ChannelRouter {
     // The steps name files and commands, so only a direct chat is shown them: this message already passed the sender check.
     const steps = switches.steps !== "off" && message.chatKind === "direct" ? this.stepsOf(runOf) : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
-      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group" }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps);
+      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group" }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
+  }
+  private replyFor(message: InboundMessage): ReplyStream | null {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    if (!adapter?.edit || message.chatKind !== "direct" || this.switches().liveStatus === "off" || !this.liveOn()) return null;
+    return new ReplyStream({ adapter, chatId: message.chatId, messageId: message.messageId,
+      allowed: () => this.liveOn() && this.senderAllowed(message.channel, message.senderId) },
+    (text) => this.outboundGuard(this.hideLeaks(text)), this.liveTiming.editEveryMs);
   }
   /**
    * "Show steps in chats" in an app that cannot edit a message (WhatsApp, Signal, iMessage, email…): one line above the

@@ -8,6 +8,7 @@
 import { esc } from "./dom.js";
 import { E } from "./state.js";
 import { sleeps } from "./sleep.js";
+import { drop17, hold17, play17 } from "./held.js";
 
 /* The prototype's key → [what it shows, file without its extension, still only]. */
 export const ART17 = {
@@ -85,11 +86,7 @@ function retireMedia() {
     for (const node of nodes) {
       if (node.isConnected) continue;
       const videos = node.tagName === "VIDEO" ? [node] : node.querySelectorAll("video");
-      for (const video of videos) {
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
-      }
+      for (const video of videos) drop17(video);
     }
     if (live.length) pool.set(key, live);
     else pool.delete(key);
@@ -99,7 +96,7 @@ function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
   if (v && gate && gatedLoop(v)) gate(v);
-  else if (v?.paused && !v.dataset.off13 && !document.hidden && !sleeps(v)) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
+  else if (v?.paused && !v.dataset.off13 && !document.hidden && !sleeps(v)) play17(v).catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
 }
 
 function fillMedia(slot) {
@@ -143,13 +140,13 @@ function hoverLoop(e) {
 /* Regions, dialogs and panels all draw outside one place, so any drawn placeholder is filled as it lands. */
 new MutationObserver(() => fill17()).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", () => fill17());
-/* A loop nobody can see (the window hidden or minimised) is paused, and carries on when the window is shown again,
+/* A loop nobody can see (the window hidden or minimised) is held (core/held.js), and carries on when the window is shown again,
    unless it was paused for another reason: scrolled off screen (data-off13, core/pets.js) or a napping pet (.zz11). */
 document.addEventListener("visibilitychange", () => {
   for (const v of document.querySelectorAll("video")) {
     if (!v.autoplay || !v.loop) continue;
-    if (document.hidden) v.pause();
-    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11") && !sleeps(v)) v.play().catch((error) => console.warn(error.message));
+    if (document.hidden) hold17(v);
+    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11") && !sleeps(v)) play17(v).catch((error) => console.warn(error.message));
   }
 });
 document.addEventListener("pointerover", hoverLoop);
