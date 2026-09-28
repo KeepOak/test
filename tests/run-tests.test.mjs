@@ -7,6 +7,7 @@ import { parse } from "yaml";
 import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, runFile, runPool, shareFiles, shards, testGroups,
   testProcessStatus } from "../scripts/run-tests.mjs";
 import { mergeWeights, readTimings } from "../scripts/test-weights.mjs";
+import { FULL_MATRIX, planMatrix } from "../scripts/select-affected-tests.mjs";
 
 test("npm test isolates browser and desktop files while keeping ordinary tests together", () => {
   const listing = {
@@ -147,9 +148,14 @@ test("the three lanes run every file between them, and Linux runs everything but
   assert.deepEqual(flat(picked).map((file) => file.replace(/\\/g, "/")), ["tests/leak-guard.test.mjs"], "the desktop file is Windows'");
 });
 
-test("the workflow runs every share of every lane, and each lane's shares cover it exactly once", () => {
+test("the whole suite runs every share of every lane, and each lane's shares cover it exactly once", () => {
   const workflow = parse(readFileSync(new URL("../.github/workflows/checks.yml", import.meta.url), "utf8"));
-  const rows = workflow.jobs.test.strategy.matrix.include;
+  // Without a plan (every push) the workflow's own rows run; they are the planner's whole suite.
+  const expression = workflow.jobs.test.strategy.matrix;
+  assert.match(expression, /needs\.plan\.result == 'success' && needs\.plan\.outputs\.matrix/);
+  const rows = JSON.parse(/'(\{"include".*\})'/s.exec(expression)[1]).include;
+  assert.deepEqual(rows, FULL_MATRIX);
+  assert.deepEqual(planMatrix("full", {}), FULL_MATRIX);
   const byLane = lanes(testGroups());
   assert.deepEqual([...new Set(rows.map((row) => row.lane))].sort(), ["linux", "macos", "windows"]);
   for (const lane of ["linux", "windows", "macos"]) {
