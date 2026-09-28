@@ -20,6 +20,7 @@ import { canSpeak, chooseLanguage } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
+import { gsel } from "../core/gsel.js";
 
 /* The wizard's steps: each one's short name in the engine's record, and its name on the rail. */
 const WIZARD = ["welcome", "models", "trunks"];
@@ -52,8 +53,7 @@ const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animat
 
 function languageControl() {
   const now = language();
-  const opts = LANGUAGES.map(({ id }) => `<option value="${esc(id)}"${id === now ? " selected" : ""}>${esc(ownName(id))}</option>`).join("");
-  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right"><select class="inp" id="ob-lang" data-sw="ob-lang" aria-label="${t("appearance.language")}">${opts}</select></span></div>`;
+  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now })}</span></div>`;
 }
 
 function welcome(o) {

@@ -34,6 +34,7 @@ import { markLive } from "../core/features.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { list17, when17 } from "./parts17.js";
 import { t, language } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const L = { labels: { catalog: [], labels: [] }, label: null, graph: null, names: [], kg: null, links: [], problem: "", picture: { topics: [], docs: [], edges: [] } };
 const askable = (d) => Boolean(d.filePath || d.uploaded) && /\.(csv|tsv|json|xlsx)$/i.test(d.filePath ?? d.name);
@@ -149,7 +150,7 @@ function saveReport() {
 
 /* ---------- Compare or edit exactly ---------- */
 const DC = { mode: "compare", docs: [], a: null, b: null, result: null };
-const docSelect = (id, value) => `<select class="inp" id="${id}" data-sw="${id}" aria-label="${id === "doc-a-b17" ? t("window.places.library17.first-document") : t("window.places.library17.second-document")}">${DC.docs.map((d) => `<option value="${esc(d.id)}"${d.id === value ? " selected" : ""}>${esc(d.name)}</option>`).join("")}</select>`;
+const docSelect = (id, value) => gsel({ id, sw: id, label: id === "doc-a-b17" ? t("window.places.library17.first-document") : t("window.places.library17.second-document"), options: DC.docs.map((d) => [d.id, d.name]), value });
 function compareBody() {
   const r = DC.result;
   const diffs = r ? `<p class="lead-b17">${esc(r.summary)}</p><div class="diffs-b17">${r.changes.map((c) => `<div class="dif-b17"><small>${esc(c.section)}</small>${c.before ? `<del>${esc(c.before)}</del>` : ""}${c.after ? `<ins>${esc(c.after)}</ins>` : ""}</div>`).join("")}</div><p class="hint" data-css="margin:0">${t("window.places.library17.the-other-unchanged-paragraphs-are-identical", { unchanged: esc(r.unchanged) })}</p>` : "";

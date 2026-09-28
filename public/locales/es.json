@@ -10076,5 +10076,6 @@
   "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
+  "window.core.gsel.narrow": "Escribe para filtrar"
 }
