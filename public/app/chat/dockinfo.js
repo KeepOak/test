@@ -10,6 +10,7 @@ import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { ic, toast } from "../core/ui.js";
 import { t } from "../../i18n.js";
+import { lockdownOn } from "./approvals.js";
 
 const D = { cost: new Map(), costAt: new Map(), glance: null, glanceAt: 0 };
 
@@ -46,9 +47,9 @@ export function loadCost(sid, again = false) {
 }
 
 /* ---------- Lockdown ---------- */
-/** The prototype's red banner (lockBanner), drawn while the engine's Lockdown is on (GET /api/state lock), as the places
+/** The prototype's red banner (lockBanner), drawn while the engine's Lockdown is on (GET /api/lockdown, chat/approvals.js lockdownOn), as the places
    draw it; "Turn it off" is chat/approvals.js's `lock`. */
-export const lockBanner = () => (!E.state?.lock ? "" : `<div class="lock-banner">${ic("lock", "s")}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>`);
+export const lockBanner = () => (!lockdownOn() ? "" : `<div class="lock-banner">${ic("lock", "s")}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>`);
 
 /* ---------- the flags inside the box ---------- */
 export const flags = (temporary, asksFirst) => `${temporary ? `<span class="flag">${t("composer.temporary")}</span>` : ""}${asksFirst ? `<span class="flag">${t("window.chat.flag-asks-first")}</span>` : ""}`;
