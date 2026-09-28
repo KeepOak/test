@@ -204,10 +204,10 @@ proved against stand-in adapters and providers; real account connections remain 
 | TG | ◐ exec approvals by typed yes/no; clarify questions by buttons | ✅ inline buttons | ✅ buttons carry the request's fingerprint |
 | DC | ✅ buttons | ? | ✅ |
 | SL | ✅ Block Kit | ✅ | — typed y / n |
-| WA | — typed (never polls) | ✅ 👍/👎 reactions | — typed |
-| SG | — | ✅ approval reactions | — typed |
+| WA | — typed (never polls) | ✅ 👍/👎 reactions | ✅ 👍/✅ or 👎/❌ on the question message, from the person asked, once (30 min), naming the question's fingerprint; typed y/n still works |
+| SG | — | ✅ approval reactions | ✅ the same, matched to the question by this account's send timestamp |
 | IM | ? | ? | — typed |
-| MX | ✅ reactions, limited to the requester | ✅ | — typed |
+| MX | ✅ reactions, limited to the requester | ✅ | ✅ the same, as an `m.annotation` on Branch's own question event |
 | EM, SMS | — | — | — typed |
 
 ### Voice notes in (transcribed) and out (spoken replies)
@@ -233,7 +233,7 @@ proved against stand-in adapters and providers; real account connections remain 
 | IM | ✅ | ✅ | — / — |
 | MX | ✅ | ? | — / — |
 | EM | ✅ attachments | ? | — / — |
-| SMS | — | ◐ MMS | — / — |
+| SMS | — | ◐ MMS | ✅ in: MMS pictures and files from Twilio's Media list, fetched only when answered / — out: Twilio fetches an MMS from a public web address, which Branch does not have |
 
 ### Forum topics and threads
 | | H | O | B today |
@@ -391,7 +391,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | teams-bot | yes | — | — | — | — | — | — | — | — | 3500 |
 | telegram | yes | yes | yes | yes | yes | yes | yes | yes | yes | default |
 | threema | yes | — | — | — | — | — | — | — | — | 3500 |
-| twilio-sms | yes | — | — | — | — | — | — | — | — | 1600 |
+| twilio-sms | yes | — | — | — | — | — | — | yes (MMS) | — | 1600 |
 | twist | yes | — | — | — | — | — | — | — | — | 3500 |
 | vk | yes | — | — | — | — | — | — | — | — | default |
 | webex | yes | — | — | — | — | — | — | — | — | 3500 |
