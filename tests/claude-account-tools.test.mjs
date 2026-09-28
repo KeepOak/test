@@ -255,3 +255,21 @@ test("an explicit Claude model and the owner's own effort are kept over the defa
   assert.equal(run.status, "completed", run.output);
   assert.equal(effortOf(f.launches.at(-1)), "low");
 });
+test("models-ui: a specialist's saved Claude account answers its helpers through Branch's tool loop", async (t) => {
+  const { saveHelperDefault, helperDefaultsView } = await import("../dist/helper-defaults-api.js");
+  const f = await fixture(t, { runtime: true });
+  await writeFile(join(f.root, "workspace", "proof.txt"), "specialist account proof\n");
+  const { id } = await f.app.registry.execute("specialists.propose", { name: "Reader", instructions: "You read.", permissions: ["files.read"],
+    evaluation: { prompt: "say ready", checks: [{ path: "reader.txt", expected: "ready" }] } }, f.app.runtime.context());
+  const choice = helperDefaultsView(f.app.store, f.app.runtime.owner, f.app.runtime.models).choices.find((c) => c.model === pool);
+  assert.deepEqual(choice.accounts.map((a) => a.id), ["primary", second, third]);
+  assert.equal(choice.accounts.find((a) => a.id === third).label, `${third}@fixture.invalid`, "named by its verified email");
+  saveHelperDefault(f.app.store, f.app.runtime.owner, f.app.runtime.models, { specialist: id, model: pool, accountRef: { pool, account: third } });
+  const parent = await f.app.runtime.run({ prompt: "Read proof.txt", permissions: ["files.read"] });
+  assert.equal(parent.status, "completed");
+  const before = f.launches.length;
+  const child = await f.app.runtime.delegate("Read proof.txt", f.app.runtime.context({ runId: parent.id }), ["files.read"], "", { agent: id });
+  assert.equal(child.status, "completed", child.output); assert.match(child.output, /specialist account proof/);
+  assert.ok(f.launches.slice(before).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, third)), "the saved account's own Claude folder");
+  assert.equal(f.service.pool(pool).defaultAccount, "primary", "the owner's account order is untouched");
+});

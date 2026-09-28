@@ -77,6 +77,7 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
+import { helperDefaultFor, withHelperDefault } from "./helper-defaults.js"; // models-ui: a specialist's own model and account
 import { checkResult, fanoutWaves, helperRoute, helperRouteWords, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
@@ -1252,8 +1253,11 @@ export class Runtime {
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
     }
   }
-  private async helperConnection(parent: ToolContext, selection: HelperSelection): Promise<HelperConnection> {
-    const selected = HelperSelectionSchema.parse({ ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.accountRef !== undefined ? { accountRef: selection.accountRef } : {}) });
+  private async helperConnection(parent: ToolContext, selection: HelperSelection & { agent?: string }): Promise<HelperConnection> {
+    const asked = HelperSelectionSchema.parse({ ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.accountRef !== undefined ? { accountRef: selection.accountRef } : {}) });
+    // models-ui (MODEL-051): the specialist's saved model and account (src/helper-defaults.ts) come after what the call names.
+    const saved = selection.agent ? helperDefaultFor(this.store, parent.owner, selection.agent) : null;
+    const selected = withHelperDefault(asked, saved, (key) => this.models.presets.has(key));
     const sessionId = this.modelAccountSession(parent.runId);
     const inherited = this.helperModels.get(parent.runId);
     const id = selected.model ?? inherited?.id ?? knobs.subtaskModel(this.store, this.owner, (key) => this.models.presets.has(key)) ?? this.models.plan(parent.owner, sessionId).choice.presetId;

@@ -31,6 +31,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
 import { PackageInstallSchema } from "./skill-packages.js";
@@ -1665,6 +1666,13 @@ async function api(
     return secondOpinionSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/second-opinion")
     return saveSecondOpinionSettings(app.store, app.runtime.owner, await readBody(request));
+  // models-ui (MODEL-051): each specialist's own model and account when a call names none (src/helper-defaults.ts).
+  if (request.method === "GET" && path === "/api/helper-defaults")
+    return helperDefaultsView(app.store, app.runtime.owner, app.runtime.models);
+  if (request.method === "POST" && path === "/api/helper-defaults") {
+    saveHelperDefault(app.store, app.runtime.owner, app.runtime.models, await readBody(request));
+    return helperDefaultsView(app.store, app.runtime.owner, app.runtime.models);
+  }
   if (request.method === "GET" && path === "/api/orchestration")
     return orchestrationSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/orchestration")
