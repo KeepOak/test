@@ -41,6 +41,8 @@ export interface ReachDeps {
   version: string;
   platform: NodeJS.Platform;
   backgroundExec: PosixExec;
+  /** Waits while the owner has taken over this computer's screen (DesktopControl.whileDriving). */
+  screenHeld?: (runId: string, signal: AbortSignal) => Promise<void>;
   git: GitRunner;
   usbLister: UsbLister;
   relayPollMs?: number;
@@ -80,7 +82,8 @@ export class Reach {
     const models = this.modelAccess();
     this.notes = new Notes(store, owner, models);
     this.arena = new Arena(store, owner, models);
-    this.background = new BackgroundScreen({ store, owner, exec: deps.backgroundExec, platform: deps.platform });
+    this.background = new BackgroundScreen({ store, owner, exec: deps.backgroundExec, platform: deps.platform,
+      ...(deps.screenHeld ? { held: deps.screenHeld } : {}) });
     deps.registry.onRunFinished(async (context) => this.background.closeRun(context.runId));
     for (const part of reachParts) this.sync(part);
     byRuntime.set(runtime, this);
