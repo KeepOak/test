@@ -114,7 +114,10 @@ test("a plain single-valued fact saved again ends the earlier one, even when the
   await app.registry.execute("memory.put", { text: "I like hiking", source: "the person" }, context);
   await app.registry.execute("memory.put", { text: "I live in Denver.", source: "the person" }, context);
   await app.registry.execute("memory.put", { text: "I like chess", source: "the person" }, context);
+  // The same detail named two ways by the model is still one detail.
+  await app.registry.execute("memory.put", { text: "Works at Acme", source: "the person", entity: "owner", attribute: "employer" }, context);
+  await app.registry.execute("memory.put", { text: "Now works at Globex", source: "the person", entity: "user", attribute: "job" }, context);
   const current = app.store.list("memory", "local").filter((record) => !record.data.validTo).map((record) => record.data.text).sort();
-  assert.deepEqual(current, ["I like chess", "I like hiking", "I live in Denver.", "My favourite fruit is mango"],
+  assert.deepEqual(current, ["I like chess", "I like hiking", "I live in Denver.", "My favourite fruit is mango", "Now works at Globex"],
     "Atlanta ended; facts that can hold together both stay");
 });

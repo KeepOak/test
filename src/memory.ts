@@ -501,7 +501,7 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
   registry.register({ name: "memory.put", description: "Save one clear fact with its source. Give entity and attribute when it may change later, so a newer fact ends the earlier one.",
     permission: "memory.write", parameters: PutMemorySchema,
     execute: async (value, context) => {
-      if (!value.entity && !value.attribute) value = { ...value, ...impliedDetail(value.text) };
+      value = canonicalDetail(!value.entity && !value.attribute ? { ...value, ...impliedDetail(value.text) } : value);
       const owner = memoryScope(store, context);
       const sessionId = store.run(context.runId)?.sessionId;
       if (sessionId && store.memorySuppressed(owner, sessionId))
@@ -647,4 +647,20 @@ export function impliedDetail(text: string): { entity?: string; attribute?: stri
   if (/^i(?:'ve| have)? (?:moved to|live in|now live in) \S/i.test(plain)) return { entity: "me", attribute: "home" };
   const work = /^i (?:now )?work (?:at|for) \S/i.test(plain);
   return work ? { entity: "me", attribute: "work" } : {};
+}
+
+const personAliases = new Set(["me", "i", "myself", "owner", "the owner", "person", "the person", "user", "the user", "self"]);
+const attributeAliases: Readonly<Record<string, string>> = {
+  location: "home", residence: "home", city: "home", "lives in": "home", "where i live": "home", "home city": "home", "hometown": "home",
+  job: "work", employer: "work", workplace: "work", company: "work", "works at": "work",
+};
+/**
+ * The person is one entity however a model names them ("owner", "user", "me"), and a few details go by several names
+ * ("location" and "home"). Named one way, so a newer fact about the same detail ends the earlier one (closeEarlier).
+ */
+export function canonicalDetail<T extends { entity?: string | undefined; attribute?: string | undefined }>(value: T): T {
+  const entity = value.entity && personAliases.has(value.entity.trim().toLowerCase()) ? "me" : value.entity;
+  const said = value.attribute?.trim().toLowerCase();
+  const attribute = said && entity === "me" ? attributeAliases[said] ?? value.attribute : value.attribute;
+  return { ...value, ...(entity ? { entity } : {}), ...(attribute ? { attribute } : {}) };
 }
