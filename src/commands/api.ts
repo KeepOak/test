@@ -96,7 +96,9 @@ export async function commandsApi(app: Branch, path: string, deps: CommandApiDep
     if (deps.access !== "full") throw new CommandApiError(403, "Only the key of this computer can change which commands are offered.");
     app.store.profiles.requireOwner("Which commands are offered");
     const input = await deps.readBody();
-    return recordedWrite(app.store, app.runtime.owner, byCard("command-catalog"), ["command-catalog"], () => saveCommandSettings(app.store, app.runtime.owner, input));
+    const saved = recordedWrite(app.store, app.runtime.owner, byCard("command-catalog"), ["command-catalog"], () => saveCommandSettings(app.store, app.runtime.owner, input));
+    void app.channels.refreshCommandMenus(); // CHAT-161: the apps' own pickers follow the switch
+    return saved;
   }
   throw new CommandApiError(404, "Not found");
 }

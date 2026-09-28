@@ -53,6 +53,8 @@ const columns = (L) => shown().map((id) => `minmax(0,${Math.max(0.2, Number(L.w[
 function sizePanes() { const split = $(".panes19"); if (split) split.style.setProperty("--cols19", columns(layout())); }
 const faceOf = (id) => chatFace(id === MAIN ? S.chat : id);
 const working = (id) => { const s = id === MAIN ? S.chat : id; return !!s && ((E.state?.runs ?? []).some((r) => r.sessionId === s && LIVE.includes(r.status)) || !!P.get(id)?.sending); };
+/** Whether pane `id`'s conversation has a task working (a message to it then goes through the busy send). */
+export const paneBusy = (id) => working(id);
 const waiting = (id) => (E.state?.attention ?? []).some((w) => (w.open || w.sessionId) === id);
 
 /* ---------- drawing ---------- */

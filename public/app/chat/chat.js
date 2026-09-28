@@ -12,6 +12,7 @@ import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
@@ -27,7 +28,7 @@ import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
-import { panesWrap, paneTo, paneWords, paneTarget, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
+import { panesWrap, paneTo, paneWords, paneTarget, paneBusy, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
@@ -314,7 +315,7 @@ function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", main = esc(placeholder()), words = esc(paneWords() ?? placeholder());
   return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}${paneTarget() ? " away19" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" aria-expanded="false" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
-    ${dictating() ? dictRow() : ""}${paneTo()}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}" data-main="${main}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
+    ${dictating() ? dictRow() : ""}${paneTo()}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}" data-main="${main}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${practiceFlag()}${costLine(C.sessionId)}</span>`}
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
@@ -511,6 +512,8 @@ async function send(words, answered = false) {
   /* RES-703: the box writes to the active pane; one that is not this conversation is sent to in its own. */
   const pane = words === undefined ? paneTarget() : null;
   if (pane) { await sendOver(pane, prompt); return; }
+  const busy = C.sending || ["running", "queued"].includes(liveRun()?.status);
+  if (refusePracticeRoute(prompt, busy, !!routeFor(prompt, C.sessionId, whoHere(), HOOKS))) return;
   /* While a task works, words join its waiting line; files wait on their chips for the next message. */
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
   /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
@@ -538,7 +541,10 @@ async function send(words, answered = false) {
 async function sendOver(id, prompt) {
   /* A room's conversation, or words that call a Trunk by its @name, go the way the main conversation sends them (a room
      answers through its members, a named Trunk may take the conversation): that pane becomes the main one first. */
-  if (E.rooms.some((r) => r.sessionId === id) || /(^|\s)@[a-z0-9][\w-]*/i.test(prompt)) {
+  const routed = E.rooms.some((r) => r.sessionId === id) || /(^|\s)@[a-z0-9][\w-]*/i.test(prompt);
+  /* A practice task goes only by a plain start there: never through a command, the busy send or another route. */
+  if (refusePracticeRoute(prompt, paneBusy(id), routed)) return;
+  if (routed) {
     await makeMain(id);
     await send();
     return;
@@ -551,6 +557,7 @@ async function sendOver(id, prompt) {
   const fields = await takePending(false);
   if (!(await sendToPane(id, prompt, fields))) return;
   filesSent();
+  practiceSent();
   clearBox(true);
   $("#prompt")?.dispatchEvent(new Event("input", { bubbles: true }));
   $("#prompt")?.focus();
@@ -562,6 +569,7 @@ async function sendOver(id, prompt) {
 async function answerChoice(words) {
   const prompt = String(words ?? "").trim();
   if (!prompt || C.sending) return;
+  if (refusePracticeRoute(prompt, ["running", "queued"].includes(liveRun()?.status), whoHere()?.kind === "room")) return;
   if (["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, false); return; }
   const info = whoHere();
   if (info?.kind === "room") {
@@ -621,6 +629,7 @@ async function sendPlain(prompt) {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     filesSent();
+    practiceSent();
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
@@ -631,7 +640,10 @@ async function sendPlain(prompt) {
     await loadWaiting();
   } catch (error) {
     if (error.offline && !started) keepForLater(prompt);
-    else C.messages.push({ role: "assistant", content: error.message });
+    else {
+      C.messages.push({ role: "assistant", content: error.message });
+      if (!started) S.drafts[C.sessionId ?? "new"] = prompt;
+    }
   } finally {
     C.sending = false;
     watchThinking(false);
