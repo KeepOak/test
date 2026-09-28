@@ -20,6 +20,8 @@ let waitingMessage = "";
 
 /* Listens for live updates from the app (the desktop window only). */
 export function initLive() {
+  // A shell update (src/desktop/shell-switch.ts) asks for the same record, to hand to the new version's window.
+  window.branchKeepForShell = keepForShell;
   bridge()?.onWindowUpdated?.((update) => {
     if (update?.engine === true) { goingAway(true); return; }
     if (typeof update?.commit !== "string" || !/^[0-9a-f]{40}$/.test(update.commit)) return;
@@ -64,17 +66,28 @@ async function swapStyles(names, commit) {
   catch (error) { for (const { next } of replacements) next.remove(); throw error; }
 }
 
-/* What is open, kept for the page that replaces this one (this tab only, for a minute). */
-async function keepOpen(commit) {
+/* What is open: the place, the conversation, every typed word and where the caret was, how far it was scrolled. */
+function openNow(commit) {
   const chat = S.chat;
-  if (sendingWithoutSession()) throw new Error("The window update is waiting for this task's conversation to be confirmed.");
   const box = $("#prompt"), scroll = $("#scroll");
   if (box) S.drafts[chat ?? "new"] = box.value;
-  const kept = {
+  return {
     commit, at: Date.now(), view: S.view, chat, tabs: S.tabs, setPage: S.setPage, drafts: S.drafts,
     caret: box ? { start: box.selectionStart, end: box.selectionEnd, focused: document.activeElement === box } : null,
     scroll: scroll ? { top: scroll.scrollTop, atEnd: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40 } : null,
   };
+}
+
+/* A shell update: what is open, as text for the new version's window, or null while a first message waits for its
+   conversation (the switch then waits, as a live reload does). */
+function keepForShell() {
+  return sendingWithoutSession() ? null : JSON.stringify(openNow("shell"));
+}
+
+/* What is open, kept for the page that replaces this one (this tab only, for a minute). */
+async function keepOpen(commit) {
+  if (sendingWithoutSession()) throw new Error("The window update is waiting for this task's conversation to be confirmed.");
+  const kept = openNow(commit);
   try { sessionStorage.setItem(KEY, JSON.stringify(kept)); }
   catch { throw new Error("The window could not keep your draft, so the update is waiting."); }
 }

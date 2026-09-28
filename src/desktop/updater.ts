@@ -10,6 +10,8 @@ import { checksumAssetName, type PackageType } from "./release-assets.js";
 import type { LiveOutcome } from "../hot-update/live-build.js";
 import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevBuildPlan, type DevBuilt, type DevStage, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
+import { folderPath, partFolder, pointerFiles, readPointer, sealAppFolder, type Layout } from "./app-folders.js";
+import { failureName, invisibleWaitWords, shellUpMarker, windowsSwitchScript, type SwitchFailure } from "./shell-switch.js";
 import { runHostedBuild, type HostedBuild } from "./build-client.js";
 import type { PauseReason } from "./quiet-build.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
@@ -86,6 +88,18 @@ export interface UpdaterOptions {
    * restart (src/hot-update/). `build` answers "shell" for a change that must go the packaged way.
    */
   live?: LiveHooks;
+  /**
+   * Windows, versioned app folders (app-folders.ts): where this copy's versions sit and which one runs (folder "": a
+   * flat copy from before). A new version is made beside it and switched to (shell-switch.ts); nothing is swapped or
+   * copied over, and the background engine is never stopped for it. Left out: the flat swap, as before.
+   */
+  appFolders?: Layout | null;
+  /**
+   * Versioned app folders: waits for the moment the switch may happen (the window out of sight, or the owner away) and
+   * keeps what the window has open for the new version; answers whether the window was hidden, so the new version
+   * starts the same way.
+   */
+  handOver?: (target: { version: string; stillWanted: () => boolean }) => Promise<{ minimized: boolean }>;
 }
 /** hot-update: how the updater builds and applies a change live (supplied by main, src/desktop/hot-apply.ts). */
 export interface LiveHooks {
@@ -398,6 +412,8 @@ export class Updater {
         await this.verify(archive, release, checked);
         stagedDir = await this.unpack(archive);
       }
+      // Versioned app folders: a downloaded version goes into a folder of its own beside this one before it is tried.
+      if (this.options.appFolders && !beta) stagedDir = await this.intoAppFolder(stagedDir, expectedVersion);
       this.stage("checking");
       await validateStagedPackage(stagedDir, expectedVersion, this.platform);
       await this.untilUnpaused();
@@ -410,7 +426,10 @@ export class Updater {
       // Only once nothing is working: a task that started during the build defers the install, and the swap never began.
       await this.options.beforeStop?.();
       this.stage("swapping");
-      const script = await this.writeScript(stagedDir, await this.stopBackground());
+      // Versioned app folders: nothing is stopped or swapped; the new version takes over from this one (shell-switch.ts).
+      const script = this.options.appFolders
+        ? await this.writeSwitchScript(stagedDir, expectedVersion, release)
+        : await this.writeScript(stagedDir, await this.stopBackground());
       this.set("ready", "Restarting to finish the update…", 1, release);
       held = options.hold === true;
       return { script, stagedDir };
@@ -490,6 +509,19 @@ export class Updater {
     if (!release?.otherLine || release.commit !== confirm)
       throw new Error("The change you confirmed is no longer Beta's newest one, so nothing was installed. Check again and confirm the change shown.");
     return release;
+  }
+  /**
+   * Versioned app folders: the new version did not say its window was up, so the switch went back to this one by itself
+   * (shell-switch.ts). Said as a failed install of that release, with what is still installed, so the window tells the
+   * owner once and update by itself does not try that same change again (the next one is).
+   */
+  switchFailed(failure: SwitchFailure): UpdateStatus {
+    const short = failure.commit?.slice(0, 7);
+    const release: ReleaseInfo = { currentVersion: this.options.currentVersion, latestVersion: failure.tried, available: false,
+      tag: short ? `dev-${short}` : `v${failure.tried}`, title: short ? `Beta build of change ${short}` : `Version ${failure.tried}`, notes: "",
+      publishedAt: null, assetUrl: "", checksumUrl: "", assetBytes: 0, pageUrl: "", channel: short ? "beta" : "stable",
+      ...(failure.commit ? { commit: failure.commit } : {}) };
+    return this.keptAfter(failure.message, release);
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
   release(): void { this.busy = false; }
@@ -713,6 +745,8 @@ export class Updater {
     const plan: DevBuildPlan = {
       repo: this.devRepo(), buildDir, commit: release.commit, running: this.installed.commit, assetName: this.options.assetName!,
       platform: this.platform, otherLineConfirmed: release.otherLine === true,
+      ...(this.options.appFolders ? { appFolder: { root: this.options.appFolders.root,
+        running: folderPath(this.options.appFolders.root, this.options.appFolders.folder), executableName: this.options.executableName } } : {}),
       onStage: (stage, state) => {
         this.stage(stage, state);
         if (state === "running") this.set("downloading", words[stage], null, this.status.release);
@@ -731,6 +765,8 @@ export class Updater {
       throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
     this.stage("checking");
     this.set("verifying", "Checking the build is whole…", null, this.status.release);
+    // Versioned app folders: already in place beside the running version, whole (it was renamed in only once it was).
+    if ("appFolder" in built) return { version: built.version, stagedDir: built.appFolder };
     if ("folder" in built) {
       const app = await findExecutableDir(built.folder, this.options.executableName);
       const into = join(this.options.scratchDir, "unpacked"), stagedDir = join(into, basename(app));
@@ -941,6 +977,38 @@ export class Updater {
         started: this.startedFile(),
         archive: join(this.options.scratchDir, this.options.assetName!), unpacked: join(this.options.scratchDir, "unpacked") }),
     ].join("\r\n"), "utf8");
+    return script;
+  }
+  /** Versioned app folders: a downloaded version, unpacked in the scratch folder, moved into its own folder beside this one. */
+  private async intoAppFolder(stagedDir: string, version: string): Promise<string> {
+    const { root } = this.options.appFolders!;
+    const part = partFolder(root, version);
+    await removeTree(part);
+    await rename(stagedDir, part).catch(async () => { await cp(stagedDir, part, { recursive: true, verbatimSymlinks: true }); await removeTree(stagedDir); });
+    return sealAppFolder(root, version, await readPointer(root));
+  }
+  /**
+   * Versioned app folders: the pointers the switch renames, the note the old version reads if the new one does not come
+   * up, and the hidden script that does the switch and watches it (shell-switch.ts). Written only after the window has
+   * reached its moment (`handOver`), so the new version starts shown or in the tray exactly as this one was.
+   */
+  private async writeSwitchScript(stagedDir: string, version: string, release: ReleaseInfo): Promise<string> {
+    const { root, folder } = this.options.appFolders!;
+    const running = { folder, version: this.options.currentVersion };
+    const next = { folder: basename(stagedDir), version };
+    this.set("ready", invisibleWaitWords, 1, release);
+    const { minimized } = this.options.handOver ? await this.options.handOver({ version, stillWanted: () => !this.calledOff }) : { minimized: false };
+    await this.untilUnpaused();
+    const files = await pointerFiles(root, running, next);
+    const scratch = this.options.scratchDir, exe = this.options.executableName;
+    const failure: SwitchFailure = { kept: this.options.currentVersion, tried: version, commit: release.commit ?? null, at: new Date().toISOString(),
+      message: `Version ${version} did not open its window within two minutes, so Branch went back to ${this.options.currentVersion} by itself. Your conversations and chat apps kept running. The next change is tried as soon as it lands.` };
+    await writeFile(join(scratch, `${failureName}.draft`), JSON.stringify(failure));
+    await rm(join(scratch, failureName), { force: true });
+    const script = join(scratch, "switch-version.cmd");
+    await writeFile(script, windowsSwitchScript({ root, next: files.next, rollback: folder ? files.rollback : null,
+      newExe: join(stagedDir, exe), oldExe: join(folderPath(root, folder), exe), marker: shellUpMarker(scratch, version),
+      failureDraft: join(scratch, `${failureName}.draft`), failure: join(scratch, failureName), log: join(scratch, "apply-update.log"), minimized }), "utf8");
     return script;
   }
   /** macOS and Linux: the shell hand-over from hand-over.ts, written beside the download. */

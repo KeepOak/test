@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+// A shell update (src/desktop/shell-switch.ts): what the old version's window had open, handed to this page once, before
+// any of its scripts run, where a live reload keeps it (public/app/shell/liveupdate.js restoreOpen).
+try {
+  const kept: unknown = ipcRenderer.sendSync("branch:shell-kept");
+  if (typeof kept === "string") sessionStorage.setItem("branch-live-restore", kept);
+} catch { /* nothing kept, or no storage: an ordinary start */ }
+
 contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   modelSettings: () => ipcRenderer.invoke("branch:model-settings"),
   saveModelSettings: (settings: unknown) =>

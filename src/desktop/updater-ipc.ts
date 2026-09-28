@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { Updater, UpdateDeferredError, type LiveHooks, type UpdateChannel, type UpdateStatus } from "./updater.js";
 import { changedMind, confirmedChange, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
 import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { versionedLayout } from "./app-folders.js";
+import { readSwitchFailure } from "./shell-switch.js";
+import { portableMarker } from "../install/layout.js";
 import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
@@ -59,6 +63,8 @@ export interface UpdateHooks {
   currentCommit?: string | null;
   /** hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts). */
   live?: LiveHooks;
+  /** Versioned app folders: the moment and the window's state for a shell switch (main.ts, shell-switch.ts). */
+  handOver?: (target: { version: string; stillWanted: () => boolean }) => Promise<{ minimized: boolean }>;
 }
 
 /**
@@ -98,6 +104,9 @@ export function registerUpdaterIpc(
     if (why) throw new UpdateDeferredError(why);
   };
   const installDir = installedAppRoot(app.isPackaged, process.platform, process.execPath);
+  // Windows: each version in a folder of its own beside the others, switched to without touching the one in use
+  // (app-folders.ts). A portable copy keeps its data beside the program, so it keeps the flat swap.
+  const appFolders = installDir ? versionedLayout(process.execPath, process.platform, existsSync(join(dirname(process.execPath), portableMarker))) : null;
   const updater = new Updater({
     ...(process.platform === "win32" ? updateSource : platformSource),
     currentVersion: version,
@@ -113,6 +122,8 @@ export function registerUpdaterIpc(
     ...(hooks?.tryOut ? { tryOut: hooks.tryOut } : {}),
     beforeStop: () => ensureIdle(),
     ...(hooks?.live ? { live: hooks.live } : {}),
+    ...(appFolders ? { appFolders } : {}),
+    ...(hooks?.handOver ? { handOver: hooks.handOver } : {}),
     devBuildDir: hooks?.buildDir ?? null,
     onChange: statusSender((status) => {
       if (window.isDestroyed()) return;
@@ -128,6 +139,12 @@ export function registerUpdaterIpc(
       throw new Error("Desktop update access denied");
   };
   const installClaim = new UpdateInstallClaim();
+  // A new version that did not come up sent the switch back to this one: said now, once (shell-switch.ts).
+  if (appFolders) void readSwitchFailure(updateScratchDir(), version).then((failure) => {
+    if (!failure) return;
+    updater.switchFailed(failure);
+    diagnose("updater", "error", failure.message, { fields: { kept: failure.kept, tried: failure.tried } });
+  }).catch(() => undefined);
   ipcMain.handle("branch:update-status", (event) => { authorized(event); return updater.status; });
   ipcMain.handle("branch:update-check", async (event) => {
     authorized(event);
@@ -186,7 +203,8 @@ export function registerUpdaterIpc(
       try {
         // mac7/safe-rollback: recorded here, marked as landed by the next start (`settleActivation`),
         // because this process quits into the hand-over and never sees how it went.
-        if (hooks?.record) await hooks.record(stagedDir, updater.status.release?.latestVersion ?? "");
+        // Versioned app folders need no record to undo: the version before stays whole and the switch goes back by itself.
+        if (hooks?.record && !appFolders) await hooks.record(stagedDir, updater.status.release?.latestVersion ?? "");
         // The background engine is already closed by this point, so say so if the hand-over cannot start.
         await launchHandOver(script, process.pid).catch((error: unknown) => {
           const why = error instanceof Error ? error.message : String(error);

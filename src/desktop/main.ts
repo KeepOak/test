@@ -87,6 +87,9 @@ import { desktopGatewayConfig } from "./gateway-mode.js";
 import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesktopGateway } from "./gateway-launch.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
+import { versionedLayout } from "./app-folders.js";
+import { handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
+import { portableMarker } from "../install/layout.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -109,6 +112,8 @@ let countingToQuit = false;
 /** Whether the app's own engine has proved itself at the window's address (src/desktop/engine-gate.ts). */
 let engineGate: EngineGate | undefined;
 /** Test builds only: an unpackaged copy started with BRANCH_TEST_ENGINE_HOOKS=1 lets a test see the engine and its gate. */
+/** Windows: where this copy's versions sit (app-folders.ts); null for a portable copy, other systems, or source. */
+const appLayout = () => (app.isPackaged ? versionedLayout(process.execPath, process.platform, existsSync(join(dirname(process.execPath), portableMarker))) : null);
 const testHooksOn = (): boolean => !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1";
 /**
  * hot-update: the program's own folder, which holds its live builds. A test copy (never a packaged app) may name a folder
@@ -324,7 +329,9 @@ async function createWindow(
   registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: async () => updateReadiness(url, key(), client.fetch) });
+    { ...update, readiness: async () => updateReadiness(url, key(), client.fetch),
+      // Versioned app folders: the switch waits for the window's invisible moment and hands its state over (shell-window.ts).
+      handOver: handOverHook({ window, userData: app.getPath("userData"), power: powerMonitor }) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
   const liveWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) });
@@ -348,6 +355,10 @@ async function createWindow(
   });
   // "Start quietly in the corner of the taskbar" keeps the window hidden until the tray icon is used.
   window.once("ready-to-show", () => { if (!startsMinimized(process.argv)) window?.show(); });
+  // After a shell switch (shell-switch.ts): what the old version's window had open comes back in this one's first page,
+  // and only once it has, this version says its window is up (the switch script goes back to the old one otherwise).
+  const windowUp = await resumeWindow({ ipc: ipcMain, window, origin: url, userData: app.getPath("userData"), version: app.getVersion(),
+    scratchDir: updateScratchDir(), expectRestore: liveWindow.expectRestore });
   // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the
   // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
   // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
@@ -357,6 +368,21 @@ async function createWindow(
     pageRecovery.failed();
   });
   createTray();
+  void windowUp().then(() => settleVersions(), (error: Error) => console.error("Window up:", error.message));
+}
+
+/**
+ * Versioned app folders: once this version's window is up, "start with Windows" and the background engine's launcher
+ * name it, and versions nothing runs from any more are removed (two minutes on, when a switch has long settled).
+ */
+function settleVersions(): void {
+  const layout = appLayout();
+  if (!layout?.folder) return;
+  setTimeout(() => {
+    void folders(app.getPath("userData")).then(({ dataDir }) => settleLayout(layout, appEntryName(process.platform), dataDir))
+      .then((done) => { if (done.pruned.length) console.log(`Removed older versions: ${done.pruned.join(", ")}`); })
+      .catch((error: Error) => console.error("Versions:", error.message));
+  }, 120_000).unref();
 }
 
 /**
@@ -434,7 +460,10 @@ function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
 async function refreshWindowsShortcuts(): Promise<void> {
   const installRoot = installedAppRoot(app.isPackaged, process.platform, process.execPath);
   if (process.platform !== "win32" || !installRoot) return;
-  await refreshWindowsIdentity({ installRoot, executableName: appEntryName(process.platform), env: process.env }, {
+  const layout = appLayout();
+  await refreshWindowsIdentity({ installRoot, executableName: appEntryName(process.platform), env: process.env,
+    // Versioned app folders: a shortcut to another version of this install moves to this one, the version in use.
+    ...(layout ? { sameInstall: (path: string) => sameInstall(layout.root, path) } : {}) }, {
     readShortcut: (path) => shell.readShortcutLink(path),
     updateShortcut: (path, fields) => shell.writeShortcutLink(path, "update", fields),
     exists: existsSync,
