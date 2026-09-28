@@ -10057,5 +10057,12 @@
   "window.places.library17.import-spreadsheet": "Importer une feuille de calcul",
   "window.places.library17.import-spreadsheet-hint": "Choisissez un fichier CSV, TSV, JSON ou Excel. Branch le garde dans la Bibliothèque et prépare une question SELECT que vous pouvez lancer.",
   "window.places.library17.import-spreadsheet-limit": "Choisissez une feuille de calcul de moins de 8 Mo.",
-  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau."
+  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau.",
+  "window.chat.bgsend.started": "Travail en arrière-plan. Vous serez prévenu une fois terminé.",
+  "window.chat.bgsend.full": "{count} conversations travaillent déjà en arrière-plan ; attendez que l’une se termine.",
+  "window.chat.bgsend.done": "Terminé en arrière-plan.",
+  "window.chat.bgsend.failed": "Cela n’a pas fonctionné. Ouvrez-la pour voir pourquoi.",
+  "window.chat.bgsend.finished": "Terminé en arrière-plan : {name}",
+  "window.chat.bgsend.tip": "Envoyer · {keys} pour travailler en arrière-plan",
+  "window.chat.bgsend.waiting": "Il faut votre réponse pour continuer. Ouvrez-la pour répondre."
 }

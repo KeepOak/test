@@ -23,6 +23,14 @@ const onScreen = (id) => S.view === "chat" && S.chat === id && !document.hidden;
    Branch's own conversation carries the bell. */
 const faceHere = (id) => { const face = chatFace(id); return face.kind === "main" ? `<span class="ico-tile">${ic("bell", "s")}</span>` : av(face, 30, id); };
 
+/** The card for `w` ({ open or sessionId, who, question }), unless the person turned pop-ups off; a finished background
+    conversation (chat/bgsend.js) is announced through it too. Answers whether it was shown. */
+export function announce(w) {
+  if (quiet() || onScreen(w.open || w.sessionId)) return false;
+  show(w);
+  return true;
+}
+
 function show(w) {
   const id = w.open || w.sessionId;
   $(".notif")?.remove();
