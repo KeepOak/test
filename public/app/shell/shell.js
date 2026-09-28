@@ -8,7 +8,7 @@ import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
 import { stillOutOfSight } from "../core/still.js";
-import { head as chatHead, openConversation, startConversation } from "../chat/chat.js";
+import { head as chatHead, openConversation, startConversation, addDockItem } from "../chat/chat.js";
 import { statusItems } from "../chat/messages.js";
 import { initExtras, gatewayOn, readGateway } from "./extras.js";
 import { initUsage, planMeter } from "./usage.js";
@@ -23,7 +23,7 @@ import { SQ, searchHTML, askEngine, initSearch } from "./search.js";
 import { loadLook, applyLook, savePrefs } from "./look.js";
 import { initThemes } from "./themes.js";
 import { reserveControls, followControlsLook } from "./controls.js";
-import { loadDelight, drawBackground, drawPet, petHTML, pat, D } from "./scene.js";
+import { loadDelight, drawBackground, drawPet, petHTML, pat, D, sceneryHTML, paintScenery } from "./scene.js";
 import { initPalette } from "./palette.js";
 import { ACT, working, readActivity } from "./activity.js";
 import { K, loadKeys, pressed, binding, spoken, ariaKeys } from "./keys.js";
@@ -146,7 +146,7 @@ function side() {
   const n = waitingCount(), live = liveNow();
   const person = personHere();
   const shut = S.placesShut && !railNow(), named = shut || railNow(); // the rail keeps the column of icons (prototype places14)
-  return `${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
+  return `${sceneryHTML()}${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
     <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot${link.up ? "" : " off"}"></i></span>${ic("chev", "s")}</button>
     <div class="side-top"><label class="sq9">${ic("search", "s")}<input id="side-q" type="search" placeholder="${t("action.search")}" value="${esc(SQ.q)}" autocomplete="off" aria-label="${t("window.shell.shell.search-chats-trunks-messages-and-past")}"${binding("palette") ? ` aria-keyshortcuts="${esc(ariaKeys(binding("palette")))}"` : ""}>${SQ.q ? `<button type="button" class="sq-x" data-act="sq-clear" aria-label="${t("window.shell.shell.clear-the-search")}">${ic("x", "s")}</button>` : binding("palette") ? `<kbd>${esc(spoken(binding("palette")))}</kbd>` : ""}</label><button class="icon-btn" type="button" aria-label="${t("window.shell.shell.new-conversation-trunk-room-or-automation")}" aria-expanded="false" data-act="newmenu">${ic("plus")}</button></div>
     <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic(S.placesShut ? "chev" : "down", "s")}${t("ew.places")}</button>
@@ -217,12 +217,14 @@ export function drawShell() {
   header.style.setProperty("--tint14", (merged && slot.querySelector(".head")?.style.getPropertyValue("--tint")) || "transparent");
   if (drew.includes($("#side"))) stillOutOfSight($("#side .list"));
   drawBackground();
+  paintScenery();
   drawPet();
 }
 
 export function initShell() {
   reserveControls();
   followControlsLook();
+  addDockItem(() => petHTML("dock")); // the pet by the message box, when Appearance puts it there
   markLive(["sq-f", "sq-clear", "projtoggle", "sw:side-q"]);
   on("projtoggle", () => toggleProjects());
   on("sq-f", (el) => { SQ.f = el.dataset.v; renderNow(); });
