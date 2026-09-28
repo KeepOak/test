@@ -2078,12 +2078,12 @@ video.pose11{background:transparent}
 .live-fig12{width:56px;height:56px;flex:none}.live-fig12 .fig12{width:56px;height:56px}
 /* look picker */
 .looks12,.pets12{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
-.look-c12,.pet-c12{display:grid;justify-items:center;gap:4px;padding:10px 6px 8px;border-radius:14px;border:1px solid var(--line);background:var(--raise);transition:border-color .15s,transform .15s}
+.look-c12,.pet-c12{display:grid;min-width:0;justify-items:center;gap:4px;padding:10px 6px 8px;border-radius:14px;border:1px solid var(--line);background:var(--raise);transition:border-color .15s,transform .15s}
 .look-c12:hover,.pet-c12:hover{transform:translateY(-2px);border-color:var(--line-2)}
 .look-c12[aria-pressed="true"],.pet-c12[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
 .look-c12 img,.look-c12 video{width:72px;height:72px;object-fit:contain}
 .pet-c12 img,.pet-c12 video{width:56px;height:56px;object-fit:contain}
-.look-c12 b,.pet-c12 b{font-size:12px;font-weight:600;text-align:center;line-height:1.2}
+.look-c12 b,.pet-c12 b{font-size:12px;font-weight:600;text-align:center;line-height:1.2;max-width:100%;hyphens:auto;overflow-wrap:anywhere}
 .peb-demo12{height:72px;display:grid;place-items:center}
 .pet-px12{width:56px;height:56px;display:grid;place-items:center;border-radius:12px;background:var(--fill);color:var(--ink-3);font-size:18px}
 .petbox .pet12{width:44px;height:44px;margin-top:-8px}
