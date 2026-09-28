@@ -14,6 +14,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,11 +61,17 @@ function startDetached(command, args, cwd) {
   child.unref();
   return child.pid;
 }
-async function listening(port, label) {
-  const { connect } = await import("node:net");
+const answers = (port) => new Promise((resolve) => {
+  const socket = connect(port, "127.0.0.1", () => { socket.destroy(); resolve(true); });
+  socket.on("error", () => resolve(false));
+});
+/** Waits for the server to listen; with a pid, also that the process started here is the one still running. */
+async function listening(port, label, pid) {
   for (let tries = 0; tries < 60; tries++) {
-    const up = await new Promise((resolve) => { const s = connect(port, "127.0.0.1", () => { s.destroy(); resolve(true); }); s.on("error", () => resolve(false)); });
-    if (up) return;
+    if (await answers(port)) {
+      if (pid) process.kill(pid, 0); // throws when the process started here has already exited
+      return;
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`${label} did not start listening on 127.0.0.1:${port}`);
@@ -83,7 +90,7 @@ async function ircUp() {
   writeFileSync(join(dir, "real-chat.yaml"), config);
   if (!existsSync(join(dir, "ircd.db"))) run(join(dir, "ergo.exe"), ["initdb", "--conf", "real-chat.yaml"], { cwd: dir });
   const pid = startDetached(join(dir, "ergo.exe"), ["run", "--conf", "real-chat.yaml"], dir);
-  await listening(ports.irc, "Ergo");
+  await listening(ports.irc, "Ergo", pid);
   return { pid, state: { host: "127.0.0.1", port: ports.irc } };
 }
 /** Email: GreenMail, an SMTP and IMAP server in one jar, with two mailboxes. */
@@ -93,7 +100,7 @@ async function emailUp() {
     `-Dgreenmail.imap.hostname=127.0.0.1`, `-Dgreenmail.imap.port=${ports.imap}`,
     "-Dgreenmail.users=branch:branchpw@branch.localhost,sam:sampw@branch.localhost", "-Dgreenmail.users.login=email",
     "-Dgreenmail.verbose=false", "-jar", jar], home);
-  await listening(ports.smtp, "GreenMail SMTP");
+  await listening(ports.smtp, "GreenMail SMTP", pid);
   await listening(ports.imap, "GreenMail IMAP");
   return { pid, state: { domain: "branch.localhost", smtp: { host: "127.0.0.1", port: ports.smtp }, imap: { host: "127.0.0.1", port: ports.imap } } };
 }
@@ -165,6 +172,13 @@ setsid -f ./tuwunel -c tuwunel.toml > ${inWsl}/matrix.log 2>&1 < /dev/null`, con
 async function up() {
   mkdirSync(home, { recursive: true });
   down({ quiet: true });
+  for (const port of Object.values(ports)) { // what down stopped may take a moment to let go of its port
+    let tries = 0;
+    while (await answers(port)) {
+      if (++tries > 20) throw new Error(`127.0.0.1:${port} is already in use. Stop whatever holds it, then run up again.`);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
   const irc = await ircUp(), email = await emailUp(), xmpp = await xmppUp(), matrix = await matrixUp();
   const state = { pids: [irc.pid, email.pid], servers: { irc: irc.state, email: email.state, xmpp: xmpp.state, matrix: matrix.state } };
   writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);

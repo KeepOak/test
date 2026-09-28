@@ -26,7 +26,8 @@ The cells below mostly rest on stand-in adapters. This section says which apps a
 with no account anywhere: Branch's own channel, built from a connections-file entry exactly as at start, talks to a
 real server on this computer, and a person on the other side uses a small client of their own that shares no code
 with Branch. The walk is the owner's: a stranger writes and gets a pairing code, the owner approves it, and the same
-person asks a question with an accent and emoji in it and gets the answer back.
+person asks a question with an accent and emoji in it and gets the answer back. The model is a stand-in that echoes
+the question, so what is real is the transport: the app's server, the connection, and Branch's adapter on it.
 
 How to run it (Windows with a WSL distro; `BRANCH_REAL_CHAT_WSL`, default `BranchCI`):
 
@@ -37,11 +38,12 @@ node scripts/real-chat/servers.mjs down
 ```
 
 - Every server listens on 127.0.0.1 only, with no federation and throwaway passwords that exist only there.
-- Downloads come to about 52 MB in all: Ergo 7 MB, GreenMail 11 MB, tuwunel 32 MB, and Prosody about 2 MB from apt.
-  GreenMail needs Java 11 or later.
+- Downloads come to about 52 MB in all, each checked against a pinned SHA-256: Ergo 7 MB, GreenMail 11 MB,
+  tuwunel 32 MB, and Prosody about 2 MB from apt.
+- Java 11 or later must already be installed for GreenMail; the script does not download it.
 - CI has no servers, so there the four real walks are skipped with a reason. The check that every catalog app has
   either a real test or a reason still runs in CI, and so does the check that this table is current.
-- The first runs found two bugs in Branch's email reader, both fixed in the same change:
+- The first runs found two bugs in Branch's email reader, both fixed in #834:
   - A server may send a message's text before its headers, and GreenMail does about half the time. Branch read the
     headers as the text and dropped the mail.
   - IMAP counts a message in bytes. Branch counted characters, so a mail with a few accents or emoji made the inbox
@@ -49,11 +51,11 @@ node scripts/real-chat/servers.mjs down
 
 <!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
 
-4 of 55 apps are tested for real; every other one says why not.
+4 of 56 apps are tested for real; every other one says why not.
 
 | App | Result | Server, or why not |
 | --- | --- | --- |
-| Telegram | Skipped | needs a bot token; Telegram's test environment needs a test-DC account to create a bot with its BotFather, so there is no account-free sandbox |
+| Telegram | Skipped | needs a bot token; Telegram's test environment only takes a bot made by a test-server user account, and making one is an account on Telegram's servers, which this harness never does |
 | Discord | Skipped | needs a Discord bot token and a server to add it to; there is no local or sandbox server for it |
 | Slack | Skipped | needs a Slack workspace and an app token; there is no local or sandbox server for it |
 | WhatsApp Business | Skipped | needs a WhatsApp Business number (Meta Cloud API); there is no local or sandbox server for it |
@@ -76,6 +78,7 @@ node scripts/real-chat/servers.mjs down
 | Twitch chat | Skipped | needs a Twitch account and an OAuth token; there is no local or sandbox server for it |
 | Gotify | Skipped | a local Gotify server is possible (one Go binary, about 20 MB) but is not in this harness yet |
 | iMessage | Skipped | needs a Mac with Messages signed in to an Apple ID |
+| iMessage through BlueBubbles | Skipped | needs a Mac running the BlueBubbles server, signed in to an Apple ID |
 | Microsoft Teams (bot) | Skipped | needs an Azure Bot registration; there is no local or sandbox server for it |
 | Webex | Skipped | needs a Webex bot token; there is no local or sandbox server for it |
 | Synology Chat | Skipped | needs a Synology NAS running Synology Chat |

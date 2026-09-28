@@ -13,7 +13,7 @@ export const LOCAL = {
 const account = (what) => `needs ${what}; there is no local or sandbox server for it`;
 /** Why each other app is not tested for real, in words someone can act on. */
 export const SKIPPED = {
-  telegram: "needs a bot token; Telegram's test environment needs a test-DC account to create a bot with its BotFather, so there is no account-free sandbox",
+  telegram: "needs a bot token; Telegram's test environment only takes a bot made by a test-server user account, and making one is an account on Telegram's servers, which this harness never does",
   discord: account("a Discord bot token and a server to add it to"),
   slack: account("a Slack workspace and an app token"),
   whatsapp: account("a WhatsApp Business number (Meta Cloud API)"),
@@ -33,6 +33,7 @@ export const SKIPPED = {
   twitch: account("a Twitch account and an OAuth token"),
   gotify: "a local Gotify server is possible (one Go binary, about 20 MB) but is not in this harness yet",
   imessage: "needs a Mac with Messages signed in to an Apple ID",
+  bluebubbles: "needs a Mac running the BlueBubbles server, signed in to an Apple ID",
   "msteams-bot": account("an Azure Bot registration"),
   webex: account("a Webex bot token"),
   "synology-chat": "needs a Synology NAS running Synology Chat",
