@@ -213,3 +213,18 @@ test("the setup wizard says what each app does in groups, and the owner's group 
   await call("/api/channels/groups", { channel: "discord", chatId: "C1", activation: null });
   assert.deepEqual((await call("/api/channels")).body.groups, []);
 });
+
+/* #658's reaction approvals follow the same room rule: a tap in a room of two is a direct answer (so the owner's
+   per-person yes applies), a tap in a bigger room is a group one. */
+test("Matrix: a reaction answer in a room of two is direct, in a bigger room it is a group one", async () => {
+  const puts = [];
+  const fetch = async (url, init) => { puts.push({ url: String(url), body: JSON.parse(init.body) }); return Response.json({ event_id: `$q${puts.length}` }); };
+  const adapter = new MatrixAdapter({ id: "matrix", homeserver: "https://m.example.org", userId: "@juniper:m.example.org", accessToken: "x", fetch });
+  adapter.members.set("!dm:m", 2);
+  adapter.members.set("!room:m", 5);
+  for (const room of ["!dm:m", "!room:m"]) await adapter.sendButtons(room, "May I?", [{ label: "Yes", value: "y:abc" }, { label: "No", value: "n:abc" }]);
+  const question = (room) => puts.find((put) => put.url.includes(encodeURIComponent(room)) && put.url.includes("/m.room.message/")).url && puts.filter((put) => put.url.includes(encodeURIComponent(room)) && put.body["m.relates_to"])[0].body["m.relates_to"].event_id;
+  const react = (room) => adapter.inbound(room, { type: "m.reaction", event_id: "$r1", sender: "@alice:m", content: { "m.relates_to": { rel_type: "m.annotation", event_id: question(room), key: "👍" } } });
+  assert.deepEqual([react("!dm:m").chatKind, react("!dm:m").text], ["direct", "y:abc"]);
+  assert.equal(react("!room:m").chatKind, "group");
+});

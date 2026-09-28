@@ -349,6 +349,9 @@ export class DiscordAdapter implements ChannelAdapter {
     await this.rest("PATCH", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`,
       { content: this.content(text, format) });
   }
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    await this.rest("DELETE", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`);
+  }
   /** One small call for the live status; a rate limit is noted and reported as a failure. */
   private async rest(method: string, path: string, body?: unknown): Promise<void> {
     // Discord's own wait, carried on the error so the live status waits it out rather than counting it as a failure.

@@ -149,6 +149,7 @@ export const ROUTES = {
   "/api/channels/link": "owner POST",
   "/api/channels/live": "owner POST",
   "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
+  "/api/channels/steps": "owner POST", // Settings › Chat apps › Show steps in chats: the steps knobs
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
   "/api/channels/pairings/": "prefix",
@@ -913,6 +914,7 @@ export const ROUTES = {
   "/api/plugins/sample/inspect": "owner POST",
   "/api/pins": "look", // mac7/wake-pins: which settings the owner pinned, for everybody who uses this computer
   "/api/policy": "owner POST",
+  "/api/practice-runs": "owner POST", // Read availability only; owner changes the global switch.
   "/api/policy/approve": "task POST",
   "/api/practice": "owner POST",
   "/api/preferences": "owner POST",
@@ -983,6 +985,7 @@ export const ROUTES = {
   "/api/registry/browse": "owner POST",
   "/api/registry/install": "owner POST",
   "/api/registry/rollback": "owner POST",
+  "/api/registry/trust": "owner POST", // pins a registry's signing key
   "/api/registry/update": "owner POST",
   "/api/registry/updates": "look",
   // eng-connectors: What's new for the installed version.
