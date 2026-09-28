@@ -228,3 +228,18 @@ test("Matrix: a reaction answer in a room of two is direct, in a bigger room it 
   assert.deepEqual([react("!dm:m").chatKind, react("!dm:m").text], ["direct", "y:abc"]);
   assert.equal(react("!room:m").chatKind, "group");
 });
+
+/* #664's files follow the same room rule: a picture or voice note sent in a room of two is for the assistant (direct and
+   addressed); in a bigger room it waits to be asked about, like any other message there. */
+test("Matrix: a file in a room of two is direct and addressed, in a bigger room it is a group one", () => {
+  const adapter = new MatrixAdapter({ id: "matrix", homeserver: "https://m.example.org", userId: "@juniper:m.example.org", accessToken: "x" });
+  adapter.members.set("!dm:m", 2);
+  adapter.members.set("!room:m", 5);
+  const read = (room, msgtype) => adapter.inbound(room, { type: "m.room.message", event_id: "$f1", sender: "@alice:m",
+    content: { msgtype, body: "cat.jpg", url: "mxc://m.example.org/abc", info: { mimetype: msgtype === "m.audio" ? "audio/ogg" : "image/jpeg" } } });
+  const dm = read("!dm:m", "m.image");
+  assert.deepEqual([dm.chatKind, dm.addressed, dm.chatTitle], ["direct", true, undefined]);
+  assert.deepEqual([read("!dm:m", "m.audio").chatKind, read("!dm:m", "m.audio").addressed], ["direct", true]);
+  const room = read("!room:m", "m.image");
+  assert.deepEqual([room.chatKind, room.addressed, room.chatTitle], ["group", false, "!room:m"]);
+});
