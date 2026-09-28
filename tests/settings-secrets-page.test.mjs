@@ -43,7 +43,8 @@ test("DG-053 Saved sign-ins says only what Branch knows about the password manag
   await openSettingsPage(page, "secrets");
   const col = page.locator(".set-col");
   await col.getByRole("heading", { name: "Saved sign-ins", exact: true }).waitFor();
-  assert.equal(await col.locator("input, textarea, select").count(), 0, "nothing here could hold a password");
+  // RES-710: the one switch (Fill saved sign-ins) is a checkbox, which holds no text.
+  assert.equal(await col.locator("input:not([type=checkbox]), textarea, select").count(), 0, "nothing here could hold a password");
   assert.doesNotMatch(await col.innerText(), /Bitwarden is connected/, "Branch is not reading from Bitwarden, so the page must not say it is connected");
   assert.deepEqual(errors, []);
 });

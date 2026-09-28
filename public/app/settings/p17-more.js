@@ -41,7 +41,11 @@ export function secrets17(lv, services, platform) {
   // Q257: the chosen manager is the first one listed; a choice keeps the other listed behind it.
   const cur = Object.keys(VAULT_SERVICE).find((v) => (services ?? [])[0] === VAULT_SERVICE[v]) ?? null;
   const seg = seg15(t("window.settings.p17-more.password-manager"), cur ? say(VAULT[cur]) : "", [["bitwarden", t("vault-autofill.service.bitwarden")], ["onepassword", t("vault-autofill.service.1password")], ["windows", "Windows"]], cur, "vaultb17", "f15-password-manager");
-  return sec17(t("window.settings.p17-more.where-passwords-come-from"), (platform === "win32" ? seg : seg.replace('data-act="vaultb17" data-v="windows"', 'data-act="vaultwinb17" data-v="windows"'))
+  // RES-710: Proton Pass has a command line (pass-cli), but how it prints one field and what it exits with are not
+  // documented, and it has not been run here, so its choice is shown greyed with that reason (vaultprotonb17).
+  const proton = `<button type="button" aria-pressed="false" data-act="vaultprotonb17" data-v="proton">Proton Pass</button>`;
+  const withProton = seg.replace(/(data-v="windows"[^>]*>[^<]*<\/button>)/, `$1${proton}`);
+  return sec17(t("window.settings.p17-more.where-passwords-come-from"), (platform === "win32" ? withProton : withProton.replace('data-act="vaultb17" data-v="windows"', 'data-act="vaultwinb17" data-v="windows"'))
     + demos17(["keys", "locker", "tokens"]));
 }
 

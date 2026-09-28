@@ -16,6 +16,7 @@ import { closeDlg, ic, openDlg, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { fillButton, initVaultFill } from "./stage-vault-fill.js"; // RES-710
 
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
@@ -185,14 +186,14 @@ export function ownerBrowserNeeds() {
  * "Needs you": the page in front is a sign-in (Branch never types a password) or a "prove you're a person" check. Drawn
  * over the live picture, unscaled, with the two ways on: take the browser (Branch waits), or stop the task.
  */
-export function needsHTML(needs, url, take, runId) {
+export function needsHTML(needs, url, take, runId, sid = B.sid) {
   if (!needs) return "";
   const host = (() => { try { return new URL(url).hostname; } catch { return ""; } })();
   const title = t(needs === "captcha" ? "window.chat.stage.ob.needs-captcha" : "window.chat.stage.ob.needs-sign-in");
   const stop = runId ? `<button class="btn ghost" type="button" data-act="stage-stop" data-id="${esc(runId)}">${t("window.chat.stage.ob.stop-task")}</button>` : "";
   return `<div class="needs7" role="alertdialog" aria-label="${title}"><div class="needs7-card"><span class="pill warn"><i></i>${t("window.chat.stage.ob.needs-you")}</span>
     <b>${title}</b>${host ? `<small>${esc(host)}</small>` : ""}<p>${t("window.chat.stage.ob.needs-why")}</p>
-    <div class="needs7-acts"><button class="btn pri" type="button" data-act="${take.act}"${take.id ? ` data-id="${esc(take.id)}"` : ""}>${t("window.chat.stage.ob.take-control")}</button>${stop}</div></div></div>`;
+    <div class="needs7-acts"><button class="btn pri" type="button" data-act="${take.act}"${take.id ? ` data-id="${esc(take.id)}"` : ""}>${t("window.chat.stage.ob.take-control")}</button>${needs === "sign-in" ? fillButton(url, runId, sid) : ""}${stop}</div></div></div>`;
 }
 /**
  * "You're in control": touch-sized tools over the page, unscaled so they stay usable on a phone. The keyboard opens the
@@ -370,6 +371,7 @@ function pointerUp(event) {
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
 export function initOwnerBrowser() {
+  initVaultFill();
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
     "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys", "owner-browser-keys", "owner-browser-touch",

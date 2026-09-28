@@ -40,16 +40,32 @@ async function chooseVault(v) {
   await loadAll();
 }
 
+/* RES-710: the switch for filling. It ships off until a password manager is connected and on once one is, saying so;
+   the owner's own choice on it is kept either way. */
+async function saveFill(on) {
+  try { vault = await api("vault-autofill/settings", { mode: on ? "on" : "off" }); } catch (error) { toast(error.message); }
+  render();
+}
+function fillRow() {
+  if (!vault) return "";
+  const on = vault.mode !== "off";
+  const sub = !vault.connected ? t("window.settings.secrets.fill-needs-vault")
+    : vault.onBecause ? `${t("window.settings.secrets.fill-sub")} ${t("window.settings.secrets.on-because-vault")}` : t("window.settings.secrets.fill-sub");
+  const title = t("window.settings.secrets.fill-switch");
+  return `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" id="vault-fill" ${on ? "checked" : ""}${vault.connected ? "" : " disabled"} aria-label="${esc(title)}" data-sw="set"><small>${esc(sub)}</small></div>`;
+}
+
 export function init() {
   on("secret-rm", (el) => remove(el.dataset.name));
   on("vaultb17", (el) => chooseVault(el.dataset.v));
-  markLive(["secret-rm", "vaultb17"]);
+  document.addEventListener("change", (e) => { if (e.target.id === "vault-fill") saveFill(e.target.checked); });
+  markLive(["secret-rm", "vaultb17", "sw:vault-fill"]);
   loadAll();
 }
 
 export async function load() { await loadAll(); }
 
-export const live = { "secret-rm": true, "vaultb17": true };
+export const live = { "secret-rm": true, "vaultb17": true, "sw:vault-fill": true };
 
 function rows() {
   return (vault?.logins ?? []).map((s) => `<div class="prow"><span class="ico-tile">${ic("key", "s")}</span><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.site)}</small></span><span class="meta">${MASK}</span><button class="btn ghost sm" type="button" data-act="secret-rm" data-name="${esc(s.name)}">${t("accounts.action.remove")}</button></div>`).join("");
@@ -58,5 +74,5 @@ function rows() {
 export function draw() {
   const bitwarden = credentials?.enabled && (credentials.services ?? []).includes("bitwarden");
   const status = bitwarden ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.secrets.bitwarden-is-connected")}</b><p>${t("window.settings.secrets.branch-asks-bitwarden-to-fill-a")}</p></div></div>` : "";
-  return `<h1>${t("window.settings.secrets.saved-sign-ins")}</h1><p class="lede">${t("window.settings.secrets.sign-ins-branch-may-fill-for")}</p>${status}<div class="sec"><h2>${t("window.settings.secrets.branch-may-fill")}</h2><div class="rows">${rows()}</div></div>${secrets17(level17(), credentials?.services, credentials?.platform)}`;
+  return `<h1>${t("window.settings.secrets.saved-sign-ins")}</h1><p class="lede">${t("window.settings.secrets.sign-ins-branch-may-fill-for")}</p>${status}<div class="sec">${fillRow()}</div><div class="sec"><h2>${t("window.settings.secrets.branch-may-fill")}</h2><div class="rows">${rows()}</div></div>${secrets17(level17(), credentials?.services, credentials?.platform)}`;
 }

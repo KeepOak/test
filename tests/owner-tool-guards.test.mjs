@@ -92,6 +92,7 @@ const NOT_TOOL_GUARDS = {
   "src/sdk-kit.ts": "the owner check guards the HTTP switch, not a tool",
   "src/index.ts": "hands store.profiles.requireOwner to the guards listed above",
   "src/integrations/bootstrap.ts": "hands store.profiles.requireOwner to signin.fill (listed above)",
+  "src/vault-owner-fill.ts": "RES-710: the owner's own Fill button (/api/panels/browser/fill, behind the browser controls' owner gate); it defines no tool, and the model's signin.fill (listed above) keeps its own guard",
   "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
 };
 

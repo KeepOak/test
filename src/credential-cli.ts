@@ -75,9 +75,11 @@ export interface CredentialRef {
   /**
    * mac7/vault-autofill (R17-068): which field of the item to read. "password" is what every
    * `secret://` reference means and what every caller before this one asked for; "totp" is the
-   * one-time code, and only the sign-in filling ever asks for it.
+   * one-time code, and only the sign-in filling ever asks for it. RES-710: "username" is the name the item signs in
+   * with, read only for the owner's own "Fill from Bitwarden" (src/vault-autofill.ts); it is not a secret, so it is
+   * not remembered for scrubbing.
    */
-  field?: "password" | "totp";
+  field?: "password" | "totp" | "username";
 }
 /** The reference text for one vault item, for settings screens and documentation. */
 export const credentialReference = (service: CredentialService, item: string): string => `secret://${service}/${item}`;
@@ -108,10 +110,12 @@ export type CliRunner = (executable: string, args: string[], timeoutMs: number) 
 export function commandFor(reference: CredentialRef, settings: CredentialSettings): { executable: string; args: string[] } {
   const field = reference.field ?? "password";
   if (reference.service === "bitwarden")
-    return { executable: settings.bitwardenCommand || "bw", args: ["--nointeraction", "--raw", "get", field === "totp" ? "totp" : "password", reference.item] };
+    return { executable: settings.bitwardenCommand || "bw", args: ["--nointeraction", "--raw", "get", field, reference.item] };
   // 1Password reads a field by its address, and a one-time code is not at a path Branch can guess.
   // It is refused here rather than quietly read as a password: a caller that asked for a code and
   // was handed a password would type the wrong secret into the wrong box.
+  if (field === "username")
+    throw new Error("Branch reads the name an item signs in with from Bitwarden only. Type that one yourself.");
   if (field === "totp")
     throw new Error(reference.service === "windows" ? "Branch reads a one-time code from Bitwarden only. Windows Credential Manager holds none."
       : "Branch reads a one-time code from Bitwarden only. 1Password holds it at an address only you know.");
@@ -243,7 +247,7 @@ export function refusalFrom(reference: CredentialRef, outcome: CliOutcome, execu
     return `There is nothing called "${reference.item}" in your ${reference.service === "windows" ? name : `${name} vault`}.`;
   if (outcome.code !== 0) return `${name} would not hand that over, and gave no reason Branch can pass on.`;
   if (!outcome.stdout.trim())
-    return `${name} found "${reference.item}" but it has no ${reference.field === "totp" ? "one-time code" : "password"} saved on it.`;
+    return `${name} found "${reference.item}" but it has no ${reference.field === "totp" ? "one-time code" : reference.field === "username" ? "user name" : "password"} saved on it.`;
   return null;
 }
 
@@ -291,7 +295,7 @@ export class CredentialResolver {
     // A one-time code is not: it is six or eight figures, it is stale within the minute, and
     // remembering it would blank those figures out of ordinary text for the rest of the session.
     // Nothing downstream ever sees it instead — it goes straight into the page (src/vault-autofill.ts).
-    if ((reference.field ?? "password") !== "totp") this.scrubber.remember(`${reference.service}:${reference.item}`, value);
+    if ((reference.field ?? "password") === "password") this.scrubber.remember(`${reference.service}:${reference.item}`, value);
     this.record(reference, use, "handed over");
     return value;
   }

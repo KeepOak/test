@@ -15,6 +15,7 @@ import { safetyToolFeatures } from "./safety-extras/settings.js"; // mac7/r17-g
 import { boardToolFeatures } from "./flows-boards/settings.js"; // r17-h
 import { learningToolFeatures } from "./learning-more/settings.js"; // R17-F
 import { learnMode, learnToolFeatures } from "./learn/settings.js"; // mac7/learn
+import { vaultAutofillShipsAs } from "./vault-autofill-mode.js"; // RES-710
 
 /**
  * The owner's three-way switch for a feature: off, when needed, or on. Each ships as its own
@@ -170,7 +171,9 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
     mode: (s: Reader, o: string): FeatureMode => (lockdownOverrides(s, o, key) ? "off" : learnMode(s, o)) })),
   // mac7/vault-autofill (R17-068): filling a saved sign-in (src/vault-autofill.ts). Written out here
   // rather than imported, because that module reads this one for the three-way switch.
-  { reason: "filling a saved sign-in is switched on", tools: signInFillTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "vault-autofill") },
+  // RES-710: it ships off until the owner connects a password manager, and on once they have (src/vault-autofill-mode.ts).
+  { reason: "filling a saved sign-in is switched on", tools: signInFillTools, hideWhenOff: true,
+    mode: (s, o) => savedMode(s, o, "vault-autofill", "mode", vaultAutofillShipsAs(s, o), true) },
   // Bucket 21 hook: tools for people building on Branch (src/sdk-kit.ts).
   { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit") },
   // ── bucket-15: add-ons other people wrote (src/add-ons/settings.ts keeps these lists). ──

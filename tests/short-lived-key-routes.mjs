@@ -1235,6 +1235,7 @@ export const ROUTES = {
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
+  "/api/panels/browser/fill": "owner POST", // RES-710: the owner's own Fill from the password manager
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",

@@ -12,11 +12,12 @@ import { readPolicy } from './policy.js';
 import { runOrigin, startedWithShortLivedKey } from './key-context.js';
 import { currentPerson } from './people/context.js';
 import { lockdownActive, onLockdownChange } from './lockdown.js';
+import { fillForOwner } from './vault-owner-fill.js'; // RES-710
 
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 export const browserApiPath = '/api/panels/browser';
 export const browserApiPaths = ['/api/panels/browser', '/api/panels/browser/start', '/api/panels/browser/control',
-  '/api/panels/browser/action', '/api/panels/browser/disconnect', '/api/panels/browser/stop'] as const;
+  '/api/panels/browser/action', '/api/panels/browser/disconnect', '/api/panels/browser/stop', '/api/panels/browser/fill'] as const;
 export const handlesBrowserApiPath = (path: string): boolean => browserApiPaths.some(value => value === path);
 const ScopeSchema = z.object({ sessionId: z.string().uuid(), profile: profileNameSchema.nullable(), clientId: z.string().uuid() }).strict();
 const BoundSchema = ScopeSchema.extend({ id: z.string().uuid(), epoch: z.number().int().min(1) });
@@ -25,6 +26,8 @@ const StartSchema = ScopeSchema.extend({ confirmToken: z.string().uuid().optiona
 const ControlSchema = BoundSchema.extend({ operation: z.enum(['takeover', 'handback']), runId: z.string().uuid().optional(), confirmToken: z.string().uuid().optional() });
 const ActionSchema = BoundSchema.extend({ frameId: z.string().uuid(), sequence: z.number().int().min(1), tabId: z.string().uuid(),
   tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
+/** RES-710: the owner's own "Fill from Bitwarden" on a working task's page that waits for them to sign in. */
+const FillSchema = z.object({ sessionId: z.string().uuid(), runId: z.string().uuid() }).strict();
 type Scope = z.infer<typeof ScopeSchema>;
 type Bound = z.infer<typeof BoundSchema>;
 interface RequestAccess { authorize(): void; signal: AbortSignal }
@@ -272,6 +275,7 @@ export class BrowserControlApi {
     if (path === `${browserApiPath}/start`) return this.start(StartSchema.parse(body), access);
     if (path === `${browserApiPath}/control`) return this.transfer(ControlSchema.parse(body), access);
     if (path === `${browserApiPath}/action`) return this.action(ActionSchema.parse(body), access);
+    if (path === `${browserApiPath}/fill`) return this.fill(FillSchema.parse(body), access);
     const input = BoundSchema.parse(body), { binding, control } = this.bound(input, access); this.changed(input.id);
     if (path === `${browserApiPath}/disconnect`) { control.disconnect(input.clientId); return { status: 'ready', control: control.view() }; }
     if (path === `${browserApiPath}/stop`) {
@@ -281,6 +285,26 @@ export class BrowserControlApi {
       return { status: 'stopped', control: control.view() };
     }
     throw new BrowserApiError(404, 'Browser endpoint not found.');
+  }
+  /**
+   * RES-710: fills the owner's saved sign-in into that task's open page (src/vault-owner-fill.ts). Only a task of this
+   * conversation that is still going, and only a page it already has open; the answer names the boxes, never a value.
+   */
+  private async fill(input: z.infer<typeof FillSchema>, access: RequestAccess) {
+    const browser = this.browser(), owner = this.app.runtime.owner;
+    if (!this.app.store.ownsSession(owner, input.sessionId)) throw new BrowserApiError(404, 'Conversation not found.');
+    const run = this.app.store.run(input.runId);
+    if (!run || run.owner !== owner || run.sessionId !== input.sessionId) throw new BrowserApiError(404, 'That task is not in this conversation.');
+    if (!['running', 'needs_input'].includes(run.status)) throw new BrowserApiError(409, 'That task has finished, so there is nothing to fill.');
+    const signal = AbortSignal.any([access.signal, AbortSignal.timeout(30_000)]);
+    try {
+      return await fillForOwner({ store: this.app.store, owner, page: browser.signInPage(), hasPage: (who, id) => browser.hasRunPage(who, id),
+        read: (reference, use) => this.app.credentials.read(reference, use),
+        requireOwner: (what) => this.app.store.profiles.requireOwner(what) }, input.runId, signal);
+    } catch (error) {
+      // Every sentence from there is one the owner reads and none carries a value (src/vault-owner-fill.ts).
+      throw new BrowserApiError(409, error instanceof Error ? error.message : String(error));
+    }
   }
   close(): void {
     this.revoke(); this.closed = true; this.stopLockdown();

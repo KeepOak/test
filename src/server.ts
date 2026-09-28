@@ -258,7 +258,8 @@ import { readFirstStart, recordFirstStart } from "./install/update-backup.js";
 import { readDesktopSettings, saveDesktopSettings } from "./integrations/desktop-config.js";
 import { readCredentialSettings, saveCredentialSettings } from "./credential-cli.js";
 // mac7/vault-autofill (R17-068): the owner's book of saved sign-ins Branch may fill into a page.
-import { readVaultAutofillSettings, saveVaultAutofillSettings } from "./vault-autofill.js";
+import { saveVaultAutofillSettings, vaultAutofillView } from "./vault-autofill.js";
+import { vaultConnected } from "./vault-autofill-mode.js"; // RES-710
 import { keychainApi, keychainSettingsPath, permissionsContext } from "./keychain-api.js";
 import { optionalFields } from "./feature-switches.js";
 import { auditCsvResponse, handlesMiscPath, miscApi, MiscApiError } from "./misc-api.js";
@@ -1498,11 +1499,14 @@ async function api(
   // The owner's alone: a household person is refused here, a short-lived key at the door below.
   if (path === "/api/vault-autofill/settings") {
     app.store.profiles.requireOwner("Your saved sign-ins");
-    if (request.method === "GET") return readVaultAutofillSettings(app.store, app.runtime.owner);
+    // RES-710: with `onBecause` when it is on only because a vault is connected, and `connected` for the window.
+    const view = () => ({ ...vaultAutofillView(app.store, app.runtime.owner), connected: vaultConnected(app.store, app.runtime.owner) });
+    if (request.method === "GET") return view();
     if (request.method === "POST") {
       const autofill = await readBody(request);
-      return recordedWrite(app.store, app.runtime.owner, byCard("vault-autofill"), ["vault-autofill"],
+      recordedWrite(app.store, app.runtime.owner, byCard("vault-autofill"), ["vault-autofill"],
         () => saveVaultAutofillSettings(app.store, app.runtime.owner, autofill));
+      return view();
     }
     throw new HttpError(405, "That is not something Branch can do with your saved sign-ins");
   }

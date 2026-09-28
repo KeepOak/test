@@ -6,6 +6,8 @@ import { FeatureModeSchema, optionalFields, settleSwitch } from "./feature-switc
 import { runOrigin, startedFromChat, startedWithShortLivedKey } from "./key-context.js";
 import { lockdownActive } from "./lockdown.js";
 import { whileSignInShows } from "./sign-in-showing.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
+import { vaultAutofillKey, vaultAutofillOnBecause, vaultAutofillShipsAs } from "./vault-autofill-mode.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -79,7 +81,7 @@ export const VaultAutofillSettingsSchema = z.object({
 }).strict();
 export type VaultAutofillSettings = z.infer<typeof VaultAutofillSettingsSchema>;
 
-export const vaultAutofillKey = "vault-autofill";
+export { vaultAutofillKey } from "./vault-autofill-mode.js";
 /** For src/feature-switches.ts: the tool this feature owns, and why it would be loaded. */
 export const vaultAutofillTools = ["signin.fill"] as const;
 export const vaultAutofillToolFeatures: readonly (readonly [string, string, readonly string[]])[] =
@@ -87,24 +89,47 @@ export const vaultAutofillToolFeatures: readonly (readonly [string, string, read
 
 type Reader = Pick<Store, "get">;
 
-export function readVaultAutofillSettings(store: Reader, owner: string): VaultAutofillSettings {
+/** The record as the owner saved it, before the ship-on rule: what a change is saved onto. */
+function savedVaultAutofillSettings(store: Reader, owner: string): VaultAutofillSettings {
   const saved = VaultAutofillSettingsSchema.safeParse(store.get("settings", owner, vaultAutofillKey)?.data ?? {});
   const settings = saved.success ? saved.data : VaultAutofillSettingsSchema.parse({});
   return { ...settings, ...settleSwitch(settings, {}) };
 }
 
+/**
+ * The settings in force. RES-710: while the owner has not set the switch, it reads as it ships
+ * (src/vault-autofill-mode.ts): off until a password manager is connected, on once one is.
+ */
+export function readVaultAutofillSettings(store: Reader, owner: string): VaultAutofillSettings {
+  const settings = savedVaultAutofillSettings(store, owner);
+  const ships = vaultAutofillShipsAs(store, owner);
+  if (ships === "off") return settings;
+  const shipped = shippedUnlessChosen(store, owner, vaultAutofillKey, settings, { mode: ships });
+  return { ...shipped, enabled: shipped.mode !== "off" };
+}
+
+/** The settings in force, and why it is on when the owner did not switch it on ("on because your vault is connected"). */
+export function vaultAutofillView(store: Reader, owner: string): VaultAutofillSettings & { onBecause: string | null } {
+  const settings = readVaultAutofillSettings(store, owner);
+  return { ...settings, onBecause: vaultAutofillOnBecause(store, owner, settings.mode) };
+}
+
 export function saveVaultAutofillSettings(store: Store, owner: string, input: unknown): VaultAutofillSettings {
-  const current = readVaultAutofillSettings(store, owner);
+  // Saved onto the owner's own record, never onto how it ships, so removing one sign-in does not write down an "on"
+  // that stays after the vault is disconnected.
+  const current = savedVaultAutofillSettings(store, owner);
   const value = optionalFields(VaultAutofillSettingsSchema).parse(input ?? {}); // Q65: one helper for a patch
   const next = VaultAutofillSettingsSchema.parse({ ...current, ...value, ...settleSwitch(current, value) });
   if (new Set(next.logins.map((one) => one.name)).size !== next.logins.length)
     throw new Error("Two of those sign-ins have the same name");
   store.save("settings", owner, vaultAutofillKey, next);
+  markChosen(store, owner, vaultAutofillKey, sentKeys(input).filter((field) => field === "mode" || field === "enabled"));
+  const now = readVaultAutofillSettings(store, owner);
   audit(store, owner, {
     action: "policy.changed", actor: owner, subject: "the saved sign-ins Branch may fill",
-    reason: next.mode === "off" ? "Turned off" : `${next.logins.length} sign-in(s) may be filled`, outcome: "saved",
+    reason: now.mode === "off" ? "Turned off" : `${now.logins.length} sign-in(s) may be filled`, outcome: "saved",
   });
-  return next;
+  return now;
 }
 
 /* ----------------------------------------------- the page being filled */
@@ -140,8 +165,11 @@ export interface SignInWhere {
  */
 export interface SignInPage {
   where(context: ToolContext): Promise<SignInWhere>;
-  /** Types the value into one box. Throws a plain sentence, never one carrying the value. */
-  type(context: ToolContext, box: SignInBox, label: string | undefined, value: string): Promise<void>;
+  /**
+   * Types the value into one box. Throws a plain sentence, never one carrying the value. "username" (RES-710) is
+   * only ever asked for by the owner's own Fill button (src/vault-owner-fill.ts), never by the assistant's tool.
+   */
+  type(context: ToolContext, box: SignInBox | "username", label: string | undefined, value: string, host?: string): Promise<void>;
 }
 
 /* ----------------------------------------------- who may ask, and where */
@@ -297,7 +325,7 @@ export class VaultAutofill {
     const purpose = `filling your "${entry.name}" sign-in on ${new URL(address).hostname}`;
     const value = await this.deps.read(reference, { runId: context.runId, purpose });
     try {
-      await this.deps.page.type(context, asked.box, asked.label, value);
+      await this.deps.page.type(context, asked.box, asked.label, value, new URL(address).hostname);
     } catch {
       // Deliberately not the error that was thrown: a page library's own message can quote what it
       // was asked to type. The owner is told what to do instead; the value stays where it was.

@@ -23,7 +23,7 @@ import { registerHumanTasks } from "./deferred.js";
 import { BackgroundProcesses, registerProcesses } from "./processes.js";
 import { CodeRunner, registerCodeRun } from "./code-run.js";
 import { HandOff, registerHandOff } from "./coding/hand-off.js";
-import { CredentialResolver } from "./credential-cli.js";
+import { CredentialResolver, type CliRunner } from "./credential-cli.js";
 import { OsPermissions, probeReader } from "./os-permissions.js";
 import { Runtime, argumentFingerprint } from "./runtime.js";
 import { gateRefusal } from "./tool-gate.js"; // integration review (mac5/manual-actions)
@@ -339,6 +339,8 @@ export async function createBranch(options: {
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
    */
   dictation?: { speech?: SpeechStreamRunner; sound?: SoundStreamRunner; present?: ProgramPresent; platform?: string };
+  /** RES-710 test seam: the password manager's command line. Left out, the real `bw`, `op` or Windows one is run. */
+  credentialRunner?: CliRunner;
   /** Test-only: clock function for deterministic rate limiting. Normal production uses Date.now. */
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
@@ -611,7 +613,7 @@ export async function createBranch(options: {
   store.secrets.gate = () => sessionLock.require();
   // Batch 26 (wave 8): the owner's own password manager, asked at the call boundary and only when
   // they have switched it on. It waits for the same unlock the locker does.
-  const credentials = new CredentialResolver(store, runtime.owner, store.secrets.scrubber);
+  const credentials = new CredentialResolver(store, runtime.owner, store.secrets.scrubber, options.credentialRunner);
   credentials.gate = () => sessionLock.require();
   store.secrets.credentials = credentials;
   // Batch 20 (wave 8): a password fetched by a command of the owner's own, behind the same lock.
@@ -1642,6 +1644,8 @@ export async function createBranch(options: {
     /** Letting conversations older than the owner's cut-off go, with a saved copy first. */
     retention,
     browserProfiles,
+    /** The owner's password manager, read at the call boundary (RES-710: the owner's own Fill in the browser uses it). */
+    credentials,
     /**
      * The live browser, once the launcher has loaded the integration settings, so Settings can
      * offer the sign-in-once window. It stays null when no browser is configured.

@@ -1099,6 +1099,15 @@ export class BranchBrowser {
      before, because the assistant supplies the value there; this way in is the owner's own, it
      supplies the value itself (src/vault-autofill.ts), and it hands nothing back. */
 
+  /**
+   * RES-710: whether this task has a page open now, for the owner's own Fill. It never opens one: the owner fills
+   * only the page they are looking at.
+   */
+  hasRunPage(owner: string, runId: string): boolean {
+    const entry = this.sessions.get(this.key({ owner, runId }));
+    return !!entry && entry.session.started() && entry.control?.view().state !== 'stopped';
+  }
+
   /** The page this task is on, as the sign-in filling needs it. Nothing here returns what it typed. */
   signInPage(): SignInPage {
     return {
@@ -1111,10 +1120,12 @@ export class BranchBrowser {
           // one is being kept (integration review; src/vault-autofill.ts refuses on this).
           recording: entry.session.isRecording() };
       }),
-      type: async (context, box, label, value) => {
+      type: async (context, box, label, value, host) => {
         if (this.entry(context).session.isRecording())
           throw new Error('This task is keeping a recording of the browser, which writes down everything typed into a page.');
         await this.operation(context, async (page, check) => {
+          // RES-710: the page must still be on the website the sign-in was matched to; one that moved on gets nothing.
+          if (host && hostOf(page.url()) !== host.toLowerCase()) throw new Error('The page moved to another website, so nothing was typed.');
           const found = await signInBox(page, box, label);
           // live-stage: kept before anything is typed, so no frame of the window is taken with the value showing.
           await this.keepFilled(this.entry(context), page, found);
@@ -1230,14 +1241,18 @@ export async function needsPerson(page: Page): Promise<'sign-in' | 'captcha' | n
  * password box, whatever label was given, so a page that labels a plain text box "Password" cannot
  * have the value typed where everyone can read it.
  */
-async function signInBox(page: Page, box: SignInBox, label: string | undefined) {
+/** RES-710: where a sign-in page asks for the name, for the owner's own Fill only: an empty, visible name box. */
+const nameBoxes = 'input[autocomplete~="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[id*="user" i], input[id*="email" i]';
+async function signInBox(page: Page, box: SignInBox | 'username', label: string | undefined) {
   // Only ever the page's own top frame: a Playwright locator does not reach into a frame from
   // another website (it takes a frameLocator, which nothing here has), so a page cannot have the
   // value typed into a box it borrowed from somebody else. Proven in the integration review.
   const found = label
     ? page.getByLabel(label, { exact: true })
     : page.locator(box === 'password' ? 'input[type="password"]'
+      : box === 'username' ? `:is(${nameBoxes}):visible:not([type="password"])`
       : 'input[autocomplete="one-time-code"], input[inputmode="numeric"]').first();
+  if (box === 'username' && await found.inputValue({ timeout: 2000 })) throw new Error('The name box already holds a name.');
   const tag = await found.evaluate(node => node.tagName);
   const refusal = signInBoxFor(box, String(tag), await found.getAttribute('type'));
   if (refusal) throw new Error(refusal);
@@ -1250,10 +1265,12 @@ async function signInBox(page: Page, box: SignInBox, label: string | undefined) 
  * password box; a one-time code goes only into an ordinary text box, never into something that is
  * not a box at all and never into a password box, whatever label a page hangs on it.
  */
-export function signInBoxFor(box: SignInBox, tagName: string, type: string | null): string | null {
+export function signInBoxFor(box: SignInBox | 'username', tagName: string, type: string | null): string | null {
   if (tagName.toUpperCase() !== 'INPUT')
     return `That is not a box on this page, so nothing was typed into it.`;
   const kind = (type ?? '').trim().toLowerCase();
+  if (box === 'username')
+    return ['text', 'email', ''].includes(kind) ? null : 'That is not a box a name goes into, so nothing was typed into it.';
   if (box === 'password')
     return kind === 'password' ? null : 'That is not a password box on this page, so nothing was typed into it.';
   return ['text', 'tel', 'number', ''].includes(kind)

@@ -42,6 +42,7 @@ import { work, loadWork } from "./terminal.js";
 import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
 import { liveOf, liveError, liveLoading, watchLive } from "./stage-live.js";
+import { fillButton } from "./stage-vault-fill.js"; // RES-710
 import { hasOwnerBrowser, ownerBrowserHTML, ownerBrowserPip, ownerBrowserButtons, ownerBrowserHolder, watchOwnerBrowser,
   paintOwnerBrowser, initOwnerBrowser, ownerBrowserNeeds, ownerBrowserState, ownerBrowserToolbar, needsHTML, takeControl } from "./stage-browser-control.js";
 import { watchScreen, screenFrame, screenRefusal } from "./stage-screen.js";
@@ -272,7 +273,7 @@ function browserNeeds() {
 /* Over the page, unscaled: the Needs you sheet, or the owner's in-control tools. */
 function browserOverlay() {
   const needs = browserNeeds();
-  if (needs) return needsHTML(needs.needs, needs.url, needs.take, needs.run.id);
+  if (needs) return needsHTML(needs.needs, needs.url, needs.take, needs.run.id, S.chat);
   const run = goingRun();
   return ownerBrowserToolbar(run && STOPPABLE.has(run.status) ? run.id : null, owner());
 }
@@ -310,7 +311,7 @@ export function stageCard() {
   const sub = line ? `<div class="sub">${line}</div>` : "";
   const thumb = view.frame ? `<button type="button" class="comp7-thumb" data-act="stage" data-v="browser" aria-label="${t("window.chat.stage.full-size")}"><span class="st7-scale">${liveWindow(view, view.frame)}</span></button>` : "";
   const acts = view.needs && mine()
-    ? `<button class="btn pri sm" type="button" data-act="stage-take-control" data-id="${esc(now.runId)}">${t("window.chat.stage.ob.take-control")}</button><button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(now.runId)}">${t("window.chat.stage.ob.stop-task")}</button>`
+    ? `<button class="btn pri sm" type="button" data-act="stage-take-control" data-id="${esc(now.runId)}">${t("window.chat.stage.ob.take-control")}</button>${view.needs === "sign-in" ? fillButton(view.url, now.runId, S.chat, "btn sm") : ""}<button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(now.runId)}">${t("window.chat.stage.ob.stop-task")}</button>`
     : `<button class="btn pri sm" type="button" data-act="stage" data-v="browser">${ic("monitor", "s")}${t("window.chat.stage.watch-full")}</button>`;
   return `<div class="b"><div class="gut"></div><div><div class="card comp7"><div class="card-h"><b>${ic("globe", "s")}${t("window.chat.stage.browser-of", { name: esc(name()) })}</b><span class="pill ${cls} ml"><i></i>${words}</span></div>${sub}
     ${thumb}<div class="acts">${acts}</div></div></div></div>`;
