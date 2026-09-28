@@ -78,6 +78,7 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
+import { helperDefaultFor, withHelperDefault } from "./helper-defaults.js"; // models-ui: a specialist's own model and account
 import { checkResult, fanoutWaves, helperRoute, helperRouteWords, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
@@ -1258,8 +1259,13 @@ export class Runtime {
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
     }
   }
-  private async helperConnection(parent: ToolContext, selection: HelperSelection): Promise<HelperConnection> {
-    const selected = HelperSelectionSchema.parse({ ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.accountRef !== undefined ? { accountRef: selection.accountRef } : {}) });
+  private async helperConnection(parent: ToolContext, selection: HelperSelection & { agent?: string }): Promise<HelperConnection> {
+    const asked = HelperSelectionSchema.parse({ ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.accountRef !== undefined ? { accountRef: selection.accountRef } : {}) });
+    // models-ui (MODEL-051): the specialist's saved model and account (src/helper-defaults.ts) come after what the call names.
+    // Work a Trunk is doing keeps to the Trunk's own accounts, so there only the saved model is used, never the saved account.
+    const found = selection.agent ? helperDefaultFor(this.store, parent.owner, selection.agent) : null;
+    const saved = found?.accountRef && this.trunkWork(parent) ? { model: found.model } : found;
+    const selected = withHelperDefault(asked, saved, (key) => this.models.presets.has(key));
     const sessionId = this.modelAccountSession(parent.runId);
     const inherited = this.helperModels.get(parent.runId);
     const id = selected.model ?? inherited?.id ?? knobs.subtaskModel(this.store, this.owner, (key) => this.models.presets.has(key)) ?? this.models.plan(parent.owner, sessionId).choice.presetId;
@@ -1334,6 +1340,12 @@ ${run.output.slice(0, 6000)}`;
    * call it makes on the side answers through that conversation's account, not the owner's default
    * (which may be a second of the owner's own plans, reached after the first ran out).
    */
+  /** models-ui: whether a helper is being started for a Trunk's work: its keys are in force, or its task is a Trunk's turn. */
+  private trunkWork(parent: ToolContext): boolean {
+    if (parent.trunkKeys || currentAccountCall()?.trunk) return true;
+    const root = this.spendRoot.get(parent.runId) ?? parent.runId;
+    return [...new Set([parent.runId, root])].some((id) => this.store.events(id).some((event) => event.kind === "trunk.turn"));
+  }
   private asTrunk<T>(context: ToolContext, work: () => Promise<T>): Promise<T> {
     const marked = currentAccountCall()?.trunk;
     // FQ-routing.isolated-agents: marked again when this is another Trunk's work, so what it sets going is its own.
