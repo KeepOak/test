@@ -44,8 +44,13 @@ export function defaultAmong(store: Pick<Store, "get">, scope: string, trunks: r
 
 /** The default Trunk among these, read and never written. */
 export function pickDefault(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[]): Trunk | undefined {
+  return designatedDefault(store, scope, trunks) ?? (setupOver(store, scope) ? defaultAmong(store, scope, trunks) : undefined);
+}
+
+/** Only a saved default designation grants the owner's authority; fallback routing alone never does. */
+export function designatedDefault(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[]): Trunk | undefined {
   const picked = store.get("governance", scope, defaultPointer)?.data as { trunkId?: unknown } | undefined;
-  return trunks.find((trunk) => trunk.id === picked?.trunkId) ?? (setupOver(store, scope) ? defaultAmong(store, scope, trunks) : undefined);
+  return trunks.find((trunk) => trunk.id === picked?.trunkId);
 }
 
 /** For the chat apps (lane chatparity's routes fall back to it): the default Trunk's id, or null while there is none. */

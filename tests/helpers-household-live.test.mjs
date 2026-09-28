@@ -314,7 +314,13 @@ test("her reply area follows her own task's live steps; nobody else's does, and 
   const { app, page, errors, at, gates } = f;
   const owner = await ownerAtWork(f);
   const { dana, parent, hers } = await danaSends(f, "check Dana's receipts");
-  await page.locator("#conversation li.ls-in").first().waitFor({ timeout: 20000 });
+  // What the window and the engine showed, named in the failure (seen on Linux CI, not reproduced on Windows or WSL).
+  await page.locator("#conversation li.ls-in").first().waitFor({ timeout: 20000 }).catch(async (error) => assert.fail(`${error.message}; `
+    + `steps shown: ${JSON.stringify(await page.locator("#conversation li[class*='ls-']").allInnerTexts().catch((e) => e.message))}; `
+    + `conversation: ${JSON.stringify((await page.locator("#conversation").innerText().catch((e) => e.message)).slice(-600))}; `
+    + `parent: ${JSON.stringify(app.store.run(parent)?.status)}; helpers: ${JSON.stringify(hers.map((id) => app.store.run(id)?.status))}; `
+    + `helper events: ${JSON.stringify(hers.map((id) => app.store.events(id).map((e) => e.kind).slice(-8)))}; `
+    + `live: ${(await readStream(f, `runs/${parent}/live`, (text) => text.includes("event: steps"))).text.slice(0, 800)}`));
   const lines = await page.locator("#conversation li[class*='ls-']").allInnerTexts();
   assert.ok(lines.some((line) => /Reading notes\.txt/.test(line)), `her helpers' steps show live: ${JSON.stringify(lines)}`);
   const own = await readStream(f, `runs/${parent}/live`, (text) => text.includes("event: steps"));
