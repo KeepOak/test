@@ -357,7 +357,9 @@ export class MemoryFacts {
       if (!writableTo(record, agent)) continue;
       const d = record.data as MemoryData;
       if (d.entity !== entity || d.attribute !== attribute || (d.validTo ?? null) !== null) continue;
-      if ((d.validFrom ?? record.createdAt) >= validFrom) continue;
+      // A fact that starts after the new one is not ended by it. One that starts in the same instant was saved first, so the
+      // new one replaces it (two saves inside one millisecond left both current).
+      if ((d.validFrom ?? record.createdAt) > validFrom) continue;
       this.keepVersion(owner, record, "superseded");
       this.db.prepare("UPDATE memory SET data=?, updated_at=?, revision=revision+1 WHERE owner=? AND id=?")
         .run(JSON.stringify({ ...d, validTo: validFrom }), new Date().toISOString(), owner, record.id);

@@ -9,6 +9,16 @@ import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 import type { Store } from "./store.js";
 import { conversationBegunBy, notYourConversation } from "./outside-origin.js";
+import { shortLivedKeyMark, startedWithShortLivedKey } from "./key-context.js";
+
+/**
+ * Who is calling, by the key it came with (a pairing key or another short-lived key), not by the name it gives itself:
+ * a task is found, and stopped, only by the key that started it. The app's own key is the owner's.
+ */
+function callerKey(): string {
+  return startedWithShortLivedKey() ? `key:${shortLivedKeyMark().keyId ?? "unnamed"}` : "owner";
+}
+const unknownTask = (id: string) => new A2aError(-32001, `Task ${id} is not known to this assistant`);
 
 /**
  * A2A, the agent-to-agent protocol: how an assistant made by someone else asks this one to do a
@@ -62,7 +72,7 @@ export interface A2aOptions {
   /** How long a task may run before it is stopped. */
   taskTimeoutMs: number;
 }
-export interface A2aTaskRecord { id: string; runId: string; sessionId: string; agent: string; createdAt: string }
+export interface A2aTaskRecord { id: string; runId: string; sessionId: string; agent: string; createdAt: string; caller?: string }
 
 /** How many tasks stay findable by `tasks/get` before the oldest are forgotten. */
 const maxRememberedTasks = 500;
@@ -137,8 +147,14 @@ export class A2aServer {
     const sessionId = this.sessionFor(params.sessionId);
     this.checkRate(agent);
     const prompt = taskText(params.message);
-    const id = params.id ?? randomUUID();
-    const record: A2aTaskRecord = { id, runId: "", sessionId: "", agent, createdAt: nowIso() };
+    const id = params.id ?? randomUUID(), caller = callerKey();
+    // An id already in use is never taken over: another caller's is refused as unknown would be, and one of this
+    // caller's own that is still going is refused plainly, so a task cannot be overwritten mid-way.
+    const earlier = this.tasks.get(id);
+    if (earlier && earlier.caller !== caller) throw new A2aError(-32002, `The task id ${id} is already in use. Send a new id.`);
+    if (earlier && (!earlier.runId || this.store.run(earlier.runId)?.status === "running"))
+      throw new A2aError(-32002, `Task ${id} is still going. Wait for it, or send a new id.`);
+    const record: A2aTaskRecord = { id, runId: "", sessionId: "", agent, createdAt: nowIso(), caller };
     this.tasks.set(id, record);
     // Only the most recent tasks stay findable, so a long-running install does not grow without end.
     for (const oldest of [...this.tasks.keys()].slice(0, this.tasks.size - maxRememberedTasks))
@@ -191,17 +207,22 @@ export class A2aServer {
   /** A task started earlier in this session of the app; a restart forgets the ones still running. */
   get(params: unknown): unknown {
     const { id } = TaskIdParamsSchema.parse(params);
-    const record = this.tasks.get(id);
+    const record = this.mine(id);
     const run = record && this.store.run(record.runId);
-    if (!record || !run) throw new A2aError(-32001, `Task ${id} is not known to this assistant`);
+    if (!record || !run) throw unknownTask(id);
     return this.taskView(record, run);
   }
 
+  /** The task with this id if the caller asking is the one that started it; another caller's is not known to them. */
+  private mine(id: string): A2aTaskRecord | undefined {
+    const record = this.tasks.get(id);
+    return record && (record.caller ?? "owner") === callerKey() ? record : undefined;
+  }
   /** Stops a task that is still running; one that already finished comes back as it ended. */
   cancel(params: unknown): unknown {
     const { id } = TaskIdParamsSchema.parse(params);
-    const record = this.tasks.get(id);
-    if (!record) throw new A2aError(-32001, `Task ${id} is not known to this assistant`);
+    const record = this.mine(id);
+    if (!record) throw unknownTask(id);
     if (record.runId) this.runtime.cancel(record.runId);
     const run = this.store.run(record.runId);
     // A task cancelled before its run had even begun still answers as cancelled, with no answer.
