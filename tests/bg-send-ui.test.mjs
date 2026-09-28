@@ -95,7 +95,9 @@ test("at most three background conversations wait at once; a fourth is refused w
     await page.locator("#prompt").press("Control+Enter");
     await page.waitForFunction(() => document.getElementById("prompt")?.value === "");
   }
-  await until(() => app.store.runs(app.runtime.owner).length === 3);
+  /* Only these tasks are counted: the engine may run its own (the default Trunk's hello, #726). */
+  const weekly = () => app.store.runs(app.runtime.owner).filter((r) => r.prompt.endsWith("the weekly numbers")).length;
+  await until(() => weekly() === 3);
   await page.locator("#prompt").fill("4: the weekly numbers");
   await page.locator("#prompt").press("Control+Enter");
   await page.locator(".toast").filter({ hasText: "already working in the background" }).waitFor();
@@ -106,7 +108,7 @@ test("at most three background conversations wait at once; a fourth is refused w
     return { ms: performance.now() - started, got: !!answer };
   });
   assert.ok(read.got && read.ms < 5000, `a read still goes through while three wait (${Math.round(read.ms)} ms)`);
-  assert.equal(app.store.runs(app.runtime.owner).length, 3, "no fourth task started");
+  assert.equal(weekly(), 3, "no fourth task started");
   release();
   assert.deepEqual(errors, []);
 });
