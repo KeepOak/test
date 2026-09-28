@@ -53,6 +53,8 @@ import { MorningBrief } from "../dist/brief.js";
 import { currentValue } from "../dist/settings-kit/changes.js";
 import { accountsSettings, saveAccountsSettings } from "../dist/accounts/settings.js";
 import { markChosen } from "../dist/ship-on.js";
+import { sdkKitMode, saveSdkKitSettings } from "../dist/sdk-kit.js";
+import { readKnobs, saveKnobs, resetKnobs } from "../dist/knobs/settings.js";
 
 const owner = "owner";
 /** Just enough of the store for the settings readers: records kept in memory, by kind, owner and id. */
@@ -136,7 +138,21 @@ const flipped = [
     off: (s) => { saveAccountsSettings(s, owner, { ...accountsSettings(s, owner), mode: "off" }); markChosen(s, owner, "accounts", ["mode"]); },
     old: (s) => s.raw("accounts", { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] }) },
   { name: "quick answers from the web", read: (s) => askMode(s, owner, "answer-engine"), ships: "when-needed", off: (s) => saveAskMode(s, owner, "answer-engine", { mode: "off" }) },
+  // Defaults audit (2026-09-28, DEFAULTS-AUDIT.md): none of (a)–(f).
+  { name: "tools for building on Branch", read: (s) => sdkKitMode(s, owner), ships: "when-needed", off: (s) => saveSdkKitSettings(s, owner, { mode: "off" }) },
+  { name: "the about-you note", read: (s) => (readKnobs(s, owner, "memory").aboutYouOn ? "on" : "off"), ships: "on", off: (s) => saveKnobs(s, owner, "memory", { aboutYouOn: false }),
+    old: (s) => s.raw("knobs-memory", { snapshotFacts: 30, snapshotChars: 2000, aboutYouOn: false, aboutYou: "", aboutYouChars: 1500 }) },
 ];
+
+test("defaults audit: a knob card put back reads as it ships again, and an owner's other knobs are untouched", () => {
+  const store = memoryStore();
+  saveKnobs(store, owner, "memory", { aboutYouOn: false, snapshotFacts: 12 });
+  saveKnobs(store, owner, "memory", { aboutYou: "I work nights." });
+  assert.equal(readKnobs(store, owner, "memory").aboutYouOn, false, "the owner's off survives a later save of the card");
+  assert.equal(readKnobs(store, owner, "memory").snapshotFacts, 12);
+  resetKnobs(store, owner, "memory");
+  assert.equal(readKnobs(store, owner, "memory").aboutYouOn, true);
+});
 
 test("a fresh install has every flipped feature on", () => {
   const store = memoryStore();

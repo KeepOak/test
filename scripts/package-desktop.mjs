@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, copyFile, mkdir, readdir, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as mac from "./package-macos.mjs";
 import * as linux from "./package-linux.mjs";
@@ -131,20 +131,7 @@ async function packageWindows({ arch, release, zipOnly }) {
   // The .ico holds the mascot at every size Windows asks for (scripts/make-icons.mjs).
   const { writeWindowsIcon } = await import("./make-icons.mjs");
   await writeWindowsIcon();
-  const paths = await runPackager(packagerOptions("win32", arch));
-  // Electron fetches its own executable on first use, not at install: asking for its path fetches it.
-  const electronExe = (await import("electron")).default;
-  // Smart App Control blocks unsigned executables it has never seen. The packager rewrites the
-  // executable's icon and version resources, giving every build a brand-new hash. Until releases
-  // are code-signed, ship the stock Electron executable (a widely known hash) under the app name;
-  // the window and tray icons are set at runtime, and the taskbar takes its icon from the shortcuts,
-  // which name branch.ico and the app's own ID (src/install/windows-identity.ts, mac7/win-icon). A
-  // shortcut that names the executable's icon shows Electron's atom in the taskbar: 0.18.0 did that.
-  for (const out of keepsStockExecutable(process.env) ? paths : []) {
-    const target = join(out, "Branch Agent.exe");
-    await copyFile(electronExe, target);
-    await utimes(target, new Date(), new Date()); // Electron's file dates predate 1980, which ZIP cannot store
-  }
+  const paths = await windowsAppFolders(arch);
   // The installer: one script to put beside the release zip. It unpacks the zip with the tar that
   // comes with Windows and then runs the installer that travels inside the app itself, so nothing has
   // to be installed first and nothing has to be signed.
@@ -158,6 +145,40 @@ async function packageWindows({ arch, release, zipOnly }) {
   if (!release) return;
   const archive = join(RELEASE, assetNameFor("win32", arch));
   await finishArchive(archive, windowsZipCommand(paths[0], archive));
+}
+
+/**
+ * Smart App Control blocks unsigned executables it has never seen, and the owner's rule is that no executable is ever
+ * made on his computer (every Beta update builds there). The packager edits Electron's executable (icon, name and
+ * version), which makes a brand-new one, so an unsigned build no longer runs it: the app folder is laid out from the
+ * stock pieces instead (scripts/assemble-app.mjs), with the stock executable under the app's name. The window and tray
+ * icons are set at runtime, and the taskbar takes its icon from the shortcuts, which name branch.ico and the app's own
+ * ID (src/install/windows-identity.ts, mac7/win-icon). A signed release (and a build for another arch, which needs the
+ * packager's download of that arch's Electron) still goes through the packager, and keeps its edited executable.
+ */
+export function assemblesWithoutPackager(env, arch, hostArch) {
+  return keepsStockExecutable(env) && arch === hostArch;
+}
+
+async function windowsAppFolders(arch) {
+  // Electron fetches its own executable on first use, not at install: asking for its path fetches it.
+  const electronExe = (await import("electron")).default;
+  if (!assemblesWithoutPackager(process.env, arch, process.arch)) {
+    const paths = await runPackager(packagerOptions("win32", arch));
+    for (const out of keepsStockExecutable(process.env) ? paths : []) {
+      const target = join(out, "Branch Agent.exe");
+      await copyFile(electronExe, target);
+      await utimes(target, new Date(), new Date()); // Electron's file dates predate 1980, which ZIP cannot store
+    }
+    return paths;
+  }
+  const { assembleWindowsApp } = await import("./assemble-app.mjs");
+  const { isJunk } = await import("junk");
+  const into = join(RELEASE, `Branch Agent-win32-${arch}`);
+  const runtime = await assembleWindowsApp({ source: ".", dist: dirname(electronExe), into, executableName: "Branch Agent.exe",
+    included: includedInApp, isJunk });
+  console.log(`Stock Electron program, unchanged: sha256 ${runtime.sha256}`);
+  return [into];
 }
 
 async function finishArchive(archive, command, options) {

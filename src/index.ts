@@ -1,3 +1,4 @@
+import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
@@ -1314,6 +1315,7 @@ export async function createBranch(options: {
   // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
   trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
+  trunks.rooms.pick = (message, members) => decisionModels.pickTrunk(message, members); // Send each message to the right Trunk (off as shipped)
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
   // opened), and Talk live is refused where it would step round a Trunk, Lockdown or an outside hold.
@@ -1799,6 +1801,7 @@ export async function createBranch(options: {
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
+      closeSpareAgents(); // copies of Claude Code started ahead of time for the next question (src/providers/cli-agent.ts)
       await rings.idle(); // Seasons: a night under way finishes its step before the database closes
       await budding.close(); // Stop a resumed task before closing the connectors and private database.
       // Wave 8: a connection that stays open must not outlive the app either.
