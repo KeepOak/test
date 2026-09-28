@@ -17,6 +17,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const PORT = process.env.PORT || "3393";
 const TOKEN = process.env.TOKEN || "";
@@ -304,8 +305,8 @@ async function documentsTools(page, s) {
 
   await page.click('[data-act="doccmpb17"]');
   await page.waitForSelector(".dlg #doc-a-b17", { timeout: 8000 });
-  await page.selectOption("#doc-a-b17", L.older.id);
-  await page.selectOption("#doc-b-b17", L.newer.id);
+  await pickGsel(page.locator("#doc-a-b17"), L.older.id);
+  await pickGsel(page.locator("#doc-b-b17"), L.newer.id);
   await page.waitForSelector(".dlg .dif-b17", { timeout: 15000 });
   const compared = await post("action", { tool: "documents.compare", args: { file: "lease/lease-2025.md", against: "lease/lease-2026.md" } });
   check("doccmpb17 (Compare): one entry per change the engine found (documents.compare)", (await page.locator(".dlg .dif-b17").count()) === compared.changes.length, `${compared.changes.length} change(s)`);
@@ -489,7 +490,7 @@ async function customize(page, s) {
 const STEPS = [inbox, automations, library, customize];
 
 async function run() {
-  const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+  const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
   const model = await startModel();
   const s = await setup();
   const browser = await chromium.launch();

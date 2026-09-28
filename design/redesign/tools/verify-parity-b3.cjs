@@ -9,7 +9,8 @@
    Screenshots go to SHOTS (default: the session folder). */
 const fs = require("node:fs");
 const path = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const { PORT, TOKEN, DATA, PHASE } = process.env;
 if (!PORT || !TOKEN || !["setup", "fresh"].includes(PHASE) || (PHASE === "setup" && !DATA)) { console.error("Set PHASE (setup or fresh), PORT, TOKEN, and DATA for setup."); process.exit(2); }
@@ -152,9 +153,9 @@ async function libraryDocuments(page) {
   await page.locator('#main [data-act="doccmpb17"]').click();
   await page.locator(".dlg #doc-a-b17").waitFor({ timeout: 10000 });
   const docs = (await api("documents")).documents;
-  await page.selectOption(".dlg #doc-a-b17", docs.find((d) => d.name === "lease-2025.md").id);
+  await pickGsel(page.locator(".dlg #doc-a-b17"), docs.find((d) => d.name === "lease-2025.md").id);
   await sleep(600);
-  await page.selectOption(".dlg #doc-b-b17", docs.find((d) => d.name === "lease-2026.md").id);
+  await pickGsel(page.locator(".dlg #doc-b-b17"), docs.find((d) => d.name === "lease-2026.md").id);
   check("places-040 the engine's comparison is drawn", await until(async () => (await page.locator(".dlg .dif-b17").count()) >= 1));
   check("places-040 the Edit exactly tab is live", await live(page.locator(".dlg [data-act='docmodeb17'][data-v='edit']")));
   await shot(page, "library-compare-setup");
