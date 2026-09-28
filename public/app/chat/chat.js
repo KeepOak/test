@@ -495,6 +495,14 @@ async function carryOut(client) {
     if (box) { box.value = client.text; box.focus(); }
   } else if (client.do === "send" && typeof client.text === "string") await send(client.text);
   else if (client.do === "refresh-model") { await refresh().catch((error) => toast(error.message)); renderNow(); }
+  else if (client.do === "search" && typeof client.text === "string") await searchFor(client.text);
+}
+/* /find: the sidebar's search with these words, as if typed there (loaded when first used, as the shell loads it). */
+async function searchFor(text) {
+  const { SQ, askEngine } = await import("../shell/search.js");
+  SQ.q = text; SQ.f = "all";
+  renderNow();
+  if (await askEngine(text.trim())) renderNow();
 }
 
 /* Sends what is in the box, or `words` when given (an earlier message edited and sent again). While a task works, the
