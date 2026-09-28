@@ -2,14 +2,16 @@ import type { Message, ToolCall } from "./contracts.js";
 
 /**
  * What a call with no result was, for a task that stopped to ask the person: it never ran (Dogfood F8), and the answer
- * decides whether it runs. Written as "side effects may have occurred", a local model read it as a failure and gave up
- * instead of making the allowed call again (QA retest 2026-09-28, M2).
+ * decides whether it runs. Written as "side effects may have occurred", the record contradicted the note that tells the model
+ * how the person answered (runtime continueNote), and a local model read it as a failure (QA retest 2026-09-28, M2). What
+ * to do next is said by that note alone: a yes to a request, a reply to a question (a push to a shared branch is sent
+ * again with confirmed), or a no.
  */
 const waitingOnAnswer = JSON.stringify({
   ok: false,
   status: "waiting",
   outcome: "not_run",
-  error: "Not run: the task stopped to ask the person before this call. When you carry on, make this same call again, exactly as before: it runs only if they allowed it, and asks them again if they have not answered. If they refused it, do not make it again.",
+  error: "Not run: the task stopped to ask the person before this call ran. Carry on from their answer.",
 });
 /** The question the model itself put to the person (user.ask): asked, and the answer is their next message. */
 const askedThePerson = JSON.stringify({ ok: true, status: "asked", note: "Asked. The person's next message in this conversation is their answer." });

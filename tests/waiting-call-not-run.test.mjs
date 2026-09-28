@@ -1,8 +1,8 @@
 /**
  * QA retest 2026-09-28 (M2): a task that stops to ask the person left its waiting call with the result "No durable tool
  * result was recorded (needs_input). Side effects may have occurred". The call never ran (Dogfood F8), and a local model
- * read that as a failure and gave up instead of making the allowed call again. A waiting call now says it has not run
- * and what to do after the answer; a question the model itself asked says the answer is the next message; any other gap
+ * read that as a failure and gave up instead of making the allowed call again. A waiting call now says it has not run and
+ * to carry on from the answer (the note after the answer says what to send); a question the model itself asked says the answer is the next message; any other gap
  * is still an unknown outcome. Node only: the real dist/, a scripted model, port 0.
  */
 import test from "node:test";
@@ -23,8 +23,8 @@ test("a call waiting on the person's answer is marked not run; the model's own q
   const [waiting, asked] = results(reconcileTranscript(turn("files.write", "user.ask"), "needs_input").messages);
   assert.equal(waiting.outcome, "not_run");
   assert.match(waiting.error, /^Not run:/);
-  assert.match(waiting.error, /make this same call again/);
-  assert.match(waiting.error, /If they refused it, do not/);
+  assert.match(waiting.error, /Carry on from their answer/);
+  assert.doesNotMatch(waiting.error, /exactly as before/, "what to send next is the answer note's to say (a push is sent again with confirmed)");
   assert.doesNotMatch(waiting.error, /Side effects may have occurred/);
   assert.equal(asked.status, "asked");
   assert.match(asked.note, /next message .* is their answer/);
