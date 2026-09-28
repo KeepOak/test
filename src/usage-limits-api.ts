@@ -71,21 +71,26 @@ function accountsFor(app: LimitsApp, connection: string): LimitsAccount[] {
   const pool = service.on() ? service.pool(found.pool) : null;
   if (!pool && !signIn) return [];
   const from = found.kind === "chatgpt" ? planFrom.chatgpt : planFrom.cli;
-  const listed = pool?.accounts ?? [{ id: primaryAccount, label: firstLabel(found.pool) }];
+  const listed = pool?.accounts ?? [{ id: primaryAccount, label: firstLabel(found.pool), disabled: false }];
   const next = pool ? service.usedNext(found.pool) : primaryAccount;
   // What pool-provider.ts rotates on: moving on switched on, and two or more switched-on accounts to move between.
   const usable = pool ? service.usablePool(found.pool) : null;
   const switches = !!usable?.autoSwitch && usable.accounts.filter((account) => !account.disabled).length >= 2;
-  return listed.map((account) => ({
+  return listed.map((account) => {
+    const shown = service.presentation(found.pool, account, found.kind);
+    return {
     // Who the sign-in is (its email, where the service said it), else the name it was given.
-    account: account.id, label: service.identities.get(`${found.pool}/${account.id}`) ?? account.label ?? account.id, inUse: account.id === next, signIn,
-    verified: service.identities.has(`${found.pool}/${account.id}`),
+    account: account.id, label: shown.label, inUse: account.id === next && shown.ready === true, signIn,
+    // The label is who the service said the sign-in is (#605's verified identity), not a name it was given.
+    verified: Boolean(shown.identity?.email ?? shown.identity?.name),
     limited: signIn && service.stateOf(found.pool, account.id).limitedUntil > service.now(), switches,
     remaining: null,
-    ...(signIn && service.canReadPlan(found.pool) ? { readable: true, note: service.planNotes.get(`${found.pool}/${account.id}`) ?? null } : {}),
+    ...(signIn ? { ...(shown.ready === true && service.canReadPlan(found.pool) ? { readable: true } : {}),
+      note: shown.signInProblem ?? service.planNotes.get(`${found.pool}/${account.id}`) ?? null } : {}),
     /* Straight from what the service said, per account. `smartOrder()`'s stand-in for an unknown never comes near here. */
-    ...(signIn ? { windows: service.planWindows.get(found.pool, account.id).map((window) => planLimitWindow(window, from)) } : {}),
-  }));
+    ...(signIn ? { windows: shown.ready === false ? [] : service.planWindows.get(found.pool, account.id).map((window) => planLimitWindow(window, from)) } : {}),
+    };
+  });
 }
 /** The list a connection's accounts belong to, and what kind: sign-ins share one row per account. */
 function groupOf(app: LimitsApp, id: string): { group?: string; planName?: string; signIn?: boolean; keyed?: boolean; provider?: string } {
@@ -239,6 +244,7 @@ async function refreshPlan(app: LimitsApp, input: unknown): Promise<UsageGlance>
   if (!parsed.success || !service) throw new UsageLimitsError(400, "Say which connection and which account to check.");
   try { await service.readPlan(parsed.data.connection, parsed.data.account); }
   catch (error) { throw new UsageLimitsError(400, errorText(error)); }
+  await service.readIdentities();
   return usageGlance(app);
 }
 
