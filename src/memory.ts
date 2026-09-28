@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { memoryAgent, readsSharedFacts, writesSharedFacts } from "./trunks/memory-scope.js"; // R17-A (Trunks)
 import { isDeepStrictEqual } from "node:util";
@@ -428,7 +429,7 @@ export class MemoryFacts {
     const binned = binnedRuns(this.db); // a fact a conversation in Recently Deleted taught is not recalled while it waits there
     let bytes = 2;
     for (const record of this.list(owner)) {
-      if (!visibleTo(record, agent) || learnedInBin(binned, record.data)) continue;
+      if (!visibleTo(record, agent) || learnedInBin(binned, record.data) || !isCurrentFact(record)) continue; // SELF-202
       if (!String(record.data.text).normalize("NFC").toLowerCase().includes(normalized)) continue;
       const size = Buffer.byteLength(JSON.stringify(record)) + 1;
       if (bytes + size > 48000 || results.length === 20) break;
@@ -503,7 +504,9 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
   registry.register({ name: "memory.put", description: "Save one clear fact with its source. Give entity and attribute when it may change later, so a newer fact ends the earlier one.",
     permission: "memory.write", parameters: PutMemorySchema,
     execute: async (value, context) => {
-      value = canonicalDetail(!value.entity && !value.attribute ? { ...value, ...impliedDetail(value.text) } : value);
+      // SELF-202: what the fact and the owner's own words say fills in what the model left out (see withImpliedDetail).
+      const asked = (context.source ?? "owner") === "owner" ? store.run(context.runId)?.prompt : undefined;
+      value = canonicalDetail(withImpliedDetail(value, { ownerNames: ownerNames(), ...(asked ? { request: asked } : {}) }));
       const owner = memoryScope(store, context);
       const sessionId = store.run(context.runId)?.sessionId;
       if (sessionId && store.memorySuppressed(owner, sessionId))
@@ -589,7 +592,7 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const owner = memoryScope(store, context);
       if (provider?.isOutside(owner)) return provider.search(owner, value.query, memoryAgent(context));
       if (!retrieval) return store.searchMemory(owner, value.query, memoryAgent(context));
-      const hits = await retrieval.search(owner, value.query, memoryAgent(context), 20, context.signal);
+      const hits = (await retrieval.search(owner, value.query, memoryAgent(context), 20, context.signal)).filter((hit) => isCurrentFact(hit.record));
       return hits.map((hit) => ({ ...hit.record, score: hit.score, importance: hit.importance, matched: hit.matched }));
     } });
   registry.register({ name: "memory.delete", description: "Delete an owner-scoped memory: its id, or words of the fact as you know it.", permission: "memory.write",
@@ -642,6 +645,62 @@ function factsByWords(store: Store, owner: string, words: string, agent?: string
  * Dr. Okafor"), names its own entity and detail. Saving it with them means a newer one ends the earlier one (closeEarlier),
  * even when the model did not say which detail it was. Anything else is saved as it was given. Empty when nothing is implied.
  */
+/**
+ * SELF-202 (mem-update-not-duplicate): a newer fact ends an earlier one only when both name the same entity and
+ * attribute, and qwen2.5:7b named them loosely: "Atlanta" about "Taofiks" (the owner's name, from the computer's name
+ * it is shown), "I live in Atlanta" about "owner" with no attribute, then "I moved to Denver" about "person"/"location".
+ * So Atlanta stayed current beside Denver in 6 of 10 tries. What the fact and the owner's own words say fills in what
+ * the model left out:
+ * - an entity that names the owner (an alias, or their own name) is the owner, and a fact in the owner's first person
+ *   ("I live in…", "my dentist is…") with no entity, or one naming the owner, is about the owner;
+ * - with no attribute, the detail those words name is kept; failing that, the detail the owner's own request names
+ *   ("Remember: I live in Atlanta.") when the fact shares a word with it. Only the owner's own request is read: in a
+ *   chat, "I" may be somebody else.
+ * An entity the model named that is not the owner ("Alice", "mom") is left as it is.
+ */
+export function withImpliedDetail<T extends { text: string; entity?: string | undefined; attribute?: string | undefined }>(
+  value: T, about: { ownerNames?: readonly string[]; request?: string } = {},
+): T {
+  const named = value.entity?.trim().toLowerCase();
+  const owners = new Set([...personAliases, ...(about.ownerNames ?? []).map((name) => name.toLowerCase())]);
+  const ownerOrNone = !named || owners.has(named);
+  if (!ownerOrNone) return value;
+  const implied = impliedDetail(value.text);
+  const fromRequest = implied.attribute ? {} : detailFromRequest(about.request, value.text);
+  const entity = implied.entity ?? fromRequest.entity ?? (named ? "me" : undefined);
+  const attribute = value.attribute ?? implied.attribute ?? fromRequest.attribute;
+  return { ...value, ...(entity ? { entity } : {}), ...(attribute ? { attribute } : {}) };
+}
+/** The detail the owner's own request names, clause by clause ("Remember: I live in Atlanta."), when the fact shares a word with it. */
+function detailFromRequest(request: string | undefined, text: string): { entity?: string; attribute?: string } {
+  if (!request) return {};
+  const said = new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []));
+  for (const clause of request.split(/[.:;!?\n]+/)) {
+    const plain = clause.trim().replace(/^(?:please\s+)?(?:remember|note|save|keep in mind|update where i live)(?:\s+that)?\s*/i, "");
+    const detail = impliedDetail(plain);
+    if (!detail.attribute) continue;
+    const words = plain.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+    if (words.some((word) => said.has(word) && !["live", "moved", "work", "now"].includes(word))) return detail;
+  }
+  return {};
+}
+/**
+ * The names the owner goes by here, as a model may write them for the owner: the first word of this computer's name,
+ * which every task is shown ("Taofiks_Legion" gives "Taofiks"). Nothing else is read.
+ */
+export function ownerNames(host = hostname()): string[] {
+  const first = host.split(/[_\-. ]+/)[0] ?? "";
+  return /^[\p{L}]{3,}$/u.test(first) && !/^(desktop|laptop|pc|computer|localhost|mac|macbook|windows|linux)$/i.test(first) ? [first] : [];
+}
+/**
+ * SELF-202: whether a fact is still true. A fact a newer one ended (closeEarlier sets its `validTo`) stays in the record
+ * for memory.at and the timeline, but is never put in front of the model as if it were current: with "I live in
+ * Atlanta" and "I live in Denver" both in its snapshot, qwen2.5:7b answered "both".
+ */
+export function isCurrentFact(record: { data: { validTo?: unknown } }, now = Date.now()): boolean {
+  const ended = record.data.validTo;
+  return typeof ended !== "string" || !ended || Date.parse(ended) > now;
+}
 export function impliedDetail(text: string): { entity?: string; attribute?: string } {
   const plain = text.trim().replace(/\s+/g, " ");
   const mine = /^my ([a-z][a-z' -]{0,40}?) (?:is|are) \S/i.exec(plain);
@@ -654,15 +713,22 @@ export function impliedDetail(text: string): { entity?: string; attribute?: stri
 const personAliases = new Set(["me", "i", "myself", "owner", "the owner", "person", "the person", "user", "the user", "self"]);
 const attributeAliases: Readonly<Record<string, string>> = {
   location: "home", residence: "home", city: "home", "lives in": "home", "where i live": "home", "home city": "home", "hometown": "home",
-  job: "work", employer: "work", workplace: "work", company: "work", "works at": "work",
+  // SELF-202: the other ways qwen2.5:7b named where the owner lives ("current residence" ended nothing saved as "home").
+  address: "home", "home address": "home", "place of residence": "home", "residence city": "home", "city of residence": "home",
+  lives: "home", living: "home", "living in": "home", "resides in": "home", "home location": "home", "home town": "home",
+  job: "work", employer: "work", workplace: "work", company: "work", "works at": "work", "place of work": "work", "work place": "work",
 };
+/** SELF-202: an attribute as it is compared: lower case, "_" and "-" as spaces, and a leading "current", "the" or "my" left off. */
+function plainAttribute(attribute: string): string {
+  return attribute.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").replace(/^(?:(?:current|present|the|my)\s+)+/, "");
+}
 /**
  * The person is one entity however a model names them ("owner", "user", "me"), and a few details go by several names
  * ("location" and "home"). Named one way, so a newer fact about the same detail ends the earlier one (closeEarlier).
  */
 export function canonicalDetail<T extends { entity?: string | undefined; attribute?: string | undefined }>(value: T): T {
   const entity = value.entity && personAliases.has(value.entity.trim().toLowerCase()) ? "me" : value.entity;
-  const said = value.attribute?.trim().toLowerCase();
+  const said = value.attribute ? plainAttribute(value.attribute) : undefined;
   const attribute = said && entity === "me" ? attributeAliases[said] ?? value.attribute : value.attribute;
   return { ...value, ...(entity ? { entity } : {}), ...(attribute ? { attribute } : {}) };
 }
