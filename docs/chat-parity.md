@@ -104,12 +104,19 @@ email (EM), SMS.
 ### Streaming the final reply
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ◐ written into the short progress message; with steps shown (direct chats) the reply arrives whole. Left: stream it into a message of its own |
-| DC | ✅ | ✅ | ◐ as TG |
-| SL | ✅ native streaming | ✅ | ◐ as TG |
+| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ✅ direct replies stream in a separate editable message; steps stay quiet and separate |
+| DC | ✅ | ✅ | ✅ same shared reply stream |
+| SL | ✅ native streaming | ✅ | ✅ shared message edits (native Slack streaming remains a separate adapter improvement) |
 | WA | ✅ (bridge) | ? | — |
-| MX | ✅ | ✅ | ◐ as TG (piece 3 gave Matrix edits) |
+| MX | ✅ | ✅ | ✅ same shared reply stream |
 | SG, IM, EM, SMS | — | — | — |
+
+Branch sends the reply's first preview as a normal reply notification and edits it as it grows; it does not send
+another copy at completion. Groups receive a complete reply and private progress summaries. Completed words pass
+the secret scrub and outbound check before each preview; the unfinished trailing word stays buffered so split
+credentials are checked whole. Long final replies reuse the first message and deliver the remaining chunks through
+the ledger. Missing message IDs, failed edits and quick answers fall back to ordinary delivery. These paths are
+proved against stand-in adapters and providers; real account connections remain unproven.
 
 ### Approvals by button (the exact request, by fingerprint)
 | | H | O | B today |
@@ -167,7 +174,7 @@ email (EM), SMS.
 | WA | — | ✅ | — |
 | SG | ✅ | ✅ | — |
 | IM | ✅ tapbacks | ✅ | — |
-| MX | ✅ | ✅ | — |
+| MX | ✅ | ✅ | ✅ `m.reaction` on the exact inbound event; own previous status is redacted before replacement (stand-in proof) |
 | EM, SMS | — | — | — |
 
 ### Slash commands and menus
@@ -286,7 +293,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | keybase | yes | — | — | — | — | — | — | — | — | 3500 |
 | kook | yes | — | — | — | — | — | — | — | — | 4000 |
 | mastodon | yes | — | — | — | — | — | — | — | — | default |
-| matrix | yes | — | yes | — | — | — | — | — | — | 3500 |
+| matrix | yes | yes | yes | yes | — | — | — | — | — | 3500 |
 | mqtt | yes | — | — | — | — | — | — | — | — | 3500 |
 | mumble | yes | — | — | — | — | — | — | — | — | 3500 |
 | nextcloud-talk | yes | — | — | — | — | — | — | — | — | default |
