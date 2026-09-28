@@ -163,6 +163,8 @@ owner GET /api/decisions/settings | here=ok remote=ok phone=ok legacy=ok person=
 owner POST /api/decisions/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2303,6 +2305,8 @@ owner+lockdown GET /api/decisions/settings | here=ok remote=ok phone=ok legacy=o
 owner+lockdown POST /api/decisions/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/decisions/decide | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/decisions/urgency | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4443,6 +4447,8 @@ household GET /api/decisions/settings | here=400/f6e21c remote=400/f6e21c read=4
 household POST /api/decisions/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/approvals/categories | here=ok remote=ok read=ok run=ok
 household POST /api/approvals/categories | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/artifacts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6583,6 +6589,8 @@ household+lockdown GET /api/decisions/settings | here=400/f6e21c remote=400/f6e2
 household+lockdown POST /api/decisions/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/decisions/decide | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/decisions/urgency | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/approvals/categories | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/approvals/categories | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/artifacts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8723,6 +8731,8 @@ applock GET /api/decisions/settings | here=423/a8f863
 applock POST /api/decisions/settings | here=423/a8f863
 applock GET /api/decisions/decide | here=423/a8f863
 applock POST /api/decisions/decide | here=423/a8f863
+applock GET /api/decisions/urgency | here=423/a8f863
+applock POST /api/decisions/urgency | here=423/a8f863
 applock GET /api/approvals/categories | here=423/a8f863
 applock POST /api/approvals/categories | here=423/a8f863
 applock GET /api/artifacts | here=423/a8f863
