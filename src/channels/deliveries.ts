@@ -6,8 +6,9 @@ import type { FeatureSwitch } from "./chat-live-settings.js";
 /**
  * The delivery ledger: every outbound channel message is written down before it is sent, split
  * into ordered chunks with stable keys, so a message survives an unavailable channel and is sent
- * in order after reconnect without duplicates. A chunk that keeps failing is kept as a dead letter
- * the owner can see and retry.
+ * in order after reconnect. Delivery is at-least-once: a chunk is marked sent only after the chat
+ * service took it, so if Branch stops in that moment the chunk is sent again after the restart.
+ * A chunk that keeps failing is kept as a dead letter the owner can see and retry.
  */
 export const DeliverySchema = z.object({
   key: z.string().min(1).max(200),

@@ -219,7 +219,8 @@ import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-co
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
-import { builtInImagePrices, imagePricedAt, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { builtInImagePrices, imagePricedAt, knownPictureModels, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { providerImages } from "./media-images.js";
 // Bucket 17.
 import { bucket17Api, handlesBucket17, readMediaBody } from "./media-understand-api.js";
 import { troubleshootApi } from "./troubleshoot.js"; // w911 (A0374) hook.
@@ -287,7 +288,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -1459,7 +1460,8 @@ async function api(
     return voiceApi(voiceDeps(app), request.method ?? "GET", path, () => readBody(request));
   // Pictures and sounds (wave 5): what the media tools should use, and everything they have made.
   if (request.method === "GET" && path === "/api/media/settings")
-    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt };
+    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt,
+      pictures: picturesNow(app), pictureModels: knownPictureModels };
   if (request.method === "POST" && path === "/api/media/settings")
     return { settings: saveMediaSettings(app.store, app.runtime.owner, await readBody(request)) };
   // w911 (A1753) hook: plain-language page test scenarios, drafted, accepted and run as suites.
@@ -3158,6 +3160,15 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
   }
   return { amount: runs.length ? amount : null, currency: "USD" };
 }
+/**
+ * models-ui: the connection that makes pictures now (src/media.ts preset: the owner's plan for "media") and the kind of
+ * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
+ */
+function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
+  const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  const where = preset ? providerImages(preset.provider) : null;
+  return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
+}
 function runCost(app: Branch, runId: string) {
   const usage = app.store.usage(runId);
   const named = app.store.events(runId).filter((e) => e.kind.startsWith("model.") && e.data.model !== undefined);
@@ -3948,6 +3959,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         try {
           streamLiveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
             locked: () => app.sessionLock.refusal("GET", liveScreenPath), desktop: app.desktop ?? null }, request, response);
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
+      // "Take over" and "Hand back" for this computer's screen: the owner at this computer's own window, and nobody else.
+      if (request.method === "POST" && (path === screenTakeOverPath || path === screenHandBackPath)) {
+        z.object({}).strict().parse(await readBody(request));
+        try {
+          send(response, 200, screenControl({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("POST", path) }, app.desktop ?? null, path));
         } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
         return;
       }
