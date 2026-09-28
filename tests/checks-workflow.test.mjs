@@ -6,13 +6,15 @@ import YAML from "yaml";
 const read = async (name) => YAML.parse(await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"));
 const workflow = await read("checks.yml");
 
-/* A pull request's newer run cancels its older one; nothing else is ever cancelled or replaced. A group shared by the
-   pushes to one branch let each merge into redesign/window cancel the run before it (no base run finished, so promote
-   never ran), and GitHub drops all but the newest pending run of a group even without cancel-in-progress. */
-test("the whole suite runs on every pull request and keeps every integration-trunk result", () => {
+/* A pull request's newer run cancels its older one. Pushes to a branch share one group per branch (never main or a
+   release branch, each of whose runs is kept) and are never cancelled
+   in progress: the running base run finishes and promote follows it, and a newer merge replaces only the pending run,
+   so a merge storm runs the whole suite once per batch. Everything else has a group of its own. */
+test("the whole suite runs on every pull request and once per batch of merges into redesign/window", () => {
   assert.equal(workflow.concurrency.group,
-    "${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || format('checks-run-{0}', github.run_id) }}");
+    "${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') && format('checks-base-{0}', github.ref) || format('checks-run-{0}', github.run_id) }}");
   assert.equal(workflow.concurrency["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}");
+  assert.equal(workflow.jobs.promote.concurrency["cancel-in-progress"], false);
   assert.ok(Object.hasOwn(workflow.on, "pull_request"));
   assert.ok(workflow.on.push.branches.includes("mac/**"), "release and beta gates read push runs on mac/cross-platform");
   assert.equal(workflow.on.schedule[0].cron, "17 3 * * *");

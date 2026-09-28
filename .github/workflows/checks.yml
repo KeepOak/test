@@ -31,12 +31,14 @@ on:
 permissions:
   contents: read
 # A pull request keeps one run: a new push, or a base merge into it, cancels the older run for the same PR.
-# Every other run (pushes to redesign/window, mac/cross-platform, main and release branches, the nightly run, runs
-# by hand) gets a group of its own and is never cancelled or replaced. A shared group per branch let each merge into
-# redesign/window cancel the run before it, so no base run finished and promote never moved mac/cross-platform; and
-# GitHub keeps at most one pending run per group, so even without cancel-in-progress a shared group drops pushes.
+# Pushes to a branch (redesign/window, mac/cross-platform and the rest; not main or release/**) share one group per
+# branch without cancel-in-progress: the running base run always finishes (and
+# promote follows it), and GitHub keeps one pending run, which a newer merge replaces. A merge storm therefore runs the
+# whole suite once per batch, on the newest commit, which covers every commit before it; a red base names a batch, not
+# one merge. (Cancelling in progress there once meant no base run ever finished, so promote never ran.) Pushes to main
+# and release/**, the nightly run and runs by hand have a group of their own and are never replaced.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || format('checks-run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') && format('checks-base-{0}', github.ref) || format('checks-run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   # What this run tests: the whole suite, or for a pull request into redesign/window what its change reaches.
