@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { _electron } from "playwright";
-import { connected, desktopOptions, onboarded } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, onboarded, STARTUP_MS } from "./fixtures/desktop-options.mjs";
 
 const mainWindow = (electron, run) => electron.evaluate(({ BrowserWindow }, body) => {
   const win = BrowserWindow.getAllWindows().find((each) => each.getTitle() !== "" && !each.isDestroyed()) ?? BrowserWindow.getAllWindows()[0];
@@ -22,7 +22,7 @@ test("the desktop window has no system title bar, fills the screen first, and re
   const electron = await _electron.launch(options);
   let left = null; // the window's size just before it closed
   try {
-    const page = await electron.firstWindow();
+    const page = await electron.firstWindow({ timeout: STARTUP_MS });
     await onboarded(page);
     // Linux build machines draw windows with no window manager (Xvfb), and nothing can be maximised there;
     // the choice itself is tested in window-state.test.mjs.
@@ -49,7 +49,7 @@ test("the desktop window has no system title bar, fills the screen first, and re
   }
   const again = await _electron.launch(options);
   try {
-    const page = await again.firstWindow();
+    const page = await again.firstWindow({ timeout: STARTUP_MS });
     await connected(page);
     assert.equal(await mainWindow(again, (win) => win.isMaximized()), false, "it reopens the way it was left");
     const bounds = await mainWindow(again, (win) => win.getNormalBounds());
@@ -64,7 +64,7 @@ test("the desktop window's own top row moves it while its buttons still press", 
   const { options } = await desktopOptions({ hidden: true });
   const electron = await _electron.launch(options);
   try {
-    const page = await electron.firstWindow();
+    const page = await electron.firstWindow({ timeout: STARTUP_MS });
     await onboarded(page);
     await staysHidden(electron, "opened");
     // Redesign: the old window marked the desktop frame with body.lx-desktop-frame and its top row was body.lx header.
@@ -105,7 +105,7 @@ test("nothing of the page sits under the desktop window's own controls", { timeo
   const { options } = await desktopOptions({ hidden: true });
   const electron = await _electron.launch(options);
   try {
-    const page = await electron.firstWindow();
+    const page = await electron.firstWindow({ timeout: STARTUP_MS });
     await connected(page);
     await staysHidden(electron, "opened");
     await page.locator(".ob9").waitFor(); // setup, over a fresh data folder
@@ -165,7 +165,7 @@ test("the desktop window's own controls follow the look, in every shipped theme,
   const { options } = await desktopOptions({ hidden: true });
   const electron = await _electron.launch(options);
   try {
-    const page = await electron.firstWindow();
+    const page = await electron.firstWindow({ timeout: STARTUP_MS });
     await onboarded(page);
     await staysHidden(electron, "opened");
     await mainWindow(electron, (win) => {
