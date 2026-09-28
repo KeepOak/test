@@ -6,6 +6,7 @@
  * one account, or with the switch off, nothing moves. Every service is a stand-in; nothing reaches a provider.
  */
 import test from "node:test";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -161,6 +162,7 @@ test("R9 a real task on Claude Code: the owner's plan runs out, the next of thei
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  await fakeClaudeAccounts(t, service);
   const seen = [];
   const spawn = async (row, prompt, signal, limits, home) => {
     const who = home ? home.path.split(/[\\/]/).pop() : "primary";
