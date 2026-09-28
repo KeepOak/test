@@ -28,7 +28,7 @@ import { defaultTrunkConversation, roomToWork, startEngine } from "../tests/fixt
 import { addProgram } from "../dist/accounts/saved-sign-ins.js";
 import { startNightBrain } from "./selfdev-night-brain.mjs";
 import { canonicalCoord, coordFingerprint, offlineOutcome, offlineWorld } from "./selfdev-night-world.mjs";
-import { cleanUp, githubOutcome, githubWorld } from "./selfdev-night-github.mjs";
+import { cleanUp, githubOutcome, githubWorld, stopOtherWhenRed } from "./selfdev-night-github.mjs";
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => { const at = args.indexOf(`--${name}`); return at >= 0 ? args[at + 1] : fallback; };
@@ -137,7 +137,7 @@ async function readNight(engine, sessionId, known) {
 }
 
 /** Watches the night, kills the engine once at the chosen wait, starts it again, until nothing of it is left working. */
-async function watch(paths, port, env, sessionId, deadline) {
+async function watch(paths, port, env, sessionId, deadline, tick = () => undefined) {
   let engine = await startChild(paths, port, env);
   running.add(engine);
   const health = [], restart = { killedAt: null, backAt: null }, known = { runs: [] };
@@ -147,6 +147,7 @@ async function watch(paths, port, env, sessionId, deadline) {
   for (;;) {
     await pause(3000);
     health.push({ at: Date.now(), ok: (await api(engine, "health").catch(() => ({ status: 0 }))).status === 200 });
+    try { tick(); } catch { /* a look at GitHub that failed is tried again next time */ }
     if (Date.now() > deadline) return { engine, health, restart, timedOut: true };
     const read = await readNight(engine, sessionId, known).catch(() => null);
     if (!read) continue;
@@ -243,7 +244,8 @@ async function main() {
     const sessionId = await setUp(world, conn, paths);
     const port = await freePort();
     const since = new Date().toISOString();
-    const watched = await watch(paths, port, conn.env, sessionId, Date.now() + Number(option("hours", "4")) * 3600_000);
+    const watched = await watch(paths, port, conn.env, sessionId, Date.now() + Number(option("hours", "4")) * 3600_000,
+      onGitHub ? () => stopOtherWhenRed(world) : undefined);
     killHard(watched.engine); running.delete(watched.engine);
     await pause(2000); // the killed engine's files are let go
     if (conn.chatgptAuth) await copyFile(join(paths.dataDir, "chatgpt-auth.json"), conn.chatgptAuth).catch(() => undefined);

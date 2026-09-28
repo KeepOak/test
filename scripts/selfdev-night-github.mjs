@@ -74,6 +74,22 @@ export function githubPrompt(world) {
   ].join("\n\n");
 }
 
+/**
+ * #M only has to be seen red, so once one of its checks has failed its run is stopped, to spare shared runners. The
+ * lead then reads it as not passed (a stopped check never counts as passed). At most once every five minutes.
+ */
+export function stopOtherWhenRed(world) {
+  if (world.otherStopped || Date.now() - (world.otherLooked ?? 0) < 300_000) return;
+  world.otherLooked = Date.now();
+  const head = world.redBranch.replace("night-red-", "night-other-");
+  const runs = ghJson("api", `repos/${repo}/actions/runs?branch=${encodeURIComponent(head)}&per_page=20`, "--jq", "[.workflow_runs[] | {id, status}]") ?? [];
+  const sha = ghJson("api", `repos/${repo}/git/ref/heads/${head}`, "--jq", "{sha: .object.sha}")?.sha;
+  const failed = sha ? (ghJson("api", `repos/${repo}/commits/${sha}/check-runs?per_page=100`, "--jq", '[.check_runs[] | select(.conclusion == "failure")] | length') ?? 0) : 0;
+  if (!failed) return;
+  for (const run of runs.filter((row) => row.status !== "completed")) { try { gh("api", "-X", "POST", `repos/${repo}/actions/runs/${run.id}/cancel`); } catch { /* finished */ } }
+  world.otherStopped = true;
+}
+
 /** What the night left on GitHub, read over REST, for the gate's own judgement. */
 export function githubOutcome(world) {
   const pulls = ghJson("api", `repos/${repo}/pulls?state=all&base=${encodeURIComponent(world.base)}&per_page=50`,
