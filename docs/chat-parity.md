@@ -20,6 +20,97 @@ Researched 2026-09-27. Sources:
   - `docs/concepts/streaming.md`, `typing-indicators.md`, `queue.md`
 - Branch: `src/channels/**`, `src/live-steps.ts`, `src/commands/catalog.ts`, `src/scheduler.ts`, `src/live-screen.ts`.
 
+## Tested for real, app by app (CHAT-003)
+
+The cells below mostly rest on stand-in adapters. This section says which apps also run against a **real server**,
+with no account anywhere: Branch's own channel, built from a connections-file entry exactly as at start, talks to a
+real server on this computer, and a person on the other side uses a small client of their own that shares no code
+with Branch. The walk is the owner's: a stranger writes and gets a pairing code, the owner approves it, and the same
+person asks a question with an accent and emoji in it and gets the answer back.
+
+How to run it (Windows with a WSL distro; `BRANCH_REAL_CHAT_WSL`, default `BranchCI`):
+
+```
+node scripts/real-chat/servers.mjs up     # fetch (pinned checksums), configure and start the servers
+node scripts/real-chat/servers.mjs test   # run tests/real-chat.test.mjs against them
+node scripts/real-chat/servers.mjs down
+```
+
+- Every server listens on 127.0.0.1 only, with no federation and throwaway passwords that exist only there.
+- Downloads come to about 52 MB in all: Ergo 7 MB, GreenMail 11 MB, tuwunel 32 MB, and Prosody about 2 MB from apt.
+  GreenMail needs Java 11 or later.
+- CI has no servers, so there the four real walks are skipped with a reason. The check that every catalog app has
+  either a real test or a reason still runs in CI, and so does the check that this table is current.
+- The first runs found two bugs in Branch's email reader, both fixed in the same change:
+  - A server may send a message's text before its headers, and GreenMail does about half the time. Branch read the
+    headers as the text and dropped the mail.
+  - IMAP counts a message in bytes. Branch counted characters, so a mail with a few accents or emoji made the inbox
+    wait until it gave up, on every look, for good.
+
+<!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
+
+4 of 55 apps are tested for real; every other one says why not.
+
+| App | Result | Server, or why not |
+| --- | --- | --- |
+| Telegram | Skipped | needs a bot token; Telegram's test environment needs a test-DC account to create a bot with its BotFather, so there is no account-free sandbox |
+| Discord | Skipped | needs a Discord bot token and a server to add it to; there is no local or sandbox server for it |
+| Slack | Skipped | needs a Slack workspace and an app token; there is no local or sandbox server for it |
+| WhatsApp Business | Skipped | needs a WhatsApp Business number (Meta Cloud API); there is no local or sandbox server for it |
+| Email | **Real-tested** | GreenMail 2.1.14 (one Java jar, 11 MB) SMTP 127.0.0.1:13025 and IMAP 127.0.0.1:13143 |
+| Facebook Messenger | Skipped | needs a Facebook Page and a Meta app; there is no local or sandbox server for it |
+| Instagram | Skipped | needs an Instagram business account and a Meta app; there is no local or sandbox server for it |
+| Matrix (Element) | **Real-tested** | tuwunel 1.9.3 (a Conduit fork, one Rust binary, 32 MB) in the BranchCI WSL distro on 127.0.0.1:16167 |
+| Signal | Skipped | needs a phone number registered with Signal for signal-cli; Signal has no test server |
+| Mattermost | Skipped | a local Mattermost server is a Docker image of about 1 GB (over the 100 MB limit without asking) |
+| Rocket.Chat | Skipped | a local Rocket.Chat server needs MongoDB and a Docker image of about 1.5 GB (over the 100 MB limit without asking) |
+| Google Chat | Skipped | needs a Google Workspace account and a Chat app; there is no local or sandbox server for it |
+| Microsoft Teams (webhook) | Skipped | needs a Microsoft 365 tenant (incoming webhook); there is no local or sandbox server for it |
+| Zulip | Skipped | a local Zulip server is a Docker install of several GB (over the 100 MB limit without asking) |
+| Feishu / Lark | Skipped | needs a Feishu / Lark developer account; there is no local or sandbox server for it |
+| DingTalk | Skipped | needs a DingTalk developer account; there is no local or sandbox server for it |
+| WeCom (group robot) | Skipped | needs a WeCom (WeChat Work) organisation; there is no local or sandbox server for it |
+| LINE | Skipped | needs a LINE Messaging API channel; there is no local or sandbox server for it |
+| Viber | Skipped | needs a Viber bot account; there is no local or sandbox server for it |
+| IRC | **Real-tested** | Ergo 2.19.1 (one Go binary, 7 MB) on 127.0.0.1:16667 |
+| Twitch chat | Skipped | needs a Twitch account and an OAuth token; there is no local or sandbox server for it |
+| Gotify | Skipped | a local Gotify server is possible (one Go binary, about 20 MB) but is not in this harness yet |
+| iMessage | Skipped | needs a Mac with Messages signed in to an Apple ID |
+| Microsoft Teams (bot) | Skipped | needs an Azure Bot registration; there is no local or sandbox server for it |
+| Webex | Skipped | needs a Webex bot token; there is no local or sandbox server for it |
+| Synology Chat | Skipped | needs a Synology NAS running Synology Chat |
+| Zalo Official Account | Skipped | needs a Zalo Official Account; there is no local or sandbox server for it |
+| Flock | Skipped | needs a Flock workspace and app; there is no local or sandbox server for it |
+| Pumble | Skipped | needs a Pumble workspace and app; there is no local or sandbox server for it |
+| Mastodon | Skipped | a local Mastodon server needs PostgreSQL, Redis and Ruby (several hundred MB; over the limit without asking) |
+| Bluesky | Skipped | needs a Bluesky account (its local PDS needs Docker and DNS); there is no local or sandbox server for it |
+| Reddit | Skipped | needs a Reddit account and a script app; there is no local or sandbox server for it |
+| Discourse | Skipped | a local Discourse server is a Docker install of several GB (over the 100 MB limit without asking) |
+| X direct messages | Skipped | needs an X developer account with Direct Message access; there is no local or sandbox server for it |
+| Twist | Skipped | needs a Twist workspace and integration; there is no local or sandbox server for it |
+| Nextcloud Talk | Skipped | a local Nextcloud with Talk needs a web server, PHP and a database (several hundred MB; over the limit without asking) |
+| Text messages (Twilio) | Skipped | needs a Twilio phone number; there is no local or sandbox server for it |
+| ntfy | Skipped | a local ntfy server is possible (one Go binary, about 20 MB) but is not in this harness yet |
+| Pushover | Skipped | needs a Pushover application token; there is no local or sandbox server for it |
+| Threema Gateway | Skipped | needs a Threema Gateway ID (paid); there is no local or sandbox server for it |
+| Home Assistant | Skipped | a local Home Assistant is several hundred MB of Python packages (over the limit without asking) |
+| XMPP (Jabber) | **Real-tested** | Prosody 0.12 (apt, about 2 MB) in the BranchCI WSL distro, STARTTLS with a certificate from a throwaway local CA |
+| MQTT | Skipped | a local Mosquitto broker is possible (apt, about 1 MB) but is not in this harness yet |
+| Keybase | Skipped | needs a Keybase account signed in to the keybase program |
+| SimpleX Chat | Skipped | a local SimpleX chat program is possible (about 80 MB) but is not in this harness yet |
+| Delta Chat | Skipped | possible with the local mail server above and deltachat-rpc-server (about 20 MB), but not in this harness yet |
+| Nostr | Skipped | a local relay is possible (strfry or nostr-rs-relay) but is not in this harness yet |
+| VK | Skipped | needs a VK community token; there is no local or sandbox server for it |
+| QQ (official bot) | Skipped | needs a QQ bot registration; there is no local or sandbox server for it |
+| Guilded | Skipped | needs a Guilded bot token; there is no local or sandbox server for it |
+| Revolt (Stoat) | Skipped | a local Revolt server is a Docker install of several services (over the 100 MB limit without asking) |
+| Mumble | Skipped | a local Mumble server is possible (apt mumble-server, a few MB) but is not in this harness yet |
+| KOOK | Skipped | needs a KOOK bot token; there is no local or sandbox server for it |
+| WeChat Official Account | Skipped | needs a WeChat Official Account; there is no local or sandbox server for it |
+| WeCom app | Skipped | needs a WeCom organisation and self-built app; there is no local or sandbox server for it |
+
+<!-- real-chat:end -->
+
 ## What the two of them do, and what Branch takes
 
 ### The live progress message (Hermes, as the owner's Telegram screenshots show)
