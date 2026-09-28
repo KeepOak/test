@@ -5,8 +5,9 @@
  * the owner's default when it does not copy them. Every service is a stand-in: keys are answered by a fake fetch, programs by a fake runner.
  */
 import test from "node:test";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -25,6 +26,7 @@ async function fixture(t) {
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
   service.deps.statusRun = async () => ({ code: 0, missing: false, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' });
+  await fakeClaudeAccounts(t, service);
   delete service.deps.policy; // the stand-in fetch below is the whole network
   for (const part of ["trunks", "rooms", "routines"]) app.trunks.setMode(part, { mode: "on" });
   return { app, service, owner: app.runtime.owner };
@@ -260,10 +262,10 @@ test("trunks-use-subscriptions: Claude Code answering a Trunk gets no tools of i
   args.length = 0;
   const own = await app.runtime.run({ prompt: "hello" });
   assert.equal(own.output, "from the sign-in");
-  assert.ok(!args[0].includes("--tools"), "the owner's own call keeps its arguments");
+  assert.equal(args[0][args[0].indexOf("--tools") + 1], "", "the owner's transport delegates every tool to Branch");
   const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
   assert.equal(chat.output, "from the sign-in", chat.output);
-  assert.deepEqual(args[1].slice(-2), ["--tools", ""], "Claude Code runs with no tools of its own for a Trunk");
+  assert.equal(args[1][args[1].indexOf("--tools") + 1], "", "Claude Code runs with no tools of its own for a Trunk");
 });
 
 test("trunks-use-subscriptions: a Trunk messaged by a Trunk a household person drove is not the owner's work", async (t) => {
@@ -332,6 +334,12 @@ test("owner priority 2026-09-27: one Trunk answers with the owner's second Codex
   registerCliAgent(app.runtime.models, { id: "codex" }, {}, spawn);
   registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
   service.deps.spawnAgent = spawn;
+  // Codex counts as installed only when it is on PATH (checkProgram), which a build machine's is not: the Claude
+  // transport reads every sign-in before it answers, and a Codex that is not there reads as signed out.
+  const bin = await mkdtemp(join(tmpdir(), "codex-fixture-bin-")), before = process.env.PATH;
+  for (const name of ["codex", "codex.cmd"]) await writeFile(join(bin, name), "", { mode: 0o755 });
+  process.env.PATH = bin + (process.platform === "win32" ? ";" : ":") + before;
+  t.after(async () => { process.env.PATH = before; await discardTemp(bin); });
   app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
   setMode(service, { mode: "on" });
   const codexSecond = (await addAccount(service, { pool: "cli-codex", label: "Work Codex" })).accounts.at(-1).id;

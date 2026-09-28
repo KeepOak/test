@@ -46,7 +46,15 @@ test("GET /api/state marks setup's tasks and the engine's own asks aside, and no
   const byPrompt = (words) => runs.filter((r) => r.prompt === words);
   assert.equal(byPrompt("Hello from setup")[0]?.aside, true, "a task asked from setup");
   assert.equal(byPrompt("Summarise my week")[0]?.aside, undefined, "a task asked from the window");
-  for (const name of ["Made in setup", "Made later"]) assert.equal(byPrompt(`Trunk: ${name}`)[0]?.aside, true, `the task that opens ${name}'s conversation`);
+  for (const name of ["Made in setup", "Made later"]) {
+    const trunk = app.trunks.records.list().find((one) => one.name === name);
+    assert.ok(trunk, `${name} was kept`);
+    const opening = app.store.sessionRuns(app.runtime.owner, trunk.chatSessionId)
+      .map((run) => app.store.run(run.id)).find((run) => run?.prompt === `Trunk: ${name}`);
+    assert.ok(opening, `${name}'s conversation has its saved opening row`);
+    assert.equal(app.store.engineOwnRuns([opening.id]).has(opening.id), true, `${name}'s opening is marked aside`);
+    assert.equal(byPrompt(`Trunk: ${name}`).length, 0, `${name}'s bookkeeping is hidden from recent activity`);
+  }
   const intros = runs.filter((r) => r.prompt.startsWith("Introduce yourself to the owner"));
   assert.equal(intros.length, 2);
   assert.ok(intros.every((r) => r.aside === true), "each Trunk's introduction, from setup or not");
