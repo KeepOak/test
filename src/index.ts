@@ -1,3 +1,4 @@
+import { environmentTool } from "./environment.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
@@ -675,6 +676,7 @@ export async function createBranch(options: {
   };
   registerDocuments(registry, documents);
   registerAttachmentTools(registry, store, attachments);
+  registry.register(environmentTool((runId) => runtime.channelOf(runId))); // where Branch is running, on request
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",

@@ -61,6 +61,7 @@ import { Attachments } from "./attachments.js";
 import { readForModel, type KeptFile, type Understander } from "./attachment-reading.js";
 import type { WebhookNotifier } from "./webhooks.js";
 import type { HookDecision } from "./hooks.js";
+import { environmentFacts, environmentLine } from "./environment.js"; // where Branch runs, for the model
 import { assistantIdentity, identityInstructions } from "./identity.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
@@ -559,6 +560,8 @@ export interface RunOptions {
   dryRun?: boolean;
   /** Who started this task; defaults to the owner's own app or command line. */
   source?: RunSource;
+  /** The chat app a chat's message came in on ("telegram"), told to the model with where it runs (src/environment.ts). */
+  channel?: string;
   /** Ask for a short plan first and work through it step by step. */
   plan?: boolean;
   /** The engine's own ask, marked on the saved message (src/contracts.ts Message.system); never the person's words. */
@@ -1546,6 +1549,7 @@ ${run.output.slice(0, 6000)}`;
       permissions: [...context.permissions].sort(),
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
       ...(context.dryRun ? { dryRun: true } : {}),
+      ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
     // ── mac2/fly-core: the learning core ranks what worked before as the task starts, and learns from
@@ -2627,6 +2631,9 @@ ${run.output.slice(0, 6000)}`;
     messages.push(...learningOpening(this.store, run, context)); // R17-F (src/learning-more/hook.ts); adds nothing while its parts are off
     const working = this.store.workingMessages(run.sessionId);
     if (working.summary) messages.push(summaryMessage(working.summary));
+    // Where Branch is running, where the message came from and the local time: last of the system text, after
+    // everything that stays the same between turns, so a service's prompt cache keeps the rest (src/environment.ts).
+    messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id))) });
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
     return { messages, ids };
@@ -3653,6 +3660,16 @@ ${run.output.slice(0, 6000)}`;
     return { ...rest, source, ...(from === options.resumeFrom ? {} : { originFrom: from }), ...(kept ? { permissions: kept } : {}) };
   }
   /** mac7/outside-resume: who a piece of work is held as — its context, or its task's record when that is stricter. */
+  /** The chat app a task's message came in on, from its start record (null for the window, the API and the rest). */
+  channelOf(runId: string): string | null {
+    let id: string | null = runId;
+    for (let hops = 0; id && hops < 5; hops++) { // a helper's task says where its parent's message came from
+      const started: Record<string, unknown> | undefined = this.store.events(id).find((event) => event.kind === "run.started")?.data;
+      if (typeof started?.channel === "string" && started.channel) return started.channel;
+      id = typeof started?.parentRunId === "string" ? started.parentRunId : null;
+    }
+    return null;
+  }
   private sourceOf(context: { source?: RunSource | undefined; runId?: string | undefined }): RunSource {
     const given = context.source ?? "owner";
     return given !== "owner" ? given : this.recordedSource(context.runId) ?? "owner";
