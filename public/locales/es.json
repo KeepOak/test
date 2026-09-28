@@ -10020,5 +10020,16 @@
   "selfMerge.done": "GitHub confirmed the merge: {sha}",
   "selfMerge.runner": "Check isolated test runner",
   "selfMerge.runnerReady": "The existing isolated test runner is available.",
-  "selfMerge.scope": "Contract paths and side effects:"
+  "selfMerge.scope": "Contract paths and side effects:",
+  "window.chat.hf.wakeups": "{count} avisos",
+  "window.chat.hf.wakeups.one": "{count} aviso",
+  "window.chat.hf.programs": "{count} programas en marcha",
+  "window.chat.hf.programs.one": "{count} programa en marcha",
+  "window.chat.hf.wakeup-at": "Despierta esta conversación a las {time}",
+  "window.chat.hf.wakeup-every": "Despierta esta conversación a las {time} y luego cada {minutes} minutos",
+  "window.chat.hf.wakeup-cron": "Despierta esta conversación a las {time} y luego según {cron}",
+  "window.chat.hf.wakeup-cancel": "Cancelar",
+  "window.chat.hf.wakeup-cancelled": "Aviso cancelado.",
+  "window.chat.hf.program-running": "En marcha desde las {time}",
+  "window.chat.hf.program-stopped": "{name} detenido."
 }

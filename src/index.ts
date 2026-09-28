@@ -1786,6 +1786,8 @@ ${result.output || "(it said nothing)"}`;
     debugAdapters,
     /** Programs left running, and the switch that stops them all when the app closes. */
     processes,
+    /** workbench (SELF-305): wake-ups set inside conversations, for the window's open-work list. */
+    wakeups,
     /** What integrations need to host messaging channels: the router and default-project secrets. */
     channelHost: {
       router: channels,
