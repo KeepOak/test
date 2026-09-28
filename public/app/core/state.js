@@ -6,7 +6,7 @@ import { render } from "./dom.js";
 import { t } from "../../i18n.js";
 
 const SAVED_KEY = "branch-window";
-const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden"];
+const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "panes19"];
 
 export const S = {
   view: "chat",
@@ -22,6 +22,7 @@ export const S = {
   dockW: null,
   rail: false,
   sideHidden: false,
+  panes19: null, // RES-703: the panes beside the open conversation, their widths and the active one (chat/panes.js)
   signedIn: true,
 };
 

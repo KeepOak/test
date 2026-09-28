@@ -10056,5 +10056,15 @@
   "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
+  "window.panes.label": "Conversaciones lado a lado",
+  "window.panes.close-main": "Cerrar este panel",
+  "window.panes.make-main": "Abrir {name} aquí completo",
+  "window.panes.add": "Añadir un panel",
+  "window.panes.resize": "Arrastra para repartir el ancho",
+  "window.panes.answer": "Responder",
+  "window.panes.full": "Ya hay {count} paneles esperando una respuesta; espera a que termine uno.",
+  "window.panes.none-left": "Todas las conversaciones ya están abiertas.",
+  "window.panes.open-in-pane": "Abrir en un panel",
+  "window.panes.needs-you": "Esperando tu respuesta."
 }

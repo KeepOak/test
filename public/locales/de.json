@@ -10056,5 +10056,15 @@
   "window.places.library17.import-spreadsheet": "Tabelle importieren",
   "window.places.library17.import-spreadsheet-hint": "Wähle eine CSV-, TSV-, JSON- oder Excel-Datei. Branch behält sie in der Bibliothek und füllt eine SELECT-Frage aus, die du ausführen kannst.",
   "window.places.library17.import-spreadsheet-limit": "Wähle eine Tabelle, die kleiner als 8 MB ist.",
-  "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal."
+  "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal.",
+  "window.panes.label": "Unterhaltungen nebeneinander",
+  "window.panes.close-main": "Diesen Bereich schließen",
+  "window.panes.make-main": "{name} hier vollständig öffnen",
+  "window.panes.add": "Bereich hinzufügen",
+  "window.panes.resize": "Ziehen, um die Breite aufzuteilen",
+  "window.panes.answer": "Antworten",
+  "window.panes.full": "Schon {count} Bereiche warten auf eine Antwort; warte, bis einer fertig ist.",
+  "window.panes.none-left": "Alle Unterhaltungen sind schon geöffnet.",
+  "window.panes.open-in-pane": "In einem Bereich öffnen",
+  "window.panes.needs-you": "Wartet auf deine Antwort."
 }

@@ -1,76 +1,23 @@
 /* Two things from the conversation's header and menu (design doc 4.3, pass 10 and 15).
-   - Open another conversation beside: a second conversation read with GET /api/sessions/{id}, drawn next to this one
-     on a wide window (the split closes itself below 1000px, as the prototype's does).
+   - Open another conversation beside: now a pane of its own, among many (RES-703, chat/panes.js).
    - Who it knows: the Trunks this computer has (GET /api/trunks) and the Trunks on the owner's other computers
      (POST /api/reach/trunks/remote, which only looks). "Connect another agent" opens Customize › Tools at Agents. The
      per-row "may talk to" switches stay greyed: widening whom a Trunk may message is a security-reviewed change, and the
      engine keeps no per-Trunk list for it; the hops note stays greyed because the engine does not say its limit. */
 
 import { $, esc, render } from "../core/dom.js";
-import { S, E, ownName, chatFace, trunkIntro } from "../core/state.js";
+import { S } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run, has } from "../core/actions.js";
-import { ic, av, mi, openPop, closePop, toast } from "../core/ui.js";
+import { ic, av, mi, openPop, closePop } from "../core/ui.js";
 import { markLive } from "../core/features.js";
-import { text } from "./markdown.js";
-import { mediaRows } from "./media.js";
 import { t } from "../../i18n.js";
 import { shareMenu } from "../flows/share.js";
 
-const V = { id: null, messages: [], loaded: null };
-const sid = (s) => s.sessionId ?? s.id;
-/* A Trunk's or a room's own conversation by its name and face, as the list's rows are (core/state.js). */
-const nameOf = (id) => ownName(id) || E.sessions.find((s) => sid(s) === id)?.opening || "";
-
-/* ---------- the conversation beside ---------- */
+/* ---------- the conversation's menu ---------- */
+/* "Open another conversation beside" pulls one into a pane of its own (chat/panes.js). */
 export function chatMenuTop() {
-  return mi("beside15", "cols15", S.beside15 ? t("window.chat.beside.change") : t("window.chat.beside.open-another")) + shareMenu() + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
-}
-
-function besidePop() {
-  const rows = E.sessions.filter((s) => sid(s) !== S.chat).slice(0, 8).map((s) => `<button class="mi" type="button" data-act="beside15" data-v="${esc(sid(s))}">${av(chatFace(sid(s)), 22)}<span><span class="mi-t">${esc(nameOf(sid(s)))}</span><span class="mi-s">${esc(String(s.lastMessage || "").slice(0, 44))}</span></span></button>`).join("");
-  return `<div class="ph">${t("window.chat.beside.open-beside")}</div>${rows}`;
-}
-
-function thread(messages, session) {
-  let last = null;
-  return messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !trunkIntro(m)).map((m) => {
-    const html = m.role === "user"
-      ? `<div class="u">${esc(m.content)}</div>${mediaRows(m, session)}`
-      : `<div class="b"><div class="gut">${last !== "assistant" ? av(chatFace(session), 28) : ""}</div><div><div class="txt">${text(m.content)}</div></div></div>`;
-    last = m.role;
-    return html;
-  }).join("");
-}
-
-/* Only the newest pick's answer is kept: a slower read for a conversation picked earlier is dropped when it returns. */
-async function load(id) {
-  V.loaded = id;
-  let messages = [];
-  try { messages = (await api("sessions/" + encodeURIComponent(id))).messages ?? []; } catch (error) { if (V.loaded === id) toast(error.message); }
-  if (V.loaded !== id) return;
-  V.messages = messages;
-  V.id = id;
-  render();
-}
-
-/* Wraps the conversation's scroll area in the split when another conversation is open beside it. */
-export function besideWrap(scroll) {
-  const id = S.beside15;
-  if (!id || id === S.chat) return scroll;
-  if (V.loaded !== id) load(id);
-  const body = V.id === id ? thread(V.messages, id) : "";
-  const name = esc(nameOf(id));
-  return `<div class="split15">${scroll}<aside class="beside15" aria-label="${t("window.chat.beside.label", { name })}"><div class="bs-h15">${av(chatFace(id), 26)}<span class="grow"><b>${name}</b><small></small></span><button class="btn ghost sm" type="button" data-act="chat" data-id="${esc(id)}">${t("ov.open")}</button><button class="icon-btn" type="button" aria-label="${t("window.chat.beside.close")}" data-act="beside15" data-v="">${ic("x", "s")}</button></div><div class="bs-body15"><div class="thread">${body}</div></div></aside></div>`;
-}
-
-function beside(el) {
-  if (el.dataset.v == null) { openPop($('[data-act="chatmenu"]') || el, besidePop(), { right: true, force: true }); return; }
-  S.beside15 = el.dataset.v || null;
-  V.loaded = null;
-  closePop();
-  render();
-  if (S.beside15 && innerWidth < 1000) toast(t("window.chat.beside.wider"));
+  return mi("beside15", "cols15", t("window.chat.beside.open-another")) + shareMenu() + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
 }
 
 /* ---------- who it knows ---------- */
@@ -122,9 +69,8 @@ function connectAgent() {
 }
 
 export function initBeside() {
-  markLive(["beside15", "roster10", "roster10h", "t9-kind-roster"]);
+  markLive(["roster10", "roster10h", "t9-kind-roster"]);
   on("t9-kind-roster", () => connectAgent());
-  on("beside15", (el) => beside(el));
   on("roster10", () => roster($('[data-act="roster10h"]') || $('[data-act="chatmenu"]'), true));
   on("roster10h", (el) => roster(el, false));
 }

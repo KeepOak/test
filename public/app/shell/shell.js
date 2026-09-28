@@ -301,7 +301,8 @@ function rowMenu(e) {
   if (!row) return false;
   e.preventDefault();
   const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = s && trunkFor(s);
-  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"`) + unreadItem(row.dataset.id) + convItems(row.dataset.id);
+  const pane = row.dataset.id !== S.chat ? mi("pane-add", "cols15", t("window.panes.open-in-pane"), "", `data-id="${id}"`) : ""; // RES-703
+  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"`) + pane + unreadItem(row.dataset.id) + convItems(row.dataset.id);
   const tid = esc(tr?.id ?? "");
   const trunk = tr ? mi("new-with", "plus", t("window.shell.shell.new-conversation-with-name", { name: esc(tr.name) }), "", `data-id="${tid}"`) + roomItems(tr.id) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("autonomy.pause"), "", `data-id="${tid}"`) + mi("edit", "sliders", t("window.shell.shell.edit-trunk"), "", `data-id="${tid}"`) + "<hr>" + mi("remove", "trash", t("strip.menu.remove"), "", `data-id="${tid}"`) : "";
   /* A room's own row ends with the prototype's "Leave and archive", greyed: the engine keeps no leaving or archiving of

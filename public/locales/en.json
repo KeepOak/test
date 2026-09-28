@@ -10056,5 +10056,15 @@
   "window.places.library17.import-spreadsheet": "Import a spreadsheet",
   "window.places.library17.import-spreadsheet-hint": "Choose a CSV, TSV, JSON or Excel file. Branch keeps it in Library and fills in a SELECT question you can run.",
   "window.places.library17.import-spreadsheet-limit": "Choose a spreadsheet smaller than 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "The file could not be read. Choose it again."
+  "window.places.library17.import-spreadsheet-read-error": "The file could not be read. Choose it again.",
+  "window.panes.label": "Conversations side by side",
+  "window.panes.close-main": "Close this pane",
+  "window.panes.make-main": "Open {name} here in full",
+  "window.panes.add": "Add a pane",
+  "window.panes.resize": "Drag to share the width",
+  "window.panes.answer": "Answer",
+  "window.panes.full": "{count} panes are already waiting on an answer; wait for one to finish.",
+  "window.panes.none-left": "Every conversation is already open.",
+  "window.panes.open-in-pane": "Open in a pane",
+  "window.panes.needs-you": "Waiting for your answer."
 }
