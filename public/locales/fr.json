@@ -9690,7 +9690,6 @@
   "window.why.docedit17": "Une modification exacte est faite par un Trunk à votre demande dans une conversation ; cette fenêtre n’a pas d’endroit pour dire quoi changer. Comparer montre les différences.",
   "window.why.d17-learnfolder-go": "La visite est affichée ici ; pour la suivre avec un Trunk, demandez une visite du dossier dans une conversation.",
   "window.why.d17-pages-go": "Un article a besoin d’un sujet, et cette liste n’a pas d’endroit pour le saisir. Demandez-le dans une conversation.",
-  "window.why.hb-work-hours": "Branch ne connaît pas d’horaires de travail : les points réguliers utilisent une plage horaire, ou ont lieu à toute heure.",
   "window.why.gate-script": "Reste désactivé ici jusqu’à un examen de sécurité à part : Autoriser laisse ce programme s’exécuter sur cet ordinateur avant chaque tour. D’ici là, la tâche reste en pause ; Annuler ne changerait donc rien.",
   "window.why.recipe-run": "Reste désactivé ici jusqu’à un examen de sécurité à part : Exécuter rejoue les étapes de la procédure en votre nom, sans demander d’abord. Ouvrez-la pour voir ses étapes.",
   "window.why.loopstartb17": "Une boucle arrêtée ne redémarre qu’avec /loop dans sa propre conversation.",
