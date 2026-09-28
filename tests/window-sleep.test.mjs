@@ -14,6 +14,13 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 const MIN = 60 * 1000;
+/* A wait with no limit of its own (an engine promise, or a read inside the page) fails after `ms`, naming what it waited
+   for, instead of holding the file until the test runner ends it at 360 s with nothing said (seen on CI, on the base too). */
+async function bounded(what, promise, ms = 60000) {
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1000} s`)), ms); });
+  try { return await Promise.race([promise, late]); } finally { clearTimeout(timer); }
+}
 
 async function syncSetup(page, delayRefresh) {
   let release = () => {}, received = () => {}, finished = false;
@@ -35,7 +42,7 @@ async function syncSetup(page, delayRefresh) {
       assert.equal(finished, false, "clock readiness waits for the deliberately held engine refresh");
       release();
     }
-    await ready;
+    await bounded("the setup's refresh and draw in the page", ready);
   } finally { release(); if (delayRefresh) await page.unroute("**/api/state", delayed); }
 }
 
@@ -65,7 +72,7 @@ async function fixture(t, { delayRefresh = false } = {}) {
     if (character) await call(`/api/trunks/${trunk.id}`, { character });
     trunks[name] = trunk;
   }
-  await app.trunks.introduced(); // creation returns before its model task completes; a late reply correctly wakes the window
+  await bounded("the Trunks' introductions", app.trunks.introduced()); // creation returns before its model task completes; a late reply correctly wakes the window
   await call("/api/delight/settings", { pets: { on: true, kind: "fennec" }, background: { on: true } });
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, reducedMotion: "no-preference", serviceWorkers: "block" });
   const errors = [];
@@ -118,10 +125,10 @@ async function waitFor(page, predicate, arg) {
     throw error;
   }
 }
-const open = (page, trunk) => page.evaluate(async (id) => {
+const open = (page, trunk) => bounded(`opening ${trunk.name}'s conversation in the page`, page.evaluate(async (id) => {
   const { openConversation } = await import("/app/chat/chat.js");
   await openConversation(id); // finish its message/extras reads before advancing the clock
-}, trunk.chatSessionId);
+}, trunk.chatSessionId));
 /* Waits (no fixed sleep) until a face's loop matches, and, with still, until that loop is paused. */
 const settled = (page, trunk, pattern, still = false) => waitFor(page, ([id, source, still]) => {
   const el = document.querySelector(`#side [data-rk="t:${id}"]`), v = el?.querySelector("video");
