@@ -69,11 +69,17 @@ const format = (kind, options) => {
   if (!formats.has(key)) formats.set(key, new Intl.DateTimeFormat(language(), options));
   return formats.get(key);
 };
-const when = (t) => {
+/* A row's time: today the hour; within the last week the weekday ("Sat"); older a date ("12 Sep"), with the year once it
+   is another year's (UI-027: a weekday alone is unclear past one week). */
+const WEEK = 6 * 24 * 60 * 60 * 1000;
+export const when = (t, now = new Date()) => {
   if (!t) return "";
   const d = new Date(t);
-  const today = new Date().toDateString() === d.toDateString();
-  return today ? format("time", { hour: "numeric", minute: "2-digit" }).format(d) : format("day", { weekday: "short" }).format(d);
+  if (now.toDateString() === d.toDateString()) return format("time", { hour: "numeric", minute: "2-digit" }).format(d);
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (d.getTime() >= midnight - WEEK) return format("day", { weekday: "short" }).format(d);
+  if (d.getFullYear() === now.getFullYear()) return format("date", { day: "numeric", month: "short" }).format(d);
+  return format("year", { day: "numeric", month: "short", year: "numeric" }).format(d);
 };
 
 /* The engine's one count (Q050); a helper's question is answered in its task's Activity › Helpers (FEATURES17C §4). */
@@ -96,7 +102,7 @@ function row(s) {
   const drags = trunk && ownerHere() ? ` draggable="true" data-trunk="${esc(trunk.id)}"` : ""; // trunk-rooms-live: onto another Trunk (flows/roomwith.js)
   return `<div class="rw18"><button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}${drags}>
     <span class="avw">${av(trunk ?? chatFace(id), 40, id)}</span>
-    <b><span class="ellip14">${esc(ownName(id) || sessionTitle(s))}</span>${trunk?.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time>${esc(when(s.updatedAt ?? s.createdAt))}</time>
+    <b><span class="ellip14">${esc(ownName(id) || sessionTitle(s))}</span>${trunk?.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time datetime="${esc(s.updatedAt ?? s.createdAt ?? "")}">${esc(when(s.updatedAt ?? s.createdAt))}</time>
     ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(plain(s.lastMessage))}</p>`}${unreadDot(s)}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
 }
 

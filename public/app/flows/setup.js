@@ -21,6 +21,7 @@ import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.j
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
 import { gsel } from "../core/gsel.js";
+import { say } from "../core/words.js";
 
 /* The wizard's steps: each one's short name in the engine's record, and its name on the rail. */
 const WIZARD = ["welcome", "models", "trunks"];
@@ -309,7 +310,7 @@ async function propose() {
   o.life = what;
   if (!what || o.proposing) { $("#ob-life")?.focus(); return; }
   await refresh().catch(() => {});
-  if (E.state?.modelNeeded) { o.note = E.state.modelNeeded; draw(); return; }
+  if (E.state?.modelNeeded) { o.note = say(E.state.modelNeeded); draw(); return; } // the engine's English, in the window's language
   Object.assign(o, { proposing: true, note: "", error: "" });
   draw();
   try {
