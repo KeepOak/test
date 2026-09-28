@@ -40,8 +40,8 @@ test("General and Gateway share saved preference, while footer reports running s
   await page.locator("p.pp", { hasText: "Saved on. The gateway is not running yet" }).waitFor();
   assert.match(await footer.textContent(), /Gateway off/, "the footer reports actual running state");
   await page.locator('[data-act="setpage"][data-v="gateway"]').click();
-  await page.getByText("The gateway is off", { exact: true }).waitFor();
-  await page.locator("#main").getByText("Saved on. The gateway is not running yet", { exact: false }).waitFor();
+  await page.locator("#main .status").filter({ hasText: "The gateway is switched on, not running yet" }).waitFor();
+  assert.match(await page.locator("#main .status").textContent(), /takes over the next time Branch starts/);
   assert.equal(await page.locator("#main #gw-mode").isChecked(), true);
   await page.locator("#main #gw-mode").click();
   await page.waitForFunction(() => document.querySelector("#main #gw-mode")?.checked === false);

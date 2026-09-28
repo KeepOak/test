@@ -92,6 +92,8 @@ const telegramTarget = (address: string): { chat_id: number; message_thread_id?:
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly kind = "telegram";
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   private readonly base: string;
   private readonly fetch: typeof fetch;
@@ -322,10 +324,12 @@ export class TelegramAdapter implements ChannelAdapter {
    * the exact request, which fits inside Telegram's 64-byte limit; the conversation the answer
    * belongs to is worked out from the chat, not carried in the button.
    */
-  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
-      ...telegramTarget(chatId), text,
-      reply_markup: { inline_keyboard: [buttons.map((button) => ({ text: button.label, callback_data: button.value }))] },
+      ...telegramTarget(chatId), text, ...formatted({ spans: format?.spans }),
+      // Yes / No side by side; a longer list (the /model menu) one button a row, so each name can be read whole.
+      reply_markup: { inline_keyboard: buttons.length > 3 ? buttons.map((button) => [{ text: button.label, callback_data: button.value }])
+        : [buttons.map((button) => ({ text: button.label, callback_data: button.value }))] },
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
     });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
@@ -349,6 +353,11 @@ export class TelegramAdapter implements ChannelAdapter {
       // Sending the same words again is refused with this; the message already says them.
       if (!/message is not modified/i.test(error instanceof Error ? error.message : "")) throw error;
     }
+  }
+  /** Removes a message the bot sent (Telegram allows it for 48 hours; an older one stays). */
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    if (!/^\d+$/.test(messageId)) throw new Error("Telegram: that is not a message this bot sent");
+    await this.call("deleteMessage", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId) });
   }
   private inbound(message: z.infer<typeof messageSchema>): InboundMessage | null {
     const spoken = message.voice ?? message.audio;

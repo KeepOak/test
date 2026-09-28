@@ -13,6 +13,7 @@ import { UpdateLoop, type LoopFacts, type LoopPlan } from "./update-loop.js";
 import { portableMarker } from "../install/layout.js";
 import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
+import { isOfferUrl } from "../usage-offers.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
 import { watchForOwner, type OwnerWindow } from "./quiet-build.js";
@@ -257,7 +258,8 @@ export function registerUpdaterIpc(
   ipcMain.handle("branch:update-loop", (event) => { authorized(event); return loop ? { inMain: true, ...loop.last } : { inMain: false }; });
   ipcMain.handle("branch:open-external", async (event, url: unknown) => {
     authorized(event);
-    if (typeof url !== "string" || !(externalAllowed.some((prefix) => url.startsWith(prefix)) || settingsPages.has(url)))
+    // The usage bar's "more usage" pages (src/usage-offers.ts) are matched on their origin and path exactly.
+    if (typeof url !== "string" || !(externalAllowed.some((prefix) => url.startsWith(prefix)) || settingsPages.has(url) || isOfferUrl(url)))
       throw new Error("That link cannot be opened from here");
     await shell.openExternal(url);
     return true;

@@ -88,7 +88,8 @@ test("the window takes a live update in place, and a reload keeps the conversati
   assert.equal(first.ok, true, first.error);
   assert.equal(first.applied.tier, "window");
   await page.waitForFunction(() => [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) => link.href).join(" ").includes("?live="));
-  await page.waitForFunction(() => document.querySelectorAll('link[rel="stylesheet"]').length === 1, undefined, { timeout: 30000 });
+  // The old /app.css goes once its new one has loaded; the page's other stylesheets (per-area files) stay as they are.
+  await page.waitForFunction(() => [...document.querySelectorAll('link[rel="stylesheet"]')].filter((link) => new URL(link.href).pathname === "/app.css").length === 1, undefined, { timeout: 30000 });
   assert.equal(await page.evaluate(() => window.samePage), true, "nothing reloaded");
   assert.equal(await page.locator("#prompt").inputValue(), "a half-typed thought");
   assert.equal(await page.evaluate(() => fetch("/app.css").then((r) => r.text()).then((text) => text.includes("/* live */"))), true, "the engine serves the new stylesheet");

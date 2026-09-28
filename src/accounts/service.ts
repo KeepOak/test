@@ -25,7 +25,10 @@ import {
 } from "./settings.js";
 import { AccountUsageLedger } from "./usage.js";
 import { mergeChatGPTDuplicates } from "./dedupe.js";
-import type { RunStatus } from "./sign-ins.js";
+import { checkProgram, type RunStatus } from "./sign-ins.js";
+import { accountPresentation, identityKey, type AccountIdentity, type AccountSignIn } from "./identity.js";
+import { startedWithShortLivedKey } from "../key-context.js";
+import { currentPerson } from "../people/context.js";
 import { type ClaudeUsageRead, claudeNoLimits, claudeUsageWindows, readChatGPTUsage, runClaudeUsage } from "./plan-read.js";
 
 export interface AccountsDeps {
@@ -163,20 +166,84 @@ export class AccountsService {
   }
 
   /**
-   * Who each sign-in is, as the service itself said at sign-in: a ChatGPT account's email, read from its own sign-in
-   * (the ID token's email claim). Kept by `pool/account`, filled by `readIdentities`, and shown only on the owner's
-   * usage rows (src/usage-limits-api.ts), which refuse everybody else. A connection that says nothing has none.
+   * Verified identity per pool/account: ChatGPT's own sign-in, or the CLI's documented status JSON.
+   * Cached only in memory and shown only to the owner; generic saved labels remain separate.
    */
   readonly identities = new Map<string, string>();
+  readonly signIns = new Map<string, AccountSignIn>();
+  private readonly identityReads = new Map<string, Promise<void>>();
+  private identityVisible(): boolean {
+    return this.deps.store.profiles.scope() === this.deps.owner && !startedWithShortLivedKey() && !currentPerson();
+  }
   async readIdentities(): Promise<void> {
-    const chatgpt = this.deps.chatgpt;
-    if (!chatgpt) return;
-    const listed = this.pool("chatgpt")?.accounts.map((account) => account.id) ?? [primaryAccount];
-    for (const id of new Set([primaryAccount, ...listed])) {
-      const status = await (id === primaryAccount ? chatgpt : this.chatgptAccounts.auth(id)).status().catch(() => null);
-      if (status?.signedIn && status.email) this.identities.set(`chatgpt/${id}`, status.email);
-      else this.identities.delete(`chatgpt/${id}`);
+    if (!this.identityVisible()) return;
+    const pools = new Set(this.settings().pools.filter((pool) => pool.kind !== "api-key").map((pool) => pool.pool));
+    if (this.deps.chatgpt) pools.add("chatgpt");
+    for (const preset of this.deps.models.presets.values()) {
+      const found = this.poolFor(preset);
+      if (found && found.kind !== "api-key") pools.add(found.pool);
     }
+    for (const pool of pools) for (const account of new Set([primaryAccount, ...(this.pool(pool)?.accounts.map((one) => one.id) ?? [])])) {
+      if (!this.identityVisible()) return;
+      await this.readIdentity(pool, account);
+    }
+  }
+  private readIdentity(pool: string, account: string): Promise<void> {
+    const key = `${pool}/${account}`, running = this.identityReads.get(key);
+    if (running) return running;
+    const known = this.signIns.get(key);
+    if (known && this.now() - known.checkedAt < 60_000) return Promise.resolve();
+    const reading = this.readIdentityNow(pool, account).finally(() => { this.identityReads.delete(key); });
+    this.identityReads.set(key, reading);
+    return reading;
+  }
+  private async readIdentityNow(pool: string, account: string): Promise<void> {
+    if (pool === "chatgpt") {
+      const auth = account === primaryAccount ? this.deps.chatgpt : this.chatgptAccounts.auth(account);
+      const status = await auth?.status().catch(() => null);
+      this.noteSignIn(pool, account, { installed: !!auth, signedIn: status?.signedIn ?? false,
+        ...(status?.signedIn && status.email ? { identity: { email: status.email } } : {}),
+        message: status?.signedIn ? "Signed in." : "Not signed in." });
+      return;
+    }
+    const status = await checkProgram({ service: this }, { id: pool.slice(4), account }, this.deps.statusRun)
+      .catch(() => ({ installed: true, signedIn: null, message: "The program did not confirm this sign-in. Check again." }));
+    this.noteSignIn(pool, account, status);
+  }
+  noteSignIn(pool: string, account: string, status: Omit<AccountSignIn, "checkedAt">): void {
+    const key = `${pool}/${account}`;
+    this.signIns.set(key, { installed: status.installed, signedIn: status.signedIn,
+      ...(status.signedIn === true && status.identity ? { identity: status.identity } : {}),
+      message: status.message, checkedAt: this.now() });
+    if (status.signedIn && status.identity?.email) this.identities.set(key, status.identity.email);
+    else this.identities.delete(key);
+  }
+  presentation(pool: string, account: Pick<Account, "id" | "label" | "disabled">, kind?: AccountKind) {
+    if (!this.identityVisible()) return { ...accountPresentation(account.label), signedIn: null, duplicateOf: null,
+      ready: kind === "api-key" && !account.disabled ? true : null, signInProblem: null };
+    const { status, identity, duplicateOf } = this.cachedSignIn(pool, account.id);
+    const signedIn = status?.signedIn ?? null;
+    let subscription: boolean | null | undefined;
+    if (pool === "cli-claude-code") subscription = identity?.authMethod === "claude.ai" ? true : identity?.authMethod === "api-key" ? false : null;
+    let ready = kind === "api-key" ? true : signedIn;
+    if (signedIn === true && subscription !== undefined) ready = subscription;
+    if (account.disabled || duplicateOf) ready = false;
+    let signInProblem: string | null = status && signedIn !== true ? status.message : null;
+    if (!status && kind !== "api-key") signInProblem = "This sign-in has not been checked.";
+    if (signedIn === true && subscription === false) signInProblem = "Signed in with API authentication.";
+    if (signedIn === true && subscription === null) signInProblem = "The program has not confirmed Claude subscription authentication.";
+    if (duplicateOf) signInProblem = "This is another saved entry for the same sign-in; it is counted once.";
+    return { ...accountPresentation(account.label, identity), signedIn, duplicateOf,
+      ...(subscription !== undefined ? { subscription } : {}),
+      ready, signInProblem };
+  }
+  /** Internal eligibility uses private cached facts even when the caller may not see their identity. */
+  private cachedSignIn(pool: string, account: string) {
+    const status = this.signIns.get(`${pool}/${account}`);
+    const identity: AccountIdentity | undefined = status?.identity ?? (this.identities.has(`${pool}/${account}`) ? { email: this.identities.get(`${pool}/${account}`)! } : undefined);
+    const signature = identityKey(identity), siblings = this.pool(pool)?.accounts ?? [];
+    const first = signature ? siblings.find((one) => !one.disabled && identityKey(this.signIns.get(`${pool}/${one.id}`)?.identity) === signature) : undefined;
+    return { status, identity, duplicateOf: first && first.id !== account ? first.id : null };
   }
   settings() { return accountsSettings(this.deps.store, this.deps.owner); }
   on(): boolean { return this.settings().mode !== "off"; }
@@ -217,7 +284,7 @@ export class AccountsService {
     if (!cursor) this.cursors.set(pool, cursor = { value: 0 });
     const store = this.deps.store, owner = this.deps.owner;
     return {
-      owner, pool, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
+      owner, pool, name: preset.name, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
       settings: () => this.usablePool(pool),
       providerFor: (account: string) => this.providerFor(pool, kind, preset, account),
       refresh: (account: string) => this.refreshSignIn(kind, account),
@@ -234,8 +301,13 @@ export class AccountsService {
   /** The saved pool as the connection may use it now: ChatGPT's first account only while it is signed in. */
   usablePool(pool: string): Pool | null {
     const found = this.pool(pool);
-    if (!found || found.kind !== "chatgpt" || this.legacySignedIn) return found;
-    return { ...found, accounts: found.accounts.map((account) => account.id === primaryAccount ? { ...account, disabled: true } : account) };
+    if (!found) return null;
+    return { ...found, accounts: found.accounts.map((account) => {
+      const shown = this.presentation(pool, account, found.kind);
+      const cached = this.cachedSignIn(pool, account.id);
+      return { ...account, label: shown.label, disabled: account.disabled || cached.duplicateOf !== null
+        || (found.kind !== "api-key" && (cached.status?.signedIn === false || (found.kind === "chatgpt" && account.id === primaryAccount && !this.legacySignedIn))) };
+    }) };
   }
 
   /** After a 401: a ChatGPT sign-in gets a new token (true when it did). A key or a program has nothing to refresh. */
