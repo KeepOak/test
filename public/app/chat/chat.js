@@ -24,7 +24,7 @@ import { FIND, findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
 import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } from "./dictate.js";
 import { initTalkLive } from "./talklive.js";
-import { replyMark, readNewReply } from "./aloud.js";
+import { replyMark, readNewReply, sentMessage } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
@@ -507,6 +507,7 @@ async function send(words, answered = false) {
   const prompt = (words ?? box?.value ?? "").trim();
   if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
   if (!prompt && !(words === undefined && hasFiles())) return;
+  sentMessage(); // whether these words were said or typed, for Answer aloud › When I talk
   const busy = C.sending || ["running", "queued"].includes(liveRun()?.status);
   if (refusePracticeRoute(prompt, busy, !!routeFor(prompt, C.sessionId, whoHere(), HOOKS))) return;
   /* While a task works, words join its waiting line; files wait on their chips for the next message. */
