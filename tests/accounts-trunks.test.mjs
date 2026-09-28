@@ -7,7 +7,7 @@
 import test from "node:test";
 import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -334,6 +334,12 @@ test("owner priority 2026-09-27: one Trunk answers with the owner's second Codex
   registerCliAgent(app.runtime.models, { id: "codex" }, {}, spawn);
   registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
   service.deps.spawnAgent = spawn;
+  // Codex counts as installed only when it is on PATH (checkProgram), which a build machine's is not: the Claude
+  // transport reads every sign-in before it answers, and a Codex that is not there reads as signed out.
+  const bin = await mkdtemp(join(tmpdir(), "codex-fixture-bin-")), before = process.env.PATH;
+  for (const name of ["codex", "codex.cmd"]) await writeFile(join(bin, name), "", { mode: 0o755 });
+  process.env.PATH = bin + (process.platform === "win32" ? ";" : ":") + before;
+  t.after(async () => { process.env.PATH = before; await discardTemp(bin); });
   app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
   setMode(service, { mode: "on" });
   const codexSecond = (await addAccount(service, { pool: "cli-codex", label: "Work Codex" })).accounts.at(-1).id;
