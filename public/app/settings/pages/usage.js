@@ -31,10 +31,17 @@ import { t, language, plural } from "../../../i18n.js";
 
 let usage = null;
 let range = "30";
+/* The read in flight, if any: "Open the report" waits for it, so a report opened as the page arrives (or just after
+   a new period was chosen) adds up the engine's numbers, never an empty or older stretch. */
+let reading = null;
 
-async function loadUsage() {
-  try { usage = await api(`usage?range=${range}d&by=day`); } catch (error) { usage = null; toast(error.message); }
-  renderNow();
+function loadUsage() {
+  const read = (async () => {
+    try { usage = await api(`usage?range=${range}d&by=day`); } catch (error) { usage = null; toast(error.message); }
+    renderNow();
+  })();
+  reading = read;
+  return read;
 }
 
 function reportCard() {
@@ -284,7 +291,7 @@ export function init() {
     await loadGlance();
   });
   on("rep15", (el) => { range = el.dataset.v; loadUsage(); });
-  on("repopen15", () => openReport());
+  on("repopen15", async () => { await reading; openReport(); });
   on("repcsv15", () => saveCsv());
   on("keep15", (el) => keep(el.dataset.v));
   on("keeploosen15", () => { const v = keepAsked; keepAsked = null; closeDlg(); if (v) keep(v, true); });
