@@ -2896,11 +2896,15 @@ ${run.output.slice(0, 6000)}`;
   private reindex(run: Run, context: ToolContext, catalog: ToolLoader): void {
     const notes = this.store.toolUsage.noteMap(context.owner);
     // A connected server's tools each carry a permission of their own name, which a task that started before the
-    // server connected could not have held. One that started with everything is given them (see `wholeKit`).
+    // server connected could not have held; a plugin switched on meanwhile may ask for a permission no tool had before.
+    // One that started with everything is given them (see `wholeKit`), so what the owner switched on mid-task is
+    // usable from its next round, exactly as it would be in the next task.
     if (this.wholeKit.has(run.id) && context.permissions instanceof Set) {
       const held = new Set(this.registry.permissions());
-      for (const name of this.registry.names())
-        if (this.registry.sourceOf(name)?.startsWith("mcp:") && held.has(name)) context.permissions.add(name);
+      for (const name of this.registry.names()) {
+        const source = this.registry.sourceOf(name), permission = this.registry.permissionOf(name);
+        if ((source?.startsWith("mcp:") || source?.startsWith("plugin:")) && held.has(permission)) context.permissions.add(permission);
+      }
     }
     catalog.refresh(this.offered(run, context), {
       groupOf: (name) => this.registry.groupOf(name),
