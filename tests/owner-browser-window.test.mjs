@@ -58,9 +58,14 @@ async function fixture(t, provider) {
 
 /** Where an element of the engine's page is drawn in the window: the frame is drawn whole, centred across, from the top. */
 async function onFrame(w, selector) {
-  await framed(w.page);
+  // The view may be drawn again as control changes hands; measure a frame that is on screen now.
+  let img = null;
+  for (let i = 0; i < 50 && !img; i++) {
+    await framed(w.page);
+    img = await w.page.locator('#stage7 .owner-browser7-img[src^="data:image/jpeg"]:not([hidden])').boundingBox({ timeout: 1000 }).catch(() => null);
+  }
+  assert.ok(img, "the page's picture is on screen");
   const box = await w.enginePage().locator(selector).boundingBox(), size = w.enginePage().viewportSize();
-  const img = await w.page.locator("#stage7 .owner-browser7-img").boundingBox();
   const scale = Math.min(img.width / size.width, img.height / size.height), left = img.x + (img.width - size.width * scale) / 2;
   return { x: left + (box.x + box.width / 2) * scale, y: img.y + (box.y + box.height / 2) * scale };
 }
