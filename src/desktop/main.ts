@@ -228,8 +228,42 @@ async function startTrayNotifier(url: string, key: () => string): Promise<TrayNo
   return notifier;
 }
 
+let dropWhenHidden: () => void = () => undefined;
+/**
+ * Drops the hidden window if its page says nothing lives only there, keeping what it had open; otherwise asks again
+ * later. The owner's notifications go back to main meanwhile (src/desktop/tray-notify.ts).
+ */
+async function dropWindow(url: string, key: () => string): Promise<void> {
+  const win = window;
+  if (!win || win.isDestroyed() || win.isVisible() || quitting) return;
+  const answer = await win.webContents.executeJavaScript("globalThis.branchKeep?.() ?? null", true)
+    .catch(() => null) as { held?: string; kept?: unknown } | null;
+  if (win.isDestroyed() || win.isVisible() || window !== win) return;
+  if (!answer || answer.held) {
+    (globalThis as { branchDropHeldForTests?: string }).branchDropHeldForTests = answer?.held ?? "the page did not answer";
+    setTimeout(() => { if (window === win && !win.isVisible()) dropWhenHidden(); }, dropHiddenMs()).unref();
+    return;
+  }
+  keptPage = answer.kept ?? null;
+  window = undefined;
+  making = undefined;
+  pageLoaded = new Promise(() => undefined);
+  win.destroy();
+  trayNotifier ??= await startTrayNotifier(url, key);
+}
+
 /** Opens the window (made on first use) and brings it forward; `hash` names a conversation to open it at. */
 let makeWindow: ((hash?: string, show?: boolean) => Promise<void>) | undefined;
+/** The window being made, or made; cleared when a hidden window is dropped, so the next open makes it again. */
+let making: Promise<void> | undefined;
+/** What a dropped window had open (src/desktop/../../public/app/shell/keep.js keptNow), handed to the next one once. */
+let keptPage: unknown = null;
+/**
+ * A window hidden this long is dropped (its page, drawing and graphics are memory nobody uses) and made again when it
+ * is opened, with what it had open (public/app/shell/keep.js). Never while something lives only in the page.
+ */
+const DROP_HIDDEN_MS = 15 * 60_000;
+const dropHiddenMs = () => (!app.isPackaged && Number(process.env.BRANCH_TEST_DROP_HIDDEN_MS)) || DROP_HIDDEN_MS;
 async function showWindow(hash = ""): Promise<void> {
   // A window made now shows itself as soon as it can draw (buildWindow's ready-to-show), not once its page has loaded.
   if (!window && makeWindow) { await makeWindow(hash, true); return; }
@@ -240,11 +274,18 @@ async function showWindow(hash = ""): Promise<void> {
 async function createWindow(
   url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean = () => true,
 ): Promise<void> {
-  let making: Promise<void> | undefined;
   makeWindow = (hash = "", show = false) => (making ??= buildWindow(url, key, settings, update, reachable, hash, show).then(() => {
     trayNotifier?.stop();
     trayNotifier = undefined;
   }));
+  // The window a dropped one comes back as asks for what it had open, once (public/app/shell/keep.js restoreKept).
+  ipcMain.handle("branch:kept-page", (event) => {
+    if (!window || event.sender !== window.webContents || new URL(event.senderFrame?.url ?? "about:blank").origin !== url) return null;
+    const kept = keptPage;
+    keptPage = null;
+    return kept;
+  });
+  dropWhenHidden = () => void dropWindow(url, key);
   // The quick-ask keys work from any app whether or not the window has been made yet (src/desktop/quick-ask.ts).
   registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window: lazyWindow(), origin: url, keys: async () => quickAskKeys(url, key()),
     log: (line) => console.error(line) });
@@ -370,6 +411,10 @@ async function buildWindow(
   });
   const loaded = new Promise<void>((done) => window?.webContents.once("did-finish-load", () => done()));
   pageLoaded = loaded;
+  let hiddenFor: NodeJS.Timeout | undefined;
+  window.on("hide", () => { clearTimeout(hiddenFor); hiddenFor = setTimeout(() => dropWhenHidden(), dropHiddenMs()); });
+  window.on("show", () => clearTimeout(hiddenFor));
+  window.on("closed", () => clearTimeout(hiddenFor));
   // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the
   // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
   // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.

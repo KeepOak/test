@@ -24,6 +24,8 @@ import { t } from "../../i18n.js";
    whatever finishes after its call has ended (a microphone still opening) can tell it is no longer wanted. */
 const L = { phase: "idle", el: null, socket: null, mic: null, player: null, call: 0 };
 let calls = 0;
+/* A call is on (connecting, listening, speaking): the desktop app never drops the window during one (shell/keep.js). */
+export const talkingLive = () => L.phase !== "idle";
 const current = (call) => L.call === call && L.phase !== "idle";
 let hooks = { state: () => ({}), reopen: async () => {} };
 

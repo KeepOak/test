@@ -20,6 +20,7 @@ import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
 import { splash, splashDone } from "./shell/inperson.js";
 import { initLanguage, t } from "../i18n.js";
+import { restoreKept } from "./shell/keep.js";
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -176,6 +177,7 @@ async function boot() {
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") escape(); });
   splash();
   await connect();
+  await restoreKept().catch((error) => console.warn(error.message)); // the desktop app's dropped window (shell/keep.js)
   splashDone();
 }
 

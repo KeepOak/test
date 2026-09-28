@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   windowLook: (look: unknown) => ipcRenderer.invoke("branch:window-look", look),
   // PLAT-192: the chosen language, so the tray's notifications speak it before the window is opened.
   windowLanguage: (language: unknown) => ipcRenderer.invoke("branch:window-language", language),
+  // What the window had open before it was dropped while hidden (public/app/shell/keep.js), handed over once.
+  keptPage: () => ipcRenderer.invoke("branch:kept-page"),
   // Pass 17: the quick-ask keys pressed in any app open the box; the page never sees the event itself.
   onQuickAsk: (callback: unknown) => {
     if (typeof callback !== "function") return;
