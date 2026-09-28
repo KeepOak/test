@@ -29,7 +29,7 @@ async function osClipboard(format: string): Promise<Buffer> {
  * Never a thrown error to the page, which would reach it wrapped as "Error invoking remote method".
  */
 export interface ClipboardFilesAnswer { sent: unknown[]; error: string | null }
-export function registerClipboardFilesIpc(window: BrowserWindow, origin: string, key: () => string, gate: Pick<PasteGate, "take">): void {
+export function registerClipboardFilesIpc(window: BrowserWindow, origin: string, key: () => string, gate: Pick<PasteGate, "take">, call: typeof fetch = fetch): void {
   ipcMain.handle("branch:clipboard-files", async (event): Promise<ClipboardFilesAnswer> => {
     const ask = clipboardAsk(event, window, origin, gate);
     if (ask === "refused") throw new Error("Clipboard files access denied");
@@ -37,7 +37,7 @@ export function registerClipboardFilesIpc(window: BrowserWindow, origin: string,
     const paths = sendablePaths(await clipboardPaths(process.platform, osClipboard), 20);
     const sent: unknown[] = [];
     for (const path of paths) {
-      const answer = await fetch(`${origin}/api/attachments/upload?name=${encodeURIComponent(basename(path))}&type=application%2Foctet-stream`, {
+      const answer = await call(`${origin}/api/attachments/upload?name=${encodeURIComponent(basename(path))}&type=application%2Foctet-stream`, {
         method: "POST",
         headers: { authorization: `Bearer ${key()}`, "content-type": "application/octet-stream", "x-branch-origin": "window" },
         body: Readable.toWeb(createReadStream(path)) as ReadableStream, duplex: "half",

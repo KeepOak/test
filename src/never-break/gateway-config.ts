@@ -27,6 +27,8 @@ const workerEnvName = z.string().refine((name) => (workerEnvNames as readonly st
 export const GatewayConfigSchema = z.object({
   /** Off: `branch start` is the engine alone, as before. When needed / on: the gateway runs it. */
   mode: FeatureModeSchema.default("off"),
+  /** Owner choice: ask the desktop gateway to keep the system awake while it is running. */
+  keepAwake: z.boolean().default(false),
   /** How long a new worker may take to say it is ready. */
   startSeconds: z.number().int().min(2).max(600).default(90),
   /** How long a request waits for a worker that is restarting before it is told to try again. */
@@ -153,7 +155,7 @@ export type DryRun = (config: GatewayConfig) => Promise<{ ok: boolean; detail: s
  * does that.
  */
 export async function proposeConfig(dataDir: string, input: unknown, why: string, dryRun: DryRun): Promise<Proposal> {
-  const { mode: _mode, workerEnv: _env, ...change } = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const { mode: _mode, keepAwake: _awake, workerEnv: _env, ...change } = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const merged = GatewayConfigSchema.safeParse({ ...(await loadGatewayConfig(dataDir)).config, ...change });
   const check = merged.success ? await dryRun(merged.data).catch((error: unknown) => ({ ok: false, detail: String(error).slice(0, 300) }))
     : { ok: false, detail: plainProblem(merged.error) };
@@ -175,7 +177,7 @@ export async function acceptProposal(dataDir: string): Promise<GatewayConfig> {
   if (!proposal.check?.ok) throw new Error(`This change did not start cleanly when it was tried, so it cannot be used: ${proposal.check?.detail ?? "it was never tried"}.`);
   // Only the timings the assistant may suggest are taken; the owner's switch and engine settings stay as they are now.
   const { config: current } = await loadGatewayConfig(dataDir);
-  const accepted = { ...proposal.config, mode: current.mode, workerEnv: current.workerEnv };
+  const accepted = { ...proposal.config, mode: current.mode, keepAwake: current.keepAwake, workerEnv: current.workerEnv };
   await saveGatewayConfig(dataDir, accepted);
   await rm(join(dataDir, proposedFile), { force: true });
   await journalChange(dataDir, { before: timingsOf(current), after: timingsOf(accepted), why: proposal.why,
@@ -191,7 +193,7 @@ export async function acceptProposal(dataDir: string): Promise<GatewayConfig> {
  * owner's switch and the engine's settings are never changed by a suggestion, so neither by rolling one back.
  */
 export const changesFile = "gateway.changes.json";
-const TimingsSchema = GatewayConfigSchema.omit({ mode: true, workerEnv: true });
+const TimingsSchema = GatewayConfigSchema.omit({ mode: true, keepAwake: true, workerEnv: true });
 type Timings = z.infer<typeof TimingsSchema>;
 export const AcceptedChangeSchema = z.object({
   before: TimingsSchema, after: TimingsSchema, why: z.string().max(500),
@@ -199,7 +201,7 @@ export const AcceptedChangeSchema = z.object({
 }).strict();
 export type AcceptedChange = z.infer<typeof AcceptedChangeSchema>;
 const keptChanges = 20;
-const timingsOf = ({ mode: _mode, workerEnv: _env, ...timings }: GatewayConfig): Timings => TimingsSchema.parse(timings);
+const timingsOf = ({ mode: _mode, keepAwake: _awake, workerEnv: _env, ...timings }: GatewayConfig): Timings => TimingsSchema.parse(timings);
 
 export async function readChanges(dataDir: string): Promise<AcceptedChange[]> {
   try { return z.array(AcceptedChangeSchema).parse(JSON.parse(await readFile(join(dataDir, changesFile), "utf8"))); }
@@ -221,7 +223,7 @@ export async function rollbackAccepted(dataDir: string): Promise<GatewayConfig> 
   const { config: current } = await loadGatewayConfig(dataDir);
   if (JSON.stringify(timingsOf(current)) !== JSON.stringify(last.after))
     throw new Error("The gateway's settings changed after that change was accepted, so it cannot be rolled back as it was.");
-  const back = GatewayConfigSchema.parse({ ...last.before, mode: current.mode, workerEnv: current.workerEnv });
+  const back = GatewayConfigSchema.parse({ ...last.before, mode: current.mode, keepAwake: current.keepAwake, workerEnv: current.workerEnv });
   await saveGatewayConfig(dataDir, back);
   await writeAtomic(join(dataDir, changesFile), JSON.stringify([...changes.slice(0, -1), { ...last, rolledBackAt: new Date().toISOString() }], null, 2));
   return back;

@@ -11,7 +11,7 @@ import {
   shortcutDefaults, statusItems, type ComfortCard,
 } from "./settings.js";
 import { checkCertificate, validateNetwork, type OutboundNetwork } from "./network.js";
-import { busyTaskCount, busyTasks as countBusy, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, updatePlan, updateProblem } from "./auto-update.js";
+import { busyTasks as countBusy, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, updatePlan, updateProblem } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
 import { diagnose } from "../diagnostic-log.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
@@ -188,7 +188,8 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
       requireOwnerHere(app.store, updateWords);
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");
       const notify = readComfort(app.store, app.runtime.owner, "notify");
-      return { channel: notify.releaseChannel, busyTasks: busyTaskCount(app.store), autoUpdate: notify.autoUpdate };
+      const busy = countBusy(app.store);
+      return { channel: notify.releaseChannel, busyTasks: busy.working + busy.asking, workingTasks: busy.working, autoUpdate: notify.autoUpdate };
     }
     if (path === "/api/comfort/status") {
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");
