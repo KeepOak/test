@@ -193,10 +193,11 @@ export class BackgroundProcesses {
    * A program by its short name: the owner's list of programs to leave running first, then, for a task that may run
    * commands (shell.execute), the ones commands may run. Without a context (a command rule reading the line), both.
    */
-  private program(name: string, context?: Pick<ToolContext, "permissions">): { path: string; args: string[] } | undefined {
+  private program(name: string, context?: Pick<ToolContext, "permissions" | "writesConfinedTo">): { path: string; args: string[] } | undefined {
     const own = this.settings().programs;
     if (Object.hasOwn(own, name)) return own[name];
-    if (context && !context.permissions.has("shell.execute")) return undefined;
+    // A task whose writes are held to one folder runs only what it was held with (shell.execute behind the sandbox).
+    if (context && (!context.permissions.has("shell.execute") || context.writesConfinedTo)) return undefined;
     const commands = this.commandPrograms();
     return Object.hasOwn(commands, name) ? commands[name] : undefined;
   }
