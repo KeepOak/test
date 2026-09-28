@@ -11,6 +11,7 @@ import { cwdOf } from "./never-break/protected.js";
 import { isReadOnlyPermission } from "./policy.js";
 import { isCommandTool } from "./policy-resources.js";
 import { wallReport } from "./sandbox-backends.js";
+import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { lockdownActive } from "./lockdown.js";
 import { betaLine } from "./desktop/dev-build.js";
 import { githubRepositoryOf } from "./github-address.js";
@@ -503,7 +504,13 @@ export function sourceCheckedOut(workspace: string): boolean {
   try { return readdirSync(workspace).some((entry) => sourceSpelling(entry) === sourceFolder); } catch { return false; }
 }
 
-const canConfineWrites = async (): Promise<boolean> => (await wallReport()).available;
+/**
+ * Whether this computer can hold a command's writes to one folder. On Windows a held command runs inside WSL behind
+ * bubblewrap (src/integrations/shell.ts, wsl-held.ts), so it can when WSL has Node.js and bubblewrap; the native wall
+ * is macOS's and Linux's alone.
+ */
+const canConfineWrites = async (): Promise<boolean> =>
+  process.platform === "win32" ? (await wslReadiness(wslProbe)) === null : (await wallReport()).available;
 
 /**
  * A command's text is never read: globs and variables can always name Branch's source some other
