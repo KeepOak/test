@@ -979,6 +979,7 @@ export const ROUTES = {
   "/api/registry/browse": "owner POST",
   "/api/registry/install": "owner POST",
   "/api/registry/rollback": "owner POST",
+  "/api/registry/trust": "owner POST", // pins a registry's signing key
   "/api/registry/update": "owner POST",
   "/api/registry/updates": "look",
   // eng-connectors: What's new for the installed version.

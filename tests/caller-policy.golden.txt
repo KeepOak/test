@@ -1682,6 +1682,8 @@ owner GET /api/registry/install | here=ok remote=ok phone=ok legacy=ok person=40
 owner POST /api/registry/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/registry/rollback | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/registry/rollback | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/registry/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/registry/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/registry/update | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/registry/update | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/registry/updates | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3810,6 +3812,8 @@ owner+lockdown GET /api/registry/install | here=ok remote=ok phone=ok legacy=ok 
 owner+lockdown POST /api/registry/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/registry/rollback | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/registry/rollback | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/registry/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/registry/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/registry/update | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/registry/update | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/registry/updates | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5938,6 +5942,8 @@ household GET /api/registry/install | here=400/f6e21c remote=400/f6e21c read=400
 household POST /api/registry/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/registry/rollback | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/registry/rollback | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/registry/trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/registry/trust | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/registry/update | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/registry/update | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/registry/updates | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8066,6 +8072,8 @@ household+lockdown GET /api/registry/install | here=400/f6e21c remote=400/f6e21c
 household+lockdown POST /api/registry/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/registry/rollback | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/registry/rollback | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/registry/trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/registry/trust | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/registry/update | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/registry/update | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/registry/updates | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10194,6 +10202,8 @@ applock GET /api/registry/install | here=423/a8f863
 applock POST /api/registry/install | here=423/a8f863
 applock GET /api/registry/rollback | here=423/a8f863
 applock POST /api/registry/rollback | here=423/a8f863
+applock GET /api/registry/trust | here=423/a8f863
+applock POST /api/registry/trust | here=423/a8f863
 applock GET /api/registry/update | here=423/a8f863
 applock POST /api/registry/update | here=423/a8f863
 applock GET /api/registry/updates | here=423/a8f863

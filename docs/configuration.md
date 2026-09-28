@@ -4291,8 +4291,14 @@ have. On the command line: `branch skill pack <folder> [out.branchskill] --autho
 **Registries, version 2.** A registry index may now say `"version": 2` and publish a `publicKey`
 (base64 ed25519). Each listed skill may carry a `version`, a `changelog` and a `signature`, made
 over the exact lines `branch-skill-registry`, the registry name, the skill id, the version and the
-fingerprint. Branch labels every entry `checked`, `unsigned` or `invalid`; an `invalid` signature
-stops the install, an unsigned entry is installed but plainly labelled as unsigned. Version 1
+fingerprint. The key a registry publishes about itself is not trusted by itself: it counts only once it is pinned
+on this computer, either shipped with Branch or approved by you. `POST /api/registry/browse` answers a `key`
+`{ published, pinned, status }` (status `pinned`, `not-pinned`, `changed` or `none`), and `POST /api/registry/trust
+{ url, fingerprint }` pins the key the registry publishes right now when it is the fingerprint you were shown. Branch
+labels every entry `checked` (signed with a pinned key), `untrusted` (signed, but the key is not pinned), `unsigned`
+or `invalid`. An `invalid` entry is not installed or updated; once a key is pinned, a registry that publishes another
+key, drops its key or lists an unsigned entry is `invalid` until you approve the new key. An unsigned or untrusted
+entry is installed but plainly labelled. Version 1
 indexes still work exactly as before. `GET /api/registry/updates` asks the registries you installed
 from whether a newer version exists and returns the changelog; `POST /api/registry/update
 { skillId }` saves the new version and switches to it, keeping the one you had;
