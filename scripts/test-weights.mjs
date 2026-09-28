@@ -4,9 +4,8 @@
 //
 // Each share of a Checks run uploads how long each of its files took (`test-timings-<lane>-<share>`). This downloads
 // them, puts each lane's seconds under that system's key (linux, win32, darwin), keeps what the run did not measure,
-// and drops files that no longer exist. scripts/run-tests.mjs packs the shares from these weights. They are seconds
-// measured with files running side by side, so they are not tests/test-weights.json, the one-at-a-time seconds
-// scripts/select-affected-tests.mjs budgets the five-minute lane from.
+// and drops files that no longer exist. scripts/run-tests.mjs packs the shares from these weights, and
+// scripts/select-affected-tests.mjs sizes a pull request's partial run from the Linux ones.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
