@@ -38,7 +38,8 @@ export function narrowTrunk(data: string, now = new Date()): { data: string; hel
   const had = HadSchema.safeParse({ permissions: record.permissions ?? [], mcpServers: record.mcpServers ?? [],
     keys: record.keys ?? { copyFromOwner: true, accounts: {} }, reach: record.reach ?? { channels: [], commands: false }, paused: record.paused === true });
   if (!had.success) return null;
-  const narrowed = { ...record, permissions: lookOnly(had.data.permissions), mcpServers: [], keys: { copyFromOwner: true, accounts: {} },
+  const { fromSetup: _setup, ...kept } = record; // defaulttrunk: a restored Trunk is never setup's first Trunk here
+  const narrowed = { ...kept, permissions: lookOnly(had.data.permissions), mcpServers: [], keys: { copyFromOwner: true, accounts: {} },
     reach: { channels: [], commands: false }, paused: true, pausedAt: now.toISOString() };
   return { data: JSON.stringify(narrowed), held: { name: record.name.slice(0, 40), had: had.data } };
 }
