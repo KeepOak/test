@@ -94,7 +94,7 @@ email (EM), SMS.
 |---|---|---|---|
 | TG | ✅ | ✅ | ✅ `sendChatAction` |
 | DC | ✅ | ✅ | ◐ as TG |
-| SL | ✅ "is thinking…" assistant status | ✅ + typing reaction | — |
+| SL | ✅ "is thinking…" assistant status | ✅ + typing reaction | ✅ assistant status (`assistant.threads.setStatus`): "is thinking…", then the step in a DM ("is reading notes.md…"), "is working…" in a channel, cleared at the end; scrubbed, sent only on change, left alone after two refusals (needs Agents & AI Apps and `assistant:write`); plus the status reaction |
 | WA | ✅ | ✅ | — |
 | SG | ✅ (every 8 s) | ✅ | — |
 | IM | ✅ (Private API) | ✅ | — |

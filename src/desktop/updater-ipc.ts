@@ -8,6 +8,7 @@ import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.
 import { readFileSync } from "node:fs";
 import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
+import { isOfferUrl } from "../usage-offers.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
 
@@ -189,7 +190,8 @@ export function registerUpdaterIpc(
   });
   ipcMain.handle("branch:open-external", async (event, url: unknown) => {
     authorized(event);
-    if (typeof url !== "string" || !(externalAllowed.some((prefix) => url.startsWith(prefix)) || settingsPages.has(url)))
+    // The usage bar's "more usage" pages (src/usage-offers.ts) are matched on their origin and path exactly.
+    if (typeof url !== "string" || !(externalAllowed.some((prefix) => url.startsWith(prefix)) || settingsPages.has(url) || isOfferUrl(url)))
       throw new Error("That link cannot be opened from here");
     await shell.openExternal(url);
     return true;

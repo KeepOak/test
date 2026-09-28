@@ -114,7 +114,7 @@ export function openPalette() {
   closePalette();
   P.sel = 0;
   P.el = Object.assign(document.createElement("div"), { className: "scrim top" });
-  P.el.innerHTML = `<div class="palette" role="dialog" aria-label="${t("comfort.field.palette")}"><div class="pin-in">${ic("search")}<input id="pal-in" placeholder="${t("window.shell.palette.find-a-trunk-a-conversation-a")}" aria-label="${t("comfort.field.palette")}" autocomplete="off"></div><div class="pal-list" id="pal-list" role="listbox"></div><div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> ${t("window.shell.palette.move")}</span><span><kbd>Enter</kbd> ${t("window.shell.palette.open")}</span><span><kbd>Esc</kbd> ${t("window.shell.palette.close")}</span></div></div>`;
+  P.el.innerHTML = `<div class="palette" role="dialog" aria-label="${t("comfort.field.palette")}"><div class="pin-in">${ic("search")}<input id="pal-in" placeholder="${t("window.shell.palette.find-a-trunk-a-conversation-a")}" aria-label="${t("comfort.field.palette")}" autocomplete="off"></div><div class="pal-list" id="pal-list" role="listbox" aria-label="${t("comfort.field.palette")}"></div><div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> ${t("window.shell.palette.move")}</span><span><kbd>Enter</kbd> ${t("window.shell.palette.open")}</span><span><kbd>Esc</kbd> ${t("window.shell.palette.close")}</span></div></div>`;
   app().appendChild(P.el);
   paint("");
   $("#pal-in").focus();
