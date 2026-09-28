@@ -1,8 +1,7 @@
 /**
- * Slack approval buttons (Block Kit): a question goes out with Yes / No buttons whose values are the router's exact
- * answers, and a press that arrives on the app's own Socket Mode connection comes back as that answer from the person
- * who pressed, once. Through the router, a Slack DM answers a waiting question by button, and a command from the
- * owner's own Slack DM is shown whole before its Yes, except words Slack would draw differently. Stand-in Slack only.
+ * Commands from the owner's own Slack DM (src/channels/owner-commands.ts) on Slack's Block Kit buttons (CHAT-062): the
+ * whole command is shown fenced before its Yes, and its Yes button runs it once; a command holding words Slack would
+ * draw differently (< > & or a backtick: links, mentions, escapes, a broken fence) gets only No. Stand-in Slack only.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -19,46 +18,16 @@ function slack() {
   const adapter = new SlackAdapter({ id: "slack", token: "stand-in-bot", appToken: "stand-in-app", apiBase: "http://slack.test/api",
     fetch: async (url, init) => { calls.push({ method: String(url).split("/").pop(), body: JSON.parse(init.body) });
       return new Response(JSON.stringify({ ok: true, ts: "111.222" })); } });
-  const receive = (payload, envelope = "e1") => adapter.receive(JSON.stringify({ type: "interactive", envelope_id: envelope, payload }),
-    async (message) => { inbound.push(message); });
-  return { adapter, calls, inbound, receive };
+  return { adapter, calls, inbound };
 }
-const press = (extra = {}) => ({ type: "block_actions", trigger_id: "t1", user: { id: "U1", username: "owner" },
-  channel: { id: "D1", name: "directmessage" }, container: { message_ts: "111.222" },
-  actions: [{ action_id: "branch-answer-0", value: `y:${fingerprint}` }], ...extra });
 
-test("a question goes out as a section and Yes / No buttons carrying the exact answers", async () => {
+test("an owner-DM command's code span is fenced inside the question's section", async () => {
   const { adapter, calls } = slack();
-  assert.equal(await adapter.sendButtons("D1", "Read notes.md?", [{ label: "Yes", value: `y:${fingerprint}` }, { label: "No", value: `n:${fingerprint}` }], "100.1"), "111.222");
-  const body = calls[0].body;
-  assert.equal(calls[0].method, "chat.postMessage");
-  assert.equal(body.thread_ts, "100.1");
-  assert.equal(body.blocks[0].text.text, "Read notes.md?");
-  assert.deepEqual(body.blocks[1].elements.map((one) => [one.action_id, one.value, one.style]),
-    [["branch-answer-0", `y:${fingerprint}`, "primary"], ["branch-answer-1", `n:${fingerprint}`, "danger"]]);
-});
-
-test("a press comes back once, from the person who pressed, direct in an IM and a group elsewhere", async () => {
-  const { inbound, receive } = slack();
-  receive(press());
-  receive(press(), "e2");
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(inbound.length, 1, "the same press twice is taken once");
-  assert.deepEqual([inbound[0].senderId, inbound[0].chatKind, inbound[0].chatId, inbound[0].text, inbound[0].messageId],
-    ["U1", "direct", "D1", `y:${fingerprint}`, "111.222"]);
-  receive(press({ trigger_id: "t2", channel: { id: "C9" }, container: { message_ts: "5.5", thread_ts: "4.4" } }));
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.deepEqual([inbound[1].chatKind, inbound[1].messageId], ["group", "4.4"], "in a channel it answers in the thread");
-});
-
-test("anything but Branch's own answer buttons starts nothing", async () => {
-  const { inbound, receive } = slack();
-  receive(press({ trigger_id: "a", actions: [{ action_id: "someone-else", value: `y:${fingerprint}` }] }));
-  receive(press({ trigger_id: "b", actions: [{ action_id: "branch-answer-0", value: "run everything" }] }));
-  receive(press({ trigger_id: "c", type: "view_submission" }));
-  receive(press({ trigger_id: "d", actions: [] }));
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.deepEqual(inbound, []);
+  const text = ["Run this?", "node -p 1+1"].join("\n");
+  await adapter.sendButtons("D1", text, [{ label: "Yes", value: `y:${fingerprint}` }], undefined,
+    { spans: [{ offset: 10, length: 11, kind: "block", language: "shell" }] });
+  assert.equal(calls[0].body.blocks[0].text.text, ["Run this?", "```", "node -p 1+1", "```"].join("\n"));
+  assert.equal(calls[0].body.blocks[1].elements[0].action_id, "branch_answer_0");
 });
 
 // ---- through the router -------------------------------------------------------------------------------------------

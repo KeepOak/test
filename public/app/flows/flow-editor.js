@@ -28,6 +28,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { t, language } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const KINDS = [["when", "window.flows.flow.when"], ["do", "window.flows.flow.ask-trunk"], ["if", "window.flows.flow.if"], ["ask", "window.flows.flow.ask-me"], ["wait", "window.flows.flow.wait"],
   ["loop", "window.flows.flow.repeat"], ["fan", "window.flows.flow.fan"], ["sub", "window.flows.flow.sub"]];
@@ -149,8 +150,8 @@ const engineSteps = (draft) => draft.map(engineStep);
 const FIELD = { if: "personal.mail.words", when: "autonomy.start.when", wait: "window.flows.flow.how-long", ask: "window.flows.flow.question" };
 function flowRow(s, j, n) {
   const field = t(FIELD[s.kind] ?? "window.flows.flow.what-ask");
-  const kinds = KINDS.map(([k, l]) => `<option value="${k}" ${s.kind === k ? "selected" : ""} ${EDITABLE.has(k) ? "" : "disabled"}>${t(l)}</option>`).join("");
-  return `<div class="flow-row"><select class="inp" id="fk-${j}" data-flow="kind" data-j="${j}" aria-label="${t("window.flows.flow.kind-n", { n: j + 1 })}">${kinds}</select><input class="inp" id="ft-${j}" data-flow="text" data-j="${j}" value="${esc(s.text)}" placeholder="${field}" aria-label="${t("window.flows.flow.field-n", { field, n: j + 1 })}">
+  const kinds = KINDS.map(([k, l]) => [k, t(l), !EDITABLE.has(k)]);
+  return `<div class="flow-row">${gsel({ id: `fk-${j}`, label: t("window.flows.flow.kind-n", { n: j + 1 }), options: kinds, value: s.kind, attrs: `data-flow="kind" data-j="${j}"` })}<input class="inp" id="ft-${j}" data-flow="text" data-j="${j}" value="${esc(s.text)}" placeholder="${field}" aria-label="${t("window.flows.flow.field-n", { field, n: j + 1 })}">
     <span class="acts" data-css="gap:0"><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="-1" ${j === 0 ? "disabled" : ""}>${t("accounts.action.up")}</button><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="1" ${j === n - 1 ? "disabled" : ""}>${t("accounts.action.down")}</button><button class="btn ghost sm" type="button" data-act="flow-rm" data-j="${j}">${t("editor.remove")}</button></span>${s.kind === "if" ? ifWays(s, j) : ""}</div>`;
 }
 /* "If it says": what to ask when it does, and when it doesn't. */
