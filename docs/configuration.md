@@ -494,7 +494,9 @@ Install the browser once:
 npx playwright install chromium --only-shell
 ```
 
-Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
+Branch's browser is on with no configuration file: it may open any website the network rules allow (`"anyWebsite": true`), and every picture, script and request a page makes is held to those rules too, so a page cannot reach this computer or your home network unless the network rules allow private addresses. The owner's approval rules and the per-task caps below still apply.
+
+To hold it to a list of websites instead, create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
 
 ```json
 {
@@ -503,6 +505,8 @@ Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
   }
 }
 ```
+
+The browser section takes either `allowedOrigins` or `"anyWebsite": true`, never both. A configuration file without a browser section leaves the browser off.
 
 Origins must match exactly, including port. Browser requests to other origins, HTTP redirects, WebSockets and service workers are blocked. Redirecting sites may therefore fail even when the final destination is otherwise allowed. Browser fill supports non-password fields; credentials go through a saved sign-in instead (below). Unless a saved sign-in is chosen, each task gets a fresh profile, not your existing signed-in browser.
 
@@ -842,6 +846,29 @@ Routes: `GET/POST /api/workspace-editor/settings`, `GET /api/workspace-editor/li
 `tests/code-editor.test.mjs`. Works the same on Windows, macOS and Linux.
 
 ## Channels (Telegram)
+
+### Message intake and reconnecting
+
+`GET /api/channels/formatting` returns `formats`; owner-only `POST /api/channels/formatting { channel, mode }`
+saves one supported app's `native` (default) or `plain` choice. Changes apply to the connected adapter's next send
+or edit, including live steps and queued delivery retries, and survive a restart. Plain mode removes presentation
+markers while retaining code contents and link destinations. Slack uses plain_text blocks, Matrix omits HTML, Telegram
+omits entities, and Discord escapes remaining literal symbols. Discord reserves half its text budget before
+splitting to keep escape characters inside the service's message limit.
+
+Settings › Chat apps reads `intake` from `GET /api/channels`; `POST /api/channels/intake` saves only the named
+fields and is owner-only. `edited` and `albums` default to true: edited messages replace a version still being
+gathered, and a photo album joins one turn. An edit after that turn has started is its own message.
+`splitWaitMs` is 0, 1000 (default), or 3000; messages from the same live chat arriving during that wait join a turn.
+Fetched messages after a restart stay separate. Albums still wait at least one second when split waiting is off.
+
+`watchdog` defaults to true. A watched connection with no service contact for `stalledAfterSeconds` (30–3600,
+default 90) becomes stalled. After a further `reconnectMinutes` (1, 3, or 10; default 3), it restarts at most once
+per that interval. Empty successful polls count as contact; a quiet chat does not cause a restart. A failed or
+ineffective restart produces a reason on the app's card until contact returns.
+
+`presence` defaults to false because it changes the public bot profile. Telegram can publish Online while running
+and Offline, back soon when stopped; switching it off clears the description. Lockdown prevents those writes.
 
 Create a bot with @BotFather, then either save its token as the secret `TELEGRAM_BOT_TOKEN` in the default project or export it as an environment variable, and add to the integrations file:
 

@@ -214,6 +214,9 @@ async function start(config: EngineConfig): Promise<void> {
     branch.browser = integrations.hosted.browser ?? null;
     branch.studies.browser = integrations.hosted.browser;
     branch.issues = integrations.hosted.issues ?? null;
+    // The firewall card says what the browser may open, as the command-line launch does (src/cli.ts).
+    branch.reach = { browserOrigins: integrations.hosted.browserOrigins ?? [], browserAnyWebsite: integrations.hosted.browserAnyWebsite === true,
+      commandsMayReachInternet: integrations.hosted.commandsNetless !== true };
     // Q45 leaf 0: the same port as last time when it is free, so the page's own stored choices survive a restart.
     const portFile = join(config.dataDir, "local-port.json");
     let healthKey = "";

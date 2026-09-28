@@ -26,6 +26,7 @@ import type { Store } from "./store.js";
 import type { ToolContext } from "./contracts.js";
 import type { TryOutcome, HandRun } from "./playground.js";
 import { lockdownActive, lockdownRefusal } from "./lockdown.js";
+import { runLimitReached } from "./integrations/browser.js";
 
 export const ownerBrowsePath = "/api/panels/browse";
 export const ownerBrowseClosePath = "/api/panels/browse/close";
@@ -124,6 +125,12 @@ export async function browse(deps: BrowseDeps, input: z.infer<typeof BrowseSchem
     return { id: run.id, done: (ok, output) => { deps.store.finish(run.id, ok ? "completed" : "failed", output.slice(0, 4000), { mend: false }); } };
   };
   const outcome = await deps.tryTool(deps.context(stop.signal), { name: "browser.navigate", arguments: { url }, confirm: input.confirm, sessionId: input.sessionId }, ownRun);
+  // The limits on how many websites and steps one task may take are for tasks. The owner's window that reached one
+  // is closed and the address opens in a fresh window, once, through the same gate.
+  if (had && outcome.status === "failed" && runLimitReached(outcome.error)) {
+    close(input.sessionId);
+    return browse(deps, input);
+  }
   const entry = kept.get(input.sessionId);
   if (entry) idle(input.sessionId, entry);
   return { ...outcome, url };
