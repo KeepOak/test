@@ -10097,7 +10097,6 @@
   "window.why.p-install": "Always asks: Branch never installs anything without your yes, and there's no way to change that.",
   "window.why.p-inv-keepoak": "Teams need a keepoak.com account, which isn't open yet.",
   "window.why.p-wall": "This computer can't build that wall; the reason is written under this row.",
-  "window.why.pat15-teams": "Branch has no teams of small groups with their own leads. A lead and helpers is the nearest.",
   "window.why.petwhere15-dock": "In this window the pet walks only in the list or the status bar; pick one of those.",
   "window.why.plug-add": "Stays off here until a separate safety review: a plugin is code that runs on this computer. One you put in Branch's plugins folder shows here.",
   "window.why.pp-may": "What each person may do comes from their role. Change their role on their card to change it.",

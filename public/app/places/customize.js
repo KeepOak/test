@@ -199,8 +199,8 @@ const specWhat = (s) => String(s.data?.definition?.instructions ?? "").split("\n
 
 /* The prototype's patterns. The one checked is the engine's (GET /api/state orchestration.pattern); "auto", its default,
    leaves it to Branch per job, so none is checked. Choosing one saves it (POST /api/orchestration {pattern}); choosing the
-   checked one again gives it back to Branch. Teams has no engine form (src/team-pattern.ts teamPatterns), so its card
-   keeps its own greyed act and says why (window.why.pat15-teams). */
+   checked one again gives it back to Branch. Teams runs over the owner's saved teams, each with its own lead
+   (RES-721, src/team-groups.ts delegate.teams). */
 const PATTERNS = [
   ["one", "One at a time", "A Trunk calls a specialist, waits, carries on.", "M30 14v14M30 38v10", [[30, 10], [30, 33], [30, 52]]],
   ["super", "A lead and helpers", "One Trunk plans and hands out the parts.", "M30 14L14 42M30 14v28M30 14l16 28", [[30, 10], [14, 46], [30, 46], [46, 46]]],
@@ -227,7 +227,7 @@ function specialistsTab() {
   const specs = E.state.specialists || [];
   const rows = specs.map((s) => `<div class="prow"><span class="ico-tile">${ic('bolt', 's')}</span><span class="grow"><b>${esc(specName(s))}</b><small>${esc(specWhat(s))}</small>${specLine(s)}</span><button class="btn sm" type="button" data-act="specb17" data-id="${esc(s.id ?? "")}">${t("prompts.action.edit")}</button></div>`).join('');
   const chosen = E.state.orchestration?.pattern;
-  const pats = PATTERNS.map((p) => `<button type="button" role="radio" class="pat15" aria-checked="${chosen === p[0]}" data-act="${p[0] === "teams" ? "pat15-teams" : "pat15"}" data-v="${p[0]}">${patSvg(p)}<b>${esc(say(p[1]))}</b><small>${esc(say(p[2]))}</small></button>`).join("");
+  const pats = PATTERNS.map((p) => `<button type="button" role="radio" class="pat15" aria-checked="${chosen === p[0]}" data-act="pat15" data-v="${p[0]}">${patSvg(p)}<b>${esc(say(p[1]))}</b><small>${esc(say(p[2]))}</small></button>`).join("");
   return `<div class="rows">${rows ? `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}` : empty18("customize:specialists", { off: true })}</div>
     <div class="sec x15-sec">${fleet(specs)}<h2 data-css="margin-top:22px">${t("window.places.customize.how-trunks-work-together")}</h2><p class="hint" data-css="margin:0 0 10px">${t("window.places.customize.the-pattern-a-room-or-a")}</p>
     <div class="pats15" role="radiogroup" aria-label="${t("window.places.customize.how-trunks-work-together")}">${pats}</div></div>${codingAgentsSection()}`;

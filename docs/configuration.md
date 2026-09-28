@@ -6783,6 +6783,12 @@ same budget, the same approval rules and the same record as any other delegated 
   for somebody else rather than being lost.
 - **`delegate.route`** — works out which one of several specialists a request belongs to, from a
   short description of what each one is for, then hands it straight to that one.
+- **`delegate.teams`** (RES-721) — small groups, each with its own lead, over your saved teams (Team › Teams of
+  specialists). A team's lead is its member whose role says "lead" (else its first member); the others are its
+  helpers. A head (a specialist you name, or the first team's lead) splits the job between two to four teams, each
+  team's lead shares its part among its own helpers as `delegate.supervise` does, the teams work at the same time, and
+  the head writes the one answer, saying where a part failed. "Teams" is also a choice under Customize › Specialists ›
+  how Trunks work together; chosen, a task is told to work that way, and another way waits for your yes.
 
 **Handing work on.** `delegate.handoff` now takes a reason, and the handover is written into the
 conversation — "Handed over from X to Y: why" — so a person reading it afterwards can see the work

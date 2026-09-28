@@ -10097,7 +10097,6 @@
   "window.why.p-install": "Siempre pregunta: Branch nunca instala nada sin tu sí, y no hay forma de cambiarlo.",
   "window.why.p-inv-keepoak": "Los equipos necesitan una cuenta de keepoak.com, que aún no está abierta.",
   "window.why.p-wall": "Este equipo no puede levantar ese muro; el motivo está escrito debajo de esta fila.",
-  "window.why.pat15-teams": "Branch no tiene equipos de grupos pequeños con su propio líder. Lo más parecido es Un líder y ayudantes.",
   "window.why.petwhere15-dock": "En esta ventana la mascota solo camina por la lista o por la barra de estado; elige una de ellas.",
   "window.why.plug-add": "Queda desactivado aquí hasta una revisión de seguridad aparte: un plugin es código que se ejecuta en este ordenador. Uno que pongas en la carpeta de plugins de Branch aparece aquí.",
   "window.why.pp-may": "Lo que puede hacer cada persona depende de su rol. Cambia el rol en su tarjeta para cambiarlo.",

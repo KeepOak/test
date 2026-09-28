@@ -10098,7 +10098,6 @@
   "window.why.p-install": "Demande toujours : Branch n’installe jamais rien sans votre oui, et cela ne peut pas être changé.",
   "window.why.p-inv-keepoak": "Les équipes demandent un compte keepoak.com, qui n’est pas encore ouvert.",
   "window.why.p-wall": "Cet ordinateur ne peut pas construire ce mur ; la raison est écrite sous cette ligne.",
-  "window.why.pat15-teams": "Branch n’a pas d’équipes en petits groupes avec leur propre responsable. Le plus proche est Un responsable et des aides.",
   "window.why.petwhere15-dock": "Dans cette fenêtre, l’animal ne se promène que dans la liste ou dans la barre d’état ; choisissez l’une des deux.",
   "window.why.plug-add": "Reste désactivé ici jusqu’à un examen de sécurité à part : un plugin est du code qui s’exécute sur cet ordinateur. Celui que vous placez dans le dossier des plugins de Branch apparaît ici.",
   "window.why.pp-may": "Ce que chaque personne peut faire dépend de son rôle. Changez son rôle sur sa fiche pour le modifier.",
