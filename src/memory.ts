@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { SavedRecord, Store } from "./store.js";
 import type { ToolRegistry } from "./registry.js";
 import { FactKindSchema, MemoryLayerSchema, layerForKind, layerOf } from "./memory-layers.js";
-import type { MemoryBackend } from "./memory-backend.js"; // FQ-memory.providers
+import type { MemoryBackend, MemoryDestination, MemoryWriteReceipt } from "./memory-backend.js"; // FQ-memory.providers
 
 export const maximumMemoryArchiveBytes = 16 * 1024 * 1024;
 export const MemoryDataSchema = z.object({
@@ -265,14 +265,14 @@ export class MemoryFacts {
     this.db.prepare("DELETE FROM memory WHERE owner=? AND id=?").run(owner, id);
     return { id, note };
   }
-  restore(owner: string, id: string) {
+  restore(owner: string, id: string, preserveExpiry = false) {
     const row = this.db.prepare("SELECT * FROM memory_archive WHERE owner=? AND id=?").get(owner, id);
     if (!row) throw new Error("Archived memory not found");
     this.requireRoom(owner, 1);
     // R17-058 (integration review): the owner putting back a fact that expired keeps it for good,
     // rather than the next sweep setting it straight aside again.
     const data = JSON.parse(String(row.data)) as Record<string, unknown>;
-    if (typeof data.expiresAt === "string" && Date.parse(data.expiresAt) <= Date.now()) delete data.expiresAt;
+    if (!preserveExpiry && typeof data.expiresAt === "string" && Date.parse(data.expiresAt) <= Date.now()) delete data.expiresAt;
     this.db.exec("BEGIN");
     try {
       this.db.prepare("INSERT INTO memory(id,owner,data,created_at,updated_at,revision) VALUES(?,?,?,?,?,?)")
@@ -357,7 +357,9 @@ export class MemoryFacts {
       if (!writableTo(record, agent)) continue;
       const d = record.data as MemoryData;
       if (d.entity !== entity || d.attribute !== attribute || (d.validTo ?? null) !== null) continue;
-      if ((d.validFrom ?? record.createdAt) >= validFrom) continue;
+      // A fact that starts after the new one is not ended by it. One that starts in the same instant was saved first, so the
+      // new one replaces it (two saves inside one millisecond left both current).
+      if ((d.validFrom ?? record.createdAt) > validFrom) continue;
       this.keepVersion(owner, record, "superseded");
       this.db.prepare("UPDATE memory SET data=?, updated_at=?, revision=revision+1 WHERE owner=? AND id=?")
         .run(JSON.stringify({ ...d, validTo: validFrom }), new Date().toISOString(), owner, record.id);
@@ -483,6 +485,9 @@ export interface OutsideMemoryProvider extends MemoryBackend {
   forgetSettled?(owner: string, sessionId: string): Promise<void>;
   serviceFor?(owner: string): MemoryBackend | undefined;
   takeBack?(owner: string, id: string, service: MemoryBackend): Promise<boolean>;
+  destinationFor?(owner: string): MemoryDestination;
+  setAsideAt?(owner: string, id: string, receipt: MemoryWriteReceipt, note: string): Promise<void>;
+  restoreAt?(owner: string, id: string, receipt: MemoryWriteReceipt): Promise<void>;
 }
 /**
  * Takes back a fact just written for `owner`: from the service it was written to when that is known
@@ -498,6 +503,7 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
   registry.register({ name: "memory.put", description: "Save one clear fact with its source. Give entity and attribute when it may change later, so a newer fact ends the earlier one.",
     permission: "memory.write", parameters: PutMemorySchema,
     execute: async (value, context) => {
+      value = canonicalDetail(!value.entity && !value.attribute ? { ...value, ...impliedDetail(value.text) } : value);
       const owner = memoryScope(store, context);
       const sessionId = store.run(context.runId)?.sessionId;
       if (sessionId && store.memorySuppressed(owner, sessionId))
@@ -586,11 +592,20 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const hits = await retrieval.search(owner, value.query, memoryAgent(context), 20, context.signal);
       return hits.map((hit) => ({ ...hit.record, score: hit.score, importance: hit.importance, matched: hit.matched }));
     } });
-  registry.register({ name: "memory.delete", description: "Delete an owner-scoped memory.", permission: "memory.write",
-    parameters: z.object({ id: MemoryIdSchema }).strict(),
+  registry.register({ name: "memory.delete", description: "Delete an owner-scoped memory: its id, or words of the fact as you know it.", permission: "memory.write",
+    parameters: z.object({ id: MemoryIdSchema.describe("The fact's id, or words from the fact") }).strict(),
     execute: async (value, context) => {
       const owner = memoryScope(store, context);
       const outside = !!provider?.isOutside(owner);
+      // The facts a task is shown carry no ids, so a model names the fact by its words. On this computer's own memory,
+      // words that match exactly one current fact of this agent's reach delete that one; several are listed to choose from.
+      if (!outside && !store.get("memory", owner, value.id)) {
+        const found = factsByWords(store, owner, value.id, memoryAgent(context));
+        if (found.length !== 1) return found.length
+          ? { deleted: false, note: "Those words match more than one fact. Delete one by its id.", facts: found.map(summary) }
+          : { deleted: false, note: "No remembered fact has that id or those words. memory.search finds facts by their words." };
+        value = { id: found[0]!.id };
+      }
       // FQ-routing.isolated-agents: an id outside this agent's own scope is refused exactly as a
       // missing one is (returns false, nothing thrown) — an unauthorised Trunk learns nothing about
       // whether that id even exists.
@@ -609,4 +624,45 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
 
 function summary(record: MemoryRecord) {
   return { id: record.id, text: String(record.data.text), updatedAt: record.updatedAt };
+}
+
+/** The current facts (not ended) of this owner that contain these words, within what `agent` may change. */
+function factsByWords(store: Store, owner: string, words: string, agent?: string): MemoryRecord[] {
+  const wanted = words.trim().toLowerCase().replace(/\s+/g, " ");
+  if (wanted.length < 2) return [];
+  return (store.list("memory", owner) as MemoryRecord[]).filter((record) => {
+    const data = record.data as { text?: unknown; validTo?: unknown };
+    return (data.validTo ?? null) === null && writableTo(record, agent)
+      && String(data.text ?? "").toLowerCase().replace(/\s+/g, " ").includes(wanted);
+  });
+}
+
+/**
+ * A fact about the person that can only have one value at a time, said the plain way ("I live in Denver", "My dentist is
+ * Dr. Okafor"), names its own entity and detail. Saving it with them means a newer one ends the earlier one (closeEarlier),
+ * even when the model did not say which detail it was. Anything else is saved as it was given. Empty when nothing is implied.
+ */
+export function impliedDetail(text: string): { entity?: string; attribute?: string } {
+  const plain = text.trim().replace(/\s+/g, " ");
+  const mine = /^my ([a-z][a-z' -]{0,40}?) (?:is|are) \S/i.exec(plain);
+  if (mine) return { entity: "me", attribute: mine[1]!.toLowerCase() };
+  if (/^i(?:'ve| have)? (?:moved to|live in|now live in) \S/i.test(plain)) return { entity: "me", attribute: "home" };
+  const work = /^i (?:now )?work (?:at|for) \S/i.test(plain);
+  return work ? { entity: "me", attribute: "work" } : {};
+}
+
+const personAliases = new Set(["me", "i", "myself", "owner", "the owner", "person", "the person", "user", "the user", "self"]);
+const attributeAliases: Readonly<Record<string, string>> = {
+  location: "home", residence: "home", city: "home", "lives in": "home", "where i live": "home", "home city": "home", "hometown": "home",
+  job: "work", employer: "work", workplace: "work", company: "work", "works at": "work",
+};
+/**
+ * The person is one entity however a model names them ("owner", "user", "me"), and a few details go by several names
+ * ("location" and "home"). Named one way, so a newer fact about the same detail ends the earlier one (closeEarlier).
+ */
+export function canonicalDetail<T extends { entity?: string | undefined; attribute?: string | undefined }>(value: T): T {
+  const entity = value.entity && personAliases.has(value.entity.trim().toLowerCase()) ? "me" : value.entity;
+  const said = value.attribute?.trim().toLowerCase();
+  const attribute = said && entity === "me" ? attributeAliases[said] ?? value.attribute : value.attribute;
+  return { ...value, ...(entity ? { entity } : {}), ...(attribute ? { attribute } : {}) };
 }

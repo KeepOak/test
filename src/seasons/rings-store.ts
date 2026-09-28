@@ -25,6 +25,8 @@ export interface NightData {
   light: { embedded: number; merges: number };
   rem: { found: number; grounded: number; ungrounded: number; refused: number };
   deep: { promoted: string[]; staged: string[]; known: number; waiting: number };
+  /** The owner's night only: what the Gardener did, and how many code-level problems were filed for the owner. */
+  garden?: { planted: number; adopted: number; discarded: number; rolledBack: number; pruned: number; grafted: number; problems: number };
 }
 export const emptyNight = (): NightData => ({ read: 0, light: { embedded: 0, merges: 0 },
   rem: { found: 0, grounded: 0, ungrounded: 0, refused: 0 }, deep: { promoted: [], staged: [], known: 0, waiting: 0 } });
@@ -37,14 +39,25 @@ export class RingsBook {
     db.exec(`CREATE TABLE IF NOT EXISTS seasons_candidates(id TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS seasons_nights(id TEXT PRIMARY KEY, scope TEXT NOT NULL, night TEXT NOT NULL, data TEXT NOT NULL,
         started_at TEXT NOT NULL, UNIQUE(scope, night));
-      CREATE TABLE IF NOT EXISTS seasons_cursor(scope TEXT PRIMARY KEY, through TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS seasons_cursor(scope TEXT PRIMARY KEY, through TEXT NOT NULL, through_id TEXT NOT NULL DEFAULT '');`);
+    if (!db.prepare("PRAGMA table_info(seasons_cursor)").all().some((column) => column.name === "through_id")) {
+      db.exec("ALTER TABLE seasons_cursor ADD COLUMN through_id TEXT NOT NULL DEFAULT ''");
+    }
   }
   candidates(scope: string): Candidate[] {
     return this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? ORDER BY updated_at DESC LIMIT 500").all(scope)
       .map((row) => JSON.parse(String(row.data)) as Candidate).filter((entry) => entry.scope === scope);
   }
   candidate(scope: string, id: string): Candidate | undefined {
-    return this.candidates(scope).find((entry) => entry.id === id);
+    const row = this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? AND id=?").get(scope, id);
+    if (!row) return undefined;
+    const entry = JSON.parse(String(row.data)) as Candidate;
+    return entry.scope === scope ? entry : undefined;
+  }
+  /** A night action must reach every fact from that night, including facts outside the recent list. */
+  candidatesForNight(scope: string, night: string): Candidate[] {
+    return this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? AND json_extract(data,'$.promotedNight')=?").all(scope, night)
+      .map((row) => JSON.parse(String(row.data)) as Candidate).filter((entry) => entry.scope === scope && entry.promotedNight === night);
   }
   saveCandidate(entry: Candidate): Candidate {
     this.db.prepare("INSERT INTO seasons_candidates VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
@@ -58,7 +71,7 @@ export class RingsBook {
    */
   addMention(scope: string, text: string, kind: string, evidence: Evidence): Candidate {
     const words = wordsOf(text);
-    const match = this.candidates(scope).find((entry) => jaccard(wordsOf(entry.text), words) >= sameThought);
+    const match = this.matchingCandidate(scope, words);
     if (match) {
       if (!match.evidence.some((seen) => seen.runId === evidence.runId)) match.evidence.push(evidence);
       match.lastAt = evidence.at > match.lastAt ? evidence.at : match.lastAt;
@@ -67,11 +80,24 @@ export class RingsBook {
     return this.saveCandidate({ id: randomUUID(), scope, text, kind, status: "pending", evidence: [evidence],
       memoryId: null, proposalId: null, promotedNight: null, firstAt: evidence.at, lastAt: evidence.at });
   }
-  cursor(scope: string): string {
-    return String(this.db.prepare("SELECT through FROM seasons_cursor WHERE scope=?").get(scope)?.through ?? "1970-01-01T00:00:00.000Z");
+  private matchingCandidate(scope: string, words: Set<string>): Candidate | undefined {
+    // Stream older thoughts too: a veto must not expire just because it left the Library's recent list.
+    for (const row of this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? ORDER BY updated_at DESC").iterate(scope)) {
+      const entry = JSON.parse(String(row.data)) as Candidate;
+      if (entry.scope === scope && jaccard(wordsOf(entry.text), words) >= sameThought) return entry;
+    }
+    return undefined;
   }
-  moveCursor(scope: string, through: string): void {
-    this.db.prepare("INSERT INTO seasons_cursor VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET through=excluded.through").run(scope, through);
+  cursor(scope: string): string {
+    return this.cursorPosition(scope).at;
+  }
+  cursorPosition(scope: string): { at: string; id: string } {
+    const row = this.db.prepare("SELECT through,through_id FROM seasons_cursor WHERE scope=?").get(scope);
+    return { at: String(row?.through ?? "1970-01-01T00:00:00.000Z"), id: String(row?.through_id ?? "") };
+  }
+  moveCursor(scope: string, through: string, id = ""): void {
+    this.db.prepare("INSERT INTO seasons_cursor(scope,through,through_id) VALUES(?,?,?) ON CONFLICT(scope) DO UPDATE SET through=excluded.through,through_id=excluded.through_id")
+      .run(scope, through, id);
   }
   nights(scope: string, limit = 60): Night[] {
     return this.db.prepare("SELECT data FROM seasons_nights WHERE scope=? ORDER BY night DESC LIMIT ?").all(scope, limit)

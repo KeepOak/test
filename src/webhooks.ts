@@ -84,6 +84,14 @@ export class Webhooks {
     /** Pauses between attempts; one more attempt is made than there are pauses. */
     public retryDelays: number[] = defaultRetryDelays,
   ) {}
+  /**
+   * Deliveries to one webhook can overlap, and each takes a while. Each is numbered as it starts, and the newest one to
+   * give up is remembered, so an older delivery finishing late never clears a newer failure; and the counts are always
+   * written onto the webhook as it is now, never onto the copy read before sending (which would undo a switch-off, or
+   * an edit the owner made meanwhile).
+   */
+  private started = 0;
+  private readonly lastFailure = new Map<string, number>();
 
   /**
    * Notify every webhook listening for an event. Deliveries run in the background and their
@@ -241,12 +249,13 @@ export class Webhooks {
     const webhook = this.get(owner, webhookId);
     if (!webhook || !webhook.enabled || !webhook.events.includes(event)) return;
     const body = { event, timestamp: new Date().toISOString(), ...payload };
+    const turn = ++this.started;
 
     for (let attempt = 1; attempt <= this.retryDelays.length + 1; attempt++) {
       const result = await this.send(webhook, body);
       if (result.ok) {
         this.store.logWebhookDelivery(webhookId, owner, event, "success", attempt, null);
-        if (webhook.failureCount) this.saveState(owner, webhookId, { ...webhook, failureCount: 0 });
+        this.recordSuccess(owner, webhookId, turn);
         return;
       }
       const pause = this.retryDelays[attempt - 1];
@@ -254,11 +263,18 @@ export class Webhooks {
       this.store.logWebhookDelivery(webhookId, owner, event, "failed", attempt, nextRetryAt);
       if (pause !== undefined) await new Promise((resolve) => setTimeout(resolve, pause));
     }
-    this.recordFailure(owner, webhookId);
+    this.recordFailure(owner, webhookId, turn);
+  }
+  /** A delivery got through: the count starts again, unless a delivery started after this one has since given up. */
+  private recordSuccess(owner: string, webhookId: string, turn: number): void {
+    if ((this.lastFailure.get(webhookId) ?? 0) > turn) return;
+    const current = this.get(owner, webhookId);
+    if (current?.failureCount) this.saveState(owner, webhookId, { ...current, failureCount: 0 });
   }
 
   /** Counts one giving-up delivery and switches the webhook off once failures pile up. */
-  private recordFailure(owner: string, webhookId: string): void {
+  private recordFailure(owner: string, webhookId: string, turn: number): void {
+    this.lastFailure.set(webhookId, Math.max(turn, this.lastFailure.get(webhookId) ?? 0));
     const current = this.get(owner, webhookId);
     if (!current) return;
     const failureCount = current.failureCount + 1;

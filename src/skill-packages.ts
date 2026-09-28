@@ -168,13 +168,20 @@ export class SkillPackages {
     this.toolNames.set(record.skillId, registerHttpTools(this.registry, this.host, record.manifest.name,
       kept.map((entry) => entry.tool), () => this.enabled(record.skillId), grant));
   }
-  /** Starts the recipe a package asked for when its event happens; a failure never disturbs the task. */
+  /**
+   * Starts the recipe a package asked for when its event happens; a failure never disturbs the task.
+   * Only while the package's skill is switched on, the same rule its web calls keep.
+   * A package installed switched off, or switched off later, hears nothing until the owner switches it on again.
+   */
   private fire(event: string, runId: string): void {
     if (this.firing || !this.replayRecipe) return;
-    for (const record of this.records()) {
-      const file = record.files["hooks.json"];
-      if (!file) continue;
-      for (const hook of SkillHooksSchema.parse(JSON.parse(file)).hooks) {
+    const wanted = this.records().filter((record) => record.files["hooks.json"]
+      && SkillHooksSchema.parse(JSON.parse(record.files["hooks.json"])).hooks.some((hook) => hook.event === event));
+    if (!wanted.length) return;
+    const on = new Set(this.store.skills.list(this.owner).filter((skill) => skill.activeVersion !== null).map((skill) => skill.id));
+    for (const record of wanted) {
+      if (!on.has(record.skillId)) continue;
+      for (const hook of SkillHooksSchema.parse(JSON.parse(record.files["hooks.json"]!)).hooks) {
         if (hook.event !== event) continue;
         this.firing = true;
         void this.replayRecipe(hook.recipe, event, runId)

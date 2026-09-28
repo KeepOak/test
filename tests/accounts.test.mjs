@@ -19,6 +19,7 @@ import { LockerTokenVault, remainingFrom } from "../dist/accounts/chatgpt-accoun
 import { executeCommand } from "../dist/commands/execute.js";
 import { saveCommandSettings } from "../dist/commands/settings.js";
 import { lookup } from "../dist/commands/catalog.js";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import { offLimitsToShortLivedKeys } from "../dist/server.js";
 
 const POOL = "openai-test";
@@ -29,6 +30,8 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false });
+  await fakeClaudeAccounts(t, service);
   let clock = Date.parse("2026-09-17T10:00:00Z");
   service.deps.now = () => clock;
   Object.defineProperty(service, "now", { value: () => clock });

@@ -11,6 +11,8 @@ import { startServer } from "../dist/server.js";
 import { chunkText, documentBytesLimit } from "../dist/documents.js";
 import { docxText, xlsxText, htmlText, documentType } from "../dist/document-text.js";
 import { cosine, fuseRanks } from "../dist/document-embeddings.js";
+import { buildConnection } from "../dist/provider-factory.js";
+import { NetworkPolicy } from "../dist/network-policy.js";
 
 async function fixture(t, provider) {
   const scratch = join(tmpdir(), "Codex-session-files");
@@ -28,6 +30,24 @@ const scripted = (extra = {}) => ({
   name: "documents-fixture", requests: [],
   async complete(input) { this.requests.push(input.messages.map((m) => ({ ...m }))); return { content: "Answered.", toolCalls: [] }; },
   ...extra,
+});
+
+test("the Library indexes and searches using a LAN Ollama connection's scoped transport", async (t) => {
+  const sent = [];
+  const { provider } = buildConnection({ provider: "ollama", key: "", model: "qwen3:14b",
+    extras: { baseUrl: "http://192.168.1.20:11434" }, policy: new NetworkPolicy({}),
+    fetchImpl: async (url, init) => {
+      sent.push(String(url));
+      const body = JSON.parse(init.body);
+      return Response.json({ data: body.input.map((_, index) => ({ index, embedding: [1, 2] })) });
+    } });
+  const { app } = await fixture(t, provider);
+  const document = await app.documents.add("local", { name: "LAN handbook", text: "The workshop closes at nine." });
+  assert.equal(document.embedded, 1, document.note);
+  const found = await app.documents.search("local", { query: "closing time" });
+  assert.equal(found[0].source, "LAN handbook");
+  assert.ok(sent.length >= 2);
+  assert.ok(sent.every((url) => url === "http://192.168.1.20:11434/v1/embeddings"));
 });
 
 /** A minimal ZIP container, the way Word and spreadsheet files are packed. */

@@ -275,10 +275,12 @@ test("discovery only looks at the addresses the owner types in, and pairing shar
   assert.equal(found.body.refused.length, 1);
   const empty = await api("/api/agents/discover?targets=");
   assert.equal(empty.status, 400);
-  const pairing = await api("/api/agents/pairing");
+  const pairing = await api("/api/agents/pairing", {});
   assert.match(pairing.body.code, /^[0-9a-f]{12}$/);
   assert.match(pairing.body.cardUrl, /\/\.well-known\/agent\.json$/);
   assert.match(pairing.body.shareUrl, /^branch:\/\/add-agent\?card=/);
+  const looked = await api("/api/agents/pairing");
+  assert.ok(looked.status >= 400 && !looked.body.shareUrl, "a link is made with POST only, since it makes a key");
   const paired = await api("/api/agents/pair", { link: `branch://add-agent?card=${encodeURIComponent(`${ada.url}/.well-known/agent.json`)}&key=k&code=abc` });
   assert.equal(paired.body.name, "Ada");
 });
@@ -469,4 +471,53 @@ test("saving the sharing screen does not switch answering other assistants back 
   assert.equal(saved.body.a2a, true, "a screen that never mentions it leaves it alone");
   const off = await api("/api/mcp/settings", { enabled: true, exposedTools: [], a2a: false });
   assert.equal(off.body.a2a, false, "saying so explicitly still switches it off");
+});
+
+test("a pairing link carries its own key: it reaches only the A2A door, runs out, and can be taken back", async (t) => {
+  const { app, server, api, rpc, shareA2a } = await fixture(t);
+  await shareA2a(true);
+  const made = await api("/api/agents/pairing", {});
+  assert.equal(made.status, 200);
+  const key = new URL(made.body.shareUrl).searchParams.get("key");
+  assert.ok(key, "the link carries a key");
+  assert.notEqual(key, server.token, "never the app's own key");
+  const days = (Date.parse(made.body.expiresAt) - Date.now()) / 86_400_000;
+  assert.ok(days > 29 && days <= 30, `the key runs out in 30 days (${days})`);
+  const as = (path, body, method) => fetch(server.url + path, { method: method ?? (body === undefined ? "GET" : "POST"),
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  assert.equal((await as("/.well-known/agent.json")).status, 200, "the card");
+  const sent = await rpc("tasks/send", { id: "pair-1", message: { role: "user", parts: [{ type: "text", text: "hello" }] } }, { authorization: `Bearer ${key}` });
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  assert.ok(!sent.body.error, JSON.stringify(sent.body.error));
+  for (const [path, body] of [["/api/state"], ["/api/sessions"], ["/api/run", { prompt: "hi" }], ["/api/agents/pairing", {}],
+    ["/v1/chat/completions", { model: "x", messages: [{ role: "user", content: "hi" }] }], ["/ap/v1/agent/tasks", { input: "hi" }]]) {
+    const response = await as(path, body);
+    assert.equal(response.status, 401, `${path} is refused to a pairing key`);
+  }
+  // A key that may only look cannot make a pairing key, which would let it start tasks.
+  const look = app.sessionTokens.create("local", { name: "look", scope: "read", minutes: 5 });
+  const minted = await fetch(server.url + "/api/agents/pairing", { method: "POST",
+    headers: { authorization: `Bearer ${look.token}`, "content-type": "application/json" }, body: "{}" });
+  assert.equal(minted.status, 401);
+  assert.ok(app.sessionTokens.revoke("local", made.body.keyId), "listed and taken back like any other key");
+  assert.equal((await as("/.well-known/agent.json")).status, 401, "a key taken back stops working");
+});
+
+test("an A2A task belongs to the key that started it: another caller can neither read, stop nor take over its id", async (t) => {
+  const { app, rpc, shareA2a, provider } = await fixture(t);
+  await shareA2a(true);
+  const ada = app.sessionTokens.createPairingKey("local").token, bob = app.sessionTokens.createPairingKey("local").token;
+  const as = (key) => ({ authorization: `Bearer ${key}` });
+  const message = { role: "user", parts: [{ type: "text", text: "count the files" }] };
+  const sent = await rpc("tasks/send", { id: "shared-id", message }, as(ada));
+  assert.ok(!sent.body.error, JSON.stringify(sent.body.error));
+  assert.ok((await rpc("tasks/get", { id: "shared-id" }, as(ada))).body.result, "the caller that started it finds it");
+  const peek = await rpc("tasks/get", { id: "shared-id" }, as(bob));
+  assert.match(peek.body.error.message, /not known/, "another caller does not");
+  const stop = await rpc("tasks/cancel", { id: "shared-id" }, as(bob));
+  assert.match(stop.body.error.message, /not known/);
+  const steal = await rpc("tasks/send", { id: "shared-id", message }, as(bob));
+  assert.match(steal.body.error.message, /already in use/, "nor can it take the id over");
+  assert.ok((await rpc("tasks/get", { id: "shared-id" }, as(ada))).body.result, "the first caller's task is still there");
+  void provider;
 });

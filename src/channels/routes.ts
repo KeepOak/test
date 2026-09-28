@@ -10,7 +10,7 @@ export const ChannelRouteSchema = z.object({ channel: Channel, scope: Scope,
 export type ChannelRoute = z.infer<typeof ChannelRouteSchema>;
 export class ChannelRouteError extends Error {}
 const prefix = "channel-route:";
-const routeKey = (channel: string, scope: string): string => `${prefix}${channel}:${scope}`;
+const routeKey = (channel: string, scope: string): string => `channel-route:${channel}:${scope}`;
 
 /** Only addresses whose adapter defines a thread suffix have a parent; Matrix's host colon is not one. */
 export function parentScope(kind: string, scope: string): string | null {

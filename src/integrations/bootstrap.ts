@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
 import { McpConfigSchema } from './mcp-config.js';
 import { connectMcp, openMcp, registerCachedMcp, type LiveMcp, type McpToolCache } from './mcp.js';
-import { BranchBrowser, BrowserConfigSchema, registerBrowser, type WorkspacePaths } from './browser.js';
+import { BranchBrowser, BrowserConfigSchema, defaultBrowserConfig, registerBrowser, type WorkspacePaths } from './browser.js';
 // mac7/vault-autofill (R17-068): filling one of the owner's saved sign-ins into the page they are on.
 import { CredentialResolver } from '../credential-cli.js';
 import { VaultAutofill, registerVaultAutofill } from '../vault-autofill.js';
@@ -259,13 +259,14 @@ function noteLeftOut(config: LaunchConfig, path: string): LaunchSection[] {
 /**
  * The settings loadIntegrations goes on with. With no settings file, the programs installed on this computer are
  * still there to run (dogfood A2, src/integrations/default-shell.ts), except any in the workspace the launch's tasks
- * work in; null when there is nothing at all to set up.
+ * work in, and Branch's own browser opens any website the network rules allow (defaultBrowserConfig).
  */
 async function readConfig(path: string | undefined, env: NodeJS.ProcessEnv, channels?: ChannelHost): Promise<z.infer<typeof ConfigSchema> | null> {
   if (!path) {
     const workspace = channels?.context?.('bootstrap').workspace;
     const shell = defaultShellConfig(env, process.platform, workspace ? [workspace] : []);
-    return shell ? ConfigSchema.parse({ shell }) : null;
+    // Branch's own browser ships on: without it the owner's address bar and every Trunk's browser had no tool at all.
+    return ConfigSchema.parse({ ...(shell ? { shell } : {}), browser: defaultBrowserConfig });
   }
   const info = await stat(path);
   if (!info.isFile() || info.size > 65536) throw new Error('Integration config must be a file of at most 64 KiB');
@@ -284,7 +285,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
     browser?: BranchBrowser; issues?: IssueAccess;
     /** Batch 26 (wave 8): what the firewall card reads back — the sites the browser may open, and
      * whether host commands are pointed at a dead address. Both are launch settings, not stored ones. */
-    browserOrigins?: string[]; commandsNetless?: boolean;
+    browserOrigins?: string[]; browserAnyWebsite?: boolean; commandsNetless?: boolean;
   } = {};
   const before = new Set(registry.names());
   const close = async () => {
@@ -318,6 +319,8 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       browser.tracer = channels?.tracer as never;
       // w911 (A2019) hook: the browser sandbox; its settings are read when a task first opens a page.
       if (channels?.store) { const kept = channels.store as Store; browser.sandbox = new BrowserSandbox(kept, () => kept.secrets); }
+      // What a page address carries out (src/egress-guard.ts): the values the locker has unlocked this launch.
+      if (channels?.store) { const kept = channels.store as Store; browser.egressSecrets = () => kept.secrets.scrubber.values(); }
       // The quirks of particular websites live in the skills the owner installed, not in the
       // browser tool, so they are read fresh each time: installing a skill needs no restart.
       const skillStore = channels?.store as SiteSkillSource | undefined;
@@ -328,7 +331,8 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       // Branch is never still holding the door to their signed-in windows open.
       channels?.onLock?.(() => browser.releaseBorrowed());
       hosted.browser = browser;
-      hosted.browserOrigins = [...config.browser.allowedOrigins];
+      hosted.browserOrigins = [...config.browser.allowedOrigins ?? []];
+      hosted.browserAnyWebsite = config.browser.anyWebsite === true;
       registerBrowser(registry, browser); closers.push(() => browser.close());
       // ── mac7/vault-autofill (R17-068): the owner's saved sign-ins, filled straight into the page.
       // It ships off; with no browser there is nothing to fill, so it is registered only here.
@@ -481,6 +485,15 @@ function guardedSocket(policy: NetworkPolicy | undefined): WebSocketConnect | un
   };
 }
 
+/**
+ * One entry of the connections file's `channels` list, checked with the file's own shapes and built the same way,
+ * for a chat app set up in the window (src/channel-setup/live.ts). Its channel is not attached here.
+ */
+export async function buildChannelEntry(entry: unknown, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
+  const parsed = ChannelConfigSchema.safeParse(entry);
+  if (!parsed.success) throw new Error(`The saved settings are not complete: ${parsed.error.issues.map((issue) => issue.message).join('; ').slice(0, 300)}`);
+  return buildChannel(parsed.data, env, host, policy);
+}
 /** Builds the adapter one configured channel asks for, with its secrets and network guards. */
 async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
   // Wave mac3 (channels-parity): IRC, XMPP, Mastodon and the rest are built in their own files.
