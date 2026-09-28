@@ -1,4 +1,4 @@
-import { randomInt } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { z } from "zod";
 import type { Store } from "../store.js";
@@ -15,6 +15,8 @@ import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
 import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
 import { liveSteps, specialistName } from "../live-steps.js";
+import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
 import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAllowed, chatExtraPermissions,
@@ -25,6 +27,8 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
+import { lockedDown } from "../lockdown.js";
+import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -59,6 +63,10 @@ export interface InboundMessage {
     seconds?: number | undefined;
     bytes: () => Promise<Uint8Array>;
   };
+  /** Settings › Chat apps › Edited messages: this is a new version of the message `messageId` names. */
+  edited?: boolean;
+  /** Photo albums as one message: the album this photo came in (Telegram's media_group_id). */
+  groupId?: string;
 }
 /** What a channel says about itself, in words the owner can act on. */
 /**
@@ -80,6 +88,8 @@ export interface ChannelAdapter {
   readonly kind: string;
   /** Longest single message this channel accepts; the ledger splits replies to fit. */
   readonly maxTextLength?: number;
+  /** A transport may reserve space for literal-text escaping in its message limit. */
+  configureFormatting?(mode: () => "native" | "plain"): void;
   /**
    * True where every message sent costs the owner money (SMS). Nothing is added to a reply there that was not asked
    * for, such as the steps line an app without edits gets above its reply.
@@ -93,6 +103,15 @@ export interface ChannelAdapter {
   botName(): string | null;
   /** Connection state in plain language, shown in Settings -> Channels. */
   health?(): ChannelHealth;
+  /**
+   * Settings › Chat apps › Staying connected: when the app last answered Branch at all (a poll that came back, even
+   * empty), in milliseconds since the epoch. An app that has it is watched for stalling (intake-settings.ts).
+   */
+  lastContact?(): number;
+  /** Starts the app again after a stall, with the same handler; throws in plain words when it cannot. */
+  restart?(onMessage: (message: InboundMessage) => Promise<void>): Promise<void>;
+  /** Presence: the bot's short description, "Online" or "Offline, back soon" (or empty to clear it). */
+  setPresence?(words: string): Promise<void>;
   start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void>;
   /**
    * `format` (optional): which parts of `text` are code, and whether the message should arrive without a
@@ -105,7 +124,7 @@ export interface ChannelAdapter {
    * Sends a question with buttons to press, on the channels that have them. Absent means this
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
    */
-  sendButtons?(chatId: string, text: string, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
+  sendButtons?(chatId: string, text: string, buttons: ApprovalButton[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
   // ---- Optional live-status methods (wave mac2, chat-live; used by live-status.ts) -------------
   // Any adapter may add any of these three; leave one out and the chat simply goes without it.
   // Rules every adapter follows (Telegram, Slack, Discord and Matrix are the worked examples):
@@ -151,7 +170,7 @@ export interface ChannelAdapter {
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
  * quietly. A progress message arrives quietly; the finished reply that follows it is the one that rings.
  */
-export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined }
+export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined; plain?: boolean | undefined }
 /** R17-C (R17-022): one file on its way into a chat. */
 export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Array; caption?: string }
 
@@ -174,11 +193,12 @@ export function approvalButtons(fingerprint: string, canAlways: boolean): Approv
 }
 
 /** Reads a pressed button, or a typed letter, back into a decision. */
-export function readApprovalAnswer(value: string): { decision: "allow" | "deny"; remember: PolicyRemember; fingerprint: string } | null {
-  const [letter, fingerprint = ""] = String(value ?? "").trim().toLowerCase().split(":");
-  if (letter === "y") return { decision: "allow", remember: "session", fingerprint };
-  if (letter === "a") return { decision: "allow", remember: "always", fingerprint };
-  if (letter === "n") return { decision: "deny", remember: "session", fingerprint };
+export function readApprovalAnswer(value: string): { decision: "allow" | "deny"; remember: PolicyRemember; fingerprint: string; nonce?: string } | null {
+  const [letter, fingerprint = "", nonce] = String(value ?? "").trim().toLowerCase().split(":");
+  const identity = { fingerprint, ...(nonce ? { nonce } : {}) };
+  if (letter === "y") return { decision: "allow", remember: "session", ...identity };
+  if (letter === "a") return { decision: "allow", remember: "always", ...identity };
+  if (letter === "n") return { decision: "deny", remember: "session", ...identity };
   return null;
 }
 
@@ -203,7 +223,7 @@ export const shownQuestionEnded = "That question is no longer waiting. Here is t
  * has gone, and the button belongs to a different request from the one waiting now. The words
  * therefore promise neither — they say the button no longer fits and what to do next.
  */
-const buttonPayload = /^[yan]:[0-9a-f]{1,32}$/;
+const buttonPayload = /^[yan]:[0-9a-f]{1,32}(?::[0-9a-f]{12})?$/;
 export const staleButtonNote =
   "That button does not match the question waiting here. Send me a message and I will ask again.";
 export const ChannelPolicySchema = z.object({
@@ -240,6 +260,13 @@ function fitsTurn(messages: InboundMessage[], next: InboundMessage): boolean {
   const size = [...messages, next].reduce((sum, m) => sum + m.text.length + (m.chatTitle?.length ?? 0) + m.senderName.length + 10, 0);
   return messages.length < turnMessages && size <= turnCharacters;
 }
+/**
+ * Edited messages: a new version arriving once its message is already being answered is a message of its own. It keeps
+ * the original as the one a reaction goes on, and gets an id of its own so it is not taken for a repeat.
+ */
+function editedAsNew(message: InboundMessage): InboundMessage {
+  return { ...message, edited: false, reactTo: message.reactTo ?? message.messageId, messageId: `${message.messageId}:edited:${Date.now().toString(36)}` };
+}
 /** A note turned back into a message of its own, with the words already written out. */
 function withText(note: TurnNote): InboundMessage {
   // A voice note still being written out goes on as it is, and the next turn writes it out itself.
@@ -272,6 +299,7 @@ export class ChannelRouter {
   private readonly adapters = new Map<string, { adapter: ChannelAdapter; policy: ChannelPolicy }>();
   /** PR #289: the question each chat was last shown (its conversation and fingerprint), so a typed "y" answers that one and no other. */
   private readonly shownInChat = new Map<string, { sessionId: string; fingerprint: string }>();
+  private readonly shownCommands = new Map<string, string>();
   readonly deliveries: Deliveries;
   private pump: ReturnType<typeof setInterval> | undefined;
   private flushing: Promise<void> = Promise.resolve();
@@ -319,6 +347,8 @@ export class ChannelRouter {
    * off while Lockdown is on, as it does every other outbound message.
    */
   liveAllowed: () => boolean = () => true;
+  /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
+  appLocked: () => boolean = () => false;
   /**
    * Hides key-shaped values and known secrets in what the live status shows (step labels, streamed
    * text). `createBranch` connects the leak guard; on its own this changes nothing.
@@ -336,10 +366,11 @@ export class ChannelRouter {
   }
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
+    installChannelFormatting(adapter, () => channelFormatting(this.store, this.runtime.owner, adapter.kind));
     this.adapters.set(adapter.id, { adapter, policy: ChannelPolicySchema.parse(policy) });
     // This resolves once the message has been dealt with. An adapter that reads messages one by one
     // must not wait for it, or a note sent to a running task could never get through (see telegram.ts).
-    try { await adapter.start((message) => this.handle(message).then(() => undefined)); }
+    try { await adapter.start(this.handlerFor()); }
     catch (error) {
       // A channel that did not start is not connected: left in the list, it would be reported as
       // connected and every later attempt to connect it again would be refused as a second copy.
@@ -347,8 +378,69 @@ export class ChannelRouter {
       throw error;
     }
     if (!this.pump) { this.pump = setInterval(() => void this.flush(), this.pumpMs); this.pump.unref(); }
+    if (!this.watchdog) { this.watchdog = setInterval(() => void this.checkStalled(), this.watchdogMs); this.watchdog.unref(); }
+    if (this.intake().presence) void this.presence(adapter, presenceWords.online);
     await this.flush();
   }
+  /** What every app hands its messages to; the same one is handed again when a stalled app is started again. */
+  private handlerFor(): (message: InboundMessage) => Promise<void> {
+    return (message) => this.handle(message).then(() => undefined);
+  }
+  /** Presence as saved; a store already closed (Branch shutting down after it) says nothing, so nothing is sent. */
+  private presenceOn(): boolean {
+    try { return this.intake().presence; } catch { return false; }
+  }
+  /** Settings › Chat apps (intake-settings.ts): read fresh each time. */
+  intake(): ChatIntake { return readChatIntake(this.store, this.runtime.owner); }
+  /**
+   * Presence: says "Online" or "Offline, back soon" in the bot's short description, on the apps that have one. Never
+   * while Lockdown is on (nothing goes out then); a failure is written to the diagnostics, never thrown.
+   */
+  async presence(adapter: ChannelAdapter, words: string): Promise<void> {
+    if (!adapter.setPresence || !this.liveAllowed()) return;
+    await adapter.setPresence(words).catch((error: unknown) =>
+      diagnose("channels", "warn", `${adapter.kind} would not take its online status: ${error instanceof Error ? error.message : String(error)}`));
+  }
+  /** Presence switched on or off in Settings: says so on every connected app now ("" clears the description). */
+  async presenceChanged(on: boolean): Promise<void> {
+    await Promise.allSettled([...this.adapters.values()].map(({ adapter }) => this.presence(adapter, on ? presenceWords.online : "")));
+  }
+  /**
+   * The watchdog (Settings › Chat apps › Staying connected), every `watchdogMs`: an app with no contact for the
+   * owner's "stalled after" is stalled; stalled for "reconnect after", it is started again (at most once per that
+   * wait), and one still stalled after being started again, or that could not start, says so on its card. An app
+   * that is reached with nothing new is never restarted.
+   */
+  async checkStalled(now = Date.now()): Promise<void> {
+    const intake = this.intake();
+    for (const [id, { adapter }] of this.adapters) {
+      const last = adapter.lastContact?.();
+      if (last === undefined || !adapter.restart) continue;
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      this.watch.set(id, state);
+      const stalledMs = intake.stalledAfterSeconds * 1000, quiet = now - last, stalled = quiet >= stalledMs;
+      if (!intake.watchdog || !stalled) { state.problem = null; continue; }
+      // "Reconnect after" counts from when it became stalled, not from its last contact.
+      const wait = intake.reconnectMinutes * 60_000;
+      if (quiet < stalledMs + wait || now - state.lastRestartAt < wait) continue;
+      if (state.lastRestartAt && last < state.lastRestartAt)
+        state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and starting it again did not bring it back. Branch keeps trying.`;
+      state.lastRestartAt = now;
+      const today = Date.now(); // the count on the card is by the wall clock
+      state.restarts = [...state.restarts.filter((at) => today - at < 86_400_000), today];
+      try { await adapter.restart(this.handlerFor()); }
+      catch (error) {
+        state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and Branch could not start it again: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      // Taken out (its token replaced, or Branch stopping) while it was being started again: stop what the restart
+      // began, or a second poller would keep running for an app that is no longer connected.
+      if (this.adapters.get(id)?.adapter !== adapter) await adapter.stop().catch(() => undefined);
+    }
+  }
+  /** How often the watchdog looks. */
+  watchdogMs = 15_000;
+  private watchdog: ReturnType<typeof setInterval> | undefined;
+  private readonly watch = new Map<string, { restarts: number[]; lastRestartAt: number; problem: string | null }>();
   /** The connected channel with this id, for routes that must hand a request to one. */
   adapter(id: string): ChannelAdapter | undefined { return this.adapters.get(id)?.adapter; }
   /** Stops one channel and takes it out, so it can be connected again (a Telegram bot token replaced on its card). */
@@ -356,11 +448,16 @@ export class ChannelRouter {
     const attached = this.adapters.get(id);
     if (!attached) return;
     this.adapters.delete(id);
+    this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
   }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
     this.pump = undefined;
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = undefined;
+    if (this.presenceOn())
+      await Promise.allSettled([...this.adapters.values()].map(({ adapter }) => this.presence(adapter, presenceWords.offline)));
     const stops = [...this.adapters.values()].map(({ adapter }) => adapter.stop());
     this.adapters.clear();
     await Promise.allSettled(stops);
@@ -387,19 +484,27 @@ export class ChannelRouter {
     const owner = this.runtime.owner;
     return {
       channels: [...this.adapters.values()].map(({ adapter, policy }) => ({ id: adapter.id, kind: adapter.kind, botName: adapter.botName(),
-        health: adapter.health?.() ?? { state: "connected" as const },
+        health: this.watch.get(adapter.id)?.problem ? { state: "needs attention" as const, reason: this.watch.get(adapter.id)!.problem! } : adapter.health?.() ?? { state: "connected" as const },
+        // Staying connected: when the app last answered, and how often the watchdog started it again today.
+        ...(adapter.lastContact ? { watchdog: { lastContactAt: new Date(adapter.lastContact()).toISOString(),
+          reconnectsToday: (this.watch.get(adapter.id)?.restarts ?? []).filter((at) => Date.now() - at < 86_400_000).length } } : {}),
         ...(adapter.needsAppReview ? { needsAppReview: true } : {}), ...policy })),
       pending: this.pairs(owner).filter((p) => p.status === "pending"),
       approved: this.pairs(owner).filter((p) => p.status === "approved"),
       chats: this.chats(owner),
       live: this.switches(),
+      intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
+      ownerCommands: ownerCommands(this.store, owner),
     };
   }
   /** Changes the chat extras' switches (chat-live-settings.ts); the ones not named stay as they are. */
   setSwitches(input: unknown): ChatLiveSwitches {
     return saveChatLiveSwitches(this.store, this.runtime.owner, input);
+  }
+  setOwnerCommandSettings(input: unknown) {
+    return saveOwnerCommands(this.store, this.runtime.owner, input);
   }
   /**
    * Queues text for a chat and sends it if the channel is up. The key makes a repeat call a no-op,
@@ -441,6 +546,7 @@ export class ChannelRouter {
   async handle(message: InboundMessage): Promise<Outcome> {
     const entry = this.adapters.get(message.channel);
     if (!entry) return "ignored";
+    if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
@@ -524,7 +630,7 @@ export class ChannelRouter {
     channel: string, chatId: string, value: string,
     /** Who typed it and whether this is a one-to-one chat (mac7/chat-approvals); both are needed
      *  before a chat's own yes may answer a question about what one of the owner's lines granted. */
-    from?: { senderId?: string; chatKind?: InboundMessage["chatKind"] },
+    from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined },
   ): Promise<{ decision: string; tool: string; refusal?: string; sessionId?: string; show?: WaitingQuestion | undefined } | null> {
     const read = readApprovalAnswer(value);
     if (!read) return null;
@@ -562,11 +668,18 @@ export class ChannelRouter {
     // letter went on to the assistant as an ordinary message.
     if (read.remember === "always")
       return { decision: "in-window", tool: asked.tool, refusal: standingYesInWindow };
-    const mayApprove = chatMayApprove(this.runtime.registry.permissionOf(asked.tool), this.chatApprovals(channel, from));
+    const permission = this.runtime.registry.permissionOf(asked.tool);
+    const mayApprove = permission === commandPermission
+      ? this.commandYesHere(channel, chatId, asked.runId, read.fingerprint, from)
+        && !!read.nonce && this.shownCommands.get(`${channel}\u0000${chatId}\u0000${asked.fingerprint}`) === read.nonce
+        && commandShown(asked.bytes) !== null && commandBytesExact(asked.tool, asked.bytes, asked.fingerprint)
+      : chatMayApprove(permission, this.chatApprovals(channel, from));
     if (read.decision === "allow" && !mayApprove)
       return { decision: "in-window", tool: asked.tool, refusal: approveInWindow(asked.label || asked.tool) };
     // PR #289 second review: the yes lands on exactly the question vetted above, so it still answers while another waits.
-    const result = this.runtime.approve(sessionId, read.decision, read.remember, asked.fingerprint, channel);
+    const remember = permission === commandPermission && read.decision === "allow" ? "never" : read.remember;
+    const result = this.runtime.approve(sessionId, read.decision, remember, asked.fingerprint, channel);
+    this.shownCommands.delete(`${channel}\u0000${chatId}\u0000${asked.fingerprint}`);
     return { decision: result.decision, tool: result.tool };
   }
   /**
@@ -597,8 +710,19 @@ export class ChannelRouter {
   private async askInChat(message: InboundMessage, sessionId: string, waiting: WaitingQuestion, lead: string, key: string): Promise<void> {
     const adapter = this.adapters.get(message.channel)?.adapter;
     if (!adapter) return;
-    const checked = await this.outboundGuard(lead + waiting.question);
+    // A command from the owner's own chat is shown whole, as a code block, before its Yes (src/channels/owner-commands.ts).
+    const permission = this.runtime.registry.permissionOf(waiting.tool);
+    const command = permission === commandPermission && this.ownerCommandsFrom(message)
+      && commandBytesExact(waiting.tool, waiting.bytes, waiting.fingerprint) ? commandShown(waiting.bytes) : null;
+    const asked = command ? `${lead}${waiting.question}\n\n` : lead + waiting.question;
+    const checked = await this.outboundGuard(this.hideLeaks(command ? asked + command : asked));
     if (checked.blocked) return;
+    // The command is shown exactly as it will run, or its Yes belongs in the window: a last look that changed any of
+    // the words means the chat would be approving something other than what it sees.
+    const faithful = command !== null && checked.text === asked + command
+      && checked.text.length + 16 <= (adapter.maxTextLength ?? 3500)
+      && this.commandYesHere(message.channel, message.chatId, waiting.runId, waiting.fingerprint ?? "", message)
+      && !(adapter.kind === "discord" && command.includes("`"));
     // In a group anybody paired may press the button, so a standing yes is only offered one to one.
     // mac7/chat-approvals (integration review): a chat is never offered "Yes always", because a chat
     // may never give one — offering it is offering a button whose only answer is a refusal.
@@ -607,18 +731,26 @@ export class ChannelRouter {
     // granted is answered in the window, so the chat is not offered a Yes it cannot give — only No,
     // with the sentence saying where the yes belongs. mac7/chat-approvals: unless the owner switched
     // that line on for this person on this app, in which case the Yes is theirs to press.
-    const mayApprove = chatMayApprove(this.runtime.registry.permissionOf(waiting.tool), this.chatApprovals(message.channel, message));
+    const mayApprove = permission === commandPermission ? faithful
+      : chatMayApprove(permission, this.chatApprovals(message.channel, message));
     const buttons = approvalButtons(waiting.fingerprint ?? "", canAlways && mayApprove)
       .filter((button) => mayApprove || button.value.startsWith("n"));
+    const nonce = permission === commandPermission && faithful ? randomBytes(6).toString("hex") : null;
+    if (nonce) for (const button of buttons) button.value += `:${nonce}`;
     const text = mayApprove ? checked.text : `${checked.text}\n\n${approveInWindow(waiting.label || waiting.tool || "that")}`;
+    const format = faithful && mayApprove ? { spans: [{ offset: asked.length, length: command!.length, kind: "block" as const, language: "shell" }] } : undefined;
     const sent = adapter.sendButtons
-      ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId).then(() => true, () => false)
+      ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId, format).then(() => true, () => false)
       : await this.deliver(message.channel, message.chatId, `${text}\n\n${mayApprove ? approvalFallbackNote : "Reply n for no."}`,
         key, message.messageId).then((done) => done.sent, () => false);
     // Q259: a question answered elsewhere while it was being sent is not recorded as shown.
     const still = this.runtime.waitingApprovals(sessionId).some((one) => one.fingerprint === waiting.fingerprint && one.runId === waiting.runId);
     if (sent && still && waiting.fingerprint)
       this.shownInChat.set(`${message.channel}\u0000${message.chatId}`, { sessionId, fingerprint: waiting.fingerprint });
+    if (sent && still && faithful && waiting.fingerprint && nonce) {
+      if (this.shownCommands.size >= 1000) this.shownCommands.delete(this.shownCommands.keys().next().value!);
+      this.shownCommands.set(`${message.channel}\u0000${message.chatId}\u0000${waiting.fingerprint}`, nonce);
+    }
   }
 
   private async answer(message: InboundMessage): Promise<Outcome> {
@@ -646,6 +778,8 @@ export class ChannelRouter {
         if (waiting) await this.askInChat(message, answered.sessionId, waiting, "", `reshow:${message.channel}:${message.messageId}`);
         return "replied";
       }
+      if (answered.decision === "allow" && this.runtime.registry.permissionOf(answered.tool) === commandPermission)
+        return this.startTurn([{ ...message, text: "Continue with the exact command I just approved." }]);
       await this.deliver(message.channel, message.chatId,
         answered.refusal ? answered.refusal
           : answered.decision === "allow"
@@ -664,7 +798,7 @@ export class ChannelRouter {
     }
     const turn = this.turns.get(chatKey(message));
     if (turn) return this.joinTurn(turn, message);
-    return this.startTurn([message]);
+    return this.startTurn([message.edited ? editedAsNew(message) : message]);
   }
   /** The owner's on / off / when-needed switches for the chat extras (chat-live-settings.ts). */
   switches(): ChatLiveSwitches {
@@ -687,10 +821,53 @@ export class ChannelRouter {
    * including any permission added to Branch later. The owner's own paired account is a chat account
    * like any other — a chat app cannot prove who is typing — so it gets the same list.
    */
-  private chatPermissions(from?: { channel: string; senderId: string }): string[] {
+  private chatPermissions(from?: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): string[] {
     const settings = chatPermissionSettings(this.store, this.runtime.owner);
     const extra = from ? chatExtraPermissions(settings, from.channel, from.senderId) : [];
-    return chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
+    const allowed = chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
+    // The one exception to "a chat never runs a program": the owner's own account, in a direct chat, on an app that
+    // proves who sent it, with the part on (src/channels/owner-commands.ts). Every command still asks.
+    return from && this.ownerCommandsFrom(from) && this.runtime.registry.permissions().includes(commandPermission)
+      ? [...allowed, commandPermission] : allowed;
+  }
+  /** Whether this chat message is the owner's own and may ask to run a command, now (read afresh every time). */
+  private ownerCommandsFrom(from: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
+    const adapter = this.adapters.get(from.channel)?.adapter;
+    const kind = adapter?.kind ?? "";
+    const held = lockedDown(this.store, this.runtime.owner) || this.appLocked();
+    return ownerCommandsHere(ownerCommands(this.store, this.runtime.owner),
+      { channel: from.channel, kind, senderId: from.senderId, chatKind: from.chatKind, caughtUp: from.caughtUp }, held)
+      && this.pair(from.channel, from.senderId)?.status === "approved"
+      && !!adapter?.sendButtons
+      && this.senderAllowed(from.channel, from.senderId);
+  }
+  /** Recheck the originating sender at execution, including continued tasks and helpers. */
+  commandRunAllowed(runId: string): boolean {
+    const queue = [runId], seen = new Set<string>();
+    while (queue.length && seen.size < 100) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const events = this.store.events(id);
+      const came = events.find((event) => event.kind === "channel.inbound")?.data;
+      if (came && typeof came.channel === "string" && typeof came.senderId === "string" && came.chatKind === "direct")
+        return this.ownerCommandsFrom({ channel: came.channel, senderId: came.senderId, chatKind: "direct", caughtUp: came.caughtUp === true });
+      const started = events.find((event) => event.kind === "run.started")?.data;
+      for (const next of [started?.parentRunId, started?.resumedFrom, started?.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return false;
+  }
+  /**
+   * A command is approved in a chat only with its own Yes button (the exact request's fingerprint), pressed by the
+   * owner's own account, in the very chat the task came from. A typed "y" is not enough: it answers whatever this chat
+   * was last shown. Another chat pointed at the same conversation (a linked group) can never say yes to it.
+   */
+  private commandYesHere(channel: string, chatId: string, runId: string, fingerprint: string,
+    from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined }): boolean {
+    if (!fingerprint || !from?.senderId || from.chatKind !== "direct") return false;
+    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })) return false;
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return came?.channel === channel && came?.chatId === chatId;
   }
   /** The owner's setting for what chats may do beyond talking (src/channels/chat-permissions.ts). */
   permissionSettings(): ChatPermissionSettings {
@@ -736,18 +913,30 @@ export class ChannelRouter {
    * note it reads before its next step (the same path as the app's "steer" button).
    */
   private async joinTurn(turn: ChatTurnState, message: InboundMessage): Promise<Outcome> {
+    // Edited messages: a new version of a message still being gathered takes its place, so the latest one is answered.
+    if (message.edited) {
+      const at = turn.messages.findIndex((m) => m.messageId === message.messageId);
+      if (turn.phase === "gathering" && at >= 0) { turn.messages[at] = { ...turn.messages[at]!, text: message.text }; return "ignored"; }
+      message = editedAsNew(message);
+    }
     // A service that hands over the same message twice gets one answer.
     if ([...turn.messages, ...turn.notes.map((note) => note.message)].some((m) => m.messageId === message.messageId)) return "ignored";
+    // Wait for messages split in two / albums: while the turn is still gathering, a message that fits joins it. Only the
+    // same person's live messages are joined that way (steering "on" gathers everyone's, as it always has).
+    // With no split wait, a turn gathering only for an album takes only that album's photos (Codex P2).
+    const first = turn.messages[0], sameAlbum = !!message.groupId && message.groupId === first?.groupId;
+    const joins = this.switches().steering === "on"
+      || (message.senderId === first?.senderId && !message.caughtUp && (this.intake().splitWaitMs > 0 || sameAlbum));
+    if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
+      turn.messages.push(message);
+      return new Promise((resolve) => turn.waiters.push(resolve));
+    }
     const steering = this.switches().steering;
     if (steering === "off") {
       // Not steering: the message waits for the task to finish and is then answered on its own.
       await new Promise<void>((resolve) => turn.waiters.push(() => resolve()));
       const next = this.turns.get(chatKey(message));
       return next ? this.joinTurn(next, message) : this.startTurn([message]);
-    }
-    if (turn.phase === "gathering" && fitsTurn(turn.messages, message)) {
-      turn.messages.push(message);
-      return new Promise((resolve) => turn.waiters.push(resolve));
     }
     // The note takes its place before a voice note is written out, so later messages queue behind it.
     const note: TurnNote = { text: "", message, pending: true };
@@ -807,8 +996,8 @@ export class ChannelRouter {
     turn.live = this.liveFor(first, () => turn.runId);
     this.turns.set(key, turn);
     turn.live?.start();
-    if (this.mergeWindowMs > 0 && this.switches().steering === "on")
-      await new Promise((resolve) => setTimeout(resolve, this.mergeWindowMs).unref());
+    const wait = this.gatherMs(first);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait).unref());
     let outcome: Outcome = "ignored";
     try {
       // A dropped message only gets the "Dropped that" words; nothing more is shown for it.
@@ -821,6 +1010,17 @@ export class ChannelRouter {
     const unread = turn.dropped ? [] : this.unreadNotes(turn);
     if (unread.length) void this.startTurn(unread.map(withText), true).catch(() => undefined);
     return outcome;
+  }
+  /**
+   * How long a new turn gathers before it runs: the steering window ("on"), the owner's "Wait for messages split in
+   * two", and at least `albumWaitMs` for a photo that came in an album while albums are joined. `mergeWindowMs` 0 turns
+   * all gathering off (tests that want each message on its own).
+   */
+  private gatherMs(first: InboundMessage): number {
+    if (this.mergeWindowMs <= 0) return 0;
+    const intake = this.intake(), steering = this.switches().steering === "on" ? this.mergeWindowMs : 0;
+    if (first.caughtUp) return steering; // messages fetched after a restart are old ones, each already whole
+    return Math.max(steering, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
   }
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
@@ -878,7 +1078,8 @@ export class ChannelRouter {
         source: "channel",
         onStarted: (started) => {
           // mac3/never-break: a task a chat started is left for the chat app to send again after a restart.
-          this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId });
+          this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
+            senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true });
           turn.runId = started.id;
           turn.startedAt = Date.now();
           live?.thinking();
