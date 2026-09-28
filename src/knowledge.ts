@@ -86,6 +86,11 @@ interface SpecialistState extends SpecialistVersion {
   history: SpecialistVersion[];
 }
 const idArgs = z.object({ id: z.string().uuid() }).strict();
+/** A JSON object sent as text is read as the object it spells. */
+const jsonText = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value) as unknown; } catch { return value; }
+};
 
 export class Knowledge {
   constructor(
@@ -396,6 +401,15 @@ export class Knowledge {
     });
   }
   /** The evaluated active version of a specialist, or an error the caller can show. */
+  /** A specialist's id from its id or its name (any case), so a model that names it the way it was shown still reaches it. */
+  specialistId(owner: string, idOrName: string): string {
+    if (this.store.get("specialists", owner, idOrName)) return idOrName;
+    const wanted = idOrName.trim().toLowerCase();
+    const named = this.store.list("specialists", owner)
+      .filter((record) => String((record.data as { definition?: { name?: unknown } }).definition?.name ?? "").trim().toLowerCase() === wanted);
+    if (named.length === 1) return named[0]!.id;
+    throw new Error(named.length ? `More than one specialist is called "${idOrName}"; use its id.` : `There is no specialist called "${idOrName}". specialists.list names them.`);
+  }
   activeSpecialist(owner: string, id: string) {
     const state = this.required("specialists", owner, id).data as unknown as SpecialistState;
     const version = state.activeVersion === state.version ? state : state.history.find((v) => v.version === state.activeVersion);
@@ -518,9 +532,10 @@ function registerSpecialists(
     description:
       "Hand part of this task to a specialist with fewer permissions and a share of the same budget.",
     permission: "specialists.use",
-    parameters: idArgs.extend({ prompt: z.string().min(1).max(8000), timeoutMs: z.number().int().min(1000).max(120000).optional(), resultSchema: ResultSchemaSchema.optional(), checks: CompletionCheckSchema.optional(),
+    // A model knows a specialist by the name it was shown as often as by its id, and may send a schema as JSON text.
+    parameters: z.object({ id: z.string().trim().min(1).max(200).describe("The specialist's id, or its name"), prompt: z.string().min(1).max(8000), timeoutMs: z.number().int().min(1000).max(120000).optional(), resultSchema: z.preprocess(jsonText, ResultSchemaSchema).optional(), checks: CompletionCheckSchema.optional(),
       background: z.boolean().optional().describe("Let the specialist keep working after this task finishes; its result is recorded on this task when it arrives.") }),
-    execute: async (a, c) => knowledge.delegate(c, a.id, a.prompt, { ...(a.timeoutMs ? { timeoutMs: a.timeoutMs } : {}), ...(a.resultSchema ? { resultSchema: a.resultSchema } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.background ? { background: true } : {}) }),
+    execute: async (a, c) => knowledge.delegate(c, knowledge.specialistId(c.owner, a.id), a.prompt, { ...(a.timeoutMs ? { timeoutMs: a.timeoutMs } : {}), ...(a.resultSchema ? { resultSchema: a.resultSchema } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.background ? { background: true } : {}) }),
   });
   registry.register({
     name: "specialists.fanout",
@@ -528,7 +543,7 @@ function registerSpecialists(
       "Run several specialist tasks: independent tasks run at the same time, tasks with dependsOn wait for those results and receive them. Results are merged under this task.",
     permission: "specialists.use",
     parameters: z.object({ tasks: z.array(FanoutTaskSchema.extend({ specialist: z.string().min(1).max(200) })).min(1).max(8) }).strict(),
-    execute: async (a, c) => knowledge.fanout(c, a.tasks),
+    execute: async (a, c) => knowledge.fanout(c, a.tasks.map((task) => ({ ...task, specialist: knowledge.specialistId(c.owner, task.specialist) }))),
   });
 }
 export function registerKnowledge(

@@ -247,6 +247,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
   "skill-origin:", "skill-package:",
+  // A registry signing key the owner trusted: a file must never make a key trusted by itself.
+  "registry-key:",
   // Q230, keys worked out in code: each coding, interop, learning-more, Trunks and model-savings part (they run
   // programs, reach other assistants or outside services, or choose where the words go), a conversation's mode, goal,
   // checklist, pinned skill and autonomy, a procedure's recipe checks, and a specialist's handoff list.
@@ -271,6 +273,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "reflection-cursor:": "how far a look back has read; nothing runs from it",
   "reflection-note:": "what accepting a queued note would do; it still needs the owner's yes",
   "skill-install-log": "install history for display only",
+  "stays-here:": "only keeps a conversation that held personal details on this computer; it can never send anything elsewhere",
   "tool-context-modes": "only how much of an already-permitted tool's or skill's description a request carries",
   "ask-first": "askFirst and maxQuestions only decide whether clarifying questions are asked",
   "calendar": "country, days off, working days, timezone and quiet hours only skip or hold existing work",

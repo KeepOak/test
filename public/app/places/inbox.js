@@ -39,6 +39,7 @@ import { offTile } from "./switch-on.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
 import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work: what is working or paused, with Pause, Resume, Stop
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { readUrgency, byUrgency } from "./inbox-urgency.js"; // Sort the Inbox by urgency (decision models)
 import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
 
 let asks = [];
@@ -95,13 +96,17 @@ const rowsWaiting = () => asks.length + E.state.trunkWaiting.length + installs.l
 const exact = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 const exactAsks = () => asks.filter(exact);
 const allowable = () => (E.profiles?.active?.id ? 0 : exactAsks().length + E.state.trunkWaiting.length);
+/* Each row of Needs you with its key (the one its unread dot uses) and its words, for Sort the Inbox by urgency. */
+const needRows = () => [
+  ...asks.map((q) => ({ key: `ask:${q.sessionId}:${q.fingerprint || ""}`, text: [q.question || q.label, q.target].filter(Boolean).join(" · "), row: () => askRow(q) })),
+  ...installs.map((r) => ({ key: `install:${r.id}`, text: [r.ask?.why, r.ask?.name].filter(Boolean).join(" · "), row: () => installRow(r) })),
+  ...E.state.trunkWaiting.map((m) => ({ key: `tmsg:${m.id}`, text: m.message, row: () => messageRow(m) })),
+];
 function needsTab() {
   const count = allowable();
   let html = `<div class="rows">`;
   if (count > 1) html += `<div class="acts" data-css="margin:4px 0 6px"><button class="btn" type="button" data-act="allowall">${t("window.places.inbox.allow-all-count", { count })}</button></div>`;
-  html += asks.map(askRow).join("");
-  html += installs.map(installRow).join("");
-  html += E.state.trunkWaiting.map(messageRow).join("");
+  html += byUrgency(needRows().map(({ key, row }) => [key, row()])).join("");
   html += autonomyRows();
   html += `</div>`;
   return html + waitingChanges().map(selfCard).join("");
@@ -229,6 +234,7 @@ export async function after() {
     const waiting = await readInstalls();
     if (JSON.stringify(waiting) !== JSON.stringify(installs)) { installs = waiting; changed = true; }
     if (policy && !asksRead) { asksRead = true; changed = true; }
+    if (await readUrgency(needRows().map(({ key, text }) => ({ key, text: String(text ?? "").slice(0, 600) })), sayOnce)) changed = true; // Sort the Inbox by urgency
   }
   if (await readWork().catch((error) => { sayOnce(error); return false; })) changed = true; // long-work
   const p17 = await readInbox17(tab);
