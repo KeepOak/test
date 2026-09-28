@@ -701,6 +701,8 @@ export class Runtime {
   artifacts: RunArtifacts | null = null;
   /** Where a person's attached files are kept; without it, nothing can be attached. */
   attachments: Attachments | null = null;
+  /** Files from lasting owner conversations also belong in Library; temporary and household files stay separate. */
+  attachmentsFiled: ((session: string, owner: string, refs: AttachmentRef[]) => Promise<void>) | null = null;
   /** Hears a sound or watches a video attached to a message (this computer's ffmpeg and speech settings); null when nothing can. */
   understandAttached: ((owner: string) => Understander) | null = null;
   /** Pictures that came with this turn's files, waiting for the model to be chosen so it can be said truly whether they were shown. */
@@ -1568,6 +1570,13 @@ ${run.output.slice(0, 6000)}`;
         ...(options.system ? { system: options.system } : {}),
       });
       if (read) this.store.saveRead(run.sessionId, userMessageId, read);
+      // Only the owner's own lasting conversation files into Library: never a trigger, schedule, chat app, another program
+      // or a borrowed key, since Library passages are put in front of the owner's later tasks.
+      const ownersOwn = (options.source ?? "owner") === "owner" && !options.originFrom && !startedWithShortLivedKey();
+      if (!temporary && ownersOwn && attached.length && this.attachmentsFiled) {
+        try { await this.attachmentsFiled(run.sessionId, context.owner, attached); }
+        catch (error) { this.store.event(run.id, "documents.import_failed", { reason: errorText(error) }); }
+      }
       options.onUserMessageId?.(userMessageId);
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });
