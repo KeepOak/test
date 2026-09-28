@@ -178,6 +178,8 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // workbench (SELF-305): a wake-up set in a conversation, whose words later run as the owner's own task; like the
   // waiting line, a file must never put one in place.
   "wakeup:",
+  // workbench (SELF-307): which plan window a conversation was last asked to write a handoff in; this computer's own.
+  "handoff-asked:",
   // Q230, keys worked out in code: this computer's place in each chat stream and its offsets, its holds against redoing
   // a chat task, its webhook word, its MCP sign-in clients, which Trunk a flow run works as, the file-undo slots, a
   // "Watch me" under way, kept answers (a planted one comes back as if real) and the yeses carried over a restart.

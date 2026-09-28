@@ -147,6 +147,8 @@ import { ConversationRetention } from "./retention.js";
 import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
 import { registerTrunkMemoryFiles } from "./trunks/memory-files.js"; // workbench (SELF-311)
 import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.js"; // selfdev (SELF-303)
+import { askForHandoffs, registerLeadUsage } from "./lead-usage.js"; // workbench (SELF-307)
+import { openWork } from "./open-work.js"; // workbench (SELF-307)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
 import { registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
@@ -1023,6 +1025,9 @@ export async function createBranch(options: {
   registerSchedules(registry, scheduler);
   // selfdev (SELF-303): helpers the lead starts talk to it while they work, and tell it when they finish.
   registerHelperMessages(registry, runtime);
+  // workbench (SELF-307): what each account has left, and a handoff asked for only when every account is near its limit.
+  registerLeadUsage(registry, runtime);
+  scheduler.onTick.add(async (now) => { askForHandoffs(runtime, now.getTime()); });
   // Only helpers started for the lead (helpers.start) wake it; other background work keeps its result for the parent, as before.
   runtime.onBackgroundFinished = (result) => {
     if (!result.parentRunId || !result.tellsLead) return;
@@ -1039,6 +1044,8 @@ ${result.output || "(it said nothing)"}`;
   };
   const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); });
   registerWakeups(registry, store, wakeups);
+  // workbench (SELF-307): helpers, wake-ups and programs still open ride with every round, so compaction never loses them.
+  runtime.openWork = (sessionId) => openWork(store, runtime.owner, sessionId, wakeups, processes);
   scheduler.onTick.add((now) => wakeups.tick(now));
   // wave mac2 (quiet-jobs follow-up): a program left running that finishes wakes the check-in; wake() does nothing while it is off.
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
