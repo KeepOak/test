@@ -41,7 +41,12 @@ export const KnobTaskLimitsSettingsSchema = z.object({
    * answer it has; null keeps the launch setting (12), or `codingModelRounds` for a task that works on
    * the project's files. A planned task is given more room on top.
    */
-  maxModelRounds: z.number().int().min(2).max(60).nullable().default(null),
+  maxModelRounds: z.number().int().min(2).max(500).nullable().default(null),
+  /**
+   * selfdev: how many tokens one task may use in all, counting every request it sends to the model; null keeps the
+   * built-in 200,000. Long coding work on Branch itself (edit, test, push, wait for checks, merge) needs more.
+   */
+  maxTaskTokens: z.number().int().min(20_000).max(20_000_000).nullable().default(null),
   /**
    * Settings › Permissions › Messages per conversation per hour: the most tasks one conversation may start in an hour.
    * It stops a runaway loop (a schedule, a trigger, a chat app or two Trunks answering each other): such a task past it is
