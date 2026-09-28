@@ -10091,6 +10091,7 @@
   "window.chat.live.moved-credit": "Pasó a “{to}”: “{from}” se quedó sin saldo",
   "window.chat.live.moved-refused": "Pasó a “{to}”: el servicio rechazó “{from}”",
   "window.chat.live.moved-model": "Pasó a “{to}”: “{from}” no puede usar {model}",
+  "window.chat.stage.driving": "Tienes el control · {name} está en pausa",
   "practice.task": "Practicar esta tarea",
   "practice.next-hint": "Mostrar qué cambiaría sin realizar esos cambios. Se aplica al próximo mensaje. El uso del modelo sigue contando.",
   "practice.off": "La práctica está desactivada en Ajustes > Permisos.",

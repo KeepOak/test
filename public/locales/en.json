@@ -10091,6 +10091,7 @@
   "window.chat.live.moved-credit": "Moved to “{to}” — “{from}” is out of credit",
   "window.chat.live.moved-refused": "Moved to “{to}” — “{from}” was refused by the service",
   "window.chat.live.moved-model": "Moved to “{to}” — “{from}” can't use {model}",
+  "window.chat.stage.driving": "You’re driving · {name} is paused",
   "practice.task": "Practice this task",
   "practice.next-hint": "Show what would change without making those changes. Applies to your next message. Model use still counts.",
   "practice.off": "Practice is off in Settings > Permissions.",
