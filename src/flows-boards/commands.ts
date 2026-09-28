@@ -1,5 +1,6 @@
 import type { Call, Reply } from "../commands/handlers.js";
-import { flowsBoardsFor, type FlowsBoards } from "./index.js";
+import type { FlowsBoards } from "./index.js";
+import { flowsBoardsFor } from "./instance.js";
 import type { InstallRequest } from "./install-requests.js";
 import { offSentence, type BoardPart } from "./settings.js";
 import { busyModes, type BusyMode, type Direction } from "./waiting-line.js";

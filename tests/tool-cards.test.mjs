@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBranch } from "../dist/index.js";
 import { personalParts, personalTools } from "../dist/personal/settings.js";
+import { boardParts, boardTools } from "../dist/flows-boards/settings.js";
 import { cardSchema } from "../dist/tool-cards.js";
 import { discardTemp } from "./temp-dir.mjs";
 
@@ -18,12 +19,13 @@ async function allOn(t) {
   const where = { workspace: join(root, "workspace"), dataDir: join(root, "data") };
   const first = await createBranch(where);
   for (const part of personalParts) await first.personal.setMode(part, { mode: "on" });
+  for (const part of boardParts) first.flowsBoards.setMode(part, { mode: "on" });
   await first.close();
   const app = await createBranch(where);
   t.after(async () => { await app.close(); await discardTemp(root); });
   return app;
 }
-const names = personalParts.flatMap((part) => personalTools[part]);
+const names = [...personalParts.flatMap((part) => personalTools[part]), ...boardParts.flatMap((part) => boardTools[part])];
 const isCard = (app, name) => cardSchema in (app.registry.registered(name) ?? {});
 
 test("the catalog listed from the cards is exactly the real tools' catalog, and listing it loads nothing", async (t) => {
@@ -33,6 +35,7 @@ test("the catalog listed from the cards is exactly the real tools' catalog, and 
   const dieted = app.registry.descriptions(everyone);
   assert.ok(names.every((name) => isCard(app, name)), "every personal tool is listed from its card");
   app.personal; // built now: its real tools take the cards' places
+  app.flowsBoards;
   assert.ok(names.every((name) => !isCard(app, name)), "the real tools are registered");
   assert.deepEqual(app.registry.descriptions(everyone, { diet: false }), fromCards, "the model sees the same tools, words and inputs");
   assert.deepEqual(app.registry.descriptions(everyone), dieted, "and the same once put on the schema diet");

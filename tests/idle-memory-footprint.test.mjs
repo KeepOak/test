@@ -84,6 +84,7 @@ test("the engine builds its personal part on first use, listing its tools from t
   // PLAT-191 (src/tool-cards.ts): the part's code, its connectors and their clients load when first needed.
   const loaded = staticClosure("desktop/engine-process.js");
   assert.equal(loaded.includes("personal/index.js"), false, "the personal part is not loaded with the engine");
+  assert.equal(loaded.includes("flows-boards/index.js"), false, "the flows-and-boards part is not loaded with the engine");
   for (const connector of ["personal/google.js", "personal/microsoft.js", "personal/mail-search.js", "personal/tunnel.js"])
     assert.equal(loaded.includes(connector), false, `${connector} is not loaded with the engine`);
 });

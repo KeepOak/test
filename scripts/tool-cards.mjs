@@ -8,11 +8,14 @@ import { join } from "node:path";
 import { z } from "zod";
 import { createBranch } from "../dist/index.js";
 import { personalParts, personalTools } from "../dist/personal/settings.js";
+import { boardParts, boardTools } from "../dist/flows-boards/settings.js";
 
 /* Each part built on first use: how to build it with every switch on, and the names of its tools. */
 export const parts = [
   { name: "personal", tools: () => personalParts.flatMap((part) => personalTools[part]),
     build: async (app) => { for (const part of personalParts) await app.personal.setMode(part, { mode: "on" }); } },
+  { name: "flows-boards", tools: () => boardParts.flatMap((part) => boardTools[part]),
+    build: async (app) => { for (const part of boardParts) app.flowsBoards.setMode(part, { mode: "on" }); } },
 ];
 
 export function cardOf(tool) {

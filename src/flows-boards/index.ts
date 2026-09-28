@@ -12,6 +12,7 @@ import { FlowTimeTravel } from "./time-travel.js";
 import { registrars } from "./tools.js";
 import { WaitingLine } from "./waiting-line.js";
 import { Widgets } from "./widgets.js";
+import { reachFlowsBoards } from "./instance.js";
 
 /**
  * Bucket R17-H: flows and boards — going back in a flow, checked procedures, the shared board, live
@@ -27,9 +28,7 @@ export interface FlowsBoardsDeps {
   osvEndpoint?: string;
 }
 
-const byRuntime = new WeakMap<object, FlowsBoards>();
-/** The part of Branch the typed commands reach, for this runtime (src/flows-boards/commands.ts). */
-export const flowsBoardsFor = (runtime: object): FlowsBoards | undefined => byRuntime.get(runtime);
+export { flowsBoardsFor } from "./instance.js";
 
 export class FlowsBoards {
   readonly timeTravel: FlowTimeTravel;
@@ -53,7 +52,7 @@ export class FlowsBoards {
     this.waiting = new WaitingLine(runtime, deps.queue);
     this.installs = new InstallRequests({ store, owner, fetch: deps.fetch, ...(deps.osvEndpoint ? { endpoint: deps.osvEndpoint } : {}) });
     for (const part of boardParts) this.sync(part);
-    byRuntime.set(runtime, this);
+    reachFlowsBoards(runtime, () => this);
     followBoardSwitches(store, (part, input) => this.setMode(part, input));
   }
 

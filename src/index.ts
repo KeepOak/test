@@ -274,7 +274,9 @@ import { trunkRoster } from "./reach/trunk-roster.js"; // r17-i
 import { askMode } from "./asks/settings.js"; // r17-i: other computers follow bucket 23's switch
 import { SafetyExtras } from "./safety-extras/index.js"; // mac7/r17-g: the safety extras
 import { assertAddressNotStopped } from "./safety-extras/emergency-stop.js"; // mac7/r17-g
-import { FlowsBoards } from "./flows-boards/index.js"; // r17-h: flows and boards
+import type { FlowsBoards } from "./flows-boards/index.js"; // r17-h: flows and boards
+import { boardMode, boardParts, boardTools, followBoardSwitches } from "./flows-boards/settings.js"; // PLAT-191
+import { reachFlowsBoards } from "./flows-boards/instance.js";
 // R17-F: learning, deeper (src/learning-more/).
 import { homedir as learningHome } from "node:os";
 import { LearningMore } from "./learning-more/index.js";
@@ -1484,8 +1486,16 @@ export async function createBranch(options: {
   web.policy.emergencyStop = (target) => assertAddressNotStopped(store, runtime.owner, target);
   // ── end mac7/r17-g ──
   // ── r17-h: flows and boards (src/flows-boards/). Every part ships off. ──
-  const flowsBoards = new FlowsBoards({ runtime, registry, flows, knowledge, queue: runQueue, asks,
+  // PLAT-191: built the first time anything needs it (a call to one of its tools, a typed command, its settings); its
+  // tools are listed from their cards until then, and a switch moved from anywhere reaches it (src/tool-cards.ts).
+  let flowsBoardsBuilt: FlowsBoards | undefined;
+  const flowsBoards = (): FlowsBoards => flowsBoardsBuilt ??= new (loadNow<typeof import("./flows-boards/index.js")>("./flows-boards/index.js").FlowsBoards)({
+    runtime, registry, flows, knowledge, queue: runQueue, asks,
     fetch: () => web.policy.guard(globalThis.fetch), ...(process.env.BRANCH_OSV_ENDPOINT ? { osvEndpoint: process.env.BRANCH_OSV_ENDPOINT } : {}) });
+  listFromCards(registry, boardParts.filter((part) => boardMode(store, runtime.owner, part) !== "off").flatMap((part) => boardTools[part]),
+    () => void flowsBoards());
+  reachFlowsBoards(runtime, flowsBoards);
+  followBoardSwitches(store, (part, input) => flowsBoards().setMode(part, input));
   // ── end r17-h ──
   // ── R17-F: learning, deeper (src/learning-more/). Every part ships off. ──
   const learningMore = new LearningMore({ store, registry, owner: runtime.owner, models: runtime.models,
@@ -1590,7 +1600,7 @@ export async function createBranch(options: {
     /** mac7/r17-g: tool scripts, WebAssembly add-ons, codes, the emergency stop, scans, the activity chain. */
     safetyExtras,
     /** r17-h: going back in a flow, checked procedures, the shared board, widgets, the waiting line, focus, install requests; every part ships off. */
-    flowsBoards,
+    get flowsBoards(): FlowsBoards { return flowsBoards(); },
     /** Requests from a chat to change Branch itself; only the owner answers them (src/self-development-requests.ts). */
     sourceRequests,
     sourceMerges,
