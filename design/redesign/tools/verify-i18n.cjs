@@ -26,10 +26,11 @@
    then shows Français.
    Page errors must be zero. The engine's language is left at "auto" at the end. */
 const http = require("node:http");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 /* The repository's own Playwright first, so the check never needs anything from an installed copy of Branch. */
 let playwright;
 try { playwright = require("playwright"); }
-catch { playwright = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright"); }
+catch { playwright = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright")); }
 const { chromium } = playwright;
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
@@ -123,7 +124,7 @@ async function pass(browser, lang, W, sessionId) {
   await setup.waitFor({ timeout: 30000 });
   check(`${lang}: engine says onboarding is not done`, state.onboarding?.done !== true);
   check(`${lang}: setup dialog is named "${W["window.setup.label"]}"`, (await setup.getAttribute("aria-label")) === W["window.setup.label"]);
-  await page.locator('[data-act="ob-close"]').first().click();
+  await page.keyboard.press("Escape"); // setup offers Skip only after Welcome; Escape leaves it from any step
   await page.locator("#prompt").waitFor({ timeout: 30000 });
   await dismissWelcome(page);
   await openConversation(page, sessionId);
@@ -200,11 +201,11 @@ const ownNames = (page) => page.evaluate(async () => (await import("/i18n.js")).
   return name.charAt(0).toLocaleUpperCase(id) + name.slice(1);
 }));
 const saved = (page) => page.evaluate(() => { try { return localStorage.getItem("branch-language"); } catch { return "unreadable"; } });
-const shown = (page) => page.locator("#lang").evaluate((s) => ({ value: s.value, text: s.selectedOptions[0]?.textContent ?? "", disabled: s.disabled }));
+const shown = (page) => gselShown(page.locator("#lang"));
 async function closeSetup(page) {
   const setup = page.locator(".ob9[role=dialog]");
   await setup.waitFor({ timeout: 30000 }).catch(() => null);
-  if (await setup.isVisible()) await page.locator('[data-act="ob-close"]').first().click();
+  if (await setup.isVisible()) await page.keyboard.press("Escape"); // Skip shows only after Welcome; Escape leaves any step
   await page.locator("#prompt").waitFor({ timeout: 30000 });
 }
 async function openAppearance(page) {
@@ -220,13 +221,13 @@ async function languageSelect(browser, W, E) {
   await openAppearance(page);
   const before = await shown(page);
   check("select: shows the language in force (English), live", before.value === "en" && before.text === "English" && !before.disabled, JSON.stringify(before));
-  const options = await page.locator("#lang option").evaluateAll((os) => os.map((o) => ({ v: o.value, t: o.textContent, off: o.disabled, tip: o.dataset.tip ?? "" })));
+  const options = (await gselChoices(page.locator("#lang"))).map((c) => ({ v: c.value, t: c.words, off: c.off, tip: "" }));
   // Only the languages with words on file are offered (public/i18n.js LANGUAGES); nothing is listed greyed.
   const names = await ownNames(page);
   check("select: only the languages with words on file, in their own names", options.map((o) => o.t).join("|") === names.join("|") && names.includes("Français"), options.map((o) => o.t).join("|"));
   check("select: every option can be picked", options.every((o) => !o.off && !o.tip), JSON.stringify(options));
 
-  await page.locator("#lang").selectOption("fr");
+  await pickGsel(page.locator("#lang"), "fr");
   await page.waitForFunction(() => document.documentElement.lang === "fr", null, { timeout: 15000 });
   check("Français: the engine keeps it (GET /api/look language = fr)", (await api("look")).language === "fr");
   check("Français: this browser keeps it (localStorage)", (await saved(page)) === "fr");
@@ -242,7 +243,7 @@ async function languageSelect(browser, W, E) {
   await page.locator("#paste6").waitFor({ state: "detached", timeout: 5000 }).catch(() => null);
 
   let refused = false;
-  try { await page.locator("#lang").selectOption("xx", { timeout: 2000 }); } catch { refused = true; }
+  try { await pickGsel(page.locator("#lang"), "xx", { timeout: 2000 }); } catch { refused = true; }
   now = await shown(page);
   check("a language with no words on file (xx): not offered, so it cannot be picked", refused && now.value === "fr", `refused=${refused}, value=${now.value}`);
   check("xx: the engine still says fr", (await api("look")).language === "fr");
@@ -269,7 +270,7 @@ async function languageSelect(browser, W, E) {
   now = await shown(fresh.page);
   check("new browser: French from the engine, the select shows Français", (await lang(fresh.page)) === "fr" && now.value === "fr" && now.text === "Français", JSON.stringify(now));
 
-  await fresh.page.locator("#lang").selectOption("en");
+  await pickGsel(fresh.page.locator("#lang"), "en");
   await fresh.page.waitForFunction(() => document.documentElement.lang === "en", null, { timeout: 15000 });
   const said = (await fresh.page.locator(".toast").first().textContent().catch(() => ""))?.trim();
   check('English again: the prototype\'s toast "English."', said === "English.", said);
@@ -389,7 +390,7 @@ async function setupLanguage(browser, fr, en) {
     const body = document.querySelector(".ob9 .ob-body");
     const el = body?.firstElementChild;
     const select = document.querySelector("#ob-lang");
-    return { firstIsLanguage: !!el?.classList.contains("ob-lang") && el.contains(select), options: [...(select?.options ?? [])].map((o) => ({ v: o.value, t: o.textContent, off: o.disabled })), value: select?.value, label: el?.querySelector("b")?.textContent };
+    return { firstIsLanguage: !!el?.classList.contains("ob-lang") && el.contains(select), options: JSON.parse(select?.dataset.opts ?? "[]").map(([v, t, off]) => ({ v, t, off: !!off })), value: select?.value, label: el?.querySelector("b")?.textContent };
   });
   const listed = await page.evaluate(async () => (await import("/i18n.js")).LANGUAGES.map((l) => l.id));
   check("setup: the Language control comes first, before the greeting", first.firstIsLanguage, JSON.stringify(first));
@@ -400,7 +401,7 @@ async function setupLanguage(browser, fr, en) {
   check("setup: with nothing saved it shows the language in force (English)", first.value === "en" && (await lang(page)) === "en");
   await surface(page, "setup", "en", en, en);
 
-  await page.locator("#ob-lang").selectOption("fr");
+  await pickGsel(page.locator("#ob-lang"), "fr");
   await page.waitForFunction(() => document.documentElement.lang === "fr", null, { timeout: 15000 });
   await page.locator(".ob9 h2").filter({ hasText: fr["window.flows.first.hi"] }).waitFor({ timeout: 10000 });
   check(`setup: after Français, Welcome says "${fr["window.flows.first.hi"]}"`, (await page.locator(".ob9 h2").first().textContent())?.trim() === fr["window.flows.first.hi"]);
@@ -413,7 +414,7 @@ async function setupLanguage(browser, fr, en) {
   await page.waitForFunction(() => document.documentElement.lang === "fr", null, { timeout: 30000 });
   await setup.waitFor({ timeout: 30000 });
   await page.locator(".ob9 h2").filter({ hasText: fr["window.flows.first.hi"] }).waitFor({ timeout: 10000 });
-  check("setup: after a reload it is still French, and its Language shows Français", (await page.locator("#ob-lang").inputValue()) === "fr" && (await page.locator(".ob9 h2").first().textContent())?.trim() === fr["window.flows.first.hi"]);
+  check("setup: after a reload it is still French, and its Language shows Français", (await gselShown(page.locator("#ob-lang"))).value === "fr" && (await page.locator(".ob9 h2").first().textContent())?.trim() === fr["window.flows.first.hi"]);
   await closeSetup(page);
   await openAppearance(page);
   const now = await shown(page);
@@ -442,6 +443,7 @@ async function setupLanguage(browser, fr, en) {
     await api("onboarding", { done: false });
     check("setup is not done again before the passes (GET /api/state)", (await api("state")).onboarding?.done !== true);
     await pass(browser, "fr", fr, sessionId);
+    await api("onboarding", { done: false, skipped: false }); // leaving setup in one pass marks it skipped; the next pass needs it again
     await pass(browser, "en", en, sessionId);
     await languageSelect(browser, fr, en);
     await api("look", { language: "auto" });
@@ -449,6 +451,7 @@ async function setupLanguage(browser, fr, en) {
     check("rw4-i18n-chat: the 20 words are in English and in French, and the French differs", keys.length === 20 && keys.every((k) => typeof en[k] === "string" && typeof fr[k] === "string" && fr[k] !== en[k]), keys.filter((k) => !(fr[k] && fr[k] !== en[k])).join(", "));
     await chatAndFlows(browser, "fr", fr, en, sessionId);
     await chatAndFlows(browser, "en", en, en, sessionId);
+    await api("onboarding", { done: false, skipped: false }); // the passes above left setup; its Language needs it open again
     await setupLanguage(browser, fr, en);
   } finally {
     await browser.close();
