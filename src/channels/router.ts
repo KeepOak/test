@@ -414,6 +414,8 @@ export class ChannelRouter {
    * off while Lockdown is on, as it does every other outbound message.
    */
   liveAllowed: () => boolean = () => true;
+  /** A masked picture of this task's own Branch browser window now, or null (none open, or a borrowed browser). */
+  browserPicture: (runId: string) => Promise<{ frame: Uint8Array; url: string; title: string } | null> = async () => null;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
   /**
@@ -1397,8 +1399,18 @@ export class ChannelRouter {
     // A group gets counts of kinds of step, or (the owner's "no steps in groups") no progress message at all.
     // An app whose steps the owner turned off gets no progress message either: typing and the reaction still show.
     const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
+    // Pictures of Branch's browser while the task works in it: a direct chat only, where the owner has them on.
+    const pictures = message.chatKind === "direct" && switches.steps !== "off" && display.pictures !== "off" && !!adapter.sendFile && !adapter.paidPerMessage;
+    const picture = pictures ? async () => {
+      const runId = runOf(), seen = runId ? await this.browserPicture(runId) : null;
+      if (!seen) return null;
+      let host = "";
+      try { host = new URL(seen.url).host; } catch { /* no address: the title alone */ }
+      const words = this.hideLeaks(this.runtime.hideSecrets([seen.title.trim(), host].filter(Boolean).join(" · ")));
+      return { bytes: seen.frame, caption: words ? `🌐 ${words}` : "" };
+    } : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
-      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
+      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, picture }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
   }
   private replyFor(message: InboundMessage): ReplyStream | null {
     const adapter = this.adapters.get(message.channel)?.adapter;

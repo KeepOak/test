@@ -6445,6 +6445,8 @@
   "window.chat-steps.overflow-hint": "Quand les étapes ne tiennent plus dans un message, elles continuent dans un nouveau, ou seules les plus récentes restent.",
   "window.chat-steps.overflow-roll": "Continuer dans un nouveau message",
   "window.chat-steps.overflow-trim": "Garder les plus récentes",
+  "window.chat-steps.pictures": "Images du navigateur",
+  "window.chat-steps.pictures-hint": "Pendant qu’une tâche travaille dans le navigateur de Branch, une image de la page de temps en temps, champs de mot de passe masqués. Jamais dans un groupe.",
   "window.chat-steps.same-as-all": "Comme toutes",
   "window.chat-steps.sw-cleanup": "Retirer les étapes après une bonne réponse",
   "window.chat-steps.sw-cleanup-hint": "Une fois la réponse arrivée, le message des étapes est retiré si l’app le permet. Une tâche qui a échoué le garde.",

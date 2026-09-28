@@ -68,6 +68,7 @@ import { integrationsFileTrusted, recordWorktreeCopy } from "./folder-trust.js";
 import type { CachedMcpTool } from "./integrations/mcp.js";
 import type { BranchBrowser } from "./integrations/browser.js";
 import { registerMcpTools } from "./mcp-tools.js";
+import { signInShowing } from "./sign-in-showing.js";
 import { A2aServer } from "./a2a.js";
 import { RemoteAgents, registerRemoteAgents } from "./a2a-client.js";
 import { createRequire } from "node:module";
@@ -1916,6 +1917,19 @@ export async function createBranch(options: {
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
   channelHostRef.current = branch.channelHost;
+  // Pictures of a chat task's own browser window, as the window's live view takes them: password and code boxes covered,
+  // never a borrowed browser, never while Branch's own sign-in handling is showing.
+  channels.browserPicture = async (runId) => {
+    if (signInShowing()) return null;
+    // A page between two addresses has no picture for a moment: tried again briefly before giving up.
+    for (let tries = 0; tries < 3; tries++) {
+      if (tries) await new Promise((done) => setTimeout(done, 400));
+      const seen = await branch.browser?.watch(runtime.owner, runId).catch(() => null);
+      if (!seen || seen.borrowed) return null;
+      if (seen.frame) return { frame: seen.frame, url: seen.url, title: seen.title };
+    }
+    return null;
+  };
   return branch;
 }
 /** Runs one of the owner's own verified recipes by name, for a skill package's event hook. */
