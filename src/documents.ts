@@ -175,9 +175,9 @@ export class DocumentLibrary {
     if (!route) return null;
     const model = this.settings(owner).embeddingModel;
     // A model on this computer reads passages through Ollama's own route, not the OpenAI one.
-    const here = localEmbedder(route, model);
+    const here = localEmbedder(route, model, route.fetchImpl);
     if (here) return here;
-    try { return new EmbeddingClient(route.endpoint, route.apiKey, model, embeddingFetch(route.endpoint, this.embeddingFetch)); }
+    try { return new EmbeddingClient(route.endpoint, route.apiKey, model, route.fetchImpl ?? embeddingFetch(route.endpoint, this.embeddingFetch)); }
     catch { return null; }
   }
   meaningSearchReady(owner: string): boolean { return this.client(owner) !== null; }

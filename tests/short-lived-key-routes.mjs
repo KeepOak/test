@@ -69,7 +69,7 @@ export const ROUTES = {
   "/api/agents/": "prefix",
   "/api/agents/discover": "look",
   "/api/agents/pair": "owner POST",
-  "/api/agents/pairing": "look",
+  "/api/agents/pairing": "owner POST", // makes a pairing key, so it is a change
   "/api/agents/remote": "owner POST",
   "/api/agents/remote/remove": "owner POST",
   "/api/approval-reviewer": "owner POST",
@@ -89,6 +89,7 @@ export const ROUTES = {
   "/api/workbooks/:id/markdown": "look",
   "/api/decisions/settings": "owner POST",
   "/api/decisions/decide": "owner POST",
+  "/api/decisions/urgency": "owner POST",
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
   "/api/artifacts/file": "look",
@@ -667,6 +668,7 @@ export const ROUTES = {
   "/api/knobs/launch-file": "owner POST", // R17-S-B
   "/api/model-savings": "owner POST", // R17-E
   "/api/model-savings/rounds": "look", // R17-E
+  "/api/model-savings/companies": "owner POST", // OpenRouter picks › Only ones I list: asks OpenRouter for its companies
   "/api/knowledge": "other POST",
   "/api/knowledge/:id": "other DELETE",
   "/api/knowledge/ask": "task POST",
@@ -1229,8 +1231,12 @@ export const ROUTES = {
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
   "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
-  "/api/panels/browse": "owner POST", // parity-b2: the owner types an address into Branch's browser
-  "/api/panels/browse/close": "owner POST", // parity-b2: and closes that window
+  "/api/panels/browser": "secret-read",
+  "/api/panels/browser/start": "owner POST",
+  "/api/panels/browser/control": "owner POST",
+  "/api/panels/browser/action": "owner POST",
+  "/api/panels/browser/disconnect": "owner POST",
+  "/api/panels/browser/stop": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",
@@ -1295,6 +1301,8 @@ export const OUTBOUND = [
   /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
+  // Only ones I list: OpenRouter's own documented /api/v1/providers, called outwards; not a route of ours.
+  /^src\/model-savings\/openrouter\.ts$/,
 ];
 
 export const SAMPLE_ID = "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f";
