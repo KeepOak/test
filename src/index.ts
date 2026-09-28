@@ -142,6 +142,7 @@ import { GitCheckpoints, GitWorkspaces, type GitRun } from "./git-checkpoint.js"
 import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/ssh-workspace.js";
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
+import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
 import { registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
@@ -991,8 +992,18 @@ export async function createBranch(options: {
     sessionLimiter.check({ scope: "sender", id: `${channel}:${senderId}` }, "stranger");
   const scheduler = new Scheduler(store, runtime, (channel, chatId, text, key) => channels.deliver(channel, chatId, text, key));
   registerSchedules(registry, scheduler);
+  // selfdev (SELF-305): wake-ups set inside a conversation arrive in it as follow-ups; the scheduler's tick finds them.
+  const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId }); });
+  registerWakeups(registry, store, wakeups);
+  scheduler.onTick.add((now) => wakeups.tick(now));
   // wave mac2 (quiet-jobs follow-up): a program left running that finishes wakes the check-in; wake() does nothing while it is off.
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
+  // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
+  // of the task that started it, so the assistant is told instead of checking on it.
+  processes.waker = ({ sessionId, runId, text }) => {
+    try { runtime.followUp(sessionId, text, null, { originFrom: runId }); }
+    catch (error) { store.event(runId, "process.wake_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
   // Figures, looking things up properly, watching pages, and the one message first thing.
   const deliverMessage = (channel: string, chatId: string, text: string, key: string) => channels.deliver(channel, chatId, text, key);
   const dataTables = new DataTables(files, web, writeObserver);
