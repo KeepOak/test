@@ -224,6 +224,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **MiniMax** — International keys use api.minimax.io (the usual choice); keys from the Chinese platform use api.minimax.cn. Branch keeps no price on file for it.
 - **ModelScope** — Alibaba's model hub in its OpenAI-compatible mode. Branch keeps no price on file for it.
 - **Moonshot (Kimi)** — Kimi models. International keys use api.moonshot.ai (the usual choice); keys from the Chinese platform use api.moonshot.cn. Branch keeps no price on file for it.
+- **Ollama** — Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed. An Ollama on another machine at home works too: give its address.
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.
 - **Qwen (Alibaba DashScope)** — Alibaba Model Studio in its OpenAI-compatible mode. International (Singapore) is the usual choice; the US and mainland China addresses are offered too. A workspace address works through "Something else". Branch keeps no price on file.
