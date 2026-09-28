@@ -339,28 +339,11 @@ function listenDraft() {
   });
 }
 
-/* A new step's text box takes focus once the dialog is drawn, but never from a field the person has moved to since: on a
-   busy computer the deferred focus can land late, and it must not pull their typing into the new step. */
-function addStep() {
-  F.steps.push({ kind: "do", text: "", yes: "", no: "" });
-  drawFlow();
-  const j = F.steps.length - 1, drawn = document.activeElement;
-  let acted = false;
-  const act = () => { acted = true; };
-  const kinds = ["pointerdown", "keydown", "focusin"];
-  for (const kind of kinds) document.addEventListener(kind, act, true);
-  setTimeout(() => {
-    for (const kind of kinds) document.removeEventListener(kind, act, true);
-    const now = document.activeElement;
-    if (!acted && (now === drawn || !now || now === document.body)) document.getElementById(`ft-${j}`)?.focus();
-  }, 0);
-}
-
 export function init() {
   on("flow-memory", () => { closeDlg(); S.view = "library"; S.tabs.library = "memory"; renderNow(); });
   markLive(["flow-memory", "flow", "flow-add", "flow-mv", "flow-rm", "flow-save", "flow-run", "ppback17d", "ppapprove17d", "ppold17d", "ppsee17d", "ppdeny17d", "flow-unatt"]);
   on("flow", (el) => (el.dataset.v === "auto" ? openAuto(el.dataset.id) : openRecipe(el.dataset.id)));
-  on("flow-add", () => addStep());
+  on("flow-add", () => { F.steps.push({ kind: "do", text: "", yes: "", no: "" }); drawFlow(); document.getElementById(`ft-${F.steps.length - 1}`)?.focus(); });
   on("flow-mv", (el) => { const j = +el.dataset.j, d = +el.dataset.d, s = F.steps; [s[j], s[j + d]] = [s[j + d], s[j]]; drawFlow(); });
   on("flow-rm", (el) => { F.steps.splice(+el.dataset.j, 1); drawFlow(); });
   on("flow-save", () => save());

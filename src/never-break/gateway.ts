@@ -12,6 +12,7 @@ import { clearCrashes, markExited, markRunning, recordCrash } from "./gateway-st
 import { clearWatch, readWatch, repairSwap, watchVerdict, type UpdateWatch } from "./canary.js";
 import { runAsNode } from "../child-env.js";
 import { previewRequest } from "./gateway-preview.js";
+import { quitPath, quitRequest } from "../install/quit.js";
 
 /**
  * The gateway: a small process that keeps Branch's public address open and keeps one worker — the
@@ -53,6 +54,11 @@ export interface GatewayOptions {
   onWorker?: (event: { kind: "ready"; ready: WorkerReady } | { kind: "crash"; code: number | null; signal: string | null; tripped: boolean }) => void;
   /** Retained desktop broker only: act after a successful owner OFF response has finished. */
   onOwnerOff?: () => void;
+  /**
+   * QA retest 2026-09-28 (m15): what `branch quit` does to this gateway. The engine behind it has no quit of its own, so
+   * the request used to be refused there and `branch quit` fell back to ending the process from outside (exit code 1).
+   */
+  quit?: () => void;
 }
 
 /** The engine, through this same runtime, with a message channel and no window on Windows. */
@@ -292,6 +298,11 @@ export class Gateway {
     if (request.method === "GET" && path === "/gateway/health") return json(response, 200, this.health());
     // The gateway holds the window's address, so it is what proves itself there (src/engine-proof.ts), as the engine does.
     if (request.method === "GET" && path === proofPath) return this.proof(request, response);
+    // `branch quit` closes the gateway itself (the engine goes with it), with the same checks the engine makes.
+    if (path === quitPath && this.options.quit) {
+      try { return json(response, 200, await quitRequest(request, { dataDir: this.options.dataDir, quit: this.options.quit })); }
+      catch (error) { return json(response, request.method === "POST" ? 403 : 405, { error: error instanceof Error ? error.message : String(error) }); }
+    }
     await this.forward(request, response, path ?? "/", true);
   }
 
@@ -333,7 +344,7 @@ export class Gateway {
         response.once("finish", () => { void loadGatewayConfig(this.options.dataDir).then(({ config }) => {
           if (config.mode === "off") this.options.onOwnerOff?.();
         }).catch(() => undefined); });
-      if (closing && (reply.statusCode ?? 500) < 300) reply.once("end", () => { void this.stop(); });
+      if (closing && (reply.statusCode ?? 500) < 300) reply.once("end", () => { if (this.options.quit) this.options.quit(); else void this.stop(); });
     });
     upstream.once("error", (error: NodeJS.ErrnoException) => {
       if (retry && ["ECONNREFUSED", "ECONNRESET"].includes(error.code ?? "") && !response.headersSent && !hasBody(request)) {
