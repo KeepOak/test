@@ -293,6 +293,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { handlesMiniAppPath, MiniAppApi } from "./miniapp/api.js";
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -3806,6 +3807,8 @@ export async function startServer(
   /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
   const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
   const browserControls = new BrowserControlApi(app);
+  /** The Telegram Mini App's one way into a task's browser, with its own checks instead of a key (src/miniapp/api.ts). */
+  const miniApp = new MiniAppApi(app, browserControls);
   /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
   const socketPhoneKey = (request: IncomingMessage): boolean => {
     const offered = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((part) => part.trim());
@@ -3952,6 +3955,26 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // network must not quietly widen a page whose whole secret is its address.
       if (!viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)
         && app.asks.surfaces.serve(request, response, path)) return;
+      // ---- The Telegram Mini App (src/miniapp/api.ts): no Branch key; Telegram's signed launch data and the App lock PIN
+      // open a session held to one task's browser, and its token is good for these routes only. A place that keeps
+      // sending launch data that isn't Telegram's, or a token that isn't live, waits like any wrong key. ----
+      if (handlesMiniAppPath(path)) {
+        const from = requestSource(request.socket?.remoteAddress, request.headers);
+        const waiting = authLimiter.refusal(from, "Telegram Mini App");
+        if (waiting) throw new HttpError(429, waiting);
+        const stopped = new AbortController();
+        request.once("aborted", () => stopped.abort());
+        response.once("close", () => { if (!response.writableEnded) stopped.abort(); });
+        const answer = await miniApp.handle(path, { method: request.method ?? "GET", token: bearerOf(request),
+          body: () => readBody(request, 16_384), signal: stopped.signal }).catch((error: unknown) => {
+          const refused = miniApp.error(error);
+          if (!refused) throw error;
+          if (refused.status === 401) noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the Telegram Mini App's launch data");
+          throw new HttpError(refused.status, refused.message);
+        });
+        send(response, 200, answer);
+        return;
+      }
       const triggerFireMatch = /^\/api\/triggers\/([a-f0-9-]{36})\/fire$/.exec(path);
       if (triggerFireMatch && request.method === "POST") {
         // Counted on the webhook limiter, not the key's: a service set up with the wrong secret
@@ -4642,6 +4665,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       browserControls.close();
+      miniApp.close();
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops

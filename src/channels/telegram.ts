@@ -3,6 +3,7 @@ import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, Outg
 import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
+import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -206,6 +207,10 @@ export class TelegramAdapter implements ChannelAdapter {
     return String(message.data.message_id);
   }
   // ---- end R17-C ----
+  /** The Mini App's signed launch data, checked with this bot's own token, which never leaves this adapter. */
+  miniAppUser(initData: string): MiniAppUser {
+    return verifyInitData(initData, this.options.token);
+  }
   /** The live browser in a chat: a photo with buttons, then the same message's photo replaced (editMessageMedia). */
   async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
     const form = new FormData(), target = telegramTarget(chatId);

@@ -2,6 +2,7 @@ import { randomBytes, randomInt } from "node:crypto";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { z } from "zod";
 import type { Store } from "../store.js";
+import type { MiniAppUser } from "../miniapp/init-data.js";
 import { heldReplay } from "../never-break/resume.js"; // mac3/never-break
 import type { Runtime } from "../runtime.js";
 /** One question a task is waiting on, as the runtime lists them. */
@@ -205,6 +206,11 @@ export interface ChannelAdapter {
   sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
   /** Replaces the picture, caption and buttons of a message `sendPicture` made. */
   editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[]): Promise<void>;
+  /**
+   * The Telegram Mini App's signed launch data, checked with this bot's own token (src/miniapp/init-data.ts): the user
+   * who opened it. Throws when it was not made by this bot or is too old.
+   */
+  miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
 }
 /**
@@ -1414,9 +1420,8 @@ export class ChannelRouter {
   private async pressHold(message: InboundMessage, op: "take" | "give", runId: string): Promise<Outcome> {
     const say = (text: string) => this.deliver(message.channel, message.chatId, text, `browser-hold:${message.messageId}`, message.messageId)
       .then(() => "replied" as const, () => "replied" as const);
-    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
-    const mine = came?.channel === message.channel && came?.chatId === message.chatId && came?.senderId === message.senderId;
-    if (!this.browserHold || message.chatKind !== "direct" || !mine || !this.senderAllowed(message.channel, message.senderId) || !this.liveOn())
+    if (!this.browserHold || message.chatKind !== "direct" || !this.mayHoldBrowser(runId, message.channel, message.chatId, message.senderId)
+      || !this.liveOn())
       return say("Only the person who started this task, in this chat, can take over its browser.");
     try {
       const who = await this.browserHold(runId, op);
@@ -1430,6 +1435,20 @@ export class ChannelRouter {
     } catch (error) {
       return say(error instanceof Error ? error.message : String(error));
     }
+  }
+  /**
+   * Whether this sender may take over this task's browser from outside Branch's window: the task came from this very
+   * chat, sent by them, and they may still talk to Branch (paired, or on the owner's list).
+   */
+  mayHoldBrowser(runId: string, channel: string, chatId: string, senderId: string): boolean {
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return came?.channel === channel && came?.chatId === chatId && came?.senderId === senderId && this.senderAllowed(channel, senderId);
+  }
+  /** The chat app a task came from, as its first message recorded it, or null. */
+  cameFrom(runId: string): { channel: string; chatId: string; senderId: string } | null {
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return typeof came?.channel === "string" && typeof came.chatId === "string" && typeof came.senderId === "string"
+      ? { channel: came.channel, chatId: came.chatId, senderId: came.senderId } : null;
   }
   /** Whether a chat may be shown typing, reactions and progress right now. */
   private liveOn(): boolean {
