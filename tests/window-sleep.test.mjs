@@ -169,10 +169,14 @@ test("input wakes the window and the open conversation's face at once, gently", 
   await page.clock.fastForward(10 * MIN + 5000);
   await waitFor(page, () => document.documentElement.classList.contains("still18"));
   await page.mouse.move(700, 400);
-  await waitFor(page, () => !document.documentElement.classList.contains("doze18"));
-  assert.equal(await page.evaluate(() => document.documentElement.classList.contains("wake18")), true, "the window plays its wake");
+  // Read in the moment the window wakes: its wake class lasts 0.7 s, which a slow machine can spend between two reads.
+  const woke = await (await page.waitForFunction(() => {
+    const html = document.documentElement;
+    return !html.classList.contains("doze18") && { wake: html.classList.contains("wake18"), hero: document.querySelector(".hero11 video")?.getAttribute("src") ?? "" };
+  })).jsonValue();
+  assert.equal(woke.wake, true, "the window plays its wake");
   assert.equal(await page.locator("#side .petbox.zz11").count(), 0, "the pet wakes");
-  assert.match(await page.locator(".hero11 video").getAttribute("src"), /\/idle[./]/, "the visible default Trunk wakes with the empty chat");
+  assert.match(woke.hero, /\/idle[./]/, "the visible default Trunk wakes with the empty chat, in the same moment");
   assert.ok(await playing(page) > 0, "loops play again");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a Trunk whose conversation is not open sleeps on");
   assert.deepEqual(errors, []);
@@ -181,6 +185,7 @@ test("input wakes the window and the open conversation's face at once, gently", 
 test("the first press wakes the window and still opens the conversation it pressed", async (t) => {
   const { page, errors, trunks } = await fixture(t);
   const row = page.locator(`#side .row[data-id="${trunks.Ledger.chatSessionId}"]`);
+  await row.waitFor(); // the sidebar may still be drawing its rows on a slow machine
   const box = await row.boundingBox();
   assert.ok(box);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
