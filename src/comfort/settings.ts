@@ -129,6 +129,16 @@ export const ComfortBrowserSchema = z.object({
   blockUploads: z.boolean().default(false),
   /** What happens to a website's pop-up message box: dismiss (Cancel) or accept (OK). */
   dialogs: z.enum(["dismiss", "accept"]).default("dismiss"),
+  /** Ask once for each site before a task opens an address on it; a yes for always is kept as a rule for that site. */
+  askNewSites: z.boolean().default(false),
+  /** Open the conversation's browser full size when its task starts working in it. Ships on. */
+  openFullSize: z.boolean().default(true),
+  /** A Trunk may number what can be pressed on a page and act by number (browser.annotate). Ships on, as it always was. */
+  numberMarks: z.boolean().default(true),
+  /** Keep a step-by-step browser trace of every task that opens a page, beside its other files. Off: it writes a file per task. */
+  recordTasks: z.boolean().default(false),
+  /** Where a file a page sends may come from: anywhere the network rules allow, or only a site the task's pages were on. */
+  downloadsFrom: z.enum(["anywhere", "known"]).default("anywhere"),
 }).strict();
 
 const hostName = z.string().trim().min(1).max(253).regex(/^[a-z0-9.*-]+$/i, "Write a host name such as intranet.example.com");

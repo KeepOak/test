@@ -385,7 +385,27 @@ export function computerCard(messages) {
 }
 const cardKey = (v) => JSON.stringify([v?.runId, v?.status, v?.doing, v?.browser?.live, !!v?.browser?.frame, v?.browser?.url, v?.browser?.title]);
 /* A new answer: the conversation is drawn again when its card changes; otherwise only the view (a frame is painted in). */
+/* Settings › Computer & browser › "Open the browser full size when a task starts" (the owner's comfort card browser,
+   openFullSize): the first time a working task of the conversation on screen has its browser open, the view opens full
+   size, once for each task; closed again by the owner, it stays closed. Read at most every half minute. */
+const WATCH = { on: null, at: 0, opened: new Set() };
+async function readWatch() {
+  if (E.profiles?.isOwner === false || Date.now() - WATCH.at < 30_000) return;
+  WATCH.at = Date.now();
+  try { WATCH.on = (await api("comfort")).values?.browser?.openFullSize === true; } catch (error) { WATCH.on = null; toast(error.message); }
+}
+function watchStart(now) {
+  const view = now?.browser;
+  if (!WATCH.on || !S.chat || S.view !== "chat" || now?.status !== "running" || !view?.live || view.runId !== now.runId) return false;
+  if (WATCH.opened.has(now.runId)) return false;
+  WATCH.opened.add(now.runId);
+  if (G.kind === "browser") return false;
+  openStage("browser");
+  return true;
+}
 function onLive(before, now) {
+  void readWatch();
+  if (watchStart(now)) return;
   if (cardKey(before) !== cardKey(now)) render(); else drawStage();
 }
 function fitCards() {
@@ -454,6 +474,7 @@ export function drawStage() {
   // seconds, for the card in the conversation).
   // The frames are the owner's alone (the engine refuses anyone else), so nobody else's window asks for them.
   const going = here && S.view === "chat" && runsHere()[0]?.status === "running";
+  if (going && mine()) void readWatch();
   watchLive(mine() && (browser || going) ? S.chat : null, onLive, browser);
   // The owner's own browser is read while its view shows it, full size or small.
   watchOwnerBrowser(S.chat, here && browser && mine(), (redraw) => (redraw ? drawStage() : paintFrames()));

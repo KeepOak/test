@@ -25,7 +25,7 @@ import { registerBrowserFlow } from './browser-flow.js'; // FQ-execution.browser
 import type { MarkChecks } from './browser-heal.js'; // w911 (A2144)
 import type { Store } from '../store.js';
 import { audit } from '../audit.js';
-import { browserCare, browserCareDefaults, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
+import { browserCare, browserCareDefaults, downloadNotKnown, marksOff, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
 import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) hook: import
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
 import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
@@ -108,6 +108,10 @@ interface RunEntry {
   pressed: boolean;
   granted?: string | undefined;
   held?: boolean | undefined;
+  /** The sites the task's pages were shown on (Downloads may come from known sites only). */
+  shown?: Set<string> | undefined;
+  /** A recording started by Settings' "Record browser tasks", kept by itself when the task ends. */
+  autoRecording?: boolean | undefined;
   /** Whether this task's Trunk's own saved sign-in was looked for (trunkProfile). */
   trunkChecked?: boolean;
   /**
@@ -307,7 +311,7 @@ export class BranchBrowser {
     const session: BrowserSession = new BrowserSession(
       () => this.sandbox?.pick(context.owner, !!session.options.storageState) ?? (this.starting ??= this.launch()),
       request => this.guardRequest(request, created), redirectHops);
-    session.options.saveDownload = download => this.saveDownload(download);
+    session.options.saveDownload = download => this.saveDownload(download, context.owner, created);
     session.options.dialogAnswer = () => this.care(context.owner).dialogs; // R17-S19
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
@@ -339,7 +343,7 @@ export class BranchBrowser {
    * limits so far, and its next step waits for Hand back. A borrowed browser, a benchmark window and a window being
    * recorded are never taken over.
    */
-  adoptRun(owner: string, conversation: string, runId: string, clientId: string): BrowserControl {
+  async adoptRun(owner: string, conversation: string, runId: string, clientId: string): Promise<BrowserControl> {
     const key = this.key({ owner, runId }), entry = this.sessions.get(key);
     if (entry?.control) {
       if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
@@ -348,7 +352,10 @@ export class BranchBrowser {
     if (!entry || !entry.session.started()) throw new Error('That task has no browser page open.');
     if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
     if (entry.held) throw new Error('A benchmark window cannot be taken over.');
+    // A recording Settings started is kept before the owner drives, so nothing the owner types is in it.
+    if (entry.autoRecording) await this.keepAutoRecording(runId, entry);
     if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
+    if (this.sessions.get(key) !== entry || entry.control) throw new Error('That task\'s browser changed; try again.');
     const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
     entry.control = control;
     entry.tabIds = control.view().tabs;
@@ -588,7 +595,7 @@ export class BranchBrowser {
     const refused = entry.borrowed ? attachedAddressRefusal(url, '', this.extraRefusedHosts(context.owner)) : null;
     if (refused) throw new Error(refused);
     entry.asked = URL.canParse(url) ? new URL(url).href : url;
-    return this.operation(context, async (page, check) => {
+    const opened = await this.operation(context, async (page, check) => {
       const origin = new URL(url).origin;
       if (!entry.origins.has(origin) && entry.origins.size >= this.config.maxOriginsPerRun)
         throw new Error(originStop(this.config.maxOriginsPerRun));
@@ -600,12 +607,15 @@ export class BranchBrowser {
       // open redirect on the address means the two are different websites, and a signal that lies
       // about which website the task is on is worse than no signal at all (integration review).
       entry.typedHost = hostOf(page.url()) || hostOf(url);
+      (entry.shown ??= new Set()).add(new URL(page.url()).origin);
       entry.pressed = false;
       entry.host = new URL(url).host;
       check();
       const site = await this.quirks(context, page, url);
       return { url: page.url(), title: await page.title(), ...(site ? { site } : {}) };
     }, 0, () => this.checkAddress(url, context));
+    await this.autoRecord(context, entry).catch(() => { entry.autoRecording = false; });
+    return opened;
   }
   /** The quirks of this website, when a skill knows any, applied the moment the page has opened. */
   private async quirks(context: ToolContext, page: Page, url: string): Promise<QuirksApplied | null> {
@@ -708,6 +718,7 @@ export class BranchBrowser {
    * numbers belong to the things themselves, so they survive the page redrawing itself.
    */
   async annotate(options: z.infer<typeof AnnotateSchema>, context: ToolContext) {
+    if (!this.care(context.owner).numberMarks) throw new Error(marksOff);
     const entry = this.entry(context);
     return this.operation(context, async page => {
       const found = await annotate(page, options, entry.marks);
@@ -732,6 +743,7 @@ export class BranchBrowser {
    * written into the task's trace.
    */
   async act(input: HealTarget & { action: 'click' | 'fill' | 'check' | 'press'; value?: string | undefined }, context: ToolContext) {
+    if (input.mark !== undefined && !this.care(context.owner).numberMarks) throw new Error(marksOff);
     const entry = this.entry(context);
     if (input.action === 'click') entry.pressed = true; // mac7/vault-autofill
     // Dogfood D4: a key on the page itself (Escape on a cookie wall), in Branch's own browser and nowhere else.
@@ -1002,8 +1014,17 @@ export class BranchBrowser {
     });
   }
   /** Saves a file a website sent into the workspace's downloads folder, within the size and type limits. */
-  private async saveDownload(download: Download): Promise<DownloadRecord> {
+  private async saveDownload(download: Download, owner: string, entry?: RunEntry): Promise<DownloadRecord> {
     if (!this.files) throw new Error('saving files from websites needs the workspace');
+    // Settings › Permissions › Downloads may come from: only a site this task's pages were on.
+    if (this.care(owner).downloadsFrom === 'known') {
+      let origin = '', host = '';
+      try { const from = new URL(download.url()); origin = from.origin; host = from.host; } catch { /* not an address: refused below */ }
+      // A page's own sites: where its tabs are now, and every page the task's tabs showed. A download's own address is
+      // never one of them by itself, since a file that is downloaded is never shown as a page.
+      const shown = new Set([...(entry?.shown ?? []), ...(entry?.session.tabs() ?? []).map(tab => { try { return new URL(tab.url).origin; } catch { return ''; } })]);
+      if (!origin || !shown.has(origin)) throw new Error(downloadNotKnown(host || 'an unknown place'));
+    }
     const name = safeDownloadName(download.suggestedFilename());
     const ending = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
     if (!this.config.downloadTypes.includes(ending))
@@ -1179,9 +1200,36 @@ export class BranchBrowser {
     }
 
     entry.detach();
+    await this.keepAutoRecording(context.runId, entry);
     await this.keepSignIn(context.owner, entry);
     await entry.session.close();
     if (this.sessions.get(key) === entry) this.sessions.delete(key);
+  }
+  /**
+   * Settings' "Record browser tasks": once a task's first page has opened, its window keeps a recording, as
+   * browser.recording "start" would, unless a saved sign-in's value is still typed in, the window is the owner's own,
+   * or it is the conversation's kept browser (which the owner may take over and type into). Skipped quietly then.
+   */
+  private async autoRecord(context: ToolContext, entry: RunEntry): Promise<void> {
+    if (!this.care(context.owner).recordTasks || !this.artifacts || entry.control || entry.borrowed || entry.held
+      || entry.session.isBorrowed() || entry.session.isRecording() || entry.autoRecording !== undefined) return;
+    const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
+    const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
+    if (typed.some(Boolean)) return;
+    entry.autoRecording = false;
+    await entry.session.record(startRecording);
+    entry.session.options.beforeAction = page => clearSecretValues(page);
+    entry.autoRecording = true;
+  }
+  /** A recording Settings started is kept beside the task's other files when the task ends or the owner takes over. */
+  private async keepAutoRecording(runId: string, entry: RunEntry): Promise<{ path: string } | null> {
+    if (!entry.autoRecording || !entry.session.isRecording() || !this.artifacts) return null;
+    entry.autoRecording = false;
+    try {
+      const bytes = await entry.session.keepRecording();
+      entry.session.options.beforeAction = undefined;
+      return await this.artifacts.write(runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`, 'application/zip', bytes);
+    } catch { return null; } // a recording that could not be kept never holds up the end of a task
   }
   /** A run that used a saved sign-in writes what it learned back, so the person stays signed in. */
   private async keepSignIn(owner: string, entry: RunEntry): Promise<void> {
