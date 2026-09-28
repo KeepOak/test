@@ -297,7 +297,9 @@ test("W11 real: push-to-talk in the window fills the box with live captions, wit
   await page.locator(".dict").waitFor({ state: "detached", timeout: 180_000 });
   const typed = await page.locator("#prompt").inputValue();
   assert.match(typed, /garden|water|hello/i, `the settled words did not land in the box: "${typed}"`);
-  assert.equal(app.store.runs(owner).length, 0, "the words were sent instead of waiting in the box");
+  // Other work may start on its own (a Trunk introducing itself); none of it is what was said.
+  const sent = app.store.runs(owner).filter((run) => /garden|water|hello/i.test(run.prompt));
+  assert.deepEqual(sent.map((run) => run.prompt), [], "the words were sent instead of waiting in the box");
   assert.deepEqual(errors, []);
 });
 
