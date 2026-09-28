@@ -5972,6 +5972,22 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
 
+### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
+
+The commands a chat can send are listed in the app's own command picker, from the same table every surface reads,
+and only while chat commands are on (with them off the picker is emptied, so it never offers a command that would be
+read as an ordinary message); a change to either switch updates it.
+
+- **Discord**: registered as global application commands (one overwrite, so a command taken out of the list leaves
+  Discord's picker too), each with one optional text option for what follows it. Invite the bot with the `bot` and
+  `applications.commands` scopes. Choosing one is answered at once to that person alone ("Running /status") and then
+  read as the typed command from them, so pairing, the allowlist and each command's own level still decide.
+- **Slack** keeps an app's slash commands in the app's settings, and many plain names (/status, /remind) are Slack's
+  own, so the wizard's Slack app has one, `/branch` (with the `commands` scope): `/branch status` is `/status`,
+  `/branch` alone is `/help`, and words that are not a command are an ordinary message. An app made from the older
+  manifest needs `/branch` added under Slash Commands.
+- Telegram's "/" menu is filled the same way by the Telegram menu work (#590).
+
 ### Answering an approval from a chat app
 When a task started from Telegram or Discord stops to ask whether it may go ahead, the question is
 put in that chat with buttons: Yes, Yes always (only for a task you started yourself, the same rule
