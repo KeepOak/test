@@ -2042,9 +2042,15 @@ ${run.output.slice(0, 6000)}`;
    */
   private privateRoute(run: Run, owner: string, override: RunModelOverride): RunModelOverride | null {
     if (this.staysHere.has(run.id)) { keepOnThisComputer(); return { ...override, localOnly: true }; }
-    if (override.preset || this.models.session(owner, run.sessionId).preset || !routingSettings(this.store, owner).enabled) return null;
-    const defaults = this.store.projects.defaults(owner, run.project);
-    if (routeByProfile(this.store, this.models, owner, "chat", defaults.profile).preset) return null;
+    if (!routingSettings(this.store, owner).enabled) return null;
+    // The owner's own explicit choice (for this run, this conversation, or a routing profile) is theirs to make. Anyone
+    // else's (a key, a chat app, another program, a household person) never overrides the owner's rule to keep personal
+    // tasks here.
+    if (this.ownersOwnTask(run.id)) {
+      if (override.preset || this.models.session(owner, run.sessionId).preset) return null;
+      const defaults = this.store.projects.defaults(owner, run.project);
+      if (routeByProfile(this.store, this.models, owner, "chat", defaults.profile).preset) return null;
+    }
     const toolCount = this.store.messages(run.sessionId).filter((message) => message.role === "tool").length;
     const marked = `stays-here:${run.sessionId}`;
     const earlier = this.store.get("settings", owner, marked) ? privateConversationRoute(this.store, this.models, owner) : null;

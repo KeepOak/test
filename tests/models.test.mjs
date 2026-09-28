@@ -285,3 +285,19 @@ test("a task kept on this computer with no model here is refused, never sent els
   assert.match(refused.output, /stay on this computer/);
   assert.equal(cloud.calls, 0);
 });
+
+test("a caller other than the owner cannot name a cloud model to take a private task off this computer", async (t) => {
+  const { saveRoutingSettings } = await import("../dist/local-routing.js");
+  const here = Object.assign(scripted("here"), { embeddings: () => ({ endpoint: "http://127.0.0.1:11434/v1/embeddings" }) });
+  const cloud = scripted("cloud");
+  const { app } = await fixture(t, [
+    { id: "cloud", name: "Cloud", provider: cloud, model: "c" },
+    { id: "here", name: "Here", provider: here, model: "h" },
+  ]);
+  saveRoutingSettings(app.store, "local", { enabled: true });
+  const outside = await app.runtime.run({ prompt: "my passport number is 123456789, summarise it", model: "cloud", source: "channel" });
+  assert.equal(outside.output, "here answered", "a chat app's choice of model does not beat the owner's rule");
+  assert.equal(cloud.calls, 0);
+  const owners = await app.runtime.run({ prompt: "my passport number is 123456789, summarise it", model: "cloud" });
+  assert.equal(owners.output, "cloud answered", "the owner's own explicit choice still wins");
+});
