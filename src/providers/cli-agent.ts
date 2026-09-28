@@ -7,7 +7,7 @@ import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
 import { startCall } from "../windows-command.js";
 import { codexDefaultModel, codexVerified, codexModelsFor, type CodexModels, type CodexProbe, type CodexTry } from "../codex-models.js";
-import { CodexAppServerProvider, startCodexAppServer, type StartAppServer } from "../asks/codex-app-server.js";
+import { closeWarmCodex, startCodexAppServer, warmCodexTurn, type StartAppServer } from "../asks/codex-app-server.js";
 
 /**
  * Batch 20 (wave 8): using a coding assistant already installed on this computer as a model.
@@ -304,6 +304,7 @@ function prepareSpare(key: string, row: CliAgentRow, env: NodeJS.ProcessEnv): vo
 }
 /** Stops every program started ahead of time (Branch closing). */
 export function closeSpareAgents(): void {
+  closeWarmCodex(); // QA 2026-09-28: the warm Codex app-servers too
   for (const [key, spare] of spares) { clearTimeout(spare.timer); spare.child.kill(); spares.delete(key); }
 }
 
@@ -456,10 +457,10 @@ export class CliAgentProvider implements Provider {
   private async viaAppServer(request: CompletionRequest, start: StartAppServer): Promise<Completion | null> {
     const model = this.codexModel();
     const env = this.home ? { ...strippedEnvironment(), [this.home.name]: this.home.path } : strippedEnvironment();
-    const provider = new CodexAppServerProvider(this.row.command, start, "0", this.limits.timeoutMs,
-      { model, ...(ownCodex(this.row) ? { cwd: codexWorkDir() } : {}), env, ...(this.limits.firstOutputMs ? { silenceMs: this.limits.firstOutputMs } : {}) });
+    const thread = { model, ...(ownCodex(this.row) ? { cwd: codexWorkDir() } : {}), env, ...(this.home ? { home: this.home.path } : {}),
+      ...(this.limits.firstOutputMs ? { silenceMs: this.limits.firstOutputMs } : {}) };
     try {
-      return await provider.complete(request);
+      return await warmCodexTurn(this.row.command, start, request, thread, this.limits.timeoutMs);
     } catch (error) {
       if ((error as { appServerUnavailable?: boolean }).appServerUnavailable) { noAppServer.add(this.row.command); return null; }
       const said = error instanceof Error ? error.message : String(error);

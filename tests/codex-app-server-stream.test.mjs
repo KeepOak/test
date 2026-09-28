@@ -5,6 +5,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CliAgentProvider, cliAgentCatalog, codexDefaultModel, codexWorkDir } from "../dist/providers/cli-agent.js";
+import { closeWarmCodex, warmCodexCount } from "../dist/asks/codex-app-server.js";
+
+test.afterEach(() => closeWarmCodex());
 
 const codexRow = () => cliAgentCatalog.find((row) => row.id === "codex");
 const request = (onTextDelta) => ({ messages: [{ role: "user", content: "Say hello" }], signal: AbortSignal.timeout(10000), onTextDelta });
@@ -12,23 +15,25 @@ const request = (onTextDelta) => ({ messages: [{ role: "user", content: "Say hel
 /** A stand-in app-server: answers the handshake, then streams `words`, or ends the turn with `failure`. */
 function appServer({ words = ["Hello ", "there"], failure = null, noAppServer = false } = {}) {
   const told = [], listeners = [];
-  let exit = () => {};
+  let exit = () => {}, threads = 0, starts = 0;
   const reply = (message) => setImmediate(() => { for (const fn of listeners) fn(message); });
   const child = {
     send(message) {
       told.push(message);
       if (noAppServer) { setImmediate(() => exit(2, false)); return; } // an older codex: "unrecognized subcommand"
       if (message.method === "initialize") reply({ id: message.id, result: { userAgent: "codex/1" } });
-      if (message.method === "thread/start") reply({ id: message.id, result: { thread: { id: "thr" } } });
+      if (message.method === "thread/start") reply({ id: message.id, result: { thread: { id: `thr${++threads}` } } });
       if (message.method === "turn/start") {
+        const threadId = message.params.threadId;
         reply({ id: message.id, result: { turn: { id: "turn", status: "inProgress" } } });
-        for (const delta of failure ? [] : words) reply({ method: "item/agentMessage/delta", params: { delta } });
-        reply({ method: "turn/completed", params: { turn: failure ? { status: "failed", error: { message: failure } } : { status: "completed" } } });
+        for (const delta of failure ? [] : words) reply({ method: "item/agentMessage/delta", params: { threadId, delta } });
+        reply({ method: "turn/completed", params: { threadId, turn: failure ? { status: "failed", error: { message: failure } } : { status: "completed" } } });
       }
     },
     onMessage: (fn) => listeners.push(fn), onExit: (fn) => { exit = fn; }, stop() {},
+    crash: () => exit(1, false),
   };
-  return { told, start: () => child };
+  return { told, child, get starts() { return starts; }, start: () => { starts++; listeners.length = 0; return child; } };
 }
 
 test("Codex streams its answer word by word, on Branch's model and in Branch's own folder", async () => {
@@ -70,4 +75,22 @@ test("a model Codex refuses over app-server is said plainly, with the ones it ta
     assert.doesNotMatch(error.message, /status|400|sign in again/);
     return true;
   });
+});
+
+test("the app-server stays warm: a second turn reuses it on a new thread, and a crashed one is started again", async () => {
+  const fake = appServer();
+  const provider = new CliAgentProvider(codexRow(), {}, async () => assert.fail("no exec"));
+  provider.appServer = fake.start;
+  assert.equal((await provider.complete(request())).content, "Hello there");
+  assert.equal((await provider.complete(request())).content, "Hello there");
+  assert.equal(fake.starts, 1, "one app-server for both turns");
+  assert.equal(fake.told.filter((m) => m.method === "initialize").length, 1, "the handshake is done once");
+  assert.equal(fake.told.filter((m) => m.method === "thread/start").length, 3, "each turn has its own thread, and the next one is opened ahead");
+  assert.equal(warmCodexCount(), 1);
+  fake.child.crash();
+  assert.equal(warmCodexCount(), 0, "a crashed app-server is forgotten");
+  assert.equal((await provider.complete(request())).content, "Hello there");
+  assert.equal(fake.starts, 2, "and started again on the next turn");
+  closeWarmCodex();
+  assert.equal(warmCodexCount(), 0, "Branch closing stops it");
 });
