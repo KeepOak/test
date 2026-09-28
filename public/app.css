@@ -4314,7 +4314,12 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
   .app.set18c .main{position:static}
   .app.set18c #main>.settings{grid-template-columns:minmax(0,1fr);height:calc(100% - var(--tb-h,52px))}
   .app.set18c .settings>.set-nav{position:absolute;left:0;top:var(--tb-h,52px);bottom:0;z-index:2;width:max(var(--side-w,292px),232px);box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:12px 8px;border:0;background:transparent;overflow:auto}
-  .app.set18c .settings .set-level{grid-template-columns:minmax(0,1fr)}
+  .app.set18c .settings>.set-nav>*{min-width:0;max-width:100%;box-sizing:border-box;flex-shrink:0}
+  .app.set18c .settings>.set-nav .nav,.app.set18c .settings>.set-nav .set-back{width:100%;white-space:normal}
+  .app.set18c .settings>.set-nav .set-search{width:100%;margin:10px 0 4px}
+  .app.set18c .settings>.set-nav .set-level{display:grid!important;grid-template-columns:minmax(0,1fr);margin:14px 0 0;padding:14px 4px 6px;border-top:1px solid var(--line)}
+  .app.set18c .settings>.set-nav .set-level>span:first-child,.app.set18c .settings>.set-nav .set-level::after{display:block}
+  .app.set18c .settings>.set-nav .set-level .seg{width:100%;min-width:0}
   .app.set18c.side-hidden .settings>.set-nav,.app.set18c.rail9 .settings>.set-nav{background:var(--side);border-right:1px solid var(--line)}
   .app.set18c.side-hidden .set-page,.app.set18c.rail9 .set-page{padding-left:max(0px,calc(232px - var(--side-w,0px)))}
 }
@@ -4446,6 +4451,21 @@ audio.docread18m{width:100%}
 .ob7-live>.owner-browser7-img{cursor:default}
 .owner-browser7-empty{position:absolute;inset:0;align-content:center;background:#f6f8fa;color:#3b4650;font-size:18px}
 .owner-browser7-empty small{font-size:18px}
+
+/* area: wallpaper toolbar
+   The wallpaper already covers the window. Keep the title row clear, with glass only beneath its controls;
+   its native-control reservation and drag regions retain the existing layout. Content stays solid below the row. */
+.app .titlebar,.app .titlebar.merged14,.app.has-bg .titlebar:not(.merged14){
+  background:transparent;border-bottom:0;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.app .titlebar::before,.app .titlebar::after{content:none}
+.app .titlebar .head{background:transparent;border:0;box-shadow:none}
+.app .titlebar :is(.tb-btn,.icon-btn,.win button,.head-st17):not(:hover):not([aria-pressed="true"]){
+  color:var(--ink);background:color-mix(in srgb,var(--raise) var(--toolbar-a,68%),transparent);-webkit-backdrop-filter:var(--chrome-blur);backdrop-filter:var(--chrome-blur);border-radius:7px}
+.app .titlebar :is(.tb-btn,.icon-btn,.head-st17,.win button:not(.close)):is(:hover,:focus-visible,[aria-pressed="true"]){
+  color:var(--ink);background:color-mix(in srgb,var(--raise) var(--toolbar-hot-a,82%),transparent)}
+@media (prefers-reduced-transparency:reduce){.app{--toolbar-a:100%;--toolbar-hot-a:100%}}
+.app.has-bg.merged14 #main{background:linear-gradient(to bottom,transparent var(--tb-h,52px),var(--bg) var(--tb-h,52px))}
+.app.peek .titlebar{background:transparent;box-shadow:none;border:0}
 
 /* area: accessibility (UI-223, tests/window-a11y.test.mjs): a status pill's words stay AA on its tint in every light; they
    take the status colour leaned toward the ink, and the dot keeps the pure colour. */

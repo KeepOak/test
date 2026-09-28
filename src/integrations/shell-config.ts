@@ -13,11 +13,12 @@ export const ShellConfigSchema = z.object({
   }).strict()).refine(value => Object.keys(value).length > 0 && Object.keys(value).length <= 16, 'Configure 1-16 executable aliases'),
   inheritEnv: z.array(safeKey).max(12).default(['SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP']),
   env: z.partialRecord(safeKey, z.string().max(4000).refine(value => !value.includes('\0'))).default({}),
-  timeoutMs: z.number().int().min(100).max(120000).default(30000),
+  // selfdev: up to 30 minutes, as long as a coding assistant's own command may run (a build and its tests).
+  timeoutMs: z.number().int().min(100).max(1_800_000).default(30000),
   /** A command using more memory than this (sampled about once a second) is stopped. */
   maxMemoryMb: z.number().int().min(16).max(16384).default(1024),
   /** A command using more processor time than this is stopped. */
-  maxCpuSeconds: z.number().int().min(1).max(600).default(60),
+  maxCpuSeconds: z.number().int().min(1).max(7200).default(60),
   maxOutputBytes: z.number().int().min(256).max(8192).default(8192),
   /** Point commands at a dead address so ones that respect proxy settings cannot reach the internet. */
   netless: z.boolean().default(false),
@@ -29,7 +30,7 @@ export const ShellInputSchema = z.object({
   executable: z.string().regex(/^[a-z][a-z0-9_-]{0,29}$/),
   args: z.array(argument).max(80).default([]),
   cwd: z.string().min(1).max(500).default('.'),
-  timeoutMs: z.number().int().min(100).max(120000).optional(),
+  timeoutMs: z.number().int().min(100).max(1_800_000).optional(),
   /** Names of the active project's secrets to expose to the program as environment variables. */
   secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)).max(8).default([]),
   /** Run this one command with no way out to the internet, on top of whatever the settings say. */

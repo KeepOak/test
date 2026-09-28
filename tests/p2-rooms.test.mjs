@@ -282,6 +282,7 @@ test("piece 2: choosing a Trunk for a conversation ships when needed, and while 
 test("piece 2: a conversation the owner chose a Trunk for runs as that Trunk, and each reply says who gave it", async (t) => {
   const { app, call, provider } = await served(t, seesAnn);
   on(app, "conversations", "rooms");
+  const defaultTrunk = app.trunks.ensureDefault(true);
   const ann = app.trunks.create({ name: "Ann", title: "Travel" }), ben = app.trunks.create({ name: "Ben" });
   await app.trunks.introduced();
   app.trunks.edit(ann.id, { permissions: ["files.read"] });
@@ -305,16 +306,16 @@ test("piece 2: a conversation the owner chose a Trunk for runs as that Trunk, an
   assert.equal((await call(`/api/trunks/conversations/${ann.chatSessionId}`, { trunkId: ben.id })).status, 400);
   // Back to your assistant; the earlier replies keep their author.
   const back = await call(`/api/trunks/conversations/${first.sessionId}`, { trunkId: null });
-  assert.deepEqual(back.body.authors.map((a) => [a.from, a.trunkId]), [[0, null], [1, ann.id], [2, null]]);
-  assert.equal(back.body.kind, "plain");
-  assert.equal(app.runtime.trunkShape({ sessionId: first.sessionId }), null);
+  assert.deepEqual(back.body.authors.map((a) => [a.from, a.trunkId]), [[0, null], [1, ann.id], [2, defaultTrunk.id]]);
+  assert.equal(back.body.kind, "trunk");
+  assert.equal(app.runtime.trunkShape({ sessionId: first.sessionId }).trunkId, defaultTrunk.id);
   // Starting a conversation with a Trunk before anything is said.
   const started = await call("/api/trunks/conversations", { trunkId: ben.id });
   assert.equal(started.status, 200);
   assert.equal((await call(`/api/trunks/conversations/${started.body.sessionId}`)).body.trunk.name, "Ben");
   // Removing a Trunk gives its conversations back to your assistant.
   await call(`/api/trunks/${ben.id}/remove`, {});
-  assert.equal((await call(`/api/trunks/conversations/${started.body.sessionId}`)).body.kind, "plain");
+  assert.equal((await call(`/api/trunks/conversations/${started.body.sessionId}`)).body.trunk.id, defaultTrunk.id);
 });
 
 test("piece 2: bringing a second Trunk in makes a room that knows what was said before", async (t) => {
@@ -491,6 +492,7 @@ test("integration review: the banner names the Trunk that asked and opens its ro
 test("integration review: with the switch off, a conversation can still be given back to your assistant", async (t) => {
   const { app, call } = await served(t, seesAnn);
   on(app, "conversations");
+  const defaultTrunk = app.trunks.ensureDefault(true);
   const ann = app.trunks.create({ name: "Ann" });
   await app.trunks.introduced();
   const started = (await call("/api/trunks/conversations", { trunkId: ann.id })).body;
@@ -499,7 +501,8 @@ test("integration review: with the switch off, a conversation can still be given
   assert.equal((await call(`/api/trunks/conversations/${started.sessionId}`, { trunkId: ann.id })).status, 409, "choosing is off");
   const back = await call(`/api/trunks/conversations/${started.sessionId}`, { trunkId: null });
   assert.equal(back.status, 200);
-  assert.equal(back.body.kind, "plain");
+  assert.equal(back.body.kind, "trunk");
+  assert.equal(back.body.trunk.id, defaultTrunk.id);
 });
 
 test("a private room admits named people and Trunks, and removal closes its history and artifacts", async (t) => {
