@@ -122,16 +122,25 @@ async function fixture(t) {
 }
 
 /** The window opened afresh on conversation `sid` for whoever is at it now. A switch of profile makes the window start
-    again by itself, so an opening that races it is tried again. */
+    again by itself, so an opening that races it is tried again. The opening counts only once `sid` is the window's open
+    conversation (S.chat): in CI a message typed after an opening went into a new conversation (a new session, in Ask
+    first, which rightly asks before handing work to helpers), so the helpers never started. The likely cause, not
+    reproduced here, is the page from before the switch restarting itself on its own address after the link was followed;
+    this check waits for the real state, whatever moved it. */
 async function openAs(f, sid) {
+  const opened = () => f.page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
   for (let tries = 0; ; tries++) {
     // A fresh address each time: a change of the hash alone would keep the page that was there.
-    try { await f.page.goto(`${f.server.url}/?fresh=${Date.now()}#open=${sid}`, { waitUntil: "load" }); break; } catch (error) {
+    try {
+      await f.page.goto(`${f.server.url}/?fresh=${Date.now()}#open=${sid}`, { waitUntil: "load" });
+      await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
+      await opened();
+      return;
+    } catch (error) {
       if (tries >= 3) throw error;
       await f.page.waitForLoadState("load").catch(() => undefined);
     }
   }
-  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
 }
 
 /** The owner's task with two helpers held mid-work, started as the owner. */
@@ -353,7 +362,7 @@ test("she answers her own helper's question, and nobody else can", async (t) => 
   const parentOf = () => f.runBy("check Dana's receipts");
   const asks = () => app.runtime.approvals.waiting().filter((q) => parentOf() && f.helpersOf(parentOf()).includes(q.runId));
   const asking = await until(() => asks().length === 2);
-  assert.ok(asking, asking ? "" : `control: each of her helpers asks before reading (window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT id, prompt, status, session_id FROM tasks ORDER BY rowid").all())}; waiting: ${JSON.stringify(app.runtime.approvals.waiting().map(({ runId, sessionId, tool }) => ({ runId, sessionId, tool })))}; page errors: ${JSON.stringify(errors)}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
+  assert.ok(asking, asking ? "" : `control: each of her helpers asks before reading (window had open: ${await page.evaluate(async () => (await import("/app/core/state.js")).S.chat).catch((error) => error.message)}; window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT id, prompt, status, session_id FROM tasks ORDER BY rowid").all())}; waiting: ${JSON.stringify(app.runtime.approvals.waiting().map(({ runId, sessionId, tool }) => ({ runId, sessionId, tool })))}; page errors: ${JSON.stringify(errors)}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
   const [one, other] = asks();
   const listed = (await api("policy")).body.waiting.map((q) => q.fingerprint);
   assert.ok(listed.includes(one.fingerprint) && listed.includes(other.fingerprint), "her helpers' questions are hers to see");

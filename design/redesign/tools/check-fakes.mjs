@@ -92,7 +92,7 @@ for (const [drawn, listener, why] of AFFORDANCES) {
 // shows that Trunk (core/state.js chatFace), a row tied to no Trunk a line icon. Only the logo's places draw the mark:
 // core/ui.js av() is not one of them (a conversation with no Trunk wears a neutral tile in rows, replies and quick-ask).
 const LOGO = new Set(["public/app/shell/signin.js", "public/app/shell/applock.js", "public/app/shell/shell.js", "public/app/shell/updating.js",
-  "public/app/flows/first.js", "public/app/flows/setup.js"]);
+  "public/app/flows/first.js", "public/app/flows/setup.js", "public/app/flows/tour.js", "public/app/shell/inperson.js"]);
 const MASCOT = /\bav\([^;]*?\{\s*kind:\s*["']main["']|\bmark-(face|full)\b/;
 for (const [rel, text] of sources) {
   if (LOGO.has(rel)) continue;
