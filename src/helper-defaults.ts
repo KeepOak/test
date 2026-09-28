@@ -34,7 +34,8 @@ export function helperDefaultFor(store: Store, owner: string, specialist: string
  * registered is left out, so the helper falls back as if nothing was saved.
  */
 export function withHelperDefault(selection: HelperSelection, saved: HelperDefault | null, registered: (id: string) => boolean): HelperSelection {
-  if (!saved || !registered(saved.model)) return selection;
+  // A call that names an account keeps its own route whole: the saved model would not be that account's.
+  if (!saved || !registered(saved.model) || (selection.accountRef && !selection.model)) return selection;
   const model = selection.model ?? saved.model;
   const accountRef = selection.accountRef ?? (model === saved.model ? saved.accountRef : undefined);
   return { model, ...(accountRef ? { accountRef } : {}) };
