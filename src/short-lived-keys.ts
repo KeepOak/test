@@ -133,6 +133,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/devices(\/.*)?$/,
   // P17-D §9: which of the owner's computers a Trunk may use names them, as the devices list does.
   new RegExp(`^/api/trunks/${id}/computers$`),
+  new RegExp(`^/api/trunks/${id}/files$`), // personal instructions and private notes outlive a script's key
   // R17-S-A: the settings file outlives the key, and the owner's own files say who they are.
   /^\/api\/settings-kit\/(export|files)(\/.*)?$/,
   // mac7/r17-d: the shell snapshot holds the owner's PATH, aliases and functions.
@@ -187,6 +188,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   // Requests from a chat to change Branch itself carry what people wrote and who they are
   // (src/self-development-requests.ts); only the owner reads and answers them, in the app window.
   /^\/api\/self-development\/requests$/,
+  /^\/api\/self-development\/merge(\/|$)/,
   // The bounded diff of such a change: Branch's own source as a task changed it, for the owner to read.
   new RegExp(`^/api/self-development/requests/${id}/diff$`),
 ];
