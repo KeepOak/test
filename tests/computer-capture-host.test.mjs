@@ -57,12 +57,16 @@ test("the engine asks only its own main process, with strict leases and a strict
   await assert.rejects(trustedCaptureLease({ call: async () => ({ ...proof, extra: 1 }) }, true).acquire(first));
 });
 
-test("the desktop app wires it: main answers capture-acquire and capture-release, lets go when the engine stops or the app quits, and the engine uses it", () => {
+test("the desktop app wires it: main's broker answers capture-acquire and capture-release, lets go when the engine stops, and the engine uses it", () => {
+  // #585's wiring, now in the base: main's services make the capture host, its broker answers the engine.
+  const services = readFileSync(new URL("../src/desktop/engine-services.ts", import.meta.url), "utf8");
+  assert.match(services, /capture: captureService\(\{/);
+  assert.match(services, /windows: \(\) => BrowserWindow\.getAllWindows\(\)/, "main decides which windows; the engine names none");
+  const broker = readFileSync(new URL("../src/desktop/engine-broker.ts", import.meta.url), "utf8");
+  assert.match(broker, /"capture-acquire": \(args\) => \{/);
+  assert.match(broker, /"capture-release": \(args\) => \{/);
   const main = readFileSync(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
-  assert.match(main, /"capture-acquire": \(args\) => capture\.acquire\(args\),\n\s*"capture-release": \(args\) => capture\.release\(args\),/);
-  assert.match(main, /windows: \(\) => BrowserWindow\.getAllWindows\(\)/, "main decides which windows; the engine names none");
-  assert.match(main, /onGone: \(code\) => \{ closeCapture\(\);/);
-  assert.match(main, /app\.on\("will-quit", \(\) => \{ globalShortcut\.unregisterAll\(\); closeCapture\(\); \}\)/);
+  assert.match(main, /onGone: \(code\) => \{ closeCapture\(\);/, "a stopped engine's leases die with it");
   const engine = readFileSync(new URL("../src/desktop/engine-process.ts", import.meta.url), "utf8");
-  assert.match(engine, /nativeCaptureLease: trustedCaptureLease\(link, true\),/);
+  assert.match(engine, /nativeCaptureLease: trustedCaptureLease\(link, !config\.gateway\)/);
 });
