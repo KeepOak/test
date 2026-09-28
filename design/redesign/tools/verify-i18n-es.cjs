@@ -129,6 +129,10 @@ const lines = async (page) => (await onPage(page)).split("\n").map((s) => s.trim
 async function overviewWords(page, S, E) {
   const health = (await api("health")).items ?? [], es = spanishOf(E, S);
   await page.locator('#side [data-act="view"][data-v="overview"]').first().click();
+  // Overview sums health in one line; each check is under its Details (places/overview.js), opened as a person does.
+  const details = page.locator("#main .ovs-health details");
+  await details.waitFor({ timeout: 15000 });
+  if (!(await details.evaluate((d) => d.open))) await details.locator("summary").click();
   const got = await until(async () => { const l = await lines(page); return health.every((i) => l.includes(es(i.name))) ? l : null; });
   const seen = got ?? await lines(page);
   for (const item of health) {

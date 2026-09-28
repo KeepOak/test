@@ -134,7 +134,8 @@ const whereIs = (page, lines) => page.evaluate((want) => {
 const overflowing = (page, labels) => page.evaluate((fixed) => {
   const own = new Set(fixed);
   const path = (el) => { const parts = []; for (let n = el; n && n !== document.body; n = n.parentElement) parts.unshift(`${n.tagName.toLowerCase()}${n.id ? "#" + n.id : ""}:${[...(n.parentElement?.children ?? [])].indexOf(n)}`); return parts.join(">"); };
-  const spills = (e) => e.clientWidth > 0 && e.scrollWidth > e.clientWidth + 1 && e.innerText.trim()
+  // A label kept for screen readers only (1px, clipped: the status bar at phone width) is hidden by design, not cut.
+  const spills = (e) => e.clientWidth > 1 && e.scrollWidth > e.clientWidth + 1 && e.innerText.trim()
     && (getComputedStyle(e).textOverflow !== "ellipsis" || own.has(e.innerText.trim()));
   const out = [];
   for (const b of document.querySelectorAll('button, [role="button"], [role="tab"], a.btn')) {

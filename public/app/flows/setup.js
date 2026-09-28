@@ -85,7 +85,7 @@ async function restoreFrom(file) {
 function modelRows(o) {
   const rows = [];
   for (const p of o.pools) for (const a of p.accounts ?? []) {
-    const sub = [p.pool, p.defaultAccount === a.id ? t("glance.usedNext") : "", p.signedIn?.[a.id] === false ? t("window.flows.first.sign-in") : ""].filter(Boolean).join(" · ");
+    const sub = [p.pool, p.answering && p.defaultAccount === a.id ? t("glance.usedNext") : "", p.signedIn?.[a.id] === false ? t("window.flows.first.sign-in") : ""].filter(Boolean).join(" · ");
     rows.push([p.pool, a.label || p.pool, sub, a.disabled !== true, `data-sw="ob-brain" data-pool="${esc(p.pool)}" data-account="${esc(a.id)}"`]);
   }
   if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? "", true, 'data-sw="ob-brain-model"']);
