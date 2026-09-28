@@ -15,6 +15,9 @@ import { unreadable, unreadableInside } from "./never-break/protected.js"; // ma
 import { noJournal, type JournalHook } from "./never-break/journal.js"; // mac3/never-break
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
 import { ownersOwnTask, waitsForReply } from "./asked-task.js"; // Q050
+import { practiceRunsEnabled } from "./practice-runs.js";
+import { CliAgentProvider } from "./providers/cli-agent.js";
+import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
@@ -166,6 +169,7 @@ import { RequestCache, type CacheKeyParts } from "./request-cache.js";
 import { traceSettings, writeRunTrace } from "./trace.js";
 import { LeakGuard } from "./leak-guard.js";
 import { EgressGuard } from "./egress-guard.js";
+import { wipeAttempt, wipeQuestion } from "./wipe-guard.js";
 // mac2/fly-core: the mushroom-body learning core.
 import { watchTask } from "./fly-core/hook.js";
 // Bucket 13 (A1589): the bound on pictures a task keeps in view.
@@ -424,7 +428,9 @@ const alwaysOpenGroups = ["core", "files"] as const;
 const fileTaskWords = /\b(files?|folders?|downloads|desktop|documents|tidy|organi[sz]e|sort)\b/i;
 const memoryWords = /\b(remember|memory|memories|forget|recall|notes?)\b/i;
 /** Nightly evals: "Remember that X" was not offered the tool that saves a fact. Asking to remember, forget or recall brings these. */
-const memoryAskWords = /\b(remember|forget|recall|memory|memories)\b/i;
+// A fact about the person changing ("update where I live", "I moved to Denver") is memory work too: without the memory
+// tools offered, a small model had nothing to update the remembered fact with.
+const memoryAskWords = /\b(remember|forget|recall|memory|memories|update (?:where|what|my|that)|i(?:'ve| have)? moved|no longer|changed my)\b/i;
 const coreMemoryTools = ["memory.put", "memory.search", "memory.delete"] as const;
 /**
  * QA (first task): one line, only when the request names one of the person's own folders and the task may move files,
@@ -576,6 +582,8 @@ export interface RunOptions {
   conversationMode?: ConversationMode;
   /** Dogfood B26: the thinking level a conversation begun by this message keeps (the model menu before a first message). */
   conversationReasoning?: ReasoningEffort;
+  /** QA retest 2026-09-28 (m10): the model a conversation begun by this message answers with (the model menu before a first message). */
+  conversationPreset?: string;
   /** Dogfood D14: the project a conversation begun by this message is filed under; absent, the active project. */
   conversationProject?: string;
   /** The `traceparent` header of the request that asked for this task, so one trace crosses agents. */
@@ -1389,6 +1397,9 @@ ${run.output.slice(0, 6000)}`;
     });
     if (options.sessionId && this.activeSessions.has(options.sessionId))
       throw new Error("Session already has an active run");
+    // QA retest 2026-09-28 (m10): a model picked for a new conversation is refused before anything is written, not after.
+    if (!options.sessionId && options.conversationPreset && !this.models.presets.has(options.conversationPreset))
+      throw new Error(`Unknown model preset ${options.conversationPreset}`);
     const project = !options.sessionId && options.conversationProject ? this.store.projects.of(this.owner, options.conversationProject).id : undefined;
     const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false, "web", project);
     // Redesign phase 1: only a conversation begun here is given a mode; one that exists keeps what it had.
@@ -1396,6 +1407,9 @@ ${run.output.slice(0, 6000)}`;
     // Dogfood B26: the level picked before the first message is this conversation's own, as one picked in it would be.
     if (!options.sessionId && options.conversationReasoning)
       this.models.configureSession(this.owner, run.sessionId, { reasoning: options.conversationReasoning });
+    // QA retest 2026-09-28 (m10): so is the model picked there; the owner's default for new conversations is left alone.
+    if (!options.sessionId && options.conversationPreset)
+      this.models.configureSession(this.owner, run.sessionId, { preset: options.conversationPreset });
     return run;
   }
   /** Redesign phase 1: a new conversation's mode; Plan also means "Show me the plan first". */
@@ -1411,6 +1425,10 @@ ${run.output.slice(0, 6000)}`;
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
+    // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
+    if (options.resumeFrom && this.startedAsDryRun(options.resumeFrom)) options = { ...options, dryRun: true };
+    if (!parent && !options.resumeFrom && !options.continuing && options.dryRun && !practiceRunsEnabled(this.store, this.owner))
+      throw new Error("Practice runs are switched off. Turn them on in Settings > Permissions before starting one.");
     // Q213 (NAS 6a6e954): every refusal of a task as it starts (the budget, the inlet filter, a busy conversation) stays
     // above this function's first await. The approve route waits one turn for them (server.ts settleAsked), so a refusal
     // after real waiting would be answered as "carrying on".
@@ -1509,6 +1527,7 @@ ${run.output.slice(0, 6000)}`;
         }), trunk);
     if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom);
     if (options.continuing) instructions += this.continueNote(run, options.continuing);
+    if (context.dryRun) instructions += "\nThis task is a practice run. Read-only tools may really read; changes are simulated. Describe what would change and never claim a simulated action happened. Model use still counts.\n";
     if (!options.resumeFrom && !options.continuing?.allowed && !options.continuing?.refused) {
       // The files themselves are kept first: a message may only carry a reference to something real.
       // Where a file lives is decided by the conversation, not by the message that brought it. Only the
@@ -2900,11 +2919,15 @@ ${run.output.slice(0, 6000)}`;
   private reindex(run: Run, context: ToolContext, catalog: ToolLoader): void {
     const notes = this.store.toolUsage.noteMap(context.owner);
     // A connected server's tools each carry a permission of their own name, which a task that started before the
-    // server connected could not have held. One that started with everything is given them (see `wholeKit`).
+    // server connected could not have held; a plugin switched on meanwhile may ask for a permission no tool had before.
+    // One that started with everything is given them (see `wholeKit`), so what the owner switched on mid-task is
+    // usable from its next round, exactly as it would be in the next task.
     if (this.wholeKit.has(run.id) && context.permissions instanceof Set) {
       const held = new Set(this.registry.permissions());
-      for (const name of this.registry.names())
-        if (this.registry.sourceOf(name)?.startsWith("mcp:") && held.has(name)) context.permissions.add(name);
+      for (const name of this.registry.names()) {
+        const source = this.registry.sourceOf(name), permission = this.registry.permissionOf(name);
+        if ((source?.startsWith("mcp:") || source?.startsWith("plugin:")) && held.has(permission)) context.permissions.add(permission);
+      }
     }
     catalog.refresh(this.offered(run, context), {
       groupOf: (name) => this.registry.groupOf(name),
@@ -3333,6 +3356,8 @@ ${run.output.slice(0, 6000)}`;
     shape?: AnswerShape,
     firstCapMs?: number,
   ): Promise<Completion> {
+    if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
+      throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
@@ -4012,6 +4037,13 @@ ${run.output.slice(0, 6000)}`;
     if (this.refusedAsks.get(context.scratchRoot ?? context.runId) === fingerprint) {
       this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args), target: "", reason: refusedAgain });
       return { refusal: { ok: false, error: refusedAgain }, sandbox: null, backend: null, paths: null };
+    }
+    // A task never wipes the workspace (src/wipe-guard.ts): refused under every mode and rule, and the task stops
+    // saying so in the engine's own words, so the answer does not depend on the model relaying it.
+    const wipe = wipeAttempt(call.name, args, context.workspace);
+    if (wipe) {
+      this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args), target: "", reason: `Refused: ${wipe}.`, wipe: true });
+      throw new NeedsInputError(wipeQuestion);
     }
     // Dogfood D4: the screen is refused outright in a task the owner did not start for it: nothing asked, nothing run.
     if (this.screenWithheld(call.name, args, context)) {
