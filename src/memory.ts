@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import { ownersOwnTask } from "./asked-task.js"; // SELF-202: the owner's own names and words, in the owner's own task only
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { memoryAgent, readsSharedFacts, writesSharedFacts } from "./trunks/memory-scope.js"; // R17-A (Trunks)
 import { isDeepStrictEqual } from "node:util";
@@ -510,8 +511,12 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
     permission: "memory.write", parameters: PutMemorySchema,
     execute: async (value, context) => {
       // SELF-202: what the fact and the owner's own words say fills in what the model left out (see withImpliedDetail).
-      const asked = (context.source ?? "owner") === "owner" ? store.run(context.runId)?.prompt : undefined;
-      value = canonicalDetail(withImpliedDetail(value, { ownerNames: ownerNames(), ...(asked ? { request: asked } : {}) }));
+      // Only the owner's own task, saving into the owner's own memory, reads the owner's names and the owner's words: in a
+      // household person's task "me" is that person, and a room turn or routine (a titled run) frames other members' words.
+      const ownersOwn = memoryScope(store, context) === context.owner && (context.source ?? "owner") === "owner"
+        && ownersOwnTask(store, context.runId) && !store.events(context.runId).some((event) => event.kind === "run.titled");
+      const asked = ownersOwn ? store.run(context.runId)?.prompt : undefined;
+      value = canonicalDetail(withImpliedDetail(value, { ownerNames: ownersOwn ? ownerNames() : [], ...(asked ? { request: asked } : {}) }));
       value = withSaidStart(value, store.run(context.runId)?.prompt);
       // SELF-202: qwen2.5:7b often left the source out; the save was refused and it gave up, so nothing was remembered.
       // Where the fact came from is known here: the task, and who started it.

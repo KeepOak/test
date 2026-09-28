@@ -12,6 +12,7 @@
  * - src/memory.ts search: drop isCurrentFact: "an ended fact is never shown…" (memory.search).
  * - src/memory.ts memory.put: drop withSaidStart: "a start date is kept only when…".
  * - src/memory.ts PutMemorySchema: make source required again: "a fact saved without a source…".
+ * - src/memory.ts memory.put: drop the ownersOwn gate (read the request in every task): "a household person's task…".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -139,4 +140,26 @@ test("a fact saved without a source is still saved, from where the task came; a 
   assert.ok(saved, "saved without a source");
   assert.equal(saved.data.source, "The owner said so");
   assert.deepEqual(detail({ text: "I live in Denver.", entity: "personal" }, {}), { entity: "me", attribute: "home" });
+});
+
+test("a household person's task never reads the owner's words or names: \"me\" there is that person", async (t) => {
+  const saved = {};
+  for (const who of ["owner", "Sam"]) {
+    const { app } = await branch(t, []);
+    if (who === "Sam") {
+      const { savePeopleSettings } = await import("../dist/people/settings.js");
+      savePeopleSettings(app.store, app.runtime.owner, { mode: "on" });
+      const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+      app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
+      t.after(() => app.store.profiles.switch({ profileId: null }));
+      assert.notEqual(app.store.profiles.scope(), app.runtime.owner, "control: Sam's own memory");
+    }
+    // A task whose words are "Remember: I live in Atlanta.", and the model's save with no detail of its own.
+    const run = app.store.createRun(app.runtime.owner, "Remember: I live in Atlanta.");
+    const put = await app.registry.execute("memory.put", { text: "Atlanta", source: "said so" }, app.runtime.context({ runId: run.id }));
+    saved[who] = app.store.exportMemory(app.store.profiles.scope()).records.find((r) => r.id === put.id);
+  }
+  assert.equal(saved.owner?.data.attribute, "home", "control: the owner's own task reads the owner's words");
+  assert.ok(saved.Sam, "control: Sam's fact was saved");
+  assert.equal(saved.Sam.data.attribute, undefined, "Sam's save does not read the words as the owner's");
 });
