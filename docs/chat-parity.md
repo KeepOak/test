@@ -124,6 +124,7 @@ against its adapter, then renders one fixed task for every app.
 | Revolt (`revolt`) | — | plain words | 2000 | — | yes | — | — | One summary line above the reply (plain words) |
 | Mumble (`mumble`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
 | KOOK (`kook`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| iMessage through BlueBubbles (`bluebubbles`) | — | plain words | 3000 | — | — | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
 | WeChat Official Account (`wechat-mp`) | — | plain words | 600 | — | — | off: no edits, so no progress | — | One summary line above the reply (plain words) |
 | WeCom app (`wecom-app`) | — | plain words | 600 | — | — | off; native stream message type instead | — | One summary line above the reply (plain words) |
 | Mattermost (`mattermost`) | — | plain words | 4000 | — | yes | new (edits in place) | partial draft preview | One summary line above the reply (plain words) |
@@ -204,10 +205,10 @@ proved against stand-in adapters and providers; real account connections remain 
 | TG | ◐ exec approvals by typed yes/no; clarify questions by buttons | ✅ inline buttons | ✅ buttons carry the request's fingerprint |
 | DC | ✅ buttons | ? | ✅ |
 | SL | ✅ Block Kit | ✅ | — typed y / n |
-| WA | — typed (never polls) | ✅ 👍/👎 reactions | — typed |
-| SG | — | ✅ approval reactions | — typed |
+| WA | — typed (never polls) | ✅ 👍/👎 reactions | ✅ 👍/✅ or 👎/❌ on the question message, from the person asked, once (30 min), naming the question's fingerprint; typed y/n still works |
+| SG | — | ✅ approval reactions | ✅ the same, matched to the question by this account's send timestamp |
 | IM | ? | ? | — typed |
-| MX | ✅ reactions, limited to the requester | ✅ | — typed |
+| MX | ✅ reactions, limited to the requester | ✅ | ✅ the same, as an `m.annotation` on Branch's own question event |
 | EM, SMS | — | — | — typed |
 
 ### Voice notes in (transcribed) and out (spoken replies)
@@ -233,7 +234,7 @@ proved against stand-in adapters and providers; real account connections remain 
 | IM | ✅ | ✅ | — / — |
 | MX | ✅ | ? | — / — |
 | EM | ✅ attachments | ? | — / — |
-| SMS | — | ◐ MMS | — / — |
+| SMS | — | ◐ MMS | ✅ in: MMS pictures and files from Twilio's Media list, fetched only when answered / — out: Twilio fetches an MMS from a public web address, which Branch does not have |
 
 ### Forum topics and threads
 | | H | O | B today |
@@ -368,6 +369,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 
 | Adapter | Send | Edit | Typing | React | Buttons | Voice out | File out | Files in | Voice in | Max text |
 |---|---|---|---|---|---|---|---|---|---|---|
+| bluebubbles | yes | — | — | — | — | yes (audio file without the Private API) | yes | yes | yes | 3000 |
 | bluesky | yes | — | — | — | — | — | — | — | — | 1000 |
 | deltachat | yes | — | — | — | — | — | — | — | — | 3500 |
 | discord | yes | yes | yes | yes | yes | — | yes | yes | yes | 2000 |
@@ -400,7 +402,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | teams-bot | yes | — | — | — | — | — | — | — | — | 3500 |
 | telegram | yes | yes | yes | yes | yes | yes | yes | yes | yes | default |
 | threema | yes | — | — | — | — | — | — | — | — | 3500 |
-| twilio-sms | yes | — | — | — | — | — | — | — | — | 1600 |
+| twilio-sms | yes | — | — | — | — | — | — | yes (MMS) | — | 1600 |
 | twist | yes | — | — | — | — | — | — | — | — | 3500 |
 | vk | yes | — | — | — | — | — | — | — | — | default |
 | webex | yes | — | — | — | — | — | — | — | — | 3500 |

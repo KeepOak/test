@@ -11,11 +11,12 @@
       in its own conversation, calls procedures.auto.suggest_change; the flow editor shows "<Trunk> suggests a change",
       "Keep it as it is" answers no and "Approve version 2" answers the next one yes: GET /api/autonomy/ledger and
       GET /api/autonomy/procedures. */
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
 const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const { PORT, TOKEN } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
@@ -142,8 +143,8 @@ async function suggestions(browser, errors) {
     };
     await open();
     check("the suggestion names the Trunk, shows its face and why", /Ledger suggests a change/.test(await page.locator(".dlg .fp17d").innerText()) && (await page.locator(".dlg .fp17d .av").count()) === 1);
-    const disabled = await page.locator(".dlg #fk-0 option[disabled]").allInnerTexts();
-    check("every kind of step can be picked: the engine runs them all", disabled.length === 0 && (await page.locator(".dlg #fk-0 option").count()) === 8, disabled.join(", "));
+    const kinds = await gselChoices(page.locator(".dlg #fk-0")), disabled = kinds.filter((c) => c.off).map((c) => c.words);
+    check("every kind of step can be picked: the engine runs them all", disabled.length === 0 && kinds.length === 8, disabled.join(", "));
     await page.locator('.dlg [data-act="ppsee17d"]').click();
     await page.locator('.dlg [data-act="ppdeny17d"]').waitFor();
     check("ppsee17d: See the change shows the difference", (await page.locator(".dlg .df17d li.add").count()) === 1);

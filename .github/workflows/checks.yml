@@ -13,6 +13,14 @@ name: Checks
 # beside the others, a file that runs past six minutes is ended and named, and node_modules (with the Electron
 # binary inside it) and the browser are kept between runs. The downloads and the phone apps are built for a release
 # tag, or by hand, in package.yml and mobile.yml, never here.
+#
+# A pull request into redesign/window runs what its change can reach (scripts/select-affected-tests.mjs, the `plan`
+# job): documentation alone runs no test; tests, helpers and page files run the tests that use them (every browser
+# test for a page file); anything in src/ runs the whole Linux lane. Windows and macOS run on a pull request only when
+# it touches their own code or tests. Every push, the nightly run and a run by hand run the whole suite on every
+# system, and verify-suite refuses anything less on a push, so promote only ever moves mac/cross-platform to a commit
+# the whole suite passed. (PR Fast Checks, pr-fast.yml, did the same selection in a workflow of its own; it is folded
+# in here.)
 on:
   pull_request:
   push:
@@ -23,31 +31,87 @@ on:
 permissions:
   contents: read
 # A pull request keeps one run: a new push, or a base merge into it, cancels the older run for the same PR.
-# Every other run (pushes to redesign/window, mac/cross-platform, main and release branches, the nightly run, runs
-# by hand) gets a group of its own and is never cancelled or replaced. A shared group per branch let each merge into
-# redesign/window cancel the run before it, so no base run finished and promote never moved mac/cross-platform; and
-# GitHub keeps at most one pending run per group, so even without cancel-in-progress a shared group drops pushes.
+# Pushes to a branch (redesign/window, mac/cross-platform and the rest; not main or release/**) share one group per
+# branch without cancel-in-progress: the running base run always finishes (and
+# promote follows it), and GitHub keeps one pending run, which a newer merge replaces. A merge storm therefore runs the
+# whole suite once per batch, on the newest commit, which covers every commit before it; a red base names a batch, not
+# one merge. (Cancelling in progress there once meant no base run ever finished, so promote never ran.) Pushes to main
+# and release/**, the nightly run and runs by hand have a group of their own and are never replaced.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || format('checks-run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') && format('checks-base-{0}', github.ref) || format('checks-run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # What this run tests: the whole suite, or for a pull request into redesign/window what its change reaches.
+  # A push, the nightly run and a run by hand skip it and run the whole suite at once, with no wait for its runner.
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The queue (scripts/ci-queue.mjs) cancels a waiting run, reruns a waiting one and labels its pull request.
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      selected: ${{ steps.plan.outputs.selected }}
+      summary: ${{ steps.plan.outputs.summary }}
+    steps:
+      # Two commits: a pull request's run tests the merge ref, whose first parent is the commit it merges onto.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      # At most `prSlots` pull-request runs hold runners at once, oldest first. A run that must wait says so, labels
+      # its pull request ci-waiting and cancels itself; the queue starts it again when a slot frees.
+      - id: slot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          PR: ${{ github.event.pull_request.number }}
+        run: node scripts/ci-queue.mjs admit --run="$RUN" --attempt="$ATTEMPT" --pr="$PR"
+      - name: Waiting for a CI slot (this run is being cancelled, not failed)
+        if: steps.slot.outputs.held == 'true'
+        run: |
+          sleep 120
+          echo "::error::The run was to wait for a CI slot but was not cancelled."
+          exit 1
+      - id: plan
+        if: steps.slot.outputs.held != 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: node scripts/select-affected-tests.mjs --event="$EVENT" --base-ref="$BASE_REF"
+      - name: Check documentation-only changes
+        if: steps.plan.outputs.mode == 'docs'
+        run: |
+          git diff --check HEAD^1 HEAD
+          node scripts/check-docs.mjs
+  # The plan's shares on a pull request; without a plan, the whole suite (FULL_MATRIX in select-affected-tests.mjs).
   test:
     name: test (${{ matrix.lane }}, ${{ matrix.shard }}/${{ matrix.total }})
+    needs: [plan]
+    if: ${{ !cancelled() && (needs.plan.result == 'skipped' || (needs.plan.result == 'success' && needs.plan.outputs.mode != 'docs')) }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { lane: linux, os: ubuntu-latest, shard: 1, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 2, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 3, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 4, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 5, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 6, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 7, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 8, total: 8, concurrency: '2,2' }
-          - { lane: windows, os: windows-latest, shard: 1, total: 2, concurrency: '3,1' }
-          - { lane: windows, os: windows-latest, shard: 2, total: 2, concurrency: '3,1' }
-          - { lane: macos, os: macos-latest, shard: 1, total: 1, concurrency: '3,2' }
+      matrix: >-
+        ${{ fromJSON(needs.plan.result == 'success' && needs.plan.outputs.matrix || '{"include":[
+        {"lane":"linux","os":"ubuntu-latest","shard":1,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":2,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":3,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":4,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":5,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":6,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":7,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":8,"total":8,"concurrency":"2,2"},
+        {"lane":"windows","os":"windows-latest","shard":1,"total":2,"concurrency":"3,1"},
+        {"lane":"windows","os":"windows-latest","shard":2,"total":2,"concurrency":"3,1"},
+        {"lane":"macos","os":"macos-latest","shard":1,"total":1,"concurrency":"3,2"}
+        ]}') }}
     runs-on: ${{ matrix.os }}
     # A share is measured at under eight minutes. Past fifteen something is stuck: fail rather than wait.
     timeout-minutes: 15
@@ -74,8 +138,9 @@ jobs:
       - run: node -e "require('electron')"
       # The browser, kept between runs and keyed on the Playwright version, so a new version starts a new copy. The
       # install still runs: with the browser already there it only checks it (Playwright marks a copy complete only
-      # once the whole download landed). Only Linux needs the system libraries; on Windows `--with-deps` installed
-      # the Media Foundation feature, three minutes of every Windows share.
+      # once the whole download landed). No system packages: the hosted images already carry what the headless shell
+      # needs (every browser file passed without them on run 36461239418), and `--with-deps` spent 13 to 38 s of
+      # every Linux share on apt; on Windows it installed the Media Foundation feature, three minutes a share.
       - id: playwright
         shell: bash
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
@@ -86,7 +151,7 @@ jobs:
             ~/Library/Caches/ms-playwright
             ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-headless-shell
-      - run: npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium --only-shell
+      - run: npx playwright install chromium --only-shell
       # Ubuntu 24.04 turns off unprivileged user namespaces, which is what Electron's own sandbox is
       # built on, so every desktop test died with "Process failed to launch!" before reaching a
       # single assertion. This relaxes it on the build machine only. The app is not changed.
@@ -101,13 +166,24 @@ jobs:
         run: node dist/cli.js run "Write, read and verify the fixture file."
         env:
           BRANCH_PROVIDER: demo
+      # A partial run's Linux shares split the plan's selection instead of the whole lane.
+      - if: matrix.selected
+        shell: bash
+        env:
+          SELECTED: ${{ needs.plan.outputs.selected }}
+        run: printf '%s' "$SELECTED" > "$RUNNER_TEMP/selected-tests.json"
       # Linux has no screen on the runner; Electron and browser tests draw into a virtual one.
       - shell: bash
-        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}node scripts/run-tests.mjs --lane=${{ matrix.lane }} --shard=${{ matrix.shard }}/${{ matrix.total }}
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}node scripts/run-tests.mjs --lane=${{ matrix.lane }} --shard=${{ matrix.shard }}/${{ matrix.total }}${{ matrix.selected && format(' --files-from={0}/selected-tests.json', runner.temp) || '' }}
         env:
           BRANCH_TEST_TIMINGS: ${{ runner.temp }}/test-timings.json
           BRANCH_TEST_CONCURRENCY: ${{ matrix.concurrency }}
           BRANCH_TEST_FILE_TIMEOUT: '360'
+          # Every file, and every `branch` a CLI test starts, loads the same ~1,200 built modules; V8's compiled code
+          # is kept on disk for the share, so each process after the first skips compiling them. It is checked
+          # against each module's source, so a changed file is compiled afresh. Measured on run 36461239418: the
+          # files that start the CLI took 377 s instead of 570 s.
+          NODE_COMPILE_CACHE: ${{ runner.temp }}/node-compile-cache
       # How long each file took, so tests/shard-weights.json can be refreshed from a real run.
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -116,21 +192,56 @@ jobs:
           path: ${{ runner.temp }}/test-timings.json
           if-no-files-found: ignore
           retention-days: 14
-  # The one check to require. It runs even when a share fails, so the check is red rather than skipped, and it is
-  # green only when every share of every lane passed.
+  # The one check to require. It runs even when a share fails, so the check is red rather than skipped. On a pull
+  # request it is green only when the plan ran and every share it planned passed (a documentation-only one plans
+  # none); anywhere else only when there was no plan, so the whole suite ran and passed, since promote follows it.
+  # A partial run says so. A cancelled run (replaced by a newer push, or waiting for a CI slot) is left cancelled,
+  # not red. At the end, the run hands its CI slot on: the oldest waiting pull request is started again.
   verify:
     name: verify-suite
-    needs: [test]
-    if: always()
+    needs: [plan, test]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
     steps:
-      - name: Every share of every lane passed
+      - name: The plan ran, and every share it planned passed
         env:
+          PLAN: ${{ needs.plan.result }}
+          MODE: ${{ needs.plan.outputs.mode }}
           TEST: ${{ needs.test.result }}
+          EVENT: ${{ github.event_name }}
+          SUMMARY: ${{ needs.plan.outputs.summary }}
         run: |
-          echo "tests: $TEST"
-          test "$TEST" = success
+          if [ "$EVENT" = pull_request ]; then test "$PLAN" = success; else test "$PLAN" = skipped; MODE=full; fi
+          echo "plan: $PLAN, mode: $MODE, tests: $TEST"
+          if [ "$MODE" = docs ]; then
+            test "$EVENT" = pull_request
+            test "$TEST" = skipped
+            echo "::notice::Documentation only: no test file ran."
+          else
+            test "$TEST" = success
+          fi
+          if [ -n "$SUMMARY" ]; then printf '%s' "$SUMMARY" | jq -r '.[]' | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$MODE" = partial ]; then
+            echo "::notice::PARTIAL: only the test files this change reaches ran. The whole suite runs on the merge into redesign/window."
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: always()
+        with:
+          sparse-checkout: |
+            scripts/ci-queue.mjs
+            tests/test-impact.json
+          sparse-checkout-cone-mode: false
+      - name: Hand the CI slot on
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_id }}
+        run: node scripts/ci-queue.mjs restart --run="$RUN"
   # Every merge reaches the owner: once the whole suite passed on a push to redesign/window, mac/cross-platform (the line
   # the owner's Beta and Dev app follows) is moved to that very commit. Fast-forward only: a plain `git push` refuses
   # anything else, so a commit that is not ahead of mac/cross-platform is reported, never merged and never forced. An

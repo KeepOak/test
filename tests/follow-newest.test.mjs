@@ -56,6 +56,21 @@ async function scrollUp(page) {
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
   for (let i = 0; i < 20 && await top(page) > 0; i += 1) await page.mouse.wheel(0, -2000);
 }
+/* Where a scroll up by the keyboard comes to rest. The browser animates it, and on a busy machine it lands frames after
+   the key: false if the view never moved up; otherwise its top once three frames in a row found it still. */
+async function restedUp(page) {
+  const moved = await page.waitForFunction(() => { const box = document.getElementById("scroll"); return box.scrollHeight - box.scrollTop - box.clientHeight > 80; },
+    null, { timeout: 10000 }).then(() => true, () => false);
+  if (!moved) return false;
+  let last = -1;
+  for (let still = 0; still < 3;) {
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const now = await top(page);
+    still = now === last ? still + 1 : 0;
+    last = now;
+  }
+  return last;
+}
 const row = (page, words) => page.locator('#side [data-act="chat"]').filter({ hasText: words });
 /* A redraw of the open conversation, as the person causes one (switching light or dark draws the window again), with a
    control that the conversation really was drawn again. */
@@ -161,17 +176,15 @@ test("Q197 Shift+Space, and a key pressed with the focus on the page itself, cou
   assert.ok((await gap(page)) <= 80, "control: following after the answer");
   await page.locator("#conversation").click();
   await page.keyboard.press("Shift+Space");
-  await page.waitForTimeout(300);
-  const read = await top(page);
-  assert.ok((await gap(page)) > 80, "control: Shift+Space scrolled up");
+  const read = await restedUp(page);
+  assert.ok(read !== false, "control: Shift+Space scrolled up");
   await redrawn(page);
   assert.equal(await top(page), read, "Shift+Space in the conversation counts as reading: a redraw leaves the view");
   await page.evaluate(() => document.getElementById("scroll").scrollTo(0, document.getElementById("scroll").scrollHeight));
   await page.evaluate(() => { document.activeElement?.blur(); });
   await page.keyboard.press("PageUp");
-  await page.waitForTimeout(300);
-  const paged = await top(page);
-  assert.ok((await gap(page)) > 80, "control: PageUp scrolled up");
+  const paged = await restedUp(page);
+  assert.ok(paged !== false, "control: PageUp scrolled up");
   await redrawn(page);
   assert.equal(await top(page), paged, "PageUp with the focus on the page itself counts as reading");
   assert.deepEqual(errors, []);
