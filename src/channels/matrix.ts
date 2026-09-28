@@ -132,6 +132,7 @@ export class MatrixAdapter implements ChannelAdapter {
     return messages;
   }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    if (event.type === "m.reaction") return this.fromReaction(roomId, event);
     if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text") return null;
     const text = event.content.body ?? "", sender = event.sender ?? "";
     if (!text || !sender || sender === this.options.userId) return null;
@@ -208,6 +209,38 @@ export class MatrixAdapter implements ChannelAdapter {
     return { msgtype: "m.text", body: text,
       ...(!format?.plain && format?.spans?.length ? { format: "org.matrix.custom.html", formatted_body: matrixHtml(text, format.spans) } : {}) };
   }
+  /**
+   * CHAT-063: Matrix has no buttons, so a question carries reactions to tap. The words go out with the answers named,
+   * then the assistant puts each answer's reaction on its own question, so a tap is one touch; a reaction by anybody
+   * else on that question is read back as that answer (the homeserver vouches for who reacted).
+   */
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[]): Promise<string | undefined> {
+    const choices = buttons.map((button) => ({ ...button, emoji: button.value.startsWith("y") ? "👍" : button.value.startsWith("n") ? "👎" : "✅" }));
+    const named = choices.map((choice) => `${choice.emoji} ${choice.label}`).join("   ");
+    const short = await this.send(chatId, `${text}\n\nReact ${named} (or reply y or n).`);
+    const eventId = short ? this.sent.get(short) : undefined;
+    if (!eventId) return short;
+    this.questions.set(eventId, new Map(choices.map((choice) => [choice.emoji, choice.value])));
+    if (this.questions.size > 50) this.questions.delete(this.questions.keys().next().value!);
+    for (const choice of choices)
+      await this.put(chatId, { "m.relates_to": { rel_type: "m.annotation", event_id: eventId, key: choice.emoji } }, "m.reaction").catch(() => undefined);
+    return short;
+  }
+  /** A reaction on one of its questions, by anybody but the assistant, as an addressed message carrying that answer. */
+  private fromReaction(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const relates = z.object({ rel_type: z.literal("m.annotation"), event_id: z.string(), key: z.string() }).passthrough()
+      .safeParse((event.content as Record<string, unknown> | undefined)?.["m.relates_to"]);
+    const sender = event.sender ?? "";
+    if (!relates.success || !sender || sender === this.options.userId) return null;
+    const value = this.questions.get(relates.data.event_id)?.get(relates.data.key.replace(/️/g, ""));
+    if (!value) return null;
+    const chatId = handle(roomId, "room");
+    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
+      text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+  }
+  /** Questions this adapter asked with reactions: the question's event, and what each reaction on it answers. */
+  private readonly questions = new Map<string, Map<string, string>>();
   private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message"): Promise<string | undefined> {
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${randomUUID()}`;

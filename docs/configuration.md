@@ -6036,13 +6036,18 @@ When a task started from Telegram or Discord stops to ask whether it may go ahea
 put in that chat with buttons: Yes, Yes always (only for a task you started yourself, the same rule
 the app's own card follows; a task a chat message started never counts as that, so a chat gets only
 Yes and No) and No. Telegram uses an inline keyboard, Discord an action row of
-message components. Each button carries its answer and the fingerprint of the exact request, so a
+message components, and Slack Block Kit buttons (the wizard's Slack app has interactivity on; a press
+arrives over Socket Mode as `block_actions`, only Branch's own `branch_answer_*` buttons count, and the
+buttons stay as on Telegram, so a press the router refuses never takes them from the person who may answer). Matrix has no buttons, so the question names
+👍 and 👎 and the assistant puts both reactions on it to tap; a reaction by anybody but the assistant on
+that question is read as that answer, and any other reaction is not. Each button carries its answer and the fingerprint of the exact request, so a
 yes cannot be replayed against a different one, and the conversation it belongs to is worked out
 from the chat rather than carried in the button — Telegram allows only 64 bytes there.
 
-A channel with no buttons — WhatsApp, email — gets the same question with "Reply y for yes, a for
-yes always, or n for no." A bare `y`, `a` or `n` from a chat whose conversation has a question
-waiting answers it; anything longer is an ordinary message, whatever it happens to say. The answer
+A channel with no buttons — WhatsApp, Signal, email and the rest — gets the same question with "Reply
+y for yes, or n for no (or send /approve or /deny)." A bare `y`, `a` or `n`, or `/approve` (`/yes`) and
+`/deny` (`/no`), from a chat whose conversation has a question waiting answers it (with nothing
+waiting, `/approve` and `/deny` say so rather than starting a task); anything longer is an ordinary message, whatever it happens to say. The answer
 goes through the same approval path as the app's own card, and the record of what the assistant was
 allowed to do says which chat app it was answered on.
 
