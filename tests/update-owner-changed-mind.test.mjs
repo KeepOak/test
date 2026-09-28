@@ -41,7 +41,7 @@ test("the engine's readiness carries the owner's update-by-itself choice, read f
   app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "install", releaseChannel: "dev" });
   const first = await updateReadiness(loopback, server.token);
   // A Dev choice saved before Beta became the source build is Beta.
-  assert.deepEqual(first, { channel: "beta", busyTasks: 0, autoUpdate: "install" });
+  assert.deepEqual(first, { channel: "beta", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   assert.equal(changedMind(first, { channel: "beta", automatic: true }), null);
   app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "off", releaseChannel: "dev" });
   const later = await updateReadiness(loopback, server.token);

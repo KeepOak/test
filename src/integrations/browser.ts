@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
+import { instructionsRemovedNote, withoutInstructions } from '../content-guard.js';
 import { carriedData } from '../egress-guard.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
@@ -638,7 +639,7 @@ export class BranchBrowser {
     return this.operation(context, async page => {
       const tree = await page.locator('body').ariaSnapshot();
       const { hidden, typed } = await this.pageSecrets(context, page);
-      return { url: page.url(), accessibility: scrubSnapshot(tree, hidden, typed).slice(0, 16000) };
+      return pageText({ url: page.url(), accessibility: scrubSnapshot(tree, hidden, typed).slice(0, 16000) });
     });
   }
   /**
@@ -697,11 +698,11 @@ export class BranchBrowser {
     return this.operation(context, page => waitFor(page, options));
   }
   async extract(options: z.infer<typeof ExtractSchema>, context: ToolContext) {
-    return this.operation(context, async page => extract(page, options, (await this.pageSecrets(context, page)).hidden));
+    return this.operation(context, async page => pageText(await extract(page, options, (await this.pageSecrets(context, page)).hidden)));
   }
   /** Data in the exact shape the assistant asked for, or a refusal naming the field that did not fit. */
   async extractShaped(options: z.infer<typeof ExtractSchemaSchema>, context: ToolContext) {
-    return this.operation(context, async page => extractSchema(page, options, (await this.pageSecrets(context, page)).hidden));
+    return this.operation(context, async page => pageText(await extractSchema(page, options, (await this.pageSecrets(context, page)).hidden)));
   }
   /**
    * Numbers everything on the page that can be pressed or typed into and hands back the list. The
@@ -1394,3 +1395,9 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
 }
 
 export { trunkProfileName, isTrunkProfile, trunkProfilePrefix } from './browser-profiles.js';
+
+/** What the browser read off a page, with lines that give the assistant orders taken out (src/content-guard.ts). */
+function pageText<T extends object>(result: T): T & { note?: string } {
+  const { value, removed } = withoutInstructions(result);
+  return removed ? { ...value, note: instructionsRemovedNote(removed) } : value;
+}
