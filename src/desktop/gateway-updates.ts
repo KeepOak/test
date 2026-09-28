@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Updater, UpdateDeferredError, type LiveHooks } from "./updater.js";
+import { WindowUpdateDeferred } from "./live-window-ipc.js";
 import { versionedLayout } from "./app-folders.js";
 import { UpdateLoop, type LoopPlan } from "./update-loop.js";
 import { installedAppRoot } from "./install-root.js";
@@ -32,6 +33,8 @@ export interface GatewayUpdatesOptions {
   snapshot: () => Promise<string>;
   backup: () => Promise<void>;
   scratchDir: string;
+  /** Runs an install as the broker's one adoption at a time (gateway-live.ts gatewayApplyOwner), begun with no shell. */
+  adopt?: <T>(action: () => Promise<T>) => Promise<T>;
 }
 
 export async function gatewayUpdates(options: GatewayUpdatesOptions): Promise<{ loop: UpdateLoop; updater: Updater }> {
@@ -69,7 +72,11 @@ export async function gatewayUpdates(options: GatewayUpdatesOptions): Promise<{ 
       if (options.shellOpen()) throw new UpdateDeferredError("A window opened, so it takes the update.");
       // Live changes (window and engine) go through this gateway's own engine, as a window's would.
       updater.useLive(options.live());
-      const installed = await updater.install({ automatic: true });
+      const adopt = options.adopt ?? (<T>(action: () => Promise<T>) => action());
+      const installed = await adopt(() => updater.install({ automatic: true })).catch((error: unknown) => {
+        if (error instanceof WindowUpdateDeferred) throw new UpdateDeferredError(error.message);
+        throw error;
+      });
       if ("live" in installed) return;
       // A new version of the app itself: in use from the next window. Nothing runs from it yet, so no script is needed.
       try {

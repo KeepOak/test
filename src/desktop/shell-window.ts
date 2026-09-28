@@ -81,6 +81,15 @@ export async function resumeWindow(options: { ipc: Pick<IpcMain, "on" | "removeA
   };
 }
 
+/**
+ * A start with no window (in the tray, the window made only when the owner opens it): this version is up once main is
+ * ready and its engine answers, so the switch script keeps it. What the old window had open waits for the first window
+ * (resumeWindow takes it then, for as long as a hand-over is kept).
+ */
+export async function shellUpWithoutWindow(options: { scratchDir: string; version: string }): Promise<void> {
+  await markShellUp(options.scratchDir, options.version, process.pid, null);
+}
+
 /** Old program folders a persisted path may still name: the flat copy and every app-<version> in this root. */
 export function sameInstall(root: string, path: string): boolean {
   const norm = (value: string) => value.replace(/\//g, "\\").toLowerCase();

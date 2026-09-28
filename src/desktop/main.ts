@@ -105,6 +105,14 @@ let engine: EngineHost | undefined;
 let liveWindowNow: InUse | null = null;
 let tellWindow: (update: WindowUpdate) => Promise<void> = () => Promise.reject(new UpdateDeferredError("The window is not open yet."));
 let recoverWindow: () => Promise<void> = () => Promise.resolve();
+/**
+ * hot-update: with no window open (none yet, as after a start in the tray, or closed for good) there is no page to tell
+ * or restore, so a live update goes ahead: the next window opens on the files served then. A window that is open but
+ * cannot take the update still holds it (tellWindow defers).
+ */
+const noWindowOpen = (): boolean => !window || window.isDestroyed();
+const tellOpenWindow = (update: WindowUpdate): Promise<void> => noWindowOpen() ? Promise.resolve() : tellWindow(update);
+const recoverOpenWindow = (): Promise<void> => noWindowOpen() ? Promise.resolve() : recoverWindow();
 let closeCapture: () => void = () => undefined;
 let joinedBackground = false;
 let askingToQuit = false;
@@ -503,7 +511,7 @@ async function start(): Promise<void> {
       host: () => undefined, forkLive: forkEngine, runtime: process.execPath,
       snapshot: async () => engineSnapshot(running.url, key(), client.fetch),
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
-      tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(),
+      tellWindow: tellOpenWindow, recoverWindow: recoverOpenWindow,
     }).catch((error: Error) => { console.error("Background engine's update channel:", error.message); return null; }) : null;
     if (testHooksOn() && brokerLive) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: brokerLive.hooks, engineState: brokerLive.inspect };
     await createWindow(running.url, key, settings, {
@@ -541,7 +549,7 @@ async function start(): Promise<void> {
   const hot = liveHooks({ appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
     host: () => engine, forkLive: forkEngine,
     snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
-    tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
+    tellWindow: tellOpenWindow, recoverWindow: recoverOpenWindow, runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
     onEngineDeparture: () => closeCapture(),
     log: (line) => console.error(line) });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };

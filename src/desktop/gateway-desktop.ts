@@ -27,6 +27,7 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
   const { dataDir, appRoot } = options;
   if ((await desktopGatewayConfig(dataDir)).config.mode === "off") return null;
   let gateway: Gateway | null = null, live: LiveHooks | null = null, host: EngineHost | null = null;
+  let adoptedAlone: { ok: boolean; error?: string } | null = null;
   const power = new GatewayPowerPolicy({ blocker: powerSaveBlocker, events: powerMonitor,
     read: async () => { const saved = (await loadGatewayConfig(dataDir)).config;
       return { keepAwake: saved.keepAwake, gatewayDesired: saved.mode !== "off" }; },
@@ -41,6 +42,19 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
     },
     ...(!app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1" ? {
       "test-engine": () => ({ pid: host?.pid, handingOver: host?.handingOver, running: host?.running }),
+      // The gateway updating itself with no window: the adoption begins once no shell is joined (the asking one left).
+      "test-adopt-alone": (args) => {
+        if (!live) throw new Error("The retained engine is not ready to update.");
+        const hooks = live;
+        adoptedAlone = null;
+        void (async () => {
+          while (control.current() !== null) await new Promise((wake) => setTimeout(wake, 50));
+          adoptedAlone = await owner.apply(() => applyGatewayLive(appRoot, hooks, args, () => undefined))
+            .then(() => ({ ok: true }), (error: Error) => ({ ok: false, error: error.message }));
+        })();
+        return true;
+      },
+      "test-adopted-alone": () => adoptedAlone,
     } : {}),
   }).catch((error: unknown) => { power.close(); throw error; });
   const owner = gatewayApplyOwner(control);
@@ -70,6 +84,7 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
       return answer;
     });
     const { loop } = await gatewayUpdates({ dataDir, appRoot, scratchDir: updateScratchDir(), shellOpen: () => control.current() !== null, live: () => live,
+      adopt: (action) => owner.apply(action),
       engine: call,
       snapshot: async () => { const body = await call("/api/never-break/snapshot", {}) as { folder?: unknown }; if (typeof body?.folder !== "string") throw new Error("The retained engine did not make an update copy."); return body.folder; },
       backup: () => engine(async (client, url) => { await requestUpdateBackup(url, "", { fetch: client.fetch }); }) });
