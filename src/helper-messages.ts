@@ -63,6 +63,8 @@ export const StartHelperSchema = HelperSelectionSchema.extend({
   permissions: z.array(z.string().min(1).max(100)).max(200).optional(),
   /** How long it may work, in minutes (1 to 120). */
   minutes: z.number().int().min(1).max(120).default(30),
+  /** SELF-302: work in its own copy of the project (a git worktree), so helpers started together never edit the same files. The copy is removed when it holds nothing; one with work in it is kept and named. */
+  ownCopy: z.boolean().default(false),
 }).strict();
 
 const helperInstructions = "You are a helper working in the background for the task that started you (your lead). Do the brief you were given. "
@@ -72,14 +74,14 @@ const helperInstructions = "You are a helper working in the background for the t
 export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime): void {
   registry.register({
     name: "helpers.start", permission: "specialists.use", group: "agents",
-    description: "Start a helper that works on a brief in the background while you carry on, with some or all of your tools, on a chosen model or account. You are told when it finishes; message it with helpers.message while it works.",
+    description: "Start a helper that works on a brief in the background while you carry on, with some or all of your tools, on a chosen model or account, and (ownCopy) in its own copy of the project so helpers started together never touch the same files. Start several at once for parallel work. You are told when each finishes; message it with helpers.message while it works.",
     parameters: StartHelperSchema,
     // The rules judge the exact model and account a helper is sent to, as for every other hand-off.
     target: (a) => helperRouteTarget([{ specialist: "helper", ...(a.model ? { model: a.model } : {}), ...(a.accountRef ? { accountRef: a.accountRef } : {}) }]),
     execute: async (input, context: ToolContext) => {
       const permissions = input.permissions ?? [...context.permissions];
       const started = await runtime.delegateBackground(input.brief, context, permissions, helperInstructions,
-        { timeoutMs: input.minutes * 60_000, tellsLead: true, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
+        { timeoutMs: input.minutes * 60_000, tellsLead: true, ownCopy: input.ownCopy === true, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
       return { helper: started.childRunId, minutes: input.minutes, note: "It works in the background; you are told when it finishes." };
     },
   });
