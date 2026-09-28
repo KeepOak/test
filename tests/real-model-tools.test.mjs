@@ -516,7 +516,9 @@ test("a local model's room comes from what it was made for, held to this compute
 test("Ollama is told the room, and the task's budget stays inside it", async (t) => {
   const chats = [];
   const fetchImpl = async (url, init) => {
-    if (String(url).endsWith("/api/show")) return new Response(JSON.stringify({ model_info: { "llama.context_length": 9216 } }), { status: 200 });
+    // A sized fixture has a fixed room even while other lanes use this computer's memory.
+    if (String(url).endsWith("/api/show")) return new Response(JSON.stringify({ model_info: { "llama.context_length": 9216 },
+      parameters: "num_ctx 9216" }), { status: 200 });
     chats.push(JSON.parse(init.body));
     return new Response(JSON.stringify({ message: { content: "Hello." }, done: true, prompt_eval_count: 10, eval_count: 3 }), { status: 200 });
   };
