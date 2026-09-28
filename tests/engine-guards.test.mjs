@@ -137,3 +137,18 @@ test("ordinary code comments are not taken out of a file, and a file read with a
   await assert.rejects(app.registry.execute("files.write", { path: "notes.md", content: guarded.content + "more\n" }, context), /files\.edit/);
   assert.match(await readFile(join(workspace, "notes.md"), "utf8"), /HACKED/, "the line is still in the file");
 });
+
+test("a fact saved in the same instant as the one it replaces still ends it", async (t) => {
+  const { app } = await fixture(t, [say("ok")]);
+  const run = await app.runtime.run({ prompt: "setup" });
+  const context = app.runtime.context({ runId: run.id });
+  const realNow = Date.now;
+  const frozen = realNow();
+  Date.now = () => frozen;
+  t.after(() => { Date.now = realNow; });
+  await app.registry.execute("memory.put", { text: "I live in Atlanta.", source: "the person", validFrom: new Date(frozen).toISOString() }, context);
+  await app.registry.execute("memory.put", { text: "I live in Denver.", source: "the person", validFrom: new Date(frozen).toISOString() }, context);
+  Date.now = realNow;
+  const current = app.store.list("memory", "local").filter((record) => !record.data.validTo).map((record) => record.data.text);
+  assert.deepEqual(current, ["I live in Denver."]);
+});
