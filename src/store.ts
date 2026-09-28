@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Event, Message, Run, RunStatus } from "./contracts.js";
 import { reconcileTranscript } from "./transcript.js";
+import { notRunResult } from "./approved-call.js"; // QA R1
 import { SessionHistory } from "./history.js";
 import { SessionBranches, type ConversationFiles } from "./sessions.js";
 import { SessionLibrary } from "./session-library.js";
@@ -758,10 +759,8 @@ export class Store {
     if (typeof callId !== "string") return new Map();
     if (events.some((event) => event.kind === "policy.execution_unknown" && event.data.id === callId)) return new Map();
     const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId);
-    return new Map([[callId, JSON.stringify(approval
-      ? { ok: false, status: "interrupted", outcome: "not_run", error: "Not run: Branch stopped at this call to ask the person. When the task "
-        + "carries on after a yes (or after a restart), make this same call again, exactly as before; after a no, do not make it." }
-      : { ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
+    return new Map([[callId, approval ? notRunResult
+      : JSON.stringify({ ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
   }
   /**
    * After the person answers, the asking call's "not run" result says what they answered, so the model reads the same
@@ -776,6 +775,20 @@ export class Store {
       const content = JSON.stringify(allowed
         ? { ok: false, status: "allowed", outcome: "not_run", error: "The person said yes to this call. It has not run yet: make this same call again now, exactly as before." }
         : { ok: false, status: "refused", outcome: "not_run", error: "The person said no to this call. It did not run and will not; do not make it again." });
+      this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return true;
+    }
+    return false;
+  }
+  /**
+   * QA R1: the stored result of one call, replaced with what the engine now knows (the approved call it ran itself after the
+   * owner's yes). Only the newest result for that call is written; false when the conversation holds none.
+   */
+  setToolResult(sessionId: string, callId: string, content: string): boolean {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
       this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
       return true;
     }

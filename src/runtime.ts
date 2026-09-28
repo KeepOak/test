@@ -80,6 +80,7 @@ import { codeRunSettings } from "./code-run.js"; // mac7/speed
 import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
+import { alreadyRunResult, approvedWork, notRunResult, type ApprovedWork } from "./approved-call.js"; // QA R1
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
 import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation } from "./comfort/browser-safety.js"; // R17-S19
@@ -1504,8 +1505,11 @@ ${run.output.slice(0, 6000)}`;
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
         }), trunk);
-    if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom);
-    if (options.continuing) instructions += this.continueNote(run, options.continuing);
+    // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
+    // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
+    const approved = this.approvedFor(run, options);
+    if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom) + (approved ? resumedAskNote : "");
+    if (options.continuing) instructions += this.continueNote(run, options.continuing, approved !== null);
     if (!options.resumeFrom && !options.continuing?.allowed && !options.continuing?.refused) {
       // The files themselves are kept first: a message may only carry a reference to something real.
       // Where a file lives is decided by the conversation, not by the message that brought it. Only the
@@ -1574,7 +1578,9 @@ ${run.output.slice(0, 6000)}`;
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
     try {
       options.onStarted?.(run);
-      const work = (working: ToolContext) => this.loop(run, working, instructions, options.onTextDelta, {
+      const work = async (working: ToolContext) => {
+        if (approved) await this.runApproved(run, working, approved); // QA R1
+        return this.loop(run, working, instructions, options.onTextDelta, {
         ...(options.model !== undefined ? { preset: options.model } : {}),
         ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
       }, options.checks, options.images, {
@@ -1584,6 +1590,7 @@ ${run.output.slice(0, 6000)}`;
         ...(context.depth > 0 || (context.agent && (!trunk || trunk.roomTurn)) ? { delegated: true } : {}),
         ...(options.continuing ? { continuing: true } : {}),
       }, options.style);
+      };
       output = place && this.coding ? await this.coding.inPlace(place.scope, () => work({ ...context, workspace: place.workspace })) : await work(context);
     } catch (error) {
       status = this.failureStatus(context, error);
@@ -1618,6 +1625,7 @@ ${run.output.slice(0, 6000)}`;
     // running — so every task lets go of its ids here, child runs included.
     this.tracer.forget(run.id);
     this.guards.forget(run.id); // wave mac2 (guards)
+    this.engineRan.delete(run.id); // QA R1
     this.recordedSources.delete(run.id); // mac7/outside-resume
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
@@ -1762,15 +1770,17 @@ ${run.output.slice(0, 6000)}`;
    * uncertain outcome. The yes holds for those exact bytes only (a changed request is asked about again). A reply is the
    * person's newest message in the conversation.
    */
-  private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }): string {
+  private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }, engineRuns = false): string {
     const asked = this.store.events(run.id).filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
     const unknown = this.store.events(run.id).some((event) => event.kind === "policy.execution_unknown" && event.data.id === asked);
     if ((continuing.allowed || continuing.refused) && typeof asked === "string" && !unknown) {
       this.store.event(run.id, "run.call_not_run", { id: asked });
-      // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing.
-      this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
+      // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing. QA R1: after a
+      // yes the engine runs it, and its real result takes the placeholder's place (runApproved).
+      if (!engineRuns) this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
     }
     if (continuing.refused) return this.refusalNote(run, continuing.refused, unknown); // dogfood D5
+    if (continuing.allowed && engineRuns) return approvedRanNote; // QA R1
     if (continuing.allowed && unknown) return " The person allowed the blocked step. The outer call may already have changed something: check its actual state before repeating any action. The approval does not prove the outer call never ran." + this.resumeNote(run, run.id);
     return continuing.allowed
       ? " The person has now answered your question: they allowed the request, just this once. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again."
@@ -1788,6 +1798,62 @@ ${run.output.slice(0, 6000)}`;
     const unknown = unknownIds.size;
     this.store.event(run.id, "run.resumed", { from, unknownToolOutcomes: unknown });
     return " This task was interrupted and is now continuing from its saved transcript. A tool result marked outcome unknown may or may not have taken effect: check the actual state before repeating any action that changes something.";
+  }
+  /**
+   * QA R1: what the engine runs itself as this task carries on: after a yes to its exact request, the call that asked; after
+   * a restart cut off its question (Continue), the call that was never run, which the gate then asks about again or lets
+   * through on a yes still standing. Null when there is nothing (a reply, a No, a step asked from inside a tool after it
+   * started, or a call that has already run).
+   */
+  private approvedFor(run: Run, options: RunOptions): ApprovedWork | null {
+    if (!options.continuing?.allowed && !options.resumeFrom) return null;
+    const from = options.continuing?.runId ?? options.resumeFrom!;
+    const events = this.store.events(from);
+    const kind = options.continuing ? "attention.needed" : "run.call_not_run";
+    const last = events.filter((event) => event.kind === kind).at(-1)?.data;
+    const asked = options.continuing ? last?.callId : last?.id;
+    if (typeof asked !== "string") return null;
+    const work = approvedWork(events, this.store.messages(run.sessionId), asked);
+    return work.run.length || work.finished ? work : null;
+  }
+  /**
+   * QA R1: runs the approved call as the model asked for it (the same id and the very same bytes, so the yes still binds
+   * it), through oneCall: the journal, the loop guard, the gate with its rules and remembered answers, receipts and
+   * events. Its result replaces the "not run" placeholder. A gate that asks again stops the task on the same call.
+   */
+  private async runApproved(run: Run, context: ToolContext, work: ApprovedWork): Promise<void> {
+    if (work.finished) {
+      const { call, outcome } = work.finished;
+      this.store.event(run.id, "run.approved_call", { id: call.id, name: call.name, ranBefore: true });
+      this.store.setToolResult(run.sessionId, call.id, this.clipped(run, call, JSON.stringify(outcome)));
+    }
+    for (const [at, call] of work.run.entries()) {
+      // A later call of the same reply never started: until it runs, it is a call that has not run, not one that may have.
+      if (at > 0) this.store.setToolResult(run.sessionId, call.id, notRunResult);
+      this.store.event(run.id, "run.approved_call", { id: call.id, name: call.name, ...(at > 0 ? { sameReply: true } : {}) });
+      this.noteWork(run, call);
+      this.rememberToolWork(run.id, call.name, 0);
+      const outcome = await this.oneCall(run, context, call);
+      this.store.setToolResult(run.sessionId, call.id, this.clipped(run, call, JSON.stringify(outcome)));
+      const ran = this.engineRan.get(run.id) ?? [];
+      ran.push({ id: call.id, name: call.name, canon: canonicalArguments(call.arguments), outcome });
+      this.engineRan.set(run.id, ran);
+    }
+  }
+  /** QA R1: calls the engine ran itself after a yes, by task, so a model that makes one again is handed its result. */
+  private readonly engineRan = new Map<string, { id: string; name: string; canon: string; outcome: unknown }[]>();
+  /**
+   * QA R1: a model that makes the approved call again anyway (the same tool and the same arguments, in any key order) is
+   * handed the result of the one the engine ran, once, and nothing runs a second time.
+   */
+  private approvedRepeat(runId: string, call: ToolCall): Record<string, unknown> | null {
+    const ran = this.engineRan.get(runId);
+    const canon = canonicalArguments(call.arguments);
+    const at = ran?.findIndex((one) => one.name === call.name && one.canon === canon) ?? -1;
+    if (!ran || at < 0) return null;
+    const [first] = ran.splice(at, 1);
+    this.store.event(runId, "run.approved_repeat", { id: call.id, name: call.name, of: first!.id });
+    return alreadyRunResult(first!.outcome);
   }
   /**
    * Dogfood D5: what a task carrying on after the owner's No is told (like a yes, the request is not quoted back: its
@@ -2286,6 +2352,8 @@ ${run.output.slice(0, 6000)}`;
    * waited on at once. Nothing is shared between two calls but the clock.
    */
   private oneCall(run: Run, context: ToolContext, call: ToolCall): Promise<unknown> {
+    const repeat = this.approvedRepeat(run.id, call); // QA R1
+    if (repeat) return Promise.resolve(repeat);
     // mac3/never-break: each call is written to the task journal, flushed, before it runs.
     return this.journal.around({ runId: run.id, sessionId: run.sessionId, call, workspace: context.workspace, signal: context.signal,
       permission: this.registry.permissionOf(call.name) }, () => {
@@ -4646,6 +4714,14 @@ const aloneTools = [expandToolName, toolSearchName, toolDescribeName, toolNoteNa
 function safeArguments(text: string): unknown {
   try { return JSON.parse(text); } catch { return {}; }
 }
+
+/** QA R1: what a task carrying on after a yes is told, once the engine has run the approved call itself. */
+const approvedRanNote = " The person has now answered your question: they allowed the request. Branch has now carried out that exact"
+  + " call itself (it had not run before), and what came of it is in the conversation as that call's result. Do not make that"
+  + " call again: carry on with the task from that result.";
+/** QA R1: added to the resume note when a call whose question was lost has been put through again by Branch itself. */
+const resumedAskNote = " A call that had stopped to ask the person was put through again by Branch itself; what came of it is in"
+  + " the conversation as that call's result. Do not make that call again.";
 
 /** mac7/speed: the room the one last question gets, its own, so a long task still gets an answer. */
 const lastWordTokens = 16000;
