@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { cleanChildEnvironment } from "../child-env.js";
 import { agentPromptFrom } from "../providers/cli-agent.js";
+import { startCall } from "../windows-command.js";
 
 /**
  * A0601: Codex's app-server as a backend. Where the owner has OpenAI's `codex` program installed and
@@ -22,16 +23,18 @@ export interface AppServerChild {
   onExit(listener: (code: number | null, missing: boolean) => void): void;
   stop(): void;
 }
-export type StartAppServer = (command: string) => AppServerChild;
+/** `env`: the program's whole environment (an account's own folder included); absent is codexEnvironment(). */
+export type StartAppServer = (command: string, env?: NodeJS.ProcessEnv) => AppServerChild;
 
 /** Branch's short allowlist (src/child-env.ts), plus where Codex keeps its own sign-in when moved. */
 export function codexEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return { ...cleanChildEnvironment(source), ...(source.CODEX_HOME ? { CODEX_HOME: source.CODEX_HOME } : {}) };
 }
 
-export const startCodexAppServer: StartAppServer = (command) => {
-  const env = codexEnvironment();
-  const child = spawn(command, ["app-server"], { stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true, env });
+export const startCodexAppServer: StartAppServer = (command, env = codexEnvironment()) => {
+  // An npm-installed codex is a .cmd launcher on Windows, started through its script with no shell (src/windows-command.ts).
+  const start = startCall(command, ["app-server"], env);
+  const child = spawn(start.command, start.args, { stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true, env });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   const listeners: ((message: Record<string, unknown>) => void)[] = [];
   lines.on("line", (line) => {
@@ -58,8 +61,11 @@ class Turn {
   private nextId = 1;
   private readonly waiting = new Map<number, (message: Message) => void>();
   private text = "";
+  /** True once Codex answered the handshake: a program that exits before then has no app-server to speak. */
+  greeted = false;
   constructor(private readonly child: AppServerChild, private readonly request: CompletionRequest,
-    private readonly done: (error: Error | null, text: string) => void, private readonly version: string) {
+    private readonly done: (error: Error | null, text: string) => void, private readonly version: string,
+    private readonly thread: CodexThreadOptions = {}) {
     child.onMessage((message) => this.receive(message as Message));
   }
   private ask(method: string, params: Record<string, unknown>): Promise<Message> {
@@ -95,9 +101,11 @@ class Turn {
   }
   async start(): Promise<void> {
     const hello = await this.ask("initialize", { clientInfo: { name: "branch_agent", title: "Branch Agent", version: this.version }, capabilities: null });
-    if (hello.error) throw new Error(`Codex refused to start: ${hello.error.message ?? "no reason given"}`);
+    if (hello.error) throw Object.assign(new Error(`Codex refused to start: ${hello.error.message ?? "no reason given"}`), { appServerUnavailable: true });
+    this.greeted = true;
     this.child.send({ method: "initialized" });
-    const thread = await this.ask("thread/start", { approvalPolicy: "never", sandbox: "read-only", ephemeral: true });
+    const thread = await this.ask("thread/start", { approvalPolicy: "never", sandbox: "read-only", ephemeral: true,
+      ...(this.thread.model ? { model: this.thread.model } : {}), ...(this.thread.cwd ? { cwd: this.thread.cwd } : {}) });
     const threadId = (thread.result?.thread as { id?: string } | undefined)?.id;
     if (!threadId) throw new Error(`Codex did not open a conversation: ${thread.error?.message ?? "no reason given"}`);
     const turn = await this.ask("turn/start", { threadId, input: [{ type: "text", text: agentPromptFrom(this.request), text_elements: [] }] });
@@ -105,19 +113,23 @@ class Turn {
   }
 }
 
+/** QA 2026-09-28: the model and folder a Codex-as-model turn uses, so Codex's own settings never decide either. */
+export interface CodexThreadOptions { model?: string; cwd?: string; env?: NodeJS.ProcessEnv; silenceMs?: number }
+
 export class CodexAppServerProvider implements Provider {
   readonly name = "app-server:codex";
   constructor(private readonly command = "codex", private readonly start: StartAppServer = startCodexAppServer,
-    private readonly version = "0", private readonly timeoutMs = 300_000) {}
+    private readonly version = "0", private readonly timeoutMs = 300_000, private readonly thread: CodexThreadOptions = {}) {}
 
   complete(request: CompletionRequest): Promise<Completion> {
-    const child = this.start(this.command);
+    const child = this.thread.env ? this.start(this.command, this.thread.env) : this.start(this.command);
     return new Promise<Completion>((resolve, reject) => {
       let settled = false;
       const finish = (error: Error | null, text: string): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearTimeout(quiet);
         request.signal.removeEventListener("abort", abort);
         child.stop();
         if (error) reject(error);
@@ -127,11 +139,20 @@ export class CodexAppServerProvider implements Provider {
       const abort = (): void => finish(new Error("The request was stopped."), "");
       const timer = setTimeout(() => finish(new Error("Codex took too long and was stopped. Ask again, or pick another model."), ""), this.timeoutMs);
       timer.unref?.();
+      // QA 2026-09-28: a Codex that says nothing at all for a while is stuck; stopped with a plain reason.
+      let quiet: ReturnType<typeof setTimeout> | undefined;
+      const silence = this.thread.silenceMs;
+      const hush = (): void => {
+        clearTimeout(quiet);
+        if (silence) (quiet = setTimeout(() => finish(new Error(`Codex said nothing at all for ${Math.round(silence / 1000)} seconds, so it was stopped. Run codex in a terminal to check it starts, then retry or pick another model.`), ""), silence)).unref?.();
+      };
+      if (silence) { hush(); child.onMessage(hush); }
       request.signal.addEventListener("abort", abort, { once: true });
-      child.onExit((code, missing) => finish(new Error(missing
+      const turn = new Turn(child, request, finish, this.version, this.thread);
+      child.onExit((code, missing) => finish(Object.assign(new Error(missing
         ? `"${this.command}" is not on this computer, so Branch cannot use Codex. Install it, or pick another model.`
-        : `Codex stopped (${code ?? "killed"}) before it finished answering.`), ""));
-      new Turn(child, request, finish, this.version).start().catch((error: Error) => finish(error, ""));
+        : `Codex stopped (${code ?? "killed"}) before it finished answering.`), turn.greeted || missing ? {} : { appServerUnavailable: true }), ""));
+      turn.start().catch((error: Error) => finish(error, ""));
     });
   }
   modelsList(): null { return null; }
