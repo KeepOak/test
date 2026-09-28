@@ -902,7 +902,7 @@ export class ChannelRouter {
     const typed = typedApproval(message.text);
     const answered = await this.answerApproval(message.channel, message.chatId, typed ?? message.text.trim(), message).catch(() => null);
     if (!answered && typed) {
-      await this.deliver(message.channel, message.chatId, nothingToApprove, `answer-none:${message.messageId}`, message.messageId).catch(() => undefined);
+      await this.deliver(message.channel, message.chatId, nothingToApprove, `answer-none:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
       return "replied";
     }
     if (answered) {
