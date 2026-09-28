@@ -60,8 +60,13 @@ export function init() {
   initMore17();
   const reading = loadGateway();
   on("gw-prop", (el) => answerProposal(el.dataset.v === "use"));
-  markLive(["sw:gw-mode", "sw:gw-carry", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
+  markLive(["sw:gw-mode", "sw:gw-carry", "sw:gw-keep-awake", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
   document.addEventListener("change", async (e) => {
+    if (e.target.id === "gw-keep-awake") {
+      try { await api("never-break", { keepAwake: e.target.checked }); } catch (error) { toast(error.message); }
+      await loadGateway();
+      return;
+    }
     if (e.target.id === "gw-mode") {
       try { await api("never-break", { mode: e.target.checked ? "when-needed" : "off" }); } catch (error) { toast(error.message); }
       await loadGateway();
@@ -80,7 +85,7 @@ export function init() {
   return reading;
 }
 
-/* The Gateway switch is drawn from the engine's saved mode, so Settings waits for this page's read. */
+/* The Gateway switch is the saved preference; the status above it comes from the running engine. */
 export const waitFirst = true;
 
 export async function load() {
@@ -94,12 +99,15 @@ const BASE = () => `<h1>${t("window.settings.gateway.gateway")}</h1><p class="le
    runGatewayIfSwitchedOn), so just after the switch goes on the page says so rather than that it is running. */
 function statusSection(gw) {
   if (!gw) return "";
-  const on = gwOn(gw.mode), running = on && gw.underGateway === true;
-  const [title, desc, dot] = running
+  const saved = gwOn(gw.mode), running = gw.underGateway === true;
+  // What runs now, not only what is saved: running (or still stopping after OFF), switched on for the next start, or off.
+  const [title, desc, dot] = running && saved
     ? [t("window.settings.gateway.the-gateway-is-on"), t("window.settings.gateway.on-telegram-your-phone-and-automations"), "ok"]
-    : on
-      ? [t("window.settings.gateway.the-gateway-is-switched-on"), t("window.settings.gateway.switched-on-takes-over-next-start"), "warn"]
-      : [t("window.settings.gateway.the-gateway-is-off"), t("window.settings.gateway.off-when-you-close-branch-your"), "bad"];
+    : running
+      ? [t("window.settings.gateway.the-gateway-is-on"), t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater"), "ok"]
+      : saved
+        ? [t("window.settings.gateway.the-gateway-is-switched-on"), t("window.settings.gateway.switched-on-takes-over-next-start"), "warn"]
+        : [t("window.settings.gateway.the-gateway-is-off"), t("window.settings.gateway.off-when-you-close-branch-your"), "bad"];
   return `<div class="status"><span class="sdot ${dot}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
 }
 
@@ -107,13 +115,21 @@ function modeSection(gw) {
   const mode = gw?.mode ?? null;
   return `<div class="sec"><h2>${t("field.never-break-mode")}</h2><div class="ctl"><b>${t("window.settings.gateway.gateway")}</b><input class="sw" type="checkbox" id="gw-mode" data-sw="gw-mode" ${gwOn(mode) ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.gateway")}"><small>${t("window.settings.gateway.recommended-on-telegram-your-phone-and")}</small></div>`
     + `<div class="ctl"><b>${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}</b><input class="sw" type="checkbox" id="gw-carry" data-sw="gw-carry" ${mode === "on" ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}"><small>${t("window.settings.gateway.after-a-restart-safe-steps-carry")}</small></div>`
+    + keepAwakeRow(gw)
     + `<div class="ctl"><b>${t("window.settings.gateway.show-the-gateway-in-the-tray")}</b><input class="sw" type="checkbox" id="gw-tray" aria-label="${t("window.settings.gateway.show-the-gateway-in-the-tray")}" data-sw="set"><small>${t("window.settings.gateway.a-small-branch-icon-by-the")}</small></div></div>`;
+}
+
+function keepAwakeRow(gw) {
+  const runtime = gw?.keepAwakeRuntime;
+  const state = runtime?.error ? `${t("gatewayPower.failed")} ${runtime.error}` : runtime?.suspended ? t("gatewayPower.suspended")
+    : runtime?.active ? t("gatewayPower.active") : gw?.config?.keepAwake ? t("gatewayPower.waiting") : t("gatewayPower.off");
+  return `<div class="ctl"><b>${t("gatewayPower.title")}</b><input class="sw" type="checkbox" id="gw-keep-awake" data-sw="gw-keep-awake" ${gw?.config?.keepAwake ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("gatewayPower.title")}"><small>${t("gatewayPower.description")} ${esc(state)}</small></div>`;
 }
 
 /* What it has been doing: while the gateway is off the prototype's one line is simply true; the engine keeps no list
    of the gateway's own events here, so none is written in while it is on. */
 function doing(gw) {
-  const rows = gw?.mode === "off" ? `<li class="">${ic("info", "s")}<span>${t("window.settings.gateway.nothing-is-watching-branch")}<small>${t("window.settings.gateway.the-gateway-is-off-so-a")}</small></span><time></time></li>` : "";
+  const rows = gw && gw.underGateway !== true ? `<li class="">${ic("info", "s")}<span>${t("window.settings.gateway.nothing-is-watching-branch")}<small>${t("window.settings.gateway.the-gateway-is-off-so-a")}</small></span><time></time></li>` : "";
   return `<div class="sec"><h2>${t("window.settings.gateway.what-it-has-been-doing")}</h2><ol class="tl">${rows}</ol></div>`;
 }
 
