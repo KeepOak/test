@@ -174,7 +174,7 @@ test("KOOK: built from the connections file with a secret name, checked against 
   assert.equal(built.kind, "kook");
   assert.equal(built.health().state, "needs attention");
   assert.ok(built.inner.catchUp, "KOOK is handed a saved place");
-  const card = paritySummary(context.app.store, context.app.runtime.owner).find((s) => s.kind === "kook");
+  const card = (await paritySummary(context.app.store, context.app.runtime.owner)).find((s) => s.kind === "kook");
   assert.equal(card.switch, "off");
   assert.equal(card.receives, "socket");
 });
