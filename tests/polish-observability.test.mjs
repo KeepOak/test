@@ -428,6 +428,16 @@ test("D1 comparing two tasks shows both sets of figures and the difference betwe
     return { content: `The ${variation} answer for ${asked}.\nSame line in both.`, toolCalls: [] };
   } };
   const { app, page, errors } = await onPage(t, { provider: varyingAnswers });
+  /* The first send's read of the questions it left (GET /api/policy) is held back, as a busy engine does: the answer is
+     on screen and Send is ready meanwhile, so the second message is sent then. It used to go to the ended task's waiting
+     line and stay unsent in the new conversation's box. Mutation: in chat.js sendPlain, end "sending" only in its
+     finally again, and this goes red. */
+  let ran = false, held = false;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") ran = true; });
+  await page.route("**/api/policy", async (route) => {
+    if (ran && !held) { held = true; await new Promise((done) => setTimeout(done, 3000)); }
+    await route.continue();
+  });
   /* The compare button sits in History's recordings tile, beside "Watch a task again"; recordings ship off, and while
      they are off that tile is the switch instead (public/app/places/inbox.js replayTile). */
   saveRecordingSettings(app.store, app.runtime.owner, { mode: "when-needed" });
