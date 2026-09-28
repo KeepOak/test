@@ -4,7 +4,7 @@
 /* A phone paired in its browser adds its own secret to every request to this address (public/device-headers.js). */
 import { installDeviceHeaders } from "../device-headers.js";
 installDeviceHeaders();
-import { $, onRender, render, renderNow, paint, applyCss, pressIn } from "./core/dom.js";
+import { $, onRender, render, renderNow, paint, applyCss, pressIn, keepDetails } from "./core/dom.js";
 import { S, E, loadSaved, refresh, activeId } from "./core/state.js";
 import { api, stream, link } from "./core/api.js";
 import { listen, on } from "./core/actions.js";
@@ -67,6 +67,7 @@ function drawParts(main, html) {
   }
   const nodes = old.map((node, i) => {
     if (parts[i] === drawn.parts[i] && !drawn.touched.has(node)) return node;
+    if (node.nodeType === 1 && fresh[i].nodeType === 1) keepDetails(node, fresh[i]);
     node.replaceWith(fresh[i]);
     if (fresh[i].nodeType === 1) applyCss(fresh[i]);
     return fresh[i];
