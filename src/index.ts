@@ -1008,7 +1008,12 @@ ${result.output || "(it said nothing)"}`;
     catch (error) { store.event(result.parentRunId, "delegation.tell_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
   };
   // selfdev (SELF-305): wake-ups set inside a conversation arrive in it as follow-ups; the scheduler's tick finds them.
-  const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId }); });
+  // A wake-up is never more than the task that asked for it: it carries that task's own tools.
+  const askedWith = (runId: string): string[] | null => {
+    const recorded = store.events(runId).find((event) => event.kind === "run.started")?.data.permissions;
+    return Array.isArray(recorded) ? recorded.map(String) : null;
+  };
+  const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); });
   registerWakeups(registry, store, wakeups);
   scheduler.onTick.add((now) => wakeups.tick(now));
   // wave mac2 (quiet-jobs follow-up): a program left running that finishes wakes the check-in; wake() does nothing while it is off.
@@ -1018,7 +1023,7 @@ ${result.output || "(it said nothing)"}`;
   // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
   // of the task that started it, so the assistant is told instead of checking on it.
   processes.waker = ({ sessionId, runId, text }) => {
-    try { runtime.followUp(sessionId, text, null, { originFrom: runId }); }
+    try { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); }
     catch (error) { store.event(runId, "process.wake_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
   };
   // Figures, looking things up properly, watching pages, and the one message first thing.

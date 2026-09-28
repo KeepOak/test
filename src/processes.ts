@@ -189,10 +189,14 @@ export class BackgroundProcesses {
   waker: ProcessWaker | null = null;
   /** workbench (SELF-304): the programs `shell.execute` may run (src/own-clis.ts commandPrograms); set by createBranch. */
   commandPrograms: () => Record<string, { path: string; args: string[] }> = () => ({});
-  /** A program by its short name: the owner's list of programs to leave running first, then the ones commands may run. */
-  private program(name: string): { path: string; args: string[] } | undefined {
+  /**
+   * A program by its short name: the owner's list of programs to leave running first, then, for a task that may run
+   * commands (shell.execute), the ones commands may run. Without a context (a command rule reading the line), both.
+   */
+  private program(name: string, context?: Pick<ToolContext, "permissions">): { path: string; args: string[] } | undefined {
     const own = this.settings().programs;
     if (Object.hasOwn(own, name)) return own[name];
+    if (context && !context.permissions.has("shell.execute")) return undefined;
     const commands = this.commandPrograms();
     return Object.hasOwn(commands, name) ? commands[name] : undefined;
   }
@@ -216,8 +220,11 @@ export class BackgroundProcesses {
   }
   /** Starts a program and leaves it running; the tool call is over long before the program is. */
   async start(input: z.infer<typeof StartInputSchema>, context: ToolContext): Promise<ProcessView & { sandbox: SandboxChoice; backend: SandboxBackendName }> {
+    // A helper's own conversation is not where anyone listens; it reads the program's output or tells its lead.
+    if ((input.wakeOnExit || input.wakeOnText?.length) && context.depth > 0)
+      throw new Error("A helper cannot be woken by a program. Read its output with process.read, or tell your lead with helpers.tell_lead.");
     const settings = this.settings();
-    const program = this.program(input.program);
+    const program = this.program(input.program, context);
     if (!program) throw new Error(`"${input.program}" is not one of the programs allowed to be left running or run as a command. The owner adds those in Settings.`);
     if (this.list({ active: true }).length >= settings.maxRunning)
       throw new Error(`${settings.maxRunning} programs are already running; stop one before starting another.`);

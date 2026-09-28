@@ -66,6 +66,8 @@ export class Wakeups {
   set(context: ToolContext, input: z.infer<typeof WakeLaterSchema>): Wakeup {
     const sessionId = this.store.run(context.runId)?.sessionId;
     if (!sessionId) throw new Error("A wake-up belongs to a conversation, and this task has none.");
+    // A helper's own conversation is not where anyone listens: it tells its lead instead (helpers.tell_lead).
+    if (context.depth > 0) throw new Error("A helper cannot set wake-ups. Tell your lead with helpers.tell_lead what it should come back to.");
     if (this.list(sessionId).length >= maxPerConversation) throw new Error(`This conversation already has ${maxPerConversation} wake-ups; cancel one first.`);
     const now = this.now();
     const first = input.cron ? nextCronOccurrence(new Date(now), input.cron, input.timezone!).getTime()
