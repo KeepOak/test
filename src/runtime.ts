@@ -896,21 +896,30 @@ export class Runtime {
    * Q050: carries on a task that stopped to ask, as that same task, after a yes to its exact request (the person's reply
    * to its own question reaches it through replyToAsk). No second task is started, and a task no longer waiting is refused. Every refusal comes before the first await, as a new task's does (see execute).
    */
-  async continueAsked(runId: string): Promise<Run> {
+  async continueAsked(runId: string, hooks: CarryOnHooks = {}): Promise<Run> {
     const waiting = this.store.run(runId);
     if (!waiting) throw new Error(nothingToContinue);
     return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
-      continuing: { runId, allowed: true } }));
+      ...this.carriedAs(runId, hooks), continuing: { runId, allowed: true } }));
+  }
+  /**
+   * QA R1 follow-up: a task carried on from where it came (a chat app, an editor, the terminal, a room) is held as it
+   * started: its recorded source, never the owner's own, and the caller's live hooks for its words and its start.
+   */
+  private carriedAs(runId: string, hooks: CarryOnHooks): Partial<RunOptions> {
+    const source = runOrigin(this.store, runId).source as RunSource;
+    return { ...(source !== "owner" ? { source } : {}), ...(hooks.onStarted ? { onStarted: hooks.onStarted } : {}),
+      ...(hooks.onTextDelta ? { onTextDelta: hooks.onTextDelta } : {}), ...(hooks.signal ? { signal: hooks.signal } : {}) };
   }
   /**
    * Dogfood D5: carries on a task that stopped to ask, as that same task, after the owner said No to its exact request:
    * told of the No, it replies with what it can do instead. Refused, like continueAsked, before the first await.
    */
-  async continueRefused(runId: string, fingerprint: string): Promise<Run> {
+  async continueRefused(runId: string, fingerprint: string, hooks: CarryOnHooks = {}): Promise<Run> {
     const waiting = this.store.run(runId);
     if (!waiting) throw new Error(nothingToContinue);
     return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
-      continuing: { runId, refused: { fingerprint } } }));
+      ...this.carriedAs(runId, hooks), continuing: { runId, refused: { fingerprint } } }));
   }
   /** Messages waiting for a busy conversation, in order. */
   queued(sessionId: string): FollowUp[] {
@@ -4747,6 +4756,12 @@ function safeArguments(text: string): unknown {
   try { return JSON.parse(text); } catch { return {}; }
 }
 
+/** QA R1 follow-up: what a caller that carries a waiting task on (a chat app, an editor, the terminal, a room) may watch. */
+export interface CarryOnHooks {
+  onStarted?: (run: Run) => void;
+  onTextDelta?: (text: string) => void;
+  signal?: AbortSignal;
+}
 /** QA R1: what a task carrying on after a yes is told, once the engine has run the approved call itself. */
 const approvedRanNote = " The person has now answered your question: they allowed the request. Branch has now carried out that exact"
   + " call itself (it had not run before), and what came of it is in the conversation as that call's result. Do not make that"
