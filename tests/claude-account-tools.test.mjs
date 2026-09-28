@@ -51,11 +51,11 @@ async function fixture(t, { mode = "off", runtime = false } = {}) {
 test("production registration routes the saved/default Claude account through Branch tools even with pooling off", async (t) => {
   const f = await fixture(t, { runtime: true });
   await writeFile(join(f.root, "workspace", "proof.txt"), "actual factory tool loop\n");
-  assert.equal(f.preset().model, "sonnet"); assert.equal(f.preset().provider.name, "claude-subscription");
+  assert.equal(f.preset().model, "claude-opus-5-5"); assert.equal(f.preset().provider.name, "claude-subscription");
   const run = await f.app.runtime.run({ prompt: "Read proof.txt with files.read", permissions: ["files.read"] });
   assert.equal(run.status, "completed"); assert.match(run.output, /actual factory tool loop/);
   assert.equal(f.app.store.events(run.id).filter((one) => one.kind === "tool.completed" && one.data.name === "files.read").length, 1);
-  assert.equal(f.seen.length, 2); assert.ok(f.seen.every((body) => body.model === "sonnet"));
+  assert.equal(f.seen.length, 2); assert.ok(f.seen.every((body) => body.model === "claude-opus-5-5"));
   assert.ok(f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.primaryClaudeHome));
 });
 test("parallel helpers use distinct saved Claude accounts through Branch's tool loop", async (t) => {
@@ -77,10 +77,10 @@ test("parallel helpers use distinct saved Claude accounts through Branch's tool 
   assert.equal(f.service.pool(pool).defaultAccount, "primary", "helpers never change the owner's account order");
 });
 test("concurrent account/model providers preserve independent native homes and canonical requests", async (t) => {
-  const f = await fixture(t), sonnet = f.preset(), opus = { ...sonnet, model: "opus", id: pool };
-  const a = await f.service.providerFor(pool, "cli", sonnet, second), b = await f.service.providerFor(pool, "cli", opus, third);
+  const f = await fixture(t), defaulted = f.preset(), opus = { ...defaulted, model: "opus", id: pool };
+  const a = await f.service.providerFor(pool, "cli", defaulted, second), b = await f.service.providerFor(pool, "cli", opus, third);
   await f.call(() => Promise.all([a.complete(request()), b.complete(request())]));
-  assert.deepEqual(f.seen.map((body) => body.model).sort(), ["opus", "sonnet"]);
+  assert.deepEqual(f.seen.map((body) => body.model).sort(), ["claude-opus-5-5", "opus"]);
   assert.deepEqual(f.launches.map((one) => one.env.CLAUDE_CONFIG_DIR).sort(), [f.service.homeOf(pool, second), f.service.homeOf(pool, third)].sort());
   assert.notEqual(a, b);
 });
@@ -225,4 +225,51 @@ test("a Trunk on its picked Claude account runs a Branch tool within its own per
   await assert.rejects(stat(join(own, "outside.txt")), { code: "ENOENT" });
   await assert.rejects(stat(join(f.root, "workspace", "outside.txt")), { code: "ENOENT" });
   assert.equal(f.service.pool(pool).defaultAccount, "primary", "the Trunk's pick never changes the owner's default");
+});
+/* models-ui (owner, DOGFOOD C2): Claude answers with Opus 5.5 at medium effort unless something else was chosen. */
+const effortOf = (launch) => { const at = launch.args.indexOf("--effort"); return at < 0 ? null : launch.args[at + 1]; };
+const modelOf = (launch) => launch.args[launch.args.indexOf("--model") + 1];
+test("Claude's default is Opus 5.5 at medium effort, for a new and a legacy registration alike", async (t) => {
+  const f = await fixture(t);
+  assert.equal(f.preset().model, "claude-opus-5-5"); assert.equal(f.preset().reasoning, "medium");
+  assert.equal(f.app.runtime.models.summary(f.app.runtime.owner).presets.find((p) => p.id === pool).startsAt, "medium");
+  let run = await f.app.runtime.run({ prompt: "Say ok" });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(modelOf(f.launches.at(-1)), "claude-opus-5-5"); assert.equal(effortOf(f.launches.at(-1)), "medium");
+  // A connection saved before Claude had a default of its own names the command as its model.
+  f.app.runtime.models.register({ ...f.preset(), model: "claude", reasoning: undefined });
+  assert.equal(f.preset().model, "claude-opus-5-5"); assert.equal(f.preset().reasoning, "medium");
+  run = await f.app.runtime.run({ prompt: "Say ok" });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(modelOf(f.launches.at(-1)), "claude-opus-5-5"); assert.equal(effortOf(f.launches.at(-1)), "medium");
+});
+test("an explicit Claude model and the owner's own effort are kept over the default", async (t) => {
+  const f = await fixture(t);
+  f.app.runtime.models.register({ ...f.preset(), model: "sonnet", reasoning: "high" });
+  assert.equal(f.preset().model, "sonnet"); assert.equal(f.preset().reasoning, "high");
+  let run = await f.app.runtime.run({ prompt: "Say ok" });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(modelOf(f.launches.at(-1)), "sonnet"); assert.equal(effortOf(f.launches.at(-1)), "high");
+  f.app.runtime.models.configure(f.app.runtime.owner, { reasoning: "low" }); // the owner's Branch-wide pick
+  run = await f.app.runtime.run({ prompt: "Say ok" });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(effortOf(f.launches.at(-1)), "low");
+});
+test("models-ui: a specialist's saved Claude account answers its helpers through Branch's tool loop", async (t) => {
+  const { saveHelperDefault, helperDefaultsView } = await import("../dist/helper-defaults-api.js");
+  const f = await fixture(t, { runtime: true });
+  await writeFile(join(f.root, "workspace", "proof.txt"), "specialist account proof\n");
+  const { id } = await f.app.registry.execute("specialists.propose", { name: "Reader", instructions: "You read.", permissions: ["files.read"],
+    evaluation: { prompt: "say ready", checks: [{ path: "reader.txt", expected: "ready" }] } }, f.app.runtime.context());
+  const choice = helperDefaultsView(f.app.store, f.app.runtime.owner, f.app.runtime.models).choices.find((c) => c.model === pool);
+  assert.deepEqual(choice.accounts.map((a) => a.id), ["primary", second, third]);
+  assert.equal(choice.accounts.find((a) => a.id === third).label, `${third}@fixture.invalid`, "named by its verified email");
+  saveHelperDefault(f.app.store, f.app.runtime.owner, f.app.runtime.models, { specialist: id, model: pool, accountRef: { pool, account: third } });
+  const parent = await f.app.runtime.run({ prompt: "Read proof.txt", permissions: ["files.read"] });
+  assert.equal(parent.status, "completed");
+  const before = f.launches.length;
+  const child = await f.app.runtime.delegate("Read proof.txt", f.app.runtime.context({ runId: parent.id }), ["files.read"], "", { agent: id });
+  assert.equal(child.status, "completed", child.output); assert.match(child.output, /specialist account proof/);
+  assert.ok(f.launches.slice(before).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, third)), "the saved account's own Claude folder");
+  assert.equal(f.service.pool(pool).defaultAccount, "primary", "the owner's account order is untouched");
 });
