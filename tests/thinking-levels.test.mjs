@@ -42,6 +42,10 @@ test("K1 only the providers that send a level are offered one, and only for mode
   assert.deepEqual(thinkingLevels("anthropic-vertex", "claude-opus-4-1@20250805"), budget);
   assert.deepEqual(thinkingLevels("anthropic", "claude-3-7-sonnet-latest"), budget);
   assert.deepEqual(thinkingLevels("anthropic", "claude-3-5-haiku-latest"), unknown);
+  for (const model of ["sonnet", "opus", "claude-sonnet-4-6", "claude-opus-4-5", "anthropic/claude-opus-4-6"])
+    assert.deepEqual(thinkingLevels("claude-subscription", model), effort(), `${model} takes a subscription effort level`);
+  for (const model of ["haiku", "claude-haiku-4-5", "claude-sonnet-4-5"])
+    assert.deepEqual(thinkingLevels("claude-subscription", model), unknown, `${model} does not take subscription effort`);
   for (const provider of ["gemini", "ollama", "cohere", "bedrock", "claude-code", "scripted"])
     assert.deepEqual(thinkingLevels(provider, "gpt-5.5"), { how: "none", levels: [], sent: false }, `${provider} sends no level, so none is offered`);
 });
@@ -57,7 +61,8 @@ test("K2 the providers that send a level are exactly the ones the map knows", as
       || /\b(openaiBody|anthropicBody)\(request/.test(text)) senders.push(file);
   }
   assert.deepEqual(senders.map((file) => file.split(/[\\/]/).slice(-2).join("/")).sort(),
-    ["providers/azure-openai.ts", "providers/openai-responses.ts", "src/chatgpt-provider.ts", "src/providers.ts"],
+    ["providers/azure-openai.ts", "providers/claude-subscription-history.ts", "providers/claude-subscription.ts",
+      "providers/openai-responses.ts", "src/chatgpt-provider.ts", "src/providers.ts"],
     "a provider started or stopped sending a thinking level: update src/thinking-levels.ts");
   // Every provider those files define is one the map says sends a level.
   for (const file of senders)
