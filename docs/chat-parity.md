@@ -104,12 +104,19 @@ email (EM), SMS.
 ### Streaming the final reply
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ◐ written into the short progress message; with steps shown (direct chats) the reply arrives whole. Left: stream it into a message of its own |
-| DC | ✅ | ✅ | ◐ as TG |
-| SL | ✅ native streaming | ✅ | ◐ as TG |
+| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ✅ direct replies stream in a separate editable message; steps stay quiet and separate |
+| DC | ✅ | ✅ | ✅ same shared reply stream |
+| SL | ✅ native streaming | ✅ | ✅ shared message edits (native Slack streaming remains a separate adapter improvement) |
 | WA | ✅ (bridge) | ? | — |
-| MX | ✅ | ✅ | ◐ as TG (piece 3 gave Matrix edits) |
+| MX | ✅ | ✅ | ✅ same shared reply stream |
 | SG, IM, EM, SMS | — | — | — |
+
+Branch sends the reply's first preview as a normal reply notification and edits it as it grows; it does not send
+another copy at completion. Groups receive a complete reply and private progress summaries. Completed words pass
+the secret scrub and outbound check before each preview; the unfinished trailing word stays buffered so split
+credentials are checked whole. Long final replies reuse the first message and deliver the remaining chunks through
+the ledger. Missing message IDs, failed edits and quick answers fall back to ordinary delivery. These paths are
+proved against stand-in adapters and providers; real account connections remain unproven.
 
 ### Approvals by button (the exact request, by fingerprint)
 | | H | O | B today |
@@ -167,7 +174,7 @@ email (EM), SMS.
 | WA | — | ✅ | — |
 | SG | ✅ | ✅ | — |
 | IM | ✅ tapbacks | ✅ | — |
-| MX | ✅ | ✅ | — |
+| MX | ✅ | ✅ | ✅ `m.reaction` on the exact inbound event; own previous status is redacted before replacement (stand-in proof) |
 | EM, SMS | — | — | — |
 
 ### Slash commands and menus
@@ -246,6 +253,24 @@ Piece 5 builds this. Its rules:
 - every action audited;
 - stand-in-desktop tests only.
 
+### Commands in the owner's paired DM
+
+Telegram and Discord now have a dedicated opt-in in Settings › Chat apps › Commands from your own chat. The owner
+selects their own approved pairing IDs and confirms the current App lock PIN when set. The task remains a channel
+task with every other owner-only tool refused. It gets only the configured `shell.execute` permission.
+
+The command prompt shows the complete argument list, directory, key names and explicit execution options. Its Yes
+names the exact fingerprint, works in the originating DM only, and is consumed by one execution. It continues the
+task immediately. Plain `y`, truncated or redacted commands, groups, catch-up messages, other senders, revoked pairings,
+Lockdown and App lock cannot approve it. Settings changes and resumed/helper executions recheck access.
+
+Evidence: `tests/chat-owner-commands.test.mjs`, the existing channel security suites and the headless
+`design/redesign/tools/verify-chat-owner-commands.cjs` exercise the real engine with stand-in chat, model and command
+implementations. Actual account traffic is not proven by those tests. Slack/Matrix still need their button transport;
+apps without authenticated sender identities continue to require the Branch window for command approval.
+Discord's callback transport follows its [interaction documentation](https://docs.discord.com/developers/interactions/receiving-and-responding):
+Gateway component events are acknowledged before work starts, and bot DMs are distinguished from private group channels.
+
 ## Every Branch adapter, by what it can do today
 
 Read from `src/channels/*.ts`: which optional adapter methods each one has (router.ts `ChannelAdapter`). The ten
@@ -268,7 +293,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | keybase | yes | — | — | — | — | — | — | — | — | 3500 |
 | kook | yes | — | — | — | — | — | — | — | — | 4000 |
 | mastodon | yes | — | — | — | — | — | — | — | — | default |
-| matrix | yes | — | yes | — | — | — | — | — | — | 3500 |
+| matrix | yes | yes | yes | yes | — | — | — | — | — | 3500 |
 | mqtt | yes | — | — | — | — | — | — | — | — | 3500 |
 | mumble | yes | — | — | — | — | — | — | — | — | 3500 |
 | nextcloud-talk | yes | — | — | — | — | — | — | — | — | default |

@@ -69,7 +69,7 @@ export const ROUTES = {
   "/api/agents/": "prefix",
   "/api/agents/discover": "look",
   "/api/agents/pair": "owner POST",
-  "/api/agents/pairing": "look",
+  "/api/agents/pairing": "owner POST", // makes a pairing key, so it is a change
   "/api/agents/remote": "owner POST",
   "/api/agents/remote/remove": "owner POST",
   "/api/approval-reviewer": "owner POST",
@@ -148,6 +148,7 @@ export const ROUTES = {
   "/api/channels/link": "owner POST",
   "/api/channels/live": "owner POST",
   "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
+  "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
   "/api/channels/pairings/": "prefix",
   "/api/channels/pairings/approve": "owner POST",
@@ -1228,8 +1229,12 @@ export const ROUTES = {
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
   "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
-  "/api/panels/browse": "owner POST", // parity-b2: the owner types an address into Branch's browser
-  "/api/panels/browse/close": "owner POST", // parity-b2: and closes that window
+  "/api/panels/browser": "secret-read",
+  "/api/panels/browser/start": "owner POST",
+  "/api/panels/browser/control": "owner POST",
+  "/api/panels/browser/action": "owner POST",
+  "/api/panels/browser/disconnect": "owner POST",
+  "/api/panels/browser/stop": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",

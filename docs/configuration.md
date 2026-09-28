@@ -79,6 +79,8 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 
 ### Several accounts per connection (mac6)
 
+**Verified identity and status.** Accounts, Models, account menus and usage rows use the verified sign-in email or name first; a custom label stays secondary and remains editable. ChatGPT identity comes from its sign-in status. Claude identity comes from the documented `claude auth status` JSON, with each extra account's exact `CLAUDE_CONFIG_DIR`. Only email/name, organization identity and a normalized authentication kind are retained in memory; raw output and credential fields never reach a screen or backup. Status readings are shared for one minute, while an explicit sign-in check updates them immediately. A saved program choice is not evidence of sign-in. Signed-out and unknown entries do not claim readiness; entries for the same email and organization are counted once. Claude subscription readiness requires verified `claude.ai` authentication; API or unknown authentication is identified separately. These checks establish authentication, not a successful task; the connection's actual task still has to succeed.
+
 **Settings › Accounts** (its own page since redesign phase 2; and `/account` in the message box, the terminal, the phone and the dashboard) lets one connection hold several accounts, each with a name. It follows the three-way switch and ships **on** ("when needed"; owner decision 2026-09-27): it spends nothing by itself and uses only accounts you add. Off means one key or sign-in per connection (the connection is registered untouched). With it on:
 
 - **API keys** (any catalog connection with a key, such as OpenAI, Anthropic, Gemini, OpenRouter). Each extra key is pasted once and goes straight into the locker, in a project of its own per connection (`acct-<hash>`, name `KEY_<id>`); the first key stays where the connection put it. Each extra key is tied to the address (scheme, host and port) the connection used when the key was added; if the connection is later removed and added again under the same name with another address, Branch refuses to send the old key there and says so. Keys from the same OpenAI organization or project share one rate limit, so adding them does not raise it. Which key answers: *the first ready key in this order* (pinned first), *each key in turn*, or *the least used key*. A key refused with 401 or 403 rests five minutes; a billing or quota refusal (402, `insufficient_quota` and the other spend codes) rests the whole key an hour or as long as `Retry-After` says; a plain 429 rests **that model on that key** for exactly the `Retry-After` the service sent (a minute when it sent none). The next key is tried in the same request, and only once every key rests does the task move to the next connection in the fallback order. A service outage (5xx, a dropped connection) rests nothing, since every key would fail the same way. Each key's calls, tokens and estimated cost this month are counted (`account_usage` table, no key in it), and a key with a monthly cap in US dollars is passed over once the month's estimate reaches it.
@@ -222,6 +224,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **MiniMax** — International keys use api.minimax.io (the usual choice); keys from the Chinese platform use api.minimax.cn. Branch keeps no price on file for it.
 - **ModelScope** — Alibaba's model hub in its OpenAI-compatible mode. Branch keeps no price on file for it.
 - **Moonshot (Kimi)** — Kimi models. International keys use api.moonshot.ai (the usual choice); keys from the Chinese platform use api.moonshot.cn. Branch keeps no price on file for it.
+- **Ollama** — Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed. An Ollama on another machine at home works too: give its address.
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.
 - **Qwen (Alibaba DashScope)** — Alibaba Model Studio in its OpenAI-compatible mode. International (Singapore) is the usual choice; the US and mainland China addresses are offered too. A workspace address works through "Something else". Branch keeps no price on file.
@@ -3340,7 +3343,7 @@ A task is a plain Branch task: it shows in Activity with the same signed receipt
 
 `agents.ask { agent, task, timeoutMs }` sends one piece of work and waits. The request body contains the words of the task and nothing else — no files, no secrets, nothing the assistant has read. The wait is 60 seconds by default and 120 at most, one assistant can be asked 10 times a minute, and the answer is charged against the task's own token allowance. The call is an ordinary tool call, so it carries a receipt and shows in Activity as "Asking *name*, an assistant elsewhere".
 
-**Routes.** `GET /api/agents/remote` lists them and `POST` the same path adds one (`{ cardUrl, key? }`); `POST /api/agents/remote/remove` takes `{ agent }` (an id or a name). `GET /api/agents/discover?targets=127.0.0.1:3211,example.local:3210` asks each address you type in — and only those; nothing is scanned or broadcast — for its card, and answers `{ found, refused }` with a plain reason for each one it could not reach. `GET /api/agents/pairing` returns `{ code, cardUrl, shareUrl }`; the share link is `branch://add-agent?card=…&key=…&code=…` and **carries this install's session key — the one key to everything Branch serves, not a pairing code of its own. Whoever holds it can do anything you can do here, so share it only with an install you would trust with your own account, and only over something private.** The other install adds you with `POST /api/agents/pair { link }`.
+**Routes.** `GET /api/agents/remote` lists them and `POST` the same path adds one (`{ cardUrl, key? }`); `POST /api/agents/remote/remove` takes `{ agent }` (an id or a name). `GET /api/agents/discover?targets=127.0.0.1:3211,example.local:3210` asks each address you type in — and only those; nothing is scanned or broadcast — for its card, and answers `{ found, refused }` with a plain reason for each one it could not reach. `POST /api/agents/pairing {}` makes a link and answers `{ code, cardUrl, shareUrl, expiresAt, keyId }`; the share link is `branch://add-agent?card=…&key=…&code=…`. **The key in it is a pairing key of its own, never this install’s session key: it reaches only the assistant-to-assistant door (`POST /a2a` and the card), stops working after 30 days, and is listed and taken back with the other short-lived keys (`branch token list`, `branch token revoke <keyId>`). It is still a secret, so share the link only over something private.** Making a link is the owner’s: a key that may only look cannot make one. The other install adds you with `POST /api/agents/pair { link }`.
 
 ### Working inside a code editor (ACP)
 
@@ -5968,6 +5971,22 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
   sentence the settings screen shows.
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
+
+### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
+
+The commands a chat can send are listed in the app's own command picker, from the same table every surface reads,
+and only while chat commands are on (with them off the picker is emptied, so it never offers a command that would be
+read as an ordinary message); a change to either switch updates it.
+
+- **Discord**: registered as global application commands (one overwrite, so a command taken out of the list leaves
+  Discord's picker too), each with one optional text option for what follows it. Invite the bot with the `bot` and
+  `applications.commands` scopes. Choosing one is answered at once to that person alone ("Running /status") and then
+  read as the typed command from them, so pairing, the allowlist and each command's own level still decide.
+- **Slack** keeps an app's slash commands in the app's settings, and many plain names (/status, /remind) are Slack's
+  own, so the wizard's Slack app has one, `/branch` (with the `commands` scope): `/branch status` is `/status`,
+  `/branch` alone is `/help`, and words that are not a command are an ordinary message. An app made from the older
+  manifest needs `/branch` added under Slash Commands.
+- Telegram's "/" menu is filled the same way by the Telegram menu work (#590).
 
 ### Answering an approval from a chat app
 When a task started from Telegram or Discord stops to ask whether it may go ahead, the question is
