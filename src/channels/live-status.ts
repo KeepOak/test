@@ -42,7 +42,11 @@ export interface LiveTiming {
 export const defaultLiveTiming: LiveTiming = { progressAfterMs: 4000, editEveryMs: 1500, typingEveryMs: 4000, reactEveryMs: 700 };
 export type OutboundGuard = (text: string) => Promise<{ text: string; blocked: boolean }>;
 /** The task's steps as the progress message shows them; `final` adds the line saying how it ended. */
-export interface StepsSource { render(limit: number, final?: "done" | "error"): RichText }
+export interface StepsSource {
+  render(limit: number, final?: "done" | "error"): RichText;
+  /** How many steps the task has taken; a task with none is never shown a steps message. */
+  count?(): number;
+}
 /** How long an app asked to be left alone (Telegram's `retry_after`, carried on the error), in ms; 0 for any other failure. */
 export function retryAfterMs(error: unknown): number {
   const seconds = Number((error as { retryAfter?: unknown } | null)?.retryAfter);
@@ -51,9 +55,21 @@ export function retryAfterMs(error: unknown): number {
 export interface LiveTarget {
   adapter: ChannelAdapter;
   chatId: string;
-  /** The person's message: reactions go on it and the progress message replies to it. */
+  /** The person's message: reactions go on it and, unless `quote` says otherwise, the progress message replies to it. */
   messageId: string;
   reactTo?: string | undefined;
+  /**
+   * Which message the progress message quotes, asked as it is sent (src/channels/reply-style.ts): the answer's quoting
+   * rule decides, so the steps message and the reply below it never both quote. Absent means it quotes `messageId`.
+   */
+  quote?: () => string | undefined;
+  /** False when the owner switched the reaction on the person's message off for this app. */
+  react?: boolean;
+  /**
+   * A message of this answer already in the chat (the reply's first words, written before the task took a step) that
+   * the steps message takes over, so the steps stay above the answer. Null when there is none.
+   */
+  adopt?: () => Promise<string | null>;
   /** Checked before every call to the app, so Lockdown or quiet hours starting mid-task stop the status too. */
   allowed?: () => boolean;
   /**
@@ -95,6 +111,8 @@ export class LiveStatus {
   private streamBlocked = false;
   private progressId: string | null = null;
   private progressPlanned = false;
+  /** The task has worked long enough for a progress message; it opens with its first step. */
+  private due = false;
   private shown = "";
   private closed = false;
   private state: LiveState | null = null;
@@ -145,8 +163,21 @@ export class LiveStatus {
         this.keepTyping();
         this.setState(this.wanted ?? "thinking", true);
       }
-      if (this.target.adapter.edit) void this.openProgress();
+      this.due = true;
+      if (this.target.adapter.edit && this.hasSteps()) void this.openProgress();
     }, this.timing.progressAfterMs);
+  }
+  /**
+   * Hermes Agent sends its progress bubble only once a tool runs, and OpenClaw's quiet progress mode posts nothing for a
+   * turn without one: a task that only thinks and answers shows typing and the reaction, and then its answer, with no
+   * "Done · 0 steps" message of its own.
+   */
+  private hasSteps(): boolean {
+    if (this.stepsSource?.count) {
+      try { return this.stepsSource.count() > 0; } catch { return this.steps.length > 0; }
+    }
+    // A steps source that cannot count is shown as it always was.
+    return this.stepsSource ? true : this.steps.length > 0;
   }
   /** One stored event of the task. Tool steps go in the list; a new model round is thinking again. */
   event(kind: string, data: Record<string, unknown>): void {
@@ -157,6 +188,7 @@ export class LiveStatus {
     if (kind === "tool.started") {
       this.steps.push({ id, label: stepLabel(data), name: String(data.name ?? ""), state: "working" });
       this.setState("tool");
+      this.openIfDue();
     } else if (kind === "tool.completed" || kind === "tool.failed" || kind === "tool.stalled") {
       const step = this.steps.find((s) => s.state === "working" && s.id === id) ?? this.steps.find((s) => s.state === "working");
       if (step) step.state = kind === "tool.completed" ? "done" : "failed";
@@ -165,11 +197,16 @@ export class LiveStatus {
       this.reply = "";
       this.setState("thinking");
     } else {
-      // The steps come from the task's whole record, so anything it does may change them.
-      if (this.stepsSource) this.scheduleEdit();
+      // The steps come from the task's whole record, so anything it does may change them (an installed program's own
+      // steps arrive as program.step.* events, and may be the first step of all).
+      if (this.stepsSource) { this.openIfDue(); this.scheduleEdit(); }
       return;
     }
     this.scheduleEdit();
+  }
+  /** The task has worked long enough and now has a step to show: the progress message opens. */
+  private openIfDue(): void {
+    if (this.due && !this.progressId && this.target.adapter.edit && this.hasSteps()) void this.openProgress();
   }
   /** A piece of the reply as the model writes it. */
   text(delta: string): void {
@@ -246,7 +283,7 @@ export class LiveStatus {
   }
   /** Asks for a reaction; quick changes wait a moment so only the latest one is shown. */
   private setState(state: LiveState, now = false): void {
-    if (this.closed || !this.target.adapter.react) return;
+    if (this.closed || !this.target.adapter.react || this.target.react === false) return;
     this.wanted = state;
     if (!this.awake) return;
     if (now) { void this.enqueue(() => this.applyReaction()); return; }
@@ -259,7 +296,7 @@ export class LiveStatus {
   private async applyReaction(): Promise<void> {
     const { adapter, chatId, messageId, reactTo } = this.target;
     const wanted = this.wanted;
-    if (!adapter.react || !wanted || wanted === this.state || this.failures.react >= giveUpAfter || !this.permitted()) return;
+    if (!adapter.react || this.target.react === false || !wanted || wanted === this.state || this.failures.react >= giveUpAfter || !this.permitted()) return;
     const previous = this.state ? statusEmoji[this.state] : undefined;
     try {
       await adapter.react(chatId, reactTo ?? messageId, statusEmoji[wanted], previous);
@@ -277,9 +314,19 @@ export class LiveStatus {
       const out = await this.format(rendered);
       if (out === null) return;
       try {
+        // The reply's first words are already in the chat above where this would land: they become the steps, and the
+        // reply starts again below them.
+        const adopted = await this.target.adopt?.().catch(() => null) ?? null;
+        if (adopted) {
+          this.progressId = adopted;
+          if (await this.put(out.text, out.format)) this.shown = rendered.text;
+          else this.scheduleEdit();
+          return;
+        }
         // An app that does not say which message it sent cannot have it edited; the reply still
         // comes the ordinary way, so nothing more is tried.
-        this.progressId = (await this.target.adapter.send(this.target.chatId, out.text, this.target.messageId,
+        const quote = this.target.quote ? this.target.quote() : this.target.messageId;
+        this.progressId = (await this.target.adapter.send(this.target.chatId, out.text, quote,
           Object.keys(out.format).length ? out.format : undefined)) ?? null;
         this.shown = rendered.text;
       } catch (error) {

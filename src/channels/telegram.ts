@@ -92,6 +92,8 @@ const telegramTarget = (address: string): { chat_id: number; message_thread_id?:
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly kind = "telegram";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   readonly id: string;
   private readonly base: string;
   private readonly fetch: typeof fetch;

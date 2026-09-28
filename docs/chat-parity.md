@@ -202,6 +202,25 @@ proved against stand-in adapters and providers; real account connections remain 
 | MX | ? | ✅ | — |
 | EM | ✅ | ? | ✅ |
 
+Hermes Agent's `reply_to_mode` (off / first / all, default first) and OpenClaw's `replyToMode` (off / first / all /
+batched, Telegram default off) decide whether an answer quotes. Branch has the same per-app choice under Settings ›
+Chat apps › Replies in each app (`src/channels/reply-style.ts`), with one more that is its default: **auto** quotes in a
+one-to-one chat only when a newer message came in before the answer went out (or the message was fetched late after a
+restart), and quotes the first message of an answer in a group. One answer never quotes twice unless the owner chose
+"every": the steps message and the reply below it are one answer. Only apps whose reply id is just a quote (Telegram,
+Discord, WhatsApp, Revolt, Guilded, KOOK, Nextcloud Talk, VK; `ChannelAdapter.replyQuotes`) are affected; where the id
+is the thread itself (Slack, email, Mastodon and the like) it is always kept. The reaction on the person's message is a
+per-app switch on the same card.
+
+### Ending a turn
+A turn that took no step posts only its answer: Hermes sends its progress bubble only once a tool runs, and OpenClaw's
+quiet progress mode posts nothing for a turn without one, so Branch no longer posts "✅ Done · 0 steps" as a message of
+its own. A turn with steps keeps the steps message above the answer and edits it into its last line. Words the model
+wrote before its first step, already streamed as the start of a reply, become the steps message, and the reply starts
+again below it, so the order in the chat is always steps, then answer. `/start` is answered with a short welcome (who is
+answering, on which computer, and the commands when they are on) without asking the model; Hermes answers it with
+nothing.
+
 ### Per-chat model and Trunk
 | | H | O | B today |
 |---|---|---|---|

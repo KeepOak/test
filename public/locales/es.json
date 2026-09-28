@@ -10029,5 +10029,14 @@
   "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
+  "window.chat-reply.title": "Respuestas en cada app",
+  "window.chat-reply.quote-in": "Citar tu mensaje en {name}",
+  "window.chat-reply.quote-hint": "Auto cita en un chat individual solo cuando antes llegó un mensaje tuyo más nuevo, y siempre en grupos. Primero cita el primer mensaje de cada respuesta; Todos los cita todos.",
+  "window.chat-reply.auto": "Automático",
+  "window.chat-reply.first": "Primero",
+  "window.chat-reply.all": "Todos",
+  "window.chat-reply.never": "Nunca",
+  "window.chat-reply.react-in": "Reaccionar a tu mensaje en {name}",
+  "window.chat-reply.react-hint": "Una reacción en tu mensaje muestra que Branch lo vio y cómo va el trabajo."
 }

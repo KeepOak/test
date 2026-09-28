@@ -44,6 +44,8 @@ const interactionSchema = z.object({ id: z.string().min(1).max(64), token: z.str
 
 export class DiscordAdapter implements ChannelAdapter {
   readonly kind = "discord";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   readonly id: string;
   /** Discord refuses a message longer than two thousand characters. */
   private textMode: () => "native" | "plain" = () => "native";
