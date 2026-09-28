@@ -7,9 +7,12 @@ import type { WallDeps } from "../../sandbox-backends.js";
 import { parseDeviceArgs } from "../args.js";
 import { capabilities, mediaLimitBytes, offeredOn, textLimitBytes, type Capability } from "../capabilities.js";
 import {
-  cameraCommand, clipboardReadCommand, clipboardWriteCommand, listenCommand, locationCommand, needs, notifyCommand,
-  openCommand, screenCommand, speakCommand, type NodeOs, type OsCommand,
+  cameraCommand, clipboardReadCommand, clipboardWriteCommand, linuxInputCommand, linuxScreenSizeCommand, listenCommand,
+  locationCommand, needs, notifyCommand, onWayland, openCommand, parseScreenSize, screenCommand, speakCommand, windowsInputCommand,
+  type NodeInput, type NodeOs, type OsCommand,
 } from "./commands.js";
+import { holdKeyCodes } from "../../integrations/desktop-config.js";
+import { xdotoolHoldChord } from "../../integrations/desktop-script-posix.js";
 import { walledCommand } from "./wall.js";
 import { secretHomePlaces } from "../../sandbox-seatbelt.js";
 import { installedProgram, programRoot } from "../../never-break/protected.js";
@@ -34,6 +37,8 @@ export interface ActionDeps {
   wall?: WallDeps;
   /** The node user's home folder; tests hand in a temporary one. */
   home?: string;
+  /** computer-control: told of each owner input from Branch, so this computer can say it is being used. */
+  onInput?: (action: string) => void;
 }
 
 const mimeByExt: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -118,6 +123,7 @@ export class NodeActions {
       case "speak": return this.simple(speakCommand(os, String(args.text)), "spoken");
       case "files": return this.files(await this.usableFolder(folder), String(args.action), String(args.path ?? ""));
       case "run": return this.run(await this.usableFolder(folder), args as { executable: string; args: string[]; timeoutSeconds: number });
+      case "input": return this.input(args as unknown as NodeInput);
       default: throw new Error("This device does not do that.");
     }
   }
@@ -133,6 +139,26 @@ export class NodeActions {
     const out = await this.runner(command, { timeoutMs: 30_000, maxBytes: 4096 });
     if (out.code !== 0) throw new Error(`The device could not do it: ${out.stderr.trim().slice(0, 300) || `exit ${out.code}`}`);
     return { value: { done } };
+  }
+
+  /**
+   * computer-control: one owner input from Branch's computer view. Branch lets only its owner send
+   * these, only while the owner has taken over this device; here the switch (and a local `never`)
+   * decides, and every one is logged on this computer.
+   */
+  private async input(input: NodeInput): Promise<ActionResult> {
+    const { os } = this.deps;
+    this.deps.onInput?.(input.action);
+    if (os === "win32") return this.simple(windowsInputCommand(input, input.action === "key" ? holdKeyCodes(input.chord ?? "") : []), input.action);
+    if (os !== "linux") throw new Error("Using this computer's screen from Branch works on Windows and Linux (X11) for now.");
+    if (onWayland(this.env)) throw new Error("This computer runs Wayland, which does not let another program move the pointer. It works on X11.");
+    const chord = input.action === "key" ? xdotoolHoldChord(input.chord ?? "") : null;
+    let size: { width: number; height: number } | null = null;
+    if (input.action === "click" || input.action === "scroll") {
+      const out = await this.runner(linuxScreenSizeCommand, { timeoutMs: 10_000, maxBytes: 256 });
+      size = out.code === 0 ? parseScreenSize(out.stdout.toString("utf8")) : null;
+    }
+    return this.simple(linuxInputCommand(input, size, chord), input.action);
   }
 
   private async capture(capability: Capability, args: Record<string, unknown>): Promise<ActionResult> {

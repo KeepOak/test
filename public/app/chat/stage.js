@@ -50,7 +50,7 @@ import { hasOwnerBrowser, ownerBrowserHTML, ownerBrowserPip, ownerBrowserButtons
   paintOwnerBrowser, initOwnerBrowser } from "./stage-browser-control.js";
 import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, nativeScreenState,
   refreshNativeTargets, chooseNativeTarget, stopNativeScreen, controlNativeScreen, inputNativeScreen, nativeFramePainted } from "./stage-screen.js";
-import { watchDevice, deviceFrame, deviceRefusal } from "./stage-device.js"; // computer-control: a paired computer, live
+import { watchDevice, deviceFrame, deviceRefusal, deviceDriving, deviceInputNote, driveDevice, inputDevice } from "./stage-device.js"; // computer-control: a paired computer, live
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
 
@@ -238,6 +238,12 @@ function controls(kind) {
     const act = screenDriving() ? t("window.chat.stage.hand-back-to", { name: esc(owner()) }) : t("action.take-over");
     return `<button class="btn pri sm" type="button" data-act="native-control" data-v="${screenDriving() ? "back" : "take"}">${act}</button>${screenDriving() ? "" : pause}${stop}<button class="btn sm" type="button" data-act="native-stop">Stop sharing</button>`;
   }
+  // A paired computer: Take over when its own switch lets the owner use it, greyed with the reason when not.
+  if (kind === "computer" && pairedNow() && deviceFrame() && E.profiles?.isOwner !== false) {
+    const driving = deviceDriving(), note = deviceInputNote();
+    const act = driving ? t("window.chat.stage.hand-back-to", { name: esc(owner()) }) : t("action.take-over");
+    return `<button class="btn pri sm" type="button" data-act="device-control" data-v="${driving ? "back" : "take"}"${!driving && note ? ` disabled title="${esc(note)}"` : ""}>${act}</button>${driving ? "" : pause}${stop}`;
+  }
   if (yours) return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
   const take = kind === "computer" ? (holder() === "agent" ? `<button class="btn pri sm" type="button" data-act="takeover">${t("action.take-over")}</button>` : "")
     : browserTake(run);
@@ -245,7 +251,8 @@ function controls(kind) {
 }
 
 function top(kind, steps) {
-  const now = steps.findIndex((s) => s.status === "working"), yours = kind === "computer" && (holder() === "user" || (thisScreen(kind) && screenDriving()));
+  const now = steps.findIndex((s) => s.status === "working"), yours = kind === "computer" && (holder() === "user" || (thisScreen(kind) && screenDriving())
+    || (pairedNow() && !!deviceFrame() && deviceDriving()));
   const title = kind === "browser" ? t("window.chat.stage.browser-of", { name: esc(owner()) }) : t("window.chat.stage.computer-of", { name: esc(owner()) });
   const own = kind === "browser" && (live()?.browser?.frame || hasOwnerBrowser()) ? `<span class="st7-sub">${ic("lock", "s")}${t("window.chat.stage.own-browser")}</span>` : "";
   // Who drives Branch's own browser, when the owner has it open.
@@ -313,7 +320,7 @@ function stageHTML(kind) {
   const liveNow = kind === "browser" && live()?.browser?.live && working();
   const body = scr ? `<div class="st7-screen"><div class="st7-scale">${scr}</div>${caption(steps)}</div>` : emptyHTML(kind);
   const wrap = many && G.grid ? gridHTML(many, steps) : `<div class="st7-wrap">${body}</div>`;
-  return `${top(kind, steps)}${kind === "browser" && scr ? browserNotice() : ""}${many ? compTabs(many, steps) : ""}${nativeChooser(kind)}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
+  return `${top(kind, steps)}${kind === "browser" && scr ? browserNotice() : ""}${many ? compTabs(many, steps) : ""}${nativeChooser(kind)}${deviceTools(kind)}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
     ${steps.length ? `<div class="st7-steps">${chips}<button type="button" class="st7-chip live7" data-act="stage-step" data-v="live">${liveNow ? `<i></i>${t("dashboard.live")}` : t("dashboard.area.now")}</button></div>` : ""}`;
 }
 
@@ -332,6 +339,17 @@ function nativeChooser(kind) {
     ? "You have control: every task is paused. Use your own mouse and keyboard."
     : state.label ? `Showing ${state.label}. Branch's own windows are left out.` : state.notice || "Choose a display or an app window.";
   return `<div class="native-screen-tools" role="group" aria-label="What this view shows"><form data-form="native-target"><label>Show <select id="native-target" ${state.loading ? "disabled" : ""}><option value="">Choose…</option>${group("monitor", "Displays")}${group("window", "App windows")}</select></label><button class="btn sm" type="submit" ${state.loading ? "disabled" : ""}>Show</button></form><button class="btn sm" type="button" data-act="native-refresh">Refresh list</button><span role="status">${esc(words)}</span>${input}</div>`;
+}
+
+/* A paired computer's tools: what Take over does, or why it cannot; while driving, text, a key and the wheel. */
+function deviceTools(kind) {
+  if (kind !== "computer" || !pairedNow() || !deviceFrame() || E.profiles?.isOwner === false) return "";
+  const named = computerNamed(comps().using)?.name ?? "", note = deviceInputNote();
+  const words = deviceDriving() ? `You're driving ${named}: tasks cannot act on it. Click or right-click on the picture, double-click, or use the wheel.`
+    : note || `Take over to click and type on ${named}.`;
+  const input = deviceDriving() ? `<form data-form="device-text"><input id="device-text" maxlength="2000" autocomplete="off" aria-label="Text for that computer" placeholder="Type on ${esc(named)}"><button type="submit" class="btn sm">Send text</button></form>
+    <form data-form="device-key"><input id="device-key" maxlength="40" autocomplete="off" aria-label="Key chord" placeholder="Key, e.g. CTRL+S"><button type="submit" class="btn sm">Send key</button></form>` : "";
+  return `<div class="native-screen-tools" role="group" aria-label="Using ${esc(named)}"><span role="status">${esc(words)}</span>${input}</div>`;
 }
 
 function pipHTML() {
@@ -440,7 +458,7 @@ function paintFrames() {
 
 /* Words typed in the dock's box and the address bar survive a redraw: their words, focus and caret are put back. The
    address bar otherwise shows the page's own address, so it keeps the owner's words only while they are typing. */
-const BOXES = ["#st-in", "#st-addr", "#ob7-keys", "#native-text", "#native-key"];
+const BOXES = ["#st-in", "#st-addr", "#ob7-keys", "#native-text", "#native-key", "#device-text", "#device-key"];
 function redraw(el, html) {
   const kept = BOXES.map((sel) => el.querySelector(sel)).map((box) => box && { value: box.value, focused: document.activeElement === box, start: box.selectionStart, end: box.selectionEnd });
   el.innerHTML = html;
@@ -617,6 +635,51 @@ function initNativeStage() {
   });
 }
 
+/* A paired computer, driven from the picture: a click there (or two, or the right button, or the wheel) lands at the
+   same place on that computer's screen; text and keys go through the boxes above it. */
+function spotOn(image, event) {
+  const box = image.getBoundingClientRect(), scale = Math.min(box.width / image.naturalWidth, box.height / image.naturalHeight);
+  const width = image.naturalWidth * scale, height = image.naturalHeight * scale;
+  const x = (event.clientX - box.left - (box.width - width) / 2) / width, y = (event.clientY - box.top - (box.height - height) / 2) / height;
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
+}
+function initDeviceStage() {
+  markLive(["device-control", "sw:device-text", "sw:device-key"]);
+  const manual = async (action) => { try { await action(); } catch (error) { toast(error.message); } };
+  on("device-control", (el) => manual(async () => { await driveDevice(el.dataset.v === "take"); if (el.dataset.v !== "take") toast(t("window.chat.stage.handed-back")); drawStage(); render(); }));
+  document.addEventListener("submit", (e) => {
+    const form = e.target.closest?.('#stage7 form[data-form^="device-"]');
+    if (!form) return;
+    e.preventDefault();
+    const box = form.querySelector("input"), words = box?.value;
+    if (words) void manual(async () => { await inputDevice(form.dataset.form === "device-text" ? { action: "type", text: words } : { action: "key", chord: words.toLowerCase().replace(/\s+/g, "") }); const now = document.getElementById(box.id); if (now) now.value = ""; });
+  }, true);
+  const image = (event) => (deviceDriving() ? event.target.closest?.("#stage7 .devscr-img") : null);
+  let pending = null;
+  document.addEventListener("click", (event) => {
+    const img = image(event), spot = img && spotOn(img, event);
+    if (!spot) return;
+    // A second click soon after is a double-click, sent as one.
+    clearTimeout(pending?.timer);
+    const count = pending ? 2 : 1;
+    pending = count === 2 ? null : { timer: setTimeout(() => { pending = null; void manual(() => inputDevice({ action: "click", ...spot, button: "left", count: 1 })); }, 250) };
+    if (count === 2) void manual(() => inputDevice({ action: "click", ...spot, button: "left", count: 2 }));
+  });
+  document.addEventListener("contextmenu", (event) => {
+    const img = image(event), spot = img && spotOn(img, event);
+    if (!spot) return;
+    event.preventDefault();
+    void manual(() => inputDevice({ action: "click", ...spot, button: "right", count: 1 }));
+  });
+  document.addEventListener("wheel", (event) => {
+    const img = image(event), spot = img && spotOn(img, event);
+    if (!spot) return;
+    event.preventDefault();
+    const steps = Math.max(-10, Math.min(10, Math.round(event.deltaY / 100) || Math.sign(event.deltaY)));
+    if (steps) void manual(() => inputDevice({ action: "scroll", ...spot, steps }));
+  }, { passive: false });
+}
+
 export function initStage() {
   markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr"]);
   initOwnerBrowser();
@@ -630,6 +693,7 @@ export function initStage() {
   on("stage-dock", () => { G.dock = !G.dock; drawStage(); });
   on("stage-stop", (el) => stop(el));
   initNativeStage();
+  initDeviceStage();
   on("takeover", (el) => (el.dataset.v === "screen" ? drive("take-over") : hold("linux-desktop/take-over")));
   on("handback", (el) => (el.dataset.v === "screen" ? drive("hand-back") : hold("linux-desktop/hand-back", t("window.chat.stage.handed-back"))));
   on("run-watch", (el) => watchRun(el));

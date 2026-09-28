@@ -1,5 +1,6 @@
 #!/bin/sh
-# computer-control: Branch's Linux pointer path against real X11 windows on a hidden Xvfb display inside WSL.
+# computer-control: Branch's Linux pointer path, and a paired computer's input (branch node), against real X11 windows
+# on a hidden Xvfb display inside WSL.
 # Needs Xvfb, and xdotool, xwininfo, xev and openbox with their libraries unpacked under /tmp/bx/root (apt-get download
 # and dpkg -x; nothing is installed). Run from WSL: sh design/redesign/tools/x11-pointer-proof.sh (after npm run build).
 set -e
@@ -20,6 +21,6 @@ sleep 1
 $B/root/usr/bin/xev -geometry 400x300+100+100 -name "Branch proof A" > $B/a.log 2>&1 & A=$!
 $B/root/usr/bin/xev -geometry 300x200+700+400 -name "Branch proof B" > $B/b.log 2>&1 & BB=$!
 sleep 1.5
-node "$(dirname "$0")/x11-pointer-proof.mjs"; R=$?
+PATH=$B:$PATH node "$(dirname "$0")/x11-pointer-proof.mjs"; R=$?
 kill $A $BB $WM $XV 2>/dev/null || true
 exit $R

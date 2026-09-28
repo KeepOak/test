@@ -73,5 +73,26 @@ let refused = "";
 try { await runner.run("pointer", { handle, kind: "click", at: { point: { x: 900, y: 10 } }, button: "left", count: 1, modifiers: [] }, signal()); } catch (error) { refused = error.message; }
 await wait(300);
 check(/outside the window/.test(refused) && !/ButtonPress/.test(events("/tmp/bx/a.log").slice(mark)), "a spot outside the window is refused, nothing pressed");
+// A paired computer (`branch node` on Linux) doing the owner's clicks and keys from Branch's view: a spot is a share
+// of the whole screen (1280 x 800 here), so it is checked by the root position xev reports.
+const { NodeActions } = await import(new URL("../../../dist/devices/node/actions.js", import.meta.url).href);
+const node = new NodeActions({ os: "linux", env: { DISPLAY: ":93" }, identityDir: "/nowhere" });
+mark = events("/tmp/bx/a.log").length;
+log("node click", await node.perform("input", { action: "click", x: 251.5 / 1280, y: 200.5 / 800 }, null));
+await wait(400);
+now = events("/tmp/bx/a.log").slice(mark);
+check(/ButtonPress event[\s\S]*?button 1,[\s\S]*?root:\(251,200\)|ButtonPress event[\s\S]*?root:\(251,200\)[\s\S]*?button 1,/.test(now), "the node's click landed at the screen spot asked for (251, 200)");
+mark = events("/tmp/bx/a.log").length;
+await node.perform("input", { action: "scroll", x: 251.5 / 1280, y: 200.5 / 800, steps: 2 }, null);
+await wait(400);
+now = events("/tmp/bx/a.log").slice(mark);
+check(count(now, /ButtonPress event[\s\S]*?button 5,/g) === 2, "the node's two wheel-down steps");
+mark = events("/tmp/bx/a.log").length;
+await node.perform("input", { action: "type", text: "hi" }, null);
+await node.perform("input", { action: "key", chord: "ctrl+s" }, null);
+await wait(400);
+now = events("/tmp/bx/a.log").slice(mark);
+check(/KeyPress event[\s\S]*?keysym 0x68, h\)[\s\S]*?KeyPress event[\s\S]*?keysym 0x69, i\)/.test(now), "the node typed h, i into the window under the click");
+check(/KeyPress event[\s\S]*?Control_L[\s\S]*?KeyPress event[\s\S]*?keysym 0x73, s\)[\s\S]*?KeyRelease event[\s\S]*?Control_L/.test(now), "and pressed ctrl+s");
 console.log("done", failed ? `${failed} FAILED` : "ALL PASS");
 process.exit(failed ? 1 : 0);

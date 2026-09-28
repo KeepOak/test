@@ -1,18 +1,47 @@
 /* computer-control (SCREEN-077): a paired computer's screen, live, in the full-size computer view. The engine passes each
    picture the other computer sends over its device socket (GET /api/panels/screen/device, src/device-screen.ts) down
    one open request, about one every two and a half seconds, only while the view shows that computer to the owner and
-   the page is showing. Watching only: nothing is clicked or typed there from here. When the engine refuses (the
-   computer is off, not allowed to show its screen, Lockdown), its own words are shown instead. */
+   the page is showing. When the engine refuses (the computer is off, not allowed to show its screen, Lockdown), its own
+   words are shown instead.
+   Using it: when that computer's own "use its screen and keyboard" switch is on, Take over lets the owner click, scroll
+   and type on the picture (POST /api/panels/screen/device/drive and /input). Each press names the picture it was aimed
+   at; after a click the next press waits for the next picture, so nothing lands on a screen the owner has not seen. */
 import { token } from "../core/api.js";
 
-const D = { on: false, sid: "", device: "", open: null, frame: "", refusal: "", onChange: null, epoch: 0, waiting: false };
+const D = { on: false, sid: "", device: "", open: null, frame: "", refusal: "", onChange: null, epoch: 0, waiting: false,
+  frameId: "", pressed: false, driving: false, inputNote: null };
 export const deviceFrame = () => D.frame;
 export const deviceRefusal = () => D.refusal;
+export const deviceDriving = () => D.driving;
+/** Why this computer cannot be used from here (its switch is off, it cannot), or null when Take over works. */
+export const deviceInputNote = () => D.inputNote;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const showing = () => D.on && !!D.sid && !!D.device && !document.hidden && !locked();
 
 function end() {
-  D.epoch++; D.open?.abort(); D.open = null; D.frame = ""; D.waiting = false;
+  D.epoch++; D.open?.abort(); D.open = null; D.frame = ""; D.waiting = false; D.frameId = ""; D.pressed = false; D.driving = false;
+}
+async function post(path, body) {
+  const headers = { "content-type": "application/json", ...(token.get() ? { authorization: `Bearer ${token.get()}` } : {}) };
+  const response = await fetch(`/api/panels/screen/device/${path}`, { method: "POST", headers, cache: "no-store", body: JSON.stringify({ session: D.sid, device: D.device, ...body }) });
+  const answer = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(answer.error || "That computer did not take it.");
+  return answer;
+}
+/** Take over (true) or hand back (false) the computer showing. */
+export async function driveDevice(on) {
+  if (on && D.inputNote) throw new Error(D.inputNote);
+  const answer = await post("drive", { on: !!on });
+  D.driving = answer.driving === true; D.onChange?.(true);
+}
+/** One click, scroll, key or piece of text on the picture showing now. */
+export async function inputDevice(input) {
+  if (!D.driving) throw new Error("Take over this computer first.");
+  const frameId = D.frameId, spot = input.action === "click" || input.action === "scroll";
+  // A click or scroll uses its picture up; text and keys may follow a click on the same one.
+  if (!frameId || (spot && D.pressed)) throw new Error("Wait for the next picture, then press again.");
+  if (spot) D.pressed = true;
+  await post("input", { frameId, input });
 }
 async function read(epoch) {
   const controller = new AbortController(); D.open = controller;
@@ -32,8 +61,9 @@ async function read(epoch) {
         if (got.refusal) throw new Error(got.refusal);
         if (epoch !== D.epoch) return;
         const first = !D.frame;
-        Object.assign(D, { frame: got.frame, refusal: "" });
-        D.onChange?.(first);
+        const redraw = first || D.driving !== (got.driving === true) || D.inputNote !== (got.inputNote ?? null);
+        Object.assign(D, { frame: got.frame, refusal: "", frameId: got.frameId || "", pressed: false, driving: got.driving === true, inputNote: got.inputNote ?? null });
+        D.onChange?.(redraw);
       }
     }
     // The stream ended without a refusal (the engine restarted, a proxy let go): the last picture stays, and the view

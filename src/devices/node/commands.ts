@@ -111,7 +111,69 @@ export const needs: Record<NodeOs, Partial<Record<string, readonly string[]>>> =
   darwin: { camera: ["ffmpeg"], listen: ["ffmpeg"], screen: ["screencapture"], notify: ["osascript"],
     "clipboard-read": ["pbpaste"], "clipboard-write": ["pbcopy"], "open-url": ["open"], speak: ["say"], run: ["/usr/bin/sandbox-exec"] },
   linux: { camera: ["ffmpeg"], listen: ["ffmpeg"], screen: ["grim|scrot"], notify: ["notify-send"], location: ["/usr/libexec/geoclue-2.0/demos/where-am-i"],
-    "clipboard-read": ["wl-paste|xclip"], "clipboard-write": ["wl-copy|xclip"], "open-url": ["xdg-open"], speak: ["spd-say"], run: ["bwrap"] },
+    "clipboard-read": ["wl-paste|xclip"], "clipboard-write": ["wl-copy|xclip"], "open-url": ["xdg-open"], speak: ["spd-say"], run: ["bwrap"],
+    input: ["xdotool"] },
   win32: { screen: ["powershell.exe"], notify: ["powershell.exe"], "clipboard-read": ["powershell.exe"],
-    "clipboard-write": ["powershell.exe"], "open-url": ["powershell.exe"], speak: ["powershell.exe"] },
+    "clipboard-write": ["powershell.exe"], "open-url": ["powershell.exe"], speak: ["powershell.exe"], input: ["powershell.exe"] },
 };
+
+/** computer-control: one owner input on this computer, already checked (src/devices/args.ts `input`). */
+export interface NodeInput {
+  action: "click" | "type" | "key" | "scroll";
+  x?: number; y?: number; button: "left" | "right" | "middle"; count: number;
+  text?: string; chord?: string; steps?: number;
+}
+
+/**
+ * Windows: a fixed script reads the input from BRANCH_NODE_INPUT (JSON), so nothing the owner types
+ * becomes script. The spot is a share of the virtual screen, measured the same DPI-unaware way the
+ * screen picture above is taken, so the two always agree.
+ */
+export const windowsInputScript = [
+  "$ErrorActionPreference='Stop'",
+  "Add-Type -AssemblyName System.Windows.Forms",
+  "Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BranchNodeInput{[DllImport(\"user32.dll\")]public static extern bool SetCursorPos(int x,int y);[DllImport(\"user32.dll\")]public static extern void mouse_event(uint f,int dx,int dy,int d,UIntPtr e);[DllImport(\"user32.dll\")]public static extern void keybd_event(byte vk,byte scan,uint f,UIntPtr e);}'",
+  "$i=$env:BRANCH_NODE_INPUT|ConvertFrom-Json",
+  "$b=[System.Windows.Forms.SystemInformation]::VirtualScreen",
+  "if($i.action -eq 'click' -or $i.action -eq 'scroll'){[void][BranchNodeInput]::SetCursorPos([int]($b.Left+[Math]::Min($b.Width-1,[Math]::Floor($i.x*$b.Width))),[int]($b.Top+[Math]::Min($b.Height-1,[Math]::Floor($i.y*$b.Height))));Start-Sleep -Milliseconds 30}",
+  "if($i.action -eq 'click'){$f=@{left=@(2,4);right=@(8,16);middle=@(32,64)}[$i.button];for($n=0;$n -lt $i.count;$n++){[BranchNodeInput]::mouse_event($f[0],0,0,0,[UIntPtr]::Zero);[BranchNodeInput]::mouse_event($f[1],0,0,0,[UIntPtr]::Zero)}}",
+  "if($i.action -eq 'scroll'){[BranchNodeInput]::mouse_event(2048,0,0,-120*$i.steps,[UIntPtr]::Zero)}",
+  "if($i.action -eq 'type'){[System.Windows.Forms.SendKeys]::SendWait($i.sendKeys)}",
+  "if($i.action -eq 'key'){$k=@($i.keys|ForEach-Object{[byte]$_});try{foreach($v in $k){[BranchNodeInput]::keybd_event($v,0,0,[UIntPtr]::Zero)}}finally{[array]::Reverse($k);foreach($v in $k){[BranchNodeInput]::keybd_event($v,0,2,[UIntPtr]::Zero)}}}",
+].join(";");
+
+/** Text as SendKeys reads it: its own symbols wrapped in braces, a new line as Enter and a tab as Tab. */
+export function sendKeysText(text: string): string {
+  return text.replace(/[+^%~(){}[\]]/g, (symbol) => `{${symbol}}`).replace(/\r\n|\n|\r/g, "{ENTER}").replace(/\t/g, "{TAB}");
+}
+
+/** Windows: the input as the fixed script's one environment value. `keys` are virtual-key codes for a chord. */
+export function windowsInputCommand(input: NodeInput, keys: number[]): OsCommand {
+  const sendKeys = input.action === "type" ? sendKeysText(input.text ?? "") : "";
+  // Encoded, so the C# inside (which needs double quotes) never meets Windows' argument quoting.
+  return { executable: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(windowsInputScript, "utf16le").toString("base64")],
+    env: { BRANCH_NODE_INPUT: JSON.stringify({ ...input, keys, sendKeys }) } };
+}
+
+/** Linux (X11): the screen's size in pixels, which `linuxInputCommand` needs for a spot. */
+export const linuxScreenSizeCommand: OsCommand = { executable: "xdotool", args: ["getdisplaygeometry"] };
+export function parseScreenSize(text: string): { width: number; height: number } | null {
+  const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(text);
+  return match ? { width: Number(match[1]), height: Number(match[2]) } : null;
+}
+
+/** Linux (X11): the input as one xdotool command; text and keys are their own arguments, after "--". */
+export function linuxInputCommand(input: NodeInput, size: { width: number; height: number } | null, chord: string | null): OsCommand {
+  if (input.action === "type") return { executable: "xdotool", args: ["type", "--delay", "12", "--", input.text ?? ""] };
+  if (input.action === "key") return { executable: "xdotool", args: ["key", "--clearmodifiers", "--", chord ?? ""] };
+  if (!size) throw new Error("The size of this computer's screen could not be read.");
+  const x = String(Math.min(size.width - 1, Math.floor((input.x ?? 0) * size.width)));
+  const y = String(Math.min(size.height - 1, Math.floor((input.y ?? 0) * size.height)));
+  const move = ["mousemove", "--sync", x, y];
+  if (input.action === "scroll") {
+    const steps = input.steps ?? 1;
+    return { executable: "xdotool", args: [...move, "click", "--repeat", String(Math.abs(steps)), steps > 0 ? "5" : "4"] };
+  }
+  const button = input.button === "right" ? "3" : input.button === "middle" ? "2" : "1";
+  return { executable: "xdotool", args: [...move, "click", "--repeat", String(input.count), button] };
+}

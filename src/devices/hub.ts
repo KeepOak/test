@@ -30,6 +30,8 @@ const helloWaitMs = 10_000;
 const textLimit = 256 * 1024;
 /** Integration review: what a socket may hold before it has proven itself (OpenClaw allows 64 KiB too). */
 const unprovenLimit = 64 * 1024;
+/** How long the owner's hold on a device lasts without a click, key or frame from the view. */
+export const drivingIdleMs = 120_000;
 const badRequest = "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n";
 
 /** An error in the device's own words, as opposed to Branch's; the tools mark and guard it. */
@@ -59,6 +61,9 @@ export class DeviceHub {
   private readonly invokes = new WindowLimit(30, 60_000);
   /** computer-control: the owner's live view of a device's screen has its own budget, so watching never starves tasks. */
   private readonly views = new WindowLimit(40, 60_000);
+  /** computer-control: the owner's clicks and keys on a device, and which devices the owner is driving (until when). */
+  private readonly inputs = new WindowLimit(120, 60_000);
+  private readonly drivingUntil = new Map<string, number>();
   private readonly stopListening: () => void;
   private closed = false;
   constructor(private readonly book: DeviceBook, private readonly options: HubOptions = {}) {
@@ -232,14 +237,19 @@ export class DeviceHub {
   invoke(deviceId: string, capability: Capability, args: Record<string, unknown>, options: { timeoutMs?: number; signal?: AbortSignal; ownerView?: boolean } = {}): Promise<InvokeAnswer> {
     // mac7/lockdown-fix (integration review): nothing reaches a device while the feature reads off (Lockdown included).
     if (this.book.mode() === "off") return Promise.reject(new Error("Using other devices is switched off, or Lockdown is on."));
-    if (options.ownerView && capability !== "screen") return Promise.reject(new Error("The owner's view only looks at a device's screen."));
+    if (options.ownerView && capability !== "screen" && capability !== "input") return Promise.reject(new Error("The owner's view only looks at a device's screen and uses it."));
+    if (!options.ownerView && capabilityInfo[capability].ownerOnly) return Promise.reject(new Error("Only the owner uses a device's screen and keyboard, from Branch's computer view."));
     const device = this.book.device(deviceId);
     if (!device) return Promise.reject(new Error("That device is not on the list."));
+    if (capability === "input" && !this.driving(deviceId)) return Promise.reject(new Error(`Take over ${device.name} in the computer view first.`));
+    if (!options.ownerView && capabilityInfo[capability].kind !== "capture" && this.driving(deviceId))
+      return Promise.reject(new Error(`You're driving ${device.name}. The task can act on it again once you hand it back.`));
+    if (options.ownerView && this.driving(deviceId)) this.drive(deviceId, true);
     if (!device.enabled.includes(capability))
       return Promise.reject(new Error(`"${capabilityInfo[capability].label}" is switched off for ${device.name}. The owner can switch it on in Customize, Channels, Devices.`));
     const link = this.links.get(deviceId);
     if (!link) return Promise.reject(new Error(`${device.name} is not connected right now.`));
-    if (!(options.ownerView ? this.views : this.invokes).take(deviceId)) return Promise.reject(new Error(`${device.name} has been asked too often in the last minute. Wait a little.`));
+    if (!(capability === "input" ? this.inputs : options.ownerView ? this.views : this.invokes).take(deviceId)) return Promise.reject(new Error(`${device.name} has been asked too often in the last minute. Wait a little.`));
     const id = newInvokeId(), timeoutMs = options.timeoutMs ?? this.options.invokeTimeoutMs ?? 30_000;
     return new Promise<InvokeAnswer>((resolve, reject) => {
       const timer = setTimeout(() => { link.waiting.delete(id); reject(new Error(`${device.name} did not answer in time.`)); }, timeoutMs);
@@ -247,6 +257,22 @@ export class DeviceHub {
       options.signal?.addEventListener("abort", () => { this.settle(link, id); reject(new Error("The task was stopped.")); }, { once: true });
       link.send({ type: "invoke", id, capability, args, deadline: this.now() + timeoutMs });
     });
+  }
+
+  /**
+   * computer-control: the owner takes over a device from the computer view (or hands it back). While
+   * driving, only the owner's input reaches it and a task cannot act on it; it lapses after two quiet minutes.
+   */
+  drive(deviceId: string, on: boolean): void {
+    if (on) this.drivingUntil.set(deviceId, this.now() + drivingIdleMs);
+    else this.drivingUntil.delete(deviceId);
+  }
+  driving(deviceId: string): boolean {
+    const until = this.drivingUntil.get(deviceId);
+    if (until === undefined) return false;
+    if (until > this.now()) return true;
+    this.drivingUntil.delete(deviceId);
+    return false;
   }
 
   /** Closes every device's socket; used when the feature is switched off. */

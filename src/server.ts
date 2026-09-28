@@ -292,7 +292,7 @@ import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { LocalScreen, LocalScreenRefusal } from "./local-screen.js";
 import { localScreenHttp } from "./local-screen-http.js";
-import { DeviceScreen, deviceScreenPath } from "./device-screen.js"; // computer-control: a paired computer's screen, live
+import { DeviceScreen, deviceDrivePath, deviceInputPath, deviceScreenPath } from "./device-screen.js"; // computer-control: a paired computer's screen, live
 import { pickedDevice } from "./devices/tools.js";
 import { signInShowing } from "./sign-in-showing.js";
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
@@ -3755,6 +3755,18 @@ export async function startServer(
       if (!answer.media) throw new Error("That computer did not send a picture.");
       return { bytes: answer.media.data, mime: answer.media.mime };
     },
+    inputRefusal: (deviceId) => {
+      const device = app.devices.book.device(deviceId);
+      if (!device) return "That computer is not on the list.";
+      if (!device.offers.includes("input")) return `${device.name} cannot be used from here: its screen and keyboard work from Branch on Windows and Linux (X11), with xdotool on Linux.`;
+      if (!device.enabled.includes("input")) return `Switch on "Let you use its screen and keyboard from Branch" for ${device.name} in Customize, Channels, Devices.`;
+      return app.devices.hub.connected(deviceId) ? null : `${device.name} is not connected right now.`;
+    },
+    drive: (deviceId, on) => app.devices.hub.drive(deviceId, on),
+    driving: (deviceId) => app.devices.hub.driving(deviceId),
+    input: async (deviceId, input, signal) => {
+      await app.devices.hub.invoke(deviceId, "input", input, { timeoutMs: 15_000, signal, ownerView: true });
+    },
   });
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
@@ -4024,6 +4036,19 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         try {
           await deviceScreen.stream({ owner: screenOwner, sessionId: query.session, viaDoor: throughDoor(request), shortKey: key !== "window",
             keyValid: () => key === "window" && offeredWindowKey === token }, query.device, response);
+        } catch (error) { throw error instanceof LocalScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
+      // computer-control: the owner takes over a paired computer from the view, and clicks and types on it.
+      if (request.method === "POST" && (path === deviceDrivePath || path === deviceInputPath)) {
+        const body = path === deviceDrivePath
+          ? z.object({ session: z.string().min(1).max(200), device: z.string().min(1).max(40), on: z.boolean() }).strict().parse(await readBody(request))
+          : z.object({ session: z.string().min(1).max(200), device: z.string().min(1).max(40), frameId: z.string().min(1).max(40), input: z.record(z.string(), z.unknown()) }).strict().parse(await readBody(request));
+        const access = { owner: screenOwner, sessionId: body.session, viaDoor: throughDoor(request), shortKey: key !== "window",
+          keyValid: () => key === "window" && offeredWindowKey === token };
+        try {
+          send(response, 200, "on" in body ? deviceScreen.drive(access, body.device, body.on)
+            : await deviceScreen.input(access, body.device, body.frameId, body.input, AbortSignal.timeout(20_000)));
         } catch (error) { throw error instanceof LocalScreenRefusal ? new HttpError(error.status, error.message) : error; }
         return;
       }

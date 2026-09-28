@@ -5032,9 +5032,20 @@ them, no picture is taken while a window that handles passwords shows, and only 
 **A paired computer's screen, live (computer-control).** When a conversation uses one of the owner's paired computers
 (a `branch node` whose "Take a picture of the screen" the owner switched on), its full-size computer view shows that
 computer's screen, one picture about every two and a half seconds, passed through from its device socket and kept
-nowhere (`GET /api/panels/screen/device`, `src/device-screen.ts`). Watching only: nothing is clicked or typed there from
-the view. Only the owner's window, for their own conversation that uses that computer, never under Lockdown or the app
-lock; the pictures come from a budget of their own on the device socket, so watching never takes a task's turns.
+nowhere (`GET /api/panels/screen/device`, `src/device-screen.ts`). Only the owner's window, for their own conversation
+that uses that computer, never under Lockdown or the app lock; the pictures come from a budget of their own on the
+device socket, so watching never takes a task's turns.
+**Using a paired computer from the view (computer-control).** When that computer's own "Let you use its screen and
+keyboard from Branch" switch is on (Customize, Channels, Devices; Windows, and Linux on X11 with `xdotool`), the view's
+Take over lets the owner click, right-click, double-click and scroll on the picture, and send text and key chords
+(`POST /api/panels/screen/device/drive` and `/input`). Each press names the picture it was aimed at, which must be the
+last one shown and under 30 seconds old, and a click or scroll uses that picture up, so nothing lands on a screen the
+owner has not seen. While the owner drives, a task cannot act on that computer ("You're driving"; it may still look);
+Hand back, closing the view, Lockdown, the app lock, switching it off, or two quiet minutes end it. There is no task tool
+for it: the device socket refuses it unless it comes from the owner's view. The computer checks its own switch again,
+takes these from a budget of their own (120 a minute), and its `branch node` says once a minute that the owner is using
+it. On Windows a fixed, encoded PowerShell script reads the input from one environment value; on Linux each is one
+`xdotool` command with the text after `--`.
 **The computer view never shows itself (computer-control).** The owner's live view of this computer
 (`/api/panels/screen`, `src/local-screen.ts`) opens on the main display by itself, and offers every display
 and every app window (browser windows are left out). While a view is open the desktop app's main process

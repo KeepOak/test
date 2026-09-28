@@ -142,3 +142,54 @@ test("a paired computer's screen shows live in its own view, and the engine's re
   await page.getByText("is switched off for Tower").waitFor({ timeout: 15000 });
   assert.deepEqual(errors, []);
 });
+
+test("the owner takes over a paired computer and clicks, right-clicks and types on its picture; greyed with the reason when its switch is off", async (t) => {
+  const device = (id, name, platform) => ({ id, name, platform, publicKey: "k".repeat(44), pairedAt: "2026-09-26T00:00:00.000Z", lastSeen: null, offers: ["screen", "input"], enabled: ["screen"], folder: null, sharedWith: [] });
+  const w = await windowWith(t, (app) => app.store.save("settings", app.runtime.owner, "devices-book",
+    { mode: "off", requests: [], devices: [device(TOWER, "Tower", "linux")] }));
+  await w.page.route(`**/api/devices/pick/${w.run.sessionId}`, (route) => route.fulfill({ json: { sessionId: w.run.sessionId, picked: TOWER, allowed: [TOWER] } }));
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  const state = { driving: false, note: "Switch on \"Let you use its screen and keyboard from Branch\" for Tower in Customize, Channels, Devices.", frames: 0 };
+  const sent = [];
+  await w.page.route("**/api/panels/screen/device?*", (route) => {
+    state.frames += 1;
+    route.fulfill({ contentType: "application/x-ndjson", body: `${JSON.stringify({ frame: `data:image/png;base64,${png}`, device: TOWER, frameId: `f${state.frames}`, driving: state.driving, inputNote: state.note, at: "now" })}\n` });
+  });
+  await w.page.route("**/api/panels/screen/device/drive", (route) => { const body = route.request().postDataJSON(); state.driving = body.on; sent.push(["drive", body.on]); route.fulfill({ json: { driving: body.on } }); });
+  await w.page.route("**/api/panels/screen/device/input", (route) => { const body = route.request().postDataJSON(); sent.push([body.frameId, body.input]); route.fulfill({ json: { done: true } }); });
+  await w.open();
+  const { page, errors } = w;
+  await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
+  await page.locator("#stage7 .devscr-img[src^='data:image/png']").waitFor({ timeout: 15000 });
+  const take = page.locator('#stage7 [data-act="device-control"]');
+  assert.equal(await take.isDisabled(), true, "greyed while that computer's switch is off");
+  assert.match(await take.getAttribute("title"), /Switch on "Let you use its screen and keyboard from Branch" for Tower/);
+  await page.getByText("Switch on \"Let you use its screen").first().waitFor();
+  state.note = null;
+  await page.locator('#stage7 [data-act="device-control"]:not([disabled])').waitFor({ timeout: 15000 });
+  await page.locator('#stage7 [data-act="device-control"]').click();
+  await page.getByText("You're driving Tower").waitFor({ timeout: 15000 });
+  const box = await page.locator("#stage7 .devscr-img").boundingBox();
+  const seen = state.frames;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 100 && sent.length < 2; i++) await page.waitForTimeout(50);
+  const { x, y, ...click } = sent[1][1];
+  assert.deepEqual(click, { action: "click", button: "left", count: 1 });
+  assert.ok(Math.abs(x - 0.5) < 0.02 && Math.abs(y - 0.5) < 0.02, `the middle of the picture is the middle of that screen (${x}, ${y})`);
+  // The next press waits for the next picture.
+  for (let i = 0; i < 100 && state.frames === seen; i++) await page.waitForTimeout(50);
+  await page.waitForTimeout(300);
+  await page.mouse.click(box.x + box.width / 4, box.y + box.height / 4, { button: "right" });
+  for (let i = 0; i < 100 && sent.length < 3; i++) await page.waitForTimeout(50);
+  assert.equal(sent[2][1].button, "right");
+  assert.notEqual(sent[2][0], sent[1][0], "each press names a newer picture");
+  await page.locator("#device-text").fill("hello");
+  await page.locator('form[data-form="device-text"] button').click();
+  for (let i = 0; i < 100 && sent.length < 4; i++) await page.waitForTimeout(50);
+  assert.deepEqual(sent[3], [sent[2][0], { action: "type", text: "hello" }], "text may follow a click on the same picture");
+  await page.locator('#stage7 [data-act="device-control"]').click();
+  for (let i = 0; i < 100 && sent.length < 5; i++) await page.waitForTimeout(50);
+  assert.deepEqual(sent[0], ["drive", true]);
+  assert.deepEqual(sent[4], ["drive", false]);
+  assert.deepEqual(errors, []);
+});

@@ -1240,6 +1240,8 @@ export const ROUTES = {
   "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
   "/api/panels/screen/shot": "owner POST", // computer-control: the owner's own screenshot from the + menu, to attach
   "/api/panels/screen/device": "secret-read", // computer-control: a paired computer's screen, live, to the owner's window only
+  "/api/panels/screen/device/drive": "owner POST", // computer-control: the owner takes over a paired computer from the view, or hands it back
+  "/api/panels/screen/device/input": "owner POST", // computer-control: the owner's click, words, key or wheel on a paired computer
   "/api/panels/screen/control": "owner POST", // the owner takes or hands back control of the chosen view (src/local-screen.ts)
   "/api/panels/screen/hand-back": "owner POST", // the owner hands this computer's screen back to the tasks
   "/api/panels/screen/input": "owner POST", // a click, words, a key or the wheel into the chosen app window

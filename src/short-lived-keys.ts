@@ -173,7 +173,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/panels\/browser(\/|$)/,
   // parity-b2: a frame of this computer's screen, taken as it is asked for.
   // computer-control: and a paired computer's screen, live (src/device-screen.ts).
-  /^\/api\/panels\/screen(?:\/(?:targets|target|control|input|painted|stop|device|shot))?$/,
+  /^\/api\/panels\/screen(?:\/(?:targets|target|control|input|painted|stop|device|device\/drive|device\/input|shot))?$/,
   // The desktop handover sees every person's busy tasks and the owner's release channel.
   /^\/api\/comfort\/update-readiness$/,
   // Q55: what the owner's last update did, and which versions it went between.

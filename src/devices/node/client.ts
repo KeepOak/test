@@ -115,6 +115,9 @@ export class NodeClient {
   private offers: Capability[] = [];
   private readonly seen = new Set<string>();
   private readonly limit = new WindowLimit(60, 60_000);
+  /** computer-control: the owner's clicks and keys from Branch's view have their own budget, and are said here. */
+  private readonly inputs = new WindowLimit(120, 60_000);
+  private inputNoted = 0;
   constructor(private readonly options: NodeClientOptions) {}
 
   /** What is switched on here right now: Branch's switches, less anything this computer refuses. */
@@ -183,6 +186,14 @@ export class NodeClient {
     this.folder = typeof folder === "string" ? folder : null;
   }
 
+  /** Says, at most once a minute, that the owner is using this computer from Branch, and how to stop it. */
+  private noteInput(): void {
+    const now = (this.options.now ?? Date.now)();
+    if (now - this.inputNoted < 60_000) return;
+    this.inputNoted = now;
+    this.options.log?.("Branch's owner is using this computer's mouse and keyboard from Branch. To stop it, switch it off in Branch (Devices) or stop branch node here.");
+  }
+
   private async invoke(socket: NodeSocket, frame: Record<string, unknown>): Promise<void> {
     const id = String(frame.id ?? "");
     if (!/^[a-f0-9]{32}$/.test(id)) return;
@@ -193,7 +204,8 @@ export class NodeClient {
     if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!);
     if (!capability.success || !this.enabled.has(capability.data)) return refuse("That is switched off on this device.");
     if (typeof frame.deadline !== "number" || frame.deadline < (this.options.now ?? Date.now)()) return refuse("The request came too late.");
-    if (!this.limit.take("all")) return refuse("This device has been asked too often in the last minute.");
+    if (!(capability.data === "input" ? this.inputs.take("input") : this.limit.take("all"))) return refuse("This device has been asked too often in the last minute.");
+    if (capability.data === "input") this.noteInput();
     try {
       const result = await this.options.actions.perform(capability.data, frame.args, this.folder);
       if (!result.media) return socket.text({ type: "result", id, ok: true, value: result.value });
