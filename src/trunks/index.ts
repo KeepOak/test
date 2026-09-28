@@ -1,4 +1,5 @@
 import type { Knowledge } from "../knowledge.js";
+import { trunkSecretsProject, trunkSecretsRoute } from "./secrets.js"; // RES-260
 import type { ToolRegistry } from "../registry.js";
 import type { RunOptions, Runtime } from "../runtime.js";
 import type { Scheduler } from "../scheduler.js";
@@ -155,6 +156,8 @@ export class Trunks {
   }
 
   private get store() { return this.deps.runtime.store; }
+  /** RES-260: the owner's view and changes of one Trunk's own secrets (src/trunks/secrets.ts). */
+  secrets(id: string) { return trunkSecretsRoute(this.store, this.owner, this.records.get(id)); }
   /** Q44: the owner's paired computers, read fresh so a computer removed a moment ago is gone. */
   computers(): Computer[] { return this.deps.computers?.() ?? []; }
   private get owner() { return this.deps.runtime.owner; }
@@ -486,6 +489,8 @@ export class Trunks {
       else this.rooms.remove(room.id);
     }
     const removed = this.records.remove(id);
+    // RES-260: its own secrets go with it.
+    for (const { name } of this.store.secrets.list(this.owner, trunkSecretsProject(id))) this.store.secrets.remove(this.owner, trunkSecretsProject(id), name);
     if (wasDefault) this.store.delete("governance", this.owner, defaultPointer);
     this.conversations.forget(id); // phase2/rooms
     this.onRemoved?.(id); // its own browser profile goes with it (src/index.ts)
