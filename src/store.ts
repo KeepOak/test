@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Event, Message, Run, RunStatus } from "./contracts.js";
 import { reconcileTranscript } from "./transcript.js";
-import { notRunResult } from "./approved-call.js"; // QA R1
+import { notRunMark, notRunResult } from "./approved-call.js"; // QA R1
 import { SessionHistory } from "./history.js";
 import { SessionBranches, type ConversationFiles } from "./sessions.js";
 import { SessionLibrary } from "./session-library.js";
@@ -673,7 +673,11 @@ export class Store {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");
     // unhold-control: a run that wrote nothing into its conversation (a command pressed by hand) leaves the transcript alone.
-    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status, status === "needs_input" ? this.askedCall(id) : undefined);
+    const known = status === "needs_input" ? this.askedCall(id) : undefined;
+    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status, known);
+    // QA R1: an approved call the engine ran that then asked the person in words itself: its earlier "not run" result
+    // gives way to the question's, so the model reads what is true now.
+    if (options.mend !== false) for (const [callId, content] of known ?? []) if (content !== notRunResult) this.replaceNotRun(run.sessionId, callId, content);
     if (added) this.event(id, "session.reconciled", { added, reason: status });
     // NAS 3fd7700: where the conversation stood when this task stopped to ask, so a yes carries it on only while
     // nothing else (a heartbeat's note, a Trunk routine's report) has been written there since.
@@ -758,7 +762,10 @@ export class Store {
     const callId = events.filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
     if (typeof callId !== "string") return new Map();
     if (events.some((event) => event.kind === "policy.execution_unknown" && event.data.id === callId)) return new Map();
-    const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId);
+    // QA R1: the engine runs an approved call again under its own id, so only a policy question after the call last
+    // started is the one it stopped on; one before it was answered, and the call then asked in words itself.
+    const lastStart = events.filter((event) => event.kind === "tool.started" && event.data.id === callId).at(-1)?.id ?? 0;
+    const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId && event.id > lastStart);
     return new Map([[callId, approval ? notRunResult
       : JSON.stringify({ ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
   }
@@ -793,6 +800,16 @@ export class Store {
       return true;
     }
     return false;
+  }
+  /** QA R1: the newest result of `callId`, replaced with `content` only while it is still the "not run" placeholder. */
+  private replaceNotRun(sessionId: string, callId: string, content: string): void {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      if (String(body.content ?? "").includes(notRunMark)) this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return;
+    }
   }
   reconcileMessages(sessionId: string, reason: string, known?: ReadonlyMap<string, string>): number {
     const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);

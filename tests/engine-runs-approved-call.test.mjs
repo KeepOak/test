@@ -7,9 +7,11 @@
  * - src/runtime.ts started: drop `if (approved) await this.runApproved(...)`: nothing is saved, written or run.
  * - src/approved-call.ts approvedWork: drop the `policy.execution_unknown` check: "asked after it started" runs twice.
  * - src/approved-call.ts approvedWork: drop the `ownBytes` check: "asked from inside" runs the outer call again.
- * - src/approved-call.ts approvedWork: drop the `notRunMark` check, or the `ended` lookup: the restart test runs it twice.
+ * - src/approved-call.ts approvedWork: drop the `ended` lookup: the restart test runs it twice.
  * - src/runtime.ts oneCall: drop the approvedRepeat check: "a model that repeats anyway" appends a second line.
  * - src/runtime.ts runApproved: call registry.execute in place of oneCall: the lapsed-yes test runs without a yes.
+ * - src/store.ts finish: drop replaceNotRun, or askedCall's `event.id > lastStart`: "asks in words itself" keeps "not run".
+ * (Each was built and run; all go red. approvedWork's `notRunMark` check is a backstop the `ended` lookup already covers.)
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -18,7 +20,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, savePolicy } from "../dist/index.js";
+import { createBranch, NeedsInputError, savePolicy } from "../dist/index.js";
+import { z } from "zod";
 import { startServer } from "../dist/server.js";
 import { loadIntegrations } from "../dist/integrations/bootstrap.js";
 
@@ -40,6 +43,7 @@ function model(seen, options = {}) {
     if (/^remember (.+)$/.test(text)) return call("memory.put", { text: /^remember (.+)$/.exec(text)[1], source: "owner" });
     if (/^write (\S+)$/.test(text)) return call("files.write", { path: /^write (\S+)$/.exec(text)[1], content: "hello" });
     if (/^append (\S+)$/.test(text)) return call("shell.execute", appendArgs(/^append (\S+)$/.exec(text)[1]));
+    if (text === "push it") return call("stand.push", { branch: "main" });
     if (text === "two facts") return { content: "", toolCalls: [
       { id: `c${++serial}`, name: "memory.put", arguments: JSON.stringify({ text: "Favourite colour is teal", source: "owner" }) },
       { id: `c${++serial}`, name: "memory.put", arguments: JSON.stringify({ text: "Briefs are five bullets", source: "owner" }) }] };
@@ -49,7 +53,7 @@ function model(seen, options = {}) {
 
 async function fixture(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-r1-"));
-  const seen = [];
+  const seen = [], pushes = { count: 0 };
   const workspace = join(root, "workspace"), dataDir = join(root, "data");
   const open = async () => {
     const app = await createBranch({ workspace, dataDir, provider: model(seen, options) });
@@ -58,7 +62,12 @@ async function fixture(t, options = {}) {
     await writeFile(launch, JSON.stringify({ shell: { executables: { node: { path: process.execPath } } } }));
     const integrations = await loadIntegrations(app.registry, launch, process.env, app.secretsFor, app.channelHost);
     savePolicy(app.store, app.runtime.owner, { preset: "ask-before-changes",
-      rules: [{ tool: "memory.put", decision: "ask" }, { tool: "files.write", decision: "ask" }, { tool: "shell.execute", decision: "ask" }] });
+      rules: [{ tool: "memory.put", decision: "ask" }, { tool: "files.write", decision: "ask" }, { tool: "shell.execute", decision: "ask" },
+        { tool: "stand.push", decision: "ask" }] });
+    // A gated tool that, once it runs, asks the person in words (as git.push to main does without `confirmed`).
+    app.registry.register({ name: "stand.push", permission: "files.write", description: "Stand-in for a push.",
+      parameters: z.record(z.string(), z.unknown()), target: () => "main",
+      execute: async () => { pushes.count++; throw new NeedsInputError("This would send your work straight to main. Shall I go ahead?"); } });
     const server = await startServer(app, { dataDir, port: 0, presence: "app" }); // a real start: lost questions are settled
     return { app, server, integrations };
   };
@@ -86,7 +95,7 @@ async function fixture(t, options = {}) {
     live = await open();
   };
   const facts = async () => JSON.stringify((await call("memory/export")).body);
-  return { root, seen, call, yes, settled, restart, facts, get app() { return live.app; } };
+  return { root, seen, pushes, call, yes, settled, restart, facts, get app() { return live.app; } };
 }
 
 /** The model-issued calls of one conversation, from its transcript. */
@@ -217,6 +226,21 @@ test("a question about something other than the call's own bytes (asked from ins
   assert.ok(await f.settled(first.id));
   assert.equal(kinds(f.app, first.id, "run.approved_call").length, 0, "the engine did not run it");
   assert.equal(existsSync(join(f.root, "workspace", "log.txt")), false);
+});
+
+test("an approved call that then asks in words itself: its result says so, not \"not run\"", async (t) => {
+  const f = await fixture(t);
+  const first = await f.app.runtime.run({ prompt: "push it" });
+  assert.equal(first.status, "needs_input", "control: the policy asked first");
+  assert.equal(f.pushes.count, 0);
+  await f.yes(first);
+  assert.ok(await f.settled(first.id, "needs_input"), "the tool's own question stops the task again");
+  assert.equal(f.pushes.count, 1, "the engine ran the approved call once");
+  assert.equal(f.app.runtime.approvals.waiting(first.sessionId).length, 0, "nothing is waiting on the policy");
+  const [only] = modelCalls(f.app, first.sessionId);
+  const result = f.app.store.messages(first.sessionId).find((m) => m.role === "tool" && m.toolCallId === only.id).content;
+  assert.match(result, /"outcome":"asked"/, "the question it put is its result now");
+  assert.doesNotMatch(result, /not_run/);
 });
 
 test("run once across a restart: a call that ran before its result was written is not run again", async (t) => {
