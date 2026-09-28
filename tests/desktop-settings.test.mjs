@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { _electron } from "playwright";
-import { connected, desktopOptions, offScreen, onboarded, send } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, offScreen, onboarded, send, STARTUP_MS } from "./fixtures/desktop-options.mjs";
 import { DesktopSettings } from "../dist/desktop/settings.js";
 
 test("desktop settings reject key reuse across destinations and unavailable encryption", async () => {
@@ -102,7 +102,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
   try {
     electron = await _electron.launch(options);
     const firstChild = electron.process();
-    const page = await electron.firstWindow();
+    const page = await electron.firstWindow({ timeout: STARTUP_MS });
     page.setDefaultTimeout(10000);
     await onboarded(page);
     await offScreen(electron, "opened");
@@ -131,7 +131,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     assert.equal(firstChild.exitCode, 0);
     electron = undefined;
     electron = await _electron.launch(options);
-    const restarted = await electron.firstWindow();
+    const restarted = await electron.firstWindow({ timeout: STARTUP_MS });
     restarted.setDefaultTimeout(10000);
     await connected(restarted);
     await offScreen(electron, "restarted");
@@ -184,7 +184,7 @@ test("native settings remain usable after a corrupt file or undecryptable key", 
     await writeFile(path, content);
     const electron = await _electron.launch(options);
     try {
-      const page = await electron.firstWindow();
+      const page = await electron.firstWindow({ timeout: STARTUP_MS });
       // The window still opens and reaches Branch (the engine falls back to the offline demonstration).
       await onboarded(page);
       // Redesign: the old form showed this as its note (#model-settings-note); the new window has no such form (see above).
