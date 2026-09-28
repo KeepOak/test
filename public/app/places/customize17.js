@@ -26,6 +26,10 @@ import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 
 let styles = [];
+/* models-ui (MODEL-051): each specialist's own model and account when a call names none (GET/POST /api/helper-defaults,
+   src/helper-defaults.ts): the connections a helper may use, each with its own list of accounts (named as Settings ›
+   Accounts names them), and what is saved. A new pick is saved at once; a helper already working keeps its route. */
+let helpers = null;
 const specs = () => E.state?.specialists ?? [];
 const specOf = (id) => specs().find((s) => s.id === id);
 
@@ -60,6 +64,7 @@ function drawSpec(id) {
     body: `<p class="lead-b17">${esc(String(def.instructions ?? "").split("\n")[0])}</p>
       <div class="ctl"><b>${t("window.places.customize17.working-style")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.customize17.working-style")}">${seg}</span></span><small>${esc(styles.find((st) => st.style === style)?.summary ?? "")}</small></div>
       <div class="ctl"><b>${t("window.places.customize17.evaluation")}</b><span class="right">${passed ? pill17("ok", t("delight.ach.progress", { now: checks, goal: checks })) : `<button class="btn sm" type="button" data-act="specevalb17" data-id="${esc(id)}">${t("window.places.customize17.run-checks-test-cases", { checks: esc(checks) })}</button>`}</span><small></small></div>
+      ${helperRows(id)}
       <div class="vers-b17">${versionRows(s)}</div>`,
     foot: `<button class="btn" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
   const body = dialog()?.querySelector(".dlg-b");
@@ -67,10 +72,31 @@ function drawSpec(id) {
 }
 
 async function openSpec(id) {
-  if (!styles.length) {
-    try { styles = (await api("specialist-styles")).styles ?? []; } catch (error) { toast(error.message); return; }
-  }
+  try {
+    if (!styles.length) styles = (await api("specialist-styles")).styles ?? [];
+    helpers = await api("helper-defaults");
+  } catch (error) { toast(error.message); return; }
   drawSpec(id);
+}
+
+function helperRows(id) {
+  if (!helpers) return "";
+  const saved = helpers.specialists?.[id] ?? null, choice = helpers.choices.find((c) => c.model === saved?.model);
+  const models = helpers.choices.map((c) => `<option value="${esc(c.model)}" ${c.model === saved?.model ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  const model = `<div class="ctl"><b>${t("window.places.customize17.helper-model")}</b><span class="right"><select class="inp" data-sw="spec-model" data-id="${esc(id)}" aria-label="${t("window.places.customize17.helper-model")}"><option value="" ${saved ? "" : "selected"}>${t("window.places.customize17.helper-model-usual")}</option>${models}</select></span><small>${t("window.places.customize17.helper-model-sub")}</small></div>`;
+  if (!choice?.accounts.length) return model;
+  const picked = saved.accountRef?.account ?? "";
+  const accounts = choice.accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === picked ? "selected" : ""}>${esc(a.label)}</option>`).join("");
+  return model + `<div class="ctl"><b>${t("window.places.customize17.helper-account")}</b><span class="right"><select class="inp" data-sw="spec-account" data-id="${esc(id)}" aria-label="${t("window.places.customize17.helper-account")}"><option value="" ${picked ? "" : "selected"}>${t("window.places.customize17.helper-account-usual")}</option>${accounts}</select></span><small>${t("window.places.customize17.helper-account-sub")}</small></div>`;
+}
+/* A new model starts on that connection's usual account; an account is always one of the chosen model's own. */
+async function saveHelper(el) {
+  const id = el.dataset.id, saved = helpers?.specialists?.[id] ?? null;
+  const body = el.dataset.sw === "spec-model"
+    ? { specialist: id, model: el.value || null, accountRef: null }
+    : { specialist: id, model: saved?.model ?? null, accountRef: el.value ? { pool: helpers.choices.find((c) => c.model === saved?.model)?.pool, account: el.value } : null };
+  try { helpers = await api("helper-defaults", body); } catch (error) { toast(error.message); }
+  if (dialog()) drawSpec(id);
 }
 
 /* Each change is the engine's own tool, run by hand; the card is drawn again from what the engine then holds. */
@@ -165,7 +191,8 @@ function registerTools() {
 }
 
 export function initCustomize17() {
-  markLive(["specb17", "specstyleb17", "specevalb17", "specverb17"]);
+  markLive(["specb17", "specstyleb17", "specevalb17", "specverb17", "sw:spec-model", "sw:spec-account"]);
+  document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "spec-model" || e.target.dataset?.sw === "spec-account") saveHelper(e.target); });
   on("specb17", (el) => openSpec(el.dataset.id));
   on("specstyleb17", (el) => changeStyle(el));
   on("specevalb17", (el) => specTool(el, "specialists.evaluate", { id: el.dataset.id }));
