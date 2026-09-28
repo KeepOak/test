@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { SavedRecord, Store } from "./store.js";
 import type { ToolRegistry } from "./registry.js";
 import { FactKindSchema, MemoryLayerSchema, layerForKind, layerOf } from "./memory-layers.js";
-import type { MemoryBackend } from "./memory-backend.js"; // FQ-memory.providers
+import type { MemoryBackend, MemoryDestination, MemoryWriteReceipt } from "./memory-backend.js"; // FQ-memory.providers
 
 export const maximumMemoryArchiveBytes = 16 * 1024 * 1024;
 export const MemoryDataSchema = z.object({
@@ -265,14 +265,14 @@ export class MemoryFacts {
     this.db.prepare("DELETE FROM memory WHERE owner=? AND id=?").run(owner, id);
     return { id, note };
   }
-  restore(owner: string, id: string) {
+  restore(owner: string, id: string, preserveExpiry = false) {
     const row = this.db.prepare("SELECT * FROM memory_archive WHERE owner=? AND id=?").get(owner, id);
     if (!row) throw new Error("Archived memory not found");
     this.requireRoom(owner, 1);
     // R17-058 (integration review): the owner putting back a fact that expired keeps it for good,
     // rather than the next sweep setting it straight aside again.
     const data = JSON.parse(String(row.data)) as Record<string, unknown>;
-    if (typeof data.expiresAt === "string" && Date.parse(data.expiresAt) <= Date.now()) delete data.expiresAt;
+    if (!preserveExpiry && typeof data.expiresAt === "string" && Date.parse(data.expiresAt) <= Date.now()) delete data.expiresAt;
     this.db.exec("BEGIN");
     try {
       this.db.prepare("INSERT INTO memory(id,owner,data,created_at,updated_at,revision) VALUES(?,?,?,?,?,?)")
@@ -483,6 +483,9 @@ export interface OutsideMemoryProvider extends MemoryBackend {
   forgetSettled?(owner: string, sessionId: string): Promise<void>;
   serviceFor?(owner: string): MemoryBackend | undefined;
   takeBack?(owner: string, id: string, service: MemoryBackend): Promise<boolean>;
+  destinationFor?(owner: string): MemoryDestination;
+  setAsideAt?(owner: string, id: string, receipt: MemoryWriteReceipt, note: string): Promise<void>;
+  restoreAt?(owner: string, id: string, receipt: MemoryWriteReceipt): Promise<void>;
 }
 /**
  * Takes back a fact just written for `owner`: from the service it was written to when that is known

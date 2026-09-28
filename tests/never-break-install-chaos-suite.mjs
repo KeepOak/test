@@ -662,6 +662,8 @@ test(`\`branch update --yes\` on data from a newer Branch refuses without touchi
       installRoot: join(root, "app"), dataDir, version: "1.0.0", platform: "linux", arch: "x64", yes: true,
       print: (line) => lines.push(line),
       deps: {
+        // This is a test of the data check, not of provenance, so this release names itself the last without a record.
+        lastReleaseWithoutProvenance: "2.0.0",
         fetch: releaseFor(Buffer.from(`release-${seed}`)),
         scratchDir: join(root, "scratch"),
         running: async () => null,
