@@ -95,11 +95,12 @@ test("device sign-in stores tokens, registers ChatGPT presets and completes a to
   assert.equal(stored.protected, false);
   assert.ok(!JSON.stringify(stored).includes("refresh_1"), "tokens are not stored in clear text");
   const ids = [...app.runtime.models.presets.keys()].filter((id) => id.startsWith("chatgpt-"));
-  assert.deepEqual(ids, ["chatgpt-gpt-6-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5"]);
+  assert.deepEqual(ids, ["chatgpt-gpt-6-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5", "chatgpt-gpt-6-astra"]);
   const settings = app.runtime.models.settings("local");
   assert.equal(settings.activePreset, "chatgpt-gpt-6-sol", "ChatGPT replaces the demonstration as default, with GPT-6 Sol");
   assert.deepEqual(settings.fallbackOrder, ["chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5"]);
-  assert.ok(![...app.runtime.models.presets.keys()].some((id) => id.includes("astra")), "the costliest model is never offered or fallen back to");
+  assert.ok(app.runtime.models.presets.has("chatgpt-gpt-6-astra"), "Astra is available for an explicit choice");
+  assert.ok(!settings.fallbackOrder.includes("chatgpt-gpt-6-astra"), "Astra is never an automatic fallback");
   useFakeBackend(app, auth, base);
   const run = await app.runtime.run({ prompt: "save a greeting" });
   assert.equal(run.status, "completed");
@@ -122,6 +123,22 @@ test("device sign-in stores tokens, registers ChatGPT presets and completes a to
   assert.equal(second.input.at(-1).type, "function_call_output");
   assert.equal(second.input.at(-1).call_id, "call_1");
   assert.equal(app.store.usage(run.id).reportedInput, 22);
+});
+
+test("GPT-6 Astra is an explicit subscription choice and runs Branch tools without replacing the Sol default", async (t) => {
+  const { app, auth, base, seen } = await fixture(t);
+  await auth.startDeviceLogin();
+  await finishChatGPTSignIn(app.runtime.models, auth, "local", "BranchAgent/test");
+  assert.ok(app.runtime.models.presets.has("chatgpt-gpt-6-astra"));
+  useFakeBackend(app, auth, base);
+  const run = await app.runtime.run({ prompt: "save a greeting", model: "chatgpt-gpt-6-astra" });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, "Done: greeting saved");
+  const calls = seen.requests.filter((entry) => entry.url === "/codex/responses");
+  assert.equal(calls.length, 2, "Branch executed the returned tool and sent its result back");
+  assert.ok(calls.every((entry) => JSON.parse(entry.body).model === "gpt-6-astra"));
+  assert.equal(app.runtime.models.settings("local").activePreset, "chatgpt-gpt-6-sol");
+  assert.ok(!app.runtime.models.settings("local").fallbackOrder.includes("chatgpt-gpt-6-astra"));
 });
 
 test("expiring access tokens refresh once for concurrent callers; a rejected refresh signs out", async (t) => {
@@ -168,7 +185,7 @@ test("HTTP API exposes sign-in status, starts the device flow and signs out", as
   assert.equal(status.signedIn, true);
   assert.equal(status.email, "person@example.com");
   assert.ok(!JSON.stringify(status).includes("refresh_1"));
-  assert.equal((await call("state")).data.models.presets.length, 7, "the demonstration and the six ChatGPT models");
+  assert.equal((await call("state")).data.models.presets.length, 8, "the demonstration and the seven ChatGPT models");
   const out = await call("chatgpt/logout", {});
   assert.equal(out.data.signedIn, false);
   assert.equal((await call("state")).data.models.presets.length, 1);

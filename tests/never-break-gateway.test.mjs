@@ -158,6 +158,18 @@ test("requests go through to the worker, and a killed worker is replaced while t
   assert.equal(alive(first.pid), false);
 });
 
+test("selfdev: an engine restarting itself on request (exit code 75) is started again at once and is not a crash", async (t) => {
+  const { gw, events } = await gateway(t);
+  await until(() => events.some((e) => e.kind === "ready"), "the first worker");
+  const first = JSON.parse((await get(gw.url, "/api/state")).body);
+  await get(gw.url, "/api/dashboard/restart", { method: "POST", origin: gw.url, "content-type": "application/json", body: "{}" });
+  await until(() => events.filter((e) => e.kind === "ready").length >= 2, "the worker started again");
+  const second = JSON.parse((await get(gw.url, "/api/state")).body);
+  assert.notEqual(second.pid, first.pid);
+  assert.equal(events.filter((e) => e.kind === "crash").length, 0, "a restart asked for is not recorded as a crash");
+  assert.equal(gw.restarts, 0);
+});
+
 test("a request waits only so long for a worker that will not come", async (t) => {
   const { gw } = await gateway(t, { env: { FAKE_MODE: "never-ready" },
     before: (dataDir) => saveGatewayConfig(dataDir, GatewayConfigSchema.parse({ holdSeconds: 0, startSeconds: 60 })) });

@@ -48,8 +48,8 @@ const pressedChoices = (page) => page.locator('.set-col .mirrors [data-act="them
 test("DG-160: the three choices are the prototype's light mirror, dark mirror and Match this computer, one of them chosen", async (t) => {
   const { page, errors } = await appearance(t);
   assert.deepEqual(await page.locator('.set-col .mirrors [data-act="themeset"]').evaluateAll((nodes) => nodes.map((node) => node.dataset.v)), ["light", "dark", "system"]);
-  assert.match(await choice(page, "light").innerText(), /^Light · live mirror of/);
-  assert.match(await choice(page, "dark").innerText(), /^Dark · live mirror of/);
+  assert.match(await choice(page, "light").locator("b").innerText(), /^Light · live mirror of/); // its caption; the miniature shows the latest conversation
+  assert.match(await choice(page, "dark").locator("b").innerText(), /^Dark · live mirror of/); // its caption; the miniature shows the latest conversation
   assert.equal((await choice(page, "system").innerText()).trim(), "Match this computer");
   assert.equal((await pressedChoices(page)).length, 1, "exactly one is chosen");
   assert.deepEqual(errors, []);
