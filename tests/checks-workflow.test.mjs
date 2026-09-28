@@ -26,7 +26,8 @@ test("the whole suite runs on every pull request and once per batch of merges in
 test("the suite ends in one required job, and nothing in it can hold a run past fifteen minutes", () => {
   assert.deepEqual(workflow.jobs.verify.needs, ["plan", "test"]);
   assert.equal(workflow.jobs.verify.name, "verify-suite");
-  assert.equal(workflow.jobs.verify.if, "always()");
+  // A cancelled run (replaced by a newer push, or waiting for a CI slot) stays cancelled rather than red.
+  assert.equal(workflow.jobs.verify.if, "${{ !cancelled() }}");
   const verify = workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n");
   assert.match(verify, /if \[ "\$EVENT" = pull_request \]; then test "\$PLAN" = success; else test "\$PLAN" = skipped; MODE=full; fi/);
   assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push always runs the whole suite");
@@ -78,7 +79,25 @@ test("a green push to redesign/window fast-forwards mac/cross-platform, and noth
   assert.match(script, /git push origin "\$SHA:refs\/heads\/mac\/cross-platform"/);
   assert.doesNotMatch(script, /--force|\s-f\s|\+\$SHA|git merge\s/, "never forced, never a merge commit");
   assert.equal(promote.env?.SHA ?? promote.steps.find((step) => step.env?.SHA).env.SHA, "${{ github.sha }}", "the commit this run tested");
-  // Only the promote job asks for more than reading.
-  for (const [name, job] of Object.entries(workflow.jobs)) if (name !== "promote") assert.equal(job.permissions, undefined, name);
+  // Only the promote job may write to the repository. The queue's two jobs may cancel and rerun runs and label pull
+  // requests, and nothing else; the test shares read.
+  const queue = { contents: "read", actions: "write", "pull-requests": "write" };
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name === "promote") continue;
+    assert.deepEqual(job.permissions, ["plan", "verify"].includes(name) ? queue : undefined, name);
+  }
   assert.deepEqual(workflow.permissions, { contents: "read" });
+});
+
+/* The queue: a pull-request run asks for a slot before it plans anything, and waits by cancelling itself (never by
+   holding a runner); every run that finishes hands its slot on, even when a share failed. */
+test("pull-request runs take a CI slot first, and every finished run hands its slot on", () => {
+  const plan = workflow.jobs.plan.steps;
+  const slot = plan.findIndex((step) => step.id === "slot");
+  assert.ok(slot >= 0 && slot < plan.findIndex((step) => step.id === "plan"), "the slot is taken before planning");
+  assert.match(plan[slot].run, /ci-queue\.mjs admit --run="\$RUN" --attempt="\$ATTEMPT" --pr="\$PR"/);
+  assert.equal(plan.find((step) => step.id === "plan").if, "steps.slot.outputs.held != 'true'");
+  const hand = workflow.jobs.verify.steps.find((step) => /ci-queue\.mjs restart/.test(step.run ?? ""));
+  assert.equal(hand.if, "always()", "a failed share still hands its slot on");
+  assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push to redesign/window is never held");
 });
