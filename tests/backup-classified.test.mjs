@@ -42,6 +42,7 @@ const notSettings = new Set(["[page]", "crashes", "help.", "installed_skills", "
  */
 const reviewedComputedKeys = new Set([
   "src/a2a-client.ts: recordId",
+  "src/runtime.ts: marked",
   "src/accounts/settings.ts: sessionKey",
   "src/add-ons/export.ts: this.key",
   "src/add-ons/lists.ts: this.key",
@@ -186,7 +187,7 @@ const computedExamples = {
     "flowboards-recipe-checks:p", "tool-meaning-search", "people-shares", "policy", "desktop-control", "wake-word",
     "live-dictation", "routing", "model-profiles", "models", "governance", "person-about:owner", "person-picture:owner"],
   travels: ["channel-usage:telegram:1", "delight-achievements", "prompt-library-items", "reflection-cursor:s",
-    "reflection-note:p", "skill-install-log", "tool_catalog_health", "ask-first"],
+    "reflection-note:p", "skill-install-log", "stays-here:s", "tool_catalog_health", "ask-first"],
 };
 const travels = (id) => id in travelsWithBackup || Object.keys(travelsWithBackup).some((key) => key.endsWith(":") && id.startsWith(key));
 
