@@ -273,3 +273,25 @@ test("models-ui: a specialist's saved Claude account answers its helpers through
   assert.ok(f.launches.slice(before).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, third)), "the saved account's own Claude folder");
   assert.equal(f.service.pool(pool).defaultAccount, "primary", "the owner's account order is untouched");
 });
+test("models-ui: a helper a Trunk starts answers with the Trunk's own pick, never the owner's default, wherever its work runs", async (t) => {
+  const f = await fixture(t, { mode: "on", runtime: true });
+  await writeFile(join(f.root, "workspace", "proof.txt"), "helper proof\n");
+  f.app.trunks.setMode("trunks", { mode: "on" });
+  const ed = f.app.trunks.create({ name: "Ed" });
+  const keys = { copyFromOwner: false, accounts: { [pool]: second } };
+  f.app.trunks.edit(ed.id, { permissions: ["files.read"], keys });
+  await f.app.trunks.introduced();
+  const parent = await f.app.runtime.run({ prompt: "Read proof.txt", permissions: ["files.read"], sessionId: ed.chatSessionId });
+  assert.equal(parent.status, "completed", parent.output);
+  // As a routine or a room seat: the conversation has no choice of its own, so only the Trunk's pick can say which.
+  saveSessionChoice(f.app.store, f.app.runtime.owner, ed.chatSessionId, pool, null);
+  const context = { ...f.app.runtime.context({ runId: parent.id }), trunk: ed.id, trunkKeys: keys };
+  f.launches.length = 0;
+  const child = await f.app.runtime.delegate("Read proof.txt", context, ["files.read"], "", { model: pool });
+  assert.equal(child.status, "completed", child.output);
+  assert.ok(f.launches.length && f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, second)), "the Trunk's pick, not the owner's first account");
+  await assert.rejects(f.app.runtime.delegate("Read proof.txt", context, ["files.read"], "", { model: pool, accountRef: { pool, account: third } }),
+    /may use only the account picked for it/);
+  const unpicked = { ...context, trunkKeys: { copyFromOwner: false, accounts: {} } };
+  await assert.rejects(f.app.runtime.delegate("Read proof.txt", unpicked, ["files.read"], "", { model: pool }), /no key picked/);
+});
