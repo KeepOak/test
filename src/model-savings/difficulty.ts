@@ -1,6 +1,7 @@
 import type { Store } from "../store.js";
 import { classifyTask } from "../local-routing.js";
 import { readSavings } from "./settings.js";
+import { hardMixturePreset } from "./mixture.js";
 
 /**
  * R17-047: choose the connection by how hard the task is. A small model is asked one short
@@ -84,7 +85,9 @@ export async function chooseByDifficulty(store: Pick<Store, "get">, owner: strin
   const card = readSavings(store, owner, "difficulty");
   if (card.mode === "off" || !card.easyModel || !card.hardModel) return null;
   if (!input.known(card.easyModel) || !input.known(card.hardModel)) return null;
-  const pick = (difficulty: Difficulty) => (difficulty === "easy" ? card.easyModel! : card.hardModel!);
+  // Mix models on hard questions: a hard task goes to the mixture of both picks, when it is in the model picker.
+  const hard = card.mixHard && input.known(hardMixturePreset) ? hardMixturePreset : card.hardModel!;
+  const pick = (difficulty: Difficulty) => (difficulty === "easy" ? card.easyModel! : hard);
   const reading = card.mode === "when-needed" ? readingOf(input.prompt, input.toolCount) : null;
   if (reading) return { preset: pick(reading), difficulty: reading, by: "reading", reason: `The task's length and tools say it is ${reading}, so no model was asked` };
   const classifier = card.classifierModel && input.known(card.classifierModel) ? card.classifierModel : card.easyModel;

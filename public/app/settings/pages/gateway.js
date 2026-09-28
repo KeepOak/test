@@ -14,12 +14,15 @@ import { toast, ic } from "../../core/ui.js";
 import { id15, sw15, code15, sec15 } from "../rows15.js";
 import { gateway17, initMore17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
+import { noteGateway } from "../../shell/extras.js";
 
 let gwData = null;
 const D = { reach: null, personal: null };
 const onMode = (mode) => (mode ? mode !== "off" : false);
 /* The gateway is on or off: "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so a file saved as
-   "when-needed" reads as on and the switch saves "on" or "off". */
+   "when-needed" reads as on. The Gateway switch saves "when-needed" or "off", so switching it on leaves "Carry on
+   interrupted work" as it was (QA retest 2026-09-28, G1: switching the gateway on also ticked that one); only the Carry
+   switch saves "on". */
 const gwOn = onMode;
 const mode = (on) => (on ? "when-needed" : "off");
 
@@ -37,6 +40,7 @@ async function loadGateway() {
   const [gw, reach, personal] = await Promise.all(["never-break", "reach", "personal"]
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   gwData = gw; Object.assign(D, { reach, personal });
+  if (gw) noteGateway(gw); // the status bar says the same as this page
   render();
 }
 
@@ -59,7 +63,7 @@ export function init() {
   markLive(["sw:gw-mode", "sw:gw-carry", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "gw-mode") {
-      try { await api("never-break", { mode: e.target.checked ? "on" : "off" }); } catch (error) { toast(error.message); }
+      try { await api("never-break", { mode: e.target.checked ? "when-needed" : "off" }); } catch (error) { toast(error.message); }
       await loadGateway();
       return;
     }
@@ -85,13 +89,18 @@ export async function load() {
 
 const BASE = () => `<h1>${t("window.settings.gateway.gateway")}</h1><p class="lede">${t("window.settings.gateway.a-small-helper-that-keeps-branch")}</p>`;
 
+/* QA retest 2026-09-28 (G1): the switch is what the owner chose; whether the gateway runs is the engine's own word
+   (`underGateway`: this engine was started by it). It takes over only at the next start (src/cli.ts,
+   runGatewayIfSwitchedOn), so just after the switch goes on the page says so rather than that it is running. */
 function statusSection(gw) {
   if (!gw) return "";
-  const on = gwOn(gw.mode);
-  const title = on ? t("window.settings.gateway.the-gateway-is-on") : t("window.settings.gateway.the-gateway-is-off");
-  const desc = on ? t("window.settings.gateway.on-telegram-your-phone-and-automations") : t("window.settings.gateway.off-when-you-close-branch-your");
-
-  return `<div class="status"><span class="sdot ${on ? "ok" : "bad"}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
+  const on = gwOn(gw.mode), running = on && gw.underGateway === true;
+  const [title, desc, dot] = running
+    ? [t("window.settings.gateway.the-gateway-is-on"), t("window.settings.gateway.on-telegram-your-phone-and-automations"), "ok"]
+    : on
+      ? [t("window.settings.gateway.the-gateway-is-switched-on"), t("window.settings.gateway.switched-on-takes-over-next-start"), "warn"]
+      : [t("window.settings.gateway.the-gateway-is-off"), t("window.settings.gateway.off-when-you-close-branch-your"), "bad"];
+  return `<div class="status"><span class="sdot ${dot}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
 }
 
 function modeSection(gw) {
