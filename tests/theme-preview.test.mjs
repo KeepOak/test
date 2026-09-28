@@ -66,6 +66,9 @@ test("DG-039 the Light and Dark mirrors show this window's own conversation, at 
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
     if (width <= 760) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
+    await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).click();
+    await page.locator("#conversation").getByText("Beans by the fence, squash in the sun.", { exact: true }).waitFor();
+    if (width <= 760) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
     await page.locator('#side [data-act="view"][data-v="settings"]').click();
     await page.locator('[data-act="setpage"][data-v="appearance"]').click();
     const mirrors = page.locator('.set-col .mirrors [data-act="themeset"]');
