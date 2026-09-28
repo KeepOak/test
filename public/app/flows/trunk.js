@@ -16,6 +16,8 @@ import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
+import { loadAccounts, poolById } from "./account.js"; // models-ui: account names as Settings › Accounts shows them
+import { logo } from "../core/logos.js";
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
 /* The prototype's Bob is the engine's sway (the engine has no bob). */
@@ -191,6 +193,56 @@ async function setModel(el) {
   } catch (error) { toast(error.message); }
 }
 
+/* ---------- Accounts: which account of each connection this Trunk answers with ----------
+   The engine's own view (GET /api/trunks/{id}/keys, src/trunks/accounts.ts keyPlan): every connection that can have
+   several accounts, the Trunk's pick for each, and keyPlan's plain notes about what it cannot use yet. An account is
+   named as Settings › Accounts names it (GET /api/accounts, its verified email or name where the engine has one), else
+   by the name the engine keeps. Each change is saved at once: POST /api/trunks/{id} replaces the whole keys object, so the
+   Trunk is read fresh first and the rest of it carried over, as flows/account.js saveTrunks does. "Use my accounts too"
+   is keys.copyFromOwner (on unless the owner turns it off); with it off, a connection with no pick does not answer. */
+async function loadKeys(id) {
+  try {
+    const [keys] = await Promise.all([api(`trunks/${encodeURIComponent(id)}/keys`), loadAccounts()]);
+    if (ed?.id !== id) return;
+    ed.keys = keys;
+    if (ed.tab === "accounts") drawEditor();
+  } catch (error) { toast(error.message); }
+}
+const accountName = (pool, a) => poolById(pool)?.accounts?.find((x) => x.id === a.id)?.label || a.label || a.id;
+function poolRow(tr, pool, keys) {
+  const picked = keys.accounts[pool.id] ?? "", known = pool.accounts.some((a) => a.id === picked);
+  const none = keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-none");
+  const opts = pool.accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === picked ? "selected" : ""}>${esc(accountName(pool.id, a))}</option>`).join("");
+  const label = t("window.flows.trunk.acc-pick-for", { name: pool.label });
+  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)}</b><span class="right"><select class="inp" data-sw="tk-pool" data-tk-pool="${esc(pool.id)}" data-id="${esc(tr.id)}" aria-label="${esc(label)}"><option value="" ${known ? "" : "selected"}>${esc(none)}</option>${opts}</select></span><small></small></div>`;
+}
+function accountsTab(tr) {
+  const view = ed.keys;
+  if (!view) return `<p class="hint">${t("window.flows.trunk.acc-reading")}</p>`;
+  const keys = view.keys ?? { copyFromOwner: true, accounts: {} };
+  const copy = `<div class="ctl"><b>${t("window.flows.trunk.acc-copy")}</b><input class="sw" type="checkbox" id="tk-copy" data-id="${esc(tr.id)}" ${keys.copyFromOwner ? "checked" : ""} aria-label="${esc(t("window.flows.trunk.acc-copy"))}"><small>${t("window.flows.trunk.acc-copy-hint")}</small></div>`;
+  const rows = (view.pools ?? []).map((pool) => poolRow(tr, pool, keys)).join("") || `<p class="hint">${t("window.flows.trunk.acc-empty")}</p>`;
+  const notes = [view.note, ...(view.plan?.notes ?? [])].filter(Boolean).map((n) => `<li>${esc(n)}</li>`).join("");
+  return `<div class="tk-accounts"><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.acc-lede")}</p>${copy}${rows}${notes ? `<ul class="hint tk-notes">${notes}</ul>` : ""}</div>`;
+}
+async function saveKeys(id, change) {
+  try {
+    const { trunk } = await api(`trunks/${encodeURIComponent(id)}`);
+    const had = trunk?.keys ?? { copyFromOwner: true, accounts: {} };
+    await api(`trunks/${encodeURIComponent(id)}`, { keys: change({ copyFromOwner: had.copyFromOwner, accounts: { ...had.accounts } }) });
+    await refresh().catch((error) => console.warn(error.message));
+  } catch (error) { toast(error.message); }
+  await loadKeys(id); // what the engine keeps now, whether or not the change was taken
+}
+function pickAccount(el) {
+  const pool = el.dataset.tkPool, v = el.value;
+  saveKeys(el.dataset.id, (keys) => {
+    if (v) keys.accounts[pool] = v; else delete keys.accounts[pool];
+    return keys;
+  });
+}
+const setCopy = (el) => saveKeys(el.dataset.id, (keys) => ({ ...keys, copyFromOwner: el.checked }));
+
 /* Drawn as the design has it and greyed, bar Which model: reading files, the browser and sending without asking each loosen
    the Trunk (reviewed apart, not done from here); the engine's Spend money category holds no tool in this build (GET
    /api/state approvalCategories), so there is nothing a Trunk could be let spend or kept from; and its own notes are
@@ -205,8 +257,8 @@ function drawEditor() {
   if (!tr) { closeDlg(); ed = null; return; }
   const old = dialog()?.querySelector(".editor") ? dialog() : null;
   const kept = [".dlg-b", ".looks-tl"].map((q) => old?.querySelector(q)?.scrollTop ?? 0);
-  const tabs = [["look", t("window.flows.trunk.look")], ["may", t("autonomy.orders.authority")], ["its17d", t("window.p17d.its-computers")]].map(([k, l]) => `<button class="tab" role="tab" type="button" aria-selected="${ed.tab === k}" data-act="st-tab" data-v="${k}">${l}</button>`).join("");
-  const body = ed.tab === "look" ? lookPicker(tr) + emojiRow(tr) + lookTab(tr, ed.d) : ed.tab === "its17d" ? itsTab(tr.id) : mayTab(tr);
+  const tabs = [["look", t("window.flows.trunk.look")], ["may", t("autonomy.orders.authority")], ["its17d", t("window.p17d.its-computers")], ["accounts", t("window.flows.trunk.accounts")]].map(([k, l]) => `<button class="tab" role="tab" type="button" aria-selected="${ed.tab === k}" data-act="st-tab" data-v="${k}">${l}</button>`).join("");
+  const body = ed.tab === "look" ? lookPicker(tr) + emojiRow(tr) + lookTab(tr, ed.d) : ed.tab === "its17d" ? itsTab(tr.id) : ed.tab === "accounts" ? accountsTab(tr) : mayTab(tr);
   const el = openDlg({ title: t("trunks.editing", { name: tr.name }), wide: true,
     body: `<div class="editor"><div class="big">${av(draftFace(tr), 84)}<button class="btn sm" type="button" data-act="st-shuffle">${t("studio.shuffle")}</button></div><div data-css="display:grid;gap:14px;min-width:0"><div class="tabs" data-css="margin:0" role="tablist">${tabs}</div>${body}</div></div>`,
     foot: `<button class="btn bad rm-tl" type="button" data-act="remove" data-id="${esc(tr.id)}">${t("window.flows.trunk.remove-trunk")}</button><button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="st-save">${t("action.save")}</button>` });
@@ -491,7 +543,7 @@ export function init() {
   markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
-  on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); });
+  on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); if (ed.tab === "accounts") loadKeys(ed.id); });
   computersChanged(() => { if (ed?.tab === "its17d" && dialog()?.querySelector(".editor")) drawEditor(); }); // only while the editor is open
   on("st-colour", (el) => { keepFields(); ed.d.colour = hex(el.dataset.v); drawEditor(); });
   on("st-shape", (el) => { keepFields(); ed.d.shape = SHAPE_NAMES[+el.dataset.v] ?? null; drawEditor(); });
@@ -499,8 +551,12 @@ export function init() {
   on("st-eyes", (el) => { keepFields(); ed.d.eyes = el.dataset.v; drawEditor(); });
   on("st-photo", () => pickPhoto());
   on("st-photo-x", () => removePhoto());
-  document.addEventListener("change", (e) => { if (e.target.id === "tm-model-sel") setModel(e.target); });
-  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel"]);
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "tm-model-sel") setModel(e.target);
+    else if (e.target.id === "tk-copy") setCopy(e.target);
+    else if (e.target.dataset?.tkPool) pickAccount(e.target);
+  });
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));

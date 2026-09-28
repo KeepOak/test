@@ -289,6 +289,6 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(app.trunks.rooms.list()[0].needsYou, true, "the engine says the room needs you");
   const roomRow = await sidebar(page, `#side .row[data-id="${room.sessionId}"]`);
   const seen = { roomMarked: await roomRow.locator("p.attn").count(), editorTabs };
-  assert.deepEqual(seen, { roomMarked: 1, editorTabs: ["Look", "What it may do", "Its computers"] },
-    "window bug: a room that needs you (GET /api/trunks rooms[].needsYou) is not marked in its row; the Trunk editor has no Its computers tab (prototype itsComputers, pass 17)");
+  assert.deepEqual(seen, { roomMarked: 1, editorTabs: ["Look", "What it may do", "Its computers", "Accounts"] },
+    "window bug: a room that needs you (GET /api/trunks rooms[].needsYou) is not marked in its row; the Trunk editor lacks Its computers (prototype itsComputers, pass 17) or Accounts (its own account per connection, owner 2026-09-27)");
 });
