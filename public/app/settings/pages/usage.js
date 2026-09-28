@@ -197,10 +197,26 @@ function limitsSec() {
     ${tray}</div>`;
 }
 
-/* Spend by Trunk: the engine keeps no spend per Trunk, so no bars are drawn; the month's total is the engine's. */
+/* models-ui (MODEL-052): who spent what over the last 7 days (GET /api/usage/by-trunk): the owner's own tasks and each
+   Trunk's, a bar by tasks, the cost where a price is on file (a plan sign-in has none, and says so), and the
+   accounts each answered through. The month's total is the engine's too. */
+let byTrunk = null;
+async function loadByTrunk() {
+  if (E.profiles?.isOwner === false) { byTrunk = null; return; } // the owner's alone
+  byTrunk = await api("usage/by-trunk?days=7").catch(() => null);
+  renderNow();
+}
+function spendRow(r, most) {
+  const name = r.trunk ? r.trunk.name : t("window.settings.usage.by-you");
+  const cost = r.cost === null ? t("window.settings.usage.by-plan") : `$${r.cost.toFixed(2)}${r.unpricedTasks ? ` ${t("window.settings.usage.by-plus-plan", { count: r.unpricedTasks })}` : ""}`;
+  const accounts = r.accounts.map((a) => `${a.label} (${a.calls})`).join(", ");
+  return `<div class="brow spend-row"><span><b>${esc(name)}</b></span><span class="track"><u data-css="width:${Math.max(3, Math.round((r.tasks / most) * 100))}%"></u></span><span class="v">${esc(cost)}</span><small class="spend-sub">${esc(t("window.settings.usage.by-tasks", { count: r.tasks, tokens: r.tokens.toLocaleString() }))}${accounts ? ` · ${esc(accounts)}` : ""}</small></div>`;
+}
 function spendSec() {
   const month = glance?.month?.pricedRuns ? `<p class="hint">${t("window.settings.usage.this-month-value-plans-are-billed", { value: Number(glance.month.cost).toFixed(2) })}</p>` : "";
-  return `<div class="sec"><h2>${t("window.settings.usage.spend-last-7-days")}</h2><div class="bars"></div>${month}</div>`;
+  const rows = byTrunk?.rows ?? [], most = Math.max(1, ...rows.map((r) => r.tasks));
+  const bars = rows.length ? rows.map((r) => spendRow(r, most)).join("") : byTrunk ? `<p class="hint">${t("window.settings.usage.by-none")}</p>` : "";
+  return `<div class="sec"><h2>${t("window.settings.usage.spend-last-7-days")}</h2><div class="bars spend-bars">${bars}</div>${month}</div>`;
 }
 
 /* ---------- keeping things ---------- */
@@ -274,6 +290,7 @@ export function init() {
   loadUsage();
   loadSuites();
   loadGlance();
+  loadByTrunk();
   loadRetention();
   loadFlags();
   markLive(["sw:u-ring", "sw:u-ckpt", "sw:u-ask"]);
@@ -296,6 +313,6 @@ export function init() {
   markLive(["rep15", "repopen15", "eval-set", "eval-run"]);
 }
 
-export function load() { loadSuites(); loadGlance(); loadRetention(); loadFlags(); return loadUsage(); }
+export function load() { loadSuites(); loadGlance(); loadByTrunk(); loadRetention(); loadFlags(); return loadUsage(); }
 
 export const live = { "rep15": true, "repopen15": true, "eval-set": true, "eval-run": true, "repcsv15": true, "keep15": true, "keeploosen15": true, "ckpts15": true, "ckptback15": true, "flforget17c": true };

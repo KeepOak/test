@@ -1243,6 +1243,7 @@ export const ROUTES = {
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
   "/api/usage/glance": "look",
+  "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",
   "/api/usage/metering": "owner POST",

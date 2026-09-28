@@ -615,6 +615,11 @@ export class Store {
       .all(owner)
       .map((row) => this.toRun(row));
   }
+  /** models-ui: this person's task ids started since then, newest first, at most `limit` (Settings › Data & usage, by Trunk). */
+  taskIdsSince(owner: string, since: string, limit: number): string[] {
+    return this.db.prepare("SELECT id FROM tasks WHERE owner=? AND created_at >= ? ORDER BY created_at DESC LIMIT ?")
+      .all(owner, since, limit).map((row) => String(row.id));
+  }
   /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
   sessionTasksSince(sessionId: string, since: string): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);

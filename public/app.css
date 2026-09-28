@@ -428,6 +428,8 @@ details.adv summary::-webkit-details-marker{display:none}
 .brow .track{height:8px;border-radius:4px;background:var(--fill);overflow:hidden}
 .brow .track u{display:block;height:100%;background:var(--ink-2);border-radius:4px}
 .brow .v{font:12px var(--mono);text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.brow.spend-row{grid-template-columns:minmax(90px,160px) 1fr auto}
+.brow .spend-sub{grid-column:1/-1;margin-top:-4px;font-size:12px;color:var(--ink-3)}
 .filelist{display:grid;gap:0}
 .frow{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
 .frow code{font:500 12px var(--mono);background:var(--fill);border-radius:6px;padding:4px 8px}
