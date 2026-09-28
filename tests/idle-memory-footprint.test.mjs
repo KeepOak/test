@@ -49,6 +49,13 @@ test("the engine loads Playwright only when a browser is started or joined", () 
   assert.equal(loaded.includes("package:playwright-core"), false);
 });
 
+test("the engine loads the MCP SDK only when a server is connected, listed or called", () => {
+  // About 5 MB of heap (its client, transports and schemas): src/integrations/mcp-sdk.ts loads it on use.
+  const loaded = staticClosure("desktop/engine-process.js");
+  assert.equal(loaded.includes("package:@modelcontextprotocol/sdk"), false, "the MCP SDK is not loaded with the engine");
+  assert.equal(loaded.includes("examples/mcp-notes-server.js"), false, "the example server is its own program");
+});
+
 test("a window started in the tray does not draw until it is first shown", () => {
   // Electron counts a window that was never shown as visible (paintWhenInitiallyHidden), so a tray start drew, decoded
   // its loops and held its tiles for nobody: 390 MB instead of 774 MB working set when it does not.

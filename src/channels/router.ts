@@ -28,7 +28,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
-import { platformGate } from "../reach/platform.js"; // r17-i
+import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
@@ -160,6 +160,12 @@ export interface ChannelAdapter {
    */
   react?(chatId: string, messageId: string, emoji: string, previous?: string): Promise<void>;
   /**
+   * An app without buttons that reads reactions: from now on, a thumbs up (or check) or thumbs down (or cross) by
+   * `senderId` on the question message `messageId` in this chat comes back as the answer to that question
+   * (`y:<fingerprint>` or `n:<fingerprint>`), once (src/channels/reaction-answers.ts). Absent means answers are typed.
+   */
+  watchAnswers?(chatId: string, messageId: string, senderId: string, fingerprint: string): void;
+  /**
    * The app's own working-status line in a thread (Slack's assistant status, "is thinking…"): `words` says what the
    * task is doing now, "" clears it. `threadId` is the person's message, as the reply threads under it. Absent means
    * the app has none; typing and the reaction carry the status there.
@@ -240,6 +246,8 @@ export function typedApproval(text: string): "y" | "n" | null {
   return ["approve", "yes"].includes(match[1]!.toLowerCase()) ? "y" : "n";
 }
 export const nothingToApprove = "Nothing here is waiting for a yes or no.";
+/** Added where the app reads reactions on the question (src/channels/reaction-answers.ts). */
+export const reactionNote = "Or react \u{1F44D} or \u{1F44E} to this message.";
 /** PR #289: a typed answer that cannot be matched to the question this chat was shown, while several wait. */
 export const severalWaitingInChat = "More than one request is waiting in this conversation. Answer them with their own buttons, or in the app.";
 /** PR #289: the question the chat was shown no longer waits, so a "y" cannot answer it. */
@@ -803,14 +811,19 @@ export class ChannelRouter {
     if (nonce) for (const button of buttons) button.value += `:${nonce}`;
     const text = mayApprove ? checked.text : `${checked.text}\n\n${approveInWindow(waiting.label || waiting.tool || "that")}`;
     const format = faithful && mayApprove ? { spans: [{ offset: asked.length, length: command!.length, kind: "block" as const, language: "shell" }] } : undefined;
+    // An app without buttons that reads reactions (src/channels/reaction-answers.ts) takes a thumbs up or down too.
+    const reacts = !adapter.sendButtons && !!adapter.watchAnswers && !!waiting.fingerprint;
+    const note = `${mayApprove ? approvalFallbackNote : "Reply n (or /deny) for no."}${reacts ? ` ${mayApprove ? reactionNote : "Or react \u{1F44E}."}` : ""}`;
+    let questionId: string | undefined;
     const sent = adapter.sendButtons
       ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId, format).then(() => true, () => false)
-      : await this.deliver(message.channel, message.chatId, `${text}\n\n${mayApprove ? approvalFallbackNote : "Reply n (or /deny) for no."}`,
-        key, message.messageId).then((done) => done.sent, () => false);
+      : await this.deliver(message.channel, message.chatId, `${text}\n\n${note}`, key, message.messageId)
+        .then((done) => { questionId = done.messageId; return done.sent; }, () => false);
     // Q259: a question answered elsewhere while it was being sent is not recorded as shown.
     const still = this.runtime.waitingApprovals(sessionId).some((one) => one.fingerprint === waiting.fingerprint && one.runId === waiting.runId);
     if (sent && still && waiting.fingerprint)
       this.shownInChat.set(`${message.channel}\u0000${message.chatId}`, { sessionId, fingerprint: waiting.fingerprint });
+    if (sent && still && reacts && questionId) adapter.watchAnswers!(message.chatId, questionId, message.senderId, waiting.fingerprint!);
     if (sent && still && faithful && waiting.fingerprint && nonce) {
       if (this.shownCommands.size >= 1000) this.shownCommands.delete(this.shownCommands.keys().next().value!);
       this.shownCommands.set(`${message.channel}\u0000${message.chatId}\u0000${waiting.fingerprint}`, nonce);
@@ -873,12 +886,19 @@ export class ChannelRouter {
   switches(): ChatLiveSwitches {
     return chatLiveSwitches(this.store, this.runtime.owner);
   }
+  /** One of the accounts the owner named as their own: in "Commands from your own chat" or as a /platform owner. */
+  private ownAccount(channel: string, senderId: string): boolean {
+    const same = (account: { channel: string; sender: string }) => account.channel === channel && account.sender === senderId;
+    return ownerCommands(this.store, this.runtime.owner).accounts.some(same) || platformSettings(this.store, this.runtime.owner).owners.some(same);
+  }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
     const setting = this.switches().commands;
-    // As shipped, the owner's paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    // As shipped, the owner's own paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    // Only an account the owner named as their own (Commands from your own chat, or /platform's owners) counts:
+    // a paired friend or household member keeps the switch as it is.
     const pairedDm = setting === "off" && message.chatKind === "direct" && this.pair(message.channel, message.senderId)?.status === "approved"
-      && commandsInPairedDm(this.store, this.runtime.owner);
+      && this.ownAccount(message.channel, message.senderId) && commandsInPairedDm(this.store, this.runtime.owner);
     if ((setting === "off" && !pairedDm) || message.voice) return null;
     // Wave mac3 (commands): which of the shared table's commands a chat may read follows the owner's switch.
     const command = parseChatCommand(message.text, commandMode(this.store, this.runtime.owner));

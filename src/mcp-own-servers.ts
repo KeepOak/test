@@ -32,7 +32,7 @@
 export const lockdownStartRefusal = "Lockdown is on, so Branch does not start a program on this computer. Turn Lockdown off first.";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { mcpClient } from "./integrations/mcp-sdk.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { audit } from "./audit.js";
 import { approvalQuestion, type ApprovalGate, type PendingApproval } from "./approvals.js";
@@ -248,8 +248,8 @@ export class OwnMcpServers {
 
   /** Lists what a server offers now (after the yes), keeping only what the owner's settings do not refuse outright. */
   private async listTools(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
-    const { transport } = makeTransport(entry.server, this.env, this.deps.policy());
-    const client = new Client({ name: "branch", version: "0.1.0" });
+    const { transport } = await makeTransport(entry.server, this.env, this.deps.policy());
+    const client = new (await mcpClient())({ name: "branch", version: "0.1.0" });
     try {
       await client.connect(transport as Transport, { timeout: 20000 });
       const listed = await client.listTools({}, { timeout: 20000 });
