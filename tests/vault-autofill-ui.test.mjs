@@ -64,8 +64,13 @@ test("Saved sign-ins fits a 400-pixel window", async (t) => {
   const { page, errors } = await settingsWindow(t, { name: "vault-autofill-ui", width: 400, height: 900 });
   await openSettingsPage(page, "secrets");
   await page.locator(".set-col").getByRole("heading", { name: "Branch may fill", exact: true }).waitFor();
-  const box = await page.locator(".set-col").boundingBox();
-  assert.ok(box && box.width > 0 && box.x >= 0 && box.x + box.width <= 400, "the page fits inside 400 px");
+  // Measured inside the page in one step: the page draws again once the switch's state arrives (RES-710), and a box
+  // asked for in two steps (find, then measure) can land on the one just replaced (null).
+  const fits = await page.waitForFunction(() => {
+    const box = document.querySelector(".set-col")?.getBoundingClientRect();
+    return box && box.width > 0 && box.x >= 0 && box.right <= 400;
+  }, undefined, { timeout: 5000 }).then(() => true, () => false);
+  assert.ok(fits, "the page fits inside 400 px");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   assert.deepEqual(errors, []);
 });
