@@ -539,6 +539,8 @@ const comfortCards: SettingSpec[] = [
     fields: [
       { field: "method", label: "Where you are told", t: "comfort.field.method", guard: "plain", initial: "system", kind: { type: "choice", options: ["system", "window"] } },
       { field: "sound", label: "Sound", t: "comfort.field.sound", guard: "plain", initial: "off", kind: { type: "choice", options: ["off", "chime", "knock"] } },
+      yesNo("needsYes", "A Trunk needs a yes", "comfort.field.needsYes", "plain", true),
+      yesNo("taskDone", "A long task finishes", "comfort.field.taskDone", "plain", true),
     ] },
   { key: "comfort-files", name: "Ignore files", t: "comfort.files.title", home: "settings:general", ...viaComfort("files"),
     // Turning .gitignore off lets searches see more of the workspace (never a secret file).

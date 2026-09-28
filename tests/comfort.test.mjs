@@ -62,7 +62,7 @@ test("every comfort setting ships as Branch has always behaved, but for a chime 
   assert.deepEqual(values, {
     keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "Ctrl+Shift+S", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", vim: false },
     display: { statusLine: null, timestamps: false },
-    notify: { method: "system", sound: "chime", autoUpdate: "install", releaseChannel: "stable" },
+    notify: { method: "system", sound: "chime", needsYes: true, taskDone: true, autoUpdate: "install", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
     browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss" },
     network: { proxy: null, noProxy: [], caCertificates: [] },
