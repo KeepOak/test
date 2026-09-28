@@ -193,7 +193,11 @@ test("R17-039: the checklist is sent every round, the owner's edit wins, and it 
   const seen = [];
   let round = 0;
   const provider = scripted((request) => {
-    seen.push(request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n"));
+    // selfdev/prompt-cache: the list rides at the end of each round as Branch's note, never in the instructions up front.
+    seen.push(request.messages.filter((m) => m.role === "system" || m.from === "branch").map((m) => m.content).join("\n"));
+    const lead = request.messages.findIndex((m) => m.role !== "system");
+    assert.equal(request.messages.slice(lead).some((m) => m.role === "system"), false);
+    if (round > 0) assert.match(request.messages.at(-1).content, /checklist/);
     round++;
     if (round === 1) return { content: "", toolCalls: [{ id: "c1", name: "checklist.write", arguments: JSON.stringify({ steps: [{ text: "Read the code" }, { text: "Fix the bug" }] }) }] };
     if (round === 2) {
