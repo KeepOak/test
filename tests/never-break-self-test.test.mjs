@@ -28,7 +28,7 @@ async function ownerInstall(t, progressJudge) {
   app.store.save("settings", owner, "model-connections", { connections: [
     { id: "owner-ollama", name: "Owner's model", catalogId: "ollama", model: "llama2", extras: { baseUrl: "http://127.0.0.1:9" } },
   ] });
-  app.store.save("settings", owner, "models", { activePreset: "owner-ollama", fallbackOrder: [], cooldownMs: 60000, reasoning: null });
+  app.store.save("settings", owner, "models", { activePreset: "owner-ollama", fallbackOrder: ["owner-ollama"], cooldownMs: 60000, reasoning: null });
   await app.close();
   return { dataDir, workspace: join(root, "check-workspace") };
 }

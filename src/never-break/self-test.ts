@@ -57,6 +57,8 @@ export function quietCopy(app: Pick<Branch, "store" | "runtime">): void {
 
 async function checksOn(app: Branch, dataDir: string, checks: SelfTestCheck[]): Promise<void> {
   quietCopy(app);
+  // On the copy only: the stand-in is the model for anything that starts here, and no owner model is a fallback.
+  app.runtime.models.configure(app.runtime.owner, { activePreset: selfTestPreset, fallbackOrder: [] });
   await check(checks, "runs a task on a copy of your data", async () => {
     // The copy keeps the owner's model choice and saved connections (their keys too). The task is pinned to the
     // stand-in so none of them is asked, and the owner's own guards (loop guard, progress check) still watch it.
