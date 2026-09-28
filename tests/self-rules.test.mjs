@@ -100,3 +100,25 @@ test("branch.restart_engine restarts for the owner's own task and never for a Tr
   await new Promise((resolve) => setTimeout(resolve, 450));
   assert.deepEqual(sent, [["exit", 75], ["signal", 4242, "SIGTERM"]]);
 });
+
+test("working on its own code goes live the moment GitHub is connected, with no switch of its own; remote false keeps it off", async (t) => {
+  const { app, root, owner, store } = await fixture(t);
+  const { loadIntegrations } = await import("../dist/integrations/bootstrap.js");
+  const { writeFile } = await import("node:fs/promises");
+  assert.deepEqual(selfRulesView(store, owner, app.registry.names()).selfDev, { on: false, available: false }, "not before GitHub");
+  const explicitOff = join(root, "off.json");
+  await writeFile(explicitOff, JSON.stringify({ git: { remote: false, github: { tokenSecret: "GITHUB_TOKEN" } } }));
+  const off = await loadIntegrations(app.registry, explicitOff, {}, app.secretsFor, app.channelHost);
+  assert.equal(app.registry.names().includes("git.push"), false, "an explicit remote false still keeps sending off");
+  assert.equal(selfRulesView(store, owner, app.registry.names()).selfDev.available, false);
+  await off.close();
+  for (const name of app.registry.names().filter((one) => one.startsWith("github."))) app.registry.unregister(name);
+  const connected = join(root, "github.json");
+  await writeFile(connected, JSON.stringify({ git: { github: { tokenSecret: "GITHUB_TOKEN" } } }));
+  const on = await loadIntegrations(app.registry, connected, {}, app.secretsFor, app.channelHost);
+  t.after(() => on.close());
+  const names = app.registry.names();
+  assert.ok(names.includes("git.push"), "connecting GitHub turns sending on");
+  assert.ok(names.includes("branch.prepare_source_change"), "and with it, working on its own code");
+  assert.deepEqual(selfRulesView(store, owner, names).selfDev, { on: true, available: true });
+});

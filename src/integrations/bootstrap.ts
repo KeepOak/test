@@ -196,7 +196,11 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
 
 /** Sending work to a server is off until the owner turns it on; GitHub needs a saved token too. */
 export const GitConfigSchema = z.object({
-  remote: z.boolean().default(false),
+  /**
+   * Sending and receiving work (git.clone, git.push, git.pull). Off by default; the owner's ruling (2026-09-27) is that
+   * it ships on once GitHub is connected, so with a `github` block and no word here it is on. `false` still keeps it off.
+   */
+  remote: z.boolean().optional(),
   github: GitHubConfigSchema.partial().optional(),
   /** bucket-18: GitHub App (A2227). Exchange private key for installation tokens instead of personal access token. */
   githubApp: GitHubAppSettingsSchema.optional(),
@@ -570,7 +574,7 @@ async function buildEmail(channel: Extract<ChannelConfig, { type: 'email' }>, en
 /** Turns on the tools that reach a server: sending and receiving work, and GitHub when set up. */
 function enableGit(registry: ToolRegistry, config: z.infer<typeof GitConfigSchema>, host: ChannelHost | undefined, policy: NetworkPolicy | undefined): void {
   if (!host?.git) throw new Error('Version control settings are configured but this launch cannot host them');
-  if (config.remote) registerGitRemote(registry, host.git);
+  if (config.remote ?? (config.github !== undefined)) registerGitRemote(registry, host.git);
   if (config.gitlab) enableGitLab(registry, config.gitlab, host, policy);
   if (!config.github) return;
   if (!policy || !host.activeSecret) throw new Error('GitHub needs the network settings and the secrets locker');
