@@ -285,7 +285,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { stopLiveScreen, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { LocalScreen } from "./local-screen.js";
 import { localScreenHttp } from "./local-screen-http.js";
 import { pickedDevice } from "./devices/tools.js";
@@ -4529,7 +4529,6 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
-      stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       await localScreen.close();
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops

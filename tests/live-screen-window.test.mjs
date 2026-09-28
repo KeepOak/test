@@ -1,9 +1,8 @@
-/* parity-b2: the window holds This computer's screen open (GET /api/panels/screen, a stream of frames) only while the
-   owner has the computer view open on it: nothing before it opens, and the stream is let go, and the engine's reader
-   with it, once the view is closed, switched to the browser, hidden or locked; it opens again when shown again. All
-   screens never reads This computer when This computer is not one of the screens it draws. The reader is a stand-in
-   that counts its frames and whether it was let go. design/redesign/tools/mutate-live-screen.mjs breaks each stop in
-   turn (public/app) and expects this file to go red. */
+/* parity-b2: the window reads This computer's screen (GET /api/panels/screen, src/local-screen.ts) only while the owner
+   has the computer view open on it and has chosen what it shows: nothing before, and the stream is let go, and the
+   engine's reader with it, once the view is closed, switched to the browser, hidden or locked. All screens never reads
+   This computer when This computer is not one of the screens it draws. The screen is the stand-in of
+   tests/local-screen-fixture.mjs, which counts its frames and whether it was let go. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -13,8 +12,8 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { installScreenStandIn } from "./local-screen-fixture.mjs";
 
-const JPEG = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==", "base64");
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const TOWER = "a1b2c3d4e5f60718", LAPTOP = "0f1e2d3c4b5a6978";
 
@@ -26,11 +25,8 @@ async function windowWith(t, prepare) {
   app.store.message(run.sessionId, { role: "user", content: run.prompt });
   app.store.message(run.sessionId, { role: "assistant", content: "Here it is." });
   app.store.finish(run.id, "completed", "Here it is.");
-  const taken = { count: 0, open: 0 };
-  app.desktop.liveFrames = () => {
-    taken.open += 1;
-    return { async next() { taken.count += 1; return { bytes: JPEG, type: "image/jpeg", width: 1, height: 1 }; }, close() { taken.open -= 1; } };
-  };
+  const seen = installScreenStandIn(app);
+  const taken = { get count() { return seen.captured; }, get open() { return seen.opened - seen.closed; } };
   prepare?.(app);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   const browser = await chromium.launch({ headless: true });
@@ -48,6 +44,13 @@ async function windowWith(t, prepare) {
     await page.locator("#conversation .b").first().waitFor({ timeout: 30000 });
   } };
 }
+/* The owner chooses the stand-in's app window in the view (#610: nothing is shown before a choice). */
+async function choose(page) {
+  await page.locator("#native-target option").filter({ hasText: "Fixture editor" }).waitFor({ state: "attached", timeout: 15000 });
+  await page.locator("#native-target").selectOption({ label: "Fixture editor" });
+  await page.getByRole("button", { name: "Share selected window", exact: true }).click();
+  await page.locator("#stage7 .livescr-img[src^='data:image/jpeg']").waitFor({ timeout: 15000 });
+}
 /* The frames taken after the window has had a moment to let go, over `ms`, and whether the reader is still open. */
 async function flatFor(taken, ms = 1500) {
   await pause(700);
@@ -63,27 +66,29 @@ test("This computer's screen streams only while its view is open and showing, an
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "nothing is read before the view opens");
   const open = page.locator('.head [data-act="stage"][data-v="computer"]').first();
   await open.click();
-  await page.locator("#stage7 .livescr-img[src^='data:image/jpeg']").waitFor({ timeout: 15000 });
+  assert.deepEqual(await flatFor(taken, 800), { more: 0, open: 0 }, "open but nothing chosen: nothing is read");
+  await choose(page);
   const started = taken.count;
   await pause(1000);
-  assert.ok(taken.count - started >= 4, `several frames a second while open (${taken.count - started} in a second)`);
+  assert.ok(taken.count - started >= 3, `several frames a second while open (${taken.count - started} in a second)`);
 
   await page.locator('#stage7 [data-act="stage-close"]').click();
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "closed: it stops, and the reader is let go");
 
   await open.click();
-  await page.locator("#stage7 .livescr-img[src^='data:image/jpeg']").waitFor({ timeout: 15000 });
+  await choose(page);
   await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: true, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "hidden: it stops");
   await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: false, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
+  await choose(page);
   const shown = taken.count;
   await pause(1500);
-  assert.ok(taken.count > shown, "shown again: it starts again");
+  assert.ok(taken.count > shown, "shown again and chosen: it starts again");
 
   await page.locator('#stage7 .st7-sw [data-act="stage"][data-v="browser"]').click();
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "switched to the browser: it stops");
   await page.locator('#stage7 .st7-sw [data-act="stage"][data-v="computer"]').click();
-  await page.locator("#stage7 .livescr-img").waitFor({ timeout: 15000 });
+  await choose(page);
   await page.evaluate(() => document.getElementById("app").classList.add("locked-b17"));
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "Branch locked: it stops");
   assert.deepEqual(errors, []);

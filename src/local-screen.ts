@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { NativeCaptureTargetSchema, type NativeCaptureTarget } from './desktop/capture-lease.js';
 import { ScreenAction, type ScreenSessionDesktop } from './channels/screen-sessions.js';
 import { nativeWindowViewable } from './integrations/native-view-target.js';
+import { placeOnFrame } from './live-screen.js';
 
 export const localScreenPaths = ['/api/panels/screen', '/api/panels/screen/targets', '/api/panels/screen/target',
   '/api/panels/screen/control', '/api/panels/screen/input', '/api/panels/screen/painted', '/api/panels/screen/stop'] as const;
@@ -150,8 +151,11 @@ export class LocalScreen {
           refuse('That application moved or resized. Choose it again.');
       }
       const id = opaque(); view.frame = { id, expires: this.now() + 2000, consumed: false, painted: false };
+      // The Trunk's cursor where its newest click of a task still going landed (none while the owner drives), and whether
+      // the owner drives: the owner's view of the Trunk at work, as #567 draws it.
+      const cursor = view.control ? null : placeOnFrame(view.port.pointer(), view.target.bounds);
       return { frame: `data:${shot.type};base64,${shot.bytes.toString('base64')}`, width: shot.width, height: shot.height,
-        frameId: id, viewId, seq: ++view.seq, label: view.label, control: view.control, at: new Date(this.now()).toISOString() };
+        frameId: id, viewId, seq: ++view.seq, label: view.label, control: view.control, driving: view.control, cursor, at: new Date(this.now()).toISOString() };
     } catch (error) { if (this.selected === view) await this.close(); throw error; }
     finally { view.busy = false; }
   }

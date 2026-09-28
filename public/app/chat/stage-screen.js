@@ -1,10 +1,11 @@
 import { token } from "../core/api.js";
 
 const V = { on: false, sid: "", epoch: 0, open: null, selecting: null, frame: "", frameId: "", painted: "", viewId: "", label: "",
-  refusal: "", notice: "", targets: [], loading: false, onChange: null, watching: false, driving: false };
+  refusal: "", notice: "", targets: [], loading: false, onChange: null, watching: false, driving: false, cursor: null };
 export const screenFrame = () => V.frame;
 export const screenRefusal = () => V.refusal;
-export const screenCursor = () => null;
+/** Where the Trunk's newest click landed on the frame ({ x, y } shares, `at`, `trunk`), or null. */
+export const screenCursor = () => (V.frame ? V.cursor : null);
 export const screenDriving = () => V.driving;
 export const setDriving = (value) => { V.driving = value === true; };
 export const nativeScreenState = () => ({ targets: V.targets, loading: V.loading, notice: V.notice, label: V.label, selected: !!V.viewId });
@@ -22,7 +23,7 @@ async function request(path, body, signal) {
 function end() {
   const sid = V.sid, viewId = V.viewId;
   V.epoch++; V.open?.abort(); V.selecting?.abort(); V.selecting = null;
-  Object.assign(V, { open: null, frame: "", frameId: "", painted: "", viewId: "", label: "", driving: false, loading: false });
+  Object.assign(V, { open: null, frame: "", frameId: "", painted: "", viewId: "", label: "", driving: false, cursor: null, loading: false });
   if (viewId) request("/stop", { sessionId: sid, viewId }).catch(() => {});
 }
 export function stopNativeScreen() { end(); V.refusal = "Choose an application window to start a new view."; changed(); }
@@ -54,8 +55,10 @@ function shown(got, epoch) {
   if (epoch !== V.epoch || !showing() || got.viewId !== V.viewId) return;
   if (got.frame) {
     const first = !V.frame, flipped = V.driving !== (got.control === true);
-    Object.assign(V, { frame: got.frame, frameId: got.frameId, painted: "", refusal: "", driving: got.control === true });
-    V.onChange?.(first || flipped);
+    // Another Trunk's click redraws its name and colour at once; the same Trunk's next click only moves the cursor.
+    const changedTrunk = (got.cursor?.trunk ?? null) !== (V.cursor?.trunk ?? null) || !got.cursor !== !V.cursor;
+    Object.assign(V, { frame: got.frame, frameId: got.frameId, painted: "", refusal: "", driving: got.control === true, cursor: got.cursor ?? null });
+    V.onChange?.(first || flipped || changedTrunk);
   }
 }
 async function read(epoch) {

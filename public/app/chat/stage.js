@@ -214,7 +214,9 @@ const thisScreen = (kind) => kind === "computer" && holder() === "none" && onThi
 function controls(kind) {
   if (kind === "computer" && onThis() && holder() === "none") {
     if (!screenFrame()) return "";
-    return `<button class="btn pri sm" type="button" data-act="native-control" data-v="${screenDriving() ? "back" : "take"}">${screenDriving() ? "Hand back" : "Take control"}</button><button class="btn sm" type="button" data-act="native-stop">Stop sharing</button>`;
+    // Take over pauses every task's screen actions ("You're driving"); Hand back lets them carry on (#567's words).
+    const act = screenDriving() ? t("window.chat.stage.hand-back-to", { name: esc(owner()) }) : t("action.take-over");
+    return `<button class="btn pri sm" type="button" data-act="native-control" data-v="${screenDriving() ? "back" : "take"}">${act}</button><button class="btn sm" type="button" data-act="native-stop">Stop sharing</button>`;
   }
   const run = goingRun(), yours = holder() === "user";
   if (yours) return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
@@ -596,7 +598,7 @@ async function watchRun(el) {
 function initNativeStage() {
   markLive(["native-control", "native-stop", "native-refresh", "native-scroll", "sw:native-target", "sw:native-text", "sw:native-key"]);
   const manual = async (action) => { try { await action(); } catch (error) { toast(error.message); } };
-  on("native-control", (el) => manual(() => controlNativeScreen(el.dataset.v === "take")));
+  on("native-control", (el) => drive(el.dataset.v === "take" ? "take-over" : "hand-back"));
   on("native-stop", stopNativeScreen);
   on("native-refresh", refreshNativeTargets);
   on("native-scroll", (el) => manual(() => inputNativeScreen({ action: "scroll", steps: Number(el.dataset.v) })));
