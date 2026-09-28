@@ -9746,7 +9746,6 @@
   "window.why.d17-voiceapprove": "Bleibt hier aus, bis eine eigene Sicherheitsprüfung erfolgt ist: Ein laut gesagtes Ja macht das Zustimmen leichter.",
   "window.why.docedit17": "Eine genaue Änderung macht ein Trunk auf deine Bitte in einem Gespräch; in diesem Dialog kannst du nicht sagen, was geändert werden soll. „Vergleichen“ zeigt die Unterschiede.",
   "window.why.d17-pages-go": "Ein Artikel braucht ein Thema, und diese Liste hat kein Feld dafür. Bitte in einem Gespräch darum.",
-  "window.why.hb-work-hours": "Branch kennt keine Arbeitszeiten: Check-ins nutzen eine Zeitspanne oder laufen jederzeit.",
   "window.why.gate-script": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: Erlauben lässt dieses Programm vor jeder Runde auf diesem Computer laufen. Bis dahin bleibt der Auftrag pausiert, Abbrechen würde also nichts ändern.",
   "window.why.recipe-run": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: Ausführen spielt die Schritte des Ablaufs in deinem Namen ab, ohne vorher zu fragen. Öffne ihn, um die Schritte zu sehen.",
   "window.why.loopstartb17": "Eine gestoppte Schleife startet nur mit /loop in ihrem eigenen Gespräch wieder.",

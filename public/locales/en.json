@@ -9746,7 +9746,6 @@
   "window.why.d17-voiceapprove": "Stays off here until a separate safety review: saying yes aloud makes approving easier.",
   "window.why.docedit17": "An exact edit is made by a Trunk from your request in a conversation; this dialog has no place to say what to change. Compare shows what differs.",
   "window.why.d17-pages-go": "An article needs a topic, and this list has no place to type one. Ask for one in a conversation.",
-  "window.why.hb-work-hours": "Branch keeps no work hours: check-ins use one span of hours, or run at any time.",
   "window.why.gate-script": "Stays off here until a separate safety review: Allow lets this program run on this computer before every turn. Until then the job stays paused, so Cancel would change nothing.",
   "window.why.recipe-run": "Stays off here until a separate safety review: Run replays the procedure's steps as you, without asking first. Open it to see its steps.",
   "window.why.loopstartb17": "A stopped loop starts again only from /loop in its own conversation.",
