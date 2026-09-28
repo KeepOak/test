@@ -39,6 +39,9 @@ export function joinGateway(host: Channel = process): GatewayLink | null {
     });
   };
   host.on("disconnect", stop);
+  // QA retest 2026-09-28 (X1): on macOS and Linux an engine sent SIGTERM closed its server but the open channel to the
+  // gateway kept it running, closed, and never restarted; it now leaves, so the gateway sees it stop and starts another.
+  host.on("SIGTERM", stop);
   host.on("message", (message: unknown) => {
     const parsed = GatewayMessageSchema.safeParse(message);
     if (parsed.success && parsed.data.type === "stop") stop();
