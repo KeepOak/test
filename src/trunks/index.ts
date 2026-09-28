@@ -34,6 +34,7 @@ import { TrunkFiles } from "./files.js";
 import { characters } from "./characters.js";
 import { conversationBootstrap } from "../conversation-bootstrap.js";
 import { currentPerson } from "../people/context.js";
+import { fromSetup } from "../setup-origin.js"; // defaulttrunk: which Trunk setup made
 
 
 /**
@@ -418,7 +419,7 @@ export class Trunks {
     const { startsIn, ...basic } = CreateInput.parse(input);
     checkStartsIn(startsIn, this.computers()); // Q44: refused before anything is made
     const fields = TrunkSchema.parse({ ...basic, ...(startsIn ? { startsIn } : {}) });
-    return this.adopt(fields, extra);
+    return this.adopt(fields, fromSetup() ? { ...extra, fromSetup: true } : extra); // defaulttrunk: setup's first Trunk may be the default
   }
   private adopt(fields: z.infer<typeof TrunkSchema>, extra: Partial<Trunk>, speaks = true): Trunk {
     const before = this.records.list().length;
@@ -469,7 +470,7 @@ export class Trunks {
     this.conversations.forget(id); // phase2/rooms
     this.onRemoved?.(id); // its own browser profile goes with it (src/index.ts)
     this.refresh();
-    const successor = wasDefault ? defaultAmong(this.store, this.owner, this.records.list()) : undefined;
+    const successor = wasDefault ? defaultAmong(this.store, this.owner, this.records.list(), true) : undefined;
     if (successor) this.designateDefault(successor, "The owner removed the default assistant; the eligible successor's authority was recorded");
     this.settle();
     return { removed };
