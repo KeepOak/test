@@ -1362,8 +1362,8 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   registry.register({ name: 'browser.select', permission: 'browser.interact',
     description: 'Choose one or more options in a drop-down list (by selector, name or number), by the words shown or the option value. This may change what the page sends.',
     parameters: SelectSchema, execute: (a, c) => browser.select(a, c), target: host });
-  registry.register({ name: 'browser.history', reach: 'outbound', permission: 'browser.read',
-    description: 'Go back or forward in this tab, or reload it.',
+  registry.register({ name: 'browser.history', reach: 'outbound', permission: 'browser.interact',
+    description: 'Go back or forward in this tab, or reload it. Reloading a page a form opened may send that form again.',
     parameters: HistorySchema, execute: (a, c) => browser.history(a, c), target: host });
   registry.register({ name: 'browser.console', permission: 'browser.read',
     description: 'Read what the pages logged to their console and any uncaught errors, newest last, as untrusted text. Use it to see why a page misbehaves.',

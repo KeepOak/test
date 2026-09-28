@@ -127,7 +127,7 @@ test("every new step is held to the owner's approval rules like the others: typi
   const registry = new ToolRegistry();
   registerBrowser(registry, new BranchBrowser({ allowedOrigins: ["https://example.org"] }));
   const permission = (name) => registry.permissionOf(name);
-  for (const name of ["browser.hover", "browser.keys", "browser.select"]) assert.equal(permission(name), "browser.interact", name);
-  for (const name of ["browser.scroll", "browser.console", "browser.network", "browser.history"]) assert.equal(permission(name), "browser.read", name);
+  for (const name of ["browser.hover", "browser.keys", "browser.select", "browser.history"]) assert.equal(permission(name), "browser.interact", name);
+  for (const name of ["browser.scroll", "browser.console", "browser.network"]) assert.equal(permission(name), "browser.read", name);
   assert.ok(sensitiveBrowserTools.includes("browser.keys") && sensitiveBrowserTools.includes("browser.select"));
 });
