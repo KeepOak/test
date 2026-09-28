@@ -1241,7 +1241,7 @@ lists them with Off, When needed and On (`GET /api/channels/parity`, `POST /api/
 - **On** connects when Branch starts and stays connected, as the older channels do.
 
 A change applies at once to a channel that is already connected; adding a channel to the connections
-file still needs a restart. The health line says "Switched off" for a service that is off.
+file still needs a restart, and adding one from the window's wizard does not. The health line says "Switched off" for a service that is off.
 
 The services that are posted to (Microsoft Teams bots, Webex, Synology Chat, Zalo, Flock, Pumble)
 use the same address as the other chat services, `/webhooks/chat/<channel id>/<the word on your
@@ -1660,12 +1660,20 @@ When Branch is running, the command goes through the same door as the window (th
 key), so a Telegram bot connects at once. Otherwise it opens the saved work itself, and the bot connects
 the next time Branch starts.
 
-**One command or two.** Every app is one command. Telegram and the wave mac3 services are switched on by
-it. The nine older connections (Discord, Slack, WhatsApp, email, Messenger, Instagram, Matrix, Signal
-and the ten team-chat services) are switched on by a line in the connections file, which Branch does not
-rewrite for you (it may sit in a folder you have not trusted, and holds at most eight channels), so the
-command prints that line with your settings filled in, and you add it and restart. That is the second
-step, and the only one.
+**One step, no restart (CHAT-147).** Every app is one command, or one pass through the window's wizard, and
+it connects there and then. The save keeps the app's entry, written from `data/channel-setup.json` with your
+plain settings put in (the same shape a connections-file line has, and nothing a request adds), in your
+settings; builds the channel exactly as a connections-file line is built; and attaches it to the running
+Branch. Branch connects every saved one again when it starts. Nothing is written to the connections file,
+and a channel with the same name there always wins, so one bot is never read twice. The answer says what
+really happened: connected, listening (an app that posts to Branch still needs its address pasted into the
+service, and this computer reachable from the internet), or saved but not connected, with the reason. The
+wave mac3 services still follow their switch. `DELETE /api/channel-setup/<app>` (the wizard's
+**Disconnect**) takes an app set up this way out and forgets its settings; what was pasted stays in the
+locker. Before anything is kept, the check goes past "who am I" where that cannot tell: Discord's Message
+Content Intent must be on, Slack's app-level token must open Socket Mode, and a Matrix token must belong
+to the account typed. With Branch closed, `branch connect` keeps the settings and the app connects the next
+time Branch starts.
 
 **The switch.** *Setting up from here and from the terminal* ships **off**. Off, the panel still shows
 the command, the links and the codes; it only refuses to save a token or switch anything on. The first
@@ -1744,7 +1752,7 @@ says so.
 | Discord (`discord`) | yes; then one line in the connections file | Windows: winget `Discord.Discord`; Mac: cask `discord`; Linux: Flathub `com.discordapp.Discord` | `https://discord.com/developers/applications?new_application=true` | `DISCORD_BOT_TOKEN` | GET `https://discord.com/api/v10/users/@me` |
 | Slack (`slack`) | yes; then one line in the connections file | Windows: winget `SlackTechnologies.Slack`; Mac: cask `slack`; Linux: Snap `slack` | `https://api.slack.com/apps?new_app=1&manifest_json=…` (pre-filled) | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | POST `https://slack.com/api/auth.test` |
 | WhatsApp Business (`whatsapp`) | yes; then one line in the connections file | Windows: download page; Mac: cask `whatsapp`; Linux: download page | `https://developers.facebook.com/docs/whatsapp/cloud-api/get-started` | `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`; plus phoneNumberId | none |
-| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD` | none |
+| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD`; plus address, imapHost, smtpHost | none |
 | Facebook Messenger (`messenger`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/messenger-platform/getting-started/quick-start` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Instagram (`instagram`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Matrix (Element) (`matrix`) | yes; then one line in the connections file | Windows: winget `Element.Element`; Mac: cask `element`; Linux: download page | `https://app.element.io/#/register` | `MATRIX_ACCESS_TOKEN`; plus server, userId | GET `<server>/_matrix/client/v3/account/whoami` |
@@ -2854,8 +2862,8 @@ Around it: a task's own completion checks are retried a set number of times befo
 a small script is checked before it runs, and a program can be run under a real debugger you
 already have (Settings → debug adapters) to stop it on a line and look at what every name holds.
 
-**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, off by
-default, kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
+**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, "when needed" by
+default (the ship-on rule: every fix still goes through the approval rules), kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
 (`{ "mode": "off" | "when-needed" | "on", "maxTries": 1-5 }`, two tries by default; a short-lived key
 cannot change it). It looks at a `shell.execute` or `code.run` that came back with a non-zero exit
 code (or a script that timed out). The model is asked, with no tools, for JSON
@@ -3201,7 +3209,7 @@ background command finishes is not done yet.
 
 ## Backup, restore and health
 
-`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix.
+`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix. The ordinary check changes nothing: it only looks at the workspace folder (there, a folder, writable by you). Only `--probe` (and `?probe=1`) writes one small test file into the workspace and removes it at once, besides sending each connection one real request.
 
 ## Moving in from another assistant
 
