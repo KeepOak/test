@@ -1,5 +1,27 @@
 # Configuration
 
+## Practice runs in the window
+
+The Permissions page's **Practice runs** switch controls availability and defaults on. In the
+composer's + menu, choose **Practice this task** for the next ordinary task in an idle conversation.
+The composer shows the choice until that task is accepted. A rejected request keeps the words and
+the Practice choice. Commands, room turns, direct Trunk mentions and the waiting line currently
+refuse Practice because those routes do not carry its task flag.
+
+Ordinary tasks remain real. A practice task may really read through read-only tools and use the
+model; model use still counts. Tools that would change something are simulated, including sends
+and spending actions, and recorded in `dryrun.report`. Existing tool reach, household scope and
+refusals still apply. Enabling Practice grants no permission to send, spend or change something.
+Turning availability off refuses new practice tasks before a model call; an existing practice task
+stays simulated when it continues, answers a question or resumes after an interruption.
+
+`GET /api/practice-runs` returns `{ "enabled": true }` by default. A household person may read only
+that availability boolean; `POST /api/practice-runs { "enabled": false }` changes it for the owner.
+The saved `practice-runs` settings record contains `enabled` (boolean, default `true`).
+`POST /api/run` keeps its existing per-task `dryRun: true` input, including for scripts and the CLI.
+An installed coding assistant used as the model connection is refused for Practice: its own tools
+run outside Branch's simulation. Choose a model connection that uses Branch's tools instead.
+
 ## What ships on
 
 Features ship on (the owner's rule, 2026-09-26; `src/ship-on.ts`). A feature stays off until you switch it on only when
@@ -498,6 +520,8 @@ npx playwright install chromium --only-shell
 ```
 
 Branch's browser is on with no configuration file: it may open any website the network rules allow (`"anyWebsite": true`), and every picture, script and request a page makes is held to those rules too, so a page cannot reach this computer or your home network unless the network rules allow private addresses. The owner's approval rules and the per-task caps below still apply.
+
+In this mode Chromium never looks a site's name up itself: it connects through a local door that dials only the addresses the network rules judged for that name, so a site cannot pass the check with one answer and then be reached at a private one (DNS rebinding). The checks of one page share one lookup per site for about 15 seconds, so a page with many pictures and scripts does not wait on the network rules for each. This holding does not reach a browser running in the sandbox (Docker or a remote Playwright server) or your own borrowed browser; those keep the per-request check only.
 
 To hold it to a list of websites instead, create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
 
@@ -2358,6 +2382,14 @@ owner-only. `model` is the connection that decides, by preset id (empty means th
 `minConfidence` (0.5 to 0.99, default 0.75) the task's own model decides instead; `maxList` (10 to 2000, default 400)
 is the longest list filtered at once, and a longer list is split. Every answer is checked, never trusted: a pick must
 be one of the choices offered, a filter may keep only lines it was given, and a score must be 1 to 10.
+
+The additional `route` and `inbox` switches both default to false because each decision uses a model call.
+`route` picks a room member by their written job only when the message names nobody and the room uses
+Everyone answers or Only who I tag. A checked, sufficiently confident pick is written on the message so replay
+does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
+`inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
+1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+Switching it off refuses scoring with 409 and restores the inbox's original order.
 
 ## Teams, linked chats, registries and evaluation
 
@@ -4294,8 +4326,14 @@ have. On the command line: `branch skill pack <folder> [out.branchskill] --autho
 **Registries, version 2.** A registry index may now say `"version": 2` and publish a `publicKey`
 (base64 ed25519). Each listed skill may carry a `version`, a `changelog` and a `signature`, made
 over the exact lines `branch-skill-registry`, the registry name, the skill id, the version and the
-fingerprint. Branch labels every entry `checked`, `unsigned` or `invalid`; an `invalid` signature
-stops the install, an unsigned entry is installed but plainly labelled as unsigned. Version 1
+fingerprint. The key a registry publishes about itself is not trusted by itself: it counts only once it is pinned
+on this computer, either shipped with Branch or approved by you. `POST /api/registry/browse` answers a `key`
+`{ published, pinned, status }` (status `pinned`, `not-pinned`, `changed` or `none`), and `POST /api/registry/trust
+{ url, fingerprint }` pins the key the registry publishes right now when it is the fingerprint you were shown. Branch
+labels every entry `checked` (signed with a pinned key), `untrusted` (signed, but the key is not pinned), `unsigned`
+or `invalid`. An `invalid` entry is not installed or updated; once a key is pinned, a registry that publishes another
+key, drops its key or lists an unsigned entry is `invalid` until you approve the new key. An unsigned or untrusted
+entry is installed but plainly labelled. Version 1
 indexes still work exactly as before. `GET /api/registry/updates` asks the registries you installed
 from whether a newer version exists and returns the changelog; `POST /api/registry/update
 { skillId }` saves the new version and switches to it, keeping the one you had;
@@ -4314,8 +4352,12 @@ A tool is `{ name: "plugin.<id>.<name>", description, permission, input, run(arg
 where `input` is the same `{ name: { type, required, description } }` shape a recipe uses, and the
 permission must be one the plugin declared. A hook is `{ event, run(payload) }`. Plugins may add
 tools and react to events; they may not add screens to the app. `GET /api/plugins` lists the files
-without loading any of them; `POST /api/plugins/:id/inspect` loads one file to show what it would
-add (which runs the code at the top of that file); `POST /api/plugins/:id/enable` and
+without loading any of them; `POST /api/plugins/:id/inspect` shows what one would add from its
+manifest only and never runs the file. The manifest is the plugin catalog’s record when it was installed from a
+folder, zip or add-on, or a `<id>.plugin.json` beside a hand-placed file (`{ id, name, description, permissions,
+tools?, hooks? }`); a file with neither is shown as having no manifest. Switching a plugin on is what runs it, and
+then a permission its code asks for that the manifest did not list is never granted, and code changed since it was
+installed is not switched on. `POST /api/plugins/:id/enable` and
 `POST /api/plugins/:id/disable` switch it on and off, and the choice is remembered. On the command
 line: `branch plugin list | enable <id> | disable <id>`. **Be plain about the limits:** a plugin is
 not sandboxed. It runs inside Branch with the same reach over this computer that Branch has. The
@@ -5094,7 +5136,8 @@ Everything a program of your own needs to use Branch, in one place (bucket 21):
   each README says how to use it from a copy of the source. Branch refuses any web page on another
   address, so the React hooks run in a desktop app, React Native, a server-rendered page, or behind
   a development proxy.
-- **The switch.** Settings → Advanced → **Building on Branch**: off (the default), when needed, or on.
+- **The switch.** Settings → Advanced → **Building on Branch**: off, when needed (the default, under the ship-on rule:
+  the tools only read), or on.
   `GET`/`POST /api/sdk-kit` with `{"mode": "off" | "when-needed" | "on"}` does the same; only the owner
   may change it, and a short-lived key may not.
 - **Tools for an AI coding tool.** With the switch not off, `sdk.routes` lists the web routes (by group
@@ -5993,13 +6036,18 @@ When a task started from Telegram or Discord stops to ask whether it may go ahea
 put in that chat with buttons: Yes, Yes always (only for a task you started yourself, the same rule
 the app's own card follows; a task a chat message started never counts as that, so a chat gets only
 Yes and No) and No. Telegram uses an inline keyboard, Discord an action row of
-message components. Each button carries its answer and the fingerprint of the exact request, so a
+message components, and Slack Block Kit buttons (the wizard's Slack app has interactivity on; a press
+arrives over Socket Mode as `block_actions`, only Branch's own `branch_answer_*` buttons count, and the
+buttons stay as on Telegram, so a press the router refuses never takes them from the person who may answer). Matrix has no buttons, so the question names
+👍 and 👎 and the assistant puts both reactions on it to tap; a reaction by anybody but the assistant on
+that question is read as that answer, and any other reaction is not. Each button carries its answer and the fingerprint of the exact request, so a
 yes cannot be replayed against a different one, and the conversation it belongs to is worked out
 from the chat rather than carried in the button — Telegram allows only 64 bytes there.
 
-A channel with no buttons — WhatsApp, email — gets the same question with "Reply y for yes, a for
-yes always, or n for no." A bare `y`, `a` or `n` from a chat whose conversation has a question
-waiting answers it; anything longer is an ordinary message, whatever it happens to say. The answer
+A channel with no buttons — WhatsApp, Signal, email and the rest — gets the same question with "Reply
+y for yes, or n for no (or send /approve or /deny)." A bare `y`, `a` or `n`, or `/approve` (`/yes`) and
+`/deny` (`/no`), from a chat whose conversation has a question waiting answers it (with nothing
+waiting, `/approve` and `/deny` say so rather than starting a task); anything longer is an ordinary message, whatever it happens to say. The answer
 goes through the same approval path as the app's own card, and the record of what the assistant was
 allowed to do says which chat app it was answered on.
 
@@ -8867,7 +8915,7 @@ short-lived key can read them but never change them.
 | | `serviceTier` | `standard` | `priority` sends `service_tier: "priority"` to OpenAI-style services and `service_tier: "auto"` to Claude; `flex` sends `flex` to OpenAI-style services only. `standard` sends nothing. |
 | Showing a model's thinking (Settings, Appearance) | `showReasoning` | `true` | Off removes `<think>`, `<thinking>` and `<reasoning>` blocks from answers and from the live text. |
 | How much it remembers at the start (Library, Memory) | `snapshotFacts`, `snapshotChars` | `20`, `2000` | The memory snapshot a new conversation starts with. |
-| | `aboutYouOn`, `aboutYou`, `aboutYouChars` | `false`, `""`, `1500` | The owner's own note, put in front of the owner's conversations as background (never a household person's). |
+| | `aboutYouOn`, `aboutYou`, `aboutYouChars` | `true`, `""`, `1500` | The owner's own note, put in front of the owner's conversations as background (never a household person's). On as shipped: nothing is added until the note is written. |
 | | memory provider | Branch's own | "Branch's own plus Hindsight" is the same switch as the Hindsight card (`asks-hindsight`); the address stays there. |
 | Hiding key-like values (Settings, Permissions) | `sensitivity` | `standard` | `strict` also hides long random-looking strings with digits and both cases. |
 | | `exceptions` | `[]` | Kinds of value not hidden. A private key is never let through. Owner only. |
@@ -8922,6 +8970,15 @@ rounds are read from `/api/model-savings/rounds?session=<id>`.
 Setting names: `planModel` and `sideTier` (planning model and flex for side questions), `easyModel`, `hardModel` and
 `classifierModel` (choose by difficulty), `maxPings` (keep-alive), `allowFallbacks` and `dataCollection` (OpenRouter),
 and `mixtures` (mixtures of models).
+
+`difficulty.mixHard` defaults to false. When enabled with two different easy and hard connections,
+hard tasks use both as a mixture and the hard connection writes the combined answer. Easy tasks continue
+to use the easy connection. Clearing the switch or choosing the same connection twice removes the mixture.
+
+OpenRouter's **Only ones I list** reads `POST /api/model-savings/companies` on demand and keeps the company's
+plain slugs for one day. The request sends no key and goes only to OpenRouter's own provider-list address.
+It requires a configured OpenRouter connection and refuses while Lockdown is on. The chosen `only` list
+is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
 
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
