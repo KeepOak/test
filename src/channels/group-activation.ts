@@ -2,6 +2,7 @@ import { z } from "zod";
 import { audit } from "../audit.js";
 import type { Store } from "../store.js";
 import { platformSettings } from "../reach/platform.js";
+import { ownerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import type { ChannelAdapter, InboundMessage } from "./router.js";
 
 /**
@@ -20,7 +21,7 @@ const settingsKey = "chat-group-activation";
 const groupKey = (channel: string, chatId: string): string => `${channel}\u0000${chatId}`;
 const StoredSchema = z.record(z.string().max(200), z.object({ activation: ActivationSchema, title: z.string().max(200), setAt: z.string().max(40) }).strict());
 /** Apps whose servers vouch for the sender of every message (the same four as owner commands from a chat). */
-export const vouchedKinds: readonly string[] = ["telegram", "discord", "slack", "matrix"];
+export const vouchedKinds: readonly string[] = vouchedSenderKinds;
 const maxGroups = 200;
 
 function stored(store: Pick<Store, "get">, owner: string): z.infer<typeof StoredSchema> {
@@ -77,8 +78,9 @@ export async function activationGate(store: Store, owner: string, message: Inbou
   if (message.chatKind !== "group") return null;
   const command = /^\/activation(?:@[\w.-]+)?(?:\s+(mention|always))?\s*$/i.exec(message.text.trim());
   if (!command || !vouchedKinds.includes(adapter.kind)) return null;
-  const mine = platformSettings(store, owner).owners.some((account) => account.channel === message.channel && account.sender === message.senderId);
-  if (!mine) return null;
+  // The owner's own accounts: the /platform list, or those marked under Commands from your own chat (who, not what they may run).
+  const named = (account: { channel: string; sender: string }) => account.channel === message.channel && account.sender === message.senderId;
+  if (!platformSettings(store, owner).owners.some(named) && !ownerCommands(store, owner).accounts.some(named)) return null;
   if (message.caughtUp) return { reply: null };
   const wanted = command[1]?.toLowerCase() as Activation | undefined;
   if (!wanted) {
