@@ -136,11 +136,19 @@ test("D5 an extra account that signs in as the account Branch already has update
   const added = await addAccount(service, { pool: "chatgpt", label: "ChatGPT again" });
   const id = added.accounts.find((a) => a.label === "ChatGPT again").id;
   // The browser was signed in as the owner already, so the device page approves the same account.
-  service.chatgptAccounts.auths.set(id, new ChatGPTAuth(new LockerTokenVault(app.store.locker, owner, id),
-    { fetch: deviceSignIn(tokensFor("acct-1", "owner@example.com", "fresh-refresh")), sleep: async () => undefined }));
+  const auth = new ChatGPTAuth(new LockerTokenVault(app.store.locker, owner, id),
+    { fetch: deviceSignIn(tokensFor("acct-1", "owner@example.com", "fresh-refresh")), sleep: async () => undefined });
+  let signingIn;
+  t.mock.method(auth, "waitForDeviceLogin", function (...args) {
+    return signingIn = ChatGPTAuth.prototype.waitForDeviceLogin.apply(this, args);
+  });
+  service.chatgptAccounts.auths.set(id, auth);
   const answer = await accountsApi({ method: "POST", url: "/api/accounts/chatgpt/login" }, "/api/accounts/chatgpt/login",
     { service, readBody: async () => ({ account: id }), requireOwner: () => undefined });
   assert.equal(answer.userCode, "ABCD-1234");
+  // The locker may still be creating its key on disk. Wait for the same login the route started before observing its merge.
+  assert.ok(signingIn, "the route started its background sign-in");
+  await signingIn;
   const pool = await until("the merge", async () => (await viewAll(service)).pools.find((p) => p.pool === "chatgpt" && p.mergedInto?.[id]));
   assert.equal(pool.mergedInto[id], "primary");
   assert.deepEqual(pool.accounts.map((a) => a.id), ["primary"], "one ChatGPT row, not two");
