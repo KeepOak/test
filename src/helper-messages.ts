@@ -76,7 +76,7 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
     execute: async (input, context: ToolContext) => {
       const permissions = input.permissions ?? [...context.permissions];
       const started = await runtime.delegateBackground(input.brief, context, permissions, helperInstructions,
-        { timeoutMs: input.minutes * 60_000, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
+        { timeoutMs: input.minutes * 60_000, tellsLead: true, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
       return { helper: started.childRunId, minutes: input.minutes, note: "It works in the background; you are told when it finishes." };
     },
   });

@@ -216,7 +216,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -247,7 +247,9 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
 export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
-export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string }
+export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
+  /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
+  tellsLead?: boolean }
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
@@ -987,7 +989,8 @@ export class Runtime {
     void startedAt;
     const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     void child.then((run) => {
-      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
+      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
+        ...(options.tellsLead ? { tellsLead: true } : {}) };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
       try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
