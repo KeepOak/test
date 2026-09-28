@@ -556,7 +556,7 @@ export class BranchBrowser {
     // password managers apply to website names too.
     const refused = entry.borrowed ? attachedAddressRefusal(url, '', this.extraRefusedHosts(context.owner)) : null;
     if (refused) throw new Error(refused);
-    entry.asked = new URL(url).href;
+    entry.asked = URL.canParse(url) ? new URL(url).href : url;
     return this.operation(context, async (page, check) => {
       const origin = new URL(url).origin;
       if (!entry.origins.has(origin) && entry.origins.size >= this.config.maxOriginsPerRun)
