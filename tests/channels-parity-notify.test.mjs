@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   fixture, until, delay, setSwitch, assertNoSecret, httpService, pairingWalk, refusalWalk,
 } from "./channels-parity-kit.mjs";
-import { parityServices } from "../dist/channels/connectors.js";
+import { parityServices } from "../dist/channels/parity-services.js";
 import { buildParityChannel } from "../dist/channels/parity-config.js";
 import { NextcloudTalkChannel } from "../dist/channels/nextcloud-talk.js";
 import { TwilioSmsChannel } from "../dist/channels/twilio-sms.js";
