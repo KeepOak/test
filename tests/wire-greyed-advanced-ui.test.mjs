@@ -3,7 +3,7 @@
    Settings › Advanced › Web search was drawn greyed ("Branch takes the search service from its launch settings
    file"). It is live now: each service is a real choice the engine saves (POST /api/web-search), the row says what the
    pick needs (a key's secret name, or SearXNG's address), and the engine's own refusal is shown in its words.
-   Mutation: in public/app/settings/pages/advanced.js drop "ad-search" from markLive, and the first case goes red. */
+   Mutation: in public/app/settings/pages/advanced.js drop the on("ad-search", …) handler, and the first case goes red. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
