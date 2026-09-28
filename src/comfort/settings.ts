@@ -88,6 +88,8 @@ export const ComfortDisplaySchema = z.object({
   statusLine: z.array(z.enum(statusItems)).max(statusItems.length).nullable().default(null),
   /** Show when each message was written. */
   timestamps: z.boolean().default(false),
+  /** wire-greyed: message times Never: no time on a message, not even on hover. Only counts while timestamps is off. */
+  hideTimes: z.boolean().default(false),
 }).strict();
 
 /** R17-S17: how Branch gets your attention, and whether it updates itself. */

@@ -534,7 +534,8 @@ const comfortCards: SettingSpec[] = [
   { key: "comfort-keys", name: "Shortcuts", t: "comfort.keys.title", home: "settings:general", ...viaComfort("keys"),
     fields: [yesNo("vim", "Vim keys in the message box", "comfort.field.vim", "plain")] },
   { key: "comfort-display", name: "Status line and times", t: "comfort.display.title", home: "settings:appearance", ...viaComfort("display"),
-    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain")] },
+    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain"),
+      yesNo("hideTimes", "No time on messages, even on hover", "comfort.field.hideTimes", "plain")] },
   { key: "comfort-notify", name: "Notifications and sound", t: "comfort.notify.title", home: "settings:notifications", ...viaComfort("notify"),
     fields: [
       { field: "method", label: "Where you are told", t: "comfort.field.method", guard: "plain", initial: "system", kind: { type: "choice", options: ["system", "window"] } },

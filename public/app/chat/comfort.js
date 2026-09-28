@@ -14,12 +14,14 @@ import { api, comfortSaved } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { sentAt } from "./furniture.js";
 
-export const CF = { vim: false, times: false, asked: false };
+export const CF = { vim: false, times: false, hideTimes: false, asked: false };
 const vim = { mode: "insert", pending: "" };
 
 function take(values) {
   const times = values?.display?.timestamps === true;
   CF.vim = values?.keys?.vim === true;
+  const hide = !times && values?.display?.hideTimes === true;
+  if (hide !== CF.hideTimes) { CF.hideTimes = hide; render(); }
   if (!CF.vim) { vim.mode = "insert"; vim.pending = ""; }
   if (times !== CF.times) { CF.times = times; render(); }
   mark();
