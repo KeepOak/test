@@ -256,7 +256,7 @@ import { Autonomy } from "./autonomy/index.js"; // r17-b: it suggests, and runs 
 import { trunkMode } from "./trunks/settings.js"; // Q153
 import { Trunks } from "./trunks/index.js"; // R17-A: Trunks, named long-lived agents
 import { computerPlatforms } from "./trunks/starts-in.js"; // Q44
-import { accountsSettings, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
+import { accountsSettings, poolOf, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
 import { Coding } from "./coding/index.js"; // mac7/r17-d: coding polish
 import { worktreeScope } from "./coding/worktrees.js"; // mac7/r17-d
 import { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
@@ -1304,8 +1304,19 @@ export async function createBranch(options: {
   const trunkAccounts = {
     get connected() { return accountsSettings(store, runtime.owner).mode !== "off"; },
     // models-ui: the connection's own name ("Claude Code", "ChatGPT"), so keyPlan's notes read as the window's lists do.
-    pools: () => accountsSettings(store, runtime.owner).pools.map((pool) => ({ id: pool.pool, label: connectionName(accounts, pool.pool),
-      accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) })),
+    // QA retest 2026-09-28 pass 2: every connection that can have several accounts, as Settings › Accounts lists them
+    // (src/accounts/manage.ts viewAll), not only the lists saved once a second account was added: a connection with
+    // just its first account (Claude Code signed in on this computer) was missing, and Edit Trunk › Accounts said
+    // "No connection has accounts to pick from yet". The saved settings are only read here, never written.
+    pools: () => {
+      const saved = accountsSettings(store, runtime.owner), draft = { ...saved, pools: [...saved.pools] };
+      for (const preset of runtime.models.presets.values()) {
+        const found = accounts.poolFor(preset);
+        if (found) poolOf(draft, found.pool, found.kind);
+      }
+      return draft.pools.map((pool) => ({ id: pool.pool, label: connectionName(accounts, pool.pool),
+        accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) }));
+    },
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
   const trunks = new Trunks({ runtime, registry, knowledge, scheduler, workflows, accounts: trunkAccounts,
