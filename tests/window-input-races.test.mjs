@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { newWindow, openPlace, openSettings } from "./new-window-places.mjs";
+import { pickGsel } from "./gsel.mjs";
 
 test("adding a procedure step cannot later steal focus from its No branch", async (t) => {
   const { page, call, errors } = await newWindow(t);
@@ -21,7 +22,7 @@ test("adding a procedure step cannot later steal focus from its No branch", asyn
     };
   });
   await page.locator('.dlg [data-act="flow-add"]').click();
-  await page.locator(".dlg #fk-1").selectOption("if");
+  await pickGsel(page.locator(".dlg #fk-1"), "if");
   await page.locator(".dlg #ft-1").fill("cheaper");
   await page.locator(".dlg #fy-1").fill("Draft an order.");
   await page.locator(".dlg #fn-1").focus();
