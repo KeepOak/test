@@ -149,11 +149,19 @@ export class TelegramAdapter implements ChannelAdapter {
     this.stopping.abort();
     await this.loop?.catch(() => undefined);
   }
-  async setCommands(commands: { command: string; description: string }[], groupCommands = commands): Promise<void> {
+  async setCommands(commands: { command: string; description: string }[], groupCommands = commands,
+    own?: { chatIds: string[]; commands: { command: string; description: string }[] | null }): Promise<void> {
     const rows = (list: typeof commands) => list.slice(0, 100).map(one => ({ command: one.command, description: one.description.slice(0, 256) }));
     // Separate scopes avoid replacing command menus configured for particular chats by the owner.
     await this.call("setMyCommands", { commands: rows(commands), scope: { type: "all_private_chats" } }, false, true);
     await this.call("setMyCommands", { commands: rows(groupCommands), scope: { type: "all_group_chats" } }, false, true);
+    // The owner's own direct chats get their own menu (Telegram's "chat" scope wins over the private-chats one).
+    // Null: those chats follow everyone's menu again.
+    for (const chatId of (own?.chatIds ?? []).filter((id) => /^\d{1,20}$/.test(id)).slice(0, 10)) {
+      const scope = { type: "chat", chat_id: Number(chatId) };
+      if (own!.commands) await this.call("setMyCommands", { commands: rows(own!.commands), scope }, false, true);
+      else await this.call("deleteMyCommands", { scope }, false, true);
+    }
   }
   /** Staying connected: when Telegram last answered a poll (or when this bot started). */
   private contactAt = Date.now();

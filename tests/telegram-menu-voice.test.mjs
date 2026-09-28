@@ -17,6 +17,15 @@ function adapterFixture(options = {}) {
   } });
   return { adapter, calls };
 }
+test("Telegram: the owner's own chats get a chat-scoped menu, and null clears it", async () => {
+  const { adapter, calls } = adapterFixture();
+  const rows = [{ command: "stop", description: "Stop" }];
+  await adapter.setCommands([], [], { chatIds: ["4242", "not-a-chat"], commands: rows });
+  await adapter.setCommands([], [], { chatIds: ["4242"], commands: null });
+  assert.deepEqual(calls.slice(2, 3).map(one => [one.method, JSON.parse(one.body)]), [["setMyCommands", { commands: rows, scope: { type: "chat", chat_id: 4242 } }]]);
+  assert.deepEqual(calls.at(-1).method, "deleteMyCommands");
+  assert.equal(calls.length, 6, "only a real chat id gets its own menu");
+});
 test("Telegram menus use separate private/group scopes, each with its own rows", async () => {
   const split = adapterFixture();
   const direct = [{ command: "new", description: "Fresh thread" }, { command: "stop", description: "Stop" }], group = direct.slice(0, 1);
@@ -61,14 +70,19 @@ test("router menus follow both saved command switches and their catalog; rejecte
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "stand-in", complete: async () => ({ content: "Done.", toolCalls: [] }) } });
   t.after(async () => { await app.close(); await discardTemp(root); });
-  const menus = [], groups = []; let refuse = false;
+  const menus = [], groups = [], owns = []; let refuse = false;
   const adapter = { id: "chat", kind: "telegram", botName: () => "Branch", async start() {}, async stop() {}, async send() { return "1"; },
-    async setCommands(commands, group) { if (refuse) throw new Error("refused"); menus.push(commands); groups.push(group); } };
+    async setCommands(commands, group, own) { if (refuse) throw new Error("refused"); menus.push(commands); groups.push(group); owns.push(own); } };
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
+  app.store.save("settings", app.runtime.owner, "channel-pair:chat:4242",
+    { status: "approved", code: "123456", name: "Owner", requestedAt: new Date().toISOString(), approvedAt: new Date().toISOString() });
+  app.channels.setOwnerCommandSettings({ on: false, accounts: [{ channel: "chat", sender: "4242" }] });
   await app.channels.refreshCommandMenus();
-  // As shipped, the owner's paired direct chat reads commands (#653), so the direct menu lists them; a group's does not.
-  assert.ok(menus.at(-1).some(one => one.command === "stop"), "direct chats list the commands as shipped");
+  // As shipped, only the owner's own paired direct chat reads commands (#706): only its menu lists them.
+  assert.deepEqual(menus.at(-1).map(one => one.command), ["new", "trunk"], "everyone else's menu: /new and /trunk");
   assert.deepEqual(groups.at(-1).map(one => one.command), ["new", "trunk"]);
+  assert.deepEqual(owns.at(-1).chatIds, ["4242"]);
+  assert.ok(owns.at(-1).commands.some(one => one.command === "stop"), "the owner's own chat lists the commands as shipped");
   app.channels.setSwitches({ commands: "on" }); await app.channels.refreshCommandMenus();
   assert.ok(menus.at(-1).some(one => one.command === "stop"));
   assert.ok(!menus.at(-1).some(one => one.command === "goal"), "shared catalog still off");
@@ -85,6 +99,7 @@ test("router menus follow both saved command switches and their catalog; rejecte
     addressed: true, text: "hello", messageId: "1" }), "replied");
   refuse = false; await app.channels.refreshCommandMenus(); assert.deepEqual(menus.at(-1).map(one => one.command), ["new", "trunk"],
     "the owner turned commands off: no menu lists them");
+  assert.equal(owns.at(-1).commands, null, "and the owner's own chat menu is cleared back to everyone's");
   assert.deepEqual(groups.at(-1).map(one => one.command), ["new", "trunk"]);
 });
 for (const [label, lock] of [["scrubs secrets before speech", false], ["rechecks App lock after speech", true]])
