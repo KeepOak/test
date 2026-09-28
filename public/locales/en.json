@@ -9148,6 +9148,7 @@
   "window.settings.usage.run-the-test": "Run the test",
   "window.settings.usage.running-tasks-tasks": "Running {tasks} tasks…",
   "window.settings.usage.save-as-a-spreadsheet": "Save as a spreadsheet",
+  "window.settings.usage.saved-sheet-at": "Saved in your workspace: {path}",
   "window.settings.usage.see-all": "See all",
   "window.settings.usage.show-the-ring": "Show the ring",
   "window.settings.usage.show-usage-in-the-tray": "Show usage in the tray",

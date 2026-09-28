@@ -9148,6 +9148,7 @@
   "window.settings.usage.run-the-test": "Hacer la prueba",
   "window.settings.usage.running-tasks-tasks": "Ejecutando {tasks} tareas…",
   "window.settings.usage.save-as-a-spreadsheet": "Guardar como hoja de cálculo",
+  "window.settings.usage.saved-sheet-at": "Guardado en tu espacio de trabajo: {path}",
   "window.settings.usage.see-all": "Ver todo",
   "window.settings.usage.show-the-ring": "Mostrar el anillo",
   "window.settings.usage.show-usage-in-the-tray": "Mostrar el uso en la bandeja del sistema",

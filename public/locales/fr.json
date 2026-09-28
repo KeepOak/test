@@ -9149,6 +9149,7 @@
   "window.settings.usage.run-the-test": "Lancer le test",
   "window.settings.usage.running-tasks-tasks": "{tasks} tâches en cours…",
   "window.settings.usage.save-as-a-spreadsheet": "Enregistrer comme tableur",
+  "window.settings.usage.saved-sheet-at": "Enregistré dans votre espace de travail : {path}",
   "window.settings.usage.see-all": "Tout voir",
   "window.settings.usage.show-the-ring": "Afficher l’anneau",
   "window.settings.usage.show-usage-in-the-tray": "Afficher l’utilisation dans la zone de notification",

@@ -9148,6 +9148,7 @@
   "window.settings.usage.run-the-test": "Test ausführen",
   "window.settings.usage.running-tasks-tasks": "{tasks} Aufgaben laufen …",
   "window.settings.usage.save-as-a-spreadsheet": "Als Tabelle speichern",
+  "window.settings.usage.saved-sheet-at": "In deinem Arbeitsbereich gespeichert: {path}",
   "window.settings.usage.see-all": "Alle ansehen",
   "window.settings.usage.show-the-ring": "Ring zeigen",
   "window.settings.usage.show-usage-in-the-tray": "Nutzung im Infobereich zeigen",

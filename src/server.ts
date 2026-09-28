@@ -65,7 +65,7 @@ import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watc
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
 import { replayRun } from "./replay.js";
-import { meteringFolder, meteringSettings, saveMeteringSettings, writeMeteringFile } from "./metering.js";
+import { MeteringExportSchema, meteringFolder, meteringSettings, saveMeteringSettings, writeMeteringFile } from "./metering.js";
 import { TryToolSchema, toolForms, tryToolByHand } from "./playground.js";
 import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { exportTemplate, importTemplate } from "./templates.js";
@@ -2117,7 +2117,8 @@ async function api(
     }
   }
   if (request.method === "POST" && path === "/api/usage/metering/now") {
-    const written = await writeMeteringFile(meteringDeps(app));
+    const { range } = MeteringExportSchema.parse(await readBody(request, 1024).catch(() => ({})) ?? {});
+    const written = await writeMeteringFile(meteringDeps(app), new Date(), range);
     return { ...written, metering: meteringSettings(app.store, app.runtime.owner) };
   }
   if (request.method === "GET" && path === "/api/usage/budget") {
