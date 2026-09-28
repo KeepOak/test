@@ -1,11 +1,14 @@
 import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
+import { randomUUID } from "node:crypto";
+import { mimeParts, textOf } from "../personal/mime.js";
 
 /**
  * Just enough IMAP and SMTP, over Node's own TLS, to read new mail and answer it: no library, no
- * mailbox syncing, no attachments. The IMAP side logs in, opens the inbox, asks which messages are
- * unread, fetches their headers and text, and marks them read. The SMTP side sends one plain-text
- * message, threading it onto the one it answers.
+ * mailbox syncing. The IMAP side logs in, opens the inbox, asks which messages are unread, fetches
+ * their headers and text, and marks them read; the text is read through src/personal/mime.ts, so a
+ * formatted or multipart message gives its words and its attached files. The SMTP side sends one
+ * message, threading it onto the one it answers, with any files attached.
  */
 export interface MailServer {
   host: string;
@@ -31,7 +34,12 @@ export interface MailMessage {
   messageId: string;
   references: string;
   text: string;
+  /** Files attached to the message, at most `maxMailFiles` of them, already decoded. */
+  attachments?: MailFile[];
 }
+/** One attached file, in or out. */
+export interface MailFile { name: string; mediaType: string; bytes: Uint8Array }
+export const maxMailFiles = 10;
 
 /** A socket that speaks in lines and can be read until a caller-chosen point. */
 class LineSocket {
@@ -198,10 +206,15 @@ export function parseFetched(seq: number, raw: string): MailMessage {
   const header = (name: string) => new RegExp(`^${name}:[ \\t]*([\\s\\S]*?)(?=\\r\\n[^ \\t]|$)`, "im").exec(headers)?.[1]?.replace(/\r\n[ \t]+/g, " ").trim() ?? "";
   const from = header("From");
   const address = /<([^>]+)>/.exec(from)?.[1] ?? from.split(/\s+/).pop() ?? "";
+  // The body is read with the message's own headers, so a formatted, encoded or multipart message gives its words and its files.
+  const parts = mimeParts(`${headers.split(/\r?\n\r?\n/)[0]}\r\n\r\n${body}`);
+  const attachments = parts.filter((part) => part.filename || part.disposition === "attachment").slice(0, maxMailFiles)
+    .map((part, index) => ({ name: part.filename || `attachment-${index + 1}`, mediaType: part.contentType, bytes: new Uint8Array(part.body) }));
   return {
     seq, from: address.toLowerCase(), fromName: from.replace(/<[^>]*>/, "").replace(/"/g, "").trim() || address,
     subject: header("Subject"), messageId: header("Message-ID"), references: header("References"),
-    text: body.replace(/\r\n/g, "\n").trim(),
+    text: textOf(parts).replace(/\r\n/g, "\n").trim(),
+    ...(attachments.length ? { attachments } : {}),
   };
 }
 
@@ -214,8 +227,10 @@ export interface OutgoingMail {
   references?: string;
   messageId: string;
   date?: Date;
+  /** Files to attach; the message then goes as multipart/mixed with the words first. */
+  attachments?: MailFile[];
 }
-/** Sends one plain-text message and hangs up. */
+/** Sends one message and hangs up. */
 export async function sendMail(server: MailServer, mail: OutgoingMail): Promise<void> {
   const implicit = server.tls !== false;
   const socket = await open(server, implicit);
@@ -272,14 +287,29 @@ async function authenticate(socket: LineSocket, server: MailServer, expect: (cod
   await expect(["235"]);
 }
 /** Builds the message, protecting any line that starts with a dot from ending the transmission. */
-function messageBody(mail: OutgoingMail): string {
+export function messageBody(mail: OutgoingMail): string {
   const headers = [
     `From: ${mail.from}`, `To: ${mail.to}`, `Subject: ${mail.subject}`,
     `Date: ${(mail.date ?? new Date()).toUTCString()}`, `Message-ID: ${mail.messageId}`,
     ...(mail.inReplyTo ? [`In-Reply-To: ${mail.inReplyTo}`] : []),
     ...(mail.references ? [`References: ${mail.references}`] : []),
-    "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: 8bit",
+    "MIME-Version: 1.0",
   ];
-  const body = mail.text.replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
-  return `${headers.join("\r\n")}\r\n\r\n${body}\r\n.\r\n`;
+  const words = mail.text.replace(/\r?\n/g, "\r\n");
+  const plain = ["Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: 8bit"];
+  let body: string;
+  if (!mail.attachments?.length) { headers.push(...plain); body = words; } else {
+    const boundary = `branch-${randomUUID()}`;
+    headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+    body = [`--${boundary}`, ...plain, "", words, ...mail.attachments.flatMap((file) => [`--${boundary}`, ...fileHeaders(file), "",
+      Buffer.from(file.bytes).toString("base64").replace(/.{76}/g, "$&\r\n").replace(/\r\n$/, "")]), `--${boundary}--`].join("\r\n");
+  }
+  return `${headers.join("\r\n")}\r\n\r\n${body.replace(/^\./gm, "..")}\r\n.\r\n`;
+}
+/** An attachment's own headers: its type checked, its name quoted plainly or, when it is not plain ASCII, as RFC 2231 says. */
+function fileHeaders(file: MailFile): string[] {
+  const type = /^[\w.+-]+\/[\w.+-]+$/.test(file.mediaType) ? file.mediaType : "application/octet-stream";
+  const cleaned = file.name.replace(/[\u0000-\u001f"\\]+/g, "_").slice(0, 150) || "file";
+  const name = /^[\x20-\x7e]*$/.test(cleaned) ? `filename="${cleaned}"` : `filename*=UTF-8''${encodeURIComponent(cleaned)}`;
+  return [`Content-Type: ${type}`, `Content-Disposition: attachment; ${name}`, "Content-Transfer-Encoding: base64"];
 }
