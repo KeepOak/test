@@ -29,8 +29,10 @@ async function score(answers, lookedUp = []) {
     restart: async () => undefined,
     ask: async (prompt) => { asked.push(prompt); return { id: `r${asked.length}`, answer: answers[prompt] ?? "" }; },
   };
-  const { checks } = await task.run(ctx);
-  return Object.fromEntries(checks.map((one) => [one.name.split(":")[0], one.ok]));
+  const { checks, detail } = await task.run(ctx);
+  const verdicts = Object.fromEntries(checks.map((one) => [one.name.split(":")[0], one.ok]));
+  Object.defineProperty(verdicts, "detail", { value: detail });
+  return verdicts;
 }
 
 test("right answers pass every question, and the facts are put in before the engine restarts", async () => {
@@ -52,9 +54,12 @@ test("wrong answers fail the question they answer, and only that one", async () 
   for (const id of ["q1-exact", "q3-two-at-once", "q6-other-words", "q9-not-about-me"]) assert.equal(verdicts[id], true, id);
 });
 
-test("a don't-know that still invents a value fails", async () => {
-  const verdicts = await score({ ...right, "What is my blood type?": "I don't have it saved, but it is most likely O+." });
+test("a don't-know that still invents a value fails, and the scorecard says what it invented, past the check's cut", async () => {
+  const long = "I don't have it saved. " + "Blood types are common questions. ".repeat(6) + "Most people are O+.";
+  const verdicts = await score({ ...right, "What is my blood type?": long });
   assert.equal(verdicts["q7-never-said"], false);
+  assert.ok(verdicts.detail.includes('q7-never-said missed (invented "O+")'), verdicts.detail);
+  assert.ok(verdicts.detail.includes("Most people are O+."), "the whole answer, not only its start");
 });
 
 test("a don't-know that names a saved fact fails, and so does a question about France that was shown the owner's facts", async () => {

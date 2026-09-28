@@ -61,7 +61,7 @@ export const recallTasks = [
     async run(ctx) {
       await ctx.api("memory/import", archive(Date.now()));
       await ctx.restart();
-      const checks = [], times = [];
+      const checks = [], times = [], misses = [];
       for (const q of questions) {
         const started = Date.now();
         const r = await ctx.ask(q.ask); // a new conversation each time
@@ -71,7 +71,11 @@ export const recallTasks = [
         const words = answer.replace(/\s+/g, " ").slice(0, 110);
         if (q.unknown) {
           const leaked = seeded.filter((value) => has(answer, value));
-          checks.push(check(`${q.id}: says it does not know, invents nothing`, saysUnknown(answer) && !q.invented.test(answer) && !leaked.length, words));
+          const invented = q.invented.exec(answer)?.[0];
+          const ok = saysUnknown(answer) && !invented && !leaked.length;
+          checks.push(check(`${q.id}: says it does not know, invents nothing`, ok, words));
+          // A check keeps only the start of an answer, so a miss says here why it missed (the scorecard's detail).
+          if (!ok) misses.push(`${q.id} missed (${!saysUnknown(answer) ? "no don't-know" : invented ? `invented "${invented}"` : `named ${leaked.join(", ")}`}): ${answer.replace(/\s+/g, " ").slice(0, 300)}`);
           continue;
         }
         const missing = q.must.filter((value) => !has(answer, value));
@@ -82,7 +86,7 @@ export const recallTasks = [
           !missing.length && !wrong.length && clean, words));
       }
       const passed = checks.filter((one) => one.ok).length;
-      return { checks, detail: `${passed}/${checks.length} questions · ${times.join(" · ")}` };
+      return { checks, detail: [`${passed}/${checks.length} questions · ${times.join(" · ")}`, ...misses].join(" · ") };
     },
   },
 ];
