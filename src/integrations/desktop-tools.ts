@@ -3,6 +3,7 @@ import type { DesktopControl } from './desktop.js';
 import {
   DesktopClickSchema, DesktopClipboardSchema, DesktopKeySchema, DesktopOpenSchema,
   DesktopReadSchema, DesktopScreenshotSchema, DesktopTypeSchema, DesktopWindowsSchema,
+  DesktopMoveSchema, DesktopDragSchema, DesktopScrollSchema, DesktopWaitSchema, DesktopZoomSchema,
 } from './desktop-config.js';
 
 /**
@@ -35,17 +36,54 @@ export function registerDesktop(registry: ToolRegistry, desktop: DesktopControl)
   });
   registry.register({
     name: 'desktop.read', permission: 'desktop.view',
-    description: `List what is in a window — its buttons, boxes and text, by name — so you can act on names instead of guessing at pixels. Always read a window before clicking or typing in it. ${bounds}`,
+    description: `List what is in a window — its buttons, boxes and text, by name, each with a ref and its box in window pixels — so you can act on names or refs instead of guessing at pixels. Always read a window before clicking or typing in it. ${bounds}`,
     parameters: DesktopReadSchema,
     target: (input) => input.window,
     execute: (input, context) => desktop.read(input, context),
   });
   registry.register({
     name: 'desktop.click', permission: 'desktop.control',
-    description: `Press a button, box or link in a window by the name desktop.read gives it. A point inside the window is a last resort when nothing is named. ${bounds}`,
+    description: `Click in a window: a part by the name or ref desktop.read gives it, or a point in window pixels (pass the shot of the picture or reading it came from, so a window that moved since is refused instead of clicked in the wrong place). button "right" opens a menu, count 2 is a double-click and 3 a triple-click, and modifiers hold ctrl, shift or alt. A plain click on a named part presses it without moving the pointer. Nothing is clicked where another window covers the spot. ${bounds}`,
     parameters: DesktopClickSchema,
     target: (input) => input.window,
     execute: (input, context) => desktop.click(input, context),
+  });
+  // computer-control: the rest of the pointer, as Anthropic's computer tool and OpenClaw name it, bound by the same switch,
+  // approvals, Lockdown, Stop notice and "You're driving" wait as every screen action (DesktopControl.begin).
+  registry.register({
+    name: 'desktop.move', permission: 'desktop.control',
+    description: `Move the pointer onto a part (by name or ref) or a point in a window and rest there (hoverMs), to show a tooltip or open a menu that appears on hover. ${bounds}`,
+    parameters: DesktopMoveSchema,
+    target: (input) => input.window,
+    execute: (input, context) => desktop.move(input, context),
+  });
+  registry.register({
+    name: 'desktop.drag', permission: 'desktop.control',
+    description: `Drag inside one window: press on one spot (a name, ref or point), glide to another and let go, to move a file, a slider or a selection. Both spots must be inside the window and not covered by another. ${bounds}`,
+    parameters: DesktopDragSchema,
+    target: (input) => input.window,
+    execute: (input, context) => desktop.drag(input, context),
+  });
+  registry.register({
+    name: 'desktop.scroll', permission: 'desktop.control',
+    description: `Scroll a window up, down, left or right by 1 to 10 steps. Name a list or page (or give its ref) to scroll it without moving the pointer; otherwise the wheel turns over a point, or over the middle of the window. ${bounds}`,
+    parameters: DesktopScrollSchema,
+    target: (input) => input.window,
+    execute: (input, context) => desktop.scroll(input, context),
+  });
+  registry.register({
+    name: 'desktop.zoom', permission: 'desktop.view',
+    description: `A close-up picture of part of a window (a region in window pixels), enlarged when small, to read small print or find a small target. Points stay window pixels; the answer says how to turn a spot in the close-up back into one. ${bounds}`,
+    parameters: DesktopZoomSchema,
+    target: (input) => input.window,
+    execute: (input, context) => desktop.zoom(input, context),
+  });
+  registry.register({
+    name: 'desktop.wait', permission: 'desktop.view',
+    description: `Wait 0.1 to 30 seconds for a program to finish loading or animating, touching nothing. Stop ends the wait at once. ${bounds}`,
+    parameters: DesktopWaitSchema,
+    target: (input) => `${input.seconds} s`,
+    execute: (input, context) => desktop.wait(input, context),
   });
   registry.register({
     name: 'desktop.type', permission: 'desktop.control',
@@ -56,7 +94,7 @@ export function registerDesktop(registry: ToolRegistry, desktop: DesktopControl)
   });
   registry.register({
     name: 'desktop.key', permission: 'desktop.control',
-    description: `Press one key or key combination in a window, such as "enter" or "ctrl+s". The window is brought to the front first, and nothing is sent if Windows will not bring it forward. ${bounds}`,
+    description: `Press one key or key combination in a window, such as "enter" or "ctrl+s", once or up to 20 times (repeat). The window is brought to the front first, and nothing is sent if Windows will not bring it forward. ${bounds}`,
     parameters: DesktopKeySchema,
     target: (input) => input.window,
     execute: (input, context) => desktop.key(input, context),

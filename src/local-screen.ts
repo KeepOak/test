@@ -38,7 +38,9 @@ interface LocalScreenDeps {
   lockdown(): boolean; locked(): string | null; signIn(): boolean; allowsHere(sessionId: string): boolean;
   desktop: LocalScreenDesktop | null; now?: () => number;
 }
-interface Target { target: NativeCaptureTarget; label: string; excludedProcessId: number }
+const TargetMonitor = z.object({ kind: z.literal('monitor'), deviceName: z.string().min(1).max(256), primary: z.boolean().optional(),
+  bounds: z.object({ x: z.number().int(), y: z.number().int(), w: z.number().int().positive(), h: z.number().int().positive() }).strict() }).passthrough();
+interface Target { target: NativeCaptureTarget; label: string; excludedProcessId: number; primary?: boolean }
 interface Choice extends Target { owner: string; sessionId: string; expires: number }
 interface View extends Target {
   owner: string; sessionId: string; viewId: string; epoch: number; port: ScreenSessionDesktop;
@@ -70,8 +72,16 @@ export class LocalScreen {
     const raw = await this.deps.desktop.captureTargets(access.owner, () => this.guard(access), signal);
     this.guard(access); signal.throwIfAborted();
     const ownPid = z.number().int().positive().parse(raw.excludedProcessId), result: Target[] = [];
-    // A browser API key does not prove which native viewer window must be excluded.
-    // Displays remain unavailable until the desktop host supplies that exact live proof.
+    // computer-control: a whole display, now that the desktop host hides every Branch window from capture (the lease in
+    // captureTargets) and the reader checks that hiding before and after every frame (desktop-script.ts VerifyExclusion).
+    // Without that host, captureTargets has already refused, so no display is ever offered unproved.
+    const monitors = (Array.isArray(raw.monitors) ? raw.monitors : []).map((value) => TargetMonitor.safeParse(value))
+      .filter((parsed) => parsed.success).map((parsed) => parsed.data!);
+    monitors.forEach((m, index) => {
+      const target = NativeCaptureTargetSchema.safeParse({ kind: 'monitor', deviceName: m.deviceName, bounds: m.bounds });
+      if (target.success) result.push({ target: target.data, excludedProcessId: ownPid, primary: m.primary === true,
+        label: `${monitors.length > 1 ? `Display ${index + 1}` : 'Whole screen'}${m.primary && monitors.length > 1 ? ' (main)' : ''} · ${m.bounds.w}×${m.bounds.h}` });
+    });
     for (const value of Array.isArray(raw.windows) ? raw.windows : []) {
       const parsed = TargetWindow.safeParse(value);
       if (!parsed.success || parsed.data.minimised || parsed.data.processId === ownPid) continue;
@@ -83,12 +93,12 @@ export class LocalScreen {
     }
     return result.slice(0, 256);
   }
-  async targets(access: LocalScreenAccess, signal: AbortSignal): Promise<{ targets: { id: string; label: string; kind: string }[]; notice: string }> {
+  async targets(access: LocalScreenAccess, signal: AbortSignal): Promise<{ targets: { id: string; label: string; kind: string; primary: boolean }[]; notice: string }> {
     const targets = await this.listed(access, signal);
     this.choices.clear();
-    return { notice: 'Choose an external application window. Browser windows and displays need a verified desktop viewer and are unavailable here.', targets: targets.map((target) => {
+    return { notice: "Choose a display or an app window. Branch's own windows never appear in the view; browser windows are left out.", targets: targets.map((target) => {
       const id = opaque(); this.choices.set(id, { ...target, owner: access.owner, sessionId: access.sessionId, expires: this.now() + 30000 });
-      return { id, label: target.label, kind: target.target.kind };
+      return { id, label: target.label, kind: target.target.kind, primary: target.primary === true };
     }) };
   }
   async select(access: LocalScreenAccess, id: string, signal: AbortSignal): Promise<{ viewId: string; label: string }> {
@@ -141,7 +151,7 @@ export class LocalScreen {
       const captured = shot as typeof shot & { target?: unknown; method?: unknown; screen?: unknown; windows?: unknown; after?: unknown };
       if (!same(NativeCaptureTargetSchema.parse(captured.target), view.target) || !same(captured.screen, view.target.bounds) || captured.method !== view.target.kind)
         refuse('The captured target changed. Choose it again.');
-      for (const snapshot of [captured.windows, captured.after]) {
+      for (const snapshot of view.target.kind === 'window' ? [captured.windows, captured.after] : []) {
         if (!Array.isArray(snapshot) || view.target.kind !== 'window') refuse('The application identity cannot be verified.');
         const target = view.target;
         const window = snapshot.find((item) => item?.handle === target.handle && item?.processId === target.processId);
@@ -185,6 +195,9 @@ export class LocalScreen {
   async input(access: LocalScreenAccess, viewId: string, frameId: string, input: unknown, signal: AbortSignal): Promise<{ acted: true }> {
     const view = this.currentFrame(access, viewId, frameId), action = ScreenAction.parse(input);
     if (!view.control) refuse('Take control before using this target.');
+    // A display shows every window on it, so a click could land on any of them: the owner drives a display with their own
+    // mouse and keyboard (Take control still pauses every task), and clicks through the view only into a chosen app window.
+    if (view.target.kind !== 'window') refuse('On a whole display, use your own mouse and keyboard while you have control. To click through the view, choose an app window.');
     view.frame!.consumed = true; view.busy = true;
     try {
       await view.port.act(action, AbortSignal.any([signal, view.life.signal]));
@@ -214,7 +227,10 @@ export class LocalScreen {
     response.once('close', () => { if (this.selected === view) void this.close(); });
     while (this.selected === view && !view.life.signal.aborted && !response.destroyed) {
       try {
-        if (!full && !view.busy) full = !response.write(`${JSON.stringify(await this.frame(access, viewId, width, view.life.signal))}\n`);
+        // computer-control: the next frame waits until the window has painted this one (or two seconds pass), so a
+        // Take over or click is always pressed on a frame that is still current, however slow the window is to paint.
+        const waiting = view.frame !== null && !view.frame.painted && !view.frame.consumed && view.frame.expires > this.now();
+        if (!full && !view.busy && !waiting) full = !response.write(`${JSON.stringify(await this.frame(access, viewId, width, view.life.signal))}\n`);
         else this.view(access, viewId);
       } catch (error) {
         if (!response.destroyed) response.write(`${JSON.stringify({ refusal: error instanceof Error ? error.message : 'This screen stopped.', status: error instanceof LocalScreenRefusal ? error.status : 409 })}\n`);

@@ -1,14 +1,14 @@
 import { token } from "../core/api.js";
 
 const V = { on: false, sid: "", epoch: 0, open: null, selecting: null, frame: "", frameId: "", painted: "", viewId: "", label: "",
-  refusal: "", notice: "", targets: [], loading: false, onChange: null, watching: false, driving: false, cursor: null };
+  refusal: "", notice: "", targets: [], loading: false, onChange: null, watching: false, driving: false, cursor: null, kind: "", chosen: false, last: null };
 export const screenFrame = () => V.frame;
 export const screenRefusal = () => V.refusal;
 /** Where the Trunk's newest click landed on the frame ({ x, y } shares, `at`, `trunk`), or null. */
 export const screenCursor = () => (V.frame ? V.cursor : null);
 export const screenDriving = () => V.driving;
 export const setDriving = (value) => { V.driving = value === true; };
-export const nativeScreenState = () => ({ targets: V.targets, loading: V.loading, notice: V.notice, label: V.label, selected: !!V.viewId });
+export const nativeScreenState = () => ({ targets: V.targets, loading: V.loading, notice: V.notice, label: V.label, selected: !!V.viewId, kind: V.kind });
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const showing = () => V.on && !!V.sid && !document.hidden && !locked();
 const changed = () => V.onChange?.(true);
@@ -23,10 +23,11 @@ async function request(path, body, signal) {
 function end() {
   const sid = V.sid, viewId = V.viewId;
   V.epoch++; V.open?.abort(); V.selecting?.abort(); V.selecting = null;
-  Object.assign(V, { open: null, frame: "", frameId: "", painted: "", viewId: "", label: "", driving: false, cursor: null, loading: false });
+  Object.assign(V, { open: null, frame: "", frameId: "", painted: "", viewId: "", label: "", kind: "", driving: false, cursor: null, loading: false });
   if (viewId) request("/stop", { sessionId: sid, viewId }).catch(() => {});
 }
-export function stopNativeScreen() { end(); V.refusal = "Choose an application window to start a new view."; changed(); }
+// computer-control: once the owner stops or picks something, the main display is no longer opened for them by itself.
+export function stopNativeScreen() { end(); V.chosen = true; V.last = null; V.refusal = "Choose a display or an app window to see it again."; changed(); }
 export async function refreshNativeTargets() {
   if (!showing() || V.loading) return;
   const epoch = V.epoch, sid = V.sid;
@@ -37,16 +38,26 @@ export async function refreshNativeTargets() {
     V.targets = result.targets; V.notice = result.notice; V.refusal = "";
   } catch (error) { if (epoch === V.epoch) V.refusal = error.message; }
   finally { if (epoch === V.epoch) { V.loading = false; changed(); } }
+  // computer-control: opening the computer view shows this computer at once (its main display, with Branch's own
+  // windows left out), as GrokBot's live computer does; the owner can pick another display or one app window.
+  // Shown again (the view reopened, the window came back): what the owner last chose, if it is still there.
+  if (epoch !== V.epoch || V.viewId) return;
+  const again = V.last && V.targets.find((target) => target.kind === V.last.kind && target.label === V.last.label);
+  const main = !V.chosen ? V.targets.find((target) => target.kind === "monitor" && target.primary) ?? V.targets.find((target) => target.kind === "monitor") : null;
+  const pick = again || main;
+  if (pick) void chooseNativeTarget(pick.id, false);
 }
-export async function chooseNativeTarget(targetId) {
+export async function chooseNativeTarget(targetId, byOwner = true) {
   if (!showing() || !targetId) return;
+  const chosen = V.targets.find((target) => target.id === targetId), kind = chosen?.kind || "";
+  if (byOwner) { V.chosen = true; V.last = chosen ? { kind: chosen.kind, label: chosen.label } : null; }
   end(); const epoch = V.epoch, sid = V.sid;
   const controller = new AbortController(); V.selecting = controller;
   V.loading = true; changed();
   try {
     const result = await request("/target", { sessionId: sid, targetId }, controller.signal);
     if (epoch !== V.epoch || !showing()) { request("/stop", { sessionId: sid, viewId: result.viewId }).catch(() => {}); return; }
-    Object.assign(V, { viewId: result.viewId, label: result.label, refusal: "", loading: false });
+    Object.assign(V, { viewId: result.viewId, label: result.label, kind, refusal: "", loading: false });
     changed(); void read(epoch);
   } catch (error) { if (epoch === V.epoch) { V.loading = false; V.refusal = error.message; changed(); } }
   finally { if (V.selecting === controller) V.selecting = null; }
@@ -111,6 +122,7 @@ export async function controlNativeScreen(held) {
 }
 export async function inputNativeScreen(input) {
   if (!V.driving) throw new Error("Take control before using this application.");
+  if (V.kind !== "window") throw new Error("On a whole display, use your own mouse and keyboard while you have control. To click through the view, choose an app window.");
   const body = await frameRequest({ input: { ...input, window: V.label } });
   V.painted = "";
   await request("/input", body);
@@ -122,7 +134,9 @@ export function watchScreen(on, sid, onChange) {
     new MutationObserver(() => { if (locked()) { end(); changed(); } }).observe(document.getElementById("app"), { attributes: true, attributeFilter: ["class"] });
   }
   if (V.on === !!on && V.sid === (sid || "")) return;
-  end(); Object.assign(V, { on: !!on, sid: sid || "", targets: [], refusal: "", notice: "" });
+  // Another conversation starts from its main display again; closing and reopening this one keeps the owner's choice.
+  const same = V.sid === (sid || "");
+  end(); Object.assign(V, { on: !!on, sid: sid || "", targets: [], refusal: "", notice: "", ...(same ? {} : { chosen: false, last: null }) });
   if (showing()) void refreshNativeTargets();
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) { end(); changed(); } else if (showing()) void refreshNativeTargets(); });

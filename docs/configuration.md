@@ -4952,6 +4952,36 @@ words rather than from pixels), `desktop.click`, `desktop.type`, `desktop.key`, 
 `desktop.clipboard` — and none of the three counts as merely looking, so under **Ask before
 changes** every single one stops and asks you first. Photographing your screen is treated as a
 change on purpose.
+**The whole pointer (computer-control).** Beside those, `desktop.move` (rest the pointer on something so a
+tooltip or hover menu appears), `desktop.drag` (press, glide and let go inside one window), `desktop.scroll`
+(up, down, left or right, 1 to 10 steps), `desktop.zoom` (a close-up of part of a window, enlarged when
+small) and `desktop.wait` (0.1 to 30 seconds, touching nothing) complete the set, and `desktop.click` takes
+`button` (left, right, middle), `count` (2 is a double-click, 3 a triple-click) and `modifiers` (ctrl,
+shift, alt held during the click); `desktop.key` takes `repeat` (1 to 20). `desktop.read` gives every part a
+`ref` (UI Automation's id for that exact part, searched for inside that window only) and its `box` in window
+pixels, and a picture or reading of a window comes with a `shot`: a point passed with that `shot` is
+refused, and nothing is done, once the window has moved or changed size since (OpenClaw's frame binding).
+A plain left click on a named part still presses it through UI Automation without moving the pointer, and a
+named list or page scrolls through UI Automation's scroll pattern the same way. Every pointer action checks
+that the spot is inside the window and that this window is what is really on top there, so a click never
+lands on something covering it (another program, a password prompt, or Branch's own window); held keys are
+always let go, and the pointer goes back where the owner left it after a click, drag or wheel. The script
+runs per-monitor DPI aware, so window boxes, part boxes and the pointer all count real pixels on a scaled
+display. Branch's own windows are never a target. Each new tool
+goes through the same switch, approvals, Lockdown, Stop notice, action allowance and "You're driving" wait
+as the rest; `desktop.wait` alone uses none of the allowance. These verbs are Windows-only for now; on a Mac
+or Linux they say so. (Code: `src/integrations/desktop.ts`, `src/integrations/desktop-script.ts`.)
+**The computer view never shows itself (computer-control).** The owner's live view of this computer
+(`/api/panels/screen`, `src/local-screen.ts`) opens on the main display by itself, and offers every display
+and every app window (browser windows are left out). While a view is open the desktop app's main process
+hides each of its own windows from screen capture (`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`
+through Electron's `setContentProtection`, Windows 10 version 2004 or newer), and every display frame is
+dropped unless each visible Branch window is still hidden before and after it, so the view can no longer
+show itself inside itself. Only the app's main process decides which windows to hide
+(`src/desktop/capture-service.ts`, `src/desktop/capture-link.ts`); outside the desktop app, or on an older
+Windows, no view opens and the reason is shown. A whole display is watched, and Take control pauses every
+task, but the owner drives it with their own mouse and keyboard; clicking and typing through the view is
+for a chosen app window.
 How it works underneath: one Windows PowerShell script, written once into a private temporary
 folder and called with `-File` so nothing is ever pasted into a command line, driving Windows' own
 accessibility layer (UI Automation) and `user32`. Clicking and typing go through the accessibility

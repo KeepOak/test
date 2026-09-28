@@ -314,11 +314,18 @@ function stageHTML(kind) {
 function nativeChooser(kind) {
   if (kind !== "computer" || !onThis() || holder() !== "none" || E.profiles?.isOwner === false) return "";
   const state = nativeScreenState();
-  const options = state.targets.map((target) => `<option value="${esc(target.id)}">${esc(target.label)}</option>`).join("");
-  const input = screenDriving() ? `<form data-form="native-text"><input id="native-text" maxlength="2000" autocomplete="off" aria-label="Text for selected application" placeholder="Type into the selected application"><button type="submit" class="btn sm">Send text</button></form>
+  // computer-control: displays first, then app windows; Branch's own windows are never offered and never in the picture.
+  const group = (which, label) => {
+    const items = state.targets.filter((target) => target.kind === which).map((target) => `<option value="${esc(target.id)}">${esc(target.label)}</option>`).join("");
+    return items ? `<optgroup label="${label}">${items}</optgroup>` : "";
+  };
+  const input = screenDriving() && state.kind === "window" ? `<form data-form="native-text"><input id="native-text" maxlength="2000" autocomplete="off" aria-label="Text for the app" placeholder="Type into the app"><button type="submit" class="btn sm">Send text</button></form>
     <form data-form="native-key"><input id="native-key" maxlength="80" autocomplete="off" aria-label="Key chord" placeholder="Key, e.g. CTRL+S"><button type="submit" class="btn sm">Send key</button></form>
     <button type="button" class="btn sm" data-act="native-scroll" data-v="-3">Scroll up</button><button type="button" class="btn sm" data-act="native-scroll" data-v="3">Scroll down</button>` : "";
-  return `<div class="native-screen-tools" role="group" aria-label="Local application sharing"><form data-form="native-target"><label>Application window <select id="native-target" ${state.loading ? "disabled" : ""}><option value="">Choose a window</option>${options}</select></label><button class="btn sm" type="submit" ${state.loading ? "disabled" : ""}>Share selected window</button></form><button class="btn sm" type="button" data-act="native-refresh">Refresh windows</button><span role="status">${esc(state.loading ? "Checking available windows…" : state.label || state.notice || "Choose an external application window. Displays and browser windows are unavailable here.")}</span>${input}</div>`;
+  const words = state.loading ? "Looking for displays and windows…" : screenDriving() && state.kind === "monitor"
+    ? "You have control: every task is paused. Use your own mouse and keyboard."
+    : state.label ? `Showing ${state.label}. Branch's own windows are left out.` : state.notice || "Choose a display or an app window.";
+  return `<div class="native-screen-tools" role="group" aria-label="What this view shows"><form data-form="native-target"><label>Show <select id="native-target" ${state.loading ? "disabled" : ""}><option value="">Choose…</option>${group("monitor", "Displays")}${group("window", "App windows")}</select></label><button class="btn sm" type="submit" ${state.loading ? "disabled" : ""}>Show</button></form><button class="btn sm" type="button" data-act="native-refresh">Refresh list</button><span role="status">${esc(words)}</span>${input}</div>`;
 }
 
 function pipHTML() {
@@ -584,14 +591,15 @@ function initNativeStage() {
       if (native.dataset.form === "native-target") void chooseNativeTarget(native.querySelector("#native-target")?.value);
       else {
         const box = native.querySelector("input"), words = box?.value;
-        if (words) void manual(async () => { await inputNativeScreen(native.dataset.form === "native-text" ? { action: "type", text: words } : { action: "key", chord: words }); box.value = ""; });
+        // The view may have been redrawn while the words were sent: the box on the page now is the one to empty.
+        if (words) void manual(async () => { await inputNativeScreen(native.dataset.form === "native-text" ? { action: "type", text: words } : { action: "key", chord: words }); box.value = ""; const now = document.getElementById(box.id); if (now) now.value = ""; });
       }
       return;
     }
   }, true);
   document.addEventListener("click", (event) => {
     const image = event.target.closest?.("#stage7 .livescr-img");
-    if (!image || !screenDriving()) return;
+    if (!image || !screenDriving() || nativeScreenState().kind !== "window") return;
     const box = image.getBoundingClientRect(), scale = Math.min(box.width / image.naturalWidth, box.height / image.naturalHeight);
     const width = image.naturalWidth * scale, height = image.naturalHeight * scale;
     const x = (event.clientX - box.left - (box.width - width) / 2) / width, y = (event.clientY - box.top - (box.height - height) / 2) / height;

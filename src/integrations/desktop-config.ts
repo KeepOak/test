@@ -136,13 +136,60 @@ export const DesktopReadSchema = z.object({
   /** Most parts of the window to describe; the rest are left out and the count says so. */
   limit: z.number().int().min(10).max(400).default(150),
 }).strict();
-export const DesktopClickSchema = z.object({
-  window: windowMatch,
+/** computer-control: one spot in a window: a part by the ref desktop.read gave it, a part by name, or a point. */
+const partRef = z.string().trim().regex(/^-?[0-9]+(\.-?[0-9]+){0,15}$/, 'Use a ref exactly as desktop.read gave it');
+const windowPoint = z.object({ x: z.number().int().min(0).max(20000), y: z.number().int().min(0).max(20000) }).strict();
+const spotFields = {
   /** The name of the button, box or link, exactly as `desktop.read` shows it. */
   name: z.string().trim().min(1).max(200).optional(),
-  /** A place inside the window, in pixels from its top-left corner. Only when nothing is named. */
-  point: z.object({ x: z.number().int().min(0).max(20000), y: z.number().int().min(0).max(20000) }).strict().optional(),
-}).strict().refine((value) => Boolean(value.name) !== Boolean(value.point), 'Give either a name or a point, not both');
+  /** The ref `desktop.read` gave a part: exact even when several parts share a name. */
+  ref: partRef.optional(),
+  /** A place inside the window, in pixels from its top-left corner, as in its picture. */
+  point: windowPoint.optional(),
+};
+const oneSpot = (value: { name?: string | undefined; ref?: string | undefined; point?: unknown }): boolean =>
+  [value.name, value.ref, value.point].filter((part) => part !== undefined).length === 1;
+export const DesktopSpotSchema = z.object(spotFields).strict().refine(oneSpot, 'Give one of a name, a ref or a point');
+/** The picture or reading a point was taken from (desktop.screenshot, desktop.read): refused if the window moved since. */
+const shot = z.string().regex(/^[a-f0-9]{16}$/).optional();
+const modifierKeys = z.array(z.enum(['ctrl', 'shift', 'alt'])).max(3).optional();
+export const DesktopClickSchema = z.object({
+  window: windowMatch, ...spotFields, shot,
+  /** Which mouse button; right opens a menu. */
+  button: z.enum(['left', 'right', 'middle']).default('left'),
+  /** 2 is a double-click, 3 a triple-click (a whole line or paragraph). */
+  count: z.number().int().min(1).max(3).default(1),
+  /** Keys held down during the click, such as ["ctrl"] to add to a selection. */
+  modifiers: modifierKeys,
+}).strict().refine(oneSpot, 'Give one of a name, a ref or a point');
+export const DesktopMoveSchema = z.object({
+  window: windowMatch, ...spotFields, shot,
+  /** How long to rest there, in milliseconds, so a tooltip or a menu opened by hovering can appear. */
+  hoverMs: z.number().int().min(0).max(10000).default(800),
+}).strict().refine(oneSpot, 'Give one of a name, a ref or a point');
+export const DesktopDragSchema = z.object({
+  window: windowMatch, shot,
+  from: DesktopSpotSchema, to: DesktopSpotSchema,
+  button: z.enum(['left', 'right']).default('left'),
+  modifiers: modifierKeys,
+}).strict();
+export const DesktopScrollSchema = z.object({
+  window: windowMatch, ...spotFields, shot,
+  direction: z.enum(['up', 'down', 'left', 'right']),
+  /** Wheel notches (or small steps of a scrolling list), 1 to 10. */
+  amount: z.number().int().min(1).max(10).default(3),
+  modifiers: modifierKeys,
+}).strict().refine((value) => [value.name, value.ref, value.point].filter((part) => part !== undefined).length <= 1, 'Give at most one of a name, a ref or a point');
+export const DesktopWaitSchema = z.object({
+  /** Seconds to wait for a program to catch up, 0.1 to 30. Stop ends the wait at once. */
+  seconds: z.number().min(0.1).max(30),
+}).strict();
+export const DesktopZoomSchema = z.object({
+  window: windowMatch, shot,
+  /** The part of the window to look at closely, in window pixels as in its picture. */
+  region: z.object({ x: z.number().int().min(0).max(20000), y: z.number().int().min(0).max(20000),
+    width: z.number().int().min(4).max(4000), height: z.number().int().min(4).max(4000) }).strict(),
+}).strict();
 export const DesktopTypeSchema = z.object({
   window: windowMatch,
   /** The name of the box to type into; without it the window's first writable box is used. */
@@ -153,6 +200,8 @@ export const DesktopKeySchema = z.object({
   window: windowMatch,
   /** One key press such as "enter", "ctrl+s" or "alt+f4". */
   chord: z.string().trim().min(1).max(60),
+  /** Press it this many times, such as 5 downs through a list. */
+  repeat: z.number().int().min(1).max(20).default(1),
 }).strict();
 export const DesktopOpenSchema = z.object({
   /** A program to start, such as "notepad". Give this or a file, not both. */
