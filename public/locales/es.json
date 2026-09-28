@@ -2548,6 +2548,8 @@
   "glance.setting.saveNote": "Solo pregunta, durante unos cinco segundos. No pasa nada salvo que pulses Guardar el progreso, y pregunta una vez por cada periodo de asignación.",
   "glance.thisMonth": "Este mes:",
   "glance.title": "Lo que le queda a cada conexión",
+  "glance.trunkMeter": "{trunk} en {name} ({account})",
+  "glance.trunksOn": "Trunks en esta cuenta: {names}",
   "glance.usedNext": "se usa a continuación",
   "goal.action.dismiss": "Ocultar",
   "goal.action.pause": "Pausar",

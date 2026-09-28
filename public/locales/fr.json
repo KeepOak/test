@@ -2549,6 +2549,8 @@
   "glance.setting.saveNote": "Il ne fait que demander, pendant environ cinq secondes. Rien ne se passe sans que vous appuyiez sur Enregistrer l'avancement, et il ne demande qu'une fois par période.",
   "glance.thisMonth": "Ce mois-ci :",
   "glance.title": "Ce qu'il reste à chaque connexion",
+  "glance.trunkMeter": "{trunk} sur {name} ({account})",
+  "glance.trunksOn": "Trunks sur ce compte : {names}",
   "glance.usedNext": "utilisé ensuite",
   "goal.action.dismiss": "Masquer",
   "goal.action.pause": "Mettre en pause",

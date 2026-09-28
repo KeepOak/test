@@ -2548,6 +2548,8 @@
   "glance.setting.saveNote": "Es fragt nur, etwa fünf Sekunden lang. Nichts passiert, außer du drückst Fortschritt speichern, und es fragt einmal pro Kontingentzeitraum.",
   "glance.thisMonth": "Dieser Monat:",
   "glance.title": "Was jede Verbindung noch übrig hat",
+  "glance.trunkMeter": "{trunk} auf {name} ({account})",
+  "glance.trunksOn": "Trunks auf diesem Konto: {names}",
   "glance.usedNext": "als Nächstes genutzt",
   "goal.action.dismiss": "Ausblenden",
   "goal.action.pause": "Pausieren",

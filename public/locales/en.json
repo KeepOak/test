@@ -2548,6 +2548,8 @@
   "glance.setting.saveNote": "It only asks, for about five seconds. Nothing happens unless you press Save progress, and it asks once per allowance window.",
   "glance.thisMonth": "This month:",
   "glance.title": "What each connection has left",
+  "glance.trunkMeter": "{trunk} on {name} ({account})",
+  "glance.trunksOn": "Trunks on this account: {names}",
   "glance.usedNext": "used next",
   "goal.action.dismiss": "Hide",
   "goal.action.pause": "Pause",
