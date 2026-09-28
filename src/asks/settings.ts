@@ -74,7 +74,7 @@ export const askLabels: Record<AskPart, string> = {
 export const askTools: Record<AskPart, readonly string[]> = {
   "project-board": ["project.board", "project.assign"],
   "answer-engine": ["answer.ask"],
-  "answer-pages": ["answer.page"],
+  "answer-pages": ["answer.page", "pages.publish", "pages.list"],
   "article-writer": ["research.article"],
   "intent-pipeline": ["intent.route"],
   "source-sync": ["sources.sync", "sources.list"],

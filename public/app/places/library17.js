@@ -32,6 +32,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
+import { openPagesList } from "./pages19.js";
 import { startWith } from "../chat/chat.js";
 import { list17, when17 } from "./parts17.js";
 import { t, language } from "../../i18n.js";
@@ -256,10 +257,8 @@ function registerManage() {
     el.disabled = true;
     try { await api("asks/sources/sync", {}); await openSources(); } finally { syncing = false; el.disabled = false; }
   } });
-  onDemo17("pages", { open: async () => {
-    const { pages } = await api("asks/pages");
-    demoDlg17("pages", { title: t("window.places.library17.kept-answers-and-long-articles"), lead: t("window.places.library17.kept"), go: t("window.places.library17.write-an-article"), rows: list17(pages).map((p) => [p.title, p.question || when17(p.updatedAt), null]) });
-  } });
+  // SELF-309: each kept page opens, and a live one stays current while it is open (places/pages19.js).
+  onDemo17("pages", { open: () => openPagesList() });
 }
 
 function registerLearn() {
