@@ -27,13 +27,12 @@ run outside Branch's simulation. Choose a model connection that uses Branch's to
 Features ship on (the owner's rule, 2026-09-26; `src/ship-on.ts`). A feature stays off until you switch it on only when
 it would (a) spend money, (b) send something out to other people or publish on its own, (c) delete something, (d) use the
 microphone or camera, (e) run heavy CPU constantly in the background, or (f) loosen approvals or safety. A few others stay off
-because switching them on would break or change ordinary use (history repair, and stricter settings such as trusted
-folders), or by the owner's own decision (several accounts per connection). For a three-way switch, "when needed"
+because switching them on would change ordinary use (stricter settings such as trusted folders), or by the owner's own decision (several accounts per connection). For a three-way switch, "when needed"
 is the ship-on position: the feature works, and its tools load when the work calls for them.
 
 These ship on as well, whatever an older section below still says: the flows-and-boards parts, install
 requests included; learning parts, finding conversations by meaning included, but not outside memory services; *Understanding something*;
-the safety extras but asking whether a long task is getting anywhere and history repair; add-ons but installing packages; sub-goals,
+the safety extras but asking whether a long task is getting anywhere (history repair included, since it keeps a local model's reused call ids apart); add-ons but installing packages; sub-goals,
 background tasks and hand-off commands; source sync, other agents answering (`/model`) and forecasts; sharing
 assistants; skill bundles, sharing through git and the model arena; worktrees; a Trunk in any conversation; saved
 prompts (on); recordings; *Whether Branch is keeping up*; the usage report; the memory history; installing skills;
