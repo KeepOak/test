@@ -76,15 +76,15 @@ test("a version is sealed only when whole, never over the one in use or the one 
   await assert.rejects(sealAppFolder(root, "2.0.0", await readPointer(root)), /already installed/);
 });
 
-test("older versions go, but never the one in use, the one before, a folder something runs from, or anything else", async (t) => {
+test("older versions go, but never the one in use, the one before, a newer one waiting for its switch, a folder something runs from, or anything else", async (t) => {
   const root = await temp(t);
-  for (const name of ["app-1.0.0", "app-2.0.0", "app-3.0.0", "app-4.0.0", "app-5.0.0.part", "Branch Data", "locales"]) await mkdir(join(root, name), { recursive: true });
+  for (const name of ["app-1.0.0", "app-2.0.0", "app-3.0.0", "app-4.0.0", "app-5.0.0.part", "app-9.0.0-dev.1-gabc", "Branch Data", "locales"]) await mkdir(join(root, name), { recursive: true });
   await write(join(root, exe));
   const pointer = { folder: "app-4.0.0", version: "4.0.0", previous: { folder: "app-3.0.0", version: "3.0.0" }, at: new Date().toISOString() };
   const busy = (await import("node:fs/promises")).rename;
   const removed = await pruneAppFolders(root, pointer, { rename: async (from, to) => { if (from.endsWith("app-2.0.0")) throw Object.assign(new Error("in use"), { code: "EBUSY" }); return busy(from, to); } });
   assert.deepEqual(removed.sort(), ["app-1.0.0", "app-5.0.0.part"]);
-  assert.deepEqual((await readdir(root)).sort(), [exe, "Branch Data", "app-2.0.0", "app-3.0.0", "app-4.0.0", "locales"].sort());
+  assert.deepEqual((await readdir(root)).sort(), [exe, "Branch Data", "app-2.0.0", "app-3.0.0", "app-4.0.0", "app-9.0.0-dev.1-gabc", "locales"].sort());
 });
 
 const plan = (root, extra = {}) => ({ root, next: join(root, "current.next.json"), rollback: join(root, "current.rollback.json"),

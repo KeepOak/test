@@ -3,6 +3,7 @@ import { copyFile, link, lstat, mkdir, readdir, readFile, rename, rm, writeFile 
 import { dirname, join, relative, sep, win32 } from "node:path";
 import { z } from "zod";
 import { removeTree } from "./remove-tree.js";
+import { compareVersions } from "./versions.js";
 
 /**
  * Versioned app folders (Windows): each version of Branch in a folder of its own, `<root>/app-<version>/`, beside the
@@ -126,9 +127,15 @@ export async function runtimeVersion(folder: string): Promise<string | null> {
   return /^\d+\.\d+\.\d+/.test(version) ? version : null;
 }
 
+/** Whether an app folder holds a version newer than `version`: one made and waiting for its switch is never removed. */
+function newerThan(name: string, version: string): boolean {
+  try { return compareVersions(name.slice("app-".length), version) > 0; } catch { return true; } // unreadable: kept, never guessed away
+}
+
 /**
- * Removes app folders that are neither in use nor the one before, and any half-made one. A folder something still runs
- * from (the gateway started before a switch, say) cannot be renamed on Windows, so it is left for a later look.
+ * Removes app folders that are neither in use, nor the one before, nor newer than the one in use (a version already
+ * made and waiting for its moment to switch), and any half-made one. A folder something still runs from (the gateway
+ * started before a switch, say) cannot be renamed on Windows, so it is left for a later look.
  */
 export async function pruneAppFolders(root: string, pointer: Pointer | null, deps: { rename?: typeof rename } = {}): Promise<string[]> {
   if (!pointer) return [];
@@ -138,7 +145,7 @@ export async function pruneAppFolders(root: string, pointer: Pointer | null, dep
     if (!entry.isDirectory()) continue;
     const half = /\.part$/.test(entry.name) && appFolderPattern.test(entry.name.slice(0, -5));
     const trash = /^app-.*\.trash-[0-9a-f]{8}$/.test(entry.name);
-    if (!half && !trash && (!appFolderPattern.test(entry.name) || keep.has(entry.name))) continue;
+    if (!half && !trash && (!appFolderPattern.test(entry.name) || keep.has(entry.name) || newerThan(entry.name, pointer.version))) continue;
     const from = join(root, entry.name), to = trash ? from : `${from.replace(/\.part$/, "")}.trash-${randomBytes(4).toString("hex")}`;
     try { if (!trash) await (deps.rename ?? rename)(from, to); }
     catch { continue; } // in use: a later look removes it
