@@ -55,15 +55,15 @@ async function connect(app, entry, env) {
   return adapter;
 }
 /** The owner's walk: a stranger gets a code, the owner approves it, the person asks and is answered. */
-async function ownerWalk({ app, provider }, { say, heard, label }) {
+async function ownerWalk({ app, provider }, { say, heard, label, ms = 20_000 }) {
   await say("hello there");
-  const offer = await until(() => heard().find((text) => /\b\d{6}\b/.test(text)), `${label}: a pairing code over the real server`);
+  const offer = await until(() => heard().find((text) => /\b\d{6}\b/.test(text)), `${label}: a pairing code over the real server`, ms);
   assert.equal(provider.requests, 0, `${label}: a stranger never reaches the model`);
   app.channels.approve(app.runtime.owner, { code: /\b(\d{6})\b/.exec(offer)[1] });
   // Not only ASCII: an accent and an emoji must come through every transport, both ways.
   const question = "what is two plus two? ça va, naïve café 🌳🌳";
   await say(question);
-  await until(() => heard().some((text) => text.includes("Echo:") && text.includes(question)), `${label}: the answer over the real server`);
+  await until(() => heard().some((text) => text.includes("Echo:") && text.includes(question)), `${label}: the answer over the real server`, ms);
 }
 
 /** A line-based socket, for the person's own IRC, SMTP, IMAP and XMPP clients. */
@@ -422,8 +422,10 @@ test("Delta Chat, for real: deltachat-rpc-server on the local mail server", { sk
   await phone.call("start_io", person);
   const chat = await phone.call("secure_join", person, invite);
   // The join is a short exchange of mail with the assistant's own program; the chat can be written in once it is done.
-  await until(() => phone.call("can_send", person, chat), "Delta Chat: the person joined by the invite", 60_000);
-  await ownerWalk(context, { label: "Delta Chat", heard: () => texts, say: (text) => phone.call("misc_send_text_message", person, chat, text) });
+  // Delta Chat's program looks at the inbox on its own schedule, so a round trip can take up to about a minute.
+  await until(() => phone.call("can_send", person, chat), "Delta Chat: the person joined by the invite", 90_000);
+  await ownerWalk(context, { label: "Delta Chat", heard: () => texts, ms: 90_000,
+    say: (text) => phone.call("misc_send_text_message", person, chat, text) });
 });
 
 // ---- Nostr: the person uses nak, a separate Nostr client, for keys, NIP-04 encryption and the relay ----
@@ -448,6 +450,43 @@ test("Nostr, for real: a local relay (nak serve)", { skip: state.servers.nostr ?
     nak(path, "event", "--sec", samSecret, "-k", "4", "-p", botPublic, "-c", sealed, relay);
   };
   await ownerWalk(context, { label: "Nostr", heard, say });
+});
+
+// ---- SimpleX: the person is a second simplex-chat program, driven over its own WebSocket API, on a local relay ----
+async function simplexProgram(url) {
+  const socket = new WebSocket(url), waiting = new Map(), events = [];
+  let n = 0;
+  socket.onmessage = (message) => {
+    const parsed = JSON.parse(message.data);
+    if (parsed.corrId && waiting.has(parsed.corrId)) { waiting.get(parsed.corrId)(parsed.resp); waiting.delete(parsed.corrId); } else events.push(parsed.resp ?? parsed);
+  };
+  await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error(`${url} did not open`)); });
+  const command = (cmd) => new Promise((resolve) => { const corrId = `person-${++n}`; waiting.set(corrId, resolve); socket.send(JSON.stringify({ corrId, cmd })); });
+  return { socket, events, command };
+}
+const simplexReady = async (url) => until(async () => { try { const program = await simplexProgram(url); await program.command("/user"); return program; } catch { return null; } },
+  `SimpleX: ${url} answers`, 30_000);
+test("SimpleX, for real: two simplex-chat programs on a local relay", { skip: state.servers.simplex ? false : notRunning("SimpleX") }, async (t) => {
+  const { assistant, person: personUrl } = state.servers.simplex;
+  // The owner's setup, done in their own simplex-chat as the docs ask: a one-time invitation to share.
+  const owner = await simplexReady(assistant);
+  const invitation = await owner.command("/c");
+  owner.socket.close();
+  const link = JSON.stringify(invitation).match(/simplex:\/invitation#[^"\s]+/)?.[0];
+  assert.ok(link, "the assistant's program made an invitation");
+  const context = await engine(t);
+  saveParitySwitches(context.app.store, context.app.runtime.owner, { simplex: "on" }, ["simplex"]);
+  await connect(context.app, { type: "simplex", id: "simplex", address: assistant, activation: "mention", pairing: true, allowlist: [] }, {});
+  await until(() => context.app.channels.summary().channels.find((c) => c.id === "simplex")?.health?.state === "connected", "SimpleX: the assistant is on its program");
+  const person = await simplexReady(personUrl);
+  t.after(() => person.socket.close());
+  await person.command(`/c ${link}`);
+  const contact = await until(() => person.events.find((e) => e.type === "contactConnected")?.contact?.contactId, "SimpleX: the person is connected");
+  const heard = () => person.events.filter((e) => e.type === "newChatItems").flatMap((e) => e.chatItems)
+    .filter((item) => item.chatInfo?.contact?.contactId === contact && item.chatItem?.chatDir?.type === "directRcv")
+    .map((item) => item.chatItem.content?.msgContent?.text ?? "");
+  await ownerWalk(context, { label: "SimpleX", heard,
+    say: (text) => person.command(`/_send @${contact} json ${JSON.stringify([{ msgContent: { type: "text", text } }])}`) });
 });
 
 // ---- Every other app: why it is not tested for real ----

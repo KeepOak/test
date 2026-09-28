@@ -24,7 +24,7 @@ const home = process.env.BRANCH_REAL_CHAT_HOME
 const distro = process.env.BRANCH_REAL_CHAT_WSL ?? "BranchCI";
 const inWsl = "/opt/branch-real-chat";
 const stateFile = process.env.BRANCH_REAL_CHAT_STATE ?? join(home, "state.json");
-const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167, mqtt: 11883, gotify: 18080, ntfy: 18090, mumble: 16473, nostr: 17447 };
+const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167, mqtt: 11883, gotify: 18080, ntfy: 18090, mumble: 16473, nostr: 17447, simplexBot: 15225, simplexPerson: 15226 };
 const registrationToken = "branch-real-chat-local";
 const downloads = {
   ergo: { file: "ergo-2.19.1-windows-x86_64.zip", sha256: "5397fac56f7110839aac2d8ab436279eb2a00dddfcc07032605b423e85ea40b6",
@@ -39,6 +39,10 @@ const downloads = {
     url: "https://github.com/chatmail/core/releases/download/v2.62.0/deltachat-rpc-server-win64.exe" },
   nak: { file: "nak-v0.20.7-windows-amd64.exe", sha256: "e759002c783442f3b5b082e31e56d2db0b1e2b42f61d87b68d72d93035eb39c4",
     url: "https://github.com/fiatjaf/nak/releases/download/v0.20.7/nak-v0.20.7-windows-amd64.exe" },
+  smp: { file: "smp-server-6.5.0-ubuntu-24_04", sha256: "0ec0984a9f15d8a140c96e0c84948e37f581ed0a0140e6fc1d5677dcc9e5144c",
+    url: "https://github.com/simplex-chat/simplexmq/releases/download/v6.5.0/smp-server-ubuntu-24_04-x86-64" },
+  simplexChat: { file: "simplex-chat-7.0.3-ubuntu-24_04.deb", sha256: "a004fb0ea97f647d9364b56f2b41f084201b3281c715f28800a5868026e81102",
+    url: "https://github.com/simplex-chat/simplex-chat/releases/download/v7.0.3/simplex-chat-ubuntu-24_04-x86_64.deb" },
   ntfy: { file: "ntfy_2.28.0_linux_amd64.tar.gz", sha256: "881a1530e30e01f1dec202c7f41e1664e57edfb7844e73e21e345159ac3ea9b7",
     url: "https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/ntfy_2.28.0_linux_amd64.tar.gz" },
 };
@@ -259,6 +263,31 @@ async function nostrUp() {
   await listening(ports.nostr, "nak relay", pid);
   return { pid, state: { relay: `ws://127.0.0.1:${ports.nostr}`, nak } };
 }
+/**
+ * SimpleX: its relay (smp-server) cannot bind one address, so it runs in a network namespace of its own with the
+ * assistant's and the person's simplex-chat programs, and nothing there is reachable from outside the distro. Each
+ * program's API (which binds 127.0.0.1 itself) is bridged to Windows by socat on a loopback port.
+ */
+async function simplexUp() {
+  aptInstall("socat", "socat");
+  const dir = `${inWsl}/simplex`, has = (path) => spawnSync("wsl.exe", ["-d", distro, "-u", "root", "-e", "test", "-x", path], { windowsHide: true }).status === 0;
+  if (!has(`${dir}/smp-server`)) wsl(`set -e; mkdir -p ${dir}; cat > ${dir}/smp-server; chmod +x ${dir}/smp-server`, readFileSync(await fetchPinned(downloads.smp)));
+  if (!has(`${dir}/deb/usr/bin/simplex-chat`)) wsl(`set -e; mkdir -p ${dir}; cat > ${dir}/chat.deb; dpkg-deb -x ${dir}/chat.deb ${dir}/deb`, readFileSync(await fetchPinned(downloads.simplexChat)));
+  const run = `ip netns exec branch-sx env SMP_SERVER_CFG_PATH=${dir}/etc SMP_SERVER_LOG_PATH=${dir}/var`;
+  wsl(`set -e; cd ${dir}
+ip netns add branch-sx 2>/dev/null || true; ip netns exec branch-sx ip link set lo up
+[ -f etc/fingerprint ] || ${run} ./smp-server init --ip 127.0.0.1 --no-password --disable-web -y > /dev/null
+sed -i 's/^port = .*/port = 17223/; s/^host = .*/host = 127.0.0.1/' etc/smp-server.ini
+setsid -f ${run} ./smp-server start > ${dir}/smp.log 2>&1 < /dev/null
+relay="smp://$(cat etc/fingerprint)@127.0.0.1:17223"; rm -rf bot person; mkdir -p bot person
+setsid -f ip netns exec branch-sx ./deb/usr/bin/simplex-chat -d ${dir}/bot/db --create-bot-display-name Branch -s "$relay" -p 5225 > bot.log 2>&1 < /dev/null
+setsid -f ip netns exec branch-sx ./deb/usr/bin/simplex-chat -d ${dir}/person/db --user-display-name sam -s "$relay" -p 5226 > person.log 2>&1 < /dev/null
+setsid -f socat TCP-LISTEN:${ports.simplexBot},bind=127.0.0.1,reuseaddr,fork "SYSTEM:ip netns exec branch-sx socat STDIO TCP\\:127.0.0.1\\:5225" > /dev/null 2>&1 < /dev/null
+setsid -f socat TCP-LISTEN:${ports.simplexPerson},bind=127.0.0.1,reuseaddr,fork "SYSTEM:ip netns exec branch-sx socat STDIO TCP\\:127.0.0.1\\:5226" > /dev/null 2>&1 < /dev/null`);
+  await listening(ports.simplexBot, "SimpleX bridge");
+  await listening(ports.simplexPerson, "SimpleX bridge");
+  return { state: { assistant: `ws://127.0.0.1:${ports.simplexBot}`, person: `ws://127.0.0.1:${ports.simplexPerson}` } };
+}
 
 async function up() {
   mkdirSync(home, { recursive: true });
@@ -271,7 +300,7 @@ async function up() {
     }
   }
   const starters = { irc: ircUp, email: emailUp, xmpp: xmppUp, matrix: matrixUp, mqtt: mqttUp, gotify: gotifyUp, ntfy: ntfyUp,
-    mumble: mumbleUp, deltachat: deltachatUp, nostr: nostrUp };
+    mumble: mumbleUp, deltachat: deltachatUp, nostr: nostrUp, simplex: simplexUp };
   const state = { pids: [], servers: {} };
   try {
     for (const [name, start] of Object.entries(starters)) {
@@ -290,7 +319,7 @@ function down({ quiet = false } = {}) {
   const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8")) : { pids: [] };
   for (const pid of state.pids ?? []) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
   spawnSync("wsl.exe", ["-d", distro, "-u", "root", "-e", "bash", "-c",
-    `pkill -f '${inWsl}/[p]rosody.cfg.lua' ; pkill -f '[t]uwunel -c tuwunel.toml' ; pkill -f '${inWsl}/[m]osquitto.conf' ; pkill -f '[n]tfy serve --listen-http' ; pkill -f '${inWsl}/mumble/[m]umble.ini' ; true`], { windowsHide: true });
+    `pkill -f '${inWsl}/[p]rosody.cfg.lua' ; pkill -f '[t]uwunel -c tuwunel.toml' ; pkill -f '${inWsl}/[m]osquitto.conf' ; pkill -f '[n]tfy serve --listen-http' ; pkill -f '${inWsl}/mumble/[m]umble.ini' ; pkill -f '[s]ocat TCP-LISTEN:1522' ; ip netns pids branch-sx 2>/dev/null | xargs -r kill ; sleep 0.5 ; ip netns del branch-sx 2>/dev/null ; true`], { windowsHide: true });
   if (existsSync(stateFile)) writeFileSync(stateFile, `${JSON.stringify({ servers: {} })}\n`);
   if (!quiet) console.log("Down.");
 }
@@ -299,7 +328,7 @@ function test() {
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
   const file = join(repo, "tests", "real-chat.test.mjs");
   if (!existsSync(file)) throw new Error(`${file} is missing`);
-  const done = spawnSync(process.execPath, ["--test", "--test-timeout=120000", file], { cwd: repo, stdio: "inherit",
+  const done = spawnSync(process.execPath, ["--test", "--test-timeout=300000", file], { cwd: repo, stdio: "inherit",
     env: { ...process.env, BRANCH_REAL_CHAT_STATE: stateFile, NODE_EXTRA_CA_CERTS: state.servers.xmpp?.ca ?? "" } });
   process.exitCode = done.status ?? 1;
 }

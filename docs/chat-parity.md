@@ -28,7 +28,8 @@ real server on this computer, and a person on the other side uses a small client
 with Branch. The walk is the owner's: a stranger writes and gets a pairing code, the owner approves it, and the same
 person asks a question with an accent and emoji in it and gets the answer back. An app that can only be sent to
 (Gotify) gets Branch's own delivery instead, read back by the person's client. The model is a stand-in that echoes
-the question, so what is real is the transport: the app's server, the connection, and Branch's adapter on it.
+the question, so what is real is the transport: the app's server, the connection, and Branch's adapter on it. A relay-less
+app (Delta Chat) uses the mail server above, and the person's side is the app's own program.
 
 How to run it (Windows with a WSL distro; `BRANCH_REAL_CHAT_WSL`, default `BranchCI`):
 
@@ -39,9 +40,13 @@ node scripts/real-chat/servers.mjs down
 ```
 
 - Every server listens on 127.0.0.1 only, with no federation and throwaway passwords that exist only there.
-- Downloads come to about 168 MB in all, none over 42 MB, each checked against a pinned SHA-256: Ergo 7 MB,
-  GreenMail 11 MB, tuwunel 32 MB, ntfy 30 MB, deltachat-rpc-server 23 MB, nak 42 MB, Gotify 12 MB, and from apt
-  Prosody and Mosquitto about 3 MB and the Mumble server 7.5 MB with its libraries.
+- Downloads come to about 225 MB in all, none over 45 MB, each checked against a pinned SHA-256: Ergo 7 MB,
+  GreenMail 11 MB, tuwunel 32 MB, ntfy 30 MB, deltachat-rpc-server 23 MB, nak 42 MB, smp-server 45 MB, simplex-chat
+  12 MB, Gotify 12 MB, and from apt Prosody, Mosquitto and socat about 3 MB and the Mumble server 7.5 MB with its
+  libraries.
+- SimpleX's relay cannot bind one address, so it and both simplex-chat programs run in a network namespace of their
+  own in the WSL distro; only the two programs' APIs are bridged out, to 127.0.0.1.
+- Delta Chat's program checks the inbox on its own schedule, so its walk waits up to 90 s a step (usually about 3 s).
 - Java 11 or later must already be installed for GreenMail; the script does not download it.
 - CI has no servers, so there the real walks are skipped with a reason. The check that every catalog app has
   either a real test or a reason still runs in CI, and so does the check that this table is current.
@@ -53,7 +58,7 @@ node scripts/real-chat/servers.mjs down
 
 <!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
 
-10 of 56 apps are tested for real; every other one says why not.
+11 of 56 apps are tested for real; every other one says why not.
 
 | App | Result | Server, or why not |
 | --- | --- | --- |
@@ -102,7 +107,7 @@ node scripts/real-chat/servers.mjs down
 | XMPP (Jabber) | **Real-tested** | Prosody 0.12 (apt, about 2 MB) in the BranchCI WSL distro, STARTTLS with a certificate from a throwaway local CA |
 | MQTT | **Real-tested** | Mosquitto (apt, under 1 MB) in the BranchCI WSL distro on 127.0.0.1:11883 |
 | Keybase | Skipped | needs a Keybase account signed in to the keybase program |
-| SimpleX Chat | Skipped | a local SimpleX chat program is possible (about 80 MB) but is not in this harness yet |
+| SimpleX Chat | **Real-tested** | smp-server 6.5.0 (45 MB) and two simplex-chat 7.0.3 programs (12 MB .deb) in a network namespace of their own in the BranchCI WSL distro, each program's API bridged to 127.0.0.1 |
 | Delta Chat | **Real-tested** | deltachat-rpc-server 2.62.0 (one Windows binary, 23 MB) on the GreenMail server above; the person is a second copy that joins by the assistant's invite |
 | Nostr | **Real-tested** | an in-memory relay from nak 0.20.7 (one Go binary, 42 MB) on 127.0.0.1:17447; the person's client is nak too |
 | VK | Skipped | needs a VK community token; there is no local or sandbox server for it |
