@@ -1071,7 +1071,10 @@ export class BranchBrowser {
   hostFor(context: Pick<ToolContext, 'owner' | 'runId'>): string {
     try {
       const entry = this.sessions.get(this.key(context));
-      return hostOf(entry?.session.watched()?.page.url() ?? '') || entry?.host || '';
+      // The page in front now (the owner may have moved it), with its port, as the approval rules name a site.
+      let now = '';
+      try { const at = new URL(entry?.session.watched()?.page.url() ?? ''); if (at.protocol === 'http:' || at.protocol === 'https:') now = at.host; } catch { /* no page yet */ }
+      return now || entry?.host || '';
     } catch { return ''; }
   }
   /**
