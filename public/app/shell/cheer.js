@@ -18,6 +18,7 @@ function leafBurst(x, y) {
   if (calm17()) return;
   const root = app(), cv = document.createElement("canvas"), r = root.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
   cv.className = "burst11";
+  cv.setAttribute("aria-hidden", "true"); // leaves only: nothing to read
   cv.width = r.width * dpr;
   cv.height = r.height * dpr;
   root.appendChild(cv);
