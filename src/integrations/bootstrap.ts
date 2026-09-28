@@ -281,6 +281,9 @@ async function readConfig(path: string | undefined, env: NodeJS.ProcessEnv, chan
 
 export async function loadIntegrations(registry: ToolRegistry, path?: string, env = process.env, secrets?: SecretResolver, channels?: ChannelHost) {
   const closers: (() => Promise<void>)[] = [];
+  // The launch file's MCP servers and the watch on the file close with the rest, but only a running server is counted.
+  const following: (() => Promise<void>)[] = [];
+  let mcpRunning = 0;
   /** The live browser, when one is configured, so Settings can offer the sign-in-once window. */
   const hosted: {
     browser?: BranchBrowser; issues?: IssueAccess;
@@ -291,7 +294,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
   const before = new Set(registry.names());
   const close = async () => {
     for (const name of registry.names()) if (!before.has(name)) registry.unregister(name);
-    const results = await Promise.allSettled(closers.map(stop => stop()));
+    const results = await Promise.allSettled([...closers, ...following].map(stop => stop()));
     const errors = results.filter(result => result.status === 'rejected');
     if (errors.length) throw new Error(`Failed to close ${errors.length} integration(s)`);
   };
@@ -317,11 +320,11 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
         for (const name of registry.names()) if (name.startsWith(prefix)) registry.unregister(name);
       };
     });
-    closers.push(() => launch.close());
-    await launch.apply(config.mcp, true);
+    following.push(() => launch.close());
+    mcpRunning = (await launch.apply(config.mcp, true)).started.length;
     if (path) {
       const stopFollowing = followLaunchFile(path, async () => (await readConfig(path, env, channels))?.mcp ?? [], launch);
-      closers.push(async () => stopFollowing());
+      following.push(async () => stopFollowing());
     }
     if (config.browser) {
       const browser = new BranchBrowser(config.browser);
@@ -397,7 +400,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       await channels!.router.attach(adapter, { activation: channel.activation, pairing: channel.pairing, allowlist: channel.allowlist });
       closers.push(() => adapter.stop());
     }
-    return { close, count: closers.length, hosted };
+    return { close, count: closers.length + mcpRunning, hosted };
   } catch (error) { await close().catch(() => undefined); throw error; }
 }
 
