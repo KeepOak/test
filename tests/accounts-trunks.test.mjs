@@ -24,6 +24,7 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' });
   delete service.deps.policy; // the stand-in fetch below is the whole network
   for (const part of ["trunks", "rooms", "routines"]) app.trunks.setMode(part, { mode: "on" });
   return { app, service, owner: app.runtime.owner };
@@ -213,7 +214,7 @@ test("trunks-use-subscriptions: a Trunk that does not copy the owner's accounts 
   const before = seen.length;
   const refused = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
   assert.equal(refused.status, "failed");
-  assert.match(refused.output, /does not copy your keys and has no key picked for cli-claude-code/);
+  assert.match(refused.output, /does not copy your accounts and has no account picked for Claude Code \(installed on this computer\)\. Pick one for it in Edit Trunk › Accounts/);
   assert.equal(seen.length, before, "the owner's default sign-in was not used");
   app.trunks.edit(ed.id, { keys: { copyFromOwner: false, accounts: { "cli-claude-code": second } } });
   const picked = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
@@ -232,7 +233,7 @@ test("a Trunk that does not copy the owner's keys and has no pick is refused rat
   const before = calls.first;
   const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
   assert.equal(chat.status, "failed");
-  assert.match(chat.output, /does not copy your keys and has no key picked for openai-test/);
+  assert.match(chat.output, /does not copy your accounts and has no account picked for OpenAI test/);
   assert.equal(calls.first, before, "the owner's default key was not used");
 });
 
@@ -316,4 +317,44 @@ test("trunks-use-subscriptions: a schedule a Trunk made during a household perso
   assert.equal(sams.status, "failed", sams.output);
   assert.match(sams.output, /only for your own work/);
   assert.equal(seen.length, before, "the sign-in never answered the schedule made during Sam's work");
+});
+
+test("owner priority 2026-09-27: one Trunk answers with the owner's second Codex account, another with a second Claude account, the owner keeps the first", async (t) => {
+  const fx = await fixture(t);
+  const { app, service, owner } = fx;
+  const seen = [];
+  const spawn = async (row, _prompt, _signal, _limits, home) => {
+    seen.push({ program: row.id, home: home?.path ?? "primary" });
+    return row.id === "codex"
+      ? { code: 0, stdout: JSON.stringify({ type: "item.completed", item: { id: "1", type: "agent_message", text: "from codex" } }), stderr: "" }
+      : { code: 0, stdout: JSON.stringify({ result: "from claude" }), stderr: "" };
+  };
+  registerCliAgent(app.runtime.models, { id: "codex" }, {}, spawn);
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  service.deps.spawnAgent = spawn;
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  setMode(service, { mode: "on" });
+  const codexSecond = (await addAccount(service, { pool: "cli-codex", label: "Work Codex" })).accounts.at(-1).id;
+  const claudeSecond = (await addAccount(service, { pool: "cli-claude-code", label: "Work Claude" })).accounts.at(-1).id;
+  const coder = app.trunks.create({ name: "Coder" });
+  const writer = app.trunks.create({ name: "Writer" });
+  app.trunks.edit(coder.id, { model: "cli-codex", keys: { copyFromOwner: true, accounts: { "cli-codex": codexSecond } } });
+  app.trunks.edit(writer.id, { model: "cli-claude-code", keys: { copyFromOwner: true, accounts: { "cli-claude-code": claudeSecond } } });
+  await app.trunks.introduced();
+
+  const coded = await app.runtime.run({ prompt: "hello", sessionId: coder.chatSessionId });
+  assert.equal(coded.status, "completed", coded.output);
+  assert.equal(coded.output, "from codex");
+  assert.deepEqual(seen.at(-1), { program: "codex", home: service.homeOf("cli-codex", codexSecond) }, "Codex, in the picked account's own folder");
+  assert.deepEqual(accountOf(app, coded.id), [codexSecond]);
+
+  const written = await app.runtime.run({ prompt: "hello", sessionId: writer.chatSessionId });
+  assert.equal(written.status, "completed", written.output);
+  assert.equal(written.output, "from claude");
+  assert.deepEqual(seen.at(-1), { program: "claude-code", home: service.homeOf("cli-claude-code", claudeSecond) }, "Claude Code, in the picked account's own folder");
+  assert.deepEqual(accountOf(app, written.id), [claudeSecond]);
+
+  const own = await app.runtime.run({ prompt: "hello" });
+  assert.equal(own.output, "from claude");
+  assert.deepEqual(seen.at(-1), { program: "claude-code", home: "primary" }, "the owner's own work keeps the owner's first account");
 });

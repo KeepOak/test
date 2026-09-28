@@ -7,7 +7,7 @@ import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
-import { A, allAccounts, loadAccounts, ownerOnly, poolById } from "../../flows/account.js";
+import { A, allAccounts, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { accounts17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setting up's "Two more things": email and calendar, a backup
@@ -18,13 +18,16 @@ const key = (a) => `${a.pool}/${a.id}`;
 
 export function load() { loadMore(); return loadAccounts(); }
 
+/* QA retest 2026-09-28 (m8): "used next" is said of the account the next answer comes from: the first of the list of
+   the model that answers now (GET /api/accounts pools[].answering), or that model itself when it is on this computer. A
+   list whose model is not the one answering keeps its order without the pill. */
 function row(a, i, list) {
   const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}"`;
   const tick = picked ? `<input type="checkbox" class="chk15" data-sw="acc15" data-acc15="${esc(key(a))}" ${picked.includes(key(a)) ? "checked" : ""} aria-label="${t("window.settings.accounts.select-label", { label: esc(a.label) })}">` : "";
   const top = i === 0 || list[i - 1].pool !== a.pool;
   /* A paused account (Pause below: { disabled: true }) says so and has Resume, the same route with { disabled: false }. */
   const paused = a.disabled ? `<span class="pill idle">${t("dashboard.standing.paused")}</span><button class="btn ghost sm" type="button" data-act="acct-resume" ${ids} ${ownerOnly()}>${t("autonomy.resume")}</button>` : "";
-  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(a.poolName)}</small></span>${a.first && !a.disabled ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}${paused}`
+  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, a.poolName))}</small></span>${a.first && a.answering && !a.disabled ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}${paused}`
     + `<button class="icon-btn" type="button" aria-label="${t("accounts.action.up")}" data-act="acct-up" ${ids} ${top ? "disabled" : ownerOnly()} data-css="width:28px;height:28px">${ic("up", "s")}</button>`
     + `<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" ${ids} data-css="width:28px;height:28px">${ic("more", "s")}</button></div>`;
 }
@@ -32,10 +35,10 @@ function row(a, i, list) {
 /* A model on this computer answers like an account and needs no sign-in (GET /api/state models.presets, local): listed
    after the accounts with "On this computer", without Move up or the account menu, which are an account's. */
 const localPresets = () => (E.state?.models?.presets ?? []).filter((p) => p.local);
-const localRow = (p) => `<div class="prow">${logo(p.provider, p.name, 32)}<span class="grow"><b>${esc(p.name)}</b><small>${t("glance.local")}</small></span></div>`;
+const localRow = (p) => `<div class="prow">${logo(p.provider, p.name, 32)}<span class="grow"><b>${esc(p.name)}</b><small>${t("glance.local")}</small></span>${E.state?.activeModel?.presetId === p.id ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>`;
 /* Whether an account can answer now: a sign-in only while it is signed in (GET /api/accounts pools[].signedIn); a key or a
    program's account is counted as the engine lists it. */
-const answers = (a) => poolById(a.pool)?.signedIn?.[a.id] !== false;
+const answers = (a) => a.ready === true;
 
 function bulkBar() {
   if (!picked) return "";

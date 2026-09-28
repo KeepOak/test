@@ -73,6 +73,8 @@ export function initRec() {
   on("rec", (el) => answer(el));
   on("rec-install", () => keepRunning());
   if (window.branchDesktop?.installUpdate) markLive(["install"]);
+  // Remind me tomorrow puts the card below away for a day; only the desktop app draws that card (a browser has none).
+  if (window.branchDesktop?.updateStatus) markLive(["upd-snooze"]);
   on("install", () => installNow());
 }
 
@@ -83,6 +85,19 @@ export function initRec() {
    does), nothing is drawn in a browser or while nothing newer was found, and no version is written in. The updater is
    asked at most once a minute, and a change redraws. */
 const U = { next: null, at: 0, asking: false, failed: "" };
+/* Remind me tomorrow (the version menu, shell/usage.js): the card stays away for a day for the version it offered; a newer
+   one comes back at once. Update by itself still installs as set; this only puts the reminder off. Kept in this window's
+   own storage, a convenience for this viewer. */
+const SNOOZE = "branch-update-remind";
+function snoozed(version) {
+  try { const s = JSON.parse(localStorage.getItem(SNOOZE) ?? "null"); return !!s && s.version === version && Date.now() < s.until; } catch { return false; }
+}
+export function snoozeUpdate(version = U.next?.version) {
+  if (!version) return;
+  try { localStorage.setItem(SNOOZE, JSON.stringify({ version, until: Date.now() + 24 * 3600 * 1000 })); } catch { /* no storage: the card stays */ }
+  toast(t("window.chat.rec.remind-tomorrow"));
+  render();
+}
 async function readNext() {
   U.asking = true;
   const before = U.next?.version ?? null;
@@ -98,7 +113,7 @@ async function readNext() {
 export function updateCard() {
   if (!window.branchDesktop?.updateStatus || !ownerHere()) return "";
   if (!U.asking && Date.now() - U.at > 60_000) readNext();
-  if (!U.next) return "";
+  if (!U.next || snoozed(U.next.version)) return "";
   return `<div class="upd18c" role="status">${ic("spark", "s")}<span class="grow"><b>${esc(t("window.flows.whatsnew.is-ready", { version: U.next.version }))}</b><small>${t("window.chat.rec.update-ready-hint")}</small></span><button class="btn ghost sm" type="button" data-act="relnotes17d" data-v="ready">${t("window.flows.whatsnew.read")}</button><button class="btn pri sm" type="button" data-act="install">${t("window.settings.updates.install-when-nothing-is-running")}</button></div>`;
 }
 

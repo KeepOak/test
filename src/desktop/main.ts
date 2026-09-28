@@ -45,7 +45,7 @@ import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
 // mac7/safe-rollback: what an update changes is written down before the hand-over moves anything.
-import { recordActivation } from "../install/headless-update.js";
+// It is loaded when an update is recorded: its store and backup code would otherwise sit in this process all day.
 // mac7/win-icon: the taskbar shows the mascot, not Electron's atom.
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
@@ -103,6 +103,10 @@ let liveWindowNow: InUse | null = null;
 let tellWindow: (update: WindowUpdate) => Promise<void> = () => Promise.reject(new UpdateDeferredError("The window is not open yet."));
 let recoverWindow: () => Promise<void> = () => Promise.resolve();
 let closeCapture: () => void = () => undefined;
+/** Tells the engine whether the window is shown, so a chat's answer can say where Branch is (src/environment.ts). */
+function tellWindowShown(): void {
+  if (window && !window.isDestroyed()) engine?.tell("window", { shown: window.isVisible() && !window.isMinimized() });
+}
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -256,6 +260,9 @@ async function createWindow(
     show: false,
     icon: branchIcon(),
     autoHideMenuBar: true,
+    // Started in the tray, the page stays hidden until the window is first shown: otherwise it counts as visible and
+    // draws, decodes its loops and holds its tiles for a window nobody can see.
+    paintWhenInitiallyHidden: !startsMinimized(process.argv),
     webPreferences: {
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       nodeIntegration: false,
@@ -283,6 +290,10 @@ async function createWindow(
   window.on("resize", soon);
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
+  // The engine tells the model whether Branch's window is open or hidden in the tray (src/environment.ts).
+  for (const change of ["show", "hide", "minimize", "restore"] as const) window.on(change as "show", tellWindowShown);
+  window.on("closed", () => engine?.tell("window", { shown: false }));
+  tellWindowShown();
   const mic = new TalkLiveMic(url, window.webContents.id);
   protectWindow(window, url, key, mic, access, client);
   // A page that went away while the engine was not there (its load was held too long) is opened again once it is back.
@@ -420,6 +431,7 @@ function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
   // A copy that cannot update itself never hands over, so there is nothing to write down.
   if (!installRoot) return {};
   return { record: async (stagedDir, toVersion) => {
+    const { recordActivation } = await import("../install/headless-update.js");
     const recorded = await recordActivation({ dataDir, installRoot, stagedDir, fromVersion: app.getVersion(),
       toVersion, executableName: appEntryName(process.platform) });
     recorded.close();
@@ -562,6 +574,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     onBack: (url) => {
       // The engine's own stop is written into its record of failures, as a window's or helper's is.
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
+      tellWindowShown(); // an engine started again knows nothing of the window yet
       // Back at another address (its port was taken meanwhile): the window's page belongs to the old one, so the
       // whole app starts again, which opens the window at the new address.
       if (url !== host.url) { relaunchApp(); return; }

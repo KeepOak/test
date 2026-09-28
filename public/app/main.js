@@ -271,11 +271,24 @@ function caughtUp() {
    key is asked again ever more slowly, since every refused request counts against signing in (five in fifteen minutes
    shut this computer out for five): a 401 up to once every sixteen minutes, a 429 up to once every five, so a stale tab
    never keeps the door shut for the computer's other keys. The asking never stops. Answers the way to ask at once. */
+let leaving = false; // this page is on its way to another address (see watchPerson's restart)
+addEventListener("beforeunload", () => { leaving = true; });
+
 function watchPerson() {
   let known = E.profiles ? activeId() : undefined, stopped = false, timer = null, refused = 0, cap = 0;
   const wait = () => (refused ? Math.min(cap, 2000 * 2 ** refused) : document.hidden ? 10000 : 2000);
   const again = () => { clearTimeout(timer); if (!stopped) timer = setTimeout(ask, wait()); };
-  const restart = () => { stopped = true; clearTimeout(timer); location.reload(); };
+  /* A page already on its way to another address (following a link to a conversation, say) is not restarted over it: the
+     reload would cancel that navigation and land back on this page's own address, the link already taken off it, so the
+     person would stand on a new conversation instead of the one they followed. The page that loads next reads the person
+     itself. A navigation that never replaces this page (a download) lets the restart happen a few seconds later, so a
+     window is never left showing the person from before the switch. */
+  const restart = () => {
+    stopped = true;
+    clearTimeout(timer);
+    if (leaving) setTimeout(() => location.reload(), 5000);
+    else location.reload();
+  };
   async function ask() {
     clearTimeout(timer);
     if (stopped) return;
