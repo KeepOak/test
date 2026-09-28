@@ -3373,7 +3373,10 @@ ${run.output.slice(0, 6000)}`;
       const request = { messages: this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages)), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
         ...knobs.serviceTierFor(this.store, this.owner), // R17-S12
         ...savings.requestExtras(this.store, this.owner, preset, !context.permissions.size), // R17-045 / R17-046
-        ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };
+        ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
+        // An installed program answering as the model (Claude Code, Codex) keeps its own tools only for the owner's own
+        // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
+        ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.accountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
