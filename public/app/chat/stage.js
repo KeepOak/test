@@ -212,20 +212,19 @@ const holder = () => (G.desk?.running ? G.desk.control : "none");
 /* This computer's live screen is the one showing (not the shared Linux desktop, not another computer). */
 const thisScreen = (kind) => kind === "computer" && holder() === "none" && onThis() && !!screenFrame();
 function controls(kind) {
-  if (kind === "computer" && onThis() && holder() === "none") {
-    if (!screenFrame()) return "";
-    // Take over pauses every task's screen actions ("You're driving"); Hand back lets them carry on (#567's words).
-    const act = screenDriving() ? t("window.chat.stage.hand-back-to", { name: esc(owner()) }) : t("action.take-over");
-    return `<button class="btn pri sm" type="button" data-act="native-control" data-v="${screenDriving() ? "back" : "take"}">${act}</button><button class="btn sm" type="button" data-act="native-stop">Stop sharing</button>`;
-  }
   const run = goingRun(), yours = holder() === "user";
-  if (yours) return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
-  if (thisScreen(kind) && screenDriving()) return `<button class="btn pri sm" type="button" data-act="handback" data-v="screen">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
-  const take = kind === "computer" ? (holder() === "agent" ? `<button class="btn pri sm" type="button" data-act="takeover">${t("action.take-over")}</button>`
-    : thisScreen(kind) && run?.status === "running" ? `<button class="btn pri sm" type="button" data-act="takeover" data-v="screen">${t("action.take-over")}</button>` : "")
-    : run?.status === "running" ? `<button class="btn pri sm" type="button" data-act="stage-take-browser">${t("action.take-over")}</button>` : "";
   const pause = run?.status === "running" ? `<button class="btn sm" type="button" data-act="lw-pause" data-id="${esc(run.id)}">${t("goal.action.pause")}</button>` : "";
   const stop = run && STOPPABLE.has(run.status) ? `<button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(run.id)}">${t("dashboard.stop")}</button>` : "";
+  // This computer's chosen view: Take over pauses every task's screen actions ("You're driving"); Hand back lets them
+  // carry on (#567's words). The task's own Pause and Stop stay beside it, with or without a frame.
+  if (kind === "computer" && onThis() && holder() === "none") {
+    if (!screenFrame()) return pause + stop;
+    const act = screenDriving() ? t("window.chat.stage.hand-back-to", { name: esc(owner()) }) : t("action.take-over");
+    return `<button class="btn pri sm" type="button" data-act="native-control" data-v="${screenDriving() ? "back" : "take"}">${act}</button>${screenDriving() ? "" : pause}${stop}<button class="btn sm" type="button" data-act="native-stop">Stop sharing</button>`;
+  }
+  if (yours) return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
+  const take = kind === "computer" ? (holder() === "agent" ? `<button class="btn pri sm" type="button" data-act="takeover">${t("action.take-over")}</button>` : "")
+    : run?.status === "running" ? `<button class="btn pri sm" type="button" data-act="stage-take-browser">${t("action.take-over")}</button>` : "";
   return take + pause + stop;
 }
 
