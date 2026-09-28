@@ -34,7 +34,8 @@ export async function githubProof({ root, model, stamp, log, connection, roomToW
   gh("api", "-X", "POST", `repos/${repo}/git/refs`, "-f", `ref=refs/heads/${base}`, "-f", `sha=${head}`);
   await log({ step: "scratch-base", base, from: head });
   const token = gh("auth", "token");
-  const engine = await startEngine(root, { token, npm: true, ...connection() });
+  // GitHub is shared by every lane: checks are looked at once a minute, never faster.
+  const engine = await startEngine(root, { token, npm: true, githubPollSeconds: 60, ...connection() });
   roomToWork(engine.app);
   const results = [], poller = setInterval(() => void health(engine, results), 5000);
   let summary;

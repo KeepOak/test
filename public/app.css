@@ -399,10 +399,14 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .status p{margin:2px 0 0;color:var(--ink-2);font-size:13.5px}
 .sec{margin-top:26px}
 .sec h2{font-size:13px;font-weight:600;color:var(--ink-3);margin:0 0 4px}
-.ctl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 16px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line)}
+/* The title column never gives way to the control: it keeps min(180px, 40%) of the row, and the control (a row of choices)
+   wraps inside what is left. With minmax(0,1fr) the control's one-line width took the whole row and the title and note
+   were drawn under it (tests/window-settings-picker-layout.test.mjs). */
+.ctl{display:grid;grid-template-columns:minmax(min(180px,40%),1fr) auto;gap:2px 16px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line)}
 .ctl b{font-weight:500}
 .ctl small{grid-column:1;color:var(--ink-3);font-size:12.5px}
-.ctl .right{display:flex;align-items:center;gap:8px;grid-row:1 / span 2;grid-column:2}
+.ctl .right{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;grid-row:1 / span 2;grid-column:2;min-width:0}
+.ctl .right>.seg{max-width:100%;min-width:0;justify-content:flex-end}
 details.adv{margin-top:22px;border:1px solid var(--line);border-radius:14px;padding:4px 16px}
 details.adv summary{cursor:pointer;padding:10px 0;font-weight:500;list-style:none;display:flex;align-items:center;gap:8px}
 details.adv summary::-webkit-details-marker{display:none}
@@ -2571,9 +2575,11 @@ body.pet-dock15 .dock>.petbox{position:absolute;left:calc(50% - min(430px,50% - 
 .danger15:not(:disabled){color:var(--bad)}
 .bulk15 .btn:disabled{opacity:.45}
 /* ---------- pass 15f: fine controls ---------- */
-.num15{display:inline-flex;align-items:center;gap:6px}
-.num15 .inp{width:72px;height:32px;text-align:right;font-variant-numeric:tabular-nums}
-.num15 small{font-size:12px;color:var(--ink-3);min-width:0}
+/* A number box, then a unit slot of one width whether it holds a unit or not, so the boxes of a card share their right
+   edge and the units stand in a column (tests/window-settings-picker-layout.test.mjs). */
+.num15,.ctl .right.num15{display:inline-grid;grid-template-columns:72px minmax(48px,max-content);justify-content:end;align-items:center;column-gap:6px}
+.num15 .inp{grid-column:1;width:72px;height:32px;text-align:right;font-variant-numeric:tabular-nums}
+.num15 small,.ctl .num15 small{grid-column:2;grid-row:1;font-size:12px;color:var(--ink-3);min-width:0}
 .code15{font:12px var(--mono);padding:4px 8px;border-radius:7px;background:var(--fill);color:var(--ink-2);white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
 .lv15{margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--fill);font:600 9.5px/1.6 var(--mono);letter-spacing:.04em;color:var(--ink-3);vertical-align:1px}
 .rule15 .pill{min-width:50px;justify-content:center}
@@ -4416,3 +4422,14 @@ audio.docread18m{width:100%}
 @media (prefers-reduced-transparency:reduce){.app{--toolbar-a:100%;--toolbar-hot-a:100%}}
 .app.has-bg.merged14 #main{background:linear-gradient(to bottom,transparent var(--tb-h,52px),var(--bg) var(--tb-h,52px))}
 .app.peek .titlebar{background:transparent;box-shadow:none;border:0}
+
+/* area: settings search (UI-091: every row is found, settings/find.js) */
+.set-found{display:grid;gap:2px;margin:0;padding:0;list-style:none}
+.set-hit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;width:100%;padding:10px 12px;border:0;border-radius:10px;background:none;color:var(--ink);text-align:left;cursor:pointer}
+.set-hit:hover,.set-hit:focus-visible{background:var(--wash17,var(--fill))}
+.set-hit b{font-weight:500;min-width:0;overflow-wrap:anywhere}
+.set-hit small{grid-column:1;color:var(--ink-3);font-size:12.5px;min-width:0;overflow-wrap:anywhere}
+.set-hit .pill{grid-column:2;grid-row:1 / span 2}
+.ctl.found18,.prow.found18{border-radius:10px;box-shadow:0 0 0 2px var(--accent)}
+.found18.in18{animation:found18 1.6s ease-out 1}
+@keyframes found18{0%,40%{background-color:var(--accent-tint)}100%{background-color:transparent}}

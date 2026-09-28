@@ -55,6 +55,7 @@ import { registerSessions } from "./sessions.js";
 // Wave 8: conversations branched off other conversations, seen as a tree, and one answer carried back.
 import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
+import { runOrigin } from "./key-context.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
 import { startMcpServer } from "./mcp-server.js";
@@ -119,7 +120,7 @@ import { localKitFor, startLocalModels } from "./local-kit.js";
 import type { Provider } from "./contracts.js";
 import { parseRetryPolicy, type RetryPolicyInput } from "./provider-retry.js";
 import type { ReliabilityInput } from "./reliability.js";
-import { DocumentLibrary, registerDocuments } from "./documents.js";
+import { DocumentLibrary, documentBytesLimit, registerDocuments } from "./documents.js";
 import { MediaTools, registerMedia } from "./media.js";
 import { VoiceService, registerVoice } from "./voice-service.js";
 import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRunner } from "./voice-wake.js"; // mac7/wake-mic
@@ -671,6 +672,14 @@ export async function createBranch(options: {
   registerSkills(registry, store);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
+  runtime.attachmentsFiled = async (session, owner, refs) => {
+    if (owner !== runtime.owner || store.profiles.isOwner() === false) return;
+    for (const ref of refs) {
+      if (!/\.(txt|md|html?|csv|tsv|json|docx|xlsx|pdf)$/i.test(ref.name) || ref.bytes > documentBytesLimit) continue;
+      const { bytes } = await attachments.read(session, ref.id);
+      await documents.fileAttachment(owner, ref.name, bytes);
+    }
+  };
   registerDocuments(registry, documents);
   registerAttachmentTools(registry, store, attachments);
   runtime.documents = documents;
@@ -855,6 +864,14 @@ export async function createBranch(options: {
       }))[name] ?? null,
   });
   const channels = new ChannelRouter(store, runtime);
+  channels.appLocked = () => sessionLock.locked();
+  const priorToolGuard = registry.beforeTool;
+  registry.beforeTool = async (name, args, context) => {
+    const held = await priorToolGuard?.(name, args, context);
+    if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
+      && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
+    return held;
+  };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
     const settings = voice.settings(runtime.owner);
@@ -1705,9 +1722,9 @@ ${result.output || "(it said nothing)"}`;
      * Batch 26 (wave 8): what the firewall card needs that only the launch knows — the sites the
      * browser may open at all, and whether commands on this computer are pointed at a dead address.
      * Filled in by the launcher; the defaults say "no browser, and commands can reach out", which is
-     * what a launch with no integrations file actually is.
+     * what an engine made without the launcher is. `browserAnyWebsite`: no list, any website the network rules allow.
      */
-    reach: { browserOrigins: [] as string[], commandsMayReachInternet: true },
+    reach: { browserOrigins: [] as string[], browserAnyWebsite: false, commandsMayReachInternet: true },
     /** Secrets for host commands: only the active project's, never returned to the model. */
     secretsFor: async (context: ToolContext, names: string[]) => {
       const project = store.projects.active(context.owner).id;

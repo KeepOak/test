@@ -6,7 +6,7 @@
    (GET /api/usage/glance settings.saveProgress "ask"), the prototype's save-progress offer: Save progress asks every
    running task to write down where it is (POST /api/usage/save-progress), Not now dismisses it. Each window is offered once. */
 
-import { $, esc, render, renderNow } from "../core/dom.js";
+import { $, esc, render, renderNow, pressIn, whenReleased } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
 import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
@@ -60,6 +60,8 @@ async function checkRows(rows) {
 function redrawPop(look) {
   const at = document.querySelector('#statusbar [data-act="usagepop"]');
   if (look !== looks || !at || !document.querySelector(".pop .lims")) return;
+  // A press inside the popover (Check now, Open Usage) would be lost if its button were replaced mid-press: draw after it.
+  if (pressIn(document.querySelector(".pop"))) { whenReleased(() => redrawPop(look)); return; }
   const scroll = document.querySelector(".pop .lim-list")?.scrollTop ?? 0;
   openPop(at, popHTML(glance), { right: true, force: true });
   const list = document.querySelector(".pop .lim-list");
