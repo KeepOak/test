@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { _electron } from "playwright";
 import { desktopOptions, offScreen, onboarded } from "./fixtures/desktop-options.mjs";
 import { discardTemp } from "./temp-dir.mjs";
+import { stopHomeBroker } from "./fixtures/gateway-close.mjs";
 import { proveOnce, sessionKey } from "../dist/engine-proof.js";
 
 test("a detached Electron broker proves its public engine with no shell windows and ends only its owned engine", { timeout: 180000 }, async (t) => {
@@ -61,17 +62,8 @@ test("closing and reopening a shell joins the same detached broker and keeps its
       await offScreen(item.electron, "joined shell cleanup");
       closing.push(item.electron.close()); item.closing = true;
     }
-    if (presence && token) {
-      const boot = await proveOnce(presence.url, token, 5000);
-      if (boot) await fetch(`${presence.url}/api/deployment/quit`, { method: "POST", headers: { authorization: `Bearer ${sessionKey(token, boot)}` },
-        signal: AbortSignal.timeout(15000) }).catch(() => undefined);
-      const until = Date.now() + 15000;
-      while (Date.now() < until) {
-        try { process.kill(presence.pid, 0); } catch { break; }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      assert.throws(() => process.kill(presence.pid, 0), "the proved test-owned detached broker exited");
-    }
+    // Ends the broker this test's home started, even when the test stopped before it read the note (a busy computer).
+    await stopHomeBroker(home);
     await Promise.all(closing);
     await discardTemp(home);
   });
@@ -106,14 +98,8 @@ test("the owner's OFF from a joined shell stops the broker and the shell starts 
   t.after(async () => {
     await offScreen(shell, "joined shell cleanup");
     const closing = shell.close();
-    if (presence && token) {
-      const boot = await proveOnce(presence.url, token, 5000).catch(() => null);
-      if (boot) await fetch(`${presence.url}/api/deployment/quit`, { method: "POST", headers: { authorization: `Bearer ${sessionKey(token, boot)}` },
-        signal: AbortSignal.timeout(15000) }).catch(() => undefined);
-      const until = Date.now() + 15000;
-      while (Date.now() < until) { try { process.kill(presence.pid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 50)); }
-      assert.throws(() => process.kill(presence.pid, 0), "the proved test-owned detached broker exited");
-    }
+    // Ends the broker this test's home started, even when the test stopped before it read the note (a busy computer).
+    await stopHomeBroker(home);
     await closing;
     await discardTemp(home);
   });
