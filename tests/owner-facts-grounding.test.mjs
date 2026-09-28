@@ -25,7 +25,8 @@ test("which messages are personal questions", () => {
   for (const said of ["What is my favourite colour?", "what's my wife's name", "Do you remember where I parked?",
     "Which dentist do I use?", "remind me what my PIN hint was", "When is my mum's birthday?"])
     assert.equal(personalQuestion(said), true, said);
-  for (const said of ["Write my report on the Q3 numbers.", "What is the capital of France?", "Summarise this page", "", "my files"])
+  for (const said of ["Write my report on the Q3 numbers.", "What is the capital of France?", "Summarise this page", "", "my files",
+    "find the lease, pull out the rent, remind me when it is due", "Remind me to call Sam at five"])
     assert.equal(personalQuestion(said), false, said);
 });
 

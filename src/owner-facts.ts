@@ -44,7 +44,8 @@ export function keyWords(text: string): string[] {
 export function personalQuestion(text: string): boolean {
   const said = text.trim().toLowerCase();
   if (!said || said.length > 400) return false;
-  if (/\b(do|did) you (still )?(know|remember)\b|\bremind me\b|\bwhat (do|did) you (know|remember)\b/.test(said)) return true;
+  // "Remind me what my PIN hint was" asks about a fact; "remind me when it is due" asks for a reminder, and is not one.
+  if (/\b(do|did) you (still )?(know|remember)\b|\bremind me (what|who|where|which|of|about|how)\b|\bwhat (do|did) you (know|remember)\b/.test(said)) return true;
   const asks = /\?\s*$/.test(said) || /^(what|what's|whats|which|who|who's|when|where|how|is|are|do|does|did|can you tell)\b/.test(said);
   return asks && /\b(my|mine|me|i|i'm|im)\b/.test(said);
 }
