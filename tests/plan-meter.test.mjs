@@ -74,9 +74,13 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
   await meter.click();
   await page.locator(".lims .lim-w small").waitFor();
   assert.equal(await page.locator(".lims .lim-w small").innerText(), fullReset, "the popover puts the full reset underneath the share");
+  // Opening the popover reads every plan again and draws it anew as each answer lands (redrawPop): measure once those
+  // reads are back, and inside one in-page call, so the row measured is the one on screen, never a node just replaced.
+  await page.waitForFunction(() => !document.querySelector(".lim-list")?.textContent.includes("Checking…"));
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 800 });
-    const layout = await page.locator(".lims .lim-w").evaluate((el) => {
+    const layout = await page.evaluate(() => {
+      const el = document.querySelector(".lims .lim-w");
       const share = el.querySelector(".lim-share").getBoundingClientRect(), reset = el.querySelector(".lim-reset").getBoundingClientRect();
       const row = el.getBoundingClientRect(), bar = el.querySelector(".lim-bar").getBoundingClientRect();
       return { below: reset.top >= share.bottom, fits: reset.right <= row.right + 1, bar: bar.width, overflow: el.scrollWidth > el.clientWidth + 1 };
@@ -134,15 +138,18 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
 
   const crowded = await call("/api/usage/glance");
   crowded.rows = Array.from({ length: 12 }, (_, i) => ({ ...crowded.rows[0], account: `test-${i}`, accountLabel: `owner-${i}@example.test`, readable: true }));
-  let checks = 0;
+  let checks = 0, holdLook = null;
   await page.route("**/api/usage/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (!["/api/usage/glance", "/api/usage/limits/look", "/api/usage/limits/refresh"].includes(path)) return route.continue();
     if (path.endsWith("/refresh")) checks++;
+    if (path.endsWith("/look")) await holdLook?.promise;
     await route.fulfill({ json: crowded });
   });
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 400 });
+    holdLook = Promise.withResolvers(); // the popover's own look answers only while Check now is being pressed, below
+    const looked = page.waitForResponse((response) => response.url().endsWith("/api/usage/limits/look"));
     await meter.click();
     await page.locator(".lim-list .lim").nth(11).waitFor();
     await page.waitForFunction(() => !document.querySelector(".lim-list")?.textContent.includes("Checking…"));
@@ -162,7 +169,14 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
     assert.equal(after.popScroll, 0, "the popup itself does not scroll");
     assert.ok(after.scroll > 0 && after.list.bottom <= after.footer.top, "only the plan list scrolls above the footer");
     const previous = checks;
-    await page.getByRole("button", { name: "Check now", exact: true }).click();
+    /* The look's answer draws the popover anew while Check now is held down: the press must still become its click. */
+    const box = await page.getByRole("button", { name: "Check now", exact: true }).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    holdLook.resolve();
+    await looked;
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done())));
+    await page.mouse.up();
     await page.waitForFunction(() => !document.querySelector(".lim-list")?.textContent.includes("Checking…"));
     assert.equal(checks, previous + 12, "the fixed Check now button refreshes every account");
     assert.equal((await geometry()).scroll, after.scroll, "refresh preserves the scrolled position");
