@@ -166,7 +166,7 @@ export class WorkspaceFiles {
     const relative = path.replace(/\\/g, "/").replace(/^\/+/, "");
     return !!relative && !!matcher && matcher.ignores(relative, isDirectory);
   }
-  async read(path: string): Promise<{ path: string; content: string }> {
+  async read(path: string, maxBytes = 32768): Promise<{ path: string; content: string }> {
     const target = await this.checked(path);
     const handle = await open(
       target,
@@ -175,20 +175,42 @@ export class WorkspaceFiles {
     try {
       const stat = await handle.stat();
       if (stat.nlink > 1) throw new Error("Hardlink path denied");
-      if (!stat.isFile() || stat.size > 32768)
-        throw new Error("File exceeds 32 KiB or is not regular");
+      if (!stat.isFile() || stat.size > maxBytes)
+        throw new Error(maxBytes === 32768 ? "File exceeds 32 KiB or is not regular" : `File exceeds ${Math.round(maxBytes / 1048576)} MiB or is not regular`);
       return { path, content: await handle.readFile("utf8") };
     } finally {
       await handle.close();
     }
   }
+  /**
+   * selfdev: part of a file too large to read whole (Branch's own source has files of a megabyte), by lines, as a
+   * coding assistant's reader does. The answer says where it starts and how many lines the file has, and is held
+   * to 32 KiB of text, so a larger slice comes back shorter and says so.
+   */
+  async readLines(path: string, from: number, count: number): Promise<{ path: string; content: string; fromLine: number; toLine: number; totalLines: number; more: boolean; whole: string }> {
+    const { content: whole } = await this.read(path, largeFileBytes);
+    const lines = whole.split(/(?<=\n)/);
+    const start = Math.min(Math.max(1, from), Math.max(1, lines.length));
+    let content = "", end = start - 1;
+    for (let at = start - 1; at < lines.length && at < start - 1 + count; at++) {
+      if (Buffer.byteLength(content + lines[at]) > 32768) {
+        // One line longer than the whole answer is cut, and says so; otherwise the slice ends before the line.
+        if (end < start) { content = lines[at]!.slice(0, 16384); end = at + 1; }
+        break;
+      }
+      content += lines[at]; end = at + 1;
+    }
+    return { path, content, fromLine: start, toLine: end, totalLines: lines.length, more: end < lines.length, whole };
+  }
   async write(
     path: string,
     content: string,
     signal: AbortSignal,
+    /** selfdev: an edit in place of a large file (files.edit, files.patch) writes it back whole. */
+    maxBytes = 32768,
   ): Promise<{ path: string; bytes: number }> {
-    if (Buffer.byteLength(content) > 32768)
-      throw new Error("File exceeds 32 KiB");
+    if (Buffer.byteLength(content) > maxBytes)
+      throw new Error(maxBytes === 32768 ? "File exceeds 32 KiB" : "File exceeds 8 MiB");
     const target = await this.checkedForWrite(path);
     await mkdir(dirname(target), { recursive: true });
     await this.checked(path);
@@ -308,6 +330,20 @@ export interface WriteObserver {
   before(path: string, context: ToolContext): Promise<unknown>;
   after(path: string, context: ToolContext, token: unknown): Promise<void>;
 }
+/** selfdev: the largest file read in parts (files.read_lines) or changed in place (files.edit, files.patch). */
+export const largeFileBytes = 8 * 1024 * 1024;
+
+/** selfdev: part of a large file; seen as it is now, so a change to it (files.edit) is judged against the whole file. */
+async function readPart(files: WorkspaceFiles, context: ToolContext, path: string, from: number, count: number) {
+  const { whole, ...part } = await files.readLines(path, from, count);
+  files.readFirst?.noteRead(context.runId, files.addressOf(path), whole);
+  const where = part.more ? `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}. Read on with files.read_lines from line ${part.toLine + 1}.`
+    : `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}.`;
+  // A part of a file is guarded as a whole file is: lines that read like instructions are taken out of what is seen.
+  const guarded = guardedFile(part);
+  return { ...guarded, note: guarded.note ? `${where} ${guarded.note}` : where };
+}
+
 export function registerFiles(
   registry: ToolRegistry,
   files: WorkspaceFiles,
@@ -315,14 +351,28 @@ export function registerFiles(
 ): void {
   registry.register({
     name: "files.read",
-    description: "Read a UTF-8 workspace file, maximum 32 KiB.",
+    description: "Read a UTF-8 workspace file, maximum 32 KiB at once.",
     permission: "files.read",
     parameters: z.object({ path: pathSchema }).strict(),
     execute: async (a, c: ToolContext) => {
-      const file = await files.read(a.path);
-      files.readFirst?.noteRead(c.runId, files.addressOf(a.path), file.content); // mac7/coding-next
-      return guardedFile(file);
+      const file = await files.read(a.path).catch((error: unknown) => {
+        // selfdev: a file too large to read whole is read from its start, and says how to read the rest.
+        if (!(error instanceof Error) || !error.message.includes("32 KiB")) throw error;
+        return null;
+      });
+      if (file) {
+        files.readFirst?.noteRead(c.runId, files.addressOf(a.path), file.content); // mac7/coding-next
+        return guardedFile(file);
+      }
+      return readPart(files, c, a.path, 1, 400);
     },
+  });
+  registry.register({
+    name: "files.read_lines",
+    description: "Read part of a large workspace file (up to 8 MiB) by line numbers: fromLine, and how many lines (up to 2000). Find the lines with files.grep first.",
+    permission: "files.read",
+    parameters: z.object({ path: pathSchema, fromLine: z.number().int().min(1), lines: z.number().int().min(1).max(2000).default(400) }).strict(),
+    execute: async (a, c: ToolContext) => readPart(files, c, a.path, a.fromLine, a.lines),
   });
   registry.register({
     name: "files.list",
