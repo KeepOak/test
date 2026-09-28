@@ -21,7 +21,7 @@ async function fixture(t, firstCall) {
   let first = true;
   const provider = { name: "scripted", async complete(request) {
     const said = [...request.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const last = request.messages.at(-1);
+    const last = request.messages.filter((m) => m.role !== "system").at(-1);
     if (last?.role === "tool") return { content: "Started; I will be told.", toolCalls: [] };
     prompts.push(said);
     if (first) { first = false; return { content: "", toolCalls: [{ id: "call-1", ...firstCall }] }; }
@@ -119,7 +119,7 @@ test("the default Trunk's wake-up survives a restart and arrives in its conversa
   const provider = { name: "scripted", async complete(request) {
     systems.push(request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n"));
     const said = [...request.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    if (request.messages.at(-1)?.role === "tool") return { content: "Set.", toolCalls: [] };
+    if (request.messages.filter((m) => m.role !== "system").at(-1)?.role === "tool") return { content: "Set.", toolCalls: [] };
     if (first && /sync the plan/.test(said)) { first = false; return { content: "", toolCalls: [{ id: "w1", name: "schedules.wake_later",
       arguments: JSON.stringify({ message: "Sync the master plan.", cron: "*/30 * * * *", timezone: "America/New_York", times: 3 }) }] }; }
     return { content: `Heard: ${said.slice(0, 80)}`, toolCalls: [] };
