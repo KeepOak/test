@@ -20,12 +20,14 @@ const bundledHolidays = [new URL("./holidays.json", import.meta.url), new URL(".
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-25");
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 21:30");
 /** Nothing is held back until the owner switches quiet hours on. */
-export const quietHoursDefaults = { enabled: false, from: "21:00", to: "07:00", timezone: "UTC" };
+export const quietHoursDefaults = { enabled: false, from: "21:00", to: "07:00", timezone: "UTC", days: [] as number[] };
 export const QuietHoursSchema = z.object({
   enabled: z.boolean().default(false),
   from: clock.default("21:00"),
   to: clock.default("07:00"),
   timezone: z.string().min(1).max(64).default("UTC"),
+  /** wire-greyed: whole days off from notifications, every week (1 is Monday, 7 is Sunday), quiet all day long. */
+  days: z.array(z.number().int().min(1).max(7)).max(6, "Leave at least one day of the week with notifications").default([]),
 }).strict();
 export const CalendarSchema = z.object({
   /** Which bundled holiday list to use; empty means none. */
@@ -39,6 +41,8 @@ export const CalendarSchema = z.object({
 }).strict();
 export type CalendarSettings = z.infer<typeof CalendarSchema>;
 export type QuietHours = z.infer<typeof QuietHoursSchema>;
+/** Quiet hours as the checks read them: whole days off may be left out. */
+export type QuietRule = Omit<QuietHours, "days"> & { days?: readonly number[] | undefined };
 export interface HolidayList { name: string; days: Record<string, string> }
 
 /** The day and weekday a moment falls on in a given place, as plain numbers. */
@@ -77,8 +81,11 @@ export function dayOffDecision(at: Date, mode: "run" | "skip" | "shift", setting
   if (mode === "skip") return { action: "skip", reason };
   return { action: "shift", reason, moveTo: nextWorkingDay(at, settings, holidays).toISOString() };
 }
-/** Whether a moment falls inside quiet hours, which may run past midnight. */
-export function inQuietHours(at: Date, quiet: QuietHours): boolean {
+/** Whether a moment falls on one of the whole days off from notifications. They hold even while quiet hours are off. */
+const quietDay = (at: Date, quiet: QuietRule): boolean => (quiet.days ?? []).includes(localDay(at, quiet.timezone).weekday);
+/** Whether a moment falls inside quiet hours, which may run past midnight, or on a whole day off. */
+export function inQuietHours(at: Date, quiet: QuietRule): boolean {
+  if (quietDay(at, quiet)) return true;
   if (!quiet.enabled) return false;
   const now = localDay(at, quiet.timezone).minutes;
   const from = Number(quiet.from.slice(0, 2)) * 60 + Number(quiet.from.slice(3));
@@ -86,8 +93,13 @@ export function inQuietHours(at: Date, quiet: QuietHours): boolean {
   return from === to ? true : from < to ? now >= from && now < to : now >= from || now < to;
 }
 /** When quiet hours end, so a message can be held until then; null when it is not quiet now. */
-export function quietUntil(at: Date, quiet: QuietHours): string | null {
+export function quietUntil(at: Date, quiet: QuietRule): string | null {
   if (!inQuietHours(at, quiet)) return null;
+  // A whole day off lasts until the next local midnight that starts a day that isn't one, then quiet hours may go on.
+  let from = at;
+  for (let step = 0; step < 7 && quietDay(from, quiet); step++)
+    from = new Date(from.getTime() + (1440 - localDay(from, quiet.timezone).minutes) * 60000);
+  if (from !== at) return inQuietHours(from, quiet) ? quietUntil(from, quiet) : from.toISOString();
   const to = Number(quiet.to.slice(0, 2)) * 60 + Number(quiet.to.slice(3));
   const now = localDay(at, quiet.timezone).minutes;
   const minutes = to > now ? to - now : 1440 - now + to;
