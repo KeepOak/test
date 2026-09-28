@@ -39,6 +39,7 @@ import { offTile } from "./switch-on.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
 import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work: what is working or paused, with Pause, Resume, Stop
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
 
 let asks = [];
 let asksRead = false; // pass 18: "Nothing needs you" only once the engine answered (after() below)
@@ -87,7 +88,7 @@ const waitingChanges = () => changeRequests.filter((r) => r.status === "waiting"
 /* Q050: the tab counts what the engine counts (GET /api/state needsYou, as the sidebar and Overview do), plus the install
    requests only this place lists; the rows drawn are what decides "Nothing is waiting". */
 const waitingCount = () => needsYou() + installs.length;
-const rowsWaiting = () => asks.length + E.state.trunkWaiting.length + installs.length;
+const rowsWaiting = () => asks.length + E.state.trunkWaiting.length + installs.length + autonomyCount();
 /* What Allow all may answer: the questions and the Trunk messages, never the install requests. On a household profile
    it is not offered: GET /api/policy lists the owner's questions there too, and one yes for all of them is the owner's.
    A question with no fingerprint is left to its own Allow: without one, a yes is not bound to the request shown. */
@@ -101,6 +102,7 @@ function needsTab() {
   html += asks.map(askRow).join("");
   html += installs.map(installRow).join("");
   html += E.state.trunkWaiting.map(messageRow).join("");
+  html += autonomyRows();
   html += `</div>`;
   return html + waitingChanges().map(selfCard).join("");
 }
@@ -221,6 +223,7 @@ export async function after() {
   const key = (list) => list.map((q) => q.sessionId + q.fingerprint).join();
   if (key(fresh) !== key(asks)) { asks = fresh; changed = true; }
   if (tab === "needs") {
+    try { if (await readAutonomy()) changed = true; } catch (error) { sayOnce(error); }
     const requests = (await api("self-development/requests").catch(sayOnce)).requests ?? [];
     if (JSON.stringify(requests) !== JSON.stringify(changeRequests)) { changeRequests = requests; changed = true; }
     const waiting = await readInstalls();
@@ -378,6 +381,7 @@ async function allowAll() {
 }
 
 export function init() {
+  initAutonomyInbox();
   initDemo17();
   initInbox17();
   // Security tier: Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.
