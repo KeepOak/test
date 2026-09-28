@@ -35,8 +35,8 @@ async function settings(t) {
 }
 
 /* The new window: the prototype's Settings search (design/redesign/prototype.html renderSettings) narrows the list of
-   pages to those whose name holds what was typed, says "No page matches." when none does, and gives every page back
-   when the box is cleared. */
+   pages to those whose name holds what was typed (or that hold a row that does, UI-091), says "No page matches." when
+   none does, and gives every page back when the box is cleared. */
 test("DG-061 search narrows the pages to those that match, says when none does, and clears", async (t) => {
   const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
   const { page, errors } = await settingsWindow(t, { name: "search-head" });
@@ -46,8 +46,11 @@ test("DG-061 search narrows the pages to those that match, says when none does, 
   assert.ok(all.length > 10, "every page is listed");
   const box = page.getByRole("textbox", { name: "Search settings", exact: true });
   await box.fill("voice");
-  await page.waitForFunction(() => document.querySelectorAll('.set-nav [data-act="setpage"]').length === 1);
-  assert.deepEqual(await pages(), ["voice"]);
+  // UI-091: the list keeps the pages whose name or rows match, and the rows found are listed (settings/find.js).
+  await page.waitForFunction((n) => document.querySelectorAll('.set-nav [data-act="setpage"]').length < n, all.length);
+  const narrowed = await pages();
+  assert.ok(narrowed.includes("voice") && narrowed.length < all.length, `the list narrows to what matches (${narrowed})`);
+  await page.locator(".set-found .set-hit").first().waitFor();
   assert.equal(await box.inputValue(), "voice", "the box keeps what was typed while the list is drawn again");
   await box.fill("zzqqxx");
   await page.waitForFunction(() => document.querySelectorAll('.set-nav [data-act="setpage"]').length === 0);
