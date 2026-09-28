@@ -1769,6 +1769,7 @@ says so.
 | Twitch chat (`twitch`) | yes; switched on from it | nothing to install | `https://dev.twitch.tv/console/apps/create` | `TWITCH_CHAT_TOKEN`; plus login, channel | GET `https://id.twitch.tv/oauth2/validate` |
 | Gotify (`gotify`) | yes; switched on from it | nothing to install | `<server>/#/applications` | `GOTIFY_APP_TOKEN`; plus server | none |
 | iMessage (`imessage`) | yes; switched on from it | nothing to install | none (plain steps) | nothing | none |
+| iMessage through BlueBubbles (`bluebubbles`) | yes; switched on from it | nothing to install | none (plain steps) | `BLUEBUBBLES_PASSWORD`; plus server | none |
 | Microsoft Teams (bot) (`msteams-bot`) | yes; switched on from it | Windows: winget `Microsoft.Teams`; Mac: cask `microsoft-teams`; Linux: download page | `https://dev.teams.microsoft.com/bots` | `MSTEAMS_APP_PASSWORD`; plus appId | POST `https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token` |
 | Webex (`webex`) | yes; switched on from it | Windows: winget `Cisco.Webex`; Mac: cask `webex`; Linux: download page | `https://developer.webex.com/docs/bots` | `WEBEX_BOT_TOKEN`, `WEBEX_WEBHOOK_SECRET` | GET `https://webexapis.com/v1/people/me` |
 | Synology Chat (`synology-chat`) | yes; switched on from it | Windows: winget `Synology.ChatClient`; Mac: download page; Linux: download page | `https://kb.synology.com/en-global/DSM/help/Chat/chat_integration` | `SYNOLOGY_CHAT_INCOMING_URL`, `SYNOLOGY_CHAT_TOKEN`; plus server | none |
