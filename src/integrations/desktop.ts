@@ -12,6 +12,7 @@ import {
   DesktopClickSchema, DesktopClipboardSchema, DesktopKeySchema, DesktopOpenSchema,
   DesktopReadSchema, DesktopScreenshotSchema, DesktopTypeSchema, DesktopWindowsSchema,
   DesktopMoveSchema, DesktopDragSchema, DesktopScrollSchema, DesktopWaitSchema, DesktopZoomSchema,
+  DesktopHoldKeySchema, DesktopButtonSchema, DesktopCursorSchema, DesktopComputerSchema, holdKeyCodes, computerModifiers,
 } from './desktop-config.js';
 import { DesktopScriptRunner, screenBox, type LiveScreenProcess, type ScreenBox, type NativeCaptureTarget, type CaptureExclusion } from './desktop-script.js';
 import { DesktopBanner } from './desktop-banner.js';
@@ -63,6 +64,8 @@ export class DesktopControl {
   private readonly nativeCaptureLease: NativeCaptureLease | undefined;
   private readonly nativeScreens = new Set<ChatNativeScreen>();
   private nativeOpening = false;
+  /** computer-control: the one mouse button a task holds down (desktop.mouse_down), until it is let go. */
+  private heldButton: { runId: string; button: string; handle: string; at: number[]; timer: ReturnType<typeof setTimeout> } | null = null;
   /** computer-control: pictures and readings a task's points may come from (Seen). */
   private readonly seen = new Map<string, Seen>();
   /** computer-control: this program and its parent (in the desktop app, the main process that owns Branch's windows): no tool touches their windows. */
@@ -124,6 +127,8 @@ export class DesktopControl {
       let handBack!: () => void;
       const handedBack = new Promise<void>((resolve) => { handBack = resolve; });
       this.driving = { since: new Date().toISOString(), handBack, handedBack };
+      // computer-control: the owner drives now, so a button a task holds down is let go first.
+      void this.releaseHeld('the owner took over');
     }
     return { driving: true, since: this.driving.since };
   }
@@ -232,6 +237,7 @@ export class DesktopControl {
     state.stopped = true;
     state.controller.abort(new Error('You pressed Stop.'));
     this.store.event(runId, 'desktop.stopped', { reason: 'the Stop button on the notice was pressed' });
+    if (this.heldButton?.runId === runId) void this.releaseHeld('Stop was pressed');
     void this.banner.hide();
   }
   /** Written down for every action, so the record says which window was touched and how. */
@@ -539,6 +545,118 @@ export class DesktopControl {
     }
   }
 
+  /**
+   * computer-control: a mouse button pressed and held (left_mouse_down). One task holds one button at a time; it is let
+   * go by desktop.mouse_up, and by Stop, the task ending, the owner taking over, Branch stopping, or thirty seconds
+   * passing, whichever comes first, so no button is ever left held on the owner's computer.
+   */
+  async mouseDown(input: z.input<typeof DesktopButtonSchema>, context: ToolContext) {
+    if (this.heldButton && this.heldButton.runId !== context.runId) throw new Error('Another task is holding a mouse button. Try again when it lets go.');
+    if (this.heldButton) throw new Error('This task already holds a mouse button. Let it go with desktop.mouse_up first.');
+    const signal = await this.begin(context, 'desktop.mouse_down');
+    const spot = spotOf(input), button = input.button ?? 'left';
+    const { window, answer } = await this.onWindow(input.window, signal, (target) =>
+      this.runner.run('pointer', { handle: target.handle, kind: 'down', at: spot, atCurrent: !spot.name && !spot.ref && !spot.point, button, modifiers: [],
+        ...this.expected(context, input.shot, target) }, signal));
+    const at = Array.isArray(answer.at) ? answer.at.map(Number) : [];
+    const timer = setTimeout(() => { void this.releaseHeld('thirty seconds passed'); }, 30000);
+    timer.unref?.();
+    this.heldButton = { runId: context.runId, button, handle: String(window.handle), at, timer };
+    this.record(context, 'desktop.mouse_down', window.title, { at: described(spot), button });
+    this.landed(context, answer);
+    return { window: window.title, pressed: button, at: described(spot), note: 'Held until desktop.mouse_up (at most thirty seconds).' };
+  }
+
+  /** computer-control: let go of the button this task holds, where it says or where the pointer is (left_mouse_up). */
+  async mouseUp(input: z.input<typeof DesktopButtonSchema> | { window: string }, context: ToolContext) {
+    const held = this.heldButton;
+    if (!held || held.runId !== context.runId) throw new Error('This task holds no mouse button. Press one with desktop.mouse_down first.');
+    const signal = await this.begin(context, 'desktop.mouse_up');
+    const spot = spotOf(input as Spot);
+    const { window, answer } = await this.onWindow(input.window, signal, (target) => {
+      if (String(target.handle) !== held.handle) throw new Error('The button was pressed in another window. Let it go there.');
+      return this.runner.run('pointer', { handle: target.handle, kind: 'up', at: spot, button: held.button, pressedAt: held.at }, signal);
+    });
+    // Only a let-go that happened clears it; a refused one leaves it held for mouse_up, Stop, the end or the timer.
+    if (this.heldButton === held) { clearTimeout(held.timer); this.heldButton = null; }
+    this.record(context, 'desktop.mouse_up', window.title, { at: described(spot), how: answer.how });
+    this.landed(context, answer);
+    return { window: window.title, released: held.button, how: answer.how === 'up-where-pressed' ? 'let go where it was pressed (that spot was covered or outside the window)' : 'let go' };
+  }
+
+  /** Lets go of a held button, whatever happened; letting go needs no approval and is never refused. */
+  private async releaseHeld(why: string): Promise<void> {
+    const held = this.heldButton;
+    if (!held) return;
+    clearTimeout(held.timer);
+    this.heldButton = null;
+    this.store.event(held.runId, 'desktop.released', { button: held.button, why });
+    await this.runner.run('release', { buttons: [held.button] }, AbortSignal.timeout(15000)).catch(() => undefined);
+  }
+
+  /** computer-control: hold a key or chord down for up to ten seconds (hold_key), always let go afterwards. */
+  async holdKey(input: z.infer<typeof DesktopHoldKeySchema>, context: ToolContext) {
+    const keys = holdKeyCodes(input.chord), chord = input.chord.toLowerCase();
+    const signal = await this.begin(context, 'desktop.hold_key');
+    const ms = Math.round(input.seconds * 1000);
+    try {
+      const { window } = await this.onWindow(input.window, signal, (target) =>
+        this.runner.run('hold-key', { handle: target.handle, keys, chord, ms }, signal));
+      this.record(context, 'desktop.hold_key', window.title, { chord: input.chord, ms });
+      return { window: window.title, held: input.chord, seconds: input.seconds };
+    } catch (error) {
+      // Stopped or timed out mid-hold: the program was ended before it let go, so let go here.
+      await this.runner.run('release', { keys, chords: [chord] }, AbortSignal.timeout(15000)).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** computer-control: where the pointer is (cursor_position), on the screen and in a window's pixels. Nothing moves. */
+  async cursor(input: z.infer<typeof DesktopCursorSchema>, context: ToolContext) {
+    const signal = await this.begin(context, 'desktop.cursor');
+    if (!input.window) {
+      const answer = await this.runner.run('cursor', {}, signal);
+      return { screen: answer.at };
+    }
+    const { window, answer } = await this.onWindow(input.window, signal, (target) => this.runner.run('cursor', { handle: target.handle }, signal));
+    return { window: window.title, screen: answer.at, inWindow: answer.window, inside: answer.inside === true, ...(answer.onTop !== undefined ? { onTop: answer.onTop === true } : {}) };
+  }
+
+  /**
+   * computer-control: Anthropic's computer tool, action for action, handed to the tools above so every guard applies
+   * unchanged. Coordinates are the named window's own pixels (its desktop.screenshot), not a whole display's.
+   */
+  async computer(input: z.infer<typeof DesktopComputerSchema>, context: ToolContext): Promise<unknown> {
+    const need = <T>(value: T | undefined, what: string): T => { if (value === undefined) throw new Error(`${input.action} needs ${what}.`); return value; };
+    const window = () => need(input.window, 'a window (part of its name)');
+    const point = (at: [number, number] | undefined) => at ? { point: { x: at[0], y: at[1] } } : {};
+    const held = ['left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'left_click_drag', 'scroll'].includes(input.action);
+    const modifiers = held ? computerModifiers(input.text) : [];
+    const shot = input.shot ? { shot: input.shot } : {};
+    switch (input.action) {
+      case 'screenshot': return this.screenshot(input.window ? { window: input.window } : {}, context);
+      case 'zoom': {
+        const [x0, y0, x1, y1] = need(input.region, 'a region [x0, y0, x1, y1]');
+        return this.zoom({ window: window(), region: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }, ...shot }, context);
+      }
+      case 'left_click': case 'right_click': case 'middle_click': case 'double_click': case 'triple_click': {
+        const button = input.action === 'right_click' ? 'right' : input.action === 'middle_click' ? 'middle' : 'left';
+        const count = input.action === 'double_click' ? 2 : input.action === 'triple_click' ? 3 : 1;
+        return this.click({ window: window(), point: { x: need(input.coordinate, 'a coordinate')[0], y: input.coordinate![1] }, button, count, ...(modifiers.length ? { modifiers } : {}), ...shot }, context);
+      }
+      case 'left_click_drag': return this.drag({ window: window(), from: point(need(input.start_coordinate, 'a start_coordinate')), to: point(need(input.coordinate, 'a coordinate')), ...(modifiers.length ? { modifiers } : {}), ...shot }, context);
+      case 'mouse_move': return this.move({ window: window(), ...point(need(input.coordinate, 'a coordinate')), hoverMs: 0, ...shot }, context);
+      case 'left_mouse_down': return this.mouseDown({ window: window(), ...(input.coordinate ? point(input.coordinate) : {}), ...shot } as z.input<typeof DesktopButtonSchema>, context);
+      case 'left_mouse_up': return this.mouseUp({ window: window(), ...point(input.coordinate) }, context);
+      case 'scroll': return this.scroll({ window: window(), ...point(input.coordinate), direction: need(input.scroll_direction, 'a scroll_direction'), amount: input.scroll_amount ?? 3, ...(modifiers.length ? { modifiers } : {}), ...shot }, context);
+      case 'type': return this.type({ window: window(), text: need(input.text, 'text') }, context);
+      case 'key': return this.key({ window: window(), chord: need(input.text, 'text (the key)'), repeat: input.repeat ?? 1 }, context);
+      case 'hold_key': return this.holdKey({ window: window(), chord: need(input.text, 'text (the key)'), seconds: Math.min(10, need(input.duration, 'a duration')) }, context);
+      case 'wait': return this.wait({ seconds: need(input.duration, 'a duration') }, context);
+      case 'cursor_position': return this.cursor(input.window ? { window: input.window } : {}, context);
+    }
+  }
+
   async type(input: z.infer<typeof DesktopTypeSchema>, context: ToolContext) {
     const problem = secretReferenceIn(input.text);
     if (problem) throw new Error(problem);
@@ -598,6 +716,7 @@ export class DesktopControl {
   async closeRun(context: Pick<ToolContext, 'runId'>): Promise<void> {
     if (this.pointerAt?.runId === context.runId) this.pointerAt = null;
     for (const [id, seen] of this.seen) if (seen.runId === context.runId) this.seen.delete(id);
+    if (this.heldButton?.runId === context.runId) await this.releaseHeld('the task ended');
     if (!this.runs.delete(context.runId)) return;
     await this.banner.hide();
   }
@@ -606,6 +725,7 @@ export class DesktopControl {
     this.nativeScreens.clear();
     for (const frames of [...this.live]) frames.close(); // parity-b2: no live view outlives Branch
     for (const state of this.runs.values()) state.controller.abort(new Error('Branch stopped.'));
+    await this.releaseHeld('Branch stopped');
     this.handBack();
     this.pointerAt = null;
     this.runs.clear();

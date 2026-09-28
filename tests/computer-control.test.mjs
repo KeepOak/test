@@ -239,10 +239,13 @@ test("the Windows script: DPI aware, refs searched inside the window, nothing cl
   assert.match(desktopScript, /Assert-Uncovered \$handle \$point\n    \[BranchDesktop\]::Wheel\(/);
 });
 
-test("off Windows the new verbs say they are Windows-only instead of trying", async () => {
-  const runner = new DesktopScriptRunner(undefined, { platform: "linux", enabled: true });
-  await assert.rejects(runner.run("pointer", { handle: "1", kind: "click" }, AbortSignal.timeout(1000)), /Windows for now/);
-  await assert.rejects(runner.run("zoom", { handle: "1" }, AbortSignal.timeout(1000)), /Windows for now/);
+test("off Windows: Linux takes the pointer verbs through xdotool, a Mac says it cannot yet, and close-ups are Windows only", async () => {
+  const mac = new DesktopScriptRunner(undefined, { platform: "darwin", enabled: true });
+  await assert.rejects(mac.run("pointer", { handle: "1", kind: "click" }, AbortSignal.timeout(1000)), /Windows and on Linux/);
+  await assert.rejects(mac.run("hold-key", { handle: "1" }, AbortSignal.timeout(1000)), /Windows and on Linux/);
+  const linux = new DesktopScriptRunner(undefined, { platform: "linux", enabled: true, env: {} });
+  await assert.rejects(linux.run("zoom", { handle: "1" }, AbortSignal.timeout(1000)), /Close-ups work on Windows/);
+  await assert.rejects(linux.run("pointer", { handle: "1", kind: "click" }, AbortSignal.timeout(1000)), /no desktop session/, "on Linux the pointer goes to xdotool, which says what it needs");
 });
 
 test("reading a window takes each part in one round trip and keeps to a time budget", () => {

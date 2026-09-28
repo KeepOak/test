@@ -262,3 +262,78 @@ export function keyChord(chord: string): string {
   if (/^[a-z0-9]$/.test(last)) return prefix + last;
   throw new Error(`"${chord}" is not a key Branch knows how to press`);
 }
+
+/* computer-control: the rest of Anthropic's computer tool, in Branch's own terms. */
+
+const heldVirtualKeys: Record<string, number> = { ctrl: 0x11, control: 0x11, shift: 0x10, alt: 0x12 };
+const namedVirtualKeys: Record<string, number> = {
+  enter: 0x0d, return: 0x0d, tab: 0x09, esc: 0x1b, escape: 0x1b, backspace: 0x08, delete: 0x2e, del: 0x2e,
+  home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, up: 0x26, down: 0x28, left: 0x25, right: 0x27,
+  space: 0x20, insert: 0x2d,
+};
+/**
+ * A chord ("shift", "ctrl+a", "down") as the Windows virtual-key codes held for hold_key, in the order pressed. Only the
+ * keys keyChord accepts, so a held chord can never be something a pressed one could not.
+ */
+export function holdKeyCodes(chord: string): number[] {
+  // A chord of held keys alone ("shift", "ctrl+alt") is checked as that chord plus a letter; any other, as it is.
+  keyChord(chord.split('+').every((part) => heldVirtualKeys[part.trim().toLowerCase()] !== undefined) ? `${chord}+a` : chord);
+  const parts = chord.toLowerCase().split('+').map((part) => part.trim()).filter(Boolean);
+  return parts.map((part) => {
+    if (heldVirtualKeys[part] !== undefined) return heldVirtualKeys[part]!;
+    if (namedVirtualKeys[part] !== undefined) return namedVirtualKeys[part]!;
+    const f = /^f([1-9]|1[0-2])$/.exec(part);
+    if (f) return 0x6f + Number(f[1]);
+    if (/^[a-z0-9]$/.test(part)) return part.toUpperCase().charCodeAt(0);
+    throw new Error(`"${chord}" is not a key Branch knows how to hold`);
+  });
+}
+export const DesktopHoldKeySchema = z.object({
+  window: windowMatch,
+  /** The key or chord to hold, such as "shift" or "ctrl+a". */
+  chord: z.string().trim().min(1).max(60),
+  /** How long to hold it, 0.1 to 10 seconds. */
+  seconds: z.number().min(0.1).max(10),
+}).strict();
+export const DesktopButtonSchema = z.object({
+  window: windowMatch, ...spotFields, shot,
+  button: z.enum(['left', 'right', 'middle']).default('left'),
+}).strict().refine((value) => [value.name, value.ref, value.point].filter((part) => part !== undefined).length <= 1, 'Give at most one of a name, a ref or a point');
+export const DesktopCursorSchema = z.object({
+  /** A window to say the pointer's place in, in its pixels; without one, the place on the screen. */
+  window: windowMatch.optional(),
+}).strict();
+const pair = z.tuple([z.number().int().min(0).max(20000), z.number().int().min(0).max(20000)]);
+/**
+ * Anthropic's computer tool, action for action, so a Claude model drives Branch's computer as it was trained to. The
+ * one difference: coordinates are in the pixels of the named window's own picture (desktop.screenshot of it), not of a
+ * whole display, because Branch works a window at a time.
+ */
+export const DesktopComputerSchema = z.object({
+  window: windowMatch.optional(),
+  action: z.enum(['screenshot', 'zoom', 'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
+    'left_click_drag', 'mouse_move', 'left_mouse_down', 'left_mouse_up', 'scroll', 'type', 'key', 'hold_key', 'wait', 'cursor_position']),
+  coordinate: pair.optional(),
+  start_coordinate: pair.optional(),
+  /** The words for type, the key for key and hold_key, or held keys ("shift", "ctrl+shift") for a click or scroll. */
+  text: z.string().max(4000).optional(),
+  scroll_direction: z.enum(['up', 'down', 'left', 'right']).optional(),
+  scroll_amount: z.number().int().min(1).max(10).optional(),
+  /** Seconds, for wait and hold_key. */
+  duration: z.number().min(0.1).max(30).optional(),
+  /** For zoom: [x0, y0, x1, y1] in window pixels. */
+  region: z.tuple([z.number().int().min(0), z.number().int().min(0), z.number().int().min(0), z.number().int().min(0)]).optional(),
+  /** For key: press it this many times. */
+  repeat: z.number().int().min(1).max(20).optional(),
+  shot: z.string().regex(/^[a-f0-9]{16}$/).optional(),
+}).strict();
+
+/** Held keys for a click or scroll as Anthropic's tool writes them ("shift", "ctrl+shift"). Other keys are refused. */
+export function computerModifiers(text: string | undefined): ('ctrl' | 'shift' | 'alt')[] {
+  if (!text) return [];
+  return text.toLowerCase().split('+').map((part) => part.trim()).filter(Boolean).map((part) => {
+    if (part === 'ctrl' || part === 'control') return 'ctrl';
+    if (part === 'shift' || part === 'alt') return part;
+    throw new Error(`"${part}" cannot be held during a click here; use ctrl, shift or alt.`);
+  });
+}

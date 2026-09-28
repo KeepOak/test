@@ -23,8 +23,9 @@ export const powerShellPath = 'C:/Windows/System32/WindowsPowerShell/v1.0/powers
 
 /** Windows actions; the script does exactly one of these per run and then exits. */
 export type DesktopAction = 'windows' | 'capture-targets' | 'screenshot' | 'read' | 'click' | 'scroll' | 'type' | 'key' | 'act' | 'open' | 'clipboard'
-  // computer-control: the tools' own pointer verbs (button, double click, move, drag, wheel) and a close-up picture.
-  | 'pointer' | 'zoom';
+  // computer-control: the tools' own pointer verbs (button, double click, move, drag, wheel, press and let go), a
+  // close-up picture, holding keys, where the pointer is, and letting go of whatever a task still holds.
+  | 'pointer' | 'zoom' | 'hold-key' | 'cursor' | 'release';
 
 const CaptureInputSchema = z.object({
   handle: z.string().regex(/^[1-9][0-9]{0,18}$/),
@@ -127,6 +128,18 @@ public class BranchDesktop {
     SetCursorPos(x, y);
     mouse_event(sideways ? 0x01000u : 0x0800u, 0, 0, unchecked((uint)(steps * 120)), IntPtr.Zero);
   }
+  // computer-control: one button pressed and held (left_mouse_down), and let go (left_mouse_up, or a release).
+  public static void ButtonDown(int x, int y, string button) { SetCursorPos(x, y); mouse_event(Down(button), 0, 0, 0, IntPtr.Zero); }
+  public static void ButtonUp(string button) { mouse_event(Up(button), 0, 0, 0, IntPtr.Zero); }
+  /** Keys held for a while (hold_key), always let go in reverse order, even when the wait is cut short. */
+  public static void HoldKeys(byte[] keys, int ms) {
+    int pressed = 0;
+    try {
+      foreach (var k in keys) { keybd_event(k, 0, 0u, IntPtr.Zero); pressed++; }
+      System.Threading.Thread.Sleep(ms);
+    } finally { for (int i = pressed - 1; i >= 0; i--) keybd_event(keys[i], 0, 0x0002u, IntPtr.Zero); }
+  }
+  public static void KeysUp(byte[] keys) { for (int i = keys.Length - 1; i >= 0; i--) keybd_event(keys[i], 0, 0x0002u, IntPtr.Zero); }
 }
 '@
 [void][BranchDesktop]::SetProcessDpiAwarenessContext([IntPtr](-4))
@@ -540,10 +553,29 @@ switch ($Action) {
         break
       }
     }
-    if ($kind -notin @('click', 'move', 'drag', 'scroll')) { throw ('Unknown pointer action: ' + $kind) }
+    if ($kind -eq 'up') {
+      # Let go where the task says, or where the pointer is now; a spot not on this window (or covered) is not where
+      # anything is dropped: the button is let go back where it was pressed, which was checked when it was.
+      $spot = $null
+      if ($request.at -and ($request.at.point -or $request.at.name -or $request.at.ref)) { $spot = Spot-Of $handle $request.at }
+      else { $now = New-Object BranchDesktop+POINT; [void][BranchDesktop]::GetCursorPos([ref]$now); $spot = @{ x = $now.X; y = $now.Y } }
+      $how = 'up'
+      try { Assert-Uncovered $handle $spot } catch { $spot = @{ x = [int]$request.pressedAt[0]; y = [int]$request.pressedAt[1] }; $how = 'up-where-pressed' }
+      [void][BranchDesktop]::SetCursorPos($spot.x, $spot.y)
+      [BranchDesktop]::ButtonUp($button)
+      $result = @{ how = $how; at = @($spot.x, $spot.y); title = [BranchDesktop]::Title($handle) }
+      break
+    }
+    if ($kind -notin @('click', 'move', 'drag', 'scroll', 'down')) { throw ('Unknown pointer action: ' + $kind) }
     if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was done.' }
     Assert-Seen $handle
-    $from = Spot-Of $handle $(if ($kind -eq 'drag') { $request.from } else { $request.at })
+    if ($kind -eq 'down' -and $request.atCurrent) {
+      # left_mouse_down with no spot presses where the pointer is, which must be inside this window.
+      $now = New-Object BranchDesktop+POINT; [void][BranchDesktop]::GetCursorPos([ref]$now)
+      $o = Window-Rect $handle
+      if ($now.X -lt $o.Left -or $now.X -ge $o.Right -or $now.Y -lt $o.Top -or $now.Y -ge $o.Bottom) { throw 'The pointer is not over that window, so nothing was pressed. Move it there first.' }
+      $from = @{ x = $now.X; y = $now.Y }
+    } else { $from = Spot-Of $handle $(if ($kind -eq 'drag') { $request.from } else { $request.at }) }
     Assert-Uncovered $handle $from
     $to = $null
     if ($kind -eq 'drag') { $to = Spot-Of $handle $request.to; Assert-Uncovered $handle $to }
@@ -552,6 +584,7 @@ switch ($Action) {
     [BranchDesktop]::Hold($mods, $true)
     try {
       if ($kind -eq 'click') { [BranchDesktop]::Press($from.x, $from.y, $button, [Math]::Max(1, [Math]::Min(3, [int]$request.count))) }
+      elseif ($kind -eq 'down') { [BranchDesktop]::ButtonDown($from.x, $from.y, $button) }
       elseif ($kind -eq 'drag') { [BranchDesktop]::Drag($from.x, $from.y, $to.x, $to.y, $button) }
       elseif ($kind -eq 'scroll') {
         $steps = [Math]::Max(1, [Math]::Min(10, [int]$request.amount))
@@ -563,10 +596,43 @@ switch ($Action) {
       }
     } finally {
       [BranchDesktop]::Hold($mods, $false)
-      if ($kind -ne 'move') { [void][BranchDesktop]::SetCursorPos($rest.X, $rest.Y) }
+      if ($kind -ne 'move' -and $kind -ne 'down') { [void][BranchDesktop]::SetCursorPos($rest.X, $rest.Y) }
     }
     $landed = if ($to) { $to } else { $from }
     $result = @{ how = $kind; at = @($landed.x, $landed.y); title = [BranchDesktop]::Title($handle) }
+  }
+  'hold-key' {
+    # computer-control: keys held down for a while (up to ten seconds) in the window brought to the front.
+    $handle = Get-Handle
+    if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so no key was held.' }
+    $keys = [byte[]]@($request.keys | ForEach-Object { [byte][int]$_ })
+    if ($keys.Length -lt 1 -or $keys.Length -gt 4) { throw 'Hold one key, with up to three held with it.' }
+    $ms = [Math]::Max(100, [Math]::Min(10000, [int]$request.ms))
+    [BranchDesktop]::HoldKeys($keys, $ms)
+    $result = @{ held = $ms; title = [BranchDesktop]::Title($handle) }
+  }
+  'cursor' {
+    # computer-control: where the pointer is, on the screen and (for a window) in its pixels, and whether that window is
+    # what is on top there. Nothing moves.
+    $now = New-Object BranchDesktop+POINT
+    [void][BranchDesktop]::GetCursorPos([ref]$now)
+    $result = @{ at = @($now.X, $now.Y) }
+    if ($request.handle) {
+      $handle = Get-Handle
+      $o = Window-Rect $handle
+      $result.window = @($now.X - $o.Left, $now.Y - $o.Top)
+      $result.inside = ($now.X -ge $o.Left -and $now.X -lt $o.Right -and $now.Y -ge $o.Top -and $now.Y -lt $o.Bottom)
+      $result.onTop = ([BranchDesktop]::RootAt($now.X, $now.Y) -eq $handle)
+      $result.title = [BranchDesktop]::Title($handle)
+    }
+  }
+  'release' {
+    # computer-control: let go of a button or keys a task still holds (it was stopped, its time ran out, or the owner
+    # took over). Letting go changes nothing else, so it needs no window.
+    foreach ($b in @($request.buttons)) { if ($b -in @('left', 'right', 'middle')) { [BranchDesktop]::ButtonUp([string]$b) } }
+    $keys = [byte[]]@($request.keys | Where-Object { $_ -ne $null } | ForEach-Object { [byte][int]$_ })
+    if ($keys.Length) { [BranchDesktop]::KeysUp($keys) }
+    $result = @{ released = $true }
   }
   'zoom' {
     # computer-control: a close-up of part of one window, taken from the window itself (never the screen on top of it),
@@ -921,8 +987,9 @@ export class DesktopScriptRunner {
     payload = captureInputPayload(action, payload);
     if (this.platform !== 'win32' && (action === 'capture-targets' || action === 'scroll' || payload.expectedTarget))
       throw new Error('This selected native monitor or window view is available on Windows only. Choose an explicitly supported computer target.');
-    if (this.platform !== 'win32' && (action === 'pointer' || action === 'zoom'))
-      throw new Error('Right-click, double-click, dragging, hovering, the scroll wheel and close-ups work on Windows for now. Use desktop.click with a name here.');
+    if (this.platform !== 'win32' && (action === 'zoom' || ((action === 'pointer' || action === 'hold-key' || action === 'cursor' || action === 'release') && this.platform !== 'linux')))
+      throw new Error(action === 'zoom' ? 'Close-ups work on Windows for now.'
+        : 'Right-click, double-click, dragging, hovering, holding keys and the scroll wheel work on Windows and on Linux (X11) for now. Use desktop.click with a name here.');
     if (this.platform !== 'win32') return this.runPosix(action, payload, signal);
     assertRealScreenAllowed(); // dogfood follow-up: never the real screen from a test without the opt-in
     const script = await this.scriptPath();
