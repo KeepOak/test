@@ -222,7 +222,8 @@ import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
 import { conversationBootstrapIds } from "./conversation-bootstrap.js";
-import { builtInImagePrices, imagePricedAt, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { builtInImagePrices, imagePricedAt, knownPictureModels, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { providerImages } from "./media-images.js";
 // Bucket 17.
 import { bucket17Api, handlesBucket17, readMediaBody } from "./media-understand-api.js";
 import { troubleshootApi } from "./troubleshoot.js"; // w911 (A0374) hook.
@@ -1474,7 +1475,8 @@ async function api(
     return voiceApi(voiceDeps(app), request.method ?? "GET", path, () => readBody(request));
   // Pictures and sounds (wave 5): what the media tools should use, and everything they have made.
   if (request.method === "GET" && path === "/api/media/settings")
-    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt };
+    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt,
+      pictures: picturesNow(app), pictureModels: knownPictureModels };
   if (request.method === "POST" && path === "/api/media/settings")
     return { settings: saveMediaSettings(app.store, app.runtime.owner, await readBody(request)) };
   // w911 (A1753) hook: plain-language page test scenarios, drafted, accepted and run as suites.
@@ -3179,6 +3181,15 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
     amount += cost;
   }
   return { amount: runs.length ? amount : null, currency: "USD" };
+}
+/**
+ * models-ui: the connection that makes pictures now (src/media.ts preset: the owner's plan for "media") and the kind of
+ * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
+ */
+function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
+  const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  const where = preset ? providerImages(preset.provider) : null;
+  return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
 }
 function runCost(app: Branch, runId: string) {
   const usage = app.store.usage(runId);
