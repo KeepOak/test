@@ -10066,5 +10066,12 @@
   "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
+  "window.chat.msg.timing": "En qué se fue el tiempo",
+  "window.chat.msg.timing-waited": "espera",
+  "window.chat.msg.timing-memory": "memoria e instrucciones",
+  "window.chat.msg.timing-tools": "herramientas y modelo",
+  "window.chat.msg.timing-firstWords": "primeras palabras",
+  "window.chat.msg.timing-answer": "respuesta completa",
+  "window.chat.msg.timing-sent": "envío"
 }

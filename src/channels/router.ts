@@ -1057,6 +1057,10 @@ export class ChannelRouter {
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
     const message = turn.messages[0]!, live = turn.live;
+    // Where a chat's answer spent its time, written on the task so "Look inside" can show it (src/inspect.ts timing):
+    // from the message being taken in (the turn opened; `startedAt` moves to the task's start once it starts).
+    const receivedAt = turn.startedAt;
+    let firstWords = false;
     const heard = await this.heardAll(turn.messages);
     if (typeof heard === "string") { live?.cancel(); return this.voiceFailed(message, heard); }
     // mac3/never-break: a message whose earlier task may already have reached the outside is not done twice.
@@ -1115,16 +1119,22 @@ export class ChannelRouter {
         onStarted: (started) => {
           // mac3/never-break: a task a chat started is left for the chat app to send again after a restart.
           this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
-            senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true });
+            senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true,
+            waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
           turn.runId = started.id;
           turn.startedAt = Date.now();
           live?.thinking();
           if (turn.dropped) this.runtime.cancel(started.id);
           this.passNotes(turn);
         },
-        onTextDelta: (delta) => turn.reply?.text(delta),
+        onTextDelta: (delta) => {
+          if (!firstWords && turn.runId) { firstWords = true; this.store.event(turn.runId, "channel.first_words", { ms: Date.now() - receivedAt }); }
+          turn.reply?.text(delta);
+        },
       });
-      return await this.finishTurn(turn, run, heard.quoted);
+      const outcome = await this.finishTurn(turn, run, heard.quoted);
+      this.store.event(run.id, "channel.sent", { ms: Date.now() - receivedAt });
+      return outcome;
     } catch (error) {
       await live?.finish("error");
       // Messages per conversation per hour: that refusal is said as it is, since no task started to show in Activity.
