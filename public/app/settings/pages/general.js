@@ -63,11 +63,12 @@ const BOUND = {
 };
 const num = (id, title, sub, unit, value) => `<div class="ctl"><b>${esc(title)}</b>${numBox(id, title, value, unit)}<small>${esc(sub)}</small></div>`;
 
-/* Message times: On hover and Always are the engine's off and on; Never has no setting (window.why.f15-message-times). */
+/* Message times: On hover, Always and Never are the display card's timestamps and hideTimes (Never hides the time in a
+   message's action row too, chat/messages.js). */
 function times() {
-  const always = comfort.display?.timestamps === true, title = t("window.settings.general.message-times");
+  const always = comfort.display?.timestamps === true, never = !always && comfort.display?.hideTimes === true, title = t("window.settings.general.message-times");
   const opt = (v, words, pressed) => `<button type="button" aria-pressed="${pressed}" data-act="mtimes15" data-v="${v}">${esc(words)}</button>`;
-  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("hover", t("window.settings.general.on-hover"), !always)}${opt("always", t("window.places.automations.always"), always)}<button type="button" aria-pressed="false" data-act="seg" data-why="f15-message-times">${esc(t("window.settings.advanced.never"))}</button></span></span><small>${esc(t("window.settings.general.when-a-message-was-sent-and"))}</small></div>`;
+  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("hover", t("window.settings.general.on-hover"), !always && !never)}${opt("always", t("window.places.automations.always"), always)}${opt("never", t("window.settings.advanced.never"), never)}</span></span><small>${esc(t("window.settings.general.when-a-message-was-sent-and"))}</small></div>`;
 }
 
 function advanced() {
@@ -112,7 +113,7 @@ export function init() {
     else if (e.target?.id === "f15-vim-keys-in-the-message-box") saveComfort("keys", { vim: e.target.checked });
     else changed(e.target, BOUND);
   });
-  on("mtimes15", (el) => saveComfort("display", { timestamps: el.dataset.v === "always" }));
+  on("mtimes15", (el) => saveComfort("display", { timestamps: el.dataset.v === "always", hideTimes: el.dataset.v === "never" }));
   // The kit and knobs are read as General first opens (Settings no longer reads them before sign-in), as on each reopen.
   loadKit();
   loadProjects();

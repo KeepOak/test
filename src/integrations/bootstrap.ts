@@ -319,6 +319,8 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       browser.tracer = channels?.tracer as never;
       // w911 (A2019) hook: the browser sandbox; its settings are read when a task first opens a page.
       if (channels?.store) { const kept = channels.store as Store; browser.sandbox = new BrowserSandbox(kept, () => kept.secrets); }
+      // What a page address carries out (src/egress-guard.ts): the values the locker has unlocked this launch.
+      if (channels?.store) { const kept = channels.store as Store; browser.egressSecrets = () => kept.secrets.scrubber.values(); }
       // The quirks of particular websites live in the skills the owner installed, not in the
       // browser tool, so they are read fresh each time: installing a skill needs no restart.
       const skillStore = channels?.store as SiteSkillSource | undefined;

@@ -46,7 +46,7 @@ const sample = {
 const special = { "msteams-bot": { appId: "12345678-1234-1234-1234-123456789012" }, "wechat-mp": { appId: "wxabcdefghij123456" },
   mumble: { server: "mumble.example.org" }, "whatsapp-web": { server: "http://127.0.0.1:3000" } };
 
-test("every chat app's panel makes an entry the connections file itself accepts, so none needs a line written by hand", () => {
+test("every chat app's panel makes an entry the connections file itself accepts, so none needs a line written by hand", async () => {
   let checked = 0;
   for (const recipe of recipes()) {
     if (recipe.turnOn === "guided") continue;
@@ -58,7 +58,7 @@ test("every chat app's panel makes an entry the connections file itself accepts,
     assert.ok(!JSON.stringify(entry).includes("…") && !JSON.stringify(entry).includes("{{"), `${recipe.id}: nothing left to fill by hand`);
     const parsed = ChannelConfigSchema.safeParse(entry);
     assert.ok(parsed.success, `${recipe.id}: ${JSON.stringify(parsed.error?.issues ?? [])}`);
-    const service = parityService(entry.type);
+    const service = await parityService(entry.type); // loaded on first use since perf(channels) d762142a
     if (service) {
       const { id: _id, type: _type, ...settings } = entry;
       const own = service.settings.safeParse(settings);
