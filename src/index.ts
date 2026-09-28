@@ -1422,7 +1422,8 @@ export async function createBranch(options: {
   // ── r17-i: reach and platform (src/reach/). Every part ships off. ──
   const reachParts = new Reach({ runtime, registry, router: channels, files, policy: web.policy, fetch: web.policy.guard(globalThis.fetch),
     secret: async (name, purpose) => (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!,
-    machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners() });
+    machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners(),
+    screenHeld: (runId, signal) => desktop.whileDriving({ runId }, signal) }); // a take-over holds background app use too
   scheduler.onTick.add(() => reachParts.tick());
   reachParts.remoteTrunks.useRoster(trunkRoster(trunks, runtime, registry, reachParts)); // R17-077 on R17-A's Trunks
   // ── end r17-i ──

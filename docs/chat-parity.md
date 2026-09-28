@@ -204,10 +204,10 @@ proved against stand-in adapters and providers; real account connections remain 
 | TG | ◐ exec approvals by typed yes/no; clarify questions by buttons | ✅ inline buttons | ✅ buttons carry the request's fingerprint |
 | DC | ✅ buttons | ? | ✅ |
 | SL | ✅ Block Kit | ✅ | — typed y / n |
-| WA | — typed (never polls) | ✅ 👍/👎 reactions | — typed |
-| SG | — | ✅ approval reactions | — typed |
+| WA | — typed (never polls) | ✅ 👍/👎 reactions | ✅ 👍/✅ or 👎/❌ on the question message, from the person asked, once (30 min), naming the question's fingerprint; typed y/n still works |
+| SG | — | ✅ approval reactions | ✅ the same, matched to the question by this account's send timestamp |
 | IM | ? | ? | — typed |
-| MX | ✅ reactions, limited to the requester | ✅ | — typed |
+| MX | ✅ reactions, limited to the requester | ✅ | ✅ the same, as an `m.annotation` on Branch's own question event |
 | EM, SMS | — | — | — typed |
 
 ### Voice notes in (transcribed) and out (spoken replies)
