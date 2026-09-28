@@ -715,7 +715,7 @@ select.inp{height:32px;padding:0 8px}
 .ach .medal{grid-row:span 2;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff}
 .ach b{font-size:13px;font-weight:600}
 .ach small{font-size:11.5px;color:var(--ink-3)}
-.ach.locked{opacity:.55}
+.ach.locked{border-style:dashed;background:none} /* locked reads as locked by its medal and edge; its words stay readable (AA) */
 .ach.locked .medal{background:var(--fill-2)!important;color:var(--ink-3)}
 .ach-toast{pointer-events:none;position:absolute;left:50%;top:42px;transform:translateX(-50%);z-index:98;display:flex;align-items:center;gap:10px;background:var(--raise);box-shadow:var(--pop);border-radius:999px;padding:6px 14px 6px 6px;font-size:13px;animation:rise .25s ease-out}
 .ach-toast .medal{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:#fff}
@@ -1345,7 +1345,7 @@ video.bg-media.fit-fill{object-fit:cover}video.bg-media.fit-fit{object-fit:conta
 .comp7-card{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:14px}
 .comp7-card .grow{display:grid;gap:2px;flex:1 1 auto;min-width:0}.comp7-card small{color:var(--ink-3);font-size:12.5px}
 .c7-reach{font-size:13px;color:var(--ink-2)}
-.comp7-card.off7{opacity:.75}
+.comp7-card.off7{border-style:dashed}.comp7-card.off7>:not(.grow){opacity:.6} /* off by its edge and icon; its words stay readable (AA) */
 
 /* ---------- a calmer window ---------- */
 .titlebar .proto{display:none}
@@ -3705,7 +3705,7 @@ p.ic-t,div.ic-t{display:flex}
 .titlebar.slim17 .tb-head14 .head .icon-btn{width:32px;height:32px}
 /* The product's name, small and quiet, where a new conversation starts. */
 .wm17{margin:10px 0 0;font:600 12px/1 var(--sans);letter-spacing:.01em;color:var(--ink-3)}
-.wm17 span{font-weight:400;opacity:.75}
+.wm17 span{font-weight:400}
 
 /* area: trunk look */
 .av.photo-tl .peb{overflow:hidden}
@@ -4400,3 +4400,12 @@ audio.docread18m{width:100%}
 .in18c.dim18{opacity:.55;filter:saturate(.6)}
 .hb18c .b18c{position:absolute;right:-2px;bottom:-2px;width:calc(var(--s) * .42);height:calc(var(--s) * .42);min-width:12px;min-height:12px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--ink-2);box-shadow:0 0 0 1.5px var(--raise)}
 .hb18c .b18c svg.i{width:70%;height:70%}
+
+/* area: accessibility (UI-223, tests/window-a11y.test.mjs): a status pill's words stay AA on its tint in every light; they
+   take the status colour leaned toward the ink, and the dot keeps the pure colour. */
+.pill:is(.ok,.done){color:color-mix(in srgb,var(--ok) 72%,var(--ink))}
+.pill:is(.ok,.done) i{background:var(--ok)}
+.pill:is(.no,.bad16){color:color-mix(in srgb,var(--bad) 78%,var(--ink))}
+.pill:is(.no,.bad16) i{background:var(--bad)}
+.pill:is(.warn,.warn6){color:color-mix(in srgb,var(--warn) 70%,var(--ink))}
+.pill:is(.warn,.warn6) i{background:var(--warn)}
