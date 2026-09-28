@@ -146,6 +146,9 @@ test("the checked-in impact map names only tests that still exist", () => {
     assert.equal(existsSync(new URL(`../${file}`, import.meta.url)), true, file);
   }
   assert.ok(checkedIn.partialCeiling > 0 && checkedIn.partialCeiling < 1);
+  // Only redesign/window: its every push runs the whole suite. A pull request into mac/cross-platform or a release
+  // branch runs the whole suite itself (beta's fast proof reads a green pull-request run as the whole suite).
+  assert.deepEqual(checkedIn.partialBases, ["redesign/window"]);
 });
 
 /**

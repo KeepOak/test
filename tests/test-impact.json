@@ -1,4 +1,7 @@
 {
+  "partialBases": [
+    "redesign/window"
+  ],
   "partialCeiling": 0.75,
   "hubTests": 25,
   "always": [

@@ -185,7 +185,7 @@ export function plan(event, baseRef, from = "HEAD^1", to = "HEAD") {
   const all = lanes(testGroups());
   const flat = (lane) => new Set([...lane.shared, ...lane.browser, ...lane.desktop].map(posix));
   const wholeSeconds = [...flat(all.linux)].reduce((total, file) => total + (weights[file] ?? 0), 0);
-  if (event !== "pull_request" || baseRef !== "redesign/window") {
+  if (event !== "pull_request" || !config.partialBases.includes(baseRef)) {
     return { mode: "full", reasons: [`A ${event} run${baseRef ? ` into ${baseRef}` : ""} runs the whole suite.`], tests: [],
       platforms: { windows: true, macos: true }, wholeSeconds, predictedSeconds: wholeSeconds };
   }
