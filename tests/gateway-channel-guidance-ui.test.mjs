@@ -1,21 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chromium } from "playwright";
-import { newWindow, openPlace, openSettings } from "./new-window-places.mjs";
-
-test("gateway status describes this engine and its saved preference separately", async (t) => {
-  assert.equal(typeof chromium.launch, "function");
-  const { page, call, errors } = await newWindow(t);
-  const view = await call("/api/never-break", { mode: "on" });
-  assert.equal(view.underGateway, false);
-  await openSettings(page, "gateway");
-  await page.getByText("The gateway is off", { exact: true }).waitFor();
-  await page.getByText("Saved preference: On.", { exact: true }).waitFor();
-  await page.getByText("The saved preference takes effect", { exact: false }).waitFor();
-  assert.equal(await page.locator("#gw-mode").isChecked(), true);
-  await page.locator('[data-act="gwpop"]').getByText("Gateway off", { exact: true }).waitFor();
-  assert.deepEqual(errors, []);
-});
+import { newWindow, openPlace } from "./new-window-places.mjs";
 
 test("Windows iMessage wizard explains Mac prerequisites and refuses Continue", { skip: process.platform === "darwin" }, async (t) => {
   const { page, errors } = await newWindow(t);

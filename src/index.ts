@@ -1,3 +1,4 @@
+import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
@@ -1795,6 +1796,7 @@ export async function createBranch(options: {
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
+      closeSpareAgents(); // copies of Claude Code started ahead of time for the next question (src/providers/cli-agent.ts)
       await rings.idle(); // Seasons: a night under way finishes its step before the database closes
       await budding.close(); // Stop a resumed task before closing the connectors and private database.
       // Wave 8: a connection that stays open must not outlive the app either.
