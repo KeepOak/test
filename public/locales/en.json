@@ -10139,7 +10139,7 @@
   "window.why.tr-sso": "Teams need a keepoak.com account, which isn't open yet.",
   "window.why.trig-who": "A procedure has no place for a Trunk, so Branch itself does the work.",
   "window.why.u-tray": "Branch's tray icon shows only its logo; the desktop app draws no usage ring there. Use “The ring bottom right” above instead.",
-  "window.why.undo-the-last-update": "Pick a copy under Branch itself › Roll back to go back to an earlier version.",
+  "window.why.undo-the-last-update": "The window has no button for this yet. To go back to the version before the last update, run `branch rollback` in a terminal on this computer: it says first whether going back would lose work, and `branch rollback --yes` does it.",
   "window.why.update-remind": "Only the desktop app reminds you about a ready update, so in a browser there is nothing to put off.",
   "window.why.v-when-i-talk": "Branch can't tell a spoken message from a typed one yet, so it can't answer aloud only when you talk.",
   "window.why.vaultwinb17": "Windows Credential Manager is part of Windows, and this Branch runs on another system, so it can't read from it here.",

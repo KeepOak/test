@@ -185,8 +185,8 @@ function draw() {
   // The prototype's "Updating" section, under its heading. The switch says how often it really looks: every five minutes on Beta, once a day on Stable (src/comfort/auto-update.ts).
   html += `<div class="sec upd18-self"><h2>${t("window.settings.updates.updating")}</h2><div class="ctl"><b>${t("comfort.update.install")}</b><input class="sw" type="checkbox" id="u-auto" ${autoUpdate ? "checked" : ""} aria-label="${t("comfort.update.install")}" data-sw="set"><small>${t(beta ? "window.updates.card.checks-every-few-minutes" : "window.settings.updates.checks-every-day")}</small></div></div>`;
 
-  /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: it goes
-     through the desktop app's own flow), the channel, and the copy of the data folder. */
+  /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: going back
+     is `branch rollback` in a terminal, which says first whether it would lose work), the channel, and the copy of the data folder. */
   html += `<details class="adv upd18-more" id="u-more"${moreOpen ? " open" : ""}><summary>${esc(t("window.updates.card.more"))}</summary>`;
   html += `<div class="ctl"><b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small></small></div>`;
   html += `<div class="ctl"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class="right"><button class="btn sm" type="button" data-act="soon" data-why="undo-the-last-update">${t("strip.undo")}</button></span><small></small></div>`;

@@ -10140,7 +10140,7 @@
   "window.why.tr-sso": "Les équipes demandent un compte keepoak.com, qui n’est pas encore ouvert.",
   "window.why.trig-who": "Une procédure n’a pas de place pour un Trunk ; c’est Branch lui-même qui fait le travail.",
   "window.why.u-tray": "L’icône de Branch dans la zone de notification n’affiche que son logo ; l’application de bureau n’y dessine pas d’anneau d’utilisation. Utilisez plutôt « L’anneau en bas à droite » ci-dessus.",
-  "window.why.undo-the-last-update": "Choisissez une copie sous Branch lui-même › Revenir en arrière pour retrouver une version antérieure.",
+  "window.why.undo-the-last-update": "La fenêtre n’a pas encore de bouton pour cela. Pour revenir à la version d’avant la dernière mise à jour, lancez `branch rollback` dans un terminal sur cet ordinateur : il dit d’abord si revenir ferait perdre du travail, et `branch rollback --yes` le fait.",
   "window.why.update-remind": "Seule l'application de bureau vous rappelle une mise à jour prête ; dans un navigateur, il n'y a rien à reporter.",
   "window.why.v-when-i-talk": "Branch ne distingue pas encore un message parlé d’un message tapé ; il ne peut donc pas répondre à voix haute seulement quand vous parlez.",
   "window.why.vaultwinb17": "Le Gestionnaire d’identification Windows fait partie de Windows, et ce Branch tourne sur un autre système : il ne peut donc pas y lire ici.",
