@@ -123,7 +123,7 @@ test("Edit Trunk › Accounts: Use my accounts too round-trips, and with it off 
 });
 
 test("Settings › Models › Second opinion is live: the switch, who checks and the ceiling are the engine's, and the rest is kept", async (t) => {
-  const { page, errors, call } = await fixture(t);
+  const { app, page, errors, call } = await fixture(t);
   await call("/api/second-opinion", { advisor: false, debateExchanges: 2, debateMaxTokens: 90000 }); // fields this tab does not show
   await openModels(page, "second");
   const sw = page.locator("#m-second");
@@ -143,6 +143,10 @@ test("Settings › Models › Second opinion is live: the switch, who checks and
   assert.ok(await page.locator("#m-second").isChecked());
   assert.equal(await page.locator(`[data-act="m-second-by"][data-v="${POOL}"]`).getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator("#m-second-max").inputValue(), "9000");
+  /* The note the switch promises: Look inside reads it from the task's own record (chat/messages.js inspect). */
+  const run = await app.runtime.run({ prompt: "hello" });
+  const record = await call(`/api/runs/${run.id}/inspect`);
+  assert.match(record.advice?.line ?? "", /^OpenAI test is not sure about this\./, "the second opinion's note is on the task's record");
   assert.deepEqual(errors, []);
 });
 
