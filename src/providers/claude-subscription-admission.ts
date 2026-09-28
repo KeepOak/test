@@ -56,14 +56,16 @@ export class NativeAdmission {
   status: number | null = null;
   completion: Completion | null = null;
   failure: string | null = null;
+  /** selfdev: why the response could not be read, kept so a reply cut off at its ceiling is told apart. */
+  error: unknown = null;
   private readonly server: Server;
   private readonly active = new Set<Promise<void>>();
   constructor(private readonly request: CompletionRequest, inventory: NativeInventory,
     private readonly authorize: () => void, private readonly connect: NativeConnector = connectNative) {
     this.capture = new NativeCapture(inventory, request);
     this.server = createServer((incoming, response) => {
-      const work = this.receive(incoming, response).catch(() => {
-        this.failure = "Native admission or response failed";
+      const work = this.receive(incoming, response).catch((error: unknown) => {
+        this.failure = "Native admission or response failed"; this.error = error;
         if (!response.headersSent) refuse(response, 502); else response.destroy();
       }).finally(() => this.active.delete(work));
       this.active.add(work);

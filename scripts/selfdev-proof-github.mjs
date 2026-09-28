@@ -24,11 +24,12 @@ const request = (knob, base, name) => [
 export async function githubProof({ root, model, stamp, log, connection, roomToWork, defaultTrunkConversation, evidence, health }) {
   const base = `selfdev-proof/base-${stamp.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`, name = `proof-${stamp.slice(5, 16).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
   const knob = {
-    what: "how long github.wait_for_checks waits in one call when it is not told",
-    how: "add `checksWaitSeconds` to the commands card in src/knobs/settings.ts (whole seconds, 10 to 600, null meaning the built-in 75), have github.wait_for_checks use it when a call gives no seconds, and document it in docs/configuration.md.",
-    paths: ["src/knobs/settings.ts", "src/integrations/git-tools.ts", "docs/configuration.md", "tests/knob-checks-wait.test.mjs"],
-    test: "tests/knob-checks-wait.test.mjs",
+    what: "how many tokens one task may use (it is fixed at 200,000 in src/knobs/apply.ts taskBudget)",
+    how: "add `maxTaskTokens` to the task limits card in src/knobs/settings.ts (whole tokens, 20,000 to 20,000,000, null meaning the built-in 200,000), have taskBudget in src/knobs/apply.ts use it, update any test that lists the limits card's fields, and document it in docs/configuration.md next to maxSteps.",
+    paths: ["src/knobs/settings.ts", "src/knobs/apply.ts", "docs/configuration.md", "tests/knob-task-tokens.test.mjs"],
+    test: "tests/knob-task-tokens.test.mjs",
   };
+
   const head = gh("api", `repos/${repo}/git/ref/heads/redesign/window`, "--jq", ".object.sha");
   gh("api", "-X", "POST", `repos/${repo}/git/refs`, "-f", `ref=refs/heads/${base}`, "-f", `sha=${head}`);
   await log({ step: "scratch-base", base, from: head });

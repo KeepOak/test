@@ -250,6 +250,11 @@ export interface BackgroundResult { childRunId: string; parentRunId: string; sta
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
+/**
+ * selfdev: a signed-in subscription (Claude Code, Codex) is not billed per token and its models write long edits, so
+ * its replies start at 8,192 tokens and may grow to 32,768 when one is cut off; a billed or local model keeps the above.
+ */
+const signInReplyCeiling = 8192, signInMaxReplyCeiling = 32768;
 /** mac7/coding-next: how long a model on this computer is silent before the person is told it may be loading. */
 const localQuietMs = 10_000;
 /** What the model is told after a reply that was all thinking: act on it now. */
@@ -3005,6 +3010,11 @@ ${run.output.slice(0, 6000)}`;
    * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
    * billed per token, and a model on this computer, keep the launch figure.
    */
+  /** selfdev: where a reply's token ceiling starts and how far it may grow, by the kind of connection. */
+  private replyCeiling(preset: ModelPreset): { base: number; max: number } {
+    return !presetRunsLocally(preset) && isSignInConnection(preset) ? { base: signInReplyCeiling, max: signInMaxReplyCeiling }
+      : { base: baseReplyCeiling, max: maxReplyCeiling };
+  }
   private toolBudgetFor(): number {
     const base = this.reliability.toolBudgetTokens;
     const chosen = this.models.presets.get(this.models.summary(this.owner).defaultPreset);
@@ -3220,8 +3230,8 @@ ${run.output.slice(0, 6000)}`;
         if (outage.back) this.store.event(run.id, outage.back, { preset: preset.id }); // long-work
         return answered;
       } catch (error) {
-        const ceiling = this.replyCeilings.get(run.id) ?? baseReplyCeiling;
-        if (isOutOfRoomThinking(error) && ceiling < maxReplyCeiling && !context.signal.aborted) {
+        const ceiling = this.replyCeilings.get(run.id) ?? this.replyCeiling(preset).base;
+        if (isOutOfRoomThinking(error) && ceiling < this.replyCeiling(preset).max && !context.signal.aborted) {
           this.replyCeilings.set(run.id, ceiling * 2);
           this.store.event(run.id, "model.ceiling_raised", { from: ceiling, to: ceiling * 2 });
           retriesUsed = -1;
@@ -3384,7 +3394,7 @@ ${run.output.slice(0, 6000)}`;
     // written down as an attempt, so a round that never reached the provider really does cost
     // nothing — in the inspector and in the figures alike. The step count still applies, so a task
     // cannot go round for ever on kept answers.
-    const maxTokens = Math.min(this.replyCeilings.get(run.id) ?? baseReplyCeiling, Math.max(0, context.budget.remaining() - input));
+    const maxTokens = Math.min(this.replyCeilings.get(run.id) ?? this.replyCeiling(preset).base, Math.max(0, context.budget.remaining() - input));
     const cacheKey: CacheKeyParts = {
       provider: preset.provider.name, model: preset.model, reasoning: reasoning ?? null, maxTokens,
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
@@ -4131,7 +4141,9 @@ ${run.output.slice(0, 6000)}`;
     const patternNo = decision === "deny" ? null : this.patternRefusal(call, context); // eng-trunk-controls
     if (patternNo) return { refusal: { ok: false, error: patternNo }, ...held };
     const aside = decision === "deny" ? null
-      : this.offPlanQuestion(context, { label, target, readOnly }) ?? this.retriedCommandQuestion(call, args, context)
+      : this.offPlanQuestion(context, { label, target, readOnly })
+        // selfdev (owner ruling 09-27): the owner's selected Full Access never asks, so a corrected command just runs.
+        ?? (this.ownerFullAccessFor(context) !== null ? null : this.retriedCommandQuestion(call, args, context))
         ?? this.patternAside(call, context); // eng-trunk-controls
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
