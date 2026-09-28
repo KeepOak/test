@@ -17,6 +17,7 @@ import { text } from "./markdown.js";
 import { extraTabs } from "./pane.js";
 import { addMoreItem } from "./more.js";
 import { t, language, plural } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const B = { sid: null, paths: [], at: 0, pick: null, model: null, from: null };
 let X = { state: () => ({ sessionId: null, messages: [] }), sendText: async () => {}, reopen: async () => {} };
@@ -158,7 +159,7 @@ function compare() {
   if (B.paths.length < 2) { toast(t("window.chat.branches.only-one")); return; }
   const cur = here() ?? B.paths[0], other = pathOf(cur.parentSessionId) ?? B.paths.find((p) => p !== cur);
   const picked = (B.pick ?? []).map(pathOf).filter(Boolean), two = picked.length === 2 ? picked : [other, cur];
-  const sel = (k) => `<select class="inp" id="br-sel${k}17c" aria-label="${t("window.chat.branches.path-n", { n: k + 1 })}">${B.paths.map((p) => `<option value="${esc(p.sessionId)}"${p === two[k] ? " selected" : ""}>${esc(nameOf(p))}</option>`).join("")}</select>`;
+  const sel = (k) => gsel({ id: `br-sel${k}17c`, label: t("window.chat.branches.path-n", { n: k + 1 }), options: B.paths.map((p) => [p.sessionId, nameOf(p)]), value: two[k]?.sessionId });
   openDlg({ title: t("window.chat.branches.compare-paths"), wide: true, body: `${B.paths.length > 2 ? `<div class="cmpsel17c">${sel(0)}${sel(1)}</div>` : ""}<div class="cmp17c">${two.map(column).join("")}</div>` });
 }
 
