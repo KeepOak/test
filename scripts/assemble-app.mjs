@@ -17,7 +17,8 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile, cp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** The package.json fields the packager (20.x, sanitize-package-json.js) strips from the copy inside the app. */
 export const sanitizedFields = ["devDependencies", "scripts", "workspaces", "packageManager", "resolutions", "overrides", "pnpm",
@@ -128,3 +129,21 @@ export async function assembleWindowsApp({ source, dist, into, executableName, i
   await assembleApp({ source, into: join(into, "resources", "app"), included, isJunk });
   return runtime;
 }
+
+/**
+ * `node scripts/assemble-app.mjs --app <folder>`: the app alone (resources/app) of this built checkout, as the Beta
+ * update puts a new version's folder together beside the running one (src/desktop/dev-build.ts): the mascot icon the
+ * shortcuts name first, then the app, pruned as above. The runtime is the updater's to lay out (a link to the one in use).
+ */
+async function main(argv) {
+  const at = argv.indexOf("--app"), into = at >= 0 ? argv[at + 1] : undefined;
+  if (!into || into.startsWith("--")) throw new Error("usage: node scripts/assemble-app.mjs --app <folder>");
+  const { includedInApp } = await import("./package-desktop.mjs");
+  const { isJunk } = await import("junk");
+  if (process.platform === "win32") await (await import("./make-icons.mjs")).writeWindowsIcon();
+  await assembleApp({ source: ".", into, included: includedInApp, isJunk });
+  console.log(into);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
+  await main(process.argv.slice(2)).catch((error) => { console.error(error.message); process.exit(1); });
