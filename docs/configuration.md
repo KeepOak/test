@@ -6295,7 +6295,7 @@ changes unless Yes is pressed. In order of how much they matter:
 **Updates** in Settings is now three choice cards instead of a list: *Install updates by myself*,
 *Tell me when there's an update*, and *Keep Branch up to date by itself* (marked Recommended). Picking
 a card saves it at once. It is the same `autoUpdate` setting (`off`, `check`, `install`), and it ships
-as `install`: an update is installed by itself when no task is working. An `off` you chose stays off.
+as `install`: an update is installed by itself when no task is working and Lockdown is off. An `off` you chose stays off; under Lockdown a ready update waits, and the Update button still installs it.
 
 **Quitting while work runs.** Closing the window keeps Branch in the tray (or the dock), so work goes
 on. Quitting stops it, so when a task is running and no background engine would carry on with it,
