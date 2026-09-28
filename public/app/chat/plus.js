@@ -18,6 +18,7 @@ import { plus17d } from "./calls17d.js"; // pass 17 part D §2 (greyed)
 import { asksFirst } from "./askfirst.js"; // parity B1: Ask me questions first
 import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the Skills list
 import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
+import { initPractice, loadPractice, practiceMenu, practiceNext } from "./practice-next.js";
 
 const Q = { temporary: false, who: null, whoFor: null };
 
@@ -25,7 +26,7 @@ function menu() {
   return mi("attach", "clip", t("window.chat.plus.attach")) + mi("add-folder", "folder", t("window.chat.plus.folder")) + mi("shot", "camera", t("window.chat.plus.screenshot")) + "<hr>"
     + mi("insert", "at", t("rooms.mentionList"), "<kbd>@</kbd>", 'data-v="@"') + mi("skills15", "slash", t("window.chat.plus.skill"), "<kbd>/</kbd>") + "<hr>"
     + `<div class="row-in"><span class="ic-t">${ic("ghost", "s")}${t("window.chat.plus.temporary")}</span><input class="sw" type="checkbox" id="pm-temp" data-sw="temp" ${Q.temporary ? "checked" : ""} ${S.chat ? "disabled" : ""} aria-label="${t("window.chat.plus.temporary")}"></div><div class="row-in"><span class="ic-t">${ic("help", "s")}${t("more.askFirst")}</span><input class="sw" type="checkbox" id="pm-ask" data-sw="askqs" ${asksFirst() ? "checked" : ""} aria-label="${t("more.askFirst")}"></div>`
-    + whoRows() + "<hr>" + mi("goal-fill", "target", t("window.chat.plus.goal"), "<kbd>/goal</kbd>") // handled in goal.js
+    + practiceMenu() + whoRows() + "<hr>" + mi("goal-fill", "target", t("window.chat.plus.goal"), "<kbd>/goal</kbd>") // handled in goal.js
     + mi("prompts-fill", "star", t("settings-kit.name.prompts"), "<kbd>/</kbd>"); // handled in messages.js
 }
 
@@ -92,6 +93,7 @@ export async function takePending(isNew) {
   const out = {};
   const uploads = await readyUploads();
   if (uploads.length) out.uploads = uploads;
+  if (practiceNext()) out.dryRun = true;
   if (isNew && Q.temporary) out.temporary = true;
   Q.temporary = false;
   return out;
@@ -111,9 +113,11 @@ function insert(text) {
 export function initPlus() {
   markLive(["plusmenu", "attach", "add-folder", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
   initAttach();
+  initPractice();
   /* Use a skill: the Skills list over the box; with no skill switched on, "/" in the box as before (the engine's commands). */
   on("skills15", () => { closePop(); if (!openSkills()) insert("/"); });
-  on("plusmenu", (el) => openPop(el, menu() + plusMore() + plus17d()));
+  /* The menu opens (or closes, on its own button) at once; Practice's availability is refreshed behind it. */
+  on("plusmenu", (el) => { openPop(el, menu() + plusMore() + plus17d()); void loadPractice(); });
   on("attach", () => { closePop(); pickFiles(false); });
   on("add-folder", () => { closePop(); pickFiles(true); });
   on("unattach", (el) => removeFile(el.dataset.k));

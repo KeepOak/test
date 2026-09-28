@@ -81,7 +81,7 @@ test("each kind is decided and checked against what was offered", async (t) => {
   const overview = (await ask("/api/decisions")).body;
   assert.equal(overview.lastDay.decisions, 4, "only the decisions that were made are counted");
   assert.equal(typeof overview.lastDay.averageMs, "number");
-  assert.deepEqual(overview.settings, { model: "", minConfidence: 0.75, maxList: 400 });
+  assert.deepEqual(overview.settings, { model: "", minConfidence: 0.75, maxList: 400, route: false, inbox: false });
   assert.deepEqual(app.store.recentSessions(app.runtime.owner, 20).sessions, [], "a decision never adds a conversation to the list");
 });
 
@@ -90,7 +90,7 @@ test("a separate decision model less sure than the threshold hands the decision 
   const small = decider("small", [[/Answer yes or no/, { answer: false, confidence: 0.6, why: "Unsure." }], ...RULES]);
   const { ask } = await fixture(t, task, small);
   assert.equal((await ask("/api/decisions/settings", { model: "nope" })).status, 400, "only a connection the owner has");
-  assert.deepEqual((await ask("/api/decisions/settings", { model: "small", minConfidence: 0.8 })).body.settings, { model: "small", minConfidence: 0.8, maxList: 400 });
+  assert.deepEqual((await ask("/api/decisions/settings", { model: "small", minConfidence: 0.8 })).body.settings, { model: "small", minConfidence: 0.8, maxList: 400, route: false, inbox: false });
   const unsure = (await ask("/api/decisions/decide", { kind: "yes", question: "Is this an invoice?" })).body;
   assert.deepEqual([unsure.verdict, unsure.escalated, unsure.model.name], ["yes", true, "Task model"]);
   assert.equal(small.said.length, 1);
