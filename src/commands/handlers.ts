@@ -47,7 +47,8 @@ export interface Reply { text: string; client?: ClientAction }
 interface GoalView { status: string; round: number; maxRounds: number; objective: string; reason?: string; sessionId: string }
 /** The goal feature (mac2/goal-undo), when this copy has it. */
 export interface GoalHost {
-  start(input: { objective: string; maxRounds?: number; sessionId?: string }): Promise<GoalView>;
+  /** `origin`: a goal set from a chat, whose rounds are the chat's tasks (its source and its short list of permissions). */
+  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel"; permissions: string[] }): Promise<GoalView>;
   status(sessionId: string): GoalView | null;
   pause(sessionId: string): GoalView;
   resume(sessionId: string): Promise<GoalView>;
@@ -225,7 +226,8 @@ async function goal(call: Call): Promise<Reply> {
     if (!call.sessionId) return say(needSession);
     return say(goalLine(await goals[word](call.sessionId)));
   }
-  const state = await goals.start({ ...parseGoal(call.argument), ...(call.sessionId ? { sessionId: call.sessionId } : {}) });
+  const state = await goals.start({ ...parseGoal(call.argument), ...(call.sessionId ? { sessionId: call.sessionId } : {}) },
+    call.surface === "chat" ? { source: "channel", permissions: call.permissions ?? [] } : undefined); // CHAT-185
   return say(goalLine(state), state.sessionId && state.sessionId !== call.sessionId ? { do: "open-session", id: state.sessionId } : undefined);
 }
 async function health(call: Call): Promise<Reply> {

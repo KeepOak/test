@@ -244,6 +244,7 @@ import { formatCopiesToPrune } from "./install/update-backup.js";
 import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
+import { commandHost } from "./commands/host.js"; // CHAT-185
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
@@ -1850,6 +1851,7 @@ export async function createBranch(options: {
   // on, once everything above has started as the owner: the launch carry-on of interrupted flows
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
+  channels.ownerDmHost = () => commandHost(runtime, branch); // CHAT-185: the owner's commands from their own chat
   return branch;
 }
 /** Runs one of the owner's own verified recipes by name, for a skill package's event hook. */

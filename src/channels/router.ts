@@ -29,6 +29,9 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
+import { ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { executeCommand } from "../commands/execute.js";
+import type { CommandHost } from "../commands/handlers.js";
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
@@ -827,6 +830,9 @@ export class ChannelRouter {
     }
     if (saved) message = { ...message, text: saved.text };
     // ---- end of the bucket 12 hook ----
+    // CHAT-185: the owner's own commands from their own direct chat, before the chat's own list.
+    const ownerDm = await this.ownerDmLine(message);
+    if (ownerDm) return ownerDm;
     const command = this.commandIn(message);
     if (command) return this.command(message, command);
     // A bare "y", "a" or "n" answers whatever this chat's conversation is waiting on, rather than
@@ -971,6 +977,29 @@ export class ChannelRouter {
     });
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
+    return "replied";
+  }
+  /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
+  ownerDmHost: (() => CommandHost) | null = null;
+  /**
+   * CHAT-185 (src/channels/owner-dm-commands.ts): one of the window's commands from the owner's own account in a direct
+   * chat, carried out through the one command table with that chat's conversation and permissions. Null when the line is
+   * not one, or the sender is not the owner there, so it goes on as an ordinary message.
+   */
+  private async ownerDmLine(message: InboundMessage): Promise<Outcome | null> {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const dm = message.voice ? null : ownerDmCommand(message.text);
+    if (!dm || !adapter || !this.ownerDmHost || !ownerDmHere(this.store, this.runtime.owner, adapter.kind, { ...message, caughtUp: false })) return null;
+    if (message.caughtUp) return "ignored"; // the owner's command sent while Branch was closed is old news, never carried out
+    const refused = ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), dm.name, dm.argument);
+    const key = `owner-dm:${message.chatId}:${message.messageId}`;
+    if (refused) { await this.deliver(message.channel, message.chatId, refused, key, message.messageId).catch(() => undefined); return "replied"; }
+    const work = async () => (await executeCommand({ ...this.ownerDmHost!(), lockdownOffRefusal: "Lockdown can only be switched off in the app on this computer." }, {
+      surface: "chat", line: message.text, sessionId: this.sessionFor(message.channel, message.chatId), access: "full",
+      permissions: this.chatPermissions(message), ownerDm: true,
+    }))?.text ?? "I do not know that command.";
+    const reply = ["goal", "bg", "health"].includes(dm.name) ? await this.withSlot(work) : await work();
+    await this.deliver(message.channel, message.chatId, reply, key, message.messageId).catch(() => undefined);
     return "replied";
   }
   /** Keeps the chat in the list of chats, but pointed at no conversation. */

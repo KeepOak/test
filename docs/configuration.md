@@ -909,6 +909,23 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
+### The window's commands from your own chat (CHAT-185)
+
+From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
+Chat apps › Commands from your own chat), in a direct chat, on Telegram, Discord, Slack or Matrix (whose servers
+vouch for who sent a message; never email, SMS or a posted webhook), these also work: `/goal`, `/subgoal`, `/bg`,
+`/memory`, `/skills`, `/health`, `/sessions`, `/queue`, `/busy`, `/lockdown` and `/lockdown on`, and the looking,
+pausing and stopping half of `/loop`, `/heartbeat`, `/suggestions` and `/blueprint`. They are read whether or not
+the chat commands switch is on, because naming the account is the owner's choice. What they hold to:
+
+- a task `/goal` or `/bg` starts is that chat's task, not yours: the chat's short list of permissions, and your
+  approval rules held to "Ask before changes", every round of a goal included (below);
+- nothing that keeps running is made from a chat (starting a `/loop` or `/heartbeat`, accepting a suggestion, making
+  a blueprint), and Lockdown is switched off only in the app on this computer;
+- under Lockdown or the App lock only `/lockdown` and `/lockdown on` are read, and nothing is sent back until it is
+  off; a command sent while Branch was closed is never carried out;
+- from anybody else, in a group, or on another app, the same line is an ordinary message.
+
 ### Who a chat message's task counts as (mac7/chat-source)
 
 A chat app cannot prove who is typing, even when the sender is you on your own paired account. So a
