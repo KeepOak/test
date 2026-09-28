@@ -133,7 +133,8 @@ export class ApprovalRequiredError extends Error {
     readonly remember: PolicyRemember = "session",
     fingerprint?: string,
     /** mac7/coding-next: the question in words of its own, and which kind of question it is. */
-    readonly asked: { question?: string; kind?: "project-tests"; onceOnly?: boolean } = {},
+    /** Inner tools opt in only when nothing in the outer call has run yet; otherwise its outcome stays unknown. */
+    readonly asked: { question?: string; kind?: "project-tests"; onceOnly?: boolean; beforeExecution?: boolean } = {},
   ) {
     super(asked.question ?? approvalQuestion(label, target));
     this.fingerprint = fingerprint ?? argumentFingerprint(tool, JSON.stringify({ target }));

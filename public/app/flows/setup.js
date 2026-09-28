@@ -18,7 +18,6 @@ import { logo } from "../core/logos.js";
 import { t, language, LANGUAGES } from "../../i18n.js";
 import { canSpeak, chooseLanguage } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
-import { media17 } from "../core/art17.js"; // Branch's idle loop, or its still when motion is reduced (prototype anim11)
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
 
@@ -29,7 +28,6 @@ const STEPS = ["window.flows.setup.step-welcome", "layout.modelTabs", "window.p1
 const IDS = ["welcome", "where", "models", "yours", "trunks", "reach", "tools", "keep", "people", "more", "check"];
 /* Overview's "Finish setting up", in this order: the steps not asked in the wizard. */
 export const FINISH = IDS.filter((id) => !WIZARD.includes(id));
-const POSES = [null, "think", "work"];
 /* A template's name and job are keys: shown in the chosen language, and the Trunk it makes is named in those words. Its
    colour and shape are the prototype's jobs' (flows/trunk.js TEMPLATES): the card draws that face, and the Trunk made
    from it is given the same face. */
@@ -50,7 +48,7 @@ const ownName = (code) => {
 };
 
 const pressed = (on) => `aria-pressed="${on}"`;
-const pose = (i) => POSES[i] ? `<img class="pose11 ob-pose11" src="/art/branch-${POSES[i]}.webp" alt="" loading="lazy" decoding="async" draggable="false">` : "";
+const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animation:none" aria-hidden="true"></span>` : "";
 
 function languageControl() {
   const now = language();
@@ -59,7 +57,7 @@ function languageControl() {
 }
 
 function welcome(o) {
-  return `${languageControl()}<div class="ob-stage11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11 ob-art11")}</div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>${bringBack(o)}`;
+  return `${languageControl()}<div class="ob-stage11"><span class="mark mark-face ob-art11" data-css="width:96px;height:96px" aria-hidden="true"></span></div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>${bringBack(o)}`;
 }
 
 /* The lead's call for #484: Welcome offers "Bring back your Branch" (the prototype's tile), a backup file sent to POST
