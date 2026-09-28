@@ -4131,7 +4131,9 @@ ${run.output.slice(0, 6000)}`;
     const patternNo = decision === "deny" ? null : this.patternRefusal(call, context); // eng-trunk-controls
     if (patternNo) return { refusal: { ok: false, error: patternNo }, ...held };
     const aside = decision === "deny" ? null
-      : this.offPlanQuestion(context, { label, target, readOnly }) ?? this.retriedCommandQuestion(call, args, context)
+      : this.offPlanQuestion(context, { label, target, readOnly })
+        // selfdev (owner ruling 09-27): the owner's selected Full Access never asks, so a corrected command just runs.
+        ?? (this.ownerFullAccessFor(context) !== null ? null : this.retriedCommandQuestion(call, args, context))
         ?? this.patternAside(call, context); // eng-trunk-controls
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
