@@ -96,6 +96,7 @@ import { routeForTask, routingSettings } from "./local-routing.js";
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
 import { memoryScope } from "./memory.js";
+import { keyWords, ownerFactsBlock, ownersLastMessage, personalQuestion, relevantFacts, type OwnerFact } from "./owner-facts.js"; // QA R1 follow-up (recall)
 import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
 import {
@@ -2750,7 +2751,45 @@ ${run.output.slice(0, 6000)}`;
     if (working.summary) messages.push(summaryMessage(working.summary));
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
+    this.groundInOwnerFacts(run, context, messages, ids); // QA R1 follow-up (recall)
     return { messages, ids };
+  }
+  /**
+   * QA R1 follow-up (recall): the saved facts that bear on the owner's newest message, in a short labelled block right
+   * before it (src/owner-facts.ts). For a personal question the engine looks them up itself. Only this computer's own
+   * memory is read, as the owner's (or the Trunk's) own scope sees it; nothing is written.
+   */
+  private groundInOwnerFacts(run: Run, context: ToolContext, messages: Message[], ids: (number | null)[]): void {
+    if (context.depth > 0 || !context.permissions.has("memory.read")) return;
+    const at = ownersLastMessage(messages);
+    const question = at >= 0 ? String(messages[at]!.content ?? "") : "";
+    if (!question.trim()) return;
+    const scope = memoryScope(this.store, context), agent = memoryAgent(context);
+    const personal = personalQuestion(question);
+    const found = new Map<string, OwnerFact>();
+    const words = (question.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).filter((word) => word.length > 2);
+    for (const query of ["", ...new Set([...words, ...keyWords(question)])].slice(0, 12)) {
+      for (const record of this.store.searchMemory(scope, query, agent)) {
+        if (record.data.kind === "task-scratch" || found.has(record.id)) continue;
+        found.set(record.id, { id: record.id, text: String(record.data.text ?? ""), updatedAt: record.updatedAt });
+      }
+    }
+    const facts = relevantFacts(question, [...found.values()], personal);
+    if (!facts.length) return;
+    // For a personal question just asked, the engine's own lookup follows it as a memory.search step that already ran:
+    // a small model answers from a tool's result far more readily than from a note above the question. Shown to the
+    // model only; the conversation keeps no such call.
+    const lookedUp = personal && at === messages.length - 1 && this.registry.permissionOf("memory.search") === "memory.read";
+    messages.splice(at, 0, { role: "system", content: ownerFactsBlock(facts) });
+    ids.splice(at, 0, null);
+    if (lookedUp) {
+      const call = { id: `lookup-${run.id.slice(0, 8)}`, name: "memory.search", arguments: JSON.stringify({ query: question.slice(0, 200) }) };
+      messages.push({ role: "assistant", content: "", toolCalls: [call] },
+        { role: "tool", toolCallId: call.id, content: JSON.stringify({ ok: true, result: facts.map((fact) => ({ id: fact.id, data: { text: fact.text } })), // as memory.search returns them
+          note: "Branch looked up what the owner asked you to remember, for this question. Answer from these facts." }) });
+      ids.push(null, null);
+    }
+    this.store.event(run.id, "memory.lookup", { personal, step: lookedUp, facts: facts.map((fact) => fact.id) });
   }
   /**
    * Passages from the person's own documents, added before their task the way the memory snapshot
@@ -2920,7 +2959,8 @@ ${run.output.slice(0, 6000)}`;
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
-      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) ? coreMemoryTools : [])]
+      // QA R1 follow-up (recall): a personal question ("what's my…") is memory work too, so it is offered memory.search.
+      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) || personalQuestion(run.prompt) ? coreMemoryTools : [])]
         .filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
