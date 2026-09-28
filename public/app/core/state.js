@@ -6,7 +6,7 @@ import { render } from "./dom.js";
 import { t } from "../../i18n.js";
 
 const SAVED_KEY = "branch-window";
-const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden"];
+const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "simple", "simpleFrom", "advLevel"];
 
 export const S = {
   view: "chat",
@@ -14,6 +14,9 @@ export const S = {
   tabs: { inbox: "needs", automations: "scheduled", library: "memory", customize: "trunks" },
   setPage: "general",
   level: "regular",
+  simple: false, // RES-704: Simple on (shell/simple.js), what it put away, and the last Advanced or Technical level
+  simpleFrom: null,
+  advLevel: null,
   drafts: {},
   placesShut: false,
   theme: null,
@@ -99,7 +102,9 @@ export const ownTrunkOf = (id) => (id ? E.trunks.find((t) => t.chatSessionId ===
 const roomOf = (id) => (id ? E.rooms.find((r) => r.sessionId === id) : undefined);
 export const ownName = (id) => ownTrunkOf(id)?.name || roomOf(id)?.name || "";
 export const roomFace = (room) => ({ kind: "room", members: (room?.members ?? []).map((m) => E.trunks.find((t) => t.id === m)).filter(Boolean) });
-export const chatFace = (id) => ownTrunkOf(id) ?? (roomOf(id) ? roomFace(roomOf(id)) : { kind: "main" });
+export const defaultTrunk = () => E.trunks.find((trunk) => trunk.id === E.defaultTrunkId);
+export const threadTrunk = (id) => E.trunks.find((trunk) => trunk.id === E.sessions.find((session) => session.sessionId === id)?.trunkId);
+export const chatFace = (id) => ownTrunkOf(id) ?? (roomOf(id) ? roomFace(roomOf(id)) : threadTrunk(id) ?? defaultTrunk() ?? { kind: "unassigned" });
 
 /* The engine's own ask that has a new Trunk introduce itself carries system: "trunk-intro" (src/trunks/index.ts). A
    conversation saved before that marker has the ask unmarked, so only a message with no marker is matched by its words. */

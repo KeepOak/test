@@ -42,7 +42,12 @@ export const KnobTaskLimitsSettingsSchema = z.object({
    * answer it has; null keeps the launch setting (12), or `codingModelRounds` for a task that works on
    * the project's files. A planned task is given more room on top.
    */
-  maxModelRounds: z.number().int().min(2).max(60).nullable().default(null),
+  maxModelRounds: z.number().int().min(2).max(500).nullable().default(null),
+  /**
+   * selfdev: how many tokens one task may use in all, counting every request it sends to the model; null keeps the
+   * built-in 200,000. Long coding work on Branch itself (edit, test, push, wait for checks, merge) needs more.
+   */
+  maxTaskTokens: z.number().int().min(20_000).max(20_000_000).nullable().default(null),
   /**
    * Settings › Permissions › Messages per conversation per hour: the most tasks one conversation may start in an hour.
    * It stops a runaway loop (a schedule, a trigger, a chat app or two Trunks answering each other): such a task past it is
@@ -62,9 +67,9 @@ export const KnobCommandSettingsSchema = z.object({
   /** Longest tool answer the model reads, in characters; null keeps the launch setting. */
   toolAnswerChars: z.number().int().min(1000).max(60000).nullable().default(null),
   /** Longest one tool call may run, in seconds; null keeps the launch setting. */
-  toolTimeoutSeconds: z.number().int().min(5).max(600).nullable().default(null),
+  toolTimeoutSeconds: z.number().int().min(5).max(1800).nullable().default(null),
   /** Longest one command may run, in seconds; null keeps the launch settings file's figure. */
-  commandTimeoutSeconds: z.number().int().min(1).max(120).nullable().default(null),
+  commandTimeoutSeconds: z.number().int().min(1).max(1800).nullable().default(null),
   /** Whether a task may keep a command line open between commands. */
   keptOpenShell: z.boolean().default(true),
   /** Extra environment variable names handed to commands, beyond the built-in safe list. */

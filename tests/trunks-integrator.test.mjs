@@ -49,6 +49,7 @@ test("a Trunk's routine never fires as the owner: switched off, or with its Trun
 test("a Trunk's conversation stays narrowed while Trunks are switched off, and a chat app still needs its reach", async (t) => {
   const { app } = await fixture(t);
   on(app);
+  app.trunks.ensureDefault(true);
   const bo = app.trunks.create({ name: "Bo" });
   app.trunks.edit(bo.id, { permissions: ["files.read"] });
   await app.trunks.introduced();
