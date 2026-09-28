@@ -1057,6 +1057,7 @@ export class BranchBrowser {
       if (!this.allowed(target.href)) return;
       const answer = await guard.call(this.policy, platformFetch)(target, { redirect: 'manual', signal: AbortSignal.timeout(3000) });
       const type = answer.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+      if (!answer.ok || Number(answer.headers.get('content-length') ?? 0) > 16_384) { void answer.body?.cancel().catch(() => undefined); return; }
       const bytes = Buffer.from(await answer.arrayBuffer());
       if (answer.ok && /^image\/[\w.+-]+$/.test(type) && bytes.length > 0 && bytes.length <= 16_384)
         this.icons.set(origin, `data:${type};base64,${bytes.toString('base64')}`);
