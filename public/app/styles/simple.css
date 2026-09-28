@@ -1,0 +1,6 @@
+/* area: Simple / Advanced (RES-704, shell/simple.js). Simple puts the developer instrumentation out of sight: the
+   conversation header's computer, browser, side-panel and roster buttons, the cost so far by the message box, and the
+   status bar's gateway and running-tasks chips. Advanced shows them again; nothing is removed. */
+.simple19 .head [data-act="stage"],.simple19 .head [data-act="pane"],.simple19 .head [data-act="roster10h"],
+.simple19 .composer .cost15,.simple19 #statusbar [data-act="gwpop"],.simple19 #statusbar .tasks10{display:none}
+.simple19-btn[aria-pressed="true"]{background:var(--accent-tint,var(--fill-2));color:var(--ink)}
