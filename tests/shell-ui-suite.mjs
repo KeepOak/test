@@ -16,6 +16,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
 import { signIn, openPlace, openSettings } from "./new-window-places.mjs";
+import { watchSettled } from "./page-settled.mjs";
 
 /* Redesign (sweep-B): the shell of the new window (public/app/shell/**, design/redesign/prototype.html pass 17). The
    old window's shell (#rail-*, #trunk-strip, #settings-window, body.lx-ready, /appearance.js) is gone; waiting for its
@@ -51,15 +52,8 @@ async function fixture(t, { width = 1440, height = 1000, onboarded = true, provi
   const page = await (await browser.newContext({ viewport: { width, height }, serviceWorkers: "block" })).newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  /* A screen draws what it reads once the engine has answered, so it is read when nothing is in flight (the live event
-     stream aside, which stays open). */
-  const pending = new Set();
-  const api = (request) => new URL(request.url()).pathname.startsWith("/api/") && !request.url().includes("/api/events/stream");
-  page.on("request", (request) => { if (api(request)) pending.add(request); });
-  for (const done of ["requestfinished", "requestfailed"]) page.on(done, (request) => pending.delete(request));
-  page.settled = async () => {
-    for (let quiet = 0; quiet < 3;) { await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20)))); quiet = pending.size ? 0 : quiet + 1; }
-  };
+  /* A screen draws what it reads once the engine has answered, so it is read when nothing is in flight (page-settled.mjs). */
+  page.settled = watchSettled(page);
   await signIn(page, server);
   return { app, page, server, errors, call };
 }

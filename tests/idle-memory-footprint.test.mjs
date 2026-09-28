@@ -49,6 +49,13 @@ test("the engine loads Playwright only when a browser is started or joined", () 
   assert.equal(loaded.includes("package:playwright-core"), false);
 });
 
+test("the engine loads the MCP SDK only when a server is connected, listed or called", () => {
+  // About 5 MB of heap (its client, transports and schemas): src/integrations/mcp-sdk.ts loads it on use.
+  const loaded = staticClosure("desktop/engine-process.js");
+  assert.equal(loaded.includes("package:@modelcontextprotocol/sdk"), false, "the MCP SDK is not loaded with the engine");
+  assert.equal(loaded.includes("examples/mcp-notes-server.js"), false, "the example server is its own program");
+});
+
 test("a window started in the tray does not draw until it is first shown", () => {
   // Electron counts a window that was never shown as visible (paintWhenInitiallyHidden), so a tray start drew, decoded
   // its loops and held its tiles for nobody: 390 MB instead of 774 MB working set when it does not.
@@ -61,4 +68,14 @@ test("comments are not shipped in the built code, where V8 would keep them with 
   assert.equal(compilerOptions.removeComments, true);
   const main = readFileSync(resolve(dist, "desktop/main.js"), "utf8");
   assert.equal(/^\s*\/\/ /m.test(main), false, "the built main process has no line comments");
+});
+
+test("the added chat services load when one is built, listed or switched, and their kinds are known without them", async () => {
+  // About 2.6 MB of heap for 36 services: src/channels/parity-services.ts is loaded on use by parity-config.ts.
+  const loaded = staticClosure("desktop/engine-process.js");
+  assert.equal(loaded.includes("channels/parity-services.js"), false, "the service list is not loaded with the engine");
+  for (const service of ["irc", "xmpp", "nostr", "wechat", "mumble"]) assert.equal(loaded.includes(`channels/${service}.js`), false, `${service} is not loaded with the engine`);
+  const { parityServices } = await import("../dist/channels/parity-services.js");
+  const { PARITY_KINDS } = await import("../dist/channels/parity-kinds.js");
+  assert.deepEqual([...PARITY_KINDS], parityServices.map((service) => service.kind), "the static kinds are the services' own, in order");
 });
