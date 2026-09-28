@@ -10,6 +10,7 @@
  * - src/owner-facts.ts ownersLastMessage: return the last message of any kind: "a task carried on after a yes…".
  * - src/runtime.ts groundInOwnerFacts: drop the memory.read check: "a task without memory.read is shown none".
  * - src/runtime.ts groundInOwnerFacts: drop the lookup step (`lookedUp` false): "a personal question…".
+ * - src/runtime.ts groundInOwnerFacts: drop the group-chat check: "a group chat's question…".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -138,4 +139,18 @@ test("a task carried on after a yes: the block still sits right before the owner
   assert.equal(messages[at + 1].content, "note down what my dog is called");
   assert.equal(messages[at + 2].role, "assistant");
   assert.equal(messages[at + 3].role, "tool", "the call and its result stay together");
+});
+
+test("a group chat's question is never grounded in the owner's facts: \"my\" there may be anybody's", async (t) => {
+  for (const chatKind of ["group", "direct"]) {
+    const { app, seen, remember } = await branch(t);
+    await remember("my favourite colour is teal");
+    const run = await app.runtime.run({ prompt: "[Alice in Family] what's my favourite colour?", source: "channel",
+      onStarted: (started) => app.store.event(started.id, "channel.inbound", { channel: "fake", chatId: "g1", messageId: "m1", senderId: "alice", chatKind }) });
+    const lookup = app.store.events(run.id).find((e) => e.kind === "memory.lookup");
+    if (chatKind === "group") {
+      assert.equal(blockIn(seen.at(-1)), -1, "no block in a group");
+      assert.equal(lookup, undefined, "and no lookup");
+    } else assert.ok(lookup, "control: a direct chat is grounded");
+  }
 });

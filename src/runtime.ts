@@ -2761,6 +2761,9 @@ ${run.output.slice(0, 6000)}`;
    */
   private groundInOwnerFacts(run: Run, context: ToolContext, messages: Message[], ids: (number | null)[]): void {
     if (context.depth > 0 || !context.permissions.has("memory.read")) return;
+    // A group chat's message may be anybody's: "my" there is not the owner's, so a group is never grounded this way.
+    const chat = this.store.events(run.id).find((event) => event.kind === "channel.inbound")?.data;
+    if (chat && chat.chatKind !== "direct") return;
     const at = ownersLastMessage(messages);
     const question = at >= 0 ? String(messages[at]!.content ?? "") : "";
     if (!question.trim()) return;

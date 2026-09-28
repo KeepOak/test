@@ -12,6 +12,7 @@
  * - src/asks/app-server.ts runTurn: the same: "a program over the app-server protocol".
  * - src/trunks/rooms.ts turn: drop the `carried` start: "a room".
  * - src/carry-on.ts carryable: drop the source check: "a chat's yes never carries on the owner's own task".
+ * - src/carry-on.ts carryable: drop the lastMessageId check: "words written since the task stopped…".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -106,6 +107,16 @@ test("a chat's yes never carries on the owner's own task in that conversation: i
   app.store.sqlite.prepare("UPDATE events SET data=? WHERE id=?").run(JSON.stringify({ ...started.data, source: "owner" }), started.id);
   assert.equal(await app.channels.handle(inbound("y")), "replied");
   assert.equal(ran.length, 0, "nothing ran");
+  assert.equal(app.store.run(asked.id).status, "needs_input");
+  assert.match(sent.at(-1), /Send your next message/);
+});
+
+test("words written in the conversation since the task stopped: a chat's yes answers, but does not carry the task on", async (t) => {
+  const { app, ran, sent, asked } = await chat(t);
+  // A routine's note, written after the task stopped to ask (src/server.ts carryOnAllowed, NAS 3fd7700).
+  app.store.message(asked.sessionId, { role: "assistant", content: "Your weekly note: nothing new." });
+  assert.equal(await app.channels.handle(inbound("y")), "replied");
+  assert.equal(ran.length, 0, "nothing ran: the carried task would have read the note as the answer");
   assert.equal(app.store.run(asked.id).status, "needs_input");
   assert.match(sent.at(-1), /Send your next message/);
 });

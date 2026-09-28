@@ -616,8 +616,11 @@ export class TrunkRooms {
   /** QA R1 follow-up: a member's task that asked, still waiting and the newest in its conversation, with nothing else waiting there. */
   private carryable(sessionId: string, runId: string): boolean {
     const run = this.deps.store.run(runId);
+    // As the window's carry-on (src/server.ts carryOnAllowed): nothing written in its conversation since it stopped.
+    const stopped = this.deps.store.events(runId).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
     return run?.status === "needs_input" && run.sessionId === sessionId && !this.deps.runtime.waitingApprovals(sessionId).length
-      && this.deps.store.newestIn(this.deps.owner, sessionId)?.id === runId;
+      && this.deps.store.newestIn(this.deps.owner, sessionId)?.id === runId
+      && typeof stopped === "number" && this.deps.store.lastMessageId(sessionId) === stopped;
   }
   /** QA R1 follow-up: a member's waiting task to carry on at its next turn, by room and member, after the owner's yes. */
   private readonly carrying = new Map<string, string>();
