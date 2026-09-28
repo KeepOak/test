@@ -33,6 +33,7 @@ import { MatrixAdapter } from '../channels/matrix.js';
 import { SignalAdapter } from '../channels/signal-cli.js';
 import { connectWebSocket, type WebSocketConnect } from '../channels/ws-client.js';
 import { WebConfigSchema, type WebAccess } from './web.js';
+import { LaunchMcp, followLaunchFile } from './launch-mcp.js';
 import { HookSchema, type Hooks, type HookRunner, type HookConfig } from '../hooks.js';
 import type { ToolContext } from '../contracts.js';
 import type { NetworkPolicy } from '../network-policy.js';
@@ -305,9 +306,22 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
   if (new Set(config.mcp.map(server => server.id)).size !== config.mcp.length)
     throw new Error('MCP server IDs must be unique');
   try {
-    for (const server of config.mcp) {
+    // The file's MCP servers follow the file while Branch runs (launch-mcp.ts): added, removed or changed ones take
+    // effect by the next turn, with nothing else restarted. Only this section is followed; the others are read once.
+    const launch = new LaunchMcp(async (server) => {
       const stop = await startMcp(registry, server, env, policy, channels?.mcp);
-      if (stop) closers.push(stop);
+      // Stopping a server takes its tools out too (its tools are named mcp.<id>.<tool>), not only its program.
+      const prefix = `mcp.${McpConfigSchema.parse(server).id}.`;
+      return async () => {
+        await stop?.();
+        for (const name of registry.names()) if (name.startsWith(prefix)) registry.unregister(name);
+      };
+    });
+    closers.push(() => launch.close());
+    await launch.apply(config.mcp, true);
+    if (path) {
+      const stopFollowing = followLaunchFile(path, async () => (await readConfig(path, env, channels))?.mcp ?? [], launch);
+      closers.push(async () => stopFollowing());
     }
     if (config.browser) {
       const browser = new BranchBrowser(config.browser);
