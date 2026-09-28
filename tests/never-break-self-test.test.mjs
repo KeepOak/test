@@ -15,7 +15,7 @@ import { createBranch } from "../dist/index.js";
 import { DemoProvider } from "../dist/demo.js";
 import { selfTest } from "../dist/never-break/self-test.js";
 
-/** An install whose owner turned the strict guards on and chose a model of their own. */
+/** An install whose owner turned the strict guards on, chose a model of their own, has Trunks and a paired chat app. */
 async function ownerInstall(t, progressJudge) {
   const root = await mkdtemp(join(tmpdir(), "branch-self-test-"));
   t.after(() => discardTemp(root));
@@ -29,7 +29,22 @@ async function ownerInstall(t, progressJudge) {
     { id: "owner-ollama", name: "Owner's model", catalogId: "ollama", model: "llama2", extras: { baseUrl: "http://127.0.0.1:9" } },
   ] });
   app.store.save("settings", owner, "models", { activePreset: "owner-ollama", fallbackOrder: ["owner-ollama"], cooldownMs: 60000, reasoning: null });
+  // Trunks, one answering with the owner's model and assigned to look after updates, and a paired chat app sender.
+  const keeper = app.trunks.create({ name: "Update keeper" }, { model: "owner-ollama" });
+  app.trunks.create({ name: "Scout" });
+  app.store.save("settings", owner, "update-keeper", { trunkId: keeper.id });
+  const at = new Date().toISOString();
+  app.store.save("settings", owner, "channel-pair:telegram:1234567", { status: "approved", code: "123456", name: "Owner", requestedAt: at, approvedAt: at });
   await app.close();
+  // Opened again as the install would be: every part of the fixture really loads.
+  const again = await createBranch({ dataDir, workspace: join(root, "workspace"), provider: new DemoProvider() });
+  try {
+    assert.equal(again.trunks.records.list().length, 2);
+    assert.equal(again.trunks.records.find(keeper.id)?.model, "owner-ollama");
+    assert.equal(again.channels.summary().approved.length, 1);
+    assert.equal(again.runtime.models.settings(owner).activePreset, "owner-ollama", "the owner's own model is chosen");
+    assert.deepEqual(again.runtime.models.settings(owner).fallbackOrder, ["owner-ollama"]);
+  } finally { await again.close(); }
   return { dataDir, workspace: join(root, "check-workspace") };
 }
 
