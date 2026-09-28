@@ -1739,6 +1739,11 @@ async function api(
     const { url } = z.object({ url: z.string().url().max(2000) }).strict().parse(await readBody(request));
     return app.skillRegistry.browse(url);
   }
+  // The owner's yes to a registry's signing key, by the fingerprint browsing showed them (src/registry-install.ts).
+  if (request.method === "POST" && path === "/api/registry/trust") {
+    const { url, fingerprint } = z.object({ url: z.string().url().max(2000), fingerprint: z.string().regex(/^[0-9a-fA-F]{64}$/) }).strict().parse(await readBody(request));
+    return { key: await app.skillRegistry.trustKey(url, fingerprint) };
+  }
   if (request.method === "POST" && path === "/api/registry/install") {
     const { url, skillId } = z.object({ url: z.string().url().max(2000), skillId: z.string().min(1).max(64) }).strict().parse(await readBody(request));
     return app.skillRegistry.install(url, skillId);

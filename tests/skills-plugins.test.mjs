@@ -157,18 +157,37 @@ function registryServer(t, options = {}) {
   return { state, server, started: new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)), url: () => `http://127.0.0.1:${server.address().port}/index.json` };
 }
 
-test("a signed registry entry is checked, a forged one is refused, and an unsigned one is labelled", async (t) => {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const spki = publicKey.export({ type: "spki", format: "der" }).toString("base64");
-  const registry = registryServer(t, { publicKey: spki, sign: (entry) => signRegistryEntry(privateKey, "Test registry", entry) });
+test("a registry's key is trusted only once pinned here, and a pinned registry cannot swap or drop its key", async (t) => {
+  const first = generateKeyPairSync("ed25519"), second = generateKeyPairSync("ed25519");
+  const spki = (pair) => pair.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  const options = { publicKey: spki(first), sign: (entry) => signRegistryEntry(first.privateKey, "Test registry", entry) };
+  const registry = registryServer(t, options);
   await registry.started;
   const { app, api } = await fixture(t, [say("ok")], { web: { allowPrivateAddresses: true } });
   const index = await api("registry/browse", { url: registry.url() });
-  assert.deepEqual(index.skills.map((skill) => [skill.id, skill.signed]), [["helper", "checked"], ["forged", "invalid"]]);
+  assert.equal(index.key.status, "not-pinned", "a key the registry supplies about itself is not trusted by itself");
+  assert.deepEqual(index.skills.map((skill) => [skill.id, skill.signed]), [["helper", "untrusted"], ["forged", "invalid"]]);
   await assert.rejects(api("registry/install", { url: registry.url(), skillId: "forged" }), /signature for this skill does not match/);
+  await assert.rejects(api("registry/trust", { url: registry.url(), fingerprint: "0".repeat(64) }), /not the one you approved/);
+  const trusted = await api("registry/trust", { url: registry.url(), fingerprint: index.key.published });
+  assert.equal(trusted.key.status, "pinned");
+  const pinned = await api("registry/browse", { url: registry.url() });
+  assert.deepEqual(pinned.skills.map((skill) => [skill.id, skill.signed]), [["helper", "checked"], ["forged", "invalid"]]);
   const installed = await api("registry/install", { url: registry.url(), skillId: "helper" });
   assert.equal(installed.origin.signed, "checked");
   assert.equal(app.store.skills.list("local").length, 1);
+  // Whoever controls the registry now publishes another key and signs with it: nothing from it is taken.
+  Object.assign(options, { publicKey: spki(second), sign: (entry) => signRegistryEntry(second.privateKey, "Test registry", entry) });
+  registry.state.version = "2.0.0";
+  const swapped = await api("registry/browse", { url: registry.url() });
+  assert.equal(swapped.key.status, "changed");
+  assert.equal(swapped.skills[0].signed, "invalid");
+  await assert.rejects(api("registry/update", { skillId: installed.id }), /not the one you trusted/);
+  // Or it drops its key and its signatures altogether: still refused, never shown as merely unsigned.
+  Object.assign(options, { publicKey: undefined, sign: undefined });
+  const dropped = await api("registry/browse", { url: registry.url() });
+  assert.equal(dropped.skills[0].signed, "invalid");
+  await assert.rejects(api("registry/update", { skillId: installed.id }), /no longer publishes the signing key/);
   // A registry with no key at all still works, and says plainly that nothing was signed.
   const plain = registryServer(t);
   await plain.started;
