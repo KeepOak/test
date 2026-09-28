@@ -69,3 +69,13 @@ test("comments are not shipped in the built code, where V8 would keep them with 
   const main = readFileSync(resolve(dist, "desktop/main.js"), "utf8");
   assert.equal(/^\s*\/\/ /m.test(main), false, "the built main process has no line comments");
 });
+
+test("the added chat services load when one is built, listed or switched, and their kinds are known without them", async () => {
+  // About 2.6 MB of heap for 36 services: src/channels/parity-services.ts is loaded on use by parity-config.ts.
+  const loaded = staticClosure("desktop/engine-process.js");
+  assert.equal(loaded.includes("channels/parity-services.js"), false, "the service list is not loaded with the engine");
+  for (const service of ["irc", "xmpp", "nostr", "wechat", "mumble"]) assert.equal(loaded.includes(`channels/${service}.js`), false, `${service} is not loaded with the engine`);
+  const { parityServices } = await import("../dist/channels/parity-services.js");
+  const { PARITY_KINDS } = await import("../dist/channels/parity-kinds.js");
+  assert.deepEqual([...PARITY_KINDS], parityServices.map((service) => service.kind), "the static kinds are the services' own, in order");
+});
