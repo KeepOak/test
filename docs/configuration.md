@@ -3227,7 +3227,7 @@ background command finishes is not done yet.
 
 ## Backup, restore and health
 
-`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix.
+`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix. The ordinary check changes nothing: it only looks at the workspace folder (there, a folder, writable by you). Only `--probe` (and `?probe=1`) writes one small test file into the workspace and removes it at once, besides sending each connection one real request.
 
 ## Moving in from another assistant
 
