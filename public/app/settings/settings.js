@@ -2,9 +2,11 @@
    Search uses a module variable (not S.setQ) to persist between draws without rebuilding state. */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, level, save } from "../core/state.js";
+import { S, E, level, save, ownerHere } from "../core/state.js";
 import { on, has } from "../core/actions.js";
 import { ic, closePop } from "../core/ui.js";
+import { calm17 } from "../core/art17.js";
+import { ROWS, rowKey, buildIndex, search } from "./find.js";
 import { markLive } from "../core/features.js";
 import { lockBanner } from "../chat/dockinfo.js"; // shell-031: Lockdown's banner above Settings too, as on every place
 
@@ -56,6 +58,65 @@ export const NAV = [
 
 let searchText = "";
 
+/* Settings search (settings/find.js): every page's rows, the owner's only. The pages not opened yet are started once, the
+   first time something is searched, so the rows waiting on the engine can be found too. */
+const pageName = (id) => id === "advanced" ? t("settings.page.advanced") : id === "developer" ? t("settings.card.developer")
+  : say(NAV.flatMap(([, items]) => items).find(([p]) => p === id)?.[1] ?? id);
+function indexPages() {
+  return [...NAV.flatMap(([, items]) => items.map(([id]) => id)), "advanced", "developer"].map((id) => ({
+    id, name: pageName(id), least: id === "advanced" ? 1 : id === "developer" ? 2 : 0, draw: () => PAGES[id].draw(),
+    tabs: id === "models" ? models.TAB_LIST().map((tab) => ({ ...tab, draw: () => models.drawTab(tab.id) })) : undefined,
+  }));
+}
+let primed = false;
+export function primeSearch() {
+  if (primed || !E.loaded || !ownerHere()) return;
+  primed = true;
+  for (const id of Object.keys(PAGES)) if (!started.has(id)) open(id);
+}
+/** The settings rows matching `text`, best first; none for anybody but the owner (never a setting of the owner's). */
+export function findSettings(text, limit) {
+  if (!ownerHere() || !text.trim()) return [];
+  primeSearch();
+  return search(buildIndex(indexPages()), text, limit);
+}
+let hits = [];
+
+/* A found row: its page (and tab) opened at a level that shows it, then the row scrolled to and marked until it is left. */
+let jumping = null, marked = null;
+export async function openSetting(row) {
+  searchText = "";
+  S.view = "settings";
+  closePop();
+  if (level() < row.level) { S.level = ["regular", "advanced", "technical"][row.level]; save(); }
+  if (row.tab) models.showTab(row.tab);
+  jumping = { ...row, until: Date.now() + 5000 };
+  marked = null;
+  await go(row.page);
+  if (S.setPage === row.page) renderNow();
+}
+function land(col) {
+  const want = jumping ?? marked;
+  if (!want || !col) return;
+  const key = `${want.card}\u001f${want.title}`;
+  const row = [...col.querySelectorAll(ROWS)].find((el) => rowKey(el) === key);
+  if (!row) { if (jumping && Date.now() > jumping.until) jumping = null; return; }
+  row.classList.add("found18");
+  if (!jumping) return;
+  jumping = null;
+  marked = want;
+  row.classList.add("in18"); // the brief glow plays once, when the row is reached, never on a later redraw
+  row.scrollIntoView({ block: "center", behavior: calm17() ? "auto" : "smooth" });
+  row.querySelector("input,button,select,textarea")?.focus({ preventScroll: true });
+}
+
+const hitRow = (row, i) => `<button class="set-hit" type="button" role="listitem" data-act="sethit" data-i="${i}"${row.note ? ` data-tip="${esc(row.note)}"` : ""}><b>${esc(row.title)}</b><small>${esc([row.pageName, row.tabName, row.card].filter(Boolean).join(" › "))}</small>${row.level > level() ? `<span class="pill idle">${esc(row.level === 2 ? t("settingsGrown.level.technical") : t("settings.page.advanced"))}</span>` : ""}</button>`;
+function found(q, rows) {
+  hits = rows.slice(0, 40);
+  return `<div class="set-found" role="list" aria-label="${esc(t("window.settings.settings.found", { query: q.trim() }))}">${hits.map(hitRow).join("")
+    || `<p class="hint">${t("window.settings.settings.nothing-found")}</p>`}</div>`;
+}
+
 /* A page starts (registers its actions, fetches its data) the first time it is opened after sign-in, and re-reads its
    data each time it is opened again; nothing is fetched before the engine has accepted the window. A page that draws a
    choice from what the engine keeps (waitFirst) is shown once its read has come back, so it never shows none pressed. */
@@ -91,9 +152,10 @@ export function draw() {
   const lv = level();
   if (!started.has(S.setPage)) open(S.setPage);
   const q = searchText.trim().toLowerCase();
+  const rows = q ? findSettings(searchText) : [];
   const extra = [lv >= 1 ? ["advanced", t("settings.page.advanced")] : null, lv >= 2 ? ["developer", t("settings.card.developer")] : null].filter(Boolean);
   const groups = NAV.map(([g, items]) => [g, g === "Care" ? [...items, ...extra] : items])
-    .map(([g, items]) => [g, items.filter(([, l]) => !q || say(l).toLowerCase().includes(q))])
+    .map(([g, items]) => [g, items.filter(([id, l]) => !q || say(l).toLowerCase().includes(q) || rows.some((r) => r.page === id))])
     .filter(([, items]) => items.length);
   if ((S.setPage === "advanced" && lv < 1) || (S.setPage === "developer" && lv < 2)) S.setPage = "general";
 
@@ -106,7 +168,7 @@ export function draw() {
     .join("") || `<p class="hint" data-css="padding:0 10px">${t("window.settings.settings.no-page-matches")}</p>`;
 
   const page = PAGES[S.setPage];
-  const pageContent = page?.draw?.() ?? "";
+  const pageContent = q && ownerHere() ? found(searchText, rows) : page?.draw?.() ?? "";
 
   return `${lockBanner()}<div class="settings">
     <nav class="set-nav" aria-label="${t("dashboard.pages.title")}">
@@ -138,6 +200,8 @@ export function init() {
 
   on("setpage", (el) => {
     closePop();
+    searchText = ""; // a page picked from the list is shown, not the rows found
+    marked = null;
     go(el.dataset.v);
   });
 
@@ -165,6 +229,14 @@ export function init() {
     renderNow();
   });
 
+  on("sethit", (el) => { const row = hits[Number(el.dataset.i)]; if (row) openSetting(row); });
+  /* Enter in the search box opens the best row found. */
+  document.addEventListener("keydown", (e) => {
+    if (e.target?.id !== "set-q" || e.key !== "Enter" || !searchText.trim()) return;
+    const best = findSettings(searchText, 1)[0];
+    if (best) { e.preventDefault(); openSetting(best); }
+  });
+
   on("set-q-input", (el) => {
     searchText = el.value;
     renderNow();
@@ -188,10 +260,10 @@ export function init() {
   for (const page of Object.values(PAGES)) {
     live.push(...(page.live ? Object.keys(page.live) : []));
   }
-  markLive(["setpage", "setgo", "setlevel", "sw:set-q", ...live]);
+  markLive(["setpage", "setgo", "setlevel", "sw:set-q", "sethit", ...live]);
 }
 
 export function after(main) {
-
   for (const page of Object.values(PAGES)) page.after?.($(".set-col", main));
+  land($(".set-col", main));
 }
