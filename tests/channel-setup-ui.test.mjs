@@ -249,3 +249,38 @@ test("the phone shows the same panel as links: the store for this phone and the 
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
   assert.deepEqual(errors, []);
 });
+
+/* CHAT-147: an app set up here connects there and then, and the wizard says what really happened. Signal with a program
+   that is not on this computer is the honest failure, and needs no network and runs nothing. The Save step offers the
+   owner's Trunks with the default one chosen, never a "Branch" of its own. */
+test("the wizard connects without a restart and says when it could not; who answers is a Trunk, never Branch", async (t) => {
+  const { page, errors, outside, call } = await signedIn(t);
+  await call("/api/trunks", { name: "Scout" });
+  await call("/api/trunks", { name: "Ivy" });
+  const trunks = await call("/api/trunks");
+  await openChannels(page);
+  await openWizard(page, "signal");
+  const dlg = page.locator(".dlg");
+  await next(page);
+  await page.locator('[data-chf="path"]').fill("/nonexistent-branch-test/signal-cli");
+  await page.locator('[data-chf="account"]').fill("+15551234567");
+  await next(page);
+  await dlg.getByText("Signal is saved but not connected").waitFor();
+  assert.match(await dlg.textContent(), /nothing at \/nonexistent-branch-test\/signal-cli/, "the engine's own reason");
+  assert.equal(((await call("/api/channels")).channels ?? []).some((c) => c.id === "signal"), false, "not reported as connected");
+  assert.equal((await call("/api/channel-setup/signal")).setUpHere, true, "kept, so it connects at the next start");
+
+  await next(page);
+  const who = dlg.locator('[data-act="chw-who"]');
+  assert.deepEqual(await who.allTextContents(), trunks.trunks.map((tr) => (tr.id === trunks.defaultId ? `${tr.name} · default` : tr.name)));
+  assert.deepEqual([...(await who.allTextContents())].map((text) => text.split(" · ")[0]).sort(), ["Ivy", "Scout"], "every Trunk, and only Trunks");
+  const home = (trunks.trunks.find((tr) => tr.id === trunks.defaultId) ?? trunks.trunks[0]).name;
+  assert.equal(await dlg.locator('[data-act="chw-who"][aria-pressed="true"]').textContent().then((text) => text.split(" · ")[0]), home, "the default Trunk is chosen");
+  assert.equal(await dlg.getByRole("button", { name: "Branch", exact: true }).count(), 0, "no brand-voiced Branch conversation");
+
+  await dlg.locator('[data-act="chw-remove"]').click();
+  await page.getByText("Signal is disconnected").waitFor();
+  assert.equal((await call("/api/channel-setup/signal")).setUpHere, false);
+  assert.deepEqual(outside, [], "nothing left this computer");
+  assert.deepEqual(errors, []);
+});

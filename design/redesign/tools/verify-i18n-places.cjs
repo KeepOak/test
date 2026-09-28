@@ -96,7 +96,7 @@ async function open(browser, lang, fr) {
   await page.getByRole("button", { name: lang === "fr" ? fr["action.connect"] : "Connect", exact: true }).click();
   const setup = page.locator(".ob9[role=dialog]");
   await setup.waitFor({ timeout: 30000 }).catch(() => null);
-  if (await setup.isVisible().catch(() => false)) await page.locator('[data-act="ob-close"]').first().click();
+  if (await setup.isVisible().catch(() => false)) await page.keyboard.press("Escape"); // Skip shows only after Welcome
   await page.locator("#side").waitFor({ timeout: 30000 });
   return { context, page, errors };
 }
