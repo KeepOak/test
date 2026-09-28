@@ -149,7 +149,12 @@ test("B19-5 people cannot read each other's conversations, and the owner's only 
   assert.equal((await f.call("GET", `/api/people/conversations/${made.body.sessionId}`, { key: bo })).status, 404);
   assert.equal((await f.call("POST", `/api/people/conversations/${made.body.sessionId}/message`, { key: bo, body: { prompt: "hi" } })).status, 404);
   assert.deepEqual((await f.call("GET", "/api/people/conversations", { key: bo })).body.own.sessions, []);
-  assert.equal((await f.call("GET", "/api/people/conversations", { key: ada })).body.own.sessions.length, 1);
+  const adaSessions = (await f.call("GET", "/api/people/conversations", { key: ada })).body.own.sessions;
+  const { TrunkRecords } = await import("../dist/trunks/record.js");
+  const ownDefault = new TrunkRecords(f.app.store, `profile:${f.ada.id}`).list()[0];
+  assert.ok(ownDefault, "Ada has her own default, separate from the owner's");
+  assert.deepEqual(adaSessions.map((session) => session.sessionId).sort(), [...new Set([made.body.sessionId, ownDefault.chatSessionId])].sort());
+  assert.ok(adaSessions.every((session) => f.app.store.ownsSession(`profile:${f.ada.id}`, session.sessionId)), "every listed conversation belongs to Ada");
   // While her task runs, her conversation is lent to the assistant and she can still read it.
   f.app.store.reassignSession(made.body.sessionId, f.app.runtime.owner);
   assert.equal((await f.call("GET", `/api/people/conversations/${made.body.sessionId}`, { key: ada })).status, 200);
