@@ -51,7 +51,7 @@ test("its actions are registered once and marked live; Try it uses the new conve
     assert.equal(all.split(`on("${act}"`).length - 1, 1, `on("${act}") once`);
     assert.match(code, new RegExp(`markLive\\(\\[[^\\]]*"${act}"`), `${act} marked live`);
   }
-  assert.match(code, /S\.drafts\.new = e\.ask;\s*startConversation\(\);/, "the B003 way: words in the box, not sent");
+  assert.match(code, /S\.drafts\.new = text;\s*startConversation\(\);/, "the B003 way: prepared words in the box, not sent");
   assert.doesNotMatch(code, /\bsend\(|startWith\(/, "Try it never sends");
 });
 

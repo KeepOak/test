@@ -29,7 +29,8 @@ export async function loadAccounts() {
 export const pools = () => A.view?.pools ?? [];
 export const poolById = (id) => pools().find((p) => p.pool === id);
 /* Every account in the engine's order, pool by pool, with the pool's own facts beside it. */
-export const allAccounts = () => pools().flatMap((p) => p.accounts.map((a) => ({ ...a, pool: p.pool, poolName: p.name ?? p.pool, kind: p.kind, first: p.defaultAccount === a.id })));
+export const allAccounts = () => pools().flatMap((p) => p.accounts.map((a) => ({ ...a, pool: p.pool, poolName: p.name ?? p.pool, kind: p.kind, first: p.defaultAccount === a.id && a.ready === true })));
+export const accountDetail = (a, service) => [a.customLabel, a.identity?.organization, service, a.signInProblem].filter(Boolean).join(" · ");
 const accountOf = (el) => allAccounts().find((a) => a.pool === el.dataset.pool && a.id === el.dataset.id);
 /* A household person (GET /api/profiles names them as active) may look, but every change is the owner's: the engine
    refuses it (src/accounts/api.ts requireOwner), so those controls are drawn greyed. */
@@ -51,7 +52,7 @@ function openRename(el) {
   if (!a) return;
   const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}"`;
   openDlg({ title: t("accounts.action.rename"),
-    body: `<label class="fld"><span>${t("window.flows.acct.call-it")}</span><input class="inp" id="acct-name" value="${esc(a.label)}" maxlength="60" autocomplete="off"></label>`,
+    body: `<label class="fld"><span>${t("window.flows.acct.call-it")}</span><input class="inp" id="acct-name" value="${esc(a.savedLabel ?? a.label)}" maxlength="60" autocomplete="off"></label>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="acct-rename-save" ${ids}>${t("action.save")}</button>` });
 }
 async function saveRename(el) {
