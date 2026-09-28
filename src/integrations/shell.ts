@@ -11,7 +11,7 @@ import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
-import { checkRunner, heldCover, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
+import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -97,7 +97,7 @@ export class BranchShell {
     const result = await this.spawn({ executable, args: held.args, cwd, injected, netless, job,
       timeoutMs: input.timeoutMs ?? limitMs, signal, passed: tuned.env,
       // wave mac3 (os-sandbox): a command pointed at the dead address gets no network behind the wall either.
-      wall: confined ? confinedWall(context.osSandbox, { registry: held.registry })
+      wall: confined ? confinedWall(context.osSandbox, { registry: held.registry, open: context.ownerFullAccess === true })
         : context.osSandbox && netless ? { ...context.osSandbox, network: 'none' as const } : context.osSandbox,
       // Q12: a command held to one folder gets that folder as the only place in the workspace it may write.
       workspace: confined ?? context.workspace, confined: !!confined });
@@ -176,7 +176,7 @@ export class BranchShell {
    */
   private async wslStart(run: Parameters<BranchShell['spawn']>[0], env: NodeJS.ProcessEnv, scratch: string) {
     const plan = wslHeldPlan({ executable: run.executable, args: run.args, cwd: run.cwd, workspace: run.workspace, env,
-      secrets: Object.keys(run.injected), registry: installsPackages(run.executable, run.args), timeoutMs: run.timeoutMs });
+      secrets: Object.keys(run.injected), registry: installsPackages(run.executable, run.args), open: run.wall?.network === 'open', timeoutMs: run.timeoutMs });
     const runner = wslHeldRunner();
     await checkRunner(runner, run.workspace);
     const missing = await wslReadiness(this.wslProbe);
@@ -253,8 +253,11 @@ export const npmRegistryHost = 'registry.npmjs.org';
 
 /** Whether a held command is `npm ci`: the alias is npm itself, its first word is `ci`, and nothing turns scripts on. */
 export function installsPackages(executable: { path: string; args: readonly string[] }, args: readonly string[]): boolean {
-  const name = executable.path.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
-  const [first, ...rest] = [...executable.args, ...args];
+  const program = executable.path.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
+  // Windows' npm alias is node.exe with npm's own script first (src/integrations/wsl-held.ts npmScript).
+  const all = [...executable.args, ...args], script = program === 'node' ? npmScript(all[0]) : null;
+  const name = script ?? program;
+  const [first, ...rest] = script ? all.slice(1) : all;
   // Nothing after `--` (npm would take a flag there as a name), and no word about scripts but `--ignore-scripts` itself,
   // so no package's scripts can be turned back on while the registry is open.
   return name === 'npm' && first === 'ci' && rest.every((arg) => arg !== '--' && (!/scripts/i.test(arg) || arg === '--ignore-scripts'));
@@ -269,22 +272,24 @@ export function heldCommand(executable: { path: string; args: readonly string[] 
  * Q12: the OS sandbox for a command held to one folder. It never gets a standing or one-time yes
  * to write anywhere else, so a blocked write is reported, never offered as a question.
  */
-export function confinedWall(wall: WallContext | undefined, how: { registry?: boolean } = {}): WallContext {
+export function confinedWall(wall: WallContext | undefined, how: { registry?: boolean; open?: boolean } = {}): WallContext {
   const base: WallContext = wall ?? { network: 'none', keySites: {}, unreadable: [], readOnly: [],
     answer: () => undefined, granted: () => [], spend: () => undefined };
   // selfdev: a held command gets no network, whatever the owner's wall allows elsewhere, so nothing it runs (gh, git, a
   // script) can reach GitHub with this computer's sign-in. The one exception is `npm ci`, which reaches the npm registry
   // and nothing else, through the wall's door; no saved key is ever swapped in for it, so it cannot sign in there.
-  const registry = how.registry === true;
-  return { ...base, network: registry ? 'per-site' as const : 'none' as const, keySites: {},
+  // selfdev: in the owner's selected Full Access (`open`) it may reach any site (downloads, installs); still no saved key,
+  // and its writes are still held to the worktree.
+  const registry = how.registry === true, open = how.open === true;
+  return { ...base, network: open ? 'open' as const : registry ? 'per-site' as const : 'none' as const, keySites: {},
     granted: (kind) => (kind === 'sandbox.write' || kind === 'network.site' ? [] : base.granted(kind)),
     answer: (kind, target) => (kind === 'sandbox.write' ? 'deny'
-      : kind === 'network.site' ? (registry && target.toLowerCase() === npmRegistryHost ? 'allow' : 'deny') : base.answer(kind, target)) };
+      : kind === 'network.site' ? (open || (registry && target.toLowerCase() === npmRegistryHost) ? 'allow' : 'deny') : base.answer(kind, target)) };
 }
 
 export function registerShell(registry: ToolRegistry, shell: BranchShell): void {
   registry.onRunFinished(context => shell.closeRun(context));
   registry.register({ name: 'shell.execute', permission: 'shell.execute', parameters: ShellInputSchema,
-    description: 'Run a configured trusted host executable alias with argument arrays in a workspace directory. Name secrets from the active project in `secrets` to expose them to the program as environment variables; their values never appear in results. Set `netless` to point the command at a dead local address so tools that respect proxy settings cannot reach the internet (best effort, not a firewall). On Windows the command is placed in a job object so the system enforces the memory and processor limits and kills the whole tree afterwards; where that is unavailable the limits are sampled instead. This is still host execution, not OS isolation: programs can read the host filesystem and launch other programs.',
+    description: 'Run a command-line program in a workspace folder: one of the configured aliases (such as git, node or npm) with its arguments as a list, for builds, tests (node --test with the test file), installs and git commands. Run a configured trusted host executable alias with argument arrays in a workspace directory. Name secrets from the active project in `secrets` to expose them to the program as environment variables; their values never appear in results. Set `netless` to point the command at a dead local address so tools that respect proxy settings cannot reach the internet (best effort, not a firewall). On Windows the command is placed in a job object so the system enforces the memory and processor limits and kills the whole tree afterwards; where that is unavailable the limits are sampled instead. This is still host execution, not OS isolation: programs can read the host filesystem and launch other programs.',
     execute: (input, context) => shell.execute(input, context) });
 }
