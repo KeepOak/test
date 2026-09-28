@@ -3,7 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 /**
  * A task never wipes the workspace. Deleting everything in it cannot be undone, so the engine refuses the calls that
  * would do it, whatever the model is and whatever the rules say: moving files to a null device (which deletes them),
- * moving the workspace itself, and a recursive delete aimed at the whole workspace. The task then stops and says
+ * moving the workspace itself, and a recursive delete (or `find … -delete`) aimed at the whole workspace. The task then stops and says
  * plainly that nothing was deleted (`wipeQuestion`), so the answer never depends on how well the model relays it.
  * Deleting named files the person asked about is not this: those calls name what they touch and go through the rules.
  */
@@ -12,7 +12,7 @@ export const wipeQuestion = "I haven't deleted anything. Deleting everything in 
 
 const nullDevice = /^(?:\/dev\/null|nul:?|\\\\\.\\nul|\/dev\/zero)$/i;
 const wholeWorkspace = /^(?:\.|\.\/|\.\\|\*|\.\/\*|\.\\\*|\/\*?|~\/?|\$?HOME\/?|%USERPROFILE%)$/i;
-const deleteVerb = /^(?:rm|rmdir|del|erase|rd|remove-item|ri|shred)$/i;
+const deleteVerb = /^(?:rm|rmdir|del|erase|rd|remove-item|ri|shred|find)$/i;
 const recursiveFlag = /^(?:-[a-z]*r[a-z]*|--recursive|\/s|-recurse)$/i;
 
 /** Why this call would wipe the workspace, in a few words, or null. */
@@ -34,12 +34,13 @@ function movesAway(args: unknown, workspace: string): string | null {
 }
 
 function deletesEverything(words: string[], workspace: string): string | null {
-  const verbAt = words.findIndex((word) => deleteVerb.test(word.replace(/\.exe$/i, "")) || /^git$/i.test(word));
+  const verbAt = words.findIndex((word) => deleteVerb.test(word.replace(/\.exe$/i, "")));
   if (verbAt < 0) return null;
   const rest = words.slice(verbAt + 1);
-  const gitClean = /^git$/i.test(words[verbAt]!) && /^clean$/i.test(rest[0] ?? "") && rest.some((word) => /^-[a-z]*[dx][a-z]*$/i.test(word));
-  const recursive = gitClean || rest.some((word) => recursiveFlag.test(word));
-  const aimed = gitClean || rest.some((word) => !word.startsWith("-") && isWholeWorkspace(word, workspace));
+  // `find <workspace> -delete` walks everything under it, as a recursive delete does.
+  const finds = /^find$/i.test(words[verbAt]!.replace(/\.exe$/i, ""));
+  const recursive = finds ? rest.includes("-delete") : rest.some((word) => recursiveFlag.test(word));
+  const aimed = rest.some((word) => !word.startsWith("-") && isWholeWorkspace(word, workspace));
   return recursive && aimed ? "deleting everything in the workspace" : null;
 }
 
