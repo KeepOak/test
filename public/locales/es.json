@@ -6849,6 +6849,7 @@
   "window.chat.stage.change-reach": "Cambiar lo que puede usar",
   "window.chat.stage.close-small": "Cerrar la ventana pequeña",
   "window.chat.stage.computer-of": "Equipo de {name}",
+  "window.chat.stage.driving": "Tienes el control · {name} está en pausa",
   "window.chat.stage.full-screen": "Pantalla completa",
   "window.chat.stage.full-size": "Abrir a tamaño completo",
   "window.chat.stage.go": "Ir",

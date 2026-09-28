@@ -6849,6 +6849,7 @@
   "window.chat.stage.change-reach": "Change what it may use",
   "window.chat.stage.close-small": "Close the small window",
   "window.chat.stage.computer-of": "{name}’s computer",
+  "window.chat.stage.driving": "You’re driving · {name} is paused",
   "window.chat.stage.full-screen": "Full screen",
   "window.chat.stage.full-size": "Open full size",
   "window.chat.stage.go": "Go",

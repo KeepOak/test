@@ -6850,6 +6850,7 @@
   "window.chat.stage.change-reach": "Changer ce qu’il peut utiliser",
   "window.chat.stage.close-small": "Fermer la petite fenêtre",
   "window.chat.stage.computer-of": "Ordinateur de {name}",
+  "window.chat.stage.driving": "C’est vous qui pilotez · {name} est en pause",
   "window.chat.stage.full-screen": "Plein écran",
   "window.chat.stage.full-size": "Ouvrir en grand",
   "window.chat.stage.go": "Aller",
