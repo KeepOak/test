@@ -178,6 +178,9 @@ export class SlackAdapter implements ChannelAdapter {
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
   }
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    await this.call("chat.delete", this.options.token, { channel: chatId, ts: messageId });
+  }
   // ---- R17-C (R17-022): a file through Slack's external upload (the older files.upload is retired).
   // 1. files.getUploadURLExternal hands out an address and a file id; 2. the bytes go to that
   // address; 3. files.completeUploadExternal shares the file in the chat, in the thread if one is named.

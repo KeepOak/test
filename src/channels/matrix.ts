@@ -203,6 +203,12 @@ export class MatrixAdapter implements ChannelAdapter {
     await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
       "m.relates_to": { rel_type: "m.replace", event_id: eventId } });
   }
+  /** Redacts an event this adapter sent (only its own, by the handle it gave it). */
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    const eventId = this.sent.get(messageId);
+    if (!eventId) throw new Error("Matrix: that message was not sent from here, so it cannot be removed");
+    await this.redact(this.rooms.get(chatId) ?? chatId, eventId);
+  }
   /** Plain words, with the code as Matrix's HTML beside them when there is any. */
   private static content(text: string, format?: MessageFormat): Record<string, unknown> {
     return { msgtype: "m.text", body: text,
