@@ -1115,7 +1115,10 @@ export class BranchBrowser {
     try { url = new URL(address); } catch { return null; }
     try { from = new URL(referer); } catch { from = null; }
     for (const relay of this.signInRelays) {
-      if (relay.owner !== owner || !relay.match(url, from)) continue;
+      if (relay.owner !== owner || !relay.match(url)) continue;
+      // Not sent from the maker's own pages: blocked all the same (its code must never reach the tab or the website),
+      // and nothing is handed to the program, which keeps waiting for the owner's own sign-in.
+      if (!relay.trusted(from)) return blockedPage(relay.program);
       this.signInRelays.delete(relay);
       relay.take(url);
       return signedInPage(relay.program);
@@ -1242,7 +1245,21 @@ export class BranchBrowser {
 }
 
 /** RES-706: one sign-in's return address, waited for. `take` is handed the address with the code in it, once. */
-export interface SignInRelay { owner: string; program: string; match: (url: URL, from: URL | null) => boolean; take: (url: URL) => void }
+export interface SignInRelay {
+  owner: string; program: string;
+  /** The return address, with the waited-for state and a code. */
+  match: (url: URL) => boolean;
+  /** Whether the page that sent the browser there is one of the maker's own. */
+  trusted: (from: URL | null) => boolean;
+  take: (url: URL) => void;
+}
+/** A return address the maker's pages did not send the browser to: answered, with no code, and nothing handed on. */
+function blockedPage(program: string): string {
+  const name = program.replace(/[<>&"]/g, '');
+  return `<!doctype html><meta charset="utf-8"><title>Not handed on</title><body style="font:16px system-ui;padding:40px">`
+    + `<h1 id="not-handed-on">Branch did not hand this to ${name}: it did not come from ${name}'s own sign-in page.</h1>`
+    + `<script>history.replaceState(null, '', '/')</script></body>`;
+}
 /** What the tab shows instead of the maker's return page: no code, and an address that holds none either. */
 function signedInPage(program: string): string {
   const name = program.replace(/[<>&"]/g, '');

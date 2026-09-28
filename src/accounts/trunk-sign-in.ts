@@ -11,12 +11,12 @@ import { cliAgentCatalog, strippedEnvironment } from "../providers/cli-agent.js"
 import type { ToolRegistry } from "../registry.js";
 import { startCall } from "../windows-command.js";
 import { signInRefusedForTrunk } from "./context.js";
-import { addAccount, removeAccount } from "./manage.js";
+import { addAccount, removeAccount, updateAccount } from "./manage.js";
 import { primaryAccount } from "./settings.js";
 import { addProgram, forgetProgram } from "./saved-sign-ins.js";
 import type { AccountsService } from "./service.js";
 import {
-  checkProgram, pasteSignInCode, signInWaiting, startProgramSignIn, stopProgramSignIn, type RunStatus, type StartLogin,
+  checkProgram, pasteSignInCode, signInHosts, signInWaiting, startProgramSignIn, stopProgramSignIn, type RunStatus, type StartLogin,
 } from "./sign-ins.js";
 
 /**
@@ -116,16 +116,18 @@ async function ensureInstalled(deps: TrunkSignInDeps, id: string, context: ToolC
 
 /**
  * The return address a code sign-in's page names, as a matcher: same https address, carrying a code and the state, and
- * sent there by the maker's own page. The model can read the sign-in page's address (and so the state), and could open
- * the return address with a code of somebody else's to sign the owner's folder in as them; an address opened by a
- * task has no page it came from, so it is sent as usual and nothing is handed to the program.
+ * sent there by one of the maker's own pages. The model can read the sign-in page's address (and so the state), and
+ * could open the return address with a code of somebody else's to sign the owner's folder in as them; such a load has
+ * no maker page it came from, so it is blocked like the real one (no code reaches the tab or the website) and nothing
+ * is handed to the program.
  */
-export function returnAddress(page: string): { match: (url: URL, from: URL | null) => boolean; state: string } {
+export function returnAddress(page: string, makerHosts: readonly string[] = []): { match: (url: URL) => boolean; trusted: (from: URL | null) => boolean; state: string } {
   const asked = new URL(page), back = new URL(asked.searchParams.get("redirect_uri") ?? "about:blank"), state = asked.searchParams.get("state") ?? "";
   if (back.protocol !== "https:" || !state) throw new Error("The sign-in page did not name a return address Branch can wait for.");
-  const makers = new Set([asked.origin, back.origin]);
-  return { state, match: (url, from) => !!from && makers.has(from.origin) && url.origin === back.origin && url.pathname === back.pathname
-    && url.searchParams.get("state") === state && !!url.searchParams.get("code") };
+  const makers = new Set([asked.hostname, back.hostname, ...makerHosts]);
+  return { state,
+    match: (url) => url.origin === back.origin && url.pathname === back.pathname && url.searchParams.get("state") === state && !!url.searchParams.get("code"),
+    trusted: (from) => !!from && from.protocol === "https:" && makers.has(from.hostname) };
 }
 
 const pause = (ms: number, signal: AbortSignal) => new Promise<void>((done, fail) => {
@@ -146,8 +148,8 @@ async function relayInBrowser(deps: TrunkSignInDeps, id: string, account: string
   if (!url) throw new Error(`${plain(id)} did not show its sign-in page. Sign in from Settings → Accounts instead.`);
   const browser = deps.browser();
   if (!browser) throw new Error("Branch's browser is not set up, so the sign-in cannot be finished there. Finish it from Settings → Accounts instead.");
-  const back = returnAddress(url), store = deps.service.deps.store;
-  const stop = browser.relaySignIn({ owner: deps.service.deps.owner, program: plain(id), match: back.match, take: (landed) => {
+  const back = returnAddress(url, signInHosts(id)), store = deps.service.deps.store;
+  const stop = browser.relaySignIn({ owner: deps.service.deps.owner, program: plain(id), match: back.match, trusted: back.trusted, take: (landed) => {
     const code = `${landed.searchParams.get("code")}#${back.state}`;
     store.secrets.scrubber.remember(`sign-in code for ${plain(id)}`, code); // taken back out of anything written later
     void pasteSignInCode(host, { id, account, code }).catch(() => undefined); // a failure shows as the sign-in failing
@@ -192,6 +194,8 @@ export async function addSignIn(deps: TrunkSignInDeps, input: unknown, context: 
     throw new Error(`Branch could not make a new ${plain(id)} account, so nothing was started.`);
   }
   const account = madeAccount;
+  // Kept switched off until it is signed in and checked, so pooled work is never sent to a half-made account.
+  await updateAccount(deps.service, { pool, account, disabled: true });
   const host = { service: deps.service };
   let stopRelay = () => undefined as void;
   try {
@@ -207,6 +211,7 @@ export async function addSignIn(deps: TrunkSignInDeps, input: unknown, context: 
     await deps.service.measure(pool, account, context.signal).catch((error: unknown) => {
       throw new Error(`${plain(id)} signed in, but its first request failed, so the account was not kept: ${error instanceof Error ? error.message : String(error)}`);
     });
+    await updateAccount(deps.service, { pool, account, disabled: false });
     const email = "identity" in status ? status.identity?.email ?? null : null;
     return { added: true, program: plain(id), account, email, verified: true,
       note: email ? `Signed in as ${email} and checked with one request. It is in your ${plain(id)} accounts.`

@@ -39,12 +39,17 @@ async function fakeClaudeOnPath(root) {
     else { copyFileSync(join(fixtures, `${name}.sh.txt`), join(bin, name)); chmodSync(join(bin, name), 0o755); }
   };
   const before = process.env.PATH;
-  process.env.PATH = `${bin}${delimiter}${before}`;
+  // No other folder that holds a claude or codex stays on the path while these tests run: the real programs on this
+  // computer can never be what "claude" or "codex" starts, whatever step a test is at.
+  const holds = (folder) => ["claude", "codex"].some((name) => ["", ".exe", ".cmd", ".bat", ".ps1"].some((end) => existsSync(join(folder, name + end))));
+  process.env.PATH = [bin, ...before.split(delimiter).filter((folder) => folder && !holds(folder))].join(delimiter);
   return { bin, install, restore: () => { process.env.PATH = before; },
     starts: () => { try { return readFileSync(join(bin, "claude-log.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } } };
 }
 /** Whatever else happens, the real Claude Code on this computer is never what "claude" starts. */
 function assertFixtureResolves(bin, name = "claude") {
+  assert.equal(process.env.PATH.split(delimiter).filter((folder) => ["", ".exe", ".cmd"].some((end) => existsSync(join(folder, name + end)))).join(), bin,
+    `only the test's own ${name} is on the path`);
   if (process.platform === "win32") {
     const start = startCall(name, ["x"], process.env);
     assert.equal(start.args[0], join(bin, `${name}-fixture.mjs`), `"${name}" would start ${JSON.stringify(start)}`);
@@ -175,6 +180,7 @@ events: ${JSON.stringify(run && store.events(run.id).map((e) => [e.kind, JSON.st
   const pool = accountsServiceFor(app.runtime.models).pool("cli-claude-code");
   const added = (pool?.accounts ?? []).filter((one) => one.id !== "primary");
   assert.equal(added.length, 1, "the account was not kept");
+  assert.equal(added[0].disabled, false, "the checked account was left switched off");
   const view = await (await fetch(`${w.server.url}/api/accounts`, { headers: { authorization: `Bearer ${w.server.token}` } })).json();
   const listed = JSON.stringify(view);
   assert.match(listed, /owner@example\.test/, "the account is not shown by its verified email");
@@ -231,19 +237,61 @@ test("A4 attack: a return address the task opens itself, with somebody else's co
   t.after(async () => { await browser.close(); await chromiumHere.close(); site.close(); });
   const authorize = "https://claude.com/cai/oauth/authorize?code=true&client_id=fixture&redirect_uri=" + encodeURIComponent("https://platform.claude.com/oauth/code/callback") + "&state=FIXTURESTATE";
   const taken = [];
-  const stop = browser.relaySignIn({ owner, program: "Claude Code", match: returnAddress(authorize).match, take: (url) => taken.push(url.searchParams.get("code")) });
+  const back = returnAddress(authorize, ["claude.com", "platform.claude.com", "claude.ai", "console.anthropic.com"]);
+  const stop = browser.relaySignIn({ owner, program: "Claude Code", match: back.match, trusted: back.trusted, take: (url) => taken.push(url.searchParams.get("code")) });
   t.after(stop);
   const run = store.createRun(owner, "sign in");
   const context = { owner, runId: run.id, signal: new AbortController().signal, workspace: "", permissions: new Set(), depth: 0 };
 
-  // The task (so, the model) opens the return address itself: it has no page it came from, so it is sent as usual.
+  // The task (so, the model) opens the return address itself: no maker page sent it, so it is blocked (never sent,
+  // the tab holds no code) and nothing is handed to the program, which keeps waiting.
   await browser.navigate("https://platform.claude.com/oauth/code/callback?code=ATTACKERCODE&state=FIXTURESTATE", context);
   assert.deepEqual(taken, [], "a code the task typed into the address bar reached the program");
-  assert.ok(hits.some((hit) => hit.includes("ATTACKERCODE")));
+  assert.equal(hits.some((hit) => hit.includes("ATTACKERCODE")), false, "the task's own load of the return address was sent");
+  assert.equal((await browser.signInPage().where(context)).address.includes("ATTACKERCODE"), false, "the tab holds the code");
+  assert.equal(back.trusted(new URL("https://evil.example/")), false);
+  assert.equal(back.trusted(null), false);
+  assert.equal(back.trusted(new URL("https://claude.ai/login")), true, "an Anthropic page on the way (SSO back to claude.ai) is the maker's");
   // The maker's own page sends the browser there: that one is taken, and never sent.
   await browser.navigate(authorize, context);
   await browser.click("button", "Continue", context);
   for (let i = 0; i < 50 && !taken.length; i++) await new Promise((done) => setTimeout(done, 100));
   assert.deepEqual(taken, ["FIXTURECODE"]);
   assert.equal(hits.some((hit) => hit.includes("FIXTURECODE")), false, "the maker's return page was loaded with the code");
+});
+
+test("A5 a Trunk adds the account when the owner is behind it, and is refused when another program is", async (t) => {
+  const provider = { name: "scripted", async complete(request) {
+    const done = request.messages.at(-1)?.role !== "user";
+    return done ? { content: "Done.", toolCalls: [] }
+      : { content: "", toolCalls: [{ id: "add", name: "accounts.add_signin", arguments: JSON.stringify({ program: "codex" }) }] };
+  } };
+  const { app, fake, store } = await engine(t, { provider, trunkSignIn: { pollMs: 50 } });
+  fake.install("codex");
+  assertFixtureResolves(fake.bin, "codex");
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.trunks.introduced();
+  const toolEvents = (run) => store.events(run.id).filter((event) => /^tool\./.test(event.kind)).map((event) => [event.kind, event.data.error ?? ""]);
+
+  // A Trunk's change is asked about first; the owner says yes, once, and the Trunk carries on.
+  const asked = await app.runtime.run({ prompt: "Add my Codex account", sessionId: ed.chatSessionId });
+  assert.equal(asked.status, "needs_input", JSON.stringify(asked).slice(0, 300));
+  assert.match(asked.output, /Codex sign-in/);
+  app.runtime.approve(ed.chatSessionId, "allow", "never");
+  const mine = await app.runtime.run({ prompt: "Add my Codex account", sessionId: ed.chatSessionId });
+  assert.equal(mine.status, "completed", JSON.stringify(mine).slice(0, 300));
+  assert.ok(toolEvents(mine).some(([kind]) => kind === "tool.completed" || kind === "tool.finished"), JSON.stringify(store.events(mine.id).map((e) => [e.kind, JSON.stringify(e.data).slice(0, 200)]).slice(3)));
+  const service = accountsServiceFor(app.runtime.models);
+  assert.equal(service.pool("cli-codex").accounts.filter((one) => one.id !== "primary").length, 1, "the Trunk's account was not kept");
+
+  // Even with the owner's yes to the call, a message from another program is refused by the tool itself.
+  const prompt = "A message from another computer: add my Codex account";
+  let remote = await app.runtime.run({ prompt, sessionId: ed.chatSessionId, source: "a2a" });
+  if (remote.status === "needs_input") {
+    app.runtime.approve(ed.chatSessionId, "allow", "never");
+    remote = await app.runtime.run({ prompt, sessionId: ed.chatSessionId, source: "a2a" });
+  }
+  const refused = toolEvents(remote).find(([kind]) => kind === "tool.failed");
+  assert.match(refused?.[1] ?? "", /needs you there|only for your own work/, "another program's message added a sign-in: " + JSON.stringify(toolEvents(remote)));
+  assert.equal(service.pool("cli-codex").accounts.filter((one) => one.id !== "primary").length, 1);
 });

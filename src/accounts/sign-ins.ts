@@ -69,6 +69,9 @@ const codeSignIns: Readonly<Record<string, { hosts: readonly string[]; path: Reg
 /** How much of what a code sign-in prints is looked through for the address; the rest is read and dropped. */
 const printedLimit = 64 * 1024;
 
+/** RES-706: the maker's own websites for a code sign-in, whose pages may send the browser to its return address. */
+export function signInHosts(id: string): readonly string[] { return codeSignIns[id]?.hosts ?? []; }
+
 /** The maker's sign-in address in one printed line, or null: https, one of its hosts and paths, no user or password. */
 export function signInAddress(id: string, line: string): string | null {
   const rule = codeSignIns[id];
