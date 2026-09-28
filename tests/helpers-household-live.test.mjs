@@ -45,6 +45,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { readPolicy, savePolicy } from "../dist/policy.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
@@ -126,7 +127,7 @@ async function fixture(t) {
     lets a queued profile reset put the next message in a new Ask first conversation. */
 async function openAs(f, sid) {
   const profile = f.app.store.profiles.active()?.id ?? null;
-  const opened = () => f.page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
+  const opened = () => waitInPage(f.page, async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
   for (let tries = 0; ; tries++) {
     try {
       await f.page.goto("about:blank", { waitUntil: "load" });
@@ -370,7 +371,13 @@ test("her reply area follows her own task's live steps; nobody else's does, and 
   const { app, page, errors, at, gates } = f;
   const owner = await ownerAtWork(f);
   const { dana, parent, hers } = await danaSends(f, "check Dana's receipts");
-  await page.locator("#conversation li.ls-in").first().waitFor({ timeout: 20000 });
+  // What the window and the engine showed, named in the failure (seen on Linux CI, not reproduced on Windows or WSL).
+  await page.locator("#conversation li.ls-in").first().waitFor({ timeout: 20000 }).catch(async (error) => assert.fail(`${error.message}; `
+    + `steps shown: ${JSON.stringify(await page.locator("#conversation li[class*='ls-']").allInnerTexts().catch((e) => e.message))}; `
+    + `conversation: ${JSON.stringify((await page.locator("#conversation").innerText().catch((e) => e.message)).slice(-600))}; `
+    + `parent: ${JSON.stringify(app.store.run(parent)?.status)}; helpers: ${JSON.stringify(hers.map((id) => app.store.run(id)?.status))}; `
+    + `helper events: ${JSON.stringify(hers.map((id) => app.store.events(id).map((e) => e.kind).slice(-8)))}; `
+    + `live: ${(await readStream(f, `runs/${parent}/live`, (text) => text.includes("event: steps"))).text.slice(0, 800)}`));
   const lines = await page.locator("#conversation li[class*='ls-']").allInnerTexts();
   assert.ok(lines.some((line) => /Reading notes\.txt/.test(line)), `her helpers' steps show live: ${JSON.stringify(lines)}`);
   const own = await readStream(f, `runs/${parent}/live`, (text) => text.includes("event: steps"));
@@ -402,11 +409,16 @@ test("she answers her own helper's question, and nobody else can", async (t) => 
   const first = await api("run", { prompt: "hello" });
   await openAs(f, first.body.sessionId);
   await page.locator("#prompt").waitFor({ timeout: 15000 });
-  const sent = [];
-  page.on("request", (request) => { if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]); });
+  const sent = [], runRequests = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]);
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") runRequests.push(request.postDataJSON());
+  });
   await page.locator("#prompt").fill("check Dana's receipts");
   await page.locator("#prompt").press("Enter");
   const parentOf = () => f.runBy("check Dana's receipts");
+  assert.ok(await until(() => runRequests.length === 1), "the window submitted exactly one request");
+  assert.equal(runRequests[0].sessionId, first.body.sessionId, `the helper test must use the conversation it opened, not a new Ask first conversation: ${JSON.stringify(runRequests)}`);
   const asks = () => app.runtime.approvals.waiting().filter((q) => parentOf() && f.helpersOf(parentOf()).includes(q.runId));
   const asking = await until(() => asks().length === 2);
   assert.ok(asking, asking ? "" : `control: each of her helpers asks before reading (window had open: ${await page.evaluate(async () => (await import("/app/core/state.js")).S.chat).catch((error) => error.message)}; window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT id, prompt, status, session_id FROM tasks ORDER BY rowid").all())}; waiting: ${JSON.stringify(app.runtime.approvals.waiting().map(({ runId, sessionId, tool }) => ({ runId, sessionId, tool })))}; page errors: ${JSON.stringify(errors)}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);

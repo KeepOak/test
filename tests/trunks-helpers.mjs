@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
+import { noteSetupOrigin } from "../dist/setup-origin.js";
 
 /** A model that answers by rules: the first rule that returns something wins. */
 export function brain(rules = []) {
@@ -33,6 +34,14 @@ export async function fixture(t, rules) {
   app.store.save("settings", app.runtime.owner, "conversation-mode-settings", { newConversation: "follow" });
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, root, provider };
+}
+/**
+ * A Trunk made the way setup's "Your first Trunk" step makes it: inside setup's own request (x-branch-origin: setup),
+ * so it may become the default by being oldest. A Trunk made any other way is the owner's own and keeps its reach.
+ */
+export function setupTrunk(app, input) {
+  noteSetupOrigin("setup");
+  try { return app.trunks.create(input); } finally { noteSetupOrigin("window"); }
 }
 export const on = (app, ...parts) => { for (const part of ["trunks", ...parts]) app.trunks.setMode(part, { mode: "on" }); };
 export const call = (name, args, id = "c1") => ({ content: "", toolCalls: [{ id, name, arguments: JSON.stringify(args) }] });

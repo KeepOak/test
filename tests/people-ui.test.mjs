@@ -112,7 +112,14 @@ test("P3 a person signs in on the page with their PIN, talks, and sees only thei
   assert.equal(await phone.getByText("the owner's own words").count(), 0);
   // The key stays in the tab, never in the address.
   assert.doesNotMatch(phone.url(), /branch_person_/);
-  assert.ok(f.app.store.recentSessions(`profile:${f.app.store.profiles.list()[0].id}`).sessions.length === 1);
+  const scope = `profile:${f.app.store.profiles.list()[0].id}`;
+  const { TrunkRecords } = await import("../dist/trunks/record.js");
+  const ownDefault = new TrunkRecords(f.app.store, scope).list()[0];
+  const requested = f.app.store.runs(scope).find((run) => run.prompt === "what is on today?");
+  assert.ok(requested && ownDefault, "the requested chat and the person's own default exist");
+  assert.deepEqual(f.app.store.recentSessions(scope).sessions.map((session) => session.sessionId).sort(), [...new Set([requested.sessionId, ownDefault.chatSessionId])].sort());
+  assert.ok(f.app.store.ownsSession(scope, requested.sessionId));
+  assert.equal(f.app.store.ownsSession(scope, owners.sessionId), false, "the owner's chat is not the person's");
   assert.ok(owners.sessionId);
   assert.deepEqual(errors, []);
 });

@@ -22,7 +22,8 @@ import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underS
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
-import { asPerson, currentPerson } from "./people/context.js"; // bucket 19
+import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
+import { currentCaller } from "./caller.js"; // owner-selected Full Access keeps its local caller
 import type { TrunkRunShape } from "./trunks/shape.js"; // R17-A (Trunks)
 import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { diagnose } from "./diagnostic-log.js"; // Q44: a queued message that cannot start is logged
@@ -81,7 +82,8 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
-import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
+import { helperDefaultFor, withHelperDefault } from "./helper-defaults.js"; // models-ui: a specialist's own model and account
+import { checkResult, fanoutWaves, helperRoute, helperRouteWords, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
@@ -220,7 +222,8 @@ interface GateOutcome {
   refusal: unknown | null; sandbox: SandboxChoice | null;
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
-export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle; /** Seasons: the connection the overnight work chose (never a billed one unless the owner allowed it); an unknown id is ignored. */ model?: string }
+/** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -255,6 +258,11 @@ export interface BackgroundResult { childRunId: string; parentRunId: string; sta
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
+/**
+ * selfdev: a signed-in subscription (Claude Code, Codex) is not billed per token and its models write long edits, so
+ * its replies start at 8,192 tokens and may grow to 32,768 when one is cut off; a billed or local model keeps the above.
+ */
+const signInReplyCeiling = 8192, signInMaxReplyCeiling = 32768;
 /** mac7/coding-next: how long a model on this computer is silent before the person is told it may be loading. */
 const localQuietMs = 10_000;
 /** What the model is told after a reply that was all thinking: act on it now. */
@@ -497,6 +505,22 @@ export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset,
   const line = `\n\n${who} If asked which model you are, say so.`;
   return [{ ...first, content: first.content + line }, ...messages.slice(1)];
 }
+/**
+ * selfdev/prompt-cache: a model service serves a request's front from its prompt cache only while it is byte for byte
+ * what the round before sent. Branch adds some notes partway through a conversation (the task's checklist and the
+ * project's rules, fresh every round; the @ material), and most connections gather every instruction into one block
+ * at the very start, so a note that changed each round changed the front of every request and nothing after it could
+ * be read from the cache. A note partway through is sent where it stands instead, as Branch's own note in the
+ * conversation, so the standing instructions at the start stay the same for the whole task.
+ */
+export function notesInPlace(messages: Message[]): Message[] {
+  const start = messages.findIndex((message) => message.role !== "system");
+  if (start < 0 || !messages.some((message, at) => at > start && message.role === "system")) return messages;
+  return messages.map((message, at): Message => at > start && message.role === "system"
+    ? { role: "user", from: "branch", content: `<system-reminder>
+${message.content}
+</system-reminder>` } : message);
+}
 const summaryMessage = (summary: string): Message => ({ role: "system", content: `Earlier in this conversation (compacted summary):\n${summary}` });
 const compactionInstructions = "Summarize the conversation below for a handoff to yourself. Reply with JSON only: {\"goals\":[\"what we are trying to do\"],\"decisions\":[\"what was settled, with the turn it was settled in\"],\"instructions\":[\"what the person told you to always or never do, in their own words\"],\"todos\":[\"what is still to be done, in order\"],\"openQuestions\":[\"what is still unanswered\"],\"filesTouched\":[\"paths that were read or changed\"]}. Be concrete, keep identifiers and paths exactly, and use at most eight short entries per list. Keep every decision and instruction from an earlier summary.";
 /** Range of stored, non-system messages to summarise, leaving at least `compactionKeep` recent ones and never splitting a tool exchange. */
@@ -640,6 +664,12 @@ export class Runtime {
    */
   private readonly replyCeilings = new Map<string, number>();
   private readonly children = new Map<string, number>();
+  private readonly helperModels = new Map<string, ModelPreset>();
+  /** Accounts owns final authorization and binds an immutable provider without changing defaults. */
+  resolveHelperModel = async (preset: ModelPreset, accountRef: HelperSelection["accountRef"], _parentSessionId: string): Promise<HelperConnection> => {
+    if (accountRef) throw new Error("Helper account selection is not connected");
+    return { preset };
+  };
   /** R17-050: keeps a Claude connection's prompt cache warm during a pause, when the owner asked. */
   private warmCache?: KeepAlive;
   get keepAlive(): KeepAlive { return (this.warmCache ??= new KeepAlive(this.store)); }
@@ -1018,11 +1048,15 @@ export class Runtime {
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
-    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1, budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
+    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
+      budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    const connection = await this.helperConnection(parent, options);
+    context.signal.throwIfAborted();
     let started: Run | undefined;
     const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
     void startedAt;
-    const child = this.track(() => this.execute({ prompt, signal: context.signal, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
+    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     void child.then((run) => {
       const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
@@ -1272,6 +1306,8 @@ export class Runtime {
     const sub = knobs.subtaskLimits(this.store, this.owner), atOnce = sub.atOnce;
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    // A helper answers for its parent's conversation; work started with no task (a flow node, an API call) gets an audited one.
+    if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegate(prompt, audited, permissions, instructions, options));
     const running = this.children.get(parent.runId) ?? 0;
     if (running >= atOnce) throw new Error(`Delegation concurrency limit reached (${atOnce} children at once)`);
     this.children.set(parent.runId, running + 1);
@@ -1285,14 +1321,29 @@ export class Runtime {
       ...(options.agent ? { agent: options.agent } : {}),
     };
     try {
-      const model = options.model && this.models.presets.has(options.model) ? options.model // Seasons
-        : knobs.subtaskModel(this.store, this.owner, (id) => this.models.presets.has(id)); // R17-S11
-      return await this.track(() => this.execute({ prompt, signal: context.signal, ...(model ? { model } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
+      const connection = await this.helperConnection(parent, options);
+      context.signal.throwIfAborted();
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     } finally {
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
     }
+  }
+  private async helperConnection(parent: ToolContext, selection: HelperSelection & { agent?: string }): Promise<HelperConnection> {
+    const asked = HelperSelectionSchema.parse({ ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.accountRef !== undefined ? { accountRef: selection.accountRef } : {}) });
+    // models-ui (MODEL-051): the specialist's saved model and account (src/helper-defaults.ts) come after what the call names.
+    // Work a Trunk is doing keeps to the Trunk's own accounts, so there only the saved model is used, never the saved account.
+    const found = selection.agent ? helperDefaultFor(this.store, parent.owner, selection.agent) : null;
+    const saved = found?.accountRef && this.trunkWork(parent) ? { model: found.model } : found;
+    const selected = withHelperDefault(asked, saved, (key) => this.models.presets.has(key));
+    const sessionId = this.modelAccountSession(parent.runId);
+    const inherited = this.helperModels.get(parent.runId);
+    const id = selected.model ?? inherited?.id ?? knobs.subtaskModel(this.store, this.owner, (key) => this.models.presets.has(key)) ?? this.models.plan(parent.owner, sessionId).choice.presetId;
+    const preset = this.models.presets.get(id);
+    if (!preset) throw new Error(`Unknown helper model: ${id}`);
+    const ref = selected.accountRef ?? (inherited?.id === id ? helperRoute(this.store, parent.owner, sessionId)?.accountRef : undefined);
+    return this.asTrunk(parent, () => this.resolveHelperModel(preset, ref, sessionId));
   }
   /** A delegated run plus the check of its answer against the schema the parent asked for. */
   async delegateChecked(prompt: string, parent: ToolContext, permissions: string[], instructions: string, options: DelegateOptions = {}) {
@@ -1320,7 +1371,9 @@ ${shapeInstructions(options.shape)}` : prompt;
     const question = `This answer was meant to be ${shape.name} and was not: ${reason}. Here it is; send the same content in the right shape.
 
 ${run.output.slice(0, 6000)}`;
-    const answer = await this.shaped(holder, parent, question, shape);
+    const pinned = helperRoute(this.store, run.owner, run.sessionId);
+    const connection = pinned ? await this.asTrunk(parent, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId)) : null;
+    const answer = await this.shaped(connection ? run : holder, parent, question, shape, connection?.preset);
     return answer.status === "resolved"
       ? { status: "resolved", value: answer.value }
       : { status: "unresolved", reason: answer.reason };
@@ -1338,6 +1391,8 @@ ${run.output.slice(0, 6000)}`;
         const context = task.dependsOn.length
           ? `\n\nResults from earlier tasks:\n${task.dependsOn.map((d) => `[${d}] ${outcomes[d]?.output ?? ""}`).join("\n")}` : "";
         const { run, result } = await this.delegateChecked(task.prompt + context, parent, spec.permissions, spec.instructions, {
+          ...(task.model ? { model: task.model } : {}),
+          ...(task.accountRef ? { accountRef: task.accountRef } : {}),
           ...(task.resultSchema ? { resultSchema: task.resultSchema } : {}),
           ...(task.checks ? { checks: CompletionCheckSchema.parse(task.checks) } : {}),
           ...(spec.agent ? { agent: spec.agent } : {}),
@@ -1356,13 +1411,19 @@ ${run.output.slice(0, 6000)}`;
    * call it makes on the side answers through that conversation's account, not the owner's default
    * (which may be a second of the owner's own plans, reached after the first ran out).
    */
+  /** models-ui: whether a helper is being started for a Trunk's work: its keys are in force, or its task is a Trunk's turn. */
+  private trunkWork(parent: ToolContext): boolean {
+    if (parent.trunkKeys || currentAccountCall()?.trunk) return true;
+    const root = this.spendRoot.get(parent.runId) ?? parent.runId;
+    return [...new Set([parent.runId, root])].some((id) => this.store.events(id).some((event) => event.kind === "trunk.turn"));
+  }
   private asTrunk<T>(context: ToolContext, work: () => Promise<T>): Promise<T> {
     const marked = currentAccountCall()?.trunk;
     // FQ-routing.isolated-agents: marked again when this is another Trunk's work, so what it sets going is its own.
     if (marked && (!context.trunk || marked.id === context.trunk)) return work();
     const keys = context.trunkKeys ?? marked?.keys;
     if (!keys)
-      return withAccountCall({ owner: this.owner, sessionId: this.accountSession(context.runId), runId: context.runId }, work);
+      return withAccountCall({ owner: this.owner, sessionId: this.modelAccountSession(context.runId), runId: context.runId }, work);
     const sessionId = this.store.run(context.runId)?.sessionId ?? "";
     return withAccountCall({ owner: this.owner, sessionId, runId: context.runId,
       trunk: { keys, signIns: this.trunkSignIns(context.runId), ...(context.trunk ? { id: context.trunk } : {}) } }, work);
@@ -1389,12 +1450,19 @@ ${run.output.slice(0, 6000)}`;
     const root = this.spendRoot.get(runId) ?? runId;
     return this.store.run(root)?.sessionId ?? this.store.run(runId)?.sessionId ?? "";
   }
+  private modelAccountSession(runId: string): string {
+    const run = this.store.run(runId);
+    return run && helperRoute(this.store, run.owner, run.sessionId) ? run.sessionId : this.accountSession(runId);
+  }
   /** Temporary conversations cannot write long-term memory; nothing from them should persist. */
   private scopeToSession(run: Run, given: ToolContext, trunk: TrunkRunShape | null = null): ToolContext {
     // R17-A (Trunks): a Trunk remembers in its own scope, and the task says whose it was.
     // mac7/lockdown-fix: trunkKeys. Work a Trunk set going (a workflow's prompt step, a flow box) is its work too.
     const inherited = given.trunkKeys ?? currentAccountCall()?.trunk?.keys;
-    const context = trunk ? { ...given, agent: trunk.agent, trunk: trunk.trunkId, trunkKeys: trunk.keys } : inherited ? { ...given, trunkKeys: inherited } : given;
+    // defaulttrunk: the default Trunk's turn is the owner's own (src/trunks/shape.ts `owners`): their memory, keys and reach.
+    const context = trunk ? trunk.owners ? { ...given, trunkKeys: trunk.keys }
+      : { ...given, agent: trunk.agent, trunk: trunk.trunkId, trunkKeys: trunk.keys }
+      : inherited ? { ...given, trunkKeys: inherited } : given;
     if (trunk) this.store.event(run.id, "trunk.turn", { trunkId: trunk.trunkId });
     if (!this.store.sessionTemporary(run.sessionId)) return context;
     this.store.event(run.id, "session.temporary", { memoryWrites: false });
@@ -1418,6 +1486,7 @@ ${run.output.slice(0, 6000)}`;
     const person = parent?.runId ? runOrigin(this.store, parent.runId).personProfileId : this.startedFor(context.source);
     return {
       source: context.source ?? "owner",
+      callerKind: currentCaller().kind, callerDoor: currentCaller().throughDoor,
       ...(options.resumeFrom ? { resumedFrom: options.resumeFrom } : {}),
       ...(options.originFrom ? { originFrom: options.originFrom } : {}), // mac7/outside-resume
       ...(startedWithShortLivedKey() || inherited ? { shortLivedKey: true } : {}),
@@ -1461,6 +1530,7 @@ ${run.output.slice(0, 6000)}`;
     options: RunOptions,
     parent?: ToolContext,
     instructions = "",
+    helper?: HelperConnection,
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
@@ -1498,7 +1568,7 @@ ${run.output.slice(0, 6000)}`;
     if (atOnce) throw new Error(atOnce);
     if (trunk) {
       instructions += trunk.instructions;
-      options = { ...options, permissions: trunk.permissions,
+      options = { ...options, ...(trunk.keepsReach ? {} : { permissions: trunk.permissions }), // defaulttrunk: the owner's reach, untouched
         ...(options.model === undefined && trunk.model ? { model: trunk.model } : {}),
         ...(options.reasoning === undefined && trunk.reasoning !== undefined ? { reasoning: trunk.reasoning } : {}),
         ...(options.style === undefined && trunk.style ? { style: trunk.style } : {}) };
@@ -1521,20 +1591,29 @@ ${run.output.slice(0, 6000)}`;
       if (!this.attachments) throw new Error("Files cannot be attached here.");
       this.attachments.staged(options.uploads.who, options.uploads.ids);
     }
+    const pinned = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
+    if (pinned && options.model !== undefined && options.model !== pinned.model) throw new Error("The helper model is pinned to its conversation");
+    if (pinned && !this.models.presets.has(pinned.model)) throw new Error(`Unknown helper model: ${pinned.model}`);
+    if (parent) {
+      const project = this.store.run(parent.runId)?.project;
+      if (project) options = { ...options, conversationProject: project };
+    }
     const run = this.prepareRun(options);
+    if (helper) keepHelperRoute(this.store, run.owner, run.sessionId, helper);
     // dogfood-ux-2: from here on the task works in ITS conversation's project: its folder and its saved secrets, never
     // those of a project picked anywhere else while it runs (src/project-scope.ts). Entered synchronously, so every
     // refusal above still comes before the first await.
-    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet));
+    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper));
   }
   /** The rest of `execute`, once the task exists: everything it does, inside its own project. */
   private async started(run: Run, options: RunOptions, parent: ToolContext | undefined, instructions: string, budget: Budget,
-    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null): Promise<Run> {
+    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection): Promise<Run> {
     if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
     if (parent?.runId && this.store.keptFromRecent(parent.runId)) this.store.markAside(run.id, { recent: false });
     if (trunk) this.trunkRuns.set(run.id, trunk.trunkId); // eng-trunk-controls
+    if (trunk && !parent) this.trunkClaim(run.sessionId, trunk.trunkId); // defaulttrunk: a new conversation it answers is its thread
     this.joinSpend(run.id, parent?.runId); // R17-S09
     if (inlet?.applied.length) this.store.event(run.id, "filter.applied", { stage: "inlet", filters: inlet.applied });
     const controller = new AbortController();
@@ -1635,6 +1714,14 @@ ${run.output.slice(0, 6000)}`;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
     try {
+      const pinned = helperRoute(this.store, run.owner, run.sessionId);
+      if (pinned) {
+        const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        context.signal.throwIfAborted();
+        keepHelperRoute(this.store, run.owner, run.sessionId, connection);
+        this.helperModels.set(run.id, connection.preset);
+        this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
+      }
       options.onStarted?.(run);
       const work = (working: ToolContext) => this.loop(run, working, instructions, options.onTextDelta, {
         ...(options.model !== undefined ? { preset: options.model } : {}),
@@ -1685,12 +1772,13 @@ ${run.output.slice(0, 6000)}`;
     this.recordedSources.delete(run.id); // mac7/outside-resume
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
-    if (!parent && !options.isolated && !sealed && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
+    this.helperModels.delete(run.id);
+    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
     // asked with no tools, charged to this task, as reviewRun's is; everything it finds waits for
     // the owner. Nothing happens unless its switches are on, and it never fails the task. ──
-    if (!parent && !options.isolated && !sealed) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
+    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
       const preset = this.sideJobPreset(this.owner, run.sessionId); // R17-S11
       const scoped: ToolContext = { ...context, permissions: new Set(), budget: new Budget({ maxSteps: 2, maxTokens: 24000 }), signal: AbortSignal.timeout(120000) };
       return (await this.complete(run, [{ role: "system", content: system }, { role: "user", content: question }], scoped, preset, null)).content;
@@ -1967,6 +2055,8 @@ ${run.output.slice(0, 6000)}`;
    * connects it; on its own every task is an ordinary one.
    */
   trunkShape: (options: RunOptions) => TrunkRunShape | null = () => null;
+  /** defaulttrunk: a conversation a Trunk's turn runs in, not yet anybody's, becomes that Trunk's thread (src/trunks/). */
+  trunkClaim: (sessionId: string, trunkId: string) => void = () => undefined;
   /** Q114: a Trunk's own key choices, by its id, or null once it is gone (set by src/trunks). */
   trunkKeysFor: (id: string) => TrunkRunShape["keys"] | null = () => null;
   /** Q119: the tools a Trunk may use now, by its id, or null once it is gone (set by src/trunks). */
@@ -2130,6 +2220,11 @@ ${run.output.slice(0, 6000)}`;
    * refusal says so and names a connection that could, rather than sending the picture anyway.
    */
   private planned(run: Run, owner: string, override: RunModelOverride, withPictures: boolean): ModelPlan {
+    const fixed = this.helperModels.get(run.id);
+    if (fixed) {
+      if (withPictures && !this.models.canDo(fixed, "vision")) throw new Error("The pinned helper model cannot read pictures");
+      return { choice: this.models.describe(fixed, override.reasoning ?? fixed.reasoning ?? null, "session"), candidates: [fixed] };
+    }
     const routed = this.routed(run, owner, override);
     if (!withPictures) return this.models.plan(owner, run.sessionId, routed);
     const plan = this.models.planFor(owner, run.sessionId, "vision", routed);
@@ -2143,6 +2238,7 @@ ${run.output.slice(0, 6000)}`;
   }
   /** A turn whose files include pictures prefers a connection that can see them, and falls back to the ordinary one. */
   private plannedForPictures(run: Run, owner: string, override: RunModelOverride): ModelPlan {
+    if (this.helperModels.has(run.id)) return this.planned(run, owner, override, true);
     const vision = this.models.planFor(owner, run.sessionId, "vision", this.routed(run, owner, override));
     return vision.refusal ? this.planned(run, owner, override, false) : { choice: vision.choice, candidates: vision.candidates };
   }
@@ -2166,8 +2262,9 @@ ${run.output.slice(0, 6000)}`;
     // A task that must stay on this computer is decided first, so no other rule (and no side question) sends it away.
     const here = this.privateRoute(run, context.owner, override);
     // R17-047: with the difficulty card on, a small model's "easy or hard" picks the connection.
-    override = here ?? await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
-      this.aside(run, context, { index: 0, reasoning: null, candidates: [this.models.presets.get(id)!] }, [{ role: "system", content: system }, { role: "user", content: question }]));
+    // A pinned helper keeps its model; staying on this computer still wins over it (keptHere, below).
+    override = here ?? (this.helperModels.has(run.id) ? override : await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
+      this.aside(run, context, { index: 0, reasoning: null, candidates: [this.models.presets.get(id)!] }, [{ role: "system", content: system }, { role: "user", content: question }])));
     const plan = this.turnPictures.has(run.id) && !images?.length
       ? this.plannedForPictures(run, context.owner, override)
       : this.planned(run, context.owner, override, Boolean(images?.length));
@@ -2935,7 +3032,7 @@ ${run.output.slice(0, 6000)}`;
       // owner's Settings switch that would put them back. Under it they read as absent rather than
       // as "here but switched off — tell the person they can switch it on", which would be wrong.
       nameHidden: !lockdownActive(this.store, context.owner),
-      budgetTokens: this.reliability.toolBudgetTokens,
+      budgetTokens: this.toolBudgetFor(),
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),
       noteOf: (name) => notes.get(name) ?? "",
@@ -3077,6 +3174,23 @@ ${run.output.slice(0, 6000)}`;
    * (what its service refused before, what the connection reports, else where it runs; src/model-context.ts). Never
    * more than the room a model on this computer was really given for this run (Provider.contextTokens).
    */
+  /**
+   * selfdev: the tool section's ceiling. A signed-in subscription (Claude Code, Codex) calls only the tools its list
+   * holds, costs nothing more per token and has a large window, so it holds more of Branch's tools in full (4% of its
+   * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
+   * billed per token, and a model on this computer, keep the launch figure.
+   */
+  /** selfdev: where a reply's token ceiling starts and how far it may grow, by the kind of connection. */
+  private replyCeiling(preset: ModelPreset): { base: number; max: number } {
+    return !presetRunsLocally(preset) && isSignInConnection(preset) ? { base: signInReplyCeiling, max: signInMaxReplyCeiling }
+      : { base: baseReplyCeiling, max: maxReplyCeiling };
+  }
+  private toolBudgetFor(): number {
+    const base = this.reliability.toolBudgetTokens;
+    const chosen = this.models.presets.get(this.models.summary(this.owner).defaultPreset);
+    if (!chosen || presetRunsLocally(chosen) || !isSignInConnection(chosen)) return base;
+    return Math.max(base, Math.min(12_000, Math.floor(this.contextWindowFor(chosen) * 0.04)));
+  }
   contextWindowFor(preset?: ModelPreset, runId?: string): number {
     const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
     const local = chosen ? presetRunsLocally(chosen) : false;
@@ -3286,8 +3400,8 @@ ${run.output.slice(0, 6000)}`;
         if (outage.back) this.store.event(run.id, outage.back, { preset: preset.id }); // long-work
         return answered;
       } catch (error) {
-        const ceiling = this.replyCeilings.get(run.id) ?? baseReplyCeiling;
-        if (isOutOfRoomThinking(error) && ceiling < maxReplyCeiling && !context.signal.aborted) {
+        const ceiling = this.replyCeilings.get(run.id) ?? this.replyCeiling(preset).base;
+        if (isOutOfRoomThinking(error) && ceiling < this.replyCeiling(preset).max && !context.signal.aborted) {
           this.replyCeilings.set(run.id, ceiling * 2);
           this.store.event(run.id, "model.ceiling_raised", { from: ceiling, to: ceiling * 2 });
           retriesUsed = -1;
@@ -3443,6 +3557,7 @@ ${run.output.slice(0, 6000)}`;
     shape?: AnswerShape,
     firstCapMs?: number,
   ): Promise<Completion> {
+    preset = this.helperModels.get(run.id) ?? preset;
     // A task that must stay on this computer never reaches a connection elsewhere, whichever part of it asks:
     // a side job that names its own connection is answered by the one here instead, and with none here it stops.
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
@@ -3461,13 +3576,14 @@ ${run.output.slice(0, 6000)}`;
     // written down as an attempt, so a round that never reached the provider really does cost
     // nothing — in the inspector and in the figures alike. The step count still applies, so a task
     // cannot go round for ever on kept answers.
-    const maxTokens = Math.min(this.replyCeilings.get(run.id) ?? baseReplyCeiling, Math.max(0, context.budget.remaining() - input));
+    const maxTokens = Math.min(this.replyCeilings.get(run.id) ?? this.replyCeiling(preset).base, Math.max(0, context.budget.remaining() - input));
     const cacheKey: CacheKeyParts = {
       provider: preset.provider.name, model: preset.model, reasoning: reasoning ?? null, maxTokens,
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
       shape: shape?.name ?? null,
     };
-    const kept = this.requestCache.look(cacheKey);
+    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
+    const kept = pinnedHelper ? null : this.requestCache.look(cacheKey);
     if (kept) return this.shownThinking(this.answeredFromCache(run, preset, kept, input));
     context.budget.charge(input);
     if (maxTokens < 1) throw new BudgetError(`Token budget exhausted.${this.spentOnRun(run.id, preset.model)}`);
@@ -3489,7 +3605,7 @@ ${run.output.slice(0, 6000)}`;
       this.models.requests.record(preset.id);
       // mac2/leak-guard: the copy that is sent has key-shaped values hidden; `messages` stays as it was.
       // mac7/r17-g: the sent copy is also tidied (orphaned results, missing ones, repeats) when the owner asks.
-      const request = { messages: this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages)), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
+      const request = { messages: notesInPlace(this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages))), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
         ...knobs.serviceTierFor(this.store, this.owner), // R17-S12
         ...savings.requestExtras(this.store, this.owner, preset, !context.permissions.size), // R17-045 / R17-046
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
@@ -3497,7 +3613,7 @@ ${run.output.slice(0, 6000)}`;
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
         ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
-      const raw = await withAccountCall({ owner: run.owner, sessionId: this.accountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
+      const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
         // mac7/empty-completion: thinking resets the silence clock as text does. A reasoning model
         // writes no words of its answer while it thinks, and the watchdog was calling that a dead
@@ -3548,7 +3664,7 @@ ${run.output.slice(0, 6000)}`;
       if (!this.setupFinished && answered) this.setupFinished = finishSetupOnFirstAnswer(this.store, this.owner, preset.provider.name);
       span?.end("ok", "", { "branch.tool_calls": completion.toolCalls.length, "branch.tokens.estimated_output": output });
       // Only a plain answer is kept; one that asks for a tool would replay whatever that tool does.
-      this.requestCache.keep(cacheKey, completion);
+      if (!pinnedHelper) this.requestCache.keep(cacheKey, completion);
       return this.shownThinking(completion);
     } catch (e) {
       if (e instanceof ProviderStreamError)
@@ -3735,6 +3851,67 @@ ${run.output.slice(0, 6000)}`;
     const record = runId ? this.conversationModeOf(runId) : null;
     return record ? heldMode(record, saved.preset, this.ownersOwnTask(runId!)) : null;
   }
+  /** The owner's real local caller at every step from this task back to its root. */
+  private fullAccessRoot(runId: string, context: ToolContext): string | null {
+    const seen = new Set<string>(), queue = [runId];
+    let root = runId, depth = 0;
+    for (let id = runId; id && !seen.has(id) && depth < 20; depth++) {
+      const started = this.store.events(id).find((event) => event.kind === "run.started")?.data;
+      if (!started || (depth === 0 && (started.agent ?? null) !== (context.agent ?? null))) return null;
+      root = id;
+      id = typeof started.parentRunId === "string" ? started.parentRunId : "";
+    }
+    if (depth - 1 !== context.depth || depth >= 20) return null;
+    while (queue.length && seen.size < 20) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const start = this.store.events(id).find((event) => event.kind === "run.started")?.data;
+      if (!start || this.store.run(id)?.owner !== this.owner || start.callerKind !== "owner-here"
+        || start.callerDoor || start.source !== "owner" || start.shortLivedKey || start.shortLivedKeyId
+        || start.personProfileId || start.lentTo || start.dryRun) return null;
+      for (const next of [start.parentRunId, start.resumedFrom, start.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return queue.length ? null : root;
+  }
+  /** Attribution for a selected mode, never an approval answer; direct asks for the root task. */
+  ownerFullAccessFor(context: ToolContext, direct = false): string | null {
+    const run = this.store.run(context.runId), caller = currentCaller();
+    if (!run || run.owner !== this.owner || !this.store.ownsSession(this.owner, run.sessionId)
+      || context.owner !== this.owner || context.trunk || context.isolated || context.dryRun
+      || (direct && (context.depth !== 0 || context.agent)) || this.fullAccessLocked()
+      || !this.store.profiles.isOwner() || currentPerson() || throughPairedDoor() || startedWithShortLivedKey()
+      || caller.throughDoor || caller.household || caller.appLocked || !["owner-here", "system"].includes(caller.kind)
+      || lockdownActive(this.store, this.owner) || this.sourceOf(context) !== "owner" || !this.ownersOwnTask(run.id)
+      || this.learningOf(run.id) || this.startedAsDryRun(run.id)
+      || this.heldConversationMode(readPolicy(this.store, this.owner), run.id) !== "full") return null;
+    const granted = runOrigin(this.store, run.id).permissions;
+    if (!granted || [...context.permissions].some((permission) => !granted.includes(permission))) return null;
+    const rootId = this.fullAccessRoot(run.id, context);
+    const root = rootId ? this.store.run(rootId) : null;
+    if (!root || readConversationMode(this.store, this.owner, root.sessionId)?.mode !== "full") return null;
+    // selfdev: a Trunk's keys mean a Trunk's turn; only the owner's designated default Trunk (their own assistant) keeps the owner's mode.
+    if (context.trunkKeys && !this.ownersDefaultRoot(root.id)) return null;
+    return `${this.owner} (Full Access in conversation ${root.sessionId})`;
+  }
+  /** selfdev: the task's root ran as the owner's designated default Trunk, in its own (not a room's) conversation, checked now. */
+  private ownersDefaultRoot(rootId: string): boolean {
+    const root = this.store.run(rootId);
+    const turn = this.store.events(rootId).find((event) => event.kind === "trunk.turn")?.data.trunkId;
+    return !!root && typeof turn === "string" && this.ownersDefaultIn(root.sessionId, turn);
+  }
+  /** selfdev: whether the task behind this context is the owner's own turn through their default Trunk; false when no Trunk is involved. */
+  ownersDefaultTurn(context: ToolContext): boolean {
+    if (!context.trunkKeys || context.trunk) return false;
+    const seen = new Set<string>();
+    let id = context.runId;
+    for (let parent = this.parentOf(id); parent && !seen.has(parent) && seen.size < 20; parent = this.parentOf(parent)) { seen.add(parent); id = parent; }
+    return this.ownersDefaultRoot(id);
+  }
+  /** Bound by Trunks (src/trunks/index.ts); absent wiring fails closed. */
+  ownersDefaultIn: (sessionId: string, trunkId: string) => boolean = () => false;
+  /** Bound to the actual App lock after it is created; absent wiring fails closed. */
+  fullAccessLocked: () => boolean = () => true;
   /**
    * mac7/residuals (4b, the coordinator's decision): a script's target is only "a small script", so a
    * yes kept for the conversation would cover every later script. In an Ask first conversation each
@@ -3901,19 +4078,22 @@ ${run.output.slice(0, 6000)}`;
     const { rule, leak } = tightened;
     // --- R17-C integration review: the owner's mail, calendar and house (src/personal/guard.ts). Work the
     // owner did not start is asked about, and a lock or door always is, just this once — whatever the rules say.
-    // Branch changing its own settings is always put to the owner (src/settings-kit/tools.ts).
-    const personal = personalHold(tool, args, source) ?? settingsHold(tool, args) ?? contractHold(tool, args) ?? handOffHold(tool) // Q12: a self-development contract, first or wider
-      // selfdev: a push or pull request from Branch's own source is asked about every time.
-      ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args });
+    // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
+    // the owner's external program sign-in and keeps its own once-only question.
+    const fullAccess = this.ownerFullAccessFor(context) !== null;
+    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+      // The contract, source and target checks still run at execution; these are only extra prompts.
+      ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
+    const screenHeld = screen && !fullAccess;
     // R17-S-C integration review: with "confirm sensitive browser steps" on, those are once-only questions too.
     const hold = personal ?? (holdsBrowserStep(this.store, this.owner, tool) ? { reason: browserConfirmationHold, onceOnly: true } : null)
       ?? this.scriptHold(tool, context.runId) // mac7/residuals (4b)
       // P17-D §3: every browser step of a learning task asks, once, never answered by a standing or earlier yes.
       ?? (learning && permission.startsWith("browser.") ? { reason: learningHold, onceOnly: true as const } : null)
-      ?? newAppHold(this.store, this.owner, tool, args, context.trunk) // unhold-control: a program this Trunk has not opened
-      // Dogfood D4: the owner's own screen, keyboard, mouse and clipboard ask every time, under every mode and rule.
-      ?? (screen ? { reason: screenHoldReason, onceOnly: false as const } : null);
-    const held = (personal || screen || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
+      ?? (fullAccess ? null : newAppHold(this.store, this.owner, tool, args, context.trunk)) // unhold-control
+      // Dogfood D4: screen use still asks outside a checked local owner's selected Full Access.
+      ?? (screenHeld ? { reason: screenHoldReason, onceOnly: false as const } : null);
+    const held = (personal || screenHeld || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
     const guarded = held === "allow" && lockdownActive(this.store, this.owner) && !lowersRiskOnly(tool) ? "ask" : held; // mac7/lockdown-fix
     if (hold?.onceOnly && guarded === "ask" && fingerprint) this.approvals.holdOnce(fingerprint, hold.reason);
     // --- end R17-C ---
@@ -4169,7 +4349,9 @@ ${run.output.slice(0, 6000)}`;
     const patternNo = decision === "deny" ? null : this.patternRefusal(call, context); // eng-trunk-controls
     if (patternNo) return { refusal: { ok: false, error: patternNo }, ...held };
     const aside = decision === "deny" ? null
-      : this.offPlanQuestion(context, { label, target, readOnly }) ?? this.retriedCommandQuestion(call, args, context)
+      : this.offPlanQuestion(context, { label, target, readOnly })
+        // selfdev (owner ruling 09-27): the owner's selected Full Access never asks, so a corrected command just runs.
+        ?? (this.ownerFullAccessFor(context) !== null ? null : this.retriedCommandQuestion(call, args, context))
         ?? this.patternAside(call, context); // eng-trunk-controls
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
@@ -4314,7 +4496,9 @@ ${run.output.slice(0, 6000)}`;
     // Dogfood E2: a change to Branch's own settings that the label already says in words (Q50) leaves out the same
     // change written as setting ids ("workspace-editor.mode → on"). Mac mini's review: only when the words named it,
     // so an undo, or a setting that does not exist, still says what it is about.
-    const question = about.question ? this.hideSecrets(about.question) : approvalQuestion(label, about.worded ? "" : target);
+    // A helper-route target is the exact binding key; the question names its routes in words, never the raw request (QA Q049).
+    const shown = helperRouteWords(target, (id) => this.specialistName(id)) ?? target;
+    const question = about.question ? this.hideSecrets(about.question) : approvalQuestion(label, about.worded ? "" : shown);
     const sessionId = this.sessionOf(context);
     // A conversation can genuinely stop on more than one thing at once, so the question joins the
     // list rather than taking the place of whatever was already there. Only when the list is full
@@ -4682,9 +4866,11 @@ ${run.output.slice(0, 6000)}`;
     // one can honour the owner's rule without knowing anything about the policy.
     // wave mac3 (os-sandbox, integration review): the wall comes only from wallContextFor below, never
     // from whatever context this call was handed, so an outer wall (and its key sites) cannot ride along.
-    const { osSandbox: _outerWall, ...unwalled } = context;
+    const { osSandbox: _outerWall, ownerFullAccess: _outerAccess, ...unwalled } = context;
     // Q250: a model's own call is always held to read-before-edit, whatever context it was started from.
     const scoped: ToolContext = { ...unwalled, askable: true, readFirstExempt: false, signal: AbortSignal.any([context.signal, timeout]),
+      // selfdev: the owner's selected Full Access reaches a held command too: the network, never wider writes.
+      ...(call.name === "shell.execute" && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
       ...(gated.sandbox ? { sandbox: gated.sandbox } : {}),
       ...(gated.backend ? { sandboxBackend: gated.backend } : {}),
       ...(gated.paths?.length ? { sandboxPaths: gated.paths } : {}),

@@ -20,3 +20,25 @@ export async function closeOwnedGateway(electron, home, gatewayPid) {
   assert.throws(() => process.kill(gatewayPid, 0), "the exact gateway exited after stopping its owned engine");
   await electron.close();
 }
+
+/**
+ * Ends the detached broker a gateway test started under its exact home, whatever state the test stopped in: the broker
+ * named by that home's own running note is asked to quit (proved, with the session key), and if it is still there it is
+ * ended by the pid its own note gave. Nothing outside the test's home is read or touched. Returns the pid it ended, if any.
+ */
+export async function stopHomeBroker(home) {
+  const dataDir = join(home, "state");
+  let note = null, token = null;
+  try { note = JSON.parse(await readFile(join(dataDir, "running.json"), "utf8")); } catch { return null; }
+  try { token = (await readFile(join(dataDir, "session-token"), "utf8")).trim(); } catch { /* no key: go straight to the pid */ }
+  const alive = () => { try { process.kill(note.pid, 0); return true; } catch { return false; } };
+  if (!Number.isInteger(note?.pid) || !alive()) return null;
+  const boot = token ? await proveOnce(note.url, token, 5000).catch(() => null) : null;
+  if (boot) await fetch(`${note.url}/api/deployment/quit`, { method: "POST", headers: { authorization: `Bearer ${sessionKey(token, boot)}` },
+    signal: AbortSignal.timeout(15000) }).catch(() => undefined);
+  for (const until = Date.now() + 15000; Date.now() < until && alive();) await new Promise((resolve) => setTimeout(resolve, 50));
+  if (alive()) { try { process.kill(note.pid); } catch { /* gone meanwhile */ } }
+  for (const until = Date.now() + 10000; Date.now() < until && alive();) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(alive(), false, "the test-owned detached broker exited");
+  return note.pid;
+}

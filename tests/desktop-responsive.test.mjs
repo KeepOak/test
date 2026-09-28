@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { _electron } from "playwright";
-import { connected, desktopOptions, heardNothingOfUse, noTaskWorking, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, heardNothingOfUse, noTaskWorking, offScreen, squatterOn, STARTUP_MS } from "./fixtures/desktop-options.mjs";
 
 const BLOCK_MS = 3000;
 /** The window's main process's event-loop delay, 99th percentile, while the engine is blocked. */
@@ -48,7 +48,7 @@ test("the window stays responsive while the engine is busy, and the engine comes
   const electron = await _electron.launch(options);
   let squatter;
   try {
-    const page = await electron.firstWindow();
+    const page = await electron.firstWindow({ timeout: STARTUP_MS });
     await connected(page);
     const origin = new URL(page.url()).origin;
     const firstPid = await electron.evaluate(() => globalThis.branchEngineForTests.pid);
