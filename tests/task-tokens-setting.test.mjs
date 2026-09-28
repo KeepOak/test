@@ -8,6 +8,8 @@ import { z } from "zod";
 import { createBranch } from "../dist/index.js";
 import { readKnobs, saveKnobs } from "../dist/knobs/settings.js";
 import { taskBudget } from "../dist/knobs/apply.js";
+import { applyChanges, changesFor } from "../dist/settings-kit/changes.js";
+import { settingsKitWriters } from "../dist/settings-kit/writers.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 test("a task's token allowance follows the owner's knob, and the built-in figure stays when it is empty", async (t) => {
@@ -30,4 +32,9 @@ test("a task's token allowance follows the owner's knob, and the built-in figure
   assert.deepEqual(seen, [200000, 1_500_000]);
   assert.throws(() => saveKnobs(app.store, owner, "limits", { maxTaskTokens: 100 }));
   assert.throws(() => saveKnobs(app.store, owner, "limits", { maxModelRounds: 501 }));
+  // Branch can change it for the owner through the settings kit: its field is not named like a secret.
+  const { changes, refused } = changesFor(app.store, owner, [{ key: "task-tokens", field: "taskAllowance", value: 3_000_000 }]);
+  assert.deepEqual(refused ?? [], []);
+  applyChanges(app.store, owner, changes, { accept: changes.map((change) => change.id), confirmLoosening: true, why: "test", writers: settingsKitWriters(app) });
+  assert.equal(taskBudget(app.store, owner).maxTokens, 3_000_000);
 });

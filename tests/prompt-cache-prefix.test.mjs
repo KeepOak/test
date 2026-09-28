@@ -75,4 +75,9 @@ test("the relay marks the history just before the newest user turn, and leaves a
   assert.equal(cacheHistory(plain), plain);
   const first = Buffer.from(JSON.stringify({ messages: [{ role: "user", content: "hi" }] }));
   assert.equal(cacheHistory(first), first, "a first round has no history to mark");
+  const thinking = Buffer.from(JSON.stringify({ messages: [{ role: "user", content: "hi" },
+    { role: "assistant", content: [{ type: "thinking", thinking: "t", signature: "s" }] }, { role: "user", content: "again" }] }));
+  assert.equal(cacheHistory(thinking), thinking, "never a mark on thinking, which Claude refuses");
+  const empty = Buffer.from(JSON.stringify({ messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "" }, { role: "user", content: "again" }] }));
+  assert.equal(cacheHistory(empty), empty, "nor on empty text");
 });

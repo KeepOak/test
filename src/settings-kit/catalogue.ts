@@ -44,6 +44,7 @@ import { contextFileSettings, saveContextFileSettings } from "../context-files.j
 import { saveVoiceSettings, voiceSettings, VoiceSettingsSchema } from "../voice.js";
 import { codingModelRounds, readKnobs, saveKnobs } from "../knobs/settings.js";
 import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
+import { sdkKitMode, sdkKitShipsAs } from "../sdk-kit-switch.js"; // defaults audit
 
 /**
  * R17-S-A (understandable settings): the settings that can be put back to how they started, set
@@ -409,7 +410,8 @@ const reach: SettingSpec[] = [
       { field: "silenceSeconds", label: "How long a quiet room ends it", t: "settings-kit.field.dictation-silence",
         guard: "reach", initial: 4, kind: { type: "number", min: 1, max: 30, fractions: true } }],
   },
-  one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach"),
+  // Defaults audit (2026-09-28): ships "when needed" (src/sdk-kit-switch.ts sdkKitShipsAs), read as the module reads it.
+  shipsAs(one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach", modeFrom(sdkKitMode)), sdkKitShipsAs),
   // r17-i integration review: every reach and platform switch reaches further when raised (src/reach/settings.ts).
   // src/server.ts saves them through Reach, so the tools and the relay follow the switch at once.
   // Q65: shown as saved, not as Lockdown reads it (`reachMode`), so a change is weighed against the owner's own switch.
@@ -523,12 +525,13 @@ const comfort: SettingSpec[] = [
   // the connected model, so it is plain, like the round limit; "auto" means the built-in figure.
   {
     key: "task-tokens", name: "Tokens per task", t: "settings-kit.name.task-tokens", home: "settings:advanced",
-    fields: [{ field: "maxTaskTokens", label: "Tokens one task may use", t: "settings-kit.field.task-tokens", guard: "plain",
+    // The kit's own name for the field: a name with "token" in it reads as a secret (secretShaped) and is never changed here.
+    fields: [{ field: "taskAllowance", label: "Tokens one task may use", t: "settings-kit.field.task-tokens", guard: "plain",
       initial: roundsUnset, kind: { type: "number", min: 20_000, max: 20_000_000, unset: roundsUnset },
       note: `${roundsUnset}: the built-in 200,000. Otherwise 20,000 to 20,000,000, counting every request the task sends to the model.` }],
-    read: (store, owner) => ({ maxTaskTokens: readKnobs(store, owner, "limits").maxTaskTokens ?? roundsUnset }),
+    read: (store, owner) => ({ taskAllowance: readKnobs(store, owner, "limits").maxTaskTokens ?? roundsUnset }),
     write: (store, owner, patch) => {
-      saveKnobs(store, owner, "limits", { maxTaskTokens: patch.maxTaskTokens === roundsUnset ? null : patch.maxTaskTokens });
+      saveKnobs(store, owner, "limits", { maxTaskTokens: patch.taskAllowance === roundsUnset ? null : patch.taskAllowance });
     },
   },
 ];
@@ -546,11 +549,14 @@ const comfortCards: SettingSpec[] = [
   { key: "comfort-keys", name: "Shortcuts", t: "comfort.keys.title", home: "settings:general", ...viaComfort("keys"),
     fields: [yesNo("vim", "Vim keys in the message box", "comfort.field.vim", "plain")] },
   { key: "comfort-display", name: "Status line and times", t: "comfort.display.title", home: "settings:appearance", ...viaComfort("display"),
-    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain")] },
+    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain"),
+      yesNo("hideTimes", "No time on messages, even on hover", "comfort.field.hideTimes", "plain")] },
   { key: "comfort-notify", name: "Notifications and sound", t: "comfort.notify.title", home: "settings:notifications", ...viaComfort("notify"),
     fields: [
       { field: "method", label: "Where you are told", t: "comfort.field.method", guard: "plain", initial: "system", kind: { type: "choice", options: ["system", "window"] } },
       { field: "sound", label: "Sound", t: "comfort.field.sound", guard: "plain", initial: "off", kind: { type: "choice", options: ["off", "chime", "knock"] } },
+      yesNo("needsYes", "A Trunk needs a yes", "comfort.field.needsYes", "plain", true),
+      yesNo("taskDone", "A long task finishes", "comfort.field.taskDone", "plain", true),
     ] },
   { key: "comfort-files", name: "Ignore files", t: "comfort.files.title", home: "settings:general", ...viaComfort("files"),
     // Turning .gitignore off lets searches see more of the workspace (never a secret file).

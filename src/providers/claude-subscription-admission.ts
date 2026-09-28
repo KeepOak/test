@@ -64,7 +64,8 @@ export function cacheHistory(payload: Buffer): Buffer {
   if (!target || markers >= 4 || target.role !== "assistant") return payload;
   const blocks = typeof target.content === "string" ? [{ type: "text", text: target.content }] : target.content;
   const last = Array.isArray(blocks) ? blocks.at(-1) as Record<string, unknown> | undefined : undefined;
-  if (!last || typeof last !== "object" || "cache_control" in last || !["text", "tool_use"].includes(String(last.type))) return payload;
+  if (!last || typeof last !== "object" || "cache_control" in last || !["text", "tool_use"].includes(String(last.type))
+    || (last.type === "text" && !String(last.text ?? "").trim())) return payload; // Claude refuses a mark on thinking or empty text
   last.cache_control = { type: "ephemeral", ttl: "1h" };
   target.content = blocks;
   return Buffer.from(JSON.stringify(body), "utf8");

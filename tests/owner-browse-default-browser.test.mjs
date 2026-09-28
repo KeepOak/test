@@ -15,7 +15,7 @@ import { Budget, createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { loadIntegrations } from "../dist/integrations/bootstrap.js";
 import { BranchBrowser } from "../dist/integrations/browser.js";
-import { browsedRun, close } from "../dist/owner-browse.js";
+import { randomUUID } from "node:crypto";
 
 assert.equal(typeof chromium.launch, "function");
 
@@ -32,7 +32,9 @@ async function site(t, pages) {
   return { origin: `http://127.0.0.1:${server.address().port}`, hits };
 }
 
-/* The desktop engine with no launch file, a Trunk, and a conversation of that Trunk's that has finished its turn. */
+/* The desktop engine with no launch file, a Trunk, and a conversation of that Trunk's that has finished its turn. The
+   owner's address goes through the window's own routes: /api/panels/browser/start, then /action with browser.navigate
+   (the address bar turns a site's name into https:// and words into a search before it asks). */
 async function engine(t, web = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-default-browser-"));
   const provider = { name: "scripted", async complete() { return { content: "Hello.", toolCalls: [] }; } };
@@ -48,67 +50,67 @@ async function engine(t, web = {}) {
   assert.equal(said.status, "completed", JSON.stringify(said));
   const sessionId = app.store.run(said.runId).sessionId;
   assert.equal(sessionId, trunk.chatSessionId, "Trunk 1's own conversation");
-  t.after(() => close(sessionId));
-  const browse = async (address, confirm = false) => {
-    const answer = await fetch(new URL("/api/panels/browse", server.url), { method: "POST",
-      headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ sessionId, address, confirm }) });
-    assert.equal(answer.status, 200);
+  const scope = { sessionId, clientId: randomUUID(), profile: null };
+  const call = async (part, body, method = "POST") => {
+    const url = new URL(`/api/panels/browser${part}`, server.url);
+    if (method === "GET") for (const [key, value] of Object.entries(body)) if (value !== null) url.searchParams.set(key, String(value));
+    const answer = await fetch(url, { method, headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+      ...(method === "GET" ? {} : { body: JSON.stringify(body) }) });
+    assert.equal(answer.status, 200, await answer.clone().text());
     return answer.json();
   };
-  const live = async () => {
-    const answer = await fetch(new URL(`/api/panels/live?session=${sessionId}`, server.url), { headers: { authorization: `Bearer ${server.token}` } });
-    assert.equal(answer.status, 200);
-    return answer.json();
+  /* Allow once, as the window asks the owner, when the owner's rules ask first. */
+  const answered = async (part, body) => { const first = await call(part, body); return first.status === "asked" ? call(part, { ...body, confirmToken: first.confirmToken }) : first; };
+  let control = null;
+  const view = () => call("", { ...scope, id: control.id, epoch: control.epoch }, "GET");
+  const browse = async (url) => {
+    if (!control) { const started = await answered("/start", scope); assert.equal(started.status, "ready", JSON.stringify(started)); control = started.control; }
+    const seen = await view(); control = seen.control;
+    const outcome = await answered("/action", { ...scope, id: control.id, epoch: control.epoch, frameId: seen.frameId, tabId: seen.tabId,
+      sequence: control.sequence + 1, tool: "browser.navigate", arguments: { url } });
+    control = outcome.control ?? control;
+    return outcome;
   };
-  return { app, sessionId, browse, live };
+  return { app, sessionId, browse, view, call, scope, control: () => control };
 }
 
 test("with no launch file, the owner's address opens in Branch's browser and the live view shows the page", async (t) => {
   const { origin } = await site(t, { "/": "<title>Keep Oak fixture</title><h1>Keep Oak</h1>" });
-  const { app, sessionId, browse, live } = await engine(t, { allowPrivateAddresses: true });
+  const { app, browse, view, call, scope } = await engine(t, { allowPrivateAddresses: true });
   assert.ok(app.registry.names().includes("browser.navigate"), "the browser ships on");
-  assert.equal((await live()).browser, null, "before: the empty state, nothing open");
-  let outcome = await browse(`${origin}/`);
+  assert.equal((await call("", scope, "GET")).status, "none", "before: nothing open");
+  const outcome = await browse(`${origin}/`);
   assert.doesNotMatch(JSON.stringify(outcome), /There is no tool called/);
-  if (outcome.status === "asked") outcome = await browse(`${origin}/`, true); // the owner's rules may ask first: Allow once
   assert.equal(outcome.status, "ran", JSON.stringify(outcome).slice(0, 300));
   assert.equal(outcome.result.title, "Keep Oak fixture");
-  const runId = browsedRun(sessionId);
-  assert.ok(runId, "the owner's window is kept for the live view");
-  const seen = await app.browser.watch(app.runtime.owner, runId);
-  assert.equal(seen.title, "Keep Oak fixture", "the live view shows the page");
-  assert.equal(seen.url, `${origin}/`);
-  assert.ok(seen.frame, "with a picture of it");
-  // What the window's browser view actually reads (GET /api/panels/live), not the empty state.
-  const view = (await live()).browser;
-  assert.ok(view, "the view has a page, not the empty state");
-  assert.equal(view.runId, runId);
-  assert.equal(view.url, `${origin}/`);
-  assert.equal(view.title, "Keep Oak fixture");
-  assert.match(view.frame ?? "", /^data:image\/jpeg;base64,/);
+  // What the window's browser view actually reads (GET /api/panels/browser), not the empty state.
+  const seen = await view();
+  assert.equal(seen.page.title, "Keep Oak fixture", "the view shows the page");
+  assert.equal(seen.page.url, `${origin}/`);
+  assert.equal(seen.page.tabs.length, 1);
+  assert.equal(seen.ready, true);
+  assert.ok(seen.page.frame, "with a picture of it");
+  assert.equal((await call("", scope, "GET")).status, "found", "a window that reopens finds the conversation's browser again");
 });
 
 test("with no launch file, the owner's typing still meets the network rules: this computer's own address is refused by them", async (t) => {
   const { browse } = await engine(t);
-  let outcome = await browse("http://127.0.0.1:9/");
-  if (outcome.status === "asked") outcome = await browse("http://127.0.0.1:9/", true);
+  const outcome = await browse("http://127.0.0.1:9/");
   assert.equal(outcome.status, "failed", JSON.stringify(outcome).slice(0, 300));
   assert.match(outcome.error, /points at this computer or a private network|private/i);
 });
 
-test("the owner's window outlives the per-task limit on websites: the next address opens in a fresh window", async (t) => {
+test("the owner's browser outlives the per-task limit on websites: every address the owner opens is its own step", async (t) => {
   const pages = {};
   for (let i = 0; i < 7; i++) pages[`/${i}`] = `<title>Site ${i}</title>`;
   const sites = [];
   for (let i = 0; i < 7; i++) sites.push(await site(t, pages)); // seven different origins, more than one task may open
-  const { sessionId, browse } = await engine(t, { allowPrivateAddresses: true });
+  const { browse } = await engine(t, { allowPrivateAddresses: true });
   for (let i = 0; i < 7; i++) {
-    let outcome = await browse(`${sites[i].origin}/${i}`);
-    if (outcome.status === "asked") outcome = await browse(`${sites[i].origin}/${i}`, true);
+    const outcome = await browse(`${sites[i].origin}/${i}`);
     assert.equal(outcome.status, "ran", `site ${i}: ${JSON.stringify(outcome).slice(0, 300)}`);
     assert.equal(outcome.result.title, `Site ${i}`);
   }
-  assert.ok(browsedRun(sessionId));
 });
 
 test("any-website mode checks every request a page makes, not only the page itself, against the network rules", async (t) => {
@@ -116,7 +118,8 @@ test("any-website mode checks every request a page makes, not only the page itse
   const page = await site(t, { "/": `<title>Outside</title><img src="${inside.origin}/secret?img"><script>fetch("${inside.origin}/secret?fetch").catch(() => {})</script>` });
   const browser = new BranchBrowser({ anyWebsite: true });
   const pagePort = new URL(page.origin).port;
-  browser.policy = { async assertAllowed(target) { if (target.port !== pagePort) throw new Error(`${target.host} points at this computer or a private network`); } };
+  browser.policy = { async assertAllowed(target) { if (target.port !== pagePort) throw new Error(`${target.host} points at this computer or a private network`); },
+    async allowedAddresses(target) { await this.assertAllowed(target); return null; } };
   t.after(() => browser.close());
   const context = { owner: "owner-1", workspace: ".", runId: "any-website", signal: new AbortController().signal, budget: new Budget(),
     permissions: new Set(["browser.read"]), depth: 0 };
