@@ -1068,6 +1068,18 @@ export class ChannelRouter {
     if (message.voice) await this.voiceReply(message, said).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
+  /**
+   * hot-update: resolves once no chat's turn is still finishing (its answer written down and sent) and no send is under
+   * way, or after `ms`; answers whether all were done. An engine handing over waits for this before it lets go.
+   */
+  async settle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.turns.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.flushing, new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, until - Date.now())); })]);
+    clearTimeout(timer);
+    return this.turns.size === 0;
+  }
   private handedOver(runId: string): boolean {
     return !!this.store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.handed_over' LIMIT 1").get(runId);
   }
