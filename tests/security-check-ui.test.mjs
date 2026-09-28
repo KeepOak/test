@@ -14,23 +14,25 @@ import { startServer } from "../dist/server.js";
 import { openSettings } from "./places.mjs";
 import { settingsWindow, openSettingsPage, setLevel, isSoon } from "./settings-window.mjs";
 
-/* The new window has no Security check card (the prototype has none). What still holds: both checks ship off, and the
-   one the prototype draws, "Check install requests for malware" on Settings › Advanced, is drawn off with them and never
-   claims more than the engine does. */
-test("both checks ship when needed, and the new window's malware switch waits, greyed, until it is wired", async (t) => {
+/* The new window has no Security check card (the prototype has none). What still holds: both checks ship when needed.
+   "Check install requests for malware" on Settings › Advanced is not this card's malware switch (that one is for tool
+   servers Branch starts): every install request is always looked up (src/flows-boards/install-requests.ts), so the row
+   is drawn on, greyed, with that reason, whatever the add-on check says. */
+test("both checks ship when needed, and install requests are always checked for malware", async (t) => {
   const { app, page, errors } = await settingsWindow(t, { name: "security-ui" });
   // The ship-on rule (src/security-audit/settings.ts): both ship "when needed", and neither runs by itself.
   assert.deepEqual(app.security.settings(), { audit: "when-needed", malware: "when-needed" });
   assert.equal(app.security.state().report, null, "a fresh install checks nothing by itself");
-  // The window's switch is not wired yet (it loosens safety when turned off, so it stays greyed for separate review).
+  // The add-on check switched off changes nothing about install requests.
   app.security.configure({ malware: "off" });
   await openSettingsPage(page, "general");
   await setLevel(page, "advanced");
   await openSettingsPage(page, "advanced");
   const malware = page.getByRole("checkbox", { name: "Check install requests for malware", exact: true });
   await malware.waitFor();
-  assert.equal(await malware.isChecked(), false, "the switch says off, as the engine does");
-  assert.equal(await isSoon(malware), true, "it waits, greyed out, until it is wired");
+  assert.equal(await malware.isChecked(), true, "install requests are always checked");
+  assert.equal(await isSoon(malware), true, "there is nothing to turn off, so it is greyed");
+  assert.match(await malware.getAttribute("data-tip"), /Always on/, "and says why");
   assert.deepEqual(errors, []);
 });
 
