@@ -4,7 +4,7 @@ import { audit } from "./audit.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentTaskRun } from "./task-scope.js";
 import { lockdownActive } from "./lockdown.js";
-import { contractHash, selfDevelopmentBase, selfDevelopmentLockdownRefusal } from "./self-development-contract.js";
+import { contractHash, preparedByTask, selfDevelopmentBase, selfDevelopmentLockdownRefusal } from "./self-development-contract.js";
 import { boundedDiff } from "./self-development-diff.js";
 import { cleanHead, SelfDevelopmentEvidence, sourceGit } from "./self-development-evidence.js";
 import type { SelfDevelopmentDeps } from "./self-development.js";
@@ -136,7 +136,9 @@ export class SelfDevelopmentMerges {
       throw new HttpError(403, "Automatic finish needs this owner's current local Full Access task, unlocked and outside Lockdown.");
     const run = this.deps.store.run(context.runId);
     const project = this.deps.projects.list(this.deps.owner).find((row) => row.id === run?.project);
-    if (!run || run.status !== "running" || project?.folder.replace(/\\/g, "/").replace(/\/$/, "") !== input.worktree)
+    // selfdev: the task that prepared this change keeps its conversation's project, and finishes its own change.
+    const prepared = preparedByTask(this.deps.store, this.deps.contracts, this.deps.owner, input.worktree, context.runId);
+    if (!run || run.status !== "running" || (!prepared && project?.folder.replace(/\\/g, "/").replace(/\/$/, "") !== input.worktree))
       throw new HttpError(403, "The active owner task must be working in this exact source worktree.");
     return actor;
   }
