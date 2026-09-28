@@ -9747,6 +9747,7 @@
   "window.why.quit": "Schließe diesen Tab, um zu gehen. Branch selbst läuft weiter, deine Trunks arbeiten also weiter.",
   "window.why.ws": "Teams bei keepoak.com sind noch nicht verfügbar, also ist Privat der einzige Arbeitsbereich.",
   "window.why.update-remind": "Nur die Desktop-App erinnert dich an ein bereitstehendes Update; im Browser gibt es nichts aufzuschieben.",
+  "window.why.grp-talk": "In einem Raum immer an: Seine Trunks sprechen es durch, bis zu 3 Runden, und jeder Trunk kann passen. Für einen einzelnen Raum gibt es keinen Schalter.",
   "window.why.bg-new-off": "Schalte Die gemeinsamen Befehle unter Einstellungen › Allgemein ein, um mit /bg eine zu starten.",
   "window.why.chw-may": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: wer Branch über diese Chat-App nutzen darf.",
   "window.why.scope": "Eine Wahl hier gilt nur für dieses Gespräch. Womit jedes neue Gespräch beginnt, legst du unter Branch einrichten › Wie viel es fragt fest.",

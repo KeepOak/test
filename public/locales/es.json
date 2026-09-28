@@ -9747,6 +9747,7 @@
   "window.why.quit": "Cierra esta pestaña para salir. Branch sigue en marcha, así que tus Trunks siguen trabajando.",
   "window.why.ws": "Los equipos de keepoak.com aún no están abiertos, así que Personal es el único espacio de trabajo.",
   "window.why.update-remind": "Solo la aplicación de escritorio te recuerda una actualización lista; en un navegador no hay nada que posponer.",
+  "window.why.grp-talk": "Siempre activo en una sala: sus Trunks lo hablan, hasta 3 rondas, y cualquier Trunk puede pasar. No hay un interruptor para una sola sala.",
   "window.why.bg-new-off": "Activa Los comandos compartidos en Ajustes › General para empezar una con /bg.",
   "window.why.chw-may": "Sigue desactivado aquí hasta una revisión de seguridad aparte: quién puede usar Branch desde esta app de chat.",
   "window.why.scope": "Lo que elijas aquí es solo para esta conversación. Con qué empieza cada conversación nueva se fija en Configurar Branch › Cuánto pregunta.",
