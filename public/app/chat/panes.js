@@ -9,7 +9,10 @@
    conversation's own menu ("Open another conversation beside"). Panes are widened by the handle between them, put in
    another order by dragging a tab (or Alt+Left and Alt+Right on it), and closed from their tab. The layout (the order,
    the widths and the active pane) is kept with the window's saved choices; a pane whose conversation is gone is dropped.
-   Below 1000px there is room for the main pane only, and the box writes to it. */
+   Below 1000px there is room for the main pane only, and the box writes to it.
+   Each pane shows its task working as the main conversation does: its live steps (chat/livesteps.js, a follower of its
+   own) and, when the task stops to ask, the same approval card, answered in place (chat/chat.js paneAsks); the task
+   carries on in its pane. So several Trunks can be watched, and let go on, side by side. */
 
 import { $, $$, esc, render, renderNow, applyCss, onRender, afterDraw } from "../core/dom.js";
 import { S, E, save, refresh, ownName, chatFace, trunkIntro } from "../core/state.js";
@@ -20,6 +23,7 @@ import { markLive } from "../core/features.js";
 import { text, plain } from "./markdown.js";
 import { mediaRows } from "./media.js";
 import { openConversation, conversationWho } from "./chat.js";
+import { liveFollower } from "./livesteps.js";
 import { t } from "../../i18n.js";
 import { waitRoom, holdWait, LONG_WAITS } from "../core/inflight.js"; // each send waits until its task ends
 import { simplePart } from "../shell/simple.js";
@@ -28,6 +32,8 @@ const MAIN = "@main";
 const LIVE = ["running", "queued", "waiting", "needs_input"];
 const NARROW = matchMedia("(max-width:999px)");
 const P = new Map(); // a pane's conversation: { messages, loaded, mark, sending, reading }
+const LIVES = new Map(); // a pane's live-steps follower
+const HOOK = { asks: () => "", readAsks: async () => {} }; // chat.js: the approval cards, and reading them again
 const sid = (s) => s.sessionId ?? s.id;
 
 /* ---------- the layout, as kept (S.panes19) ---------- */
@@ -44,6 +50,8 @@ function shown() { return layout().ids.filter((id) => id === MAIN || id !== S.ch
 export const panesOn = () => shown().length > 1;
 const activeId = () => { const L = layout(), list = shown(); return list.includes(L.active) && !NARROW.matches ? L.active : MAIN; };
 /** The conversation the box writes to when it is not the main one, else null. */
+/** Whether conversation `id` is open in a pane beside the main one. */
+export const paneOpen = (id) => !!id && id !== MAIN && panesOn() && shown().includes(id);
 export const paneTarget = () => (panesOn() && activeId() !== MAIN ? activeId() : null);
 
 const sessionOf = (id) => E.sessions.find((s) => sid(s) === id);
@@ -77,8 +85,14 @@ function thread(id) {
     last = m.role;
     return html;
   });
-  if (waiting(id)) rows.push(`<p class="wait19">${ic("bell", "s")}<span>${t("window.panes.needs-you")}</span><button class="btn sm" type="button" data-act="pane-main" data-pane="${esc(id)}">${t("window.panes.answer")}</button></p>`);
-  if (working(id)) rows.push(`<div class="b"><div class="gut">${av(chatFace(id), 28)}</div><div><span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span></div></div>`);
+  const live = liveOf(id);
+  if (working(id)) rows.push(`<div class="b"><div class="gut">${av(chatFace(id), 28)}</div><div>${live.shown() ? live.block() : `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>`);
+  /* Its questions, as the main conversation's cards, once its task has stopped on them (a yes given while it is still
+     stopping would carry nothing on); until then, and until they are read, a line that says one waits. */
+  const stopped = !(E.state?.runs ?? []).some((r) => r.sessionId === id && ["running", "queued"].includes(r.status)) && !P.get(id)?.sending;
+  const asks = stopped ? HOOK.asks(id) : "";
+  if (asks) rows.push(asks);
+  else if (waiting(id) || (!stopped && HOOK.asks(id))) { rows.push(`<p class="wait19">${ic("bell", "s")}<span>${t("window.panes.needs-you")}</span></p>`); readAsksSoon(); }
   return rows.join("");
 }
 function tab(id, last) {
@@ -129,12 +143,46 @@ function activate(id) {
   paintActive();
 }
 
+/* ---------- each pane's task, live ---------- */
+function liveOf(id) {
+  if (!LIVES.has(id)) LIVES.set(id, liveFollower({ block: `live19-${id}`, scroll: ".bs-body15", onAsk: () => readAsksSoon(true), onGone: render }));
+  return LIVES.get(id);
+}
+/* The task working in pane `id` now, if any, is followed; one that ended lets its follower go. */
+function watchLive(id) {
+  const run = (E.state?.runs ?? []).filter((r) => r.sessionId === id && LIVE.includes(r.status)).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+  if (run) liveOf(id).follow(run.id);
+  else if (LIVES.get(id)?.runId()) LIVES.get(id).stop();
+}
+let asksAt = 0;
+function readAsksSoon(now = false) {
+  if (!now && Date.now() - asksAt < 3000) return;
+  asksAt = Date.now();
+  HOOK.readAsks().catch((error) => toast(error.message));
+}
+/** A pane's task carried on after its question was answered there: its pane follows it until it stops working. */
+export async function followPane(id) {
+  await refresh().catch((error) => toast(error.message));
+  /* The yes carries the task on a moment later: it is waited for (up to 20 s) before its end is. */
+  let seen = false;
+  for (let i = 0; i < 600 && paneOpen(id); i++) {
+    watchLive(id);
+    await load(id, true);
+    seen ||= working(id);
+    if (seen ? !working(id) : i >= 13) break;
+    await new Promise((done) => setTimeout(done, 1500));
+    await refresh().catch(() => {});
+  }
+  render();
+}
+
 /* ---------- each pane's conversation ---------- */
 const markOf = (id) => JSON.stringify([sessionOf(id)?.updatedAt ?? "", (E.state?.runs ?? []).filter((r) => r.sessionId === id).map((r) => [r.id, r.status])]);
 /* Read again when the engine's picture of it changed, or `force`. Only the newest read for a pane is kept. */
 async function load(id, force = false) {
   const p = P.get(id) ?? { messages: [], loaded: false, mark: "", sending: false, reading: 0 };
   P.set(id, p);
+  watchLive(id);
   const mark = markOf(id);
   if (!force && (p.mark === mark || p.reading)) return;
   p.mark = mark;
@@ -153,9 +201,10 @@ async function load(id, force = false) {
   Object.assign(p, { messages: next, loaded: true });
   if (!same) render();
 }
+function forget(id) { P.delete(id); LIVES.get(id)?.forget(); LIVES.delete(id); }
 function drop(id) {
   const L = layout();
-  P.delete(id);
+  forget(id);
   keep({ ...L, ids: L.ids.filter((x) => x !== id), active: L.active === id ? MAIN : L.active });
   render();
 }
@@ -222,12 +271,12 @@ export function addPane(id) {
 }
 async function closePane(id) {
   const L = layout();
-  if (id !== MAIN) { P.delete(id); keep({ ...L, ids: L.ids.filter((x) => x !== id), active: L.active === id ? MAIN : L.active }); renderNow(); return; }
+  if (id !== MAIN) { forget(id); keep({ ...L, ids: L.ids.filter((x) => x !== id), active: L.active === id ? MAIN : L.active }); renderNow(); return; }
   /* The main pane closed: the next pane's conversation takes its place. */
   const next = shown().find((x) => x !== MAIN);
   if (!next) return;
   keep({ ...L, ids: L.ids.filter((x) => x !== next), active: MAIN, w: { ...L.w, [MAIN]: L.w[next] ?? L.w[MAIN] } });
-  P.delete(next);
+  forget(next);
   await openMain(next);
 }
 /* A pane's conversation becomes the main one (where its approvals and live steps are), and the main one takes its place. */
@@ -237,7 +286,7 @@ export async function makeMain(id) {
   if (!ids.includes(MAIN)) ids.unshift(MAIN);
   const w = { ...L.w, [MAIN]: L.w[id] ?? 1, ...(was ? { [was]: L.w[MAIN] ?? 1 } : {}) };
   keep({ ids, active: MAIN, w });
-  P.delete(id);
+  forget(id);
   await openMain(id);
 }
 function move(id, to) {
@@ -296,7 +345,8 @@ simplePart({ name: "panes19", take: () => S.panes19 ?? null, hide: () => { const
 
 /* ---------- listening ---------- */
 let dwell = null;
-export function initPanes() {
+export function initPanes(hooks = {}) {
+  Object.assign(HOOK, hooks);
   markLive(["beside15", "pane-x", "pane-main", "pane-pick", "pane-add"]);
   on("beside15", (el) => { if (el.dataset.v == null) pick($('[data-act="chatmenu"]') || el); else if (el.dataset.v) addPane(el.dataset.v); else closePop(); });
   on("pane-pick", (el) => pick(el));
