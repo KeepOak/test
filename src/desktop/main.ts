@@ -902,6 +902,9 @@ else {
 function startDetachedGateway(): void {
   const base = app.getPath("userData");
   app.setPath("userData", join(base, "gateway-desktop"));
+  // The gateway draws nothing but the small Stop notice, so it draws in software: its graphics process keeps about
+  // 35 MB less (48 -> 14 MB private) for as long as Branch runs in the background. Must come before the app is ready.
+  app.disableHardwareAcceleration();
   if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
   let gateway: Awaited<ReturnType<typeof runDesktopGateway>> = null, ending = false;
   app.on("window-all-closed", () => undefined);
