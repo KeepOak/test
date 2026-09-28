@@ -23,7 +23,36 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         "deviceKey",
         // B6: connecting from the window's "Pair a phone" square: pairs as a device, then collects the phone's session.
         "phonePair",
+        // PH-03: lending this phone while the app's own page is open.
+        "lendStart", "lendStop", "lendResult",
     ].map { CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise) }
+
+    /// PH-03: the device socket. Asks reach the page only while the app's own page shows (never the owner's Branch).
+    private lazy var lend = BranchLend(
+        showing: { [weak self] in self?.appPageShowing() ?? false },
+        state: { [weak self] connected, enabled in self?.notifyListeners("lendState", data: ["connected": connected, "enabled": enabled]) },
+        invoke: { [weak self] ask in self?.notifyListeners("lendInvoke", data: ask) })
+
+    override public func load() {
+        // The socket closes while the app is off the screen and dials again when it is back, if the page still wants it.
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.lend.pause()
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.lend.resume()
+        }
+    }
+
+    /// Whether the web view shows the app's own page, asked on the main thread.
+    private func appPageShowing() -> Bool {
+        var showing = false
+        let check = {
+            guard let shown = self.bridge?.webView?.url, let local = self.bridge?.config.localURL else { return }
+            showing = shown.scheme == local.scheme && shown.host == local.host && shown.port == local.port
+        }
+        if Thread.isMainThread { check() } else { DispatchQueue.main.sync(execute: check) }
+        return showing
+    }
 
     /// Capacitor on iOS answers its bridge from whatever page the window shows, and the window also
     /// shows the owner's Branch. Every method here is for the phone app's own page only, so a call
@@ -124,6 +153,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func openBranch(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
+        lend.stop() // PH-03: Branch's page never sees an ask
         guard let session = BranchKeychain.load() else { call.reject("Not paired"); return }
         DispatchQueue.main.async {
             (self.bridge?.viewController as? BranchViewController)?.openBranch(session, at: call.getString("at") ?? "")
@@ -240,8 +270,30 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     /// Throws this phone's key away; its signature stops working at once.
     @objc func deviceForget(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
+        lend.stop()
         BranchNode.forget()
         call.resolve()
+    }
+
+    /// PH-03: dials the Branch this phone is lent to. It takes nothing from the page: the address and the key are this side's.
+    @objc func lendStart(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        lend.start()
+        call.resolve()
+    }
+
+    @objc func lendStop(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        lend.stop()
+        call.resolve()
+    }
+
+    /// The page's answer to one ask it was handed (BranchLend.answer checks it).
+    @objc func lendResult(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        lend.answer(call.options as? [String: Any] ?? [:]) { error in
+            if let error { call.reject(error) } else { call.resolve() }
+        }
     }
 
     /// Only the paired Branch opens inside the app; every other address goes to Safari as before.
@@ -262,8 +314,9 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
 ///     itself (its Content-Security-Policy). The address rule is `BranchRules.checkOrigin`, the same
 ///     one the page keeps: https anywhere, plain http only to this network or a Tailscale address.
 enum BranchNode {
-    /// What this phone could do for Branch, before the owner's refusals (apps/mobile/web/phone-node.js).
-    static let offers = ["camera", "location", "open-url", "speak", "listen", "canvas"]
+    /// PH-03: what this phone does for Branch when lent, before the owner's refusals: the app's page takes photos,
+    /// records and speaks (apps/mobile/web/phone-node.js APP_OFFERS). Nothing else is offered.
+    static let offers = ["camera", "listen", "speak"]
     /// What this phone can promise never to do (apps/mobile/web/rules.js DEVICE_REFUSALS).
     static let refusals = ["camera", "screen", "listen", "run"]
     /// The 12 bytes an Ed25519 public key carries in front of it as SPKI DER, which is what Branch takes.
@@ -330,6 +383,32 @@ enum BranchNode {
         let record = Record(seed: made.rawRepresentation, never: load()?.never ?? [])
         try save(record)
         return (made, record)
+    }
+
+    /// Only these characters, counted: `$` in a regular expression also matches before a final line break.
+    static func only(_ text: String, _ allowed: String, count: Int) -> Bool {
+        text.count == count && text.unicodeScalars.allSatisfy { allowed.unicodeScalars.contains($0) }
+    }
+
+    /// PH-03: exactly what the phone signs to prove itself on the device socket (src/devices/protocol.ts helloText).
+    static func helloText(deviceId: String, nonce: String) -> String? {
+        guard only(deviceId, "0123456789abcdef", count: 16),
+              only(nonce, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", count: 43) else { return nil }
+        return "branch-node-hello-v1\n\(deviceId)\n\(nonce)"
+    }
+
+    /// PH-03: the hello's signature, over exactly `helloText` for this phone's own id. No other text is signed here.
+    static func helloSignature(nonce: String) throws -> String {
+        guard let record = load(), let id = record.nodeId, let text = helloText(deviceId: id, nonce: nonce),
+              let signing = try? Curve25519.Signing.PrivateKey(rawRepresentation: record.seed) else { throw URLError(.userAuthenticationRequired) }
+        return try signing.signature(for: Data(text.utf8)).base64EncodedString()
+    }
+
+    /// PH-03: the Branch this phone is lent to and its id there, the address checked again; or nil.
+    static func lendTarget() -> (hub: String, id: String)? {
+        guard let record = load(), let hub = record.hub, let id = record.nodeId, BranchRules.checkOrigin(hub) == hub,
+              only(id, "0123456789abcdef", count: 16) else { return nil }
+        return (hub, id)
     }
 
     /// mac7/residuals: the public half of the key, as it is sent with the invitation's number.
@@ -405,6 +484,221 @@ enum BranchNode {
         }
         throw NSError(domain: "BranchNode", code: 3, userInfo: [NSLocalizedDescriptionKey:
             BranchNative.word("phone.node.late", "Nobody answered in time. Make a new invitation and try again.")])
+    }
+}
+
+/// PH-03: lending this phone to Branch while the app's own page is open. This side holds the device socket
+/// (src/devices/hub.ts) and the key (BranchNode); the page does the one thing asked (apps/mobile/web/phone-node.js
+/// serveLending) and hands its answer back. What is checked here, whatever the page or Branch says: the socket goes
+/// only to the Branch in the Keychain record, checked again, and never follows a redirect; the only text signed is the
+/// hello over this connection's own challenge; an ask reaches the page only when this phone offers it, the owner
+/// switched it on, the phone's own "never" list allows it, it is in time and the app's own page shows, and is
+/// otherwise answered "no" at once; each ask is answered once; a picture or sound is at most 8 MB.
+final class BranchLend: NSObject, URLSessionTaskDelegate {
+    static let mediaLimit = 8 * 1024 * 1024
+    private let queue = DispatchQueue(label: "branch-lend")
+    private let showing: () -> Bool
+    private let state: (Bool, [String]) -> Void
+    private let invoke: ([String: Any]) -> Void
+    /// The page asked for lending and has not stopped it; a pause keeps it, so coming back dials again.
+    private var desired = false
+    private var wanted = false
+    private var proven = false
+    private var failures = 0
+    private var session: URLSession?
+    private var task: URLSessionWebSocketTask?
+    private var enabled: [String] = []
+    private var waiting: [String: Int64] = [:]
+    private var seen = Set<String>()
+
+    init(showing: @escaping () -> Bool, state: @escaping (Bool, [String]) -> Void, invoke: @escaping ([String: Any]) -> Void) {
+        self.showing = showing
+        self.state = state
+        self.invoke = invoke
+    }
+
+    static func offers(never: [String]) -> [String] { BranchNode.offers.filter { !never.contains($0) } }
+
+    /// Why an ask is turned away before the page sees it, or nil when it may go to the page.
+    static func refusal(_ capability: String, deadline: Any?, now: Int64, never: [String], enabled: [String], showing: Bool) -> String? {
+        if never.contains(capability) { return "This phone never allows that." }
+        if !BranchNode.offers.contains(capability) || !enabled.contains(capability) { return "That is switched off on this phone." }
+        guard let due = (deadline as? NSNumber)?.int64Value, due >= now else { return "The request came too late." }
+        if !showing { return "The Branch app is not open on this phone." }
+        return nil
+    }
+
+    func start() {
+        queue.async {
+            self.desired = true
+            self.connect()
+        }
+    }
+
+    func stop() {
+        queue.async {
+            self.desired = false
+            self.wanted = false
+            self.close()
+        }
+    }
+
+    func pause() {
+        queue.async {
+            self.wanted = false
+            self.close()
+        }
+    }
+
+    func resume() {
+        queue.async { if self.desired { self.connect() } }
+    }
+
+    private func connect() {
+        guard !wanted, BranchNode.lendTarget() != nil else { return }
+        wanted = true
+        failures = 0
+        dial()
+    }
+
+    /// Never follows a redirect: the socket goes to the paired Branch and nowhere else.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+
+    private func dial() {
+        guard wanted, let target = BranchNode.lendTarget(), var parts = URLComponents(string: target.hub) else { wanted = false; return }
+        parts.scheme = parts.scheme == "https" ? "wss" : "ws"
+        parts.path = "/api/devices/socket"
+        parts.queryItems = [URLQueryItem(name: "device", value: target.id)]
+        guard let url = parts.url else { wanted = false; return }
+        let session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+        let task = session.webSocketTask(with: url)
+        task.maximumMessageSize = 256 * 1024
+        self.session = session
+        self.task = task
+        proven = false
+        task.resume()
+        receive(task, id: target.id)
+    }
+
+    private func receive(_ task: URLSessionWebSocketTask, id: String) {
+        task.receive { [weak self] result in
+            self?.queue.async {
+                guard let self, self.task === task else { return }
+                switch result {
+                case .failure: self.ended()
+                case .success(.string(let text)):
+                    self.onMessage(text, id: id)
+                    if self.task === task { self.receive(task, id: id) }
+                case .success: self.receive(task, id: id)
+                }
+            }
+        }
+    }
+
+    private func close() {
+        task?.cancel(with: .normalClosure, reason: nil)
+        task = nil
+        session?.invalidateAndCancel()
+        session = nil
+        enabled = []
+        waiting = [:]
+        state(false, [])
+    }
+
+    /// The line dropped or was refused: dialled again a little later each time; refused five times running (switched
+    /// off on the computer, or the phone taken off), it waits for the next time the app opens.
+    private func ended() {
+        close()
+        failures = proven ? 0 : failures + 1
+        guard wanted, failures < 5 else { wanted = false; return }
+        queue.asyncAfter(deadline: .now() + min(30, pow(2, Double(max(0, failures - 1))))) { [weak self] in
+            guard let self, self.wanted, self.task == nil else { return }
+            self.dial()
+        }
+    }
+
+    private func send(_ value: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: value), let text = String(data: data, encoding: .utf8) else { return }
+        task?.send(.string(text)) { _ in }
+    }
+
+    private func onMessage(_ text: String, id: String) {
+        guard let message = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
+        let never = BranchNode.load()?.never ?? []
+        switch message["type"] as? String {
+        case "challenge":
+            guard let nonce = message["nonce"] as? String, BranchNode.helloText(deviceId: id, nonce: nonce) != nil,
+                  let signature = try? BranchNode.helloSignature(nonce: nonce) else { ended(); return }
+            send(["type": "hello", "version": 1, "deviceId": id, "platform": "ios", "offers": Self.offers(never: never), "signature": signature])
+        case "welcome", "enabled":
+            let switched = message["enabled"] as? [String] ?? []
+            enabled = Self.offers(never: never).filter { switched.contains($0) }
+            proven = true
+            state(true, enabled)
+        case "invoke":
+            onInvoke(message, never: never)
+        case "bye":
+            // The owner took this phone off the list on the computer: it forgets the pairing, as phone-node.js does.
+            if (message["reason"] as? String ?? "").contains("taken off") {
+                desired = false
+                wanted = false
+                BranchNode.forget()
+            }
+        default: break
+        }
+    }
+
+    private func onInvoke(_ ask: [String: Any], never: [String]) {
+        guard let id = ask["id"] as? String, BranchNode.only(id, "0123456789abcdef", count: 32), seen.insert(id).inserted else { return }
+        if seen.count > 500 { seen.removeAll() }
+        let capability = ask["capability"] as? String ?? ""
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        if let why = Self.refusal(capability, deadline: ask["deadline"], now: now, never: never, enabled: enabled, showing: showing()) {
+            send(["type": "result", "id": id, "ok": false, "error": why])
+            return
+        }
+        let deadline = (ask["deadline"] as? NSNumber)?.int64Value ?? now
+        waiting[id] = deadline
+        invoke(["id": id, "capability": capability, "args": ask["args"] as? [String: Any] ?? [:], "deadline": deadline])
+    }
+
+    /// The page's answer to one ask it was handed: answered once, a picture or sound as its own frame after it.
+    func answer(_ from: [String: Any], done: @escaping (String?) -> Void) {
+        queue.async {
+            guard let id = from["id"] as? String, self.waiting.removeValue(forKey: id) != nil, let task = self.task else {
+                done("That request is not waiting.")
+                return
+            }
+            let ok = from["ok"] as? Bool ?? false
+            var result: [String: Any] = ["type": "result", "id": id, "ok": ok]
+            var bytes: Data?
+            if !ok {
+                let error = from["error"] as? String ?? ""
+                result["error"] = error.isEmpty ? "The phone could not do it." : String(error.prefix(2000))
+            } else {
+                if let value = from["value"] { result["value"] = value }
+                if let media = from["media"] as? [String: Any] {
+                    let mime = media["mime"] as? String ?? "", name = media["name"] as? String ?? ""
+                    let kinds = mime.split(separator: "/", maxSplits: 1)
+                    guard kinds.count == 2, ["image", "audio"].contains(String(kinds[0])),
+                          BranchNode.only(String(kinds[1]), "abcdefghijklmnopqrstuvwxyz0123456789.+-", count: kinds[1].count), kinds[1].count <= 60,
+                          let data = Data(base64Encoded: media["data"] as? String ?? ""), data.count <= Self.mediaLimit, name.count <= 120 else {
+                        done("The picture or sound was larger than Branch accepts.")
+                        return
+                    }
+                    var meta: [String: Any] = ["mime": mime, "bytes": data.count]
+                    if !name.isEmpty { meta["name"] = name }
+                    result["media"] = meta
+                    bytes = data
+                }
+            }
+            self.send(result)
+            if let bytes { task.send(.data(Data(id.utf8) + bytes)) { _ in } }
+            done(nil)
+        }
     }
 }
 

@@ -46,7 +46,7 @@ const changeRoute = /^\/api\/autonomy\/procedures\/([a-f0-9-]{36})\/propose$/;
 /** Which switch an answer belongs to, so a part switched off since cannot be fed by an old question. */
 const partOf: Record<EntryKind, AutonomyPart> = {
   schedule: "suggestions", order: "orders", procedure: "procedures", instruction: "instructions",
-  start: "procedures", step: "procedures", escalation: "orders",
+  start: "procedures", step: "procedures", escalation: "orders", unattended: "procedures",
 };
 
 /**

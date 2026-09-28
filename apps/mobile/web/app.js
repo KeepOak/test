@@ -19,6 +19,7 @@ import { drawVoice, initVoice, scanPicture, shareSheet } from "/ph-voice.js";
 import { initSwitches, loadSwitches, switchesNow } from "/ph-switches.js";
 import { restartChecks, watchFront } from "/notify.js";
 import { savePanel } from "/phone-connect.js";
+import { startLending } from "/ph-lend.js";
 
 const AWAY_MS = 5 * 60_000;
 const SCREENS = { home: drawHome, chats: drawChats, chat: drawChat, inbox: drawInbox, more: drawMore, settings: drawSettings, voice: drawVoice, ...PLACES, ...SETTINGS_PAGES };
@@ -106,6 +107,9 @@ async function openApp() {
   lastScreen = null;
   draw();
   void followBranch().then(draw);
+  // PH-03: while the app's own page is open, a lent phone answers Branch (the native side knows whether it is lent, and
+  // closes the socket while the app is off the screen, dialling again when it is back).
+  void startLending(() => { if (P.scr === "lend") draw(); });
 }
 async function route() {
   const session = await phone.vault.current();
