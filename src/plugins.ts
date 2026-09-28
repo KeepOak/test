@@ -1,4 +1,5 @@
-import { readdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -68,7 +69,26 @@ export interface PluginSummary {
   tools: { name: string; description: string; permission: string; search?: string }[]; hooks: string[];
   /** Batch 26 (wave 8): the tools the owner's grant left out, each with the reason, in plain words. */
   leftOut?: string[];
+  /** From inspect: false when the plugin has no manifest to read, so nothing about it is known until it is switched on. */
+  manifest?: boolean;
 }
+/**
+ * What a plugin says about itself without running: the plugin catalog's record from when it was installed (a folder
+ * or zip with branch-plugin.json, or an add-on), else a `<id>.plugin.json` placed beside a hand-placed file.
+ */
+const PluginSidecarSchema = z.object({
+  id: pluginId,
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(500).default(""),
+  permissions: z.array(z.string().max(100)).max(20).default([]),
+  tools: z.array(z.object({ name: z.string().max(80), description: z.string().max(300).default(""),
+    permission: z.string().max(64), search: z.string().max(60).optional() })).max(50).default([]),
+  hooks: z.array(z.string().max(64)).max(20).default([]),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+});
+interface Declared { summary: PluginSummary; sha256: string | null }
+const noManifest = (id: string): string =>
+  `${id}.mjs has no manifest (the plugin catalog's record, or ${id}.plugin.json beside it), so what it adds is shown only once you switch it on. Switching it on runs its code.`;
 interface Loaded { summary: PluginSummary; toolNames: string[]; stopHooks: (() => void)[] }
 /**
  * bucket-15: where a plugin that must not run inside Branch is loaded instead — its own walled
@@ -112,9 +132,28 @@ export class Plugins {
       return { id, file: name, enabled: saved?.enabled === true, loaded: this.loaded.has(id), summary: saved?.summary ?? null };
     });
   }
-  /** Loads one plugin file to show what it would add. This runs the code in that file. */
+  /**
+   * What one plugin would add, read from its manifest only. Nothing in the plugin file is imported or run, walled or
+   * not: its code runs for the first time when the owner switches it on (`enable`).
+   */
   async inspect(id: string): Promise<PluginSummary> {
-    const plugin = await this.read(id);
+    await this.file(id);
+    const declared = await this.declared(id);
+    if (!declared) return { id, name: id, description: "", permissions: [], tools: [], hooks: [], leftOut: [noManifest(id)], manifest: false };
+    return { ...declared.summary, manifest: true };
+  }
+  /** The plugin's manifest, or null when it has none. Reading it never runs the plugin. */
+  private async declared(id: string): Promise<Declared | null> {
+    const recorded = this.store.get("settings", this.owner, `plugin-catalog:${id}`)?.data;
+    const sidecar = recorded ? null : await readFile(join(this.folder, `${id}.plugin.json`), "utf8").catch(() => null);
+    if (!recorded && sidecar === null) return null;
+    const raw = PluginSidecarSchema.parse(recorded ?? JSON.parse(sidecar!));
+    if (raw.id !== id) throw new Error(`The manifest for ${id}.mjs names the plugin "${raw.id}"`);
+    const tools = raw.tools.map((tool) => ({ name: tool.name, description: tool.description, permission: tool.permission, ...(tool.search ? { search: tool.search } : {}) }));
+    return { summary: { id, name: raw.name, description: raw.description, permissions: raw.permissions, tools, hooks: raw.hooks }, sha256: raw.sha256 ?? null };
+  }
+  /** What the loaded code itself declares; only ever asked once the owner has switched the plugin on. */
+  private summarize(id: string, plugin: BranchPlugin): PluginSummary {
     const manifest = PluginManifestSchema.parse({ id: plugin.id, name: plugin.name, description: plugin.description ?? "", permissions: plugin.permissions ?? [] });
     if (manifest.id !== id) throw new Error(`The plugin file is called ${id}.mjs but declares the id "${manifest.id}"`);
     const tools = (plugin.tools ?? []).map((tool) => this.checkTool(manifest, tool));
@@ -130,11 +169,15 @@ export class Plugins {
     return { name: tool.name, description: String(tool.description ?? "").slice(0, 300), permission: tool.permission,
       ...(tool.search?.label ? { search: String(tool.search.label).slice(0, 60) } : {}) };
   }
-  private async read(id: string): Promise<BranchPlugin> {
+  private async file(id: string): Promise<{ file: string; info: { mtimeMs: number } }> {
     pluginId.parse(id);
     const file = join(this.folder, `${id}.mjs`);
     const info = await stat(file).catch(() => null);
     if (!info?.isFile()) throw new Error(`There is no plugin file called ${id}.mjs`);
+    return { file, info };
+  }
+  private async read(id: string): Promise<BranchPlugin> {
+    const { file, info } = await this.file(id);
     // bucket-15: a plugin held elsewhere is never imported into this process.
     if (this.isolation?.holds(id)) return this.isolation.load(id, file);
     const module = await import(`${pathToFileURL(file).href}?loaded=${info.mtimeMs}`) as { default?: BranchPlugin };
@@ -151,8 +194,18 @@ export class Plugins {
    */
   async enable(id: string, allow?: readonly string[]): Promise<PluginSummary> {
     if (this.loaded.has(id)) return this.loaded.get(id)!.summary;
-    const plugin = await this.read(id), summary = await this.inspect(id);
-    const grant = this.grantFor(summary, allow ?? this.saved(id)?.grant?.permissions);
+    // The manifest the owner read binds what runs: code changed since it was installed is not run, and a permission the
+    // code asks for that the manifest did not list is never granted (its tools are left out, and said so).
+    const declared = await this.declared(id);
+    if (declared?.sha256) {
+      const code = await readFile(join(this.folder, `${id}.mjs`), "utf8");
+      if (createHash("sha256").update(code, "utf8").digest("hex") !== declared.sha256)
+        throw new Error(`${id}.mjs is not what it was when it was installed, so it was not switched on. Install it again to use it.`);
+    }
+    const plugin = await this.read(id), summary = this.summarize(id, plugin);
+    const listed = allow ?? this.saved(id)?.grant?.permissions;
+    const grant = this.grantFor(summary, declared
+      ? (listed ?? declared.summary.permissions).filter((permission) => declared.summary.permissions.includes(permission)) : listed);
     const { kept, left } = narrowTools(summary.tools, grant);
     const leftOut = [...(summary.leftOut ?? []), ...left.map((tool) => narrowedSentence(tool.name, tool.permission))];
     const wanted = new Set(kept.map((tool) => tool.name));

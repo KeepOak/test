@@ -70,6 +70,19 @@ async function onFrame(w, selector) {
   const scale = Math.min(img.width / size.width, img.height / size.height), left = img.x + (img.width - size.width * scale) / 2;
   return { x: left + (box.x + box.width / 2) * scale, y: img.y + (box.y + box.height / 2) * scale };
 }
+/* Click a box of the page and wait until the page's caret is in it, as a person would before typing: a click that
+   landed while the view was being drawn again is made again. */
+async function focusBox(w, selector, id) {
+  for (let i = 0; i < 5; i++) {
+    const at = await onFrame(w, selector);
+    await w.page.mouse.click(at.x, at.y);
+    for (let j = 0; j < 20; j++) {
+      if (await w.enginePage().evaluate(() => document.activeElement?.id).catch(() => "") === id) return at;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  assert.fail(`the page's ${id} box never got the caret`);
+}
 const framed = (page) => page.locator('#stage7 .owner-browser7-img[src^="data:image/jpeg"]:not([hidden])').waitFor({ timeout: 30000 });
 
 test("the owner opens, clicks, types, scrolls, uses tabs and Back in Branch's browser, and a refused search is said in place", async (t) => {
@@ -85,8 +98,7 @@ test("the owner opens, clicks, types, scrolls, uses tabs and Back in Branch's br
   assert.doesNotMatch(await page.locator("#stage7").innerText(), /Nothing open/);
   assert.equal(await page.locator('#stage7 [data-act="stage-take-browser"]').count(), 0, "no greyed Take over");
 
-  const input = await onFrame(w, "#name");
-  await page.mouse.click(input.x, input.y);
+  const input = await focusBox(w, "#name", "name");
   await page.keyboard.type("héllo 世界");
   await w.until(async () => (await w.enginePage().inputValue("#name")) === "héllo 世界", "typed words in the page");
   const save = await onFrame(w, "#save");
@@ -140,8 +152,7 @@ test("Take over a working task's own window, type, and Hand back: the task carri
   await framed(page);
   const back = page.locator('#stage7 .st7-top [data-act="owner-browser-handback"]');
   await back.waitFor({ timeout: 30000 });
-  const input = await onFrame(w, "#name");
-  await page.mouse.click(input.x, input.y);
+  const input = await focusBox(w, "#name", "name");
   await page.keyboard.type("from the owner");
   await w.until(async () => (await w.enginePage().inputValue("#name")) === "from the owner", "the owner's words in the task's page");
 
@@ -185,8 +196,7 @@ test("a task that reaches a sign-in page Needs you: the card and view say so, th
   const tools = page.locator("#stage7 .tb7");
   await tools.waitFor({ timeout: 30000 });
   await framed(page);
-  const box = await onFrame(w, "#pass");
-  await page.mouse.click(box.x, box.y);
+  await focusBox(w, "#pass", "pass");
   await page.keyboard.type("FixtureOnlyPassword-9");
   await w.until(async () => (await w.enginePage().inputValue("#pass")) === "FixtureOnlyPassword-9", "the owner's password in the page");
 
