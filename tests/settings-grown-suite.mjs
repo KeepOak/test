@@ -119,9 +119,12 @@ test("S8 somebody else's profile is not drawn the owner's controls, search never
   await f.page.locator(".set-col h1").first().waitFor();
   assert.equal(await f.page.locator('.set-col [data-act="p-invite"], .set-col [data-act="p-role"], .set-col [data-act="p-remove"]').count(), 0,
     "no owner-only control is drawn for somebody else");
-  /* Search names pages only, never a setting of the owner's. */
+  /* Search never names a setting of the owner's: for anybody else it finds pages by name only (settings/find.js rows
+     are the owner's), so neither a row's title nor its data is listed. */
   await f.page.locator("#set-q").fill("Key name in Secrets");
   assert.equal(await f.page.locator(".set-col").getByText("Key name in Secrets").count(), 0);
+  await f.page.locator("#set-q").fill("Vim keys");
+  assert.equal(await f.page.locator(".set-found, .set-hit").count(), 0, "no settings row is listed for somebody else");
   /* The server keeps the look and the level the owner's. */
   assert.notEqual(offLimitsToHousehold("POST", "/api/preferences"), null);
   const refused = await fetch(new URL("/api/preferences", f.url), { method: "POST", headers: f.headers, body: JSON.stringify({ settingsLevel: "technical", showEverything: true }) });
@@ -326,7 +329,7 @@ for (const [width, height] of [[1440, 950], [1024, 700], [390, 844]]) {
 }
 
 test("S19 in French, search finds a Settings page by its French name", async (t) => {
-  // Redesign: search finds pages by name; in French, the French name finds the page.
+  // Redesign: search finds pages by name and every row by its words (UI-091); in French, the French name finds the page.
   const f = await fixture(t);
   const fr = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
   await f.page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
@@ -336,7 +339,11 @@ test("S19 in French, search finds a Settings page by its French name", async (t)
   assert.notEqual(words, "Saved sign-ins", "the page's name was not translated");
   await f.page.locator("#set-q").fill(words);
   await navButton(f.page, "secrets").waitFor();
-  assert.deepEqual(await allPages(f.page), ["secrets"], "the French name finds its page, and only it");
+  // Its page stays listed, and its rows are found by the page's French name (a page whose own rows share the words, as
+  // Permissions may, is listed beside it: settings/find.js).
+  assert.ok((await allPages(f.page)).includes("secrets"), "the French name finds its page");
+  const where = await f.page.locator(".set-found .set-hit small").allTextContents();
+  assert.ok(where.some((line) => line.startsWith(words)), `the page's rows are found by its French name (${where.join(" | ")})`);
   assert.ok(Object.values(fr).includes(words), "in the French words");
   assert.deepEqual(f.errors, []);
 });
