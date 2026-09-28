@@ -152,7 +152,7 @@ async function connectOne(host: LiveHost, recipe: Recipe, entry: Record<string, 
   const posted = isPostedChannel(adapter) || recipe.id === "whatsapp" || ["messenger", "instagram"].includes(recipe.id) || entry.type === "chat";
   const address = posted ? webhookAddress(recipe.id === "whatsapp" ? "whatsapp" : "chat", channel, webhookSecret(host.store, host.owner, channel)) : null;
   const note = health?.state === "needs attention" ? health.reason ?? `${recipe.name} needs attention.`
-    : posted ? `${recipe.name} sends messages to this computer. Paste this computer's public address followed by ${address} into ${recipe.name}'s settings; it must be reachable from the internet (Settings › Remote access).`
+    : posted ? `${recipe.name} sends messages to this computer. Paste this computer's public address followed by ${address} into ${recipe.name}'s settings. Branch must be reachable from the internet at that address, through a reverse proxy or a tunnel you run; nothing arrives until it is.`
       : null;
   return outcome({ connected: health?.state !== "needs attention", channel, botName: adapter.botName(), address, note });
 }
