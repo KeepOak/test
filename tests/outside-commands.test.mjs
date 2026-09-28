@@ -129,3 +129,17 @@ test("the owner's other computers are refused to anyone but the owner, and stay 
       assert.match(error ?? "", who);
     }
 });
+
+/* A restore cuts a Trunk down (src/trunks/restore-narrow.ts); "sandboxed" only tightens, so it stays as it was, and an
+   older backup without it still restores. Mutation: drop sandboxed from HadSchema's reach and the first record is left
+   out of the restore (null). */
+test("a restored Trunk keeps running sandboxed, and one backed up before the flag still restores", async () => {
+  const { narrowTrunk } = await import("../dist/trunks/restore-narrow.js");
+  const walled = narrowTrunk(JSON.stringify({ name: "careful", reach: { channels: ["telegram"], commands: true, sandboxed: true } }));
+  assert.ok(walled, "a Trunk with the flag is restored");
+  assert.deepEqual(JSON.parse(walled.data).reach, { channels: [], commands: false, sandboxed: true });
+  assert.equal(walled.held.had.reach.sandboxed, true);
+  const older = narrowTrunk(JSON.stringify({ name: "older", reach: { channels: [], commands: false } }));
+  assert.ok(older, "an older backup still restores");
+  assert.equal(JSON.parse(older.data).reach.sandboxed, false);
+});
