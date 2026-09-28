@@ -42,7 +42,16 @@ export interface LiveTiming {
 export const defaultLiveTiming: LiveTiming = { progressAfterMs: 4000, editEveryMs: 1500, typingEveryMs: 4000, reactEveryMs: 700 };
 export type OutboundGuard = (text: string) => Promise<{ text: string; blocked: boolean }>;
 /** The task's steps as the progress message shows them; `final` adds the line saying how it ended. */
-export interface StepsSource { render(limit: number, final?: "done" | "error"): RichText }
+export interface StepsSource {
+  render(limit: number, final?: "done" | "error"): RichText;
+  /**
+   * The steps as one or more messages (src/channels/steps-display.ts `overflow` and `grouping`): a list too long for one
+   * message carries on in a new one. Absent, the one message from `render` is edited in place.
+   */
+  pages?(limit: number, final?: "done" | "error"): RichText[];
+  /** A message per step, sent and never edited (Hermes Agent's "separate"); works on an app that cannot edit too. */
+  each?: boolean;
+}
 /** How long an app asked to be left alone (Telegram's `retry_after`, carried on the error), in ms; 0 for any other failure. */
 export function retryAfterMs(error: unknown): number {
   const seconds = Number((error as { retryAfter?: unknown } | null)?.retryAfter);
@@ -61,6 +70,8 @@ export interface LiveTarget {
    * their labels, which name files, pages and commands.
    */
   kindsOnly?: boolean | undefined;
+  /** False: no progress message at all, only typing and the reaction (the owner's "no steps in groups"). */
+  progress?: boolean | undefined;
 }
 interface Step { label: string; name: string; state: "working" | "done" | "failed" }
 /** A part that failed this many times in a row is left alone for the rest of the task. */
@@ -100,6 +111,11 @@ export class LiveStatus {
   private reply = "";
   private streamBlocked = false;
   private progressId: string | null = null;
+  /** With pages (`StepsSource.pages`): every message the steps went out in, oldest first, and what each shows. */
+  private readonly pageIds: string[] = [];
+  private readonly pageShown: string[] = [];
+  /** The steps' messages have been started (with `each`, the first step may not have come yet). */
+  private pagesOpen = false;
   private progressPlanned = false;
   private shown = "";
   private closed = false;
@@ -154,7 +170,7 @@ export class LiveStatus {
         this.keepTyping();
         this.setState(this.wanted ?? "thinking", true);
       }
-      if (this.target.adapter.edit) void this.openProgress();
+      if (this.target.progress !== false && (this.target.adapter.edit || this.stepsSource?.each)) void this.openProgress();
     }, this.timing.progressAfterMs);
   }
   /** One stored event of the task. Tool steps go in the list; a new model round is thinking again. */
@@ -223,15 +239,28 @@ export class LiveStatus {
   private finishSteps(outcome: "done" | "error"): Promise<null> {
     void this.enqueue(async () => {
       await this.applyReaction();
-      if (!this.progressId) return;
+      if (!this.progressId && !this.pageIds.length && !this.pagesOpen) return;
       // A "wait" answer to the last line is waited out too, a few times at most.
       for (let tries = 0; tries < 3; tries++) {
         const wait = this.pausedUntil - Date.now();
         if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait).unref());
-        if (await this.editTo(this.stepsSource!.render(this.limit, outcome)) || this.pausedUntil <= Date.now()) return;
+        const done = this.stepsSource!.pages ? await this.syncPages(outcome) : await this.editTo(this.stepsSource!.render(this.limit, outcome));
+        if (done || this.pausedUntil <= Date.now()) return;
       }
     });
     return Promise.resolve(null);
+  }
+  /**
+   * Removes the steps message(s) once a good answer has arrived (the owner's `cleanup`), where the app can. Waits for
+   * the last edit first. A message the app will not remove is left as it is.
+   */
+  async remove(): Promise<void> {
+    await this.enqueue(async () => {
+      const { adapter, chatId } = this.target;
+      if (!adapter.deleteMessage || !this.permitted()) return;
+      const ids = this.pageIds.length ? this.pageIds.filter(Boolean) : this.progressId ? [this.progressId] : [];
+      for (const id of ids) await adapter.deleteMessage(chatId, id).catch(() => undefined);
+    });
   }
   /** Stops everything without a last reaction or edit, for a turn that never became a task. */
   cancel(): void {
@@ -306,7 +335,8 @@ export class LiveStatus {
   /** Sends the progress message once the task has been working for a while. */
   private openProgress(): Promise<void> {
     return this.enqueue(async () => {
-      if (this.closed || this.progressId || !this.permitted() || Date.now() < this.pausedUntil) return;
+      if (this.closed || this.progressId || this.pagesOpen || !this.permitted() || Date.now() < this.pausedUntil) return;
+      if (this.stepsSource?.pages) { this.pagesOpen = true; await this.syncPages(); return; }
       const rendered = this.render();
       const out = await this.format(rendered);
       if (out === null) return;
@@ -325,7 +355,7 @@ export class LiveStatus {
     });
   }
   private scheduleEdit(): void {
-    if (this.closed || !this.progressId || this.editTimer) return;
+    if (this.closed || (!this.progressId && !this.pageIds.length && !this.pagesOpen) || this.editTimer) return;
     this.editTimer = this.later(() => {
       this.editTimer = null;
       void this.enqueue(() => this.pushEdit());
@@ -334,6 +364,10 @@ export class LiveStatus {
   private async pushEdit(): Promise<void> {
     if (this.closed) return;
     if (Date.now() < this.pausedUntil) { this.scheduleEdit(); return; }
+    if (this.stepsSource?.pages) {
+      if (!await this.syncPages() && Date.now() < this.pausedUntil) this.scheduleEdit();
+      return;
+    }
     const rendered = this.render();
     if (rendered.text === this.shown) return;
     const out = await this.format(rendered);
@@ -352,11 +386,53 @@ export class LiveStatus {
     const out = await this.format(content);
     return out !== null && this.put(out.text, out.format);
   }
+  /**
+   * Brings the steps' messages up to date (`StepsSource.pages`): each message that changed is edited, and lines that
+   * no longer fit go out in a new message, quietly. With `each`, a message is never edited: only new ones are sent.
+   * False when something could not be done now (a wait asked for, a failure, words held back).
+   */
+  private async syncPages(final?: "done" | "error"): Promise<boolean> {
+    const source = this.stepsSource!;
+    const pages = source.pages!(this.limit, final);
+    let all = true;
+    for (const [index, page] of pages.entries()) {
+      if (index < this.pageIds.length) {
+        if (source.each || page.text === this.pageShown[index]) continue;
+        const out = await this.format(page);
+        if (out === null) return false;
+        if (await this.putOn(this.pageIds[index]!, out.text, out.format)) this.pageShown[index] = page.text;
+        else all = false;
+        continue;
+      }
+      if (!this.permitted() || Date.now() < this.pausedUntil || this.failures.edit >= giveUpAfter) return false;
+      const out = await this.format(page);
+      if (out === null) return false;
+      try {
+        // The first message replies to the person's; the ones after it continue the list.
+        const id = await this.target.adapter.send(this.target.chatId, out.text, this.pageIds.length ? undefined : this.target.messageId,
+          Object.keys(out.format).length ? out.format : undefined);
+        // An app that does not say which message it sent cannot have it edited: one message is all it gets.
+        if (!id && !source.each) this.failures.edit = giveUpAfter;
+        this.pageIds.push(id ?? "");
+        this.pageShown.push(page.text);
+        this.progressId ??= id ?? null;
+      } catch (error) {
+        const wait = retryAfterMs(error);
+        if (wait) this.pausedUntil = Date.now() + wait;
+        else this.failures.edit++;
+        return false;
+      }
+    }
+    return all;
+  }
   private async put(text: string, format: MessageFormat): Promise<boolean> {
+    return this.progressId ? this.putOn(this.progressId, text, format) : false;
+  }
+  private async putOn(messageId: string, text: string, format: MessageFormat): Promise<boolean> {
     const { adapter, chatId } = this.target;
-    if (!adapter.edit || !this.progressId || this.failures.edit >= giveUpAfter || !this.permitted()) return false;
+    if (!adapter.edit || !messageId || this.failures.edit >= giveUpAfter || !this.permitted()) return false;
     try {
-      await adapter.edit(chatId, this.progressId, text, format.spans?.length ? { spans: format.spans } : undefined);
+      await adapter.edit(chatId, messageId, text, format.spans?.length ? { spans: format.spans } : undefined);
       this.failures.edit = 0;
       return true;
     } catch (error) {
