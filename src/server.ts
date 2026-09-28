@@ -214,7 +214,7 @@ import {
   ownAddresses, saveListenSettings, thisComputerAddress, watchAddresses,
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
-import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { lockdownActive, lockdownToolRefusalText, onLockdownChange } from "./lockdown.js";
 import { ChannelRouteError } from "./channels/routes.js";
 import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
@@ -290,8 +290,9 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
-import { LocalScreen } from "./local-screen.js";
+import { LocalScreen, LocalScreenRefusal } from "./local-screen.js";
 import { localScreenHttp } from "./local-screen-http.js";
+import { DeviceScreen, deviceScreenPath } from "./device-screen.js"; // computer-control: a paired computer's screen, live
 import { pickedDevice } from "./devices/tools.js";
 import { signInShowing } from "./sign-in-showing.js";
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
@@ -3738,6 +3739,23 @@ export async function startServer(
     },
     desktop: app.desktop ?? null,
   });
+  // computer-control (SCREEN-077): a paired computer's screen, pictures passed through from its device socket.
+  const deviceScreen = new DeviceScreen({
+    owner: () => app.runtime.owner, isOwner: () => app.store.profiles.isOwner(),
+    owns: (owner, sessionId) => app.store.ownsSession(owner, sessionId),
+    lockdown: () => lockdownActive(app.store, app.runtime.owner),
+    locked: () => app.sessionLock.refusal("GET", deviceScreenPath),
+    allows: (sessionId, deviceId) => {
+      const trunk = app.trunks.trunkForConversation(sessionId)?.trunkId;
+      const device = pickedDevice(app.store, app.runtime.owner, sessionId) ?? (trunk ? app.devices.computerRule?.first(trunk) ?? null : null);
+      return device === deviceId && (!trunk || !app.devices.computerRule || app.devices.computerRule.allows(trunk, deviceId));
+    },
+    capture: async (deviceId, signal) => {
+      const answer = await app.devices.hub.invoke(deviceId, "screen", {}, { timeoutMs: 20_000, signal, ownerView: true });
+      if (!answer.media) throw new Error("That computer did not send a picture.");
+      return { bytes: answer.media.data, mime: answer.media.mime };
+    },
+  });
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
   const stopDiagnosticLog = startDiagnosticLog(
@@ -3985,6 +4003,30 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
       if (await handleMcpRequest(app, request, response)) return;
       const offeredWindowKey = bearerOf(request), screenOwner = app.runtime.owner;
+      // computer-control: "Take a screenshot" in the message box's + menu, the owner's own picture of their main display.
+      if (request.method === "POST" && path === "/api/panels/screen/shot") {
+        z.object({}).strict().parse(await readBody(request));
+        if (throughDoor(request) || key !== "window" || offeredWindowKey !== token) throw new HttpError(403, "A screenshot is taken only in Branch's own window on this computer.");
+        if (!app.store.profiles.isOwner()) throw new HttpError(403, "Only the owner takes a picture of this computer's screen.");
+        if (lockdownActive(app.store, app.runtime.owner)) throw new HttpError(403, lockdownToolRefusalText);
+        const locked = app.sessionLock.refusal("POST", path); if (locked) throw new HttpError(423, locked);
+        if (signInShowing()) throw new HttpError(409, "Branch is handling a sign-in right now, so no picture is taken until it finishes.");
+        if (!app.desktop) throw new HttpError(404, "This Branch has no screen to take a picture of.");
+        let bytes: Buffer;
+        try { bytes = await app.desktop.ownerShot(AbortSignal.timeout(60_000)); }
+        catch (error) { throw new HttpError(409, error instanceof Error ? error.message : "The screenshot did not work."); }
+        response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+        response.end(bytes);
+        return;
+      }
+      if (request.method === "GET" && path === deviceScreenPath) {
+        const query = z.object({ session: z.string().min(1).max(200), device: z.string().min(1).max(40) }).strict().parse(Object.fromEntries(new URL(request.url ?? "/", "http://local").searchParams));
+        try {
+          await deviceScreen.stream({ owner: screenOwner, sessionId: query.session, viaDoor: throughDoor(request), shortKey: key !== "window",
+            keyValid: () => key === "window" && offeredWindowKey === token }, query.device, response);
+        } catch (error) { throw error instanceof LocalScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
       if (await localScreenHttp(localScreen, (sessionId) => ({
         owner: screenOwner, sessionId, viaDoor: throughDoor(request), shortKey: key !== "window",
         keyValid: () => key === "window" && offeredWindowKey === token,
@@ -4584,6 +4626,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingLockdown();
       browserControls.close();
       await localScreen.close();
+      deviceScreen.close();
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
       await remote.close().catch(() => undefined); // every door it opened, and none opens after this

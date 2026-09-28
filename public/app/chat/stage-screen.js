@@ -1,7 +1,7 @@
 import { token } from "../core/api.js";
 
 const V = { on: false, sid: "", epoch: 0, open: null, selecting: null, frame: "", frameId: "", painted: "", viewId: "", label: "",
-  refusal: "", notice: "", targets: [], loading: false, onChange: null, watching: false, driving: false, cursor: null, kind: "", chosen: false, last: null };
+  refusal: "", notice: "", targets: [], loading: false, onChange: null, watching: false, driving: false, cursor: null, kind: "", chosen: false, last: null, claimed: "" };
 export const screenFrame = () => V.frame;
 export const screenRefusal = () => V.refusal;
 /** Where the Trunk's newest click landed on the frame ({ x, y } shares, `at`, `trunk`), or null. */
@@ -106,13 +106,16 @@ export function nativeFramePainted(image) {
     }).catch(() => {});
   });
 }
-// computer-control: a press lands between two frames as often as not; wait (briefly) for the next painted one instead of
+// computer-control: a press lands between two frames as often as not; wait (up to five seconds, for a busy computer) for the next painted one instead of
 // refusing the owner's click, so Take over and clicks through the view work on a busy computer too.
 async function frameRequest(extra) {
   const viewId = V.viewId;
-  for (let tries = 0; tries < 30 && showing() && V.viewId === viewId && (!V.frameId || V.painted !== V.frameId); tries++)
+  // Each painted frame carries one press: a second press made meanwhile waits for the next frame instead of reusing it.
+  const ready = () => V.frameId && V.painted === V.frameId && V.claimed !== V.frameId;
+  for (let tries = 0; tries < 100 && showing() && V.viewId === viewId && !ready(); tries++)
     await new Promise((done) => setTimeout(done, 50));
-  if (!showing() || !V.viewId || V.viewId !== viewId || V.painted !== V.frameId || !V.frameId) throw new Error("Wait for a fresh visible frame.");
+  if (!showing() || !V.viewId || V.viewId !== viewId || !ready()) throw new Error("Wait for a fresh visible frame.");
+  V.claimed = V.frameId;
   return { sessionId: V.sid, viewId: V.viewId, frameId: V.frameId, ...extra };
 }
 export async function controlNativeScreen(held) {

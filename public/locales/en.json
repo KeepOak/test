@@ -6779,6 +6779,7 @@
   "window.chat.plus.sending": "Sending {pct}%",
   "window.chat.plus.too-big": "{name} is too big: one file can be up to {size}.",
   "window.chat.plus.screenshot": "Take a screenshot",
+  "window.chat.plus.screenshot-failed": "The screenshot did not work.",
   "window.chat.plus.skill": "Use a skill",
   "window.chat.plus.temporary": "Temporary conversation",
   "window.chat.plus.too-many": "At most {files} files and {mb} MB with one message.",

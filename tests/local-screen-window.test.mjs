@@ -47,7 +47,7 @@ test('owner chooses an external application, sees its frame, manually types/clic
   await page.locator('#stage7 .livescr-img').click();
   await page.waitForTimeout(100);
   await page.getByRole('button', { name: 'Scroll down', exact: true }).click();
-  for (let i = 0; i < 100 && seen.effects.length < 3; i++) await page.waitForTimeout(20);
+  for (let i = 0; i < 500 && seen.effects.length < 3; i++) await page.waitForTimeout(20);
   assert.deepEqual(seen.effects.map(v => v.action), ['type', 'click', 'scroll']);
   assert.ok(seen.effects.every(v => v.window === 'Fixture editor'));
   await page.locator('[data-act="stage-close"]').click();

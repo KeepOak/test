@@ -5013,6 +5013,28 @@ display. Branch's own windows are never a target. Each new tool
 goes through the same switch, approvals, Lockdown, Stop notice, action allowance and "You're driving" wait
 as the rest; `desktop.wait` alone uses none of the allowance. These verbs are Windows-only for now; on a Mac
 or Linux they say so. (Code: `src/integrations/desktop.ts`, `src/integrations/desktop-script.ts`.)
+**Anthropic's computer tool, as it is (computer-control).** `desktop.mouse_down` and `desktop.mouse_up` press and
+let go of a mouse button (one held at a time; Stop, the task ending, the owner taking over, Branch stopping or thirty
+seconds let go of it, and a let-go spot that is covered or outside the window lets go where it was pressed instead),
+`desktop.hold_key` holds a chord for 0.1 to 10 seconds and always lets go, even when stopped mid-hold, and
+`desktop.cursor` says where the pointer is (on the screen, and in a window's pixels) without moving it.
+`desktop.computer` takes Anthropic's computer tool actions and fields as they are (`screenshot`, `zoom`,
+`left_click` … `triple_click`, `left_click_drag`, `mouse_move`, `left_mouse_down`/`up`, `scroll`, `type`, `key`,
+`hold_key`, `wait`, `cursor_position`, with `coordinate`, `start_coordinate`, `text`, `scroll_direction`,
+`scroll_amount`, `duration` and `region`), so a Claude model uses it as it was trained to; the one difference is that
+it names a window, and coordinates are in that window's own picture. Each action is the matching `desktop.*` tool, with
+every check it has. **On Linux (X11)** the pointer verbs, `hold_key` and the pointer's place go through `xdotool`,
+pressed only once the window is the active one and the spot is inside it; parts by name or ref, and close-ups, are
+Windows only. **On a Mac** these verbs say they are not available yet.
+**Take a screenshot (computer-control).** The message box's + menu takes a picture of the main display and attaches it
+to the next message (`POST /api/panels/screen/shot`): Branch's own windows are left out where the desktop app can hide
+them, no picture is taken while a window that handles passwords shows, and only the owner's own window may ask.
+**A paired computer's screen, live (computer-control).** When a conversation uses one of the owner's paired computers
+(a `branch node` whose "Take a picture of the screen" the owner switched on), its full-size computer view shows that
+computer's screen, one picture about every two and a half seconds, passed through from its device socket and kept
+nowhere (`GET /api/panels/screen/device`, `src/device-screen.ts`). Watching only: nothing is clicked or typed there from
+the view. Only the owner's window, for their own conversation that uses that computer, never under Lockdown or the app
+lock; the pictures come from a budget of their own on the device socket, so watching never takes a task's turns.
 **The computer view never shows itself (computer-control).** The owner's live view of this computer
 (`/api/panels/screen`, `src/local-screen.ts`) opens on the main display by itself, and offers every display
 and every app window (browser windows are left out). While a view is open the desktop app's main process

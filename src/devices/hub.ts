@@ -57,6 +57,8 @@ export class DeviceHub {
    */
   private readonly failures = new WindowLimit(10, 60_000);
   private readonly invokes = new WindowLimit(30, 60_000);
+  /** computer-control: the owner's live view of a device's screen has its own budget, so watching never starves tasks. */
+  private readonly views = new WindowLimit(40, 60_000);
   private readonly stopListening: () => void;
   private closed = false;
   constructor(private readonly book: DeviceBook, private readonly options: HubOptions = {}) {
@@ -227,16 +229,17 @@ export class DeviceHub {
   }
 
   /** Asks one connected device to do one switched-on thing. The tool gate has already decided. */
-  invoke(deviceId: string, capability: Capability, args: Record<string, unknown>, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<InvokeAnswer> {
+  invoke(deviceId: string, capability: Capability, args: Record<string, unknown>, options: { timeoutMs?: number; signal?: AbortSignal; ownerView?: boolean } = {}): Promise<InvokeAnswer> {
     // mac7/lockdown-fix (integration review): nothing reaches a device while the feature reads off (Lockdown included).
     if (this.book.mode() === "off") return Promise.reject(new Error("Using other devices is switched off, or Lockdown is on."));
+    if (options.ownerView && capability !== "screen") return Promise.reject(new Error("The owner's view only looks at a device's screen."));
     const device = this.book.device(deviceId);
     if (!device) return Promise.reject(new Error("That device is not on the list."));
     if (!device.enabled.includes(capability))
       return Promise.reject(new Error(`"${capabilityInfo[capability].label}" is switched off for ${device.name}. The owner can switch it on in Customize, Channels, Devices.`));
     const link = this.links.get(deviceId);
     if (!link) return Promise.reject(new Error(`${device.name} is not connected right now.`));
-    if (!this.invokes.take(deviceId)) return Promise.reject(new Error(`${device.name} has been asked too often in the last minute. Wait a little.`));
+    if (!(options.ownerView ? this.views : this.invokes).take(deviceId)) return Promise.reject(new Error(`${device.name} has been asked too often in the last minute. Wait a little.`));
     const id = newInvokeId(), timeoutMs = options.timeoutMs ?? this.options.invokeTimeoutMs ?? 30_000;
     return new Promise<InvokeAnswer>((resolve, reject) => {
       const timer = setTimeout(() => { link.waiting.delete(id); reject(new Error(`${device.name} did not answer in time.`)); }, timeoutMs);

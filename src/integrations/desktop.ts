@@ -407,6 +407,24 @@ export class DesktopControl {
     try { CaptureExclusionSchema.parse(await host.acquire(leaseId)); held = true; } catch { /* no proved host here: as before */ }
     try { return await take(); } finally { if (held) await host.release(leaseId).catch(() => undefined); }
   }
+  /**
+   * computer-control: the owner's own screenshot from the message box's + menu ("Take a screenshot"): the main display,
+   * with Branch's own windows left out where the desktop app can hide them, refused while a window that handles
+   * passwords shows. It goes back to the owner's window to attach, and nothing is kept here.
+   */
+  async ownerShot(signal: AbortSignal): Promise<Buffer> {
+    const windows = await this.permissions?.check('screen');
+    if (windows && !windows.allowed) throw new Error(windows.message);
+    await this.assertNothingPrivateOnScreen(signal);
+    const temporary = await this.runner.temporaryPng(`owner-${randomUUID().slice(0, 8)}`);
+    try {
+      await this.hidingBranch(() => this.runner.run('screenshot', { display: 1, outPath: temporary }, signal));
+      await this.assertNothingPrivateOnScreen(signal);
+      return await readFile(temporary);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
+  }
   /** A picture taken off the screen itself cannot hide a password manager that is showing, so it is refused instead. */
   private async assertNothingPrivateOnScreen(signal: AbortSignal): Promise<void> {
     privateShowing((await this.runner.run('windows', {}, signal)).windows);

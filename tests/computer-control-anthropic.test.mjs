@@ -215,3 +215,18 @@ test("Linux: hold_key always lets go, release needs no window, and the pointer's
   assert.throws(() => xdotoolHoldChord("super"), /Branch knows/);
   assert.deepEqual(parseShellGeometry("X=-5\nY=7\nWIDTH=10\nHEIGHT=20\n"), { x: -5, y: 7, width: 10, height: 20 });
 });
+
+test("the owner's own screenshot hides Branch through the host's lease and is refused while a password window shows", async (t) => {
+  const { app } = await world(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-owner-shot-"));
+  t.after(() => discardTemp(root));
+  const calls = [], runner = standIn(root);
+  let windows = [notepad];
+  runner.run = async (action, payload) => { calls.push(action); if (action === "windows") return { windows }; await writeFile(payload.outPath, PNG); return { width: 1, height: 1 }; };
+  const host = { acquire: async () => { calls.push("hide"); return { processId: 77, handles: ["101"] }; }, release: async () => { calls.push("show"); } };
+  const desktop = new DesktopControl(app.store, { runner, banner: quietBanner, nativeCaptureLease: host });
+  assert.deepEqual(await desktop.ownerShot(AbortSignal.timeout(5000)), PNG);
+  assert.deepEqual(calls, ["windows", "hide", "screenshot", "show", "windows"]);
+  windows = [notepad, { title: "Bitwarden", program: "Bitwarden", handle: "9", processId: 1, minimised: false }];
+  await assert.rejects(desktop.ownerShot(AbortSignal.timeout(5000)), /handles passwords/);
+});

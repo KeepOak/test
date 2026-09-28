@@ -50,6 +50,7 @@ import { hasOwnerBrowser, ownerBrowserHTML, ownerBrowserPip, ownerBrowserButtons
   paintOwnerBrowser, initOwnerBrowser } from "./stage-browser-control.js";
 import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, nativeScreenState,
   refreshNativeTargets, chooseNativeTarget, stopNativeScreen, controlNativeScreen, inputNativeScreen, nativeFramePainted } from "./stage-screen.js";
+import { watchDevice, deviceFrame, deviceRefusal } from "./stage-device.js"; // computer-control: a paired computer, live
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
 
@@ -70,6 +71,8 @@ function role() {
    the owner); This computer's own screen is the only one the engine keeps pictures of. */
 const comps = () => computersOf(S.chat);
 const onThis = () => { const st = comps(); return !st || st.using === "this"; };
+/* The conversation uses a paired computer (a device id), not This computer or the shared Linux desktop. */
+const pairedNow = () => { const st = comps(); return !!st && /^[a-f0-9]{16}$/.test(st.using ?? ""); };
 const runsHere = () => (E.state?.runs ?? []).filter((r) => S.chat && r.sessionId === S.chat)
   .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 const live = () => liveOf(S.chat);
@@ -182,6 +185,8 @@ function screen(kind, small = false) {
   if (kind === "browser" && mine()) return small ? "" : ownerBrowserHTML();
   if (kind === "computer" && onThis() && screenFrame()) return liveScreen();
   if (kind === "computer" && onThis() && holder() === "none") return "";
+  // A paired computer: its screen as it sends it, watching only.
+  if (kind === "computer" && pairedNow() && deviceFrame()) return `<div class="desk7"><img class="shot7 devscr-img" alt="${esc(computerNamed(comps().using)?.name ?? "")}"></div>`;
   const url = shotUrl(picturePath(kind));
   if (!url) return "";
   if (kind === "computer") return `<div class="desk7"><img class="shot7" src="${esc(url)}" alt="${esc(owner())}"></div>`;
@@ -197,7 +202,8 @@ function emptyHTML(kind, small) {
   if (kind === "browser" && liveLoading(S.chat)) return `<div class="st7-empty" role="status">${ic("globe")}<b>${t("window.chat.stage.loading-preview")}</b></div>`;
   const opened = (work(S.chat)?.browser?.entries ?? []).length > 0;
   // This computer's screen refused by the engine (its switch, a password window, Lockdown): the engine's own words.
-  const refused = kind === "computer" && onThis() && screenRefusal() ? `<small>${esc(screenRefusal())}</small>` : "";
+  const refused = kind === "computer" && onThis() && screenRefusal() ? `<small>${esc(screenRefusal())}</small>`
+    : kind === "computer" && pairedNow() && deviceRefusal() ? `<small>${esc(deviceRefusal())}</small>` : "";
   const line = refused || (kind === "browser" && !opened ? `<small>${t("window.chat.stage.no-page", { name: esc(name()) })}</small>` : "");
   return `<div class="st7-empty${small ? " mini7" : ""}" role="status">${ic(kind === "browser" ? "globe" : "monitor")}<b>${t("window.chat.stage.nothing-open")}</b>${line}</div>`;
 }
@@ -426,6 +432,8 @@ function paintFrames() {
     if (img.getAttribute("src") !== desk) img.setAttribute("src", desk);
     else nativeFramePainted(img);
   }
+  const other = deviceFrame();
+  if (other) for (const img of document.querySelectorAll("#stage7 .devscr-img, #pip7 .devscr-img")) if (img.getAttribute("src") !== other) img.setAttribute("src", other);
   placeCursor();
   paintOwnerBrowser();
 }
@@ -476,6 +484,8 @@ export function drawStage() {
   // All screens reads it only when This computer is one of the screens it draws.
   const grid = G.grid ? several("computer") : null, shows = grid ? grid.list.some((x) => x.id === "this") : onThis();
   watchScreen(computer && E.profiles?.isOwner !== false && shows && holder() === "none", S.chat, (redraw) => (redraw ? drawStage() : paintFrames()));
+  // computer-control: a paired computer's screen, read only while its own view shows (not All screens).
+  watchDevice(computer && E.profiles?.isOwner !== false && !G.grid && pairedNow(), S.chat, comps()?.using ?? "", (redraw) => (redraw ? drawStage() : paintFrames()));
   // Read while the view shows the browser (twice a second), or while a task of this conversation works (every few
   // seconds, for the card in the conversation).
   // The frames are the owner's alone (the engine refuses anyone else), so nobody else's window asks for them.

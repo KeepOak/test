@@ -6779,6 +6779,7 @@
   "window.chat.plus.sending": "Wird gesendet {pct} %",
   "window.chat.plus.too-big": "{name} ist zu groß: Eine Datei darf bis zu {size} haben.",
   "window.chat.plus.screenshot": "Bildschirmfoto machen",
+  "window.chat.plus.screenshot-failed": "Der Screenshot hat nicht funktioniert.",
   "window.chat.plus.skill": "Skill nutzen",
   "window.chat.plus.temporary": "Temporäre Unterhaltung",
   "window.chat.plus.too-many": "Höchstens {files} Dateien und {mb} MB pro Nachricht.",

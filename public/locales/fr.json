@@ -6780,6 +6780,7 @@
   "window.chat.plus.sending": "Envoi {pct} %",
   "window.chat.plus.too-big": "{name} est trop volumineux : un fichier peut faire jusqu’à {size}.",
   "window.chat.plus.screenshot": "Faire une capture d’écran",
+  "window.chat.plus.screenshot-failed": "La capture d’écran n’a pas fonctionné.",
   "window.chat.plus.skill": "Utiliser une compétence",
   "window.chat.plus.temporary": "Conversation temporaire",
   "window.chat.plus.too-many": "Au maximum {files} fichiers et {mb} Mo par message.",

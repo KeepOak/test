@@ -115,3 +115,30 @@ test("All screens never reads This computer when This computer is not one of its
   assert.equal(await page.locator("#stage7 .livescr-img").count(), 0);
   assert.deepEqual(errors, []);
 });
+
+test("a paired computer's screen shows live in its own view, and the engine's refusal in its place", async (t) => {
+  const device = (id, name, platform) => ({ id, name, platform, publicKey: "k".repeat(44), pairedAt: "2026-09-26T00:00:00.000Z", lastSeen: null, offers: [], enabled: [], folder: null, sharedWith: [] });
+  const w = await windowWith(t, (app) => app.store.save("settings", app.runtime.owner, "devices-book",
+    { mode: "off", requests: [], devices: [device(TOWER, "Tower", "linux")] }));
+  await w.page.route(`**/api/devices/pick/${w.run.sessionId}`, (route) => route.fulfill({ json: { sessionId: w.run.sessionId, picked: TOWER, allowed: [TOWER] } }));
+  const asked = [];
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  let refuse = false;
+  await w.page.route("**/api/panels/screen/device?*", (route) => {
+    asked.push(new URL(route.request().url()).searchParams.get("device"));
+    route.fulfill({ contentType: "application/x-ndjson", body: refuse ? `${JSON.stringify({ refusal: "\"Take a picture of the screen\" is switched off for Tower.", status: 409 })}\n`
+      : `${JSON.stringify({ frame: `data:image/png;base64,${png}`, device: TOWER, at: "now" })}\n` });
+  });
+  await w.open();
+  const { page, taken, errors } = w;
+  await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
+  await page.locator("#stage7 .devscr-img[src^='data:image/png']").waitFor({ timeout: 15000 });
+  assert.equal(asked[0], TOWER, "the view asks for that computer's screen");
+  assert.equal(await page.locator("#native-target").count(), 0, "This computer's chooser is not shown for another computer");
+  assert.deepEqual(await flatFor(taken, 500), { more: 0, open: 0 }, "This computer is not read");
+  await page.locator('#stage7 [data-act="stage-close"]').click();
+  refuse = true;
+  await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
+  await page.getByText("is switched off for Tower").waitFor({ timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
