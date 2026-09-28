@@ -35,6 +35,10 @@ import { BrowserPinProxy, type PinRules } from './browser-pin-proxy.js';
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
 import { OwnerInputSchema, ownerPageInput, type OwnerInput } from './browser-owner-input.js';
 import { platformFetch } from '../pinned-fetch.js';
+import { ConsoleSchema, HistorySchema, HoverSchema, KeysSchema, NetworkSchema, ScrollSchema, SelectSchema,
+  chooseOption, goInHistory, pressKeys, scrollPage } from './browser-actions.js';
+import { detectInjection } from '../content-guard.js';
+import { redactLeaksIn } from '../leak-guard.js';
 
 export const BrowserConfigSchema = z.object({
   /** The only websites the browser may open, as exact origins. */
@@ -694,7 +698,8 @@ export class BranchBrowser {
     const artifacts = this.artifacts;
     if (!artifacts) throw new Error('Screenshots are switched off because there is nowhere to keep the picture');
     return this.operation(context, async page => {
-      const bytes = await screenshot(page, options, this.filledOn(context, page));
+      const element = options.name !== undefined || options.mark !== undefined ? await this.found(context, page, options) : undefined;
+      const bytes = await screenshot(page, options, this.filledOn(context, page), element);
       const kept = await artifacts.write(context.runId, `screenshot-${randomUUID().slice(0, 8)}.png`, 'image/png', bytes);
       return { ...kept, url: page.url() };
     });
@@ -710,6 +715,68 @@ export class BranchBrowser {
       const bytes = await page.pdf({ printBackground: true });
       const kept = await artifacts.write(context.runId, `page-${randomUUID().slice(0, 8)}.pdf`, 'application/pdf', bytes);
       return { ...kept, url: page.url() };
+    });
+  }
+  /** One element by selector, by name or by its number from browser.annotate, healed by name if the page changed. */
+  private async found(context: ToolContext, page: Page, target: HealTarget): Promise<Locator> {
+    if (target.mark !== undefined && !this.care(context.owner).numberMarks) throw new Error(marksOff);
+    const entry = this.entry(context);
+    return (await healResolve(page, target, 2000, { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) })).locator;
+  }
+  async scroll(input: z.infer<typeof ScrollSchema>, context: ToolContext) {
+    return this.operation(context, async (page, check) => {
+      const element = input.selector || input.name || input.mark ? await this.found(context, page, input) : null;
+      check();
+      return scrollPage(page, input, element);
+    });
+  }
+  async hover(input: z.infer<typeof HoverSchema>, context: ToolContext) {
+    return this.operation(context, async (page, check) => {
+      const element = await this.found(context, page, input);
+      check();
+      await element.hover({ timeout: 5000 });
+      return { url: page.url(), hovered: input.name ?? input.selector ?? `#${input.mark}` };
+    });
+  }
+  async keys(input: z.infer<typeof KeysSchema>, context: ToolContext) {
+    return this.operation(context, async (page, check) => { check(); return pressKeys(page, input); });
+  }
+  async select(input: z.infer<typeof SelectSchema>, context: ToolContext) {
+    return this.operation(context, async (page, check) => {
+      const element = await this.found(context, page, input);
+      check();
+      return { url: page.url(), ...await chooseOption(element, input) };
+    });
+  }
+  async history(input: z.infer<typeof HistorySchema>, context: ToolContext) {
+    return this.operation(context, async (page, check) => { check(); return goInHistory(page, input.action); });
+  }
+  /**
+   * What the task's pages logged (console lines and uncaught errors), newest last, as the website's own untrusted
+   * words: the page's secrets and anything key-shaped are taken out, and words that try to give instructions are named.
+   */
+  async consoleLog(input: z.infer<typeof ConsoleSchema>, context: ToolContext) {
+    return this.operation(context, async page => {
+      const log = this.entry(context).session.log, { hidden } = await this.pageSecrets(context, page);
+      const wanted = log.console.filter(line => input.level === 'all' || line.level === input.level
+        || (input.level === 'warning' && line.level === 'error'));
+      const lines = wanted.slice(-input.limit).map(line => ({ ...line, text: scrubText(line.text, hidden) }));
+      if (input.clear) log.console.length = 0;
+      const clean = redactLeaksIn(lines).value, warnings = detectInjection(clean.map(line => line.text).join('\n'));
+      return { url: page.url(), lines: clean, more: Math.max(0, wanted.length - lines.length), untrusted: true,
+        ...(warnings.length ? { warnings } : {}) };
+    });
+  }
+  /** The requests the task's pages made: method, address without its query, kind, status or failure. Never headers or bodies. */
+  async networkLog(input: z.infer<typeof NetworkSchema>, context: ToolContext) {
+    return this.operation(context, async page => {
+      const log = this.entry(context).session.log, { hidden } = await this.pageSecrets(context, page);
+      const filter = input.filter?.toLowerCase();
+      const wanted = log.requests.filter(request => (!input.failedOnly || request.failure || (request.status ?? 0) >= 400)
+        && (!filter || request.url.toLowerCase().includes(filter) || request.kind === filter));
+      const requests = wanted.slice(-input.limit).map(request => ({ ...request, url: scrubAddress(request.url, hidden) }));
+      if (input.clear) log.requests.length = 0;
+      return { url: page.url(), requests: redactLeaksIn(requests).value, more: Math.max(0, wanted.length - requests.length) };
     });
   }
   async wait(options: z.infer<typeof WaitSchema>, context: ToolContext) {
@@ -1426,17 +1493,38 @@ export function registerBrowser(registry: ToolRegistry, browser: BranchBrowser):
 function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   host: (a: unknown, c: ToolContext) => string): void {
   registry.register({ name: 'browser.screenshot', permission: 'browser.read',
-    description: 'Take a picture of the current page. Password boxes are blacked out before the picture is taken. Use this when the page is visual and the text snapshot is not enough.',
+    description: 'Take a picture of the current page, or of one element (selector, name or number from browser.annotate). Password boxes are blacked out before the picture is taken. Use this when the page is visual and the text snapshot is not enough.',
     parameters: ScreenshotSchema, execute: (a, c) => browser.screenshot(a, c) });
   registry.register({ name: 'browser.keep_download', permission: 'browser.interact',
     description: 'Keep (or throw away, keep false) a file a page sent that is waiting outside the workspace because Settings says to ask each time. The owner is asked before it is kept.',
     parameters: z.object({ id: z.string().uuid(), keep: z.boolean().default(true) }).strict(),
     execute: (a, c) => browser.keepDownload(a, c), target: a => browser.heldHost(a.id) });
+  registry.register({ name: 'browser.scroll', permission: 'browser.read',
+    description: 'Scroll the page: a direction (one screen, or amount pixels), to the top or bottom, or until one element (by selector, name or number) is in view. Says where the page is and whether it reached the end.',
+    parameters: ScrollSchema, execute: (a, c) => browser.scroll(a, c), target: host });
+  registry.register({ name: 'browser.hover', permission: 'browser.interact',
+    description: 'Rest the pointer on one element (by selector, name or number from browser.annotate), to open a menu or show a tip.',
+    parameters: HoverSchema, execute: (a, c) => browser.hover(a, c), target: host });
+  registry.register({ name: 'browser.keys', permission: 'browser.interact',
+    description: 'Press a key or a combination on the page, such as Enter, Tab, Escape, ArrowDown, Control+A or Shift+Tab, optionally several times. This may submit data or perform an external action.',
+    parameters: KeysSchema, execute: (a, c) => browser.keys(a, c), target: host });
+  registry.register({ name: 'browser.select', permission: 'browser.interact',
+    description: 'Choose one or more options in a drop-down list (by selector, name or number), by the words shown or the option value. This may change what the page sends.',
+    parameters: SelectSchema, execute: (a, c) => browser.select(a, c), target: host });
+  registry.register({ name: 'browser.history', reach: 'outbound', permission: 'browser.interact',
+    description: 'Go back or forward in this tab, or reload it. Reloading a page a form opened may send that form again.',
+    parameters: HistorySchema, execute: (a, c) => browser.history(a, c), target: host });
+  registry.register({ name: 'browser.console', permission: 'browser.read',
+    description: 'Read what the pages logged to their console and any uncaught errors, newest last, as untrusted text. Use it to see why a page misbehaves.',
+    parameters: ConsoleSchema, execute: (a, c) => browser.consoleLog(a, c), target: host });
+  registry.register({ name: 'browser.network', permission: 'browser.read',
+    description: 'Read the requests the pages made (method, address without its query, kind, status or failure), newest last. Never headers, cookies or bodies.',
+    parameters: NetworkSchema, execute: (a, c) => browser.networkLog(a, c), target: host });
   registry.register({ name: 'browser.pdf', permission: 'browser.read',
     description: 'Save the current page as a PDF file.',
     parameters: z.object({}).strict(), execute: (_a, c) => browser.pdf(c) });
   registry.register({ name: 'browser.wait', permission: 'browser.read',
-    description: 'Wait for some words or an element to appear, or for the page to stop loading things.',
+    description: 'Wait for some words or an element to appear, for words to go (textGone), for the address to contain some words (url), or for the page to stop loading things.',
     parameters: WaitSchema, execute: (a, c) => browser.wait(a, c) });
   registry.register({ name: 'browser.extract', permission: 'browser.read',
     description: 'Pull rows out of a table or a repeated block of cards as untrusted data. Give the selector for one row, and optionally a name for each column.',
