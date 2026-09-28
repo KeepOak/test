@@ -181,9 +181,11 @@ test("the first press wakes the window and still opens the conversation it press
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.clock.fastForward(10 * MIN + 5000);
   await waitFor(page, () => document.documentElement.classList.contains("still18"));
-  const target = await row.elementHandle();
+  await page.evaluate(() => addEventListener("pointerdown", (event) => {
+    window.sleepPressedTarget = event.target.closest(".row");
+  }, { capture: true, once: true }));
   await page.mouse.down();
-  assert.equal(await target.evaluate((element) => element.isConnected), true, "waking keeps the pressed row until its click");
+  assert.equal(await page.evaluate(() => window.sleepPressedTarget?.isConnected), true, "waking keeps the pressed row until its click");
   await page.mouse.up();
   await page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id,
     trunks.Ledger.chatSessionId, { timeout: 5000 });
