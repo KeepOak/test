@@ -11,7 +11,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { connect as tcp } from "node:net";
 import { createInterface } from "node:readline";
 import { connect as tlsConnect } from "node:tls";
@@ -424,6 +424,30 @@ test("Delta Chat, for real: deltachat-rpc-server on the local mail server", { sk
   // The join is a short exchange of mail with the assistant's own program; the chat can be written in once it is done.
   await until(() => phone.call("can_send", person, chat), "Delta Chat: the person joined by the invite", 60_000);
   await ownerWalk(context, { label: "Delta Chat", heard: () => texts, say: (text) => phone.call("misc_send_text_message", person, chat, text) });
+});
+
+// ---- Nostr: the person uses nak, a separate Nostr client, for keys, NIP-04 encryption and the relay ----
+function nak(path, ...args) {
+  const done = spawnSync(path, args, { encoding: "utf8", windowsHide: true, timeout: 20_000 });
+  if (done.status !== 0) throw new Error(`nak ${args[0]} failed: ${done.stderr}`);
+  return done.stdout.trim();
+}
+test("Nostr, for real: a local relay (nak serve)", { skip: state.servers.nostr ? false : notRunning("Nostr") }, async (t) => {
+  const { relay, nak: path } = state.servers.nostr;
+  const botSecret = nak(path, "key", "generate"), botPublic = nak(path, "key", "public", botSecret);
+  const samSecret = nak(path, "key", "generate"), samPublic = nak(path, "key", "public", samSecret);
+  const context = await engine(t);
+  saveParitySwitches(context.app.store, context.app.runtime.owner, { nostr: "on" }, ["nostr"]);
+  await connect(context.app, { type: "nostr", id: "nostr", relays: [relay], activation: "mention", pairing: true, allowlist: [] },
+    { NOSTR_PRIVATE_KEY: botSecret });
+  await until(() => context.app.channels.summary().channels.find((c) => c.id === "nostr")?.health?.state === "connected", "Nostr: the assistant is on the relay");
+  const heard = () => nak(path, "req", "-k", "4", "-a", botPublic, "-t", `p=${samPublic}`, relay).split("\n").filter(Boolean)
+    .map((line) => nak(path, "decrypt", "--sec", samSecret, "-p", botPublic, "--nip04", JSON.parse(line).content));
+  const say = async (text) => {
+    const sealed = nak(path, "encrypt", "--sec", samSecret, "-p", botPublic, "--nip04", text);
+    nak(path, "event", "--sec", samSecret, "-k", "4", "-p", botPublic, "-c", sealed, relay);
+  };
+  await ownerWalk(context, { label: "Nostr", heard, say });
 });
 
 // ---- Every other app: why it is not tested for real ----

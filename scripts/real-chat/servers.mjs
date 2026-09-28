@@ -24,7 +24,7 @@ const home = process.env.BRANCH_REAL_CHAT_HOME
 const distro = process.env.BRANCH_REAL_CHAT_WSL ?? "BranchCI";
 const inWsl = "/opt/branch-real-chat";
 const stateFile = process.env.BRANCH_REAL_CHAT_STATE ?? join(home, "state.json");
-const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167, mqtt: 11883, gotify: 18080, ntfy: 18090, mumble: 16473 };
+const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167, mqtt: 11883, gotify: 18080, ntfy: 18090, mumble: 16473, nostr: 17447 };
 const registrationToken = "branch-real-chat-local";
 const downloads = {
   ergo: { file: "ergo-2.19.1-windows-x86_64.zip", sha256: "5397fac56f7110839aac2d8ab436279eb2a00dddfcc07032605b423e85ea40b6",
@@ -37,6 +37,8 @@ const downloads = {
     url: "https://github.com/gotify/server/releases/download/v3.1.1/gotify-windows-amd64.exe.zip" },
   deltachat: { file: "deltachat-rpc-server-2.62.0-win64.exe", sha256: "b2813cd7f40379c8c5a255dc4d67f8c81a9d7ee4652031ebf04563b3bcb09cee",
     url: "https://github.com/chatmail/core/releases/download/v2.62.0/deltachat-rpc-server-win64.exe" },
+  nak: { file: "nak-v0.20.7-windows-amd64.exe", sha256: "e759002c783442f3b5b082e31e56d2db0b1e2b42f61d87b68d72d93035eb39c4",
+    url: "https://github.com/fiatjaf/nak/releases/download/v0.20.7/nak-v0.20.7-windows-amd64.exe" },
   ntfy: { file: "ntfy_2.28.0_linux_amd64.tar.gz", sha256: "881a1530e30e01f1dec202c7f41e1664e57edfb7844e73e21e345159ac3ea9b7",
     url: "https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/ntfy_2.28.0_linux_amd64.tar.gz" },
 };
@@ -247,6 +249,16 @@ async function deltachatUp() {
   const path = await fetchPinned(downloads.deltachat);
   return { state: { path, domain: "branch.localhost", smtp: { host: "127.0.0.1", port: ports.smtp }, imap: { host: "127.0.0.1", port: ports.imap } } };
 }
+/**
+ * Nostr: nak (one Windows binary) serves an in-memory relay on loopback. The same program is the person's client in
+ * the test: it makes keys, encrypts direct messages and talks to the relay, and shares no code with Branch.
+ */
+async function nostrUp() {
+  const nak = await fetchPinned(downloads.nak);
+  const pid = startDetached(nak, ["serve", "--hostname", "127.0.0.1", "--port", String(ports.nostr)], home);
+  await listening(ports.nostr, "nak relay", pid);
+  return { pid, state: { relay: `ws://127.0.0.1:${ports.nostr}`, nak } };
+}
 
 async function up() {
   mkdirSync(home, { recursive: true });
@@ -259,7 +271,7 @@ async function up() {
     }
   }
   const starters = { irc: ircUp, email: emailUp, xmpp: xmppUp, matrix: matrixUp, mqtt: mqttUp, gotify: gotifyUp, ntfy: ntfyUp,
-    mumble: mumbleUp, deltachat: deltachatUp };
+    mumble: mumbleUp, deltachat: deltachatUp, nostr: nostrUp };
   const state = { pids: [], servers: {} };
   try {
     for (const [name, start] of Object.entries(starters)) {

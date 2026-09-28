@@ -13,6 +13,7 @@ export const LOCAL = {
   ntfy: "ntfy 2.28.0 (one Go binary, 30 MB; its server does not run on Windows) in the BranchCI WSL distro on 127.0.0.1:18090",
   mumble: "Mumble server 1.5 (apt, 7.5 MB with its libraries) in the BranchCI WSL distro on 127.0.0.1:16473, its own self-signed certificate",
   deltachat: "deltachat-rpc-server 2.62.0 (one Windows binary, 23 MB) on the GreenMail server above; the person is a second copy that joins by the assistant's invite",
+  nostr: "an in-memory relay from nak 0.20.7 (one Go binary, 42 MB) on 127.0.0.1:17447; the person's client is nak too",
   gotify: "Gotify 3.1.1 (one Go binary, 12 MB) on 127.0.0.1:18080; send-only, so the walk is a delivery the person's client reads",
 };
 const account = (what) => `needs ${what}; there is no local or sandbox server for it`;
@@ -57,7 +58,6 @@ export const SKIPPED = {
   homeassistant: "a local Home Assistant is several hundred MB of Python packages (over the limit without asking)",
   keybase: "needs a Keybase account signed in to the keybase program",
   simplex: "a local SimpleX chat program is possible (about 80 MB) but is not in this harness yet",
-  nostr: "a local relay is possible (strfry or nostr-rs-relay) but is not in this harness yet",
   vk: account("a VK community token"),
   "qq-bot": account("a QQ bot registration"),
   guilded: account("a Guilded bot token"),

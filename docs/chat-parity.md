@@ -39,9 +39,9 @@ node scripts/real-chat/servers.mjs down
 ```
 
 - Every server listens on 127.0.0.1 only, with no federation and throwaway passwords that exist only there.
-- Downloads come to about 126 MB in all, none over 32 MB, each checked against a pinned SHA-256: Ergo 7 MB,
-  GreenMail 11 MB, tuwunel 32 MB, ntfy 30 MB, deltachat-rpc-server 23 MB, Gotify 12 MB, and from apt Prosody and
-  Mosquitto about 3 MB and the Mumble server 7.5 MB with its libraries.
+- Downloads come to about 168 MB in all, none over 42 MB, each checked against a pinned SHA-256: Ergo 7 MB,
+  GreenMail 11 MB, tuwunel 32 MB, ntfy 30 MB, deltachat-rpc-server 23 MB, nak 42 MB, Gotify 12 MB, and from apt
+  Prosody and Mosquitto about 3 MB and the Mumble server 7.5 MB with its libraries.
 - Java 11 or later must already be installed for GreenMail; the script does not download it.
 - CI has no servers, so there the real walks are skipped with a reason. The check that every catalog app has
   either a real test or a reason still runs in CI, and so does the check that this table is current.
@@ -53,7 +53,7 @@ node scripts/real-chat/servers.mjs down
 
 <!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
 
-9 of 56 apps are tested for real; every other one says why not.
+10 of 56 apps are tested for real; every other one says why not.
 
 | App | Result | Server, or why not |
 | --- | --- | --- |
@@ -104,7 +104,7 @@ node scripts/real-chat/servers.mjs down
 | Keybase | Skipped | needs a Keybase account signed in to the keybase program |
 | SimpleX Chat | Skipped | a local SimpleX chat program is possible (about 80 MB) but is not in this harness yet |
 | Delta Chat | **Real-tested** | deltachat-rpc-server 2.62.0 (one Windows binary, 23 MB) on the GreenMail server above; the person is a second copy that joins by the assistant's invite |
-| Nostr | Skipped | a local relay is possible (strfry or nostr-rs-relay) but is not in this harness yet |
+| Nostr | **Real-tested** | an in-memory relay from nak 0.20.7 (one Go binary, 42 MB) on 127.0.0.1:17447; the person's client is nak too |
 | VK | Skipped | needs a VK community token; there is no local or sandbox server for it |
 | QQ (official bot) | Skipped | needs a QQ bot registration; there is no local or sandbox server for it |
 | Guilded | Skipped | needs a Guilded bot token; there is no local or sandbox server for it |
