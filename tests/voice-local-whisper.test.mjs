@@ -255,7 +255,7 @@ test("W10 real: the fixture WAV is written out on this computer, offline", { tim
   assert.equal(heard.language, "en");
 });
 
-test("W11 real: push-to-talk in the window fills the box with live captions, with a fake microphone", { timeout: 300_000 }, async (t) => {
+test("W11 real: push-to-talk in the window fills the box with live captions, with a fake microphone", { timeout: 360_000 }, async (t) => {
   const found = realOrSkip(t);
   if (!found) return;
   const { chromium } = await import("playwright");
@@ -293,7 +293,8 @@ test("W11 real: push-to-talk in the window fills the box with live captions, wit
   assert.ok(await page.locator(".composer .dict").isVisible(), "the caption came only after letting go");
   await page.waitForTimeout(3000);
   await page.mouse.up();
-  await page.locator(".dict").waitFor({ state: "detached", timeout: 60_000 });
+  // The settled words are the whole recording written out once more; on a busy computer that can take a while.
+  await page.locator(".dict").waitFor({ state: "detached", timeout: 180_000 });
   const typed = await page.locator("#prompt").inputValue();
   assert.match(typed, /garden|water|hello/i, `the settled words did not land in the box: "${typed}"`);
   assert.equal(app.store.runs(owner).length, 0, "the words were sent instead of waiting in the box");

@@ -16,6 +16,7 @@ import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
 import { localPicker, initLocalPick, openLocalPicker } from "./localpick.js";
 import { loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
+import { gsel } from "../core/gsel.js";
 
 /* ---------- the engine's list, shared by Settings › Accounts and Models ---------- */
 export const A = { view: null, catalog: null };
@@ -186,11 +187,11 @@ function step1() {
 function extraField(x) {
   const now = W.extras[x.key] ?? x.default ?? "";
   const box = x.choices
-    ? `<select class="inp" data-sw="aaextra" data-k="${esc(x.key)}">${x.choices.map((c) => `<option value="${esc(c)}"${c === now ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+    ? gsel({ sw: "aaextra", label: x.label, options: x.choices.map((c) => [c, c]), value: now, attrs: `data-k="${esc(x.key)}"` })
     : `<input class="inp" data-sw="aaextra" data-k="${esc(x.key)}" value="${esc(now)}" placeholder="${esc(x.example ?? "")}" autocomplete="off">`;
   return `<label class="fld" data-css="margin-top:10px"><span>${esc(x.label)}</span>${box}</label>`;
 }
-const extraBoxes = () => [...(dialog()?.querySelectorAll("input, select") ?? [])].filter((el) => el.dataset.sw === "aaextra");
+const extraBoxes = () => [...(dialog()?.querySelectorAll("input, .gsel") ?? [])].filter((el) => el.dataset.sw === "aaextra");
 const keepExtras = () => { for (const el of extraBoxes()) W.extras[el.dataset.k] = el.value; };
 
 /* A key connection: the catalogue's own note and where to get a key; the key field is empty every time it is drawn. */

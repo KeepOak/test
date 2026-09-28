@@ -1,3 +1,5 @@
+import { environmentTool } from "./environment.js";
+import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
@@ -74,6 +76,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { connectionName } from "./accounts/manage.js"; // models-ui: a Trunk's pools by name
 import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
@@ -681,6 +684,7 @@ export async function createBranch(options: {
   };
   registerDocuments(registry, documents);
   registerAttachmentTools(registry, store, attachments);
+  registry.register(environmentTool((runId) => runtime.channelOf(runId))); // where Branch is running, on request
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",
@@ -879,6 +883,8 @@ export async function createBranch(options: {
   channels.liveAllowed = () => !lockedDown(store, runtime.owner);
   // ...and nothing key-shaped or secret shows in a step label or streamed text (mac2/leak-guard).
   channels.hideLeaks = (text) => redactLeaksIn(store.secrets.scrubber.deep(text)).value;
+  // Data carried out in an address a task opens (src/egress-guard.ts): the values the locker has unlocked.
+  runtime.egress.secrets = () => store.secrets.scrubber.values();
   runtime.hideSecrets = (value) => {
     // mac2/leak-guard: key-shaped values nobody looked up are hidden in logs and question cards too.
     const scrubbed = redactLeaksIn(store.secrets.scrubber.deep(value)).value;
@@ -1302,7 +1308,8 @@ export async function createBranch(options: {
   // R17-005: a Trunk's account is its own conversation's choice in the accounts work (src/accounts/).
   const trunkAccounts = {
     get connected() { return accountsSettings(store, runtime.owner).mode !== "off"; },
-    pools: () => accountsSettings(store, runtime.owner).pools.map((pool) => ({ id: pool.pool, label: pool.pool,
+    // models-ui: the connection's own name ("Claude Code", "ChatGPT"), so keyPlan's notes read as the window's lists do.
+    pools: () => accountsSettings(store, runtime.owner).pools.map((pool) => ({ id: pool.pool, label: connectionName(accounts, pool.pool),
       accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) })),
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
@@ -1319,6 +1326,7 @@ export async function createBranch(options: {
   // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
   trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
+  trunks.rooms.pick = (message, members) => decisionModels.pickTrunk(message, members); // Send each message to the right Trunk (off as shipped)
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
   // opened), and Talk live is refused where it would step round a Trunk, Lockdown or an outside hold.
@@ -1409,7 +1417,8 @@ export async function createBranch(options: {
   // ── r17-i: reach and platform (src/reach/). Every part ships off. ──
   const reachParts = new Reach({ runtime, registry, router: channels, files, policy: web.policy, fetch: web.policy.guard(globalThis.fetch),
     secret: async (name, purpose) => (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!,
-    machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners() });
+    machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners(),
+    screenHeld: (runId, signal) => desktop.whileDriving({ runId }, signal) }); // a take-over holds background app use too
   scheduler.onTick.add(() => reachParts.tick());
   reachParts.remoteTrunks.useRoster(trunkRoster(trunks, runtime, registry, reachParts)); // R17-077 on R17-A's Trunks
   // ── end r17-i ──
@@ -1802,6 +1811,7 @@ export async function createBranch(options: {
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
+      closeSpareAgents(); // copies of Claude Code started ahead of time for the next question (src/providers/cli-agent.ts)
       await rings.idle(); // Seasons: a night under way finishes its step before the database closes
       await budding.close(); // Stop a resumed task before closing the connectors and private database.
       // Wave 8: a connection that stays open must not outlive the app either.
