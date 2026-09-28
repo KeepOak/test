@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { versionedLayout } from "./app-folders.js";
 import { readSwitchFailure } from "./shell-switch.js";
+import { UpdateLoop, type LoopFacts, type LoopPlan } from "./update-loop.js";
 import { portableMarker } from "../install/layout.js";
 import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
@@ -65,6 +66,8 @@ export interface UpdateHooks {
   live?: LiveHooks;
   /** Versioned app folders: the moment and the window's state for a shell switch (main.ts, shell-switch.ts). */
   handOver?: (target: { version: string; stillWanted: () => boolean }) => Promise<{ minimized: boolean }>;
+  /** The engine's plan for update by itself (update-readiness.ts updatePlanFrom), for the app's own update loop. */
+  plan?: (facts: LoopFacts) => Promise<LoopPlan>;
 }
 
 /**
@@ -160,13 +163,12 @@ export function registerUpdaterIpc(
       throw error;
     });
   });
-  ipcMain.handle("branch:update-install", async (event, automatic: unknown, confirm: unknown) => {
-    authorized(event);
-    // A Beta change that does not contain this copy's goes in only on the owner's confirmation of that exact change,
-    // pressed in the window; update by itself never confirms anything.
-    const confirmed = confirmedChange(automatic, confirm);
-    // #215: one install at a time for this window, claimed before anything is awaited.
-    return installClaim.run(() => updater.status, () => updater.inProgress, async () => {
+  /**
+   * One install, the Update button's and the app's own update loop's alike (update-loop.ts): `automatic` for update by
+   * itself, which never confirms another line's change. #215: one install at a time, claimed before anything is awaited.
+   */
+  const installNow = (automatic: boolean, confirmed: string | null) =>
+    installClaim.run(() => updater.status, () => updater.inProgress, async () => {
       if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
       const readiness = await hooks.readiness();
       const moved = updater.selectedChannel !== readiness.channel;
@@ -197,6 +199,8 @@ export function registerUpdaterIpc(
       // hot-update: applied live; nothing to hand over, nothing restarts.
       if ("live" in installed) {
         diagnose("updater", "info", "Updated live", { fields: { tier: installed.live.tier, ms: String(installed.live.ms), to: installed.live.version } });
+        // The app keeps running, so the next change must find the install free again (it was left claimed for good).
+        installClaim.release();
         return updater.status;
       }
       const { script, stagedDir } = installed;
@@ -223,7 +227,23 @@ export function registerUpdaterIpc(
       setTimeout(() => app.exit(0), 20000).unref();
       return status;
     });
+  ipcMain.handle("branch:update-install", async (event, automatic: unknown, confirm: unknown) => {
+    authorized(event);
+    // A Beta change that does not contain this copy's goes in only on the owner's confirmation of that exact change,
+    // pressed in the window; update by itself never confirms anything.
+    return installNow(automatic === true, confirmedChange(automatic, confirm));
   });
+  // Update by itself runs here, in the app, not in the window's page: it goes on whether the page is loaded, closed to
+  // the tray or gone (update-loop.ts). The page only shows what it says.
+  // Only an installed copy updates itself; one run from its source is updated with `branch update`.
+  const loop = app.isPackaged && hooks?.readiness && hooks.plan ? new UpdateLoop({
+    readiness: async () => { const state = await hooks.readiness!(); return { channel: state.channel, autoUpdate: state.autoUpdate ?? "off" }; },
+    plan: hooks.plan, updater, install: async () => { await installNow(true, null); },
+    tell: (words) => { if (!window.isDestroyed()) window.webContents.send("branch:update-said", words); diagnose("updater", "warn", words); },
+  }) : null;
+  // The first look waits a minute: the window and its engine settle first, and nothing is built during start-up.
+  loop?.start(60_000);
+  ipcMain.handle("branch:update-loop", (event) => { authorized(event); return loop ? { inMain: true, ...loop.last } : { inMain: false }; });
   ipcMain.handle("branch:open-external", async (event, url: unknown) => {
     authorized(event);
     if (typeof url !== "string" || !(externalAllowed.some((prefix) => url.startsWith(prefix)) || settingsPages.has(url)))
@@ -232,7 +252,8 @@ export function registerUpdaterIpc(
     return true;
   });
   window.on("closed", () => {
-    for (const channel of ["branch:update-status", "branch:update-check", "branch:update-install", "branch:open-external"])
+    loop?.stop();
+    for (const channel of ["branch:update-status", "branch:update-check", "branch:update-install", "branch:update-loop", "branch:open-external"])
       ipcMain.removeHandler(channel);
   });
   return updater;

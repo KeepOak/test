@@ -18,7 +18,7 @@ import { proveOnce } from "../engine-proof.js";
 import { requestUpdateBackup } from "../install/background-engine.js";
 import type { GatewayPowerPolicy } from "./gateway-power.js";
 
-async function brokerRequest<T>(host: EngineHost, action: (client: EngineClient) => Promise<T>): Promise<T> {
+export async function brokerRequest<T>(host: EngineHost, action: (client: EngineClient) => Promise<T>): Promise<T> {
   const boot = await proveOnce(host.url, host.token);
   if (!boot) throw new Error("The retained engine did not prove its identity.");
   const client = new EngineClient({ origin: host.url, access: { boot: () => host.running ? boot : null }, windowKey: () => host.token });

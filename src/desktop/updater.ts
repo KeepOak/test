@@ -338,6 +338,8 @@ export class Updater {
     // empties the scratch folder the first is downloading into, and the first fails on its own
     // archive. Two hand-overs for one app is the multiplication this row forbids.
     this.busy = true;
+    // One install at a time across the whole app: a window's and the gateway's own loop never build or switch together.
+    const unlock = await installLock(`${this.options.scratchDir}.lock`).catch((error: unknown) => { this.busy = false; throw error; });
     this.stoppedBackground = false;
     this.automatic = options.automatic === true;
     this.calledOff = null;
@@ -355,14 +357,15 @@ export class Updater {
       // Nothing has been touched yet, so the claim is simply given back: no status change and no
       // files removed, exactly as when these two refusals happened before the claim existed.
       this.busy = false;
+      await unlock();
       throw error;
     }
     let held = false;
     const beta = release.channel === "beta";
     // hot-update: a Beta change main does not load is applied live; one it does goes the packaged way below.
     if (beta && this.options.live && release.otherLine !== true) {
-      const applied = await this.tryLive(release).catch((error: unknown) => { this.busy = false; throw error; });
-      if (applied) { this.busy = false; return { live: applied }; }
+      const applied = await this.tryLive(release).catch(async (error: unknown) => { this.busy = false; await unlock(); throw error; });
+      if (applied) { this.busy = false; await unlock(); return { live: applied }; }
     }
     this.stages = (beta ? betaStages : stableStages).map((id) => ({ id, state: "waiting", startedAt: null, endedAt: null }));
     // A Beta build's version is known once its source is here; until then the screen names the change.
@@ -418,7 +421,7 @@ export class Updater {
       await rm(join(this.options.scratchDir, this.options.assetName!), { force: true }).catch(() => undefined);
       await removeTree(join(this.options.scratchDir, "unpacked")).catch(() => undefined);
       throw error;
-    } finally { if (!held) this.busy = false; }
+    } finally { if (!held) { this.busy = false; await unlock(); } }
   }
   /**
    * hot-update: builds the change the light way and, unless main must load it (answer null: the packaged way goes on),
@@ -500,6 +503,21 @@ export class Updater {
       publishedAt: null, assetUrl: "", checksumUrl: "", assetBytes: 0, pageUrl: "", channel: short ? "beta" : "stable",
       ...(failure.commit ? { commit: failure.commit } : {}) };
     return this.keptAfter(failure.message, release);
+  }
+  /** The live hooks to use from the next install (the gateway's engine can be replaced under it). */
+  useLive(hooks: LiveHooks | null): void {
+    if (hooks) this.options.live = hooks; else delete this.options.live;
+  }
+  /**
+   * Versioned app folders with no window open (gateway-updates.ts): the new version is in use from the next window, as
+   * `current.json` now says; nothing had to close. The claim is given back and the status says so.
+   */
+  switchedWithoutWindow(): UpdateStatus {
+    const release = this.status.release;
+    this.installed = { version: release?.latestVersion ?? this.installed.version, commit: release?.commit ?? this.installed.commit };
+    this.busy = false;
+    this.stages = this.target = null;
+    return this.set("current", `Version ${this.installed.version} is in place; the next time Branch's window opens, it is this version.`, null, release ? { ...release, available: false } : null);
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
   release(): void { this.busy = false; }
@@ -1138,6 +1156,30 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     `if exist "%~1\\${folder}\\" ( ${note("kept %~1 because it holds " + folder)} & exit /b 1 )`,
     `rmdir /s /q "%~1" 2>NUL`, "exit /b 0", "",
   ];
+}
+
+/**
+ * The app-wide install lock: a file naming the process installing. One whose process has ended is stale and taken
+ * over; one whose process runs means another part of Branch is installing, and this install waits (said, not failed).
+ * Answers how to give it back.
+ */
+export async function installLock(path: string, pid = process.pid): Promise<() => Promise<void>> {
+  const { open, readFile: read, rm: remove } = await import("node:fs/promises");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const file = await open(path, "wx");
+      await file.writeFile(String(pid)); await file.close();
+      return async () => { const owner = Number(await read(path, "utf8").catch(() => "")); if (owner === pid) await remove(path, { force: true }); };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const owner = Number(await read(path, "utf8").catch(() => ""));
+      let alive = false;
+      try { if (owner > 0 && owner !== pid) { process.kill(owner, 0); alive = true; } } catch (probe) { alive = (probe as NodeJS.ErrnoException).code === "EPERM"; }
+      if (alive) throw new UpdateDeferredError("Another part of Branch is installing an update right now, so this one waits for it.");
+      await remove(path, { force: true });
+    }
+  }
+  throw new UpdateDeferredError("Branch could not take the update lock, so the update waits.");
 }
 
 /** hot-update: how long a live update took, as the status says it ("1.4 s", "38 s"). */

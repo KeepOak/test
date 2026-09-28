@@ -24,7 +24,7 @@ import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
 import { markStarted, UpdateDeferredError } from "./updater.js";
-import { updateReadiness } from "./update-readiness.js";
+import { updatePlanFrom, updateReadiness } from "./update-readiness.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
 import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
 import type { DesktopSettings } from "./settings.js";
@@ -330,6 +330,8 @@ async function createWindow(
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key(), client.fetch),
+      // Update by itself runs in this process, whatever the page is doing (update-loop.ts).
+      plan: (facts) => updatePlanFrom(url, key(), facts, client.fetch),
       // Versioned app folders: the switch waits for the window's invisible moment and hands its state over (shell-window.ts).
       handOver: handOverHook({ window, userData: app.getPath("userData"), power: powerMonitor }) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.

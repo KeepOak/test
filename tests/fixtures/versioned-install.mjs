@@ -76,22 +76,32 @@ export async function inspector(port) {
   await new Promise((done, fail) => { socket.onopen = done; socket.onerror = fail; });
   let id = 0; const waiting = new Map();
   socket.onmessage = (event) => { const message = JSON.parse(event.data); waiting.get(message.id)?.(message); waiting.delete(message.id); };
+  // A shell that ends answers nothing more: whatever was asked fails at once instead of waiting for ever.
+  socket.onclose = () => { for (const answer of waiting.values()) answer({ error: { message: "the shell ended" } }); waiting.clear(); };
   const evaluate = (expression) => new Promise((done, fail) => {
     const at = ++id;
     waiting.set(at, (message) => {
       const details = message.result?.exceptionDetails;
       if (message.error || details) fail(new Error(message.error?.message ?? details.exception?.description ?? details.text)); else done(message.result.result.value);
     });
+    if (socket.readyState !== WebSocket.OPEN) { waiting.delete(at); fail(new Error("the shell ended")); return; }
     socket.send(JSON.stringify({ id: at, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true, includeCommandLineAPI: true } }));
   });
   return { evaluate, close: () => socket.close() };
 }
 
-/** What a shell's main process says on its console, into the progress file, from the moment its inspector answers. */
-export async function listen(port, tag) {
+/**
+ * What a shell's main process says on its console, into the progress file, from the moment its inspector answers.
+ * Answers a close: a program started with an inspector waits, as it ends, for every inspector to let go of it.
+ */
+export function listen(port, tag) {
+  let socket = null, closed = false;
+  void follow();
+  return { close: () => { closed = true; socket?.close(); } };
+  async function follow() {
   const list = await until(`the inspector on ${port}`, async () => (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) })).json(), 180_000, 100).catch(() => null);
-  if (!list) { progress(`${tag}: no inspector answered`); return; }
-  const socket = new WebSocket(list[0].webSocketDebuggerUrl);
+  if (!list || closed) { if (!list) progress(`${tag}: no inspector answered`); return; }
+  socket = new WebSocket(list[0].webSocketDebuggerUrl);
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data);
     if (message.method === "Runtime.consoleAPICalled") progress(`${tag} console.${message.params.type}: ${message.params.args.map((arg) => arg.value ?? arg.description ?? "").join(" ").slice(0, 600)}`);
@@ -99,6 +109,7 @@ export async function listen(port, tag) {
   };
   socket.onopen = () => { progress(`${tag}: inspector connected`); socket.send(JSON.stringify({ id: 1, method: "Runtime.enable" })); };
   socket.onclose = () => progress(`${tag}: inspector closed`);
+  }
 }
 
 /** Runs `code` in the shell's page (its own window, the one opened on the engine with ?desktop=1). */

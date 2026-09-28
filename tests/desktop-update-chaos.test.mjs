@@ -158,7 +158,12 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
     started.add(first.pid); first.unref();
     let shell = await inspector(base).catch(async (error) => { throw new Error(`${error.message}\n${await readFile(join(home, "first-shell.log"), "utf8").catch(() => "")}`); });
     shells.push(shell);
+    progress("first shell inspector");
     await connected(shell);
+    progress("first shell connected");
+    progress("turning updating off");
+    // This test drives its own switches: the app's own update loop (a minute after start) must not look at GitHub.
+    await inPage(shell, `await fetch("/api/comfort", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ card: "notify", values: { autoUpdate: "off" } }) }).then((r) => { if (!r.ok) throw new Error("comfort " + r.status); });`);
     await inPage(shell, `for (const [path, body] of [["/api/onboarding", { done: true }], ["/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true }]])
       await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); location.reload();`).catch(() => undefined);
     await connected(shell);
@@ -179,6 +184,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
 
     // A client of the gateway that keeps asking all the way through: none may fail.
     let asked = 0, failed = 0, asking = true;
+    t.after(() => { asking = false; }); // a failure part way must not leave it asking for ever
     const client = (async () => { while (asking) { try { const r = await fetch(`${running.url}/gateway/health`, { signal: AbortSignal.timeout(5000) }); if (r.ok) asked++; else failed++; } catch { failed++; } await wait(200); } })();
 
     // ---- the four kinds of work, all started before the first update and all still going through the third ----
@@ -227,7 +233,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       await writeFile(`${script}.launch.vbs`, hiddenLauncher(script, pid));
       spawn(join(process.env.SystemRoot, "System32", "wscript.exe"), ["//B", "//Nologo", `${script}.launch.vbs`], { env: env(), detached: true, stdio: "ignore", windowsHide: true }).unref();
       started.add(pid);
-      void listen(port, `shell ${to}`);
+      listeners.set(port, listen(port, `shell ${to}`));
       // Every process running the new version's program, every two seconds for a minute: when it starts, what it is.
       void (async () => {
         const end = Date.now() + 60_000;
@@ -245,13 +251,14 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       })();
       progress(`script started; asking ${from} to quit`);
       const asking = Date.now();
-      await shell.evaluate(`require("electron").app.quit()`).catch(() => undefined);
-      shell.close();
+      // Asked while the inspectors are still on it, then they let go (a program whose inspector left first never ends).
+      await shell.evaluate(`require("electron").app.quit(), "asked"`).catch(() => undefined);
+      shell.close(); listeners.get(port - 1)?.close();
       return { draft, asking };
     };
 
     // ---- three updates, back to back ----
-    const gaps = [];
+    const gaps = [], listeners = new Map();
     for (let at = 1; at <= 3; at++) {
       progress(`update ${at}`);
       const { draft, asking: from } = await switchTo(versions[at - 1], versions[at], base + at);
@@ -267,7 +274,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       assert.equal((await readPointer(root))?.folder, `app-${versions[at]}`);
       const now = await health();
       assert.deepEqual([now.gateway.pid, now.worker.pid], [gateway, worker], "the same gateway and the same engine: nothing restarted");
-      assert.equal(model.asked.filter((one) => one.tag !== "other").length, 5, "no work was asked of the model again");
+      assert.equal(model.asked.filter((one) => one.tag !== "other").length, 5, `no work was asked of the model again: ${JSON.stringify(model.asked)}`);
       progress(`update ${at} done in ${gaps.at(-1)} ms`);
     }
     assert.ok(model.streamed.words > wordsAtStart, "the answer kept streaming through the updates");
