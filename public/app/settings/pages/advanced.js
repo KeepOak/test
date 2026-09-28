@@ -22,16 +22,16 @@ import { t } from "../../../i18n.js";
    Crash reports need a linked destination first, so they stay greyed; every other greyed row says why under itself
    (core/why.js, the locale's window.why.*). */
 const D = { knobs: null, log: null, local: null, profiles: null, orders: null, retrieval: null, providers: null, history: null,
-  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null };
+  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null, search: null };
 const PATHS = { knobs: "knobs", log: "diagnostics/log/settings", local: "local-models", profiles: "browser/profiles", orders: "autonomy/orders",
   retrieval: "memory/retrieval", providers: "learning-more/providers", history: "memory/history", heartbeat: "heartbeat",
-  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs" };
+  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs", search: "web-search" };
 /* The owner's own settings: every change here is refused to a household profile (src/household-routes.ts fails closed),
    so for one the window neither reads them nor draws them live: each control is drawn without its id and greys with the
    owner-only reason (as models.js num() does, Q261), never showing an "off" it did not read. */
 const household = () => E.profiles?.isOwner === false;
 const own = (id) => (household() ? 'data-why="knobs-owner-only"' : `id="${id}" ${WIRES[id] ? checked(id) : ""}`);
-const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media"]);
+const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media", "search"]);
 const onMode = (mode) => Boolean(mode) && mode !== "off";
 const mode = (on) => (on ? "when-needed" : "off");
 const part = (path, name) => (on) => api(path, { part: name, mode: mode(on) });
@@ -57,6 +57,31 @@ async function loadAll() {
   const raw = Object.fromEntries(keys.map((key, i) => [key, got[i]]));
   Object.assign(D, raw, { knobs: raw.knobs?.values ?? null, profiles: raw.profiles?.profiles ?? null, orders: raw.orders?.orders ?? null });
   render();
+}
+
+/* Web search: where "search the web" goes (GET/POST /api/web-search, src/web-search-choice.ts), pressed from the engine's
+   own choice. A paid service's key stays in the locker; the row says the secret's name and whether it is saved. SearXNG
+   takes its address in the box under the row, sent with the pick. */
+const SEARCH = [["duckduckgo", "DuckDuckGo"], ["brave", "Brave"], ["tavily", "Tavily"], ["exa", "Exa"], ["serper", "Serper"], ["searxng", "SearXNG"]];
+function searchRow() {
+  const label = t("window.settings.advanced.web-search");
+  if (household()) return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${SEARCH.map(([, words]) => `<button type="button" aria-pressed="false" data-act="ad-search-owner" data-why="knobs-owner-only">${words}</button>`).join("")}</span></span><small></small></div>`;
+  const chosen = D.search?.chosen?.backend ?? "duckduckgo";
+  const service = (D.search?.services ?? []).find((one) => one.id === chosen);
+  const sub = chosen === "searxng" ? t("window.settings.advanced.search-searxng")
+    : service?.needsKey ? t(service.hasKey ? "window.settings.advanced.search-has-key" : "window.settings.advanced.search-needs-key", { name: esc(service.keySecret ?? "") })
+    : t("window.settings.advanced.duckduckgo-needs-no-key-so-search");
+  const from = D.search?.fromLaunchFile ? ` ${t("window.settings.advanced.search-from-file")}` : "";
+  const buttons = SEARCH.map(([v, words]) => `<button type="button" aria-pressed="${D.search ? chosen === v : false}" data-act="ad-search" data-v="${v}">${words}</button>`).join("");
+  const address = `<span class="right num15"><input class="inp" id="ad-searx" value="${esc(D.search?.chosen?.searxngUrl ?? "")}" placeholder="http://192.168.1.20:8080" aria-label="${t("window.settings.advanced.search-address")}"></span>`;
+  return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${buttons}</span></span><small>${sub}${from}</small></div>`
+    + `<div class="ctl"><b>${t("window.settings.advanced.search-address")}</b>${address}<small></small></div>`;
+}
+
+async function chooseSearch(v) {
+  const box = document.getElementById("ad-searx"), typed = box?.value.trim();
+  try { await api("web-search", { backend: v, ...(v === "searxng" && typed ? { searxngUrl: typed } : {}) }); } catch (error) { toast(error.message); }
+  await loadAll();
 }
 
 /* Outside memory: the engine's four choices (none, Mem0, Honcho, Hindsight), pressed from its own value. */
@@ -127,7 +152,7 @@ export function draw() {
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-a-skill-is-ready-first")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-check-a-skill-is-ready-first")} aria-label=\"${t("window.settings.advanced.check-a-skill-is-ready-first")}\" data-sw=\"set\"><small>${t("window.settings.advanced.programs-keys-and-systems-it-needs")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.only-signed-skill-packages")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-only-signed-skill-packages\" aria-label=\"${t("window.settings.advanced.only-signed-skill-packages")}\" data-sw=\"set\"><small></small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-install-requests-for-malware")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-check-install-requests-for-malware\" aria-label=\"${t("window.settings.advanced.check-install-requests-for-malware")}\" data-sw=\"set\"><small>${t("window.settings.advanced.against-the-osv-database-before-you")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.web-search")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.web-search")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">DuckDuckGo</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Brave</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">SearXNG</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Tavily</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Exa</button></span></span><small>${t("window.settings.advanced.duckduckgo-needs-no-key-so-search")}</small></div>`;
+    html += searchRow();
     html += `<div class=\"ctl\"><b>${t("personal.x.search")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-search-x")} aria-label=\"${t("personal.x.search")}\" data-sw=\"set\"><small>${t("window.settings.advanced.turns-on-when-an-x-account")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.video-tools")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-video-tools")} aria-label=\"${t("window.settings.advanced.video-tools")}\" data-sw=\"set\"><small>${t("window.settings.advanced.download-read-captions-and-make-short")}</small></div>`;
     html += "</div>";
@@ -202,9 +227,11 @@ export function init() {
   on("adv-logs", () => openLogs());
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
-  markLive(["adv-logs", "ad-orders", "ad-outside", "sw:ad-facts", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  on("ad-search", (el) => chooseSearch(el.dataset.v));
+  markLive(["adv-logs", "ad-orders", "ad-outside", "ad-search", "sw:ad-searx", "sw:ad-facts", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
+    if (e.target.id === "ad-searx") { if (e.target.value.trim()) await chooseSearch("searxng"); return; }
     const wire = WIRES[e.target.id];
     if (!wire) return;
     try { await wire[1](e.target.checked); } catch (error) { toast(error.message); }
@@ -215,4 +242,4 @@ export function init() {
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
-export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "sw:ad-facts": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
+export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "ad-search": true, "sw:ad-searx": true, "sw:ad-facts": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };

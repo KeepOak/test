@@ -315,6 +315,7 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
+import { webSearchApi, WebSearchApiError } from "./web-search-choice.js"; // wire-greyed
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
@@ -1030,6 +1031,13 @@ async function api(
     return webPagesApi({ store: app.store, owner: app.runtime.owner, requireOwner: (what) => app.store.profiles.requireOwner(what) },
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
+    });
+  // wire-greyed: where "search the web" goes, picked in Settings › Advanced (owner-only change).
+  if (path === "/api/web-search")
+    return webSearchApi({ store: app.store, owner: app.runtime.owner, launch: () => app.web.settings().search,
+      hasSecret: (name) => { try { return app.store.secrets.list(app.runtime.owner, app.store.projects.active(app.runtime.owner).id).some((entry) => entry.name === name); } catch { return false; } },
+      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", () => readBody(request, 4 * 1024)).catch((error: unknown) => {
+      throw error instanceof WebSearchApiError ? new HttpError(error.status, error.message) : error;
     });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))
