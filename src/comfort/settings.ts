@@ -98,6 +98,13 @@ export const ComfortNotifySchema = z.object({
   method: z.enum(["system", "window"]).default("system"),
   /** A short sound when Branch needs you. */
   sound: z.enum(["off", "chime", "knock"]).default("off"),
+  /**
+   * wire-greyed: tell the owner when a Trunk waits for their yes, and when a task that ran two minutes or longer finishes.
+   * Both are told in the window (and by the computer when `method` is "system"); nothing is sent anywhere else. On by
+   * default under the ship-on rule: none of (a)–(f).
+   */
+  needsYes: z.boolean().default(true),
+  taskDone: z.boolean().default(true),
   /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
   /**
