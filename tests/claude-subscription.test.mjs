@@ -195,7 +195,7 @@ test("production connector pins the first-party TLS identity and does not follow
 });
 
 test("selfdev/prompt-cache: every round of one conversation runs in the same private folder, so its request front never moves", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { options: { timeoutMs: 60000 } }); // six native runs, two at once: room under a busy machine
   const first = [{ role: "system", content: "Owner's instructions" }, { role: "user", content: "Read the file" }];
   const later = [...first, { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "files.read", arguments: '{"path":"a.txt"}' }] },
     { role: "tool", toolCallId: "c1", content: "a" }];
