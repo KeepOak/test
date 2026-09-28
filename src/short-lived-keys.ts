@@ -170,6 +170,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/panels\/work$/,
   // live-stage: frames of the owner's tasks' browser as it works, with the addresses and titles of the pages it has open.
   /^\/api\/panels\/live$/,
+  /^\/api\/panels\/browser(\/|$)/,
   // parity-b2: a frame of this computer's screen, taken as it is asked for.
   /^\/api\/panels\/screen$/,
   // The desktop handover sees every person's busy tasks and the owner's release channel.
@@ -187,6 +188,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   // Requests from a chat to change Branch itself carry what people wrote and who they are
   // (src/self-development-requests.ts); only the owner reads and answers them, in the app window.
   /^\/api\/self-development\/requests$/,
+  /^\/api\/self-development\/merge(\/|$)/,
   // The bounded diff of such a change: Branch's own source as a task changed it, for the owner to read.
   new RegExp(`^/api/self-development/requests/${id}/diff$`),
 ];

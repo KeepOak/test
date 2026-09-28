@@ -57,8 +57,12 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
   if (!service) throw new AccountsApiError(404, "Several accounts per connection is not available in this launch.");
   const url = new URL(request.url ?? "/", "http://x");
   if (request.method === "GET" && path === "/api/accounts") return viewAll(service);
-  if (request.method === "GET" && path === "/api/accounts/session")
-    return viewSession(service, z.string().uuid().or(z.literal("")).parse(url.searchParams.get("sessionId") ?? ""));
+  if (request.method === "GET" && path === "/api/accounts/session") {
+    const session = z.string().uuid().or(z.literal("")).parse(url.searchParams.get("sessionId") ?? "");
+    viewSession(service, session); // validates conversation ownership before asking any program.
+    await service.readIdentities();
+    return viewSession(service, session);
+  }
   // The sign-ins that could be made (src/accounts/sign-ins.ts): no account is in them, so they answer with the switch off.
   // A household person sees none of the owner's sign-ins (hardening-3), so this read is the owner's too.
   if (request.method === "GET" && path === "/api/accounts/sign-ins") {
