@@ -403,9 +403,9 @@ export class SelfStarting {
   }
 
   /** The work of a step that asks a Trunk: once, by what the step before said, repeatedly, per line, or another procedure's steps. */
-  private async stepWork(id: string, step: Step, count: number, index: number, runId: string): Promise<string> {
+  private async stepWork(id: string, step: Step, count: number, index: number, runId: string, permissions?: readonly string[]): Promise<string> {
     const kind = kindOf(step), last = this.currentRun(id, runId)?.running.last ?? "";
-    const ask = (prompt: string, note = ""): Promise<string> => this.ask(id, `step ${index + 1} of ${count}: ${step.title}${note}\n${prompt}`, runId);
+    const ask = (prompt: string, note = ""): Promise<string> => this.ask(id, `step ${index + 1} of ${count}: ${step.title}${note}\n${prompt}`, runId, permissions);
     if (kind === "if") {
       const way = says(last, step.contains ?? "") ? step.yes : step.no;
       return way ? ask(way) : last;
@@ -437,7 +437,7 @@ export class SelfStarting {
     if (problem) throw new Error(problem);
     let said = this.currentRun(id, runId)?.running.last ?? "";
     for (const [i, inner] of target.procedure.steps.entries()) {
-      said = await this.stepWork(id, inner, target.procedure.steps.length, i, runId);
+      said = await this.stepWork(id, inner, target.procedure.steps.length, i, runId, bothAllow(this.get(id).procedure.permissions, target.procedure.permissions));
       const now = this.currentRun(id, runId);
       if (!now || now.status !== "active") throw new Error("This flow run has stopped.");
       this.save({ ...now, running: { ...now.running, last: said.slice(0, 8000) } });
@@ -446,14 +446,15 @@ export class SelfStarting {
   }
 
   /** One request to a Trunk, counted against the run's hard cap before it is made. */
-  private async ask(id: string, words: string, runId: string): Promise<string> {
+  /** `permissions`: what a flow run from this one may use (both flows' own), in place of this flow's alone. */
+  private async ask(id: string, words: string, runId: string, permissions?: readonly string[]): Promise<string> {
     const state = this.currentRun(id, runId);
     if (!state || state.status !== "active") throw new Error("This flow run has stopped.");
     const running = state.running;
     if ((running.turns ?? 0) >= maxUnattendedTurns) throw new Error(`It stopped at ${maxUnattendedTurns} requests to a Trunk, the most one run may make.`);
     this.save({ ...state, running: { ...running, turns: (running.turns ?? 0) + 1 } });
     const outcome = await this.deps.runner.turn({ key: `procedure:${id}`, prompt: `Procedure "${quoteLine(state.procedure.name, 80)}", ${words}`,
-      permissions: narrowed(state.procedure.permissions, this.deps.held()), perDay: state.procedure.perDay * Math.max(1, this.worstTurns(state.procedure.steps)),
+      permissions: narrowed(permissions ?? state.procedure.permissions, this.deps.held()), perDay: state.procedure.perDay * Math.max(1, this.worstTurns(state.procedure.steps)),
       gapMs: 0, ...(running.sessionId ? { sessionId: running.sessionId } : {}) });
     const now = this.currentRun(id, runId);
     if (!now || now.status !== "active") throw new Error("This flow run has stopped.");
@@ -588,6 +589,15 @@ export class SelfStarting {
     }
     this.save(next);
   }
+}
+
+/**
+ * What a flow run from another may use: only what both allow. The owner said yes to each flow's requests under its own
+ * permissions, so running one from another never widens them. Neither naming any means the owner's rules as they are.
+ */
+function bothAllow(outer: readonly string[] | undefined, inner: readonly string[] | undefined): string[] | undefined {
+  if (!outer) return inner ? [...inner] : undefined;
+  return inner ? outer.filter((p) => inner.includes(p)) : [...outer];
 }
 
 /** One step, as the owner reads it in a question: its kind's own words, and the request it sends. */

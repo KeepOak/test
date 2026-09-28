@@ -204,7 +204,7 @@ test("a chat that has none of the extras still gets exactly one reply", async (t
   assert.equal(chat.sent()[0], "Echo: hello");
 });
 
-test("a slow task shows its steps and its reply lands in the progress message, written down once", async (t) => {
+test("a slow task keeps its progress message and sends the final reply separately, written down once", async (t) => {
   const { app, chat, model } = await fixture(t, async (request, n, self) => {
     if (n === 1) return { content: "", toolCalls: [{ id: "c1", name: "files.list", arguments: "{\"path\":\".\"}" }] };
     await self.hold(request.signal);
@@ -221,11 +221,12 @@ test("a slow task shows its steps and its reply lands in the progress message, w
   await until(() => model.gates.length === 1, "the model is writing the answer");
   model.open();
   assert.equal(await outcome, "replied");
-  assert.equal(chat.sent().length, 1, "the reply did not arrive twice");
-  assert.equal(chat.calls.filter((c) => c.op === "edit").at(-1).text, "All tidy.");
+  assert.equal(chat.sent().length, 2, "one progress message and one reply");
+  assert.equal(chat.sent().at(-1), "All tidy.");
+  assert.equal(chat.calls.filter((c) => c.op === "edit").at(-1).text, "Done (1 step).");
   const [row] = app.channels.deliveries.list().filter((d) => d.key.startsWith("reply:"));
   assert.equal(row.status, "sent");
-  assert.equal(row.messageId, "100");
+  assert.equal(row.messageId, "101");
   assert.equal(row.text, "All tidy.");
   assert.ok(chat.calls.some((c) => c.op === "typing"));
   assert.equal(chat.calls.filter((c) => c.op === "react").at(-1).emoji, statusEmoji.done);
@@ -713,4 +714,3 @@ test("the switches are read and changed over the app's own address, and bad valu
   assert.equal((await call("channels/live", { steering: "always" })).ok, false);
   assert.equal((await (await call("channels")).json()).live.steering, "on");
 });
-

@@ -186,6 +186,12 @@ export interface CompletionRequest {
    * of the question and checking the reply afterwards. See src/answer-shape.ts.
    */
   responseFormat?: { name: string; schema: Record<string, unknown> };
+  /**
+   * False when the task is not the owner's own (a chat app's, another program's, a schedule's): an installed program
+   * answering as a model (src/providers/cli-agent.ts) then gets none of its own tools, so it cannot do past Branch's
+   * permissions what Branch's own tools may not. Absent means the program keeps its tools.
+   */
+  programTools?: boolean;
 }
 export interface Completion {
   content: string;
