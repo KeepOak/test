@@ -4535,7 +4535,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     listen.extraHosts = listen.extraHosts.filter((name) => next.extraHosts.includes(name));
     listen.ipv4Only = next.ipv4Only;
   }
-  app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
+  app.localAddress = url; // R17-C: the webhook door passes requests on to this address (handed on once that part is built)
   app.scheduler.start();
   // The ship-on rule: the installed app's first start keeps Branch running without a setup step (src/keep-running.ts).
   // How earlier versions' first starts went is read here, before noteFirstStart below writes this one's.

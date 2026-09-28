@@ -262,7 +262,11 @@ import { computerPlatforms } from "./trunks/starts-in.js"; // Q44
 import { accountsSettings, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
 import { Coding } from "./coding/index.js"; // mac7/r17-d: coding polish
 import { worktreeScope } from "./coding/worktrees.js"; // mac7/r17-d
-import { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
+import type { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
+// PLAT-191: parts of Branch built the first time they are needed, with their tools listed from cards until then.
+import { personalMode, personalParts, personalTools } from "./personal/settings.js";
+import { loadNow } from "./load-now.js";
+import { listFromCards } from "./tool-cards.js";
 import { unsetConnectorTools } from "./personal/settings.js"; // ships-on sweep
 import { Reach } from "./reach/index.js"; // r17-i: reach and platform
 import { platformRunners } from "./reach/host.js"; // r17-i
@@ -1404,7 +1408,14 @@ export async function createBranch(options: {
   // ── R17-C: files, voice, devices and personal connectors (src/personal/). Every part ships off. ──
   const personalSecret = async (name: string, purpose: string) =>
     (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!;
-  const personal = new Personal({ runtime, registry, files, oauth, fetch: web.policy.guard(globalThis.fetch), secret: personalSecret,
+  // PLAT-191: built the first time anything needs it (a call to one of its tools, Settings, the terminal); its tools are
+  // listed from their cards until then, exactly as the parts' switches say (src/tool-cards.ts).
+  let personalBuilt: Personal | undefined;
+  let localAddress = "";
+  const personal = (): Personal => personalBuilt ??= buildPersonal();
+  const buildPersonal = (): Personal => {
+    const { Personal } = loadNow<typeof import("./personal/index.js")>("./personal/index.js");
+    const built = new Personal({ runtime, registry, files, oauth, fetch: web.policy.guard(globalThis.fetch), secret: personalSecret,
     assertHost: (host, port) => web.policy.assertAllowed(new URL(`https://${host}:${port}/`), "mail server address"),
     channels: { adapter: (id) => channels.adapter(id), outboundGuard: (text) => channels.outboundGuard(text),
       reachable: (id, chatId) => channels.chats(runtime.owner).some((chat) => chat.channel === id && chat.chatId === chatId) },
@@ -1414,7 +1425,12 @@ export async function createBranch(options: {
     speak: async (text) => { const spoken = await voice.speak(runtime.owner, { text, voice: "", speed: 1 }); return { bytes: spoken.bytes, mediaType: spoken.mediaType }; },
     transcribe: async (clip) => (await voice.transcribe(runtime.owner, { ...clip, name: "spoken answer" })).text,
     lockdownRefusal: () => (lockedDown(store, runtime.owner) ? lockdownRefusal : null) });
-  releaseOnLock.push(() => personal.close()); // locking Branch stops the tunnel and forgets spoken answers
+    built.tunnel.localAddress = localAddress;
+    return built;
+  };
+  listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
+    () => void personal());
+  releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──
   // It runs only while the switch is on, a word is chosen, and this computer can really listen, and
@@ -1565,8 +1581,10 @@ export async function createBranch(options: {
     trunks,
     /** mac7/r17-d: coding polish (src/coding/); every part ships off. */
     coding,
-    /** R17-C: files, voice, devices and personal connectors (src/personal/); every part ships off. */
-    personal,
+    /** R17-C: files, voice, devices and personal connectors (src/personal/); built the first time it is needed. */
+    get personal(): Personal { return personal(); },
+    /** Where Branch listens, for the personal part's webhook door; handed on when that part is built. */
+    set localAddress(address: string) { localAddress = address; if (personalBuilt) personalBuilt.tunnel.localAddress = address; },
     /** r17-i: other computers, Trunks across computers, background apps, videos, relay, send and pause, sharing, USB, notes, arena. */
     reachParts,
     /** mac7/r17-g: tool scripts, WebAssembly add-ons, codes, the emergency stop, scans, the activity chain. */
@@ -1879,7 +1897,7 @@ export async function createBranch(options: {
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
       await autonomy.close(); // r17-b: nothing more starts by itself, and a turn that is working gets a moment
       await trunks.close(); // R17-A: rooms stop between turns
-      await personal.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
+      await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
