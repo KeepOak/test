@@ -19,6 +19,7 @@ let port = 0;
 const server = createServer((request, response) => {
   if (request.headers.host !== `127.0.0.1:${port}`) { response.writeHead(403); response.end("wrong host"); return; }
   if (request.url === "/api/state") { response.end(JSON.stringify({ version: process.env.FAKE_VERSION ?? "9.9.9", pid: process.pid })); return; }
+  if (request.url === "/api/headers") { response.end(JSON.stringify({ authorization: request.headers.authorization ?? null, ask: request.headers["x-branch-ask"] ?? null })); return; }
   if (request.url === "/api/echo") {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });

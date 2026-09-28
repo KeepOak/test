@@ -550,7 +550,9 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .lh-btn:hover{color:var(--ink)}
 .side{position:relative}
 .side>*{position:relative;z-index:1}
-.side>.scenery{position:absolute;z-index:0;left:0;bottom:0;width:100%;height:120px;pointer-events:none;image-rendering:pixelated;opacity:.5}
+/* Drawn at its own size in the list's bottom right, so the tree stands behind the pet and never behind the owner's row
+   or its Settings gear, whatever the list's width (QA pass 2). */
+.side>.scenery{position:absolute;z-index:0;right:0;bottom:0;width:146px;height:60px;pointer-events:none;image-rendering:pixelated;opacity:.5}
 .ov{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:12px;margin-top:18px}
 .ov .tile h2{margin:0;font-size:13px;font-weight:600;color:var(--ink-3)}
 .big-n{font-size:28px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
