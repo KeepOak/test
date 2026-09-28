@@ -66,12 +66,16 @@ test("Saved sign-ins fits a 400-pixel window", async (t) => {
   await page.locator(".set-col").getByRole("heading", { name: "Branch may fill", exact: true }).waitFor();
   // Measured inside the page in one step: the page draws again once the switch's state arrives (RES-710), and a box
   // asked for in two steps (find, then measure) can land on the one just replaced (null).
-  const fits = await page.waitForFunction(() => {
+  // The fill switch (RES-710) is drawn once the vault's state arrives: measured only once it is there, page and all.
+  await page.locator("#vault-fill").waitFor({ state: "attached" });
+  const measured = await page.evaluate(() => {
     const box = document.querySelector(".set-col")?.getBoundingClientRect();
-    return box && box.width > 0 && box.x >= 0 && box.right <= 400;
-  }, undefined, { timeout: 5000 }).then(() => true, () => false);
-  assert.ok(fits, "the page fits inside 400 px");
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    return { fits: !!box && box.width > 0 && box.x >= 0 && box.right <= 400, wide: document.documentElement.scrollWidth > window.innerWidth,
+      row: !!document.querySelector(".set-col #vault-fill") };
+  });
+  assert.equal(measured.row, true, "the fill switch is on the page being measured");
+  assert.ok(measured.fits, "the page fits inside 400 px");
+  assert.equal(measured.wide, false);
   assert.deepEqual(errors, []);
 });
 
