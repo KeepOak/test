@@ -1279,7 +1279,8 @@ async function api(
   if (request.method === "POST" && path === "/api/tools/try") {
     // mac5/manual-actions: the same hand-pressed gate as /api/action, with its question kept, the
     // two-minute ceiling and the secret scrub; shared with the host-bridge card (src/playground.ts).
-    const tried = TryToolSchema.parse(await readBody(request));
+    // A megabyte: room for an OpenAPI description a person chose in Settings › Developer (src/openapi-tools.ts).
+    const tried = TryToolSchema.parse(await readBody(request, 1024 * 1024));
     // unhold-control: a key bound to one conversation keeps what it runs in that conversation only.
     if (tried.sessionId) requireBoundSession(shortLivedKeyMark().sessionId, tried.sessionId);
     return tryToolByHand(app, tried);
