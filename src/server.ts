@@ -330,7 +330,7 @@ import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
 import { proposeTrigger } from "./trigger-words.js";
-import { ownerTimezone } from "./person-about.js"; // your-profile
+import { aboutOf, ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
@@ -3762,8 +3762,9 @@ export async function startServer(
       if (!device.enabled.includes("input")) return `Switch on "Let you use its screen and keyboard from Branch" for ${device.name} in Customize, Channels, Devices.`;
       return app.devices.hub.connected(deviceId) ? null : `${device.name} is not connected right now.`;
     },
-    drive: (deviceId, on) => app.devices.hub.drive(deviceId, on),
+    drive: (deviceId, on) => app.devices.hub.drive(deviceId, on, aboutOf(app, "owner").name ?? "the owner"),
     driving: (deviceId) => app.devices.hub.driving(deviceId),
+    stoppedHere: (deviceId) => app.devices.hub.stoppedHere(deviceId),
     input: async (deviceId, input, signal) => {
       await app.devices.hub.invoke(deviceId, "input", input, { timeoutMs: 15_000, signal, ownerView: true });
     },

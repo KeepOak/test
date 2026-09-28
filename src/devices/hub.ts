@@ -63,11 +63,15 @@ export class DeviceHub {
   private readonly views = new WindowLimit(40, 60_000);
   /** computer-control: the owner's clicks and keys on a device, and which devices the owner is driving (until when). */
   private readonly inputs = new WindowLimit(120, 60_000);
-  private readonly drivingUntil = new Map<string, number>();
+  private readonly holds = new Map<string, { owner: string; timer: NodeJS.Timeout }>();
+  /** When someone at a device pressed Stop on its notice, so the owner's view can say so. */
+  private readonly stoppedAt = new Map<string, number>();
   private readonly stopListening: () => void;
   private closed = false;
   constructor(private readonly book: DeviceBook, private readonly options: HubOptions = {}) {
     this.stopListening = book.onChange((id, why) => {
+      // computer-control: switching "use its screen and keyboard" off (or removing the device) ends the owner's hold.
+      if (this.holds.has(id) && (why === "removed" || !this.book.device(id)?.enabled.includes("input"))) this.drive(id, false);
       const link = this.links.get(id);
       if (!link) return;
       if (why === "removed") link.close("This device was taken off the owner's list.");
@@ -183,6 +187,7 @@ export class DeviceHub {
     if (!message.success) { link.close("That message is not understood."); return; }
     state.lastPong = this.now();
     if (message.data.type === "offers") this.book.noteOffers(link.device, message.data.offers);
+    else if (message.data.type === "hold-stopped") this.heldStopped(link.device);
     else if (message.data.type === "result") this.onResult(link, message.data);
   }
 
@@ -200,6 +205,9 @@ export class DeviceHub {
     this.book.noteOffers(device.id, hello.data.offers);
     this.book.seen(device.id);
     link.send({ type: "welcome", deviceId: device.id, enabled: device.enabled, folder: device.folder });
+    // Back after a drop while the owner still holds it: the notice goes up again before anything else.
+    const held = this.holds.get(device.id);
+    if (held) link.send({ type: "driving", on: true, owner: held.owner });
     return true;
   }
 
@@ -244,7 +252,7 @@ export class DeviceHub {
     if (capability === "input" && !this.driving(deviceId)) return Promise.reject(new Error(`Take over ${device.name} in the computer view first.`));
     if (!options.ownerView && capabilityInfo[capability].kind !== "capture" && this.driving(deviceId))
       return Promise.reject(new Error(`You're driving ${device.name}. The task can act on it again once you hand it back.`));
-    if (options.ownerView && this.driving(deviceId)) this.drive(deviceId, true);
+    if (options.ownerView && this.driving(deviceId)) this.drive(deviceId, true, this.holds.get(deviceId)!.owner);
     if (!device.enabled.includes(capability))
       return Promise.reject(new Error(`"${capabilityInfo[capability].label}" is switched off for ${device.name}. The owner can switch it on in Customize, Channels, Devices.`));
     const link = this.links.get(deviceId);
@@ -262,17 +270,33 @@ export class DeviceHub {
   /**
    * computer-control: the owner takes over a device from the computer view (or hands it back). While
    * driving, only the owner's input reaches it and a task cannot act on it; it lapses after two quiet minutes.
+   * The device is told each time, so it shows (or takes down) its notice with a Stop of its own.
    */
-  drive(deviceId: string, on: boolean): void {
-    if (on) this.drivingUntil.set(deviceId, this.now() + drivingIdleMs);
-    else this.drivingUntil.delete(deviceId);
+  drive(deviceId: string, on: boolean, owner = ""): void {
+    const held = this.holds.get(deviceId);
+    if (held) clearTimeout(held.timer);
+    if (!on) {
+      this.holds.delete(deviceId);
+      if (held) this.links.get(deviceId)?.send({ type: "driving", on: false, owner: held.owner });
+      return;
+    }
+    const timer = setTimeout(() => this.drive(deviceId, false), drivingIdleMs);
+    timer.unref();
+    this.holds.set(deviceId, { owner, timer });
+    if (!held) { this.stoppedAt.delete(deviceId); this.links.get(deviceId)?.send({ type: "driving", on: true, owner }); }
   }
-  driving(deviceId: string): boolean {
-    const until = this.drivingUntil.get(deviceId);
-    if (until === undefined) return false;
-    if (until > this.now()) return true;
-    this.drivingUntil.delete(deviceId);
-    return false;
+  driving(deviceId: string): boolean { return this.holds.has(deviceId); }
+  /** Whether someone at that device pressed Stop on its notice in the last minute. */
+  stoppedHere(deviceId: string): boolean {
+    const at = this.stoppedAt.get(deviceId);
+    return at !== undefined && this.now() - at < 60_000;
+  }
+  private heldStopped(deviceId: string): void {
+    const held = this.holds.get(deviceId);
+    if (!held) return;
+    clearTimeout(held.timer);
+    this.holds.delete(deviceId);
+    this.stoppedAt.set(deviceId, this.now());
   }
 
   /** Closes every device's socket; used when the feature is switched off. */
@@ -283,6 +307,8 @@ export class DeviceHub {
 
   close(): void {
     this.closed = true;
+    for (const held of this.holds.values()) clearTimeout(held.timer);
+    this.holds.clear();
     this.stopListening();
     this.disconnectAll("Branch is closing.");
   }

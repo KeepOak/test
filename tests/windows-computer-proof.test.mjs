@@ -184,3 +184,46 @@ test("a display is framed only while every window the view must leave out is exc
   t.after(() => bad.close());
   await assert.rejects(bad.frame(640, signal()), /could not exclude/, "a window that would show in its own view stops the frame");
 });
+
+/*
+ * Q1: a paired computer (`branch node` on Windows) held by the owner shows a notice on top of every window, naming
+ * the owner, with a Stop that works there. On the runner the real notice script shows its real window; it is read,
+ * checked to be topmost, and its Stop is pressed through UI Automation, as someone at that computer would click it.
+ */
+const noticeProbe = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class ProofNotice {
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
+}
+'@
+$h = [ProofNotice]::FindWindow($null, 'Branch: being used')
+if ($h -eq [IntPtr]::Zero) { [Console]::Out.WriteLine('missing'); exit 1 }
+$A = [System.Windows.Automation.AutomationElement]
+$root = $A::FromHandle($h)
+$text = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)))
+$stop = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Stop')))
+[Console]::Out.WriteLine('topmost=' + ((([ProofNotice]::GetWindowLong($h, -20)) -band 8) -ne 0))
+[Console]::Out.WriteLine('text=' + $text.Current.Name)
+$stop.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+[Console]::Out.WriteLine('pressed')
+`;
+const noticeFile = join(folder, "proof-notice.ps1");
+writeFileSync(noticeFile, noticeProbe, "utf8");
+
+test("a held paired computer shows a topmost notice naming the owner, and its Stop ends the hold", { timeout: 300000 }, async () => {
+  const { NodeActions } = await import("../dist/devices/node/actions.js");
+  const notice = new NodeActions({ os: "win32", identityDir: folder }).startNotice("Proof Owner");
+  assert.equal(await notice.shown, true, "the notice window came up");
+  let said = null;
+  void notice.stopped.then((why) => { said = why; });
+  const probe = spawnSync(powerShellPath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", noticeFile], { encoding: "utf8", timeout: 120000 });
+  assert.equal(probe.status, 0, probe.stdout + probe.stderr);
+  assert.match(probe.stdout, /topmost=True/, "it stands on top of every window");
+  assert.match(probe.stdout, /text=Being used from Branch by Proof Owner/);
+  for (let i = 0; i < 200 && !said; i++) await new Promise((done) => setTimeout(done, 50));
+  assert.equal(said, "Stop was pressed on this computer.");
+});

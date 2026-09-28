@@ -5,16 +5,19 @@
    words are shown instead.
    Using it: when that computer's own "use its screen and keyboard" switch is on, Take over lets the owner click, scroll
    and type on the picture (POST /api/panels/screen/device/drive and /input). Each press names the picture it was aimed
-   at; after a click the next press waits for the next picture, so nothing lands on a screen the owner has not seen. */
+   at; after a click the next press waits for the next picture, so nothing lands on a screen the owner has not seen.
+   While the owner holds it, that computer shows a notice on top of everything with a Stop of its own. */
 import { token } from "../core/api.js";
 
 const D = { on: false, sid: "", device: "", open: null, frame: "", refusal: "", onChange: null, epoch: 0, waiting: false,
-  frameId: "", pressed: false, driving: false, inputNote: null };
+  frameId: "", pressed: false, driving: false, inputNote: null, stoppedHere: false };
 export const deviceFrame = () => D.frame;
 export const deviceRefusal = () => D.refusal;
 export const deviceDriving = () => D.driving;
 /** Why this computer cannot be used from here (its switch is off, it cannot), or null when Take over works. */
 export const deviceInputNote = () => D.inputNote;
+/** Someone at that computer pressed Stop on its notice. */
+export const deviceStoppedHere = () => D.stoppedHere;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const showing = () => D.on && !!D.sid && !!D.device && !document.hidden && !locked();
 
@@ -61,8 +64,8 @@ async function read(epoch) {
         if (got.refusal) throw new Error(got.refusal);
         if (epoch !== D.epoch) return;
         const first = !D.frame;
-        const redraw = first || D.driving !== (got.driving === true) || D.inputNote !== (got.inputNote ?? null);
-        Object.assign(D, { frame: got.frame, refusal: "", frameId: got.frameId || "", pressed: false, driving: got.driving === true, inputNote: got.inputNote ?? null });
+        const redraw = first || D.driving !== (got.driving === true) || D.inputNote !== (got.inputNote ?? null) || D.stoppedHere !== (got.stoppedHere === true);
+        Object.assign(D, { frame: got.frame, refusal: "", frameId: got.frameId || "", pressed: false, driving: got.driving === true, inputNote: got.inputNote ?? null, stoppedHere: got.stoppedHere === true });
         D.onChange?.(redraw);
       }
     }

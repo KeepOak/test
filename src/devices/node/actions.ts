@@ -8,7 +8,8 @@ import { parseDeviceArgs } from "../args.js";
 import { capabilities, mediaLimitBytes, offeredOn, textLimitBytes, type Capability } from "../capabilities.js";
 import {
   cameraCommand, clipboardReadCommand, clipboardWriteCommand, linuxInputCommand, linuxScreenSizeCommand, listenCommand,
-  locationCommand, needs, notifyCommand, onWayland, openCommand, parseScreenSize, screenCommand, speakCommand, windowsInputCommand,
+  linuxNoticeAboveCommand, locationCommand, needs, noticeCommand, notifyCommand, onWayland, openCommand, parseScreenSize, screenCommand,
+  speakCommand, windowsInputCommand,
   type NodeInput, type NodeOs, type OsCommand,
 } from "./commands.js";
 import { holdKeyCodes } from "../../integrations/desktop-config.js";
@@ -37,9 +38,31 @@ export interface ActionDeps {
   wall?: WallDeps;
   /** The node user's home folder; tests hand in a temporary one. */
   home?: string;
-  /** computer-control: told of each owner input from Branch, so this computer can say it is being used. */
-  onInput?: (action: string) => void;
+  /** computer-control: starts the long-lived notice window; tests hand in a stand-in that shows nothing. */
+  spawnNotice?: NoticeSpawner;
 }
+
+/**
+ * A long-lived program (the notice), and a way to end it. `exited` settles when it ends for any reason; `shown`
+ * when it prints "shown" (the Windows notice does once its window is up).
+ */
+export interface NoticeProcess { exited: Promise<void>; shown: Promise<void>; kill(): void }
+export type NoticeSpawner = (command: OsCommand) => NoticeProcess;
+/**
+ * The notice: `shown` settles true once it is on the screen and on top (false if it never is); `stopped` settles if
+ * it ends by itself (Stop pressed, window closed, it failed).
+ */
+export interface Notice { shown: Promise<boolean>; stopped: Promise<string>; close(): void }
+
+export const spawnNotice: NoticeSpawner = (command) => {
+  const child = spawn(command.executable, command.args, { shell: false, windowsHide: true, env: childEnvironment(command), stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise<void>((done) => { child.once("exit", () => done()); child.once("error", () => done()); });
+  let heard = "";
+  const shown = new Promise<void>((done) => child.stdout?.on("data", (chunk: Buffer) => { heard = (heard + chunk.toString("utf8")).slice(-64); if (/shown/.test(heard)) done(); }));
+  child.stdin?.on("error", () => undefined);
+  child.stdin?.end(command.input ?? "");
+  return { exited, shown, kill: () => { if (child.exitCode === null && child.signalCode === null) child.kill(); } };
+};
 
 const mimeByExt: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
   ".wav": "audio/wav", ".txt": "text/plain", ".md": "text/markdown", ".json": "application/json", ".pdf": "application/pdf",
@@ -148,7 +171,6 @@ export class NodeActions {
    */
   private async input(input: NodeInput): Promise<ActionResult> {
     const { os } = this.deps;
-    this.deps.onInput?.(input.action);
     if (os === "win32") return this.simple(windowsInputCommand(input, input.action === "key" ? holdKeyCodes(input.chord ?? "") : []), input.action);
     if (os !== "linux") throw new Error("Using this computer's screen from Branch works on Windows and Linux (X11) for now.");
     if (onWayland(this.env)) throw new Error("This computer runs Wayland, which does not let another program move the pointer. It works on X11.");
@@ -159,6 +181,39 @@ export class NodeActions {
       size = out.code === 0 ? parseScreenSize(out.stdout.toString("utf8")) : null;
     }
     return this.simple(linuxInputCommand(input, size, chord), input.action);
+  }
+
+  /**
+   * computer-control: shows the notice that the owner is using this computer from Branch, on top of every window,
+   * with a Stop. On Linux it is kept above with wmctrl; if that cannot be done the notice is closed and `stopped`
+   * says why, so this computer never takes input without saying so.
+   */
+  startNotice(owner: string): Notice {
+    const command = noticeCommand(this.deps.os, owner);
+    if (!command) return { shown: Promise.resolve(false), stopped: Promise.resolve("This computer cannot show that it is being used."), close: () => undefined };
+    const running = (this.deps.spawnNotice ?? spawnNotice)(command);
+    let closing = false, fail: (why: string) => void = () => undefined;
+    const stopped = new Promise<string>((done) => {
+      fail = (why) => { if (closing) return; closing = true; running.kill(); done(why); };
+      void running.exited.then(() => { if (!closing) { closing = true; done("Stop was pressed on this computer."); } });
+    });
+    const up = this.deps.os === "linux" ? this.keepAbove()
+      : Promise.race([running.shown.then(() => true), running.exited.then(() => false), new Promise<boolean>((done) => setTimeout(() => done(false), 30_000).unref())]);
+    const shown = up.then((ok) => {
+      if (!ok) fail("This computer could not show on top of its screen that it is being used, so it was not used.");
+      return ok && !closing;
+    });
+    return { shown, stopped, close: () => { closing = true; running.kill(); } };
+  }
+
+  /** Linux: asks wmctrl to keep the notice above, a few times while its window appears. */
+  private async keepAbove(): Promise<boolean> {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const out = await this.runner(linuxNoticeAboveCommand, { timeoutMs: 5000, maxBytes: 1024 }).catch(() => null);
+      if (out?.code === 0) return true;
+      await new Promise((done) => setTimeout(done, 150));
+    }
+    return false;
   }
 
   private async capture(capability: Capability, args: Record<string, unknown>): Promise<ActionResult> {

@@ -112,7 +112,7 @@ export const needs: Record<NodeOs, Partial<Record<string, readonly string[]>>> =
     "clipboard-read": ["pbpaste"], "clipboard-write": ["pbcopy"], "open-url": ["open"], speak: ["say"], run: ["/usr/bin/sandbox-exec"] },
   linux: { camera: ["ffmpeg"], listen: ["ffmpeg"], screen: ["grim|scrot"], notify: ["notify-send"], location: ["/usr/libexec/geoclue-2.0/demos/where-am-i"],
     "clipboard-read": ["wl-paste|xclip"], "clipboard-write": ["wl-copy|xclip"], "open-url": ["xdg-open"], speak: ["spd-say"], run: ["bwrap"],
-    input: ["xdotool"] },
+    input: ["xdotool", "xmessage", "wmctrl"] },
   win32: { screen: ["powershell.exe"], notify: ["powershell.exe"], "clipboard-read": ["powershell.exe"],
     "clipboard-write": ["powershell.exe"], "open-url": ["powershell.exe"], speak: ["powershell.exe"], input: ["powershell.exe"] },
 };
@@ -177,3 +177,53 @@ export function linuxInputCommand(input: NodeInput, size: { width: number; heigh
   const button = input.button === "right" ? "3" : input.button === "middle" ? "2" : "1";
   return { executable: "xdotool", args: [...move, "click", "--repeat", String(input.count), button] };
 }
+
+/**
+ * computer-control: while the owner holds this computer from Branch, a window stays on top of everything saying so,
+ * with a Stop that ends the hold here. Its title is fixed; the owner's name is its only text, passed as data.
+ */
+export const noticeTitle = "Branch: being used";
+/** The notice's words: the owner's name, without control characters and kept short. */
+export function noticeText(owner: string): string {
+  const name = owner.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 60) || "its owner";
+  return `Being used from Branch by ${name}`;
+}
+export const windowsNoticeScript = [
+  "$ErrorActionPreference='Stop'",
+  "Add-Type -AssemblyName System.Windows.Forms,System.Drawing",
+  "[System.Windows.Forms.Application]::EnableVisualStyles()",
+  "$f=New-Object System.Windows.Forms.Form",
+  `$f.Text='${noticeTitle}'`,
+  "$f.TopMost=$true",
+  "$f.ControlBox=$false",
+  "$f.FormBorderStyle='FixedToolWindow'",
+  "$f.StartPosition='Manual'",
+  "$f.ClientSize=New-Object System.Drawing.Size(460,56)",
+  "$s=[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea",
+  "$f.Location=New-Object System.Drawing.Point(($s.Left+[int](($s.Width-$f.Width)/2)),($s.Top+8))",
+  "$l=New-Object System.Windows.Forms.Label",
+  "$l.UseMnemonic=$false",
+  "$l.Text=$env:BRANCH_NODE_NOTICE",
+  "$l.Location=New-Object System.Drawing.Point(12,18)",
+  "$l.Size=New-Object System.Drawing.Size(340,24)",
+  "$b=New-Object System.Windows.Forms.Button",
+  "$b.Text='Stop'",
+  "$b.Location=New-Object System.Drawing.Point(364,12)",
+  "$b.Size=New-Object System.Drawing.Size(84,32)",
+  "$b.Add_Click({[Console]::Out.WriteLine('stop');$f.Close()})",
+  "$f.Controls.Add($l)",
+  "$f.Controls.Add($b)",
+  "$f.Add_Shown({$f.Activate();[Console]::Out.WriteLine('shown')})",
+  "[void]$f.ShowDialog()",
+].join(";");
+
+/** The notice on this computer's screen: a topmost window on Windows, xmessage (kept above by wmctrl) on Linux. */
+export function noticeCommand(os: NodeOs, owner: string): OsCommand | null {
+  if (os === "win32") return { executable: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-EncodedCommand",
+    Buffer.from(windowsNoticeScript, "utf16le").toString("base64")], env: { BRANCH_NODE_NOTICE: noticeText(owner) } };
+  if (os === "linux") return { executable: "xmessage", args: ["-title", noticeTitle, "-center", "-buttons", "Stop:10", "-default", "Stop", "-file", "-"],
+    input: noticeText(owner) };
+  return null;
+}
+/** Linux: keeps the notice above every other window (asked again until the window is there). */
+export const linuxNoticeAboveCommand: OsCommand = { executable: "wmctrl", args: ["-r", noticeTitle, "-b", "add,above"] };

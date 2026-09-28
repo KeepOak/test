@@ -51,7 +51,17 @@ async function world(t, { input = false } = {}) {
   await pairing;
   let shots = 0;
   const inputs = [];
-  const actions = { available: async () => offers, prepare: async () => undefined,
+  // The second computer's notice, a stand-in that shows nothing: its owner, whether it is up, and a Stop to press.
+  const notices = [];
+  const startNotice = (owner) => {
+    let press;
+    const notice = { owner, open: true, shown: Promise.resolve(!notices.failing), stopped: new Promise((done) => { press = done; }),
+      close() { notice.open = false; }, press: (why = "Stop was pressed on this computer.") => { notice.open = false; press(why); } };
+    if (notices.failing) notice.press("This computer could not show on top of its screen that it is being used, so it was not used.");
+    notices.push(notice);
+    return notice;
+  };
+  const actions = { available: async () => offers, prepare: async () => undefined, startNotice,
     perform: async (capability, args) => {
       // The second computer's stand-in: it keeps each owner input instead of moving a pointer.
       if (capability === "input") { inputs.push(args); return { value: { done: args.action } }; }
@@ -79,7 +89,7 @@ async function world(t, { input = false } = {}) {
     }).catch(() => undefined);
     return { lines, close: () => controller.abort(), done };
   };
-  return { app, server, call, device, run, open, shots: () => shots, client, inputs };
+  return { app, server, call, device, run, open, shots: () => shots, client, inputs, notices };
 }
 
 test("the paired computer's screen streams into the view, picture after picture, and stops when the view goes", async (t) => {
@@ -134,7 +144,7 @@ test("only the owner's window sees it: a short-lived key, a stranger's conversat
 test("the view keeps to its own budget on the device socket, so a task's turns are untouched", async () => {
   const asked = [];
   const screen = new DeviceScreen({ owner: () => "o", isOwner: () => true, owns: () => true, lockdown: () => false, locked: () => null,
-    allows: () => true, paceMs: 10, inputRefusal: () => null, drive: () => undefined, driving: () => false, input: async () => undefined, capture: async (device) => { asked.push(device); if (asked.length > 2) throw new Error("Tower has been asked too often in the last minute. Wait a little."); return { bytes: Buffer.from("x"), mime: "image/png" }; } });
+    allows: () => true, paceMs: 10, inputRefusal: () => null, drive: () => undefined, driving: () => false, stoppedHere: () => false, input: async () => undefined, capture: async (device) => { asked.push(device); if (asked.length > 2) throw new Error("Tower has been asked too often in the last minute. Wait a little."); return { bytes: Buffer.from("x"), mime: "image/png" }; } });
   const written = [];
   const response = { destroyed: false, writeHead() {}, once() {}, write(line) { written.push(JSON.parse(line)); return true; }, end() { this.destroyed = true; } };
   await screen.stream({ owner: "o", sessionId: "s", viaDoor: false, shortKey: false, keyValid: () => true }, "0123456789abcdef", response);
@@ -178,6 +188,11 @@ test("the owner clicks and types on a paired computer from the view: only throug
   assert.equal((await post("drive", { on: true }, key)).status, 401);
   assert.deepEqual(await post("drive", { on: true }), { status: 200, driving: true });
   assert.equal(w.app.devices.hub.driving(w.device.id), true);
+  // Q1: the second computer shows a notice on top, naming the owner, while the owner holds it.
+  await until(() => w.client.held(), "the second computer to put its notice up");
+  assert.equal(w.notices.length, 1);
+  assert.equal(w.notices[0].owner, "the owner", "the owner's own name when they gave one, else \"the owner\"");
+  assert.equal(w.notices[0].open, true);
   // You're driving: a task cannot act on that computer; it may still look.
   await assert.rejects(w.app.devices.hub.invoke(w.device.id, "notify", { title: "x" }), /You're driving Tower/);
   await w.app.devices.hub.invoke(w.device.id, "screen", {}, { timeoutMs: 5000 });
@@ -197,16 +212,22 @@ test("the owner clicks and types on a paired computer from the view: only throug
     { action: "type", text: "hello (world)", button: "left", count: 1 },
     { action: "key", chord: "ctrl+s", button: "left", count: 1 },
   ], "exactly the owner's three inputs reached the second computer");
-  // Switching it off stops it at once, while still driving; switching it on again lets the owner carry on.
+  // Switching it off ends the hold at once; switching it on again needs a new Take over.
   await w.call(`devices/${w.device.id}/switch`, { capability: "input", on: false });
   await until(() => !w.client.switchedOn().includes("input"), "the switch to reach the second computer");
   await until(() => frames().at(-1).inputNote !== null, "a picture that says it is off", 6000);
-  assert.match((await post("input", { frameId: frames().at(-1).frameId, input: { action: "type", text: "x" } })).error, /switched off for Tower/);
+  assert.match((await post("input", { frameId: frames().at(-1).frameId, input: { action: "type", text: "x" } })).error, /Take over that computer first/);
   assert.equal(w.inputs.length, 3);
+  assert.equal(w.app.devices.hub.driving(w.device.id), false, "switching it off ended the hold");
+  assert.equal(w.notices[0].open, false, "and took the notice down");
   await w.call(`devices/${w.device.id}/switch`, { capability: "input", on: true });
   await until(() => w.client.switchedOn().includes("input"), "the switch to reach the second computer");
+  await until(() => frames().at(-1).inputNote === null, "a picture that says it is on", 6000);
+  assert.deepEqual(await post("drive", { on: true }), { status: 200, driving: true });
+  await until(() => w.client.held() && w.notices.length === 2, "the notice to go up again");
   // Hand back, then Lockdown: both stop it.
   assert.deepEqual(await post("drive", { on: false }), { status: 200, driving: false });
+  await until(() => !w.client.held() && !w.notices[1].open, "the notice to come down");
   await w.app.devices.hub.invoke(w.device.id, "notify", { title: "x" }).catch((error) => assert.doesNotMatch(error.message, /driving/));
   assert.deepEqual(await post("drive", { on: true }), { status: 200, driving: true });
   await w.call("lockdown", { on: true });
@@ -215,4 +236,38 @@ test("the owner clicks and types on a paired computer from the view: only throug
   view.close();
   await view.done;
   await until(() => !w.app.devices.hub.driving(w.device.id), "closing the view to hand the computer back");
+});
+
+test("Stop on the paired computer's own notice ends the owner's hold there and then; no notice, no input", async (t) => {
+  const w = await world(t, { input: true });
+  const post = async (path, body) => {
+    const response = await fetch(`${w.server.url}/api/panels/screen/device/${path}`, { method: "POST",
+      headers: { authorization: `Bearer ${w.server.token}`, "content-type": "application/json" }, body: JSON.stringify({ session: w.run.sessionId, device: w.device.id, ...body }) });
+    return { status: response.status, ...(await response.json()) };
+  };
+  await w.call("devices/pick", { sessionId: w.run.sessionId, deviceId: w.device.id });
+  await w.call(`devices/${w.device.id}/switch`, { capability: "screen", on: true });
+  await w.call(`devices/${w.device.id}/switch`, { capability: "input", on: true });
+  await until(() => w.client.switchedOn().includes("input"), "the switches to reach the second computer");
+  const view = w.open();
+  const frames = () => view.lines.filter((line) => line.frame);
+  await until(() => frames().length >= 1, "a picture", 12000);
+  assert.equal((await post("drive", { on: true })).driving, true);
+  await until(() => w.client.held(), "the notice");
+  // Someone at that computer presses Stop.
+  w.notices[0].press();
+  await until(() => !w.app.devices.hub.driving(w.device.id), "Branch to hear the Stop");
+  assert.equal(w.app.devices.hub.stoppedHere(w.device.id), true);
+  const count = frames().length;
+  await until(() => frames().length > count, "the next picture", 6000);
+  assert.equal(frames().at(-1).stoppedHere, true, "the view says someone there pressed Stop");
+  assert.equal(frames().at(-1).driving, false);
+  assert.match((await post("input", { frameId: frames().at(-1).frameId, input: { action: "type", text: "x" } })).error, /Take over/);
+  // A notice that cannot show ends the hold at once.
+  w.notices.failing = true;
+  w.app.devices.hub.drive(w.device.id, true, "the owner");
+  await until(() => !w.app.devices.hub.driving(w.device.id), "a notice that could not show to end the hold");
+  assert.equal(w.inputs.length, 0, "nothing was typed on that computer without its notice up");
+  view.close();
+  await view.done;
 });

@@ -5042,9 +5042,13 @@ Take over lets the owner click, right-click, double-click and scroll on the pict
 last one shown and under 30 seconds old, and a click or scroll uses that picture up, so nothing lands on a screen the
 owner has not seen. While the owner drives, a task cannot act on that computer ("You're driving"; it may still look);
 Hand back, closing the view, Lockdown, the app lock, switching it off, or two quiet minutes end it. There is no task tool
-for it: the device socket refuses it unless it comes from the owner's view. The computer checks its own switch again,
-takes these from a budget of their own (120 a minute), and its `branch node` says once a minute that the owner is using
-it. On Windows a fixed, encoded PowerShell script reads the input from one environment value; on Linux each is one
+for it: the device socket refuses it unless it comes from the owner's view. The computer checks its own switch again
+and takes these from a budget of their own (120 a minute). While the owner holds it, that computer shows a notice on top
+of every window, "Being used from Branch by <owner>", with a Stop that works there: Stop ends the hold at once, Branch is
+told, and the view says someone there pressed Stop. The computer takes no input unless its notice is up and on top
+(Windows: a topmost window; Linux: `xmessage` kept above with `wmctrl`, so input on Linux needs `xdotool`, `xmessage`
+and `wmctrl`). Key chords the owner presses are written to that computer's own `branch node` log; typed words are not.
+On Windows a fixed, encoded PowerShell script reads the input from one environment value; on Linux each is one
 `xdotool` command with the text after `--`.
 **The computer view never shows itself (computer-control).** The owner's live view of this computer
 (`/api/panels/screen`, `src/local-screen.ts`) opens on the main display by itself, and offers every display

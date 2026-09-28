@@ -1,7 +1,7 @@
 #!/bin/sh
 # computer-control: Branch's Linux pointer path, and a paired computer's input (branch node), against real X11 windows
 # on a hidden Xvfb display inside WSL.
-# Needs Xvfb, and xdotool, xwininfo, xev and openbox with their libraries unpacked under /tmp/bx/root (apt-get download
+# Needs Xvfb, and xdotool, xwininfo, xev, xmessage, xprop, wmctrl and openbox with their libraries unpacked under /tmp/bx/root (apt-get download
 # and dpkg -x; nothing is installed). Run from WSL: sh design/redesign/tools/x11-pointer-proof.sh (after npm run build).
 set -e
 B=/tmp/bx
@@ -12,6 +12,9 @@ LD_LIBRARY_PATH=%s exec %s/root/usr/bin/xdotool "$@"
 printf '#!/bin/sh
 LD_LIBRARY_PATH=%s exec %s/root/usr/bin/xwininfo "$@"
 ' "$LD_LIBRARY_PATH" "$B" > $B/xwininfo; chmod +x $B/xwininfo
+for tool in xmessage wmctrl xprop; do printf '#!/bin/sh
+LD_LIBRARY_PATH=%s exec %s/root/usr/bin/%s "$@"
+' "$LD_LIBRARY_PATH" "$B" "$tool" > $B/$tool; chmod +x $B/$tool; done
 unset WAYLAND_DISPLAY
 export DISPLAY=:93
 Xvfb :93 -screen 0 1280x800x24 -nolisten tcp >/tmp/bx/xvfb.log 2>&1 & XV=$!

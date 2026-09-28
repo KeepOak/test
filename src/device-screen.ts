@@ -14,8 +14,9 @@ import { LocalScreenRefusal, type LocalScreenAccess } from './local-screen.js';
  * Using it: the owner takes over that computer (only when its own "Let you use its screen and keyboard from Branch"
  * switch is on, which that computer checks again itself), then clicks, scrolls and types on the picture. Each press
  * names the picture it was aimed at, which must be the last one shown and fresh, so a click never lands on a screen
- * the owner has not seen. While the owner drives, a task cannot act on that computer ("You're driving"); closing the
- * view, Hand back, Lockdown, the app lock or two quiet minutes end it. Tasks never get this: there is no tool for it.
+ * the owner has not seen. While the owner drives, a task cannot act on that computer ("You're driving") and that
+ * computer shows a notice on top of everything with a Stop of its own; Stop there, closing the view, Hand back,
+ * Lockdown, the app lock or two quiet minutes end it. Tasks never get this: there is no tool for it.
  *
  *   GET  /api/panels/screen/device?session=<conversation>&device=<16 hex>
  *   POST /api/panels/screen/device/drive  {session, device, on}
@@ -40,6 +41,8 @@ export interface DeviceScreenDeps {
   /** The owner takes over that computer, or hands it back (src/devices/hub.ts `drive`). */
   drive(deviceId: string, on: boolean): void;
   driving(deviceId: string): boolean;
+  /** Whether someone at that computer just pressed Stop on its notice. */
+  stoppedHere(deviceId: string): boolean;
   /** One owner input, through the device socket; that computer checks its own switch again. */
   input(deviceId: string, input: Record<string, unknown>, signal: AbortSignal): Promise<void>;
   paceMs?: number;
@@ -119,7 +122,8 @@ export class DeviceScreen {
           const frameId = randomBytes(8).toString('hex');
           this.shown.set(deviceId, { frameId, at: this.now(), pressed: false });
           if (!response.destroyed) response.write(`${JSON.stringify({ frame: `data:${shot.mime};base64,${shot.bytes.toString('base64')}`, device: deviceId,
-            frameId, driving: this.deps.driving(deviceId), inputNote: this.deps.inputRefusal(deviceId), at: new Date().toISOString() })}\n`);
+            frameId, driving: this.deps.driving(deviceId), inputNote: this.deps.inputRefusal(deviceId),
+            stoppedHere: this.deps.stoppedHere(deviceId), at: new Date().toISOString() })}\n`);
         } catch (error) {
           if (!life.signal.aborted && !response.destroyed)
             response.write(`${JSON.stringify({ refusal: error instanceof Error ? error.message : 'That computer stopped.', status: error instanceof LocalScreenRefusal ? error.status : 409 })}\n`);

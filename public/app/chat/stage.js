@@ -50,7 +50,7 @@ import { hasOwnerBrowser, ownerBrowserHTML, ownerBrowserPip, ownerBrowserButtons
   paintOwnerBrowser, initOwnerBrowser } from "./stage-browser-control.js";
 import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, nativeScreenState,
   refreshNativeTargets, chooseNativeTarget, stopNativeScreen, controlNativeScreen, inputNativeScreen, nativeFramePainted } from "./stage-screen.js";
-import { watchDevice, deviceFrame, deviceRefusal, deviceDriving, deviceInputNote, driveDevice, inputDevice } from "./stage-device.js"; // computer-control: a paired computer, live
+import { watchDevice, deviceFrame, deviceRefusal, deviceDriving, deviceInputNote, deviceStoppedHere, driveDevice, inputDevice } from "./stage-device.js"; // computer-control: a paired computer, live
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
 
@@ -345,8 +345,8 @@ function nativeChooser(kind) {
 function deviceTools(kind) {
   if (kind !== "computer" || !pairedNow() || !deviceFrame() || E.profiles?.isOwner === false) return "";
   const named = computerNamed(comps().using)?.name ?? "", note = deviceInputNote();
-  const words = deviceDriving() ? `You're driving ${named}: tasks cannot act on it. Click or right-click on the picture, double-click, or use the wheel.`
-    : note || `Take over to click and type on ${named}.`;
+  const words = deviceDriving() ? `You're driving ${named}: tasks cannot act on it, and ${named} shows a notice with Stop. Click or right-click on the picture, double-click, or use the wheel.`
+    : note || (deviceStoppedHere() ? `Someone at ${named} pressed Stop on its notice.` : `Take over to click and type on ${named}. It will show a notice with Stop while you do.`);
   const input = deviceDriving() ? `<form data-form="device-text"><input id="device-text" maxlength="2000" autocomplete="off" aria-label="Text for that computer" placeholder="Type on ${esc(named)}"><button type="submit" class="btn sm">Send text</button></form>
     <form data-form="device-key"><input id="device-key" maxlength="40" autocomplete="off" aria-label="Key chord" placeholder="Key, e.g. CTRL+S"><button type="submit" class="btn sm">Send key</button></form>` : "";
   return `<div class="native-screen-tools" role="group" aria-label="Using ${esc(named)}"><span role="status">${esc(words)}</span>${input}</div>`;
