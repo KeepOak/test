@@ -73,7 +73,7 @@ import { supportsImages, unofferedMark, unnamedModels, wireName } from "./provid
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
-import { presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
 import { ownerTidyRemainder } from "./owner-folders.js";
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
 import { contractHold, sourceSendHold } from "./self-development-contract.js"; // Q12
@@ -92,7 +92,7 @@ import { gateToolUse, type ToolGateOptions } from "./tool-gate.js";
 import * as safetyExtras from "./safety-extras/hooks.js"; // mac7/r17-g: the safety extras' hooks
 // Wave mac3 (tool-safety): the second look before an approval.
 import { reviewCall } from "./approval-reviewer.js";
-import { routeForTask, routingSettings } from "./local-routing.js";
+import { privateConversationRoute, routeForTask, routingSettings } from "./local-routing.js";
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
 import { memoryScope } from "./memory.js";
@@ -647,6 +647,11 @@ export class Runtime {
   private readonly pacing = new Map<string, Promise<void>>();
   /** R17-S09: the task each running run's spending counts against, and every run in that task, kept while any of them runs. */
   private readonly spendRoot = new Map<string, string>();
+  /**
+   * Tasks that must stay on this computer (a private route, src/local-routing.ts), with their sub-tasks: every model call
+   * they make, side jobs included, goes to a connection here (see `keptHere`). Forgotten a while after the task ends.
+   */
+  private readonly staysHere = new Set<string>();
   private readonly spendMembers = new Map<string, Set<string>>();
   /** Results of background specialists that finished after their parent, newest first. */
   readonly backgroundResults: BackgroundResult[] = [];
@@ -1663,12 +1668,14 @@ ${run.output.slice(0, 6000)}`;
   }
   /** R17-S09: a sub-task's spending counts against the task at the top of its tree. */
   private joinSpend(runId: string, parentRunId: string | undefined): void {
+    if (parentRunId && this.staysHere.has(parentRunId)) this.staysHere.add(runId);
     const root = parentRunId ? this.spendRoot.get(parentRunId) ?? parentRunId : runId;
     this.spendRoot.set(runId, root);
     const members = this.spendMembers.get(root) ?? new Set([root]);
     this.spendMembers.set(root, members.add(runId));
   }
   private leaveSpend(runId: string): void {
+    if (this.staysHere.has(runId)) setTimeout(() => this.staysHere.delete(runId), 15 * 60_000).unref?.();
     const root = this.spendRoot.get(runId);
     this.spendRoot.delete(runId);
     if (root && ![...this.spendRoot.values()].includes(root)) this.spendMembers.delete(root);
@@ -2035,6 +2042,7 @@ ${run.output.slice(0, 6000)}`;
    * for this run or this conversation always wins, so nothing is taken out of the owner's hands.
    */
   private routed(run: Run, owner: string, override: RunModelOverride): RunModelOverride {
+    if (this.staysHere.has(run.id)) return { ...override, localOnly: true };
     if (override.preset || this.models.session(owner, run.sessionId).preset) return override;
     // A routing profile (wave 7) is the owner's own named set of choices. It is asked first, and
     // whichever rule fired is written down so the inspector can say why this model and not another.
@@ -2052,6 +2060,36 @@ ${run.output.slice(0, 6000)}`;
     if (!choice.preset) return override;
     this.store.event(run.id, "model.routed", { preset: choice.preset, kind: choice.kind, reason: choice.reason });
     return { ...override, preset: choice.preset };
+  }
+  /**
+   * A task with personal details, while the owner keeps those on this computer, is kept here for good: its plan holds
+   * only connections here, it never falls back to one elsewhere, and neither do its side jobs, sub-tasks or the tools it
+   * uses (`keepOnThisComputer`). With no model here it is refused rather than sent away. Null for any other task. The
+   * owner's explicit choice for the run or conversation, and a routing profile, still come first, as in `routed`.
+   */
+  private privateRoute(run: Run, owner: string, override: RunModelOverride): RunModelOverride | null {
+    if (this.staysHere.has(run.id)) { keepOnThisComputer(); return { ...override, localOnly: true }; }
+    if (!routingSettings(this.store, owner).enabled) return null;
+    // The owner's own explicit choice (for this run, this conversation, or a routing profile) is theirs to make. Anyone
+    // else's (a key, a chat app, another program, a household person) never overrides the owner's rule to keep personal
+    // tasks here.
+    if (this.ownersOwnTask(run.id)) {
+      if (override.preset || this.models.session(owner, run.sessionId).preset) return null;
+      const defaults = this.store.projects.defaults(owner, run.project);
+      if (routeByProfile(this.store, this.models, owner, "chat", defaults.profile).preset) return null;
+    }
+    const toolCount = this.store.messages(run.sessionId).filter((message) => message.role === "tool").length;
+    const marked = `stays-here:${run.sessionId}`;
+    const earlier = this.store.get("settings", owner, marked) ? privateConversationRoute(this.store, this.models, owner) : null;
+    const choice = earlier ?? routeForTask(this.store, this.models, owner, { prompt: run.prompt, toolCount });
+    if (!choice.private) return null;
+    this.staysHere.add(run.id);
+    // The conversation's later turns carry this one's words, so they stay here too.
+    if (!earlier) this.store.save("settings", owner, marked, { since: new Date().toISOString(), runId: run.id });
+    keepOnThisComputer();
+    this.store.event(run.id, "model.routed", { preset: choice.preset, kind: choice.kind, reason: choice.reason, private: true });
+    if (!choice.preset) throw new Error(choice.reason);
+    return { ...override, preset: choice.preset, localOnly: true };
   }
   /**
    * Which connection answers this piece of work. When a picture is part of the question, only the
@@ -2092,8 +2130,10 @@ ${run.output.slice(0, 6000)}`;
     await this.addDocuments(run, context, messages, ids);
     await this.guards.opening(run.id); // wave mac2 (guards): an undecided folder is noted for the owner
     const { catalog, coding } = this.openCatalog(run, context, messages, shape.groups);
+    // A task that must stay on this computer is decided first, so no other rule (and no side question) sends it away.
+    const here = this.privateRoute(run, context.owner, override);
     // R17-047: with the difficulty card on, a small model's "easy or hard" picks the connection.
-    override = await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
+    override = here ?? await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
       this.aside(run, context, { index: 0, reasoning: null, candidates: [this.models.presets.get(id)!] }, [{ role: "system", content: system }, { role: "user", content: question }]));
     const plan = this.turnPictures.has(run.id) && !images?.length
       ? this.plannedForPictures(run, context.owner, override)
@@ -3345,6 +3385,13 @@ ${run.output.slice(0, 6000)}`;
     });
     return true;
   }
+  /** The connection here that answers instead of `wanted` for a task that must stay on this computer. */
+  private keptHere(run: Run, wanted: ModelPreset): ModelPreset {
+    const here = this.models.plan(this.owner, run.sessionId, { localOnly: true }).candidates[0];
+    if (!here || !presetRunsLocally(here)) throw new Error(nothingHere);
+    this.store.event(run.id, "model.kept_here", { wanted: wanted.id, used: here.id });
+    return here;
+  }
   private checkRetryBudget(messages: Message[], context: ToolContext): void {
     context.signal.throwIfAborted();
     if (context.budget.steps >= context.budget.limits.maxSteps)
@@ -3363,6 +3410,9 @@ ${run.output.slice(0, 6000)}`;
     shape?: AnswerShape,
     firstCapMs?: number,
   ): Promise<Completion> {
+    // A task that must stay on this computer never reaches a connection elsewhere, whichever part of it asks:
+    // a side job that names its own connection is answered by the one here instead, and with none here it stops.
+    if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     context.budget.step(context.signal);
