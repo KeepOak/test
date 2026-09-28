@@ -4,6 +4,7 @@ import type { ToolContext } from "./contracts.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 import type { Knowledge } from "./knowledge.js";
+import { HelperSelectionSchema, helperRouteTarget, type HelperSelection } from "./delegation.js";
 
 /**
  * Tools for working with several specialists at once: a parallel fan-out that splits this task's
@@ -13,6 +14,7 @@ import type { Knowledge } from "./knowledge.js";
 /** Most children one task may run at the same time; the delegation limit in the runtime. */
 const parallelConcurrency = 4;
 const ParallelTaskSchema = z.object({
+  ...HelperSelectionSchema.shape,
   specialist: z.string().min(1).max(200),
   prompt: z.string().min(1).max(8000),
 }).strict();
@@ -78,7 +80,7 @@ async function oneBranch(
   const id = `b${index + 1}`;
   try {
     const spec = knowledge.activeSpecialist(branch.owner, task.specialist);
-    const { run } = await runtime.delegateChecked(task.prompt, branch, spec.permissions, spec.instructions, { agent: task.specialist });
+    const { run } = await runtime.delegateChecked(task.prompt, branch, spec.permissions, spec.instructions, { agent: task.specialist, ...(task.model ? { model: task.model } : {}), ...(task.accountRef ? { accountRef: task.accountRef } : {}) });
     return { id, specialist: task.specialist, runId: run.id, status: run.status, output: run.output.slice(0, 4000) };
   } catch (error) {
     return { id, specialist: task.specialist, status: "failed", output: "", error: errorText(error) };
@@ -93,7 +95,7 @@ async function oneBranch(
  */
 export async function handOff(
   runtime: Runtime, knowledge: Knowledge, context: ToolContext,
-  input: { specialist: string; brief: string; reason?: string },
+  input: { specialist: string; brief: string; reason?: string } & HelperSelection,
 ) {
   const from = context.agent ?? "the main task";
   const refusal = runtime.handoffs.refusal(context.agent, input.specialist);
@@ -109,7 +111,7 @@ export async function handOff(
       runtime.store.message(sessionId, { role: "system",
         content: `Handed over from ${from} to ${input.specialist}${reason ? `: ${reason}` : "."}` });
   }
-  const { run, result } = await runtime.delegateChecked(input.brief, context, spec.permissions, spec.instructions, { agent: input.specialist });
+  const { run, result } = await runtime.delegateChecked(input.brief, context, spec.permissions, spec.instructions, { agent: input.specialist, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
   return { specialist: input.specialist, runId: run.id, status: run.status, output: run.output.slice(0, 4000), resolved: result.status === "resolved" };
 }
 
@@ -119,6 +121,7 @@ export function registerOrchestration(registry: ToolRegistry, runtime: Runtime, 
     description: "Run up to six specialists at once, each on a share of this task's budget. One failure leaves the rest running unless failFast. Combine their answers yourself.",
     permission: "specialists.use",
     parameters: ParallelSchema,
+    target: (a) => helperRouteTarget(a.tasks),
     execute: async (a, c) => runParallel(runtime, knowledge, c, a),
   });
   registry.register({
@@ -127,10 +130,12 @@ export function registerOrchestration(registry: ToolRegistry, runtime: Runtime, 
     permission: "specialists.use",
     parameters: z.object({
       specialist: z.string().min(1).max(200),
+      ...HelperSelectionSchema.shape,
       brief: z.string().trim().min(1).max(4000),
       /** Why this belongs to them rather than you. It is shown in the conversation. */
       reason: z.string().trim().max(300).default(""),
     }).strict(),
+    target: (a) => helperRouteTarget([a]),
     execute: async (a, c) => handOff(runtime, knowledge, c, a),
   });
   registerScratch(registry, runtime);
@@ -153,7 +158,9 @@ function registerScratch(registry: ToolRegistry, runtime: Runtime): void {
     parameters: z.object({ key: z.string().trim().min(1).max(100).optional() }).strict(),
     execute: async (a, c) => {
       const entries = runtime.orchestration.scratchRead(root(c));
-      if (a.key) return entries[a.key] ? { key: a.key, ...entries[a.key]! } : { key: a.key, value: null };
+      // A small model reaches for these notes to read a file; a key that looks like a file name says where files are read.
+      if (a.key) return entries[a.key] ? { key: a.key, ...entries[a.key]! } : { key: a.key, value: null,
+        ...(/\.[a-z0-9]{1,6}$/i.test(a.key) ? { note: `There is no shared note called ${a.key}. To read a file in the workspace, use files.read with that path.` } : {}) };
       return { notes: Object.entries(entries).map(([key, entry]) => ({ key, ...entry })).sort((x, y) => y.updatedAt.localeCompare(x.updatedAt)) };
     },
   });

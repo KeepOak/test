@@ -6,21 +6,24 @@
    counts them when achievements are on). */
 
 import { $, esc, render } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, S, ownerHere, ownName } from "../core/state.js";
 import { api } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
 import { OWN, loadOwn } from "./ownbg.js";
-import { media17, fill17 } from "../core/art17.js";
-import { PETS, petOf, petLabel, petKindName, sproutLoop, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
+import { media17 } from "../core/art17.js";
+import { PETS, petOf, petLabel, petKindName, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
 import { windowRest, onRest } from "../core/sleep.js";
+import { play17 } from "../core/held.js";
 import { say as inWords } from "../core/words.js";
 import { binding, spoken } from "./keys.js";
+import { petLine, hintLine, hintDue } from "./pettalk.js";
+import { popupsOn } from "../flows/guides.js";
 
 const KEY = "branch-scene";
 export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side" };
-export const D = { settings: null, earned: null, asked: false };
+export const D = { settings: null, earned: null, rank: null, asked: false };
 
 /* The painted scenes: the four groves and the night from /art, and the extra scenes in /art/bg. */
 export const SCENES = [["auto", "By the season", ""], ["spring", "Spring grove", "/art/grove-spring.webp"], ["autumn", "Autumn grove", "/art/grove-autumn.webp"],
@@ -57,7 +60,7 @@ export async function loadDelight() {
   D.asked = true;
   seenState = E.state;
   loadWindow();
-  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; } catch (error) { toast(error.message); }
+  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
   try { await loadOwn(); } catch (error) { toast(error.message); }
 }
 /* Read again after each refresh (the engine's events refresh the window), so a switch changed elsewhere, such as in
@@ -71,7 +74,7 @@ export function followDelight() {
 }
 async function rereadDelight() {
   const before = JSON.stringify(D.settings);
-  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; } catch (error) { toast(error.message); }
+  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
   if (JSON.stringify(D.settings) !== before) render();
 }
 /* Changes only the parts named; the engine merges each part into what it has. */
@@ -98,10 +101,10 @@ export function sceneCards(act, isOn, mark = (v) => (NEW_SCENES17.has(v) ? " new
   return SCENES.map(([v, n, f]) => `<button type="button" class="scene-c12${mark(v)}" data-act="${act}" data-v="${v}" aria-pressed="${!!isOn(v)}">${face(f)}<b>${esc(inWords(n))}</b></button>`).join("");
 }
 
-/* The pets (core/pets.js) as the prototype's gallery shows them (petGallery12, with pass 17e's): None, Little Branch, the
+/* The pets (core/pets.js): None, the
    painted pets, pass 17's six (marked New, as markNew17 marks only those) and the three pixel pets, drawn on their canvas.
    A picture's walk plays on hover unless motion is reduced. `kind` is the one shown now ("none" while the pet is off). */
-export const petNow = () => (D.settings?.pets?.on && petOf(D.settings.pets.kind) ? D.settings.pets.kind : "none");
+export const petNow = () => (D.settings?.pets?.on ? petOf(D.settings.pets.kind)?.kind ?? "none" : "none");
 export function petCard(v, l, kind, act = "petset") {
   const p = petOf(v);
   const face = !p ? `<span class="pet-px12">—</span>` : p.pixel ? pixelCanvas(p.kind, 'class="pet-pxc12" aria-hidden="true"')
@@ -155,11 +158,9 @@ export function drawBackground() {
 }
 
 /* ---------- the pet ---------- */
-/* Every kind the gallery offers (core/pets.js): a pixel pet on its canvas, a picture pet as its walk loop, Little Branch as
-   Branch's own loops. What it is doing follows the prototype's wantPet11: a moment of cheer after a Trunk finishes
-   (shell/cheer.js), a nap once the window sleeps (core/sleep.js: it stops, a "z" floats up, a walk loop pauses, Little
-   Branch sleeps, and after the long sleep Little Branch holds still too), working while a run is running (a walk loop
-   plays faster, Little Branch works), else walking. */
+/* Every kind the gallery offers (core/pets.js): a pixel pet on its canvas or a picture pet as its walk loop.
+   A moment of cheer follows a Trunk finishing (shell/cheer.js). Once the window sleeps the pet stops,
+   a "z" floats up and its walk loop pauses. A running task makes the walk loop play faster; otherwise it walks. */
 const P = { x: 0, dir: 1, say: "", until: 0, cool: 0, mood: "walk", moodNow: "", moodUntil: 0, hopUntil: 0 };
 const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 stepWhile(() => !!D.settings?.pets?.on);
@@ -184,11 +185,12 @@ onRest(() => drawPet());
 /* The pet's markup, drawn inside the list's foot or the status bar by whichever region W.petWhere names. */
 export function petHTML(where) {
   if (!petShown() || W.petWhere !== where) return "";
-  const p = D.settings.pets, pet = petOf(p.kind), mood = wantPet(), speaking = P.say && Date.now() < P.until;
-  const label = esc(t("window.shell.scene.name-the-kind-click-for-a", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
+  const p = D.settings.pets, pet = petOf(p.kind), speaking = P.say && Date.now() < P.until;
+  const tips = hintDue({ ...facts(), lastHint: 0 }); // "Click for a tip" only while this rank still gets them
+  const label = esc(t(tips ? "window.shell.scene.name-the-kind-click-for-a" : "window.shell.scene.name-the-kind", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
   const button = `role="button" tabindex="0" aria-label="${label}" data-act="pat"`;
   const body = pet.pixel ? pixelCanvas(pet.kind, `id="pet-cv" ${button}`)
-    : `<span class="pet17" ${button}>${media17(pet.still, pet.sprout ? sproutLoop(mood) : pet.walk, pet.sprout ? "pet-vid11" : "pet-vid11 pet12")}</span>`;
+    : `<span class="pet17" ${button}>${media17(pet.still, pet.walk, "pet-vid11 pet12")}</span>`;
   /* Where it has walked to, which way it faces and what it is doing are put on the drawn box by placePet() and
      applyMood(), not written into the markup, so a step does not make the sidebar's markup differ (it is drawn again only
      when that changes, core/dom.js). */
@@ -209,34 +211,40 @@ export function drawPet() {
   applyMood();
   paintPixels();
 }
-/* What it is doing, laid on the drawn pet without drawing it again: the nap's "z", Little Branch's loop, a loop's pace. */
+/* What it is doing, laid on the drawn pet without drawing it again: the nap's "z" and the loop's pace. */
 function applyMood() {
   const m = wantPet(), box = $(".petbox"), pet = petOf(D.settings?.pets?.kind);
   P.mood = m;
   if (!box || !pet) return;
   box.classList.toggle("zz11", m === "sleep");
   box.classList.toggle("hop11", Date.now() < P.hopUntil);
-  if (pet.sprout) {
-    const slot = box.querySelector("[data-m17]");
-    const loop = windowRest() === "still" ? "" : sproutLoop(m);
-    if (slot && slot.dataset.m17Loop !== loop) { slot.dataset.m17Loop = loop; fill17(box); }
-    return;
-  }
   const v = box.querySelector("video");
   if (!v) return;
   if (m === "sleep") { if (!v.paused) v.pause(); return; }
   v.playbackRate = m === "work" ? 1.6 : 1;
-  if (v.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
+  if (v.paused && !v.dataset.off13 && !document.hidden) play17(v).catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
 }
 
-/* What the pet says: a Trunk that needs a yes first, else a tip that is true of this window. */
-function petWords() {
-  const waiting = (E.state?.attention ?? []).find((w) => !w.parentRunId); // a helper's question is not in the Inbox
-  if (waiting) return t("window.shell.scene.who-needs-a-yes-its-in", { who: waiting.who || "Branch" });
-  const key = binding("palette"); // the owner may have moved it, or taken it away (shell/keys.js)
-  const tips = [key ? t("window.shell.scene.find-anything", { key: spoken(key) }) : "", t("window.shell.scene.hover-anything-to-see-what-it")].filter(Boolean);
-  return tips[Math.floor(Date.now() / 60000) % tips.length];
+/* What is happening, for the pet's words (shell/pettalk.js): who waits for a yes (a helper's question is not in the Inbox),
+   Lockdown, whether a model can answer, the work going on, where the owner is, the owner's rank (GET /api/delight rank)
+   and when the last hint was said (kept in this browser, so an hour is an hour across reloads). */
+const HINT_KEY = "branch-pet-hint";
+const lastHint = () => { try { return Number(localStorage.getItem(HINT_KEY)) || 0; } catch { return 0; } };
+const hintSaid = () => { try { localStorage.setItem(HINT_KEY, String(Date.now())); } catch { /* storage refused: the hour is kept only while open */ } P.hintAt = Date.now(); };
+function facts() {
+  const runs = (E.state?.runs ?? []).filter((r) => r.status === "running" && !r.parentRunId);
+  const key = (action) => { const combo = binding(action); return combo ? spoken(combo) : ""; }; // the owner may move a key, or take it away
+  return {
+    waiting: (E.state?.attention ?? []).filter((w) => !w.parentRunId),
+    lockdown: !!document.getElementById("app")?.classList.contains("locked"),
+    noModel: !!E.state?.modelNeeded, // the engine's own "no model yet" (chat/nomodel.js reads the same)
+    running: runs.map((r) => ({ who: ownName(r.sessionId) || E.state?.identity?.name || "" })),
+    view: S.view, owner: ownerHere(),
+    keys: { palette: key("palette"), sideList: key("sideList") },
+    rank: D.rank ?? "Bronze", tipsOn: popupsOn(), lastHint: Math.max(lastHint(), P.hintAt ?? 0), at: Date.now(),
+  };
 }
+const words = (key, values) => t(key, values);
 export function say(text) {
   P.say = text;
   P.until = Date.now() + 6500;
@@ -257,18 +265,30 @@ export async function noticed(what) {
     if (answer?.kept && what.what === "flag") toldFlags.add(what.flag);
   } catch (error) { toast(error.message); }
 }
+/* A pat: the news of the moment, else a hint when one is due; with nothing to say it only hops. */
 export async function pat() {
-  say(petWords());
+  const line = petLine(facts(), words);
+  if (line) say(line.text);
+  if (line?.kind === "hint") hintSaid();
   await noticed({ what: "pat" });
 }
 
 /* It walks, unless things are kept still or it naps; it speaks up by itself when a Trunk needs you, at most every five
-   minutes. The timer runs only while the pet is shown. */
+   minutes, and with a hint when one is due (at most hourly, and never in its first two minutes on screen). The timer
+   runs only while the pet is shown. */
 let walker = null;
 function syncWalker() {
   const want = petShown() && windowRest() === "awake"; // asleep, it naps where it stands
   if (want && !walker) walker = setInterval(walk, 360);
   else if (!want && walker) { clearInterval(walker); walker = null; }
+}
+function speakUp() {
+  const now = facts();
+  if (Date.now() > P.cool && now.waiting.length) { P.cool = Date.now() + 300000; say(petLine(now, words).text); return; }
+  P.shownAt ??= Date.now();
+  if (Date.now() - P.shownAt < 120000) return;
+  const hint = hintLine(now, words);
+  if (hint) { say(hint.text); hintSaid(); }
 }
 function walk() {
   const box = $(".petbox");
@@ -276,7 +296,7 @@ function walk() {
   applyMood();
   const bubble = $("#pet-say");
   if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;
-  if (Date.now() > P.cool && bubble?.hidden && (E.state?.attention ?? []).some((w) => !w.parentRunId)) { P.cool = Date.now() + 300000; say(petWords()); }
+  if (bubble?.hidden) speakUp();
   if (calm() || P.mood === "sleep") return;
   const max = Math.max(8, (box.parentElement?.clientWidth ?? 120) - 56);
   P.x += P.dir * 6;

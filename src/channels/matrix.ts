@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat } from "./router.js";
 import { matrixHtml } from "./progress-render.js";
 import { handle } from "./email.js";
+import { ReactionAnswers } from "./reaction-answers.js";
 import { reconnectDelay } from "./ws-client.js";
 import { catchUpBatch, MarkKeeper, type ChannelMark } from "./catch-up.js"; // mac6/bucket-16
 
@@ -69,6 +70,15 @@ export class MatrixAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.options.userId; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when the home server last answered a sync (an empty one counts; it answers every 30 s). */
+  private contactAt = Date.now();
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled sync again from where it had got to. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     this.loop = this.run(onMessage);
     await Promise.race([this.loop, new Promise((resolve) => setTimeout(resolve, 50))]);
@@ -88,6 +98,7 @@ export class MatrixAdapter implements ChannelAdapter {
     for (let attempt = 0; !this.stopping; attempt++) {
       try {
         const synced = await this.sync();
+        this.contactAt = Date.now();
         const batch = resumed ? catchUpBatch(synced) : synced;
         resumed = false;
         this.state = { state: "connected", ...(this.encryptedSeen ? { reason: `${this.encryptedSeen} message(s) arrived in an encrypted room, which this assistant cannot read` } : {}) };
@@ -125,13 +136,33 @@ export class MatrixAdapter implements ChannelAdapter {
     for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
       for (const event of room.timeline?.events ?? []) {
         if (event.type === "m.room.encrypted") { this.encryptedSeen++; continue; }
-        const inbound = this.inbound(roomId, event);
+        const inbound = event.type === "m.reaction" ? this.answer(roomId, event) : this.inbound(roomId, event);
         // The first answer carries whatever was already there; answering it would reply to history.
         if (inbound && !first) messages.push(inbound);
       }
     return messages;
   }
+  /** Questions a 👍 / 👎 annotation may answer, by the question's own event id (src/channels/reaction-answers.ts). */
+  private readonly answers = new ReactionAnswers();
+  watchAnswers(chatId: string, messageId: string, senderId: string, fingerprint: string): void {
+    const eventId = this.sent.get(messageId);
+    if (eventId) this.answers.watch(eventId, chatId, senderId, fingerprint);
+  }
+  /** An annotation on one of Branch's own questions, by the person it asked, in that room, is that question's answer. */
+  private answer(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const relates = z.object({ rel_type: z.literal("m.annotation"), event_id: z.string().max(300), key: z.string().max(40) }).passthrough()
+      .safeParse((event.content as Record<string, unknown> | undefined)?.["m.relates_to"]);
+    const sender = event.sender ?? "";
+    if (!relates.success || !sender || sender === this.options.userId) return null;
+    const chatId = handle(roomId, "room"), senderId = handle(sender, "who");
+    const said = this.answers.read(relates.data.event_id, chatId, senderId, relates.data.key);
+    if (!said) return null;
+    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
+      messageId: handle(event.event_id ?? randomUUID(), "msg") };
+  }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    if (event.type === "m.reaction") return this.fromReaction(roomId, event);
     if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text") return null;
     const text = event.content.body ?? "", sender = event.sender ?? "";
     if (!text || !sender || sender === this.options.userId) return null;
@@ -203,11 +234,49 @@ export class MatrixAdapter implements ChannelAdapter {
     await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
       "m.relates_to": { rel_type: "m.replace", event_id: eventId } });
   }
+  /** Redacts an event this adapter sent (only its own, by the handle it gave it). */
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    const eventId = this.sent.get(messageId);
+    if (!eventId) throw new Error("Matrix: that message was not sent from here, so it cannot be removed");
+    await this.redact(this.rooms.get(chatId) ?? chatId, eventId);
+  }
   /** Plain words, with the code as Matrix's HTML beside them when there is any. */
   private static content(text: string, format?: MessageFormat): Record<string, unknown> {
     return { msgtype: "m.text", body: text,
       ...(!format?.plain && format?.spans?.length ? { format: "org.matrix.custom.html", formatted_body: matrixHtml(text, format.spans) } : {}) };
   }
+  /**
+   * CHAT-063: Matrix has no buttons, so a question carries reactions to tap. The words go out with the answers named,
+   * then the assistant puts each answer's reaction on its own question, so a tap is one touch; a reaction by anybody
+   * else on that question is read back as that answer (the homeserver vouches for who reacted).
+   */
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[]): Promise<string | undefined> {
+    const choices = buttons.map((button) => ({ ...button, emoji: button.value.startsWith("y") ? "👍" : button.value.startsWith("n") ? "👎" : "✅" }));
+    const named = choices.map((choice) => `${choice.emoji} ${choice.label}`).join("   ");
+    const short = await this.send(chatId, `${text}\n\nReact ${named} (or reply y or n).`);
+    const eventId = short ? this.sent.get(short) : undefined;
+    if (!eventId) return short;
+    this.questions.set(eventId, new Map(choices.map((choice) => [choice.emoji, choice.value])));
+    if (this.questions.size > 50) this.questions.delete(this.questions.keys().next().value!);
+    for (const choice of choices)
+      await this.put(chatId, { "m.relates_to": { rel_type: "m.annotation", event_id: eventId, key: choice.emoji } }, "m.reaction").catch(() => undefined);
+    return short;
+  }
+  /** A reaction on one of its questions, by anybody but the assistant, as an addressed message carrying that answer. */
+  private fromReaction(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const relates = z.object({ rel_type: z.literal("m.annotation"), event_id: z.string(), key: z.string() }).passthrough()
+      .safeParse((event.content as Record<string, unknown> | undefined)?.["m.relates_to"]);
+    const sender = event.sender ?? "";
+    if (!relates.success || !sender || sender === this.options.userId) return null;
+    const value = this.questions.get(relates.data.event_id)?.get(relates.data.key.replace(/️/g, ""));
+    if (!value) return null;
+    const chatId = handle(roomId, "room");
+    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
+      text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+  }
+  /** Questions this adapter asked with reactions: the question's event, and what each reaction on it answers. */
+  private readonly questions = new Map<string, Map<string, string>>();
   private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message"): Promise<string | undefined> {
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${randomUUID()}`;

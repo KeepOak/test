@@ -69,7 +69,7 @@ export const ROUTES = {
   "/api/agents/": "prefix",
   "/api/agents/discover": "look",
   "/api/agents/pair": "owner POST",
-  "/api/agents/pairing": "look",
+  "/api/agents/pairing": "owner POST", // makes a pairing key, so it is a change
   "/api/agents/remote": "owner POST",
   "/api/agents/remote/remove": "owner POST",
   "/api/approval-reviewer": "owner POST",
@@ -89,6 +89,7 @@ export const ROUTES = {
   "/api/workbooks/:id/markdown": "look",
   "/api/decisions/settings": "owner POST",
   "/api/decisions/decide": "owner POST",
+  "/api/decisions/urgency": "owner POST",
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
   "/api/artifacts/file": "look",
@@ -148,6 +149,8 @@ export const ROUTES = {
   "/api/channels/link": "owner POST",
   "/api/channels/live": "owner POST",
   "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
+  "/api/channels/steps": "owner POST", // Settings › Chat apps › Show steps in chats: the steps knobs
+  "/api/channels/routes": "owner POST", // Settings › Chat apps › Who answers here (src/channels/routes.ts)
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
   "/api/channels/pairings/": "prefix",
@@ -669,6 +672,7 @@ export const ROUTES = {
   "/api/knobs/launch-file": "owner POST", // R17-S-B
   "/api/model-savings": "owner POST", // R17-E
   "/api/model-savings/rounds": "look", // R17-E
+  "/api/model-savings/companies": "owner POST", // OpenRouter picks › Only ones I list: asks OpenRouter for its companies
   "/api/knowledge": "other POST",
   "/api/knowledge/:id": "other DELETE",
   "/api/knowledge/ask": "task POST",
@@ -912,6 +916,7 @@ export const ROUTES = {
   "/api/plugins/sample/inspect": "owner POST",
   "/api/pins": "look", // mac7/wake-pins: which settings the owner pinned, for everybody who uses this computer
   "/api/policy": "owner POST",
+  "/api/practice-runs": "owner POST", // Read availability only; owner changes the global switch.
   "/api/policy/approve": "task POST",
   "/api/practice": "owner POST",
   "/api/preferences": "owner POST",
@@ -982,6 +987,7 @@ export const ROUTES = {
   "/api/registry/browse": "owner POST",
   "/api/registry/install": "owner POST",
   "/api/registry/rollback": "owner POST",
+  "/api/registry/trust": "owner POST", // pins a registry's signing key
   "/api/registry/update": "owner POST",
   "/api/registry/updates": "look",
   // eng-connectors: What's new for the installed version.
@@ -1063,6 +1069,7 @@ export const ROUTES = {
   // record is a wider window than any one of those alone, so it is refused like a secret read.
   "/api/search": "secret-read",
   "/api/second-opinion": "owner POST",
+  "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
   "/api/secrets/default": "look",
@@ -1076,6 +1083,11 @@ export const ROUTES = {
   // A chat's requests to change Branch itself: what people wrote, and who they are. Reading and
   // answering them is the owner's alone (src/self-development-requests.ts).
   "/api/self-development/requests": "secret-read",
+  "/api/self-development/merge": "secret-read",
+  "/api/self-development/merge/runner": "secret-read",
+  "/api/self-development/merge/review": "owner POST",
+  "/api/self-development/merge/approve": "owner POST",
+  "/api/self-development/merge/finish": "owner POST",
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
@@ -1231,8 +1243,14 @@ export const ROUTES = {
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
   "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
-  "/api/panels/browse": "owner POST", // parity-b2: the owner types an address into Branch's browser
-  "/api/panels/browse/close": "owner POST", // parity-b2: and closes that window
+  "/api/panels/screen/hand-back": "owner POST", // the owner hands this computer's screen back to the tasks
+  "/api/panels/screen/take-over": "owner POST", // the owner drives this computer's screen; tasks wait
+  "/api/panels/browser": "secret-read",
+  "/api/panels/browser/start": "owner POST",
+  "/api/panels/browser/control": "owner POST",
+  "/api/panels/browser/action": "owner POST",
+  "/api/panels/browser/disconnect": "owner POST",
+  "/api/panels/browser/stop": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",
@@ -1297,6 +1315,10 @@ export const OUTBOUND = [
   /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
+  // selfdev: GitHub Enterprise's own /api/v3 and /api/graphql addresses, called outwards; not routes of ours.
+  /^src\/integrations\/github\.ts$/,
+  // Only ones I list: OpenRouter's own documented /api/v1/providers, called outwards; not a route of ours.
+  /^src\/model-savings\/openrouter\.ts$/,
 ];
 
 export const SAMPLE_ID = "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f";
