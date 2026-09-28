@@ -175,6 +175,9 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // Q230 (NAS eba8bd8): a conversation's live waiting line, whose words run by themselves; this computer's MCP tool
   // cache, plugins and their fingerprints; and a running task's shared notes.
   "followups:", "mcp-tools:", "plugin-catalog:", "plugin:", "scratch:",
+  // workbench (SELF-305): a wake-up set in a conversation, whose words later run as the owner's own task; like the
+  // waiting line, a file must never put one in place.
+  "wakeup:",
   // Q230, keys worked out in code: this computer's place in each chat stream and its offsets, its holds against redoing
   // a chat task, its webhook word, its MCP sign-in clients, which Trunk a flow run works as, the file-undo slots, a
   // "Watch me" under way, kept answers (a planted one comes back as if real) and the yeses carried over a restart.
