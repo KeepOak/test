@@ -366,6 +366,34 @@ test("an interrupted migration rolls back boards, cards and marker together", as
   assert.equal(orchard.data.migrate(() => "Garden"), 0);
 });
 
+test("a worker-blocked card follows its paused task through Resume and releases its slot when that task ends", async (t) => {
+  const { app, orchard, owner } = await fixture(t);
+  const board = orchard.addBoard({ name: "Blocked resume" });
+  orchard.editBoard(board.id, { atOnce: 1 });
+  const card = orchard.add({ board: board.id, title: "Worker blocked" }, { kind: "branch" });
+  const first = app.store.createRun(app.runtime.owner, "Card task");
+  orchard.data.write(card, { lane: "growing", runId: first.id, sessionId: first.sessionId }, "owner", "test setup");
+  orchard.block(first.id, "Need the owner", { kind: "branch" });
+  // The exact records emitted by owner Pause and Resume: Resume creates a new task identity.
+  app.store.event(first.id, "run.paused", {});
+  app.store.finish(first.id, "interrupted", "Paused");
+  const waiting = orchard.add({ board: board.id, title: "Wait for the slot" }, owner);
+  assert.equal(lane(orchard, waiting.id), "seed");
+  const resumed = app.store.createRun(app.runtime.owner, "Card task", first.sessionId);
+  app.store.event(resumed.id, "run.started", { resumedFrom: first.id });
+  const following = orchard.data.card(card.id);
+  assert.equal(following.runId, resumed.id, "the blocked card follows the resumed task");
+  assert.equal(following.lane, "blocked", "Resume does not supply the owner's review or reset");
+  assert.equal(orchard.occupies(following), true);
+  await assert.rejects(orchard.start(waiting.id), /as many cards as it allows/);
+  assert.throws(() => orchard.remove(card.id), /still active/);
+  app.store.finish(resumed.id, "completed", "Done");
+  await until(() => lane(orchard, waiting.id) === "ripe", "the resumed task ended and released its slot");
+  assert.equal(lane(orchard, card.id), "blocked", "completion never picks a worker-blocked card");
+  assert.equal(orchard.occupies(orchard.data.card(card.id)), false);
+  assert.equal(orchard.remove(card.id).removed, true);
+});
+
 test("the owner edits a card, renames and removes an empty board, edits only their own comments and removes any", async (t) => {
   const { app, orchard, serve } = await fixture(t);
   const call = await serve();

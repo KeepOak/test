@@ -357,7 +357,7 @@ export class Orchard {
   }
   private carriedOn(from: string, runId: string): void {
     const card = this.data.cardOfRun(from);
-    if (!card || card.lane !== "growing") return;
+    if (!card || (card.lane !== "growing" && card.lane !== "blocked")) return;
     const run = this.store.run(runId);
     this.data.write(card, { runId, sessionId: run?.sessionId ?? card.sessionId }, "orchard", "Its task carried on");
   }
