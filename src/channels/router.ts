@@ -25,7 +25,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
   saveChatPermissionSettings, type ChatPermissionSettings } from "./chat-permissions.js";
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
-import { chatCommandSpec, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
+import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
@@ -118,6 +118,12 @@ export interface ChannelAdapter {
    * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
    */
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /**
+   * The app's own command picker (Discord's slash commands; Telegram's "/" menu in #590), filled from the same catalog
+   * every surface reads. An empty list clears it. Absent means the app keeps its commands elsewhere (Slack's are in the
+   * app's settings) or has none.
+   */
+  setCommands?(commands: { command: string; description: string }[]): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -378,6 +384,7 @@ export class ChannelRouter {
       throw error;
     }
     if (!this.pump) { this.pump = setInterval(() => void this.flush(), this.pumpMs); this.pump.unref(); }
+    void this.refreshCommandMenus(); // CHAT-161: the app's own command picker lists what this chat can send
     if (!this.watchdog) { this.watchdog = setInterval(() => void this.checkStalled(), this.watchdogMs); this.watchdog.unref(); }
     if (this.intake().presence) void this.presence(adapter, presenceWords.online);
     await this.flush();
@@ -501,7 +508,26 @@ export class ChannelRouter {
   }
   /** Changes the chat extras' switches (chat-live-settings.ts); the ones not named stay as they are. */
   setSwitches(input: unknown): ChatLiveSwitches {
-    return saveChatLiveSwitches(this.store, this.runtime.owner, input);
+    const switches = saveChatLiveSwitches(this.store, this.runtime.owner, input);
+    void this.refreshCommandMenus();
+    return switches;
+  }
+  private menuChain: Promise<void> = Promise.resolve();
+  /**
+   * CHAT-161: every connected app's own command picker, from the one command table: the commands a chat can send with
+   * the owner's switches as they are now, and none while chat commands are off, so a picker never offers a command
+   * that would be read as an ordinary message. One refresh at a time; a failure is written down, never thrown.
+   */
+  refreshCommandMenus(): Promise<void> {
+    return this.menuChain = this.menuChain.then(async () => {
+      const commands = this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
+        .map((one) => ({ command: one.name, description: one.description }));
+      const unique = [...new Map(commands.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
+        try { await adapter.setCommands?.(unique); }
+        catch (error) { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}: ${error instanceof Error ? error.message : String(error)}`); }
+      }));
+    });
   }
   setOwnerCommandSettings(input: unknown) {
     return saveOwnerCommands(this.store, this.runtime.owner, input);

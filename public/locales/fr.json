@@ -829,7 +829,7 @@
   "channel-setup.r.dingtalk.noCheck": "Le seul moyen de tester une adresse entrante est de publier un message dans votre chat. Branch vérifie donc que c'est une adresse https et laisse le premier message pour vous.",
   "channel-setup.r.dingtalk.paste-DINGTALK_SECRET": "Le secret de signature",
   "channel-setup.r.dingtalk.paste-DINGTALK_WEBHOOK_URL": "L'adresse du robot",
-  "channel-setup.r.discord.how": "Nommez l'application, allez dans Bot, appuyez sur Réinitialiser le token et copiez-le. Activez l'intention Message Content sur la même page.",
+  "channel-setup.r.discord.how": "Nommez l'application, allez dans Bot, appuyez sur Réinitialiser le token et copiez-le. Activez l'intention Message Content sur la même page. Pour l'inviter, choisissez les portées bot et applications.commands dans OAuth2, URL Generator, pour que les commandes de Branch apparaissent dans le sélecteur / de Discord.",
   "channel-setup.r.discord.pairing": "Invitez le bot sur votre serveur et envoyez-lui un message direct. Il vous répond avec un code à six chiffres. Approuvez-le sous Personnaliser, Applications de chat.",
   "channel-setup.r.discord.paste-DISCORD_BOT_TOKEN": "Le token du bot depuis la page Bot",
   "channel-setup.r.discourse.field-server": "L'adresse de votre forum",
