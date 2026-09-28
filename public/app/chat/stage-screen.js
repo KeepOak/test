@@ -95,18 +95,23 @@ export function nativeFramePainted(image) {
     }).catch(() => {});
   });
 }
-function frameRequest(extra) {
-  if (!showing() || !V.viewId || V.painted !== V.frameId || !V.frameId) throw new Error("Wait for a fresh visible frame.");
+// computer-control: a press lands between two frames as often as not; wait (briefly) for the next painted one instead of
+// refusing the owner's click, so Take over and clicks through the view work on a busy computer too.
+async function frameRequest(extra) {
+  const viewId = V.viewId;
+  for (let tries = 0; tries < 30 && showing() && V.viewId === viewId && (!V.frameId || V.painted !== V.frameId); tries++)
+    await new Promise((done) => setTimeout(done, 50));
+  if (!showing() || !V.viewId || V.viewId !== viewId || V.painted !== V.frameId || !V.frameId) throw new Error("Wait for a fresh visible frame.");
   return { sessionId: V.sid, viewId: V.viewId, frameId: V.frameId, ...extra };
 }
 export async function controlNativeScreen(held) {
-  const epoch = V.epoch, body = frameRequest({ held }); V.painted = "";
+  const epoch = V.epoch, body = await frameRequest({ held }); V.painted = "";
   const result = await request("/control", body);
   if (epoch === V.epoch) { V.driving = result.control === true; changed(); }
 }
 export async function inputNativeScreen(input) {
   if (!V.driving) throw new Error("Take control before using this application.");
-  const body = frameRequest({ input: { ...input, window: V.label } });
+  const body = await frameRequest({ input: { ...input, window: V.label } });
   V.painted = "";
   await request("/input", body);
 }
