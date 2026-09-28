@@ -2153,6 +2153,8 @@ owner GET /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401
 owner POST /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/webhooks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/webhooks | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/webhooks/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4291,6 +4293,8 @@ owner+lockdown GET /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok p
 owner+lockdown POST /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/webhooks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/webhooks | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/webhooks/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -6429,6 +6433,8 @@ household GET /api/voice/dictation | here=ok remote=ok read=401/86eff9 run=401/8
 household POST /api/voice/dictation | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/voice/dictation/listen | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household POST /api/voice/dictation/listen | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/webhooks | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/webhooks | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/webhooks/:id | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -8567,6 +8573,8 @@ household+lockdown GET /api/voice/dictation | here=ok remote=ok read=401/86eff9 
 household+lockdown POST /api/voice/dictation | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/voice/dictation/listen | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/voice/dictation/listen | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/webhooks | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/webhooks | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/webhooks/:id | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -10705,6 +10713,8 @@ applock GET /api/voice/dictation | here=423/a8f863
 applock POST /api/voice/dictation | here=423/a8f863
 applock GET /api/voice/dictation/listen | here=423/a8f863
 applock POST /api/voice/dictation/listen | here=423/a8f863
+applock GET /api/voice/dictation/hear | here=423/a8f863
+applock POST /api/voice/dictation/hear | here=423/a8f863
 applock GET /api/webhooks | here=423/a8f863
 applock POST /api/webhooks | here=423/a8f863
 applock GET /api/webhooks/:id | here=423/a8f863
