@@ -58,6 +58,8 @@ import { registerSessions } from "./sessions.js";
 import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
+import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
+import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
 import { startMcpServer } from "./mcp-server.js";
@@ -146,6 +148,11 @@ import { GitCheckpoints, GitWorkspaces, type GitRun } from "./git-checkpoint.js"
 import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/ssh-workspace.js";
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
+import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
+import { registerTrunkMemoryFiles } from "./trunks/memory-files.js"; // workbench (SELF-311)
+import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.js"; // selfdev (SELF-303)
+import { askForHandoffs, registerLeadUsage } from "./lead-usage.js"; // workbench (SELF-307)
+import { openWork } from "./open-work.js"; // workbench (SELF-307)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
 import { registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
@@ -879,11 +886,22 @@ export async function createBranch(options: {
   const channels = new ChannelRouter(store, runtime);
   channels.appLocked = () => sessionLock.locked();
   const priorToolGuard = registry.beforeTool;
+  /** RES-253: the owner marked this Trunk "sandboxed" (Trunk › Reach), so its commands are walled like an outsider's. */
+  const trunkSandboxed = (id: string | undefined): boolean =>
+    !!id && (store.get("governance", runtime.owner, `trunk:${id}`)?.data as { reach?: { sandboxed?: unknown } } | undefined)?.reach?.sandboxed === true;
   registry.beforeTool = async (name, args, context) => {
     const held = await priorToolGuard?.(name, args, context);
     if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
       && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
-    return held;
+    // RES-253 (src/outside-commands.ts): a program started for someone other than the owner is held to the workspace
+    // behind the system's own wall, with no network, or refused where no wall can run.
+    const who = !(walledTools.includes(name) || remoteTools.includes(name)) || !context.runId ? null
+      : outsideCaller(runOrigin(store, context.runId)) ?? (trunkSandboxed(context.trunk) ? "a Trunk the owner set to run sandboxed" : null);
+    if (!who) return held;
+    if (remoteTools.includes(name)) throw new Error(outsideRemoteRefusal(who, name));
+    if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
+    store.event(context.runId, "sandbox.outside_caller", { tool: name, who });
+    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
@@ -1026,8 +1044,40 @@ export async function createBranch(options: {
     sessionLimiter.check({ scope: "sender", id: `${channel}:${senderId}` }, "stranger");
   const scheduler = new Scheduler(store, runtime, (channel, chatId, text, key) => channels.deliver(channel, chatId, text, key));
   registerSchedules(registry, scheduler);
+  // selfdev (SELF-303): helpers the lead starts talk to it while they work, and tell it when they finish.
+  registerHelperMessages(registry, runtime);
+  // workbench (SELF-307): what each account has left, and a handoff asked for only when every account is near its limit.
+  registerLeadUsage(registry, runtime);
+  scheduler.onTick.add(async (now) => { askForHandoffs(runtime, now.getTime()); });
+  // Only helpers started for the lead (helpers.start) wake it; other background work keeps its result for the parent, as before.
+  runtime.onBackgroundFinished = (result) => {
+    if (!result.parentRunId || !result.tellsLead) return;
+    const said = `finished (${result.status}). Its report:
+${result.output || "(it said nothing)"}`;
+    try { tellTask(runtime, result.parentRunId, `helper ${result.childRunId.slice(0, 8)}`, said, fromHelper); }
+    catch (error) { store.event(result.parentRunId, "delegation.tell_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
+  // selfdev (SELF-305): wake-ups set inside a conversation arrive in it as follow-ups; the scheduler's tick finds them.
+  // A wake-up is never more than the task that asked for it: it carries that task's own tools.
+  const askedWith = (runId: string): string[] | null => {
+    const recorded = store.events(runId).find((event) => event.kind === "run.started")?.data.permissions;
+    return Array.isArray(recorded) ? recorded.map(String) : null;
+  };
+  const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); });
+  registerWakeups(registry, store, wakeups);
+  // workbench (SELF-307): helpers, wake-ups and programs still open ride with every round, so compaction never loses them.
+  runtime.openWork = (sessionId) => openWork(store, runtime.owner, sessionId, wakeups, processes);
+  scheduler.onTick.add((now) => wakeups.tick(now));
   // wave mac2 (quiet-jobs follow-up): a program left running that finishes wakes the check-in; wake() does nothing while it is off.
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
+  // workbench (SELF-304): a command the assistant may run once it may also leave running, and be woken when it ends.
+  processes.commandPrograms = () => ownClis.commandPrograms();
+  // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
+  // of the task that started it, so the assistant is told instead of checking on it.
+  processes.waker = ({ sessionId, runId, text }) => {
+    try { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); }
+    catch (error) { store.event(runId, "process.wake_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
   // Figures, looking things up properly, watching pages, and the one message first thing.
   const deliverMessage = (channel: string, chatId: string, text: string, key: string) => channels.deliver(channel, chatId, text, key);
   const dataTables = new DataTables(files, web, writeObserver);
@@ -1354,6 +1404,7 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  registerTrunkMemoryFiles(registry, store, trunks); // workbench (SELF-311): a Trunk's own memory files
   // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
   trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
