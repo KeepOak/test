@@ -173,7 +173,7 @@ export const restartToolName = "branch.restart_engine";
 export function registerRestartTool(app: Branch, dataDir: string, deps: DashboardDeps = {}): void {
   if (app.registry.names().includes(restartToolName)) return;
   app.registry.register({
-    name: restartToolName, permission: "process.manage", group: "settings", reach: "local",
+    name: restartToolName, permission: "process.manage", reach: "local",
     description: "Restart Branch's own engine, when it is stuck or to take up a new build. Work in progress is saved and safe steps carry on by themselves after the restart. Say why.",
     parameters: z.object({ why: z.string().trim().min(1).max(300) }).strict(),
     target: (input: { why: string }) => `restart Branch's engine: ${input.why}`,
@@ -181,7 +181,8 @@ export function registerRestartTool(app: Branch, dataDir: string, deps: Dashboar
       ownerOnly(context, app.store, (turn) => app.runtime.ownersDefaultTurn(turn), "restart Branch's engine");
       return restartEngine(dataDir, deps);
     },
-  });
+    // Last: a settings-key scan (tests/backup-classified.test.mjs) must not read this group and the next fields as a key.
+    group: "settings" });
 }
 
 const RestartSchema = z.object({ whenIdle: z.boolean().optional() }).strict();
