@@ -850,13 +850,17 @@ export async function createBranch(options: {
   const channels = new ChannelRouter(store, runtime);
   channels.appLocked = () => sessionLock.locked();
   const priorToolGuard = registry.beforeTool;
+  /** RES-253: the owner marked this Trunk "sandboxed" (Trunk › Reach), so its commands are walled like an outsider's. */
+  const trunkSandboxed = (id: string | undefined): boolean =>
+    !!id && (store.get("governance", runtime.owner, `trunk:${id}`)?.data as { reach?: { sandboxed?: unknown } } | undefined)?.reach?.sandboxed === true;
   registry.beforeTool = async (name, args, context) => {
     const held = await priorToolGuard?.(name, args, context);
     if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
       && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
     // RES-253 (src/outside-commands.ts): a program started for someone other than the owner is held to the workspace
     // behind the system's own wall, with no network, or refused where no wall can run.
-    const who = walledTools.includes(name) && context.runId ? outsideCaller(runOrigin(store, context.runId)) : null;
+    const who = !walledTools.includes(name) || !context.runId ? null
+      : outsideCaller(runOrigin(store, context.runId)) ?? (trunkSandboxed(context.trunk) ? "a Trunk the owner set to run sandboxed" : null);
     if (!who) return held;
     if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
     store.event(context.runId, "sandbox.outside_caller", { tool: name, who });

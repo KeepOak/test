@@ -80,3 +80,37 @@ test("the owner's own task keeps Full Access: its node and git run as before, un
     assert.match(git.result.stdout, /git version/, "the owner's schedule runs git unwalled");
   }
 });
+
+const npmCli = (() => {
+  try { return join(execFileSync("npm", ["root", "-g"], { encoding: "utf8", shell: true }).trim(), "npm", "bin", "npm-cli.js"); } catch { return null; }
+})();
+
+test("the owner's own Trunk runs npm and git unwalled; a Trunk the owner set to run sandboxed is walled", async (t) => {
+  const { app, root, asTask } = await fixture(t);
+  const save = (id, sandboxed) => app.store.save("governance", app.runtime.owner, `trunk:${id}`,
+    { name: id, reach: { channels: [], commands: true, sandboxed } });
+  save("builder", false);
+  save("careful", true);
+  const asTrunk = async (trunk, args) => {
+    const run = app.store.createRun(app.runtime.owner, "a Trunk's command");
+    app.store.event(run.id, "run.started", { source: "owner" });
+    try { return { run, result: await app.registry.execute("shell.execute", args, { ...app.runtime.context({ runId: run.id }), trunk }) }; }
+    catch (error) { return { run, error: error instanceof Error ? error.message : String(error) }; }
+  };
+  if (npmCli && existsSync(npmCli)) {
+    const npm = await asTrunk("builder", { executable: "node", args: [npmCli, "--version"] });
+    assert.equal(npm.error, undefined, npm.error);
+    assert.match(npm.result.stdout, /^\d+\.\d+\.\d+/m, "npm --version works for the owner's Trunk");
+  }
+  if (gitPath) {
+    const git = await asTrunk("builder", { executable: "git", args: ["--version"] });
+    assert.equal(git.error, undefined, git.error);
+    assert.match(git.result.stdout, /git version/);
+  }
+  const free = await asTrunk("builder", { executable: "node", args: ["-e", `require("fs").writeFileSync("../builder.txt","ok")`] });
+  assert.equal(free.error, undefined, free.error);
+  assert.equal(existsSync(join(root, "builder.txt")), true, "the owner's Trunk keeps Full Access");
+  const held = await asTrunk("careful", { executable: "node", args: ["-e", `try{require("fs").writeFileSync("../careful.txt","x")}catch{}`] });
+  assert.equal(existsSync(join(root, "careful.txt")), false, "a sandboxed Trunk cannot write outside the workspace");
+  assert.ok(app.store.events(held.run.id).some((event) => event.kind === "sandbox.outside_caller" && /sandboxed/.test(event.data.who)));
+});
