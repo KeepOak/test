@@ -112,7 +112,7 @@ test('Windows live capture source pins actual provenance and never substitutes t
   assert.doesNotMatch(live, /image\.GetPixel/, 'sparse useful content is not classified by sampled pixels');
   assert.equal((capture.match(new RegExp('CopyFrom' + 'Screen', 'g')) ?? []).length, 1, 'screen copy occurs only in explicit monitor branch');
   assert.match(desktopScript, /Assert-CaptureInput \$handle\s*\[System\.Windows\.Forms\./);
-  assert.match(desktopScript, /\$point = Capture-Point \$handle\s*\[BranchDesktop\]::Wheel/);
+  assert.match(desktopScript, /\$point = Capture-Point \$handle\s*Assert-Uncovered \$handle \$point\s*\[BranchDesktop\]::Wheel/); // computer-control: and nothing covers it
 });
 
 test('native capture snapshots include class provenance and guarded input rechecks it before effect', () => {

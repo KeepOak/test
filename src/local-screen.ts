@@ -227,7 +227,10 @@ export class LocalScreen {
     response.once('close', () => { if (this.selected === view) void this.close(); });
     while (this.selected === view && !view.life.signal.aborted && !response.destroyed) {
       try {
-        if (!full && !view.busy) full = !response.write(`${JSON.stringify(await this.frame(access, viewId, width, view.life.signal))}\n`);
+        // computer-control: the next frame waits until the window has painted this one (or two seconds pass), so a
+        // Take over or click is always pressed on a frame that is still current, however slow the window is to paint.
+        const waiting = view.frame !== null && !view.frame.painted && !view.frame.consumed && view.frame.expires > this.now();
+        if (!full && !view.busy && !waiting) full = !response.write(`${JSON.stringify(await this.frame(access, viewId, width, view.life.signal))}\n`);
         else this.view(access, viewId);
       } catch (error) {
         if (!response.destroyed) response.write(`${JSON.stringify({ refusal: error instanceof Error ? error.message : 'This screen stopped.', status: error instanceof LocalScreenRefusal ? error.status : 409 })}\n`);
