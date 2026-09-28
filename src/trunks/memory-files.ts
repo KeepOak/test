@@ -13,6 +13,7 @@ import type { TrunkRecords } from "./record.js";
  * tools read a file's body, write one, and delete one. They reach only the Trunk whose turn this is (its helpers work for
  * it, so they reach it too), and only MEMORY.md and the memory files: never its SOUL.md, AGENTS.md or anything that
  * shapes who it is or what it may do. A turn that is no Trunk's has no memory files to keep.
+ * They sit in the "memory-extra" box (src/catalog.ts), so opening the everyday boxes stays inside its budget.
  */
 const trunkOfRun = (store: Store, runId: string): string | null => {
   const seen = new Set<string>();
@@ -33,7 +34,7 @@ export function registerTrunkMemoryFiles(registry: ToolRegistry, store: Store, t
   };
   const actor = (id: string) => `trunk:${id}`;
   registry.register({
-    name: "memory.files", permission: "memory.read", group: "memory",
+    name: "memory.files", permission: "memory.read", group: "memory-extra",
     description: "Your MEMORY.md and the list of your memory files (name, type, one-line description). Both are also given to you at the start of every turn.",
     parameters: z.object({}).strict(),
     execute: async (_input, context) => {
@@ -43,7 +44,7 @@ export function registerTrunkMemoryFiles(registry: ToolRegistry, store: Store, t
     },
   });
   registry.register({
-    name: "memory.read_file", permission: "memory.read", group: "memory",
+    name: "memory.read_file", permission: "memory.read", group: "memory-extra",
     description: "Read one of your memory files (or MEMORY.md) in full: its description and type, then its body.",
     parameters: z.object({ name: z.string().trim().min(1).max(64) }).strict(),
     execute: async (input, context) => {
@@ -55,7 +56,7 @@ export function registerTrunkMemoryFiles(registry: ToolRegistry, store: Store, t
     },
   });
   registry.register({
-    name: "memory.write_file", permission: "memory.write", group: "memory",
+    name: "memory.write_file", permission: "memory.write", group: "memory-extra",
     description: "Write one of your memory files, or MEMORY.md itself (the index you read every turn: one line per memory file, and anything you always want in front of you). "
       + "A memory file holds one fact, rule or pointer, with a one-line description and a type: user (who the person is), feedback (how they want you to work), "
       + "project (what is going on and why) or reference (where things live). Writing a name again replaces it. Keep them short and true; they never grant permissions.",
@@ -73,7 +74,7 @@ export function registerTrunkMemoryFiles(registry: ToolRegistry, store: Store, t
     },
   });
   registry.register({
-    name: "memory.delete_file", permission: "memory.write", group: "memory",
+    name: "memory.delete_file", permission: "memory.write", group: "memory-extra",
     description: "Delete one of your memory files that is wrong or no longer needed (MEMORY.md itself is edited, never deleted).",
     parameters: z.object({ name: z.string().trim().min(1).max(64) }).strict(),
     execute: async (input, context) => {
