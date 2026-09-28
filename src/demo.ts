@@ -25,9 +25,12 @@ export class DemoProvider implements Provider {
       ["files.verify", { path, expected: content }],
     ] as const;
     const step = steps[results.length];
+    // Each step says which step it is. The same words every round read as a stuck model to the owner's
+    // progress check (src/safety-extras/progress-judge.ts), which ended the update check on a copy of a
+    // real install whose owner had switched that check on.
     if (step)
       return {
-        content: "Deterministic demo fixture: exercising workspace tools.",
+        content: `Deterministic demo fixture: step ${results.length + 1} of ${steps.length}, ${step[0]}.`,
         toolCalls: [
           {
             id: `demo-${results.length}`,

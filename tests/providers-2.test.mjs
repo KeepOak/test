@@ -18,8 +18,30 @@ import { ModelRouter } from "../dist/models.js";
 import { unofferedMark, wireName } from "../dist/providers.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
+import { providerEmbeddings } from "../dist/providers.js";
+import { EmbeddingClient } from "../dist/document-embeddings.js";
+import { embeddingConnection, embeddingsFor } from "../dist/embeddings.js";
 import { tablePrice, estimateCost } from "../dist/pricing.js";
 import { allPresets } from "../dist/providers/presets.js";
+
+test("LAN Ollama embeddings retain their connection's exact origin and network stop", async () => {
+  const policy = new NetworkPolicy({}), sent = [];
+  const { provider } = buildConnection({ provider: "ollama", key: "", model: "qwen3:14b",
+    extras: { baseUrl: "http://192.168.1.20:11434" }, policy,
+    fetchImpl: async (url) => { sent.push(String(url)); return Response.json({ data: [{ index: 0, embedding: [1, 2] }] }); } });
+  const route = providerEmbeddings(provider);
+  assert.equal(typeof route.fetchImpl, "function");
+  const client = new EmbeddingClient(route.endpoint, route.apiKey, "reader", route.fetchImpl);
+  assert.deepEqual(Array.from((await client.embed(["passage"], AbortSignal.timeout(1000)))[0]), [1, 2]);
+  const connection = embeddingConnection({ plan: () => ({ candidates: [{ provider }] }) }, "local", "reader");
+  const reader = embeddingsFor(connection, async () => { throw new Error("ordinary network policy refuses LAN"); });
+  assert.deepEqual(Array.from((await reader.embed(["passage"], AbortSignal.timeout(1000)))[0]), [1, 2]);
+  assert.equal(sent.length, 2);
+  await assert.rejects(() => route.fetchImpl("http://192.168.1.21:11434/v1/embeddings"), /not the address/);
+  const blocked = buildConnection({ provider: "ollama", key: "", extras: { baseUrl: "http://192.168.1.20:11434" },
+    policy: new NetworkPolicy({ blockedHosts: ["192.168.1.20"] }), fetchImpl: async () => { throw new Error("must not reach server"); } });
+  await assert.rejects(() => providerEmbeddings(blocked.provider).fetchImpl("http://192.168.1.20:11434/v1/embeddings"), /blocked/);
+});
 import { Store } from "../dist/store.js";
 
 const request = {

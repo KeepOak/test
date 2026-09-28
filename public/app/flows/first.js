@@ -8,7 +8,7 @@
 
 import { $, esc, applyCss, onRender } from "../core/dom.js";
 import { app, av, toast, ic, closePop, closeDlg } from "../core/ui.js";
-import { E, refresh } from "../core/state.js";
+import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
@@ -34,7 +34,7 @@ function accounts() {
   return `<h1>${t("window.flows.first.accounts")}</h1><p class="lede">${t("window.flows.first.accounts-lede")}</p><div class="ways">${rows}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-next">${t("action.next")}</button></div>`;
 }
 function apps() {
-  const rows = F.channels.slice(0, 4).map((c) => `<button class="way" type="button" data-act="ch-open" data-v="${esc(c.id)}"><span data-css="display:flex;align-items:center;gap:10px">${logo(c.id, c.name, 26)}<b>${esc(c.name)}</b></span><small>${t("window.flows.first.two-minutes")}</small></button>`).join("");
+  const rows = F.channels.slice(0, 4).map((c) => `<button class="way" type="button" data-act="ch-open" data-v="${esc(c.id)}"><span data-css="display:flex;align-items:center;gap:10px">${logo(c.id, c.name, 26)}<b>${esc(c.name)}</b></span><small>${t("window.flows.first.guided")}</small></button>`).join("");
   return `<h1>${t("window.flows.first.anywhere")}</h1><p class="lede">${t("window.flows.first.anywhere-lede")}</p><div class="ways">${rows}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-next">${t("action.next")}</button><button class="btn ghost" type="button" data-act="fr-next">${t("window.flows.first.later")}</button></div>`;
 }
 function recs() {
@@ -159,6 +159,9 @@ function welcome() {
 function placeWelcome() {
   const card = $(".welcome10"), dock = $("#main .dock"), root = app();
   if (!card || !root) return;
+  /* It belongs to the conversation, where it keeps clear of the message box; over Settings or a place it would sit on
+     their own controls (the Appearance language picker, a card's buttons), so there it waits unseen. */
+  card.hidden = S.view !== "chat";
   const over = dock?.getClientRects().length ? root.getBoundingClientRect().bottom - dock.getBoundingClientRect().top + 12 : 0;
   card.style.bottom = over > 0 ? `${Math.round(over)}px` : "";
 }

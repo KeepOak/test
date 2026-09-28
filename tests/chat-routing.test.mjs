@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, on } from "./trunks-helpers.mjs";
+import { fixture, on, setupTrunk } from "./trunks-helpers.mjs";
 import { parentScope, bindingFor, channelRoutes, ChannelRouteSchema } from "../dist/channels/routes.js";
 import { chatThread } from "../dist/channels/threads.js";
 import { startServer } from "../dist/server.js";
@@ -11,8 +11,10 @@ const message = (text, extra = {}) => ({ channel: "chat", chatId: "dm", chatKind
   senderName: "Owner", addressed: true, messageId: `m${++serial}`, text, ...extra });
 async function setup(t, options = {}) {
   const f = await fixture(t); const { app } = f; on(app);
-  const ada = app.trunks.create({ name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
-  app.trunks.edit(bo.id, { reach: { channels: ["chat", "slack", "matrix"], commands: false } });
+  // Ada is made in setup's own request, so she is the default Trunk (#625); a Trunk made later never is by age alone.
+  const ada = setupTrunk(app, { name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
+  // #594: a Trunk answers in a chat app only where its reach allows it, the default Trunk included.
+  for (const trunk of [ada, bo]) app.trunks.edit(trunk.id, { reach: { channels: ["chat", "slack", "matrix"], commands: false } });
   await app.trunks.introduced();
   app.channels.mergeWindowMs = 0;
   const sent = [];

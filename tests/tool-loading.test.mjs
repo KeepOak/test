@@ -505,3 +505,12 @@ test("under the token ceiling a tool in use goes last, after one that only won a
   const shown = loadedUnder(tools, (whole) => whole - Math.ceil(one / 2), (loader) => { loader.noteUse("alpha.x"); loader.noteUse("alpha.y"); }, "alpha x y beta z");
   assert.deepEqual(shown.sort(), ["alpha.x", "alpha.y"], "both tools in use stay; the guess goes");
 });
+
+test("selfdev: a tool the task named in tools.describe travels in full next round, even past the ceiling", () => {
+  // tools.describe says "loaded, call it now"; a model whose tools are its own can call only what its list holds.
+  const tools = [boxed("alpha.big", 160), boxed("alpha.small"), boxed("beta.one", 160), boxed("beta.two", 160)];
+  const named = ["beta.one", "beta.two"];
+  const shown = loadedUnder(tools, () => 40, (loader) => { loader.describe(named); });
+  for (const name of named) assert.ok(shown.includes(name), `${name} was named and travels (${shown.join(", ")})`);
+  assert.ok(!shown.includes("alpha.big"), "a guess goes to make room");
+});

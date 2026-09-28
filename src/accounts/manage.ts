@@ -198,8 +198,9 @@ export function switchAccount(service: AccountsService, input: unknown) {
     pool.defaultAccount = account.id;
     save(service, settings);
   }
-  return { pool: pool.pool, account: account.id, label: account.label, scope: asked.sessionId ? "conversation" : "default",
-    message: asked.sessionId ? `This conversation now uses "${account.label}".` : `New work now uses "${account.label}".` };
+  const label = service.presentation(pool.pool, account, pool.kind).label;
+  return { pool: pool.pool, account: account.id, label, scope: asked.sessionId ? "conversation" : "default",
+    message: asked.sessionId ? `This conversation now uses "${label}".` : `New work now uses "${label}".` };
 }
 
 /* ---------- what the screens read ---------- */
@@ -220,6 +221,7 @@ export function viewPool(service: AccountsService, pool: Pool) {
       const state = service.stateOf(pool.pool, account.id);
       return {
         ...account,
+        ...(!others ? service.presentation(pool.pool, account, pool.kind) : {}),
         ...(others ? { monthlyCapUsd: null } : {}),
         usage: others ? { requests: 0, input: 0, output: 0, costUsd: 0, lastUsedAt: null }
           : service.ledger.month(service.deps.owner, pool.pool, account.id, new Date(now)),
@@ -253,6 +255,18 @@ export function connectionName(service: AccountsService, pool: string): string {
   return program?.name ?? pool;
 }
 
+/**
+ * QA retest 2026-09-28 (m8): the list of the model that answers now (the owner's default), or null when that model has no
+ * list (one on this computer). A list's "used next" is only true of the list the next answer comes from.
+ */
+function answeringPool(service: AccountsService): string | null {
+  const models = service.deps.models;
+  if (!models.configured) return null;
+  const id = models.plan(service.deps.owner, "").choice.presetId;
+  const preset = models.presets.get(id);
+  return preset ? service.poolFor(preset)?.pool ?? null : null;
+}
+
 /** Every connection that can have several accounts, with its list (a list of one until more are added). */
 export async function viewAll(service: AccountsService) {
   const settings = service.settings();
@@ -267,18 +281,23 @@ export async function viewAll(service: AccountsService) {
   // Integration review (phase2/accounts): `household` lets the page leave out the owner's cards even
   // when nothing is shared with them (an empty list says nothing about whose view it is).
   if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
-  const pools = [];
+  await service.readIdentities();
+  if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
+  const pools = [], answering = answeringPool(service);
   for (const [id, about] of seen) {
     const draft = { ...settings, pools: [...settings.pools] };
     const view = viewPool(service, poolOf(draft, id, about.kind, new Date(service.now())));
-    const signIn = about.kind === "chatgpt" ? await signInState(service, view.accounts.map((a) => a.id)) : null;
+    const signIn = about.kind === "chatgpt" ? await signInState(service, view.accounts.map((a) => a.id))
+      : about.kind === "cli" ? { signedIn: Object.fromEntries(view.accounts.map((a) => [a.id, a.signedIn])), problems: Object.fromEntries(view.accounts.map((a) => [a.id, a.signInProblem])) } : null;
+    if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
     // mac7/account-pooling: the one-time notice is the owner's alone to read.
     const notice = !someoneElse(service) && settings.poolingNotices.includes(id)
       ? { key: "accounts.notice.own-plans", service: about.name, text: poolingNotice(about.name) } : null;
     // An extra ChatGPT account whose sign-in turned out to be one Branch already had was merged into it (src/accounts/dedupe.ts).
     const merged = about.kind === "chatgpt" && service.mergedInto.size ? { mergedInto: Object.fromEntries(service.mergedInto) } : {};
-    pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
+    pools.push({ ...view, name: about.name, answering: id === answering, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
   }
+  if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
   return { mode: settings.mode, pools };
 }
 /**
@@ -300,8 +319,10 @@ function sharedWithPerson(service: AccountsService, seen: Map<string, { name: st
 async function signInState(service: AccountsService, ids: string[]) {
   const signedIn: Record<string, boolean> = {}, problems: Record<string, string | null> = {};
   for (const id of ids) {
+    if (someoneElse(service)) break;
     if (id === primaryAccount) { signedIn[id] = service.legacySignedIn; problems[id] = null; continue; }
     const status = await service.chatgptAccounts.auth(id).status();
+    if (someoneElse(service)) break;
     signedIn[id] = status.signedIn;
     problems[id] = status.lastError;
   }
@@ -322,8 +343,9 @@ export function viewSession(service: AccountsService, sessionId: string) {
   if (!visible.length) return { on: true, pool: null };
   const active = visible.find((account) => account.id === (chosen ?? pool.defaultAccount)) ?? visible[0]!;
   return {
-    on: true, pool: pool.pool, kind: pool.kind, account: active.id, label: active.label,
+    on: true, pool: pool.pool, kind: pool.kind, account: active.id, label: someoneElse(service) ? active.label : service.presentation(pool.pool, active, pool.kind).label,
     chosenHere: chosen !== null,
-    accounts: visible.filter((account) => !account.disabled).map((account) => ({ id: account.id, label: account.label })),
+    accounts: visible.filter((account) => !account.disabled).map((account) => ({ id: account.id,
+      ...(someoneElse(service) ? { label: account.label } : service.presentation(pool.pool, account, pool.kind)) })),
   };
 }

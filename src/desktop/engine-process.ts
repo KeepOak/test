@@ -6,6 +6,7 @@
  * What only the main process can do (the device's key store, a window for the Stop notice, the Mac login item,
  * quitting the app) is asked of it over the private message channel (src/desktop/engine-link.ts).
  */
+import { setWindowShown } from "../environment.js";
 import { join } from "node:path";
 import { createBranch } from "../index.js";
 import { realDeviceNetwork } from "../devices/network.js";
@@ -39,6 +40,9 @@ const vault: TokenVault = {
   write: (tokens) => link.call<void>("vault-write", tokens),
   clear: () => link.call<void>("vault-clear"),
 };
+
+// Whether the window is shown, as main says each time it changes (src/environment.ts tells the model).
+listeners.set("window", (args) => { const shown = (args as { shown?: unknown } | undefined)?.shown; setWindowShown(typeof shown === "boolean" ? shown : null); });
 
 /** The Stop notice on a Mac or Linux is a window of main's; it says so when the window goes. */
 function remoteBanner(): BannerWindowFactory {
@@ -122,6 +126,9 @@ async function start(config: EngineConfig): Promise<void> {
     branch.browser = integrations.hosted.browser ?? null;
     branch.studies.browser = integrations.hosted.browser;
     branch.issues = integrations.hosted.issues ?? null;
+    // The firewall card says what the browser may open, as the command-line launch does (src/cli.ts).
+    branch.reach = { browserOrigins: integrations.hosted.browserOrigins ?? [], browserAnyWebsite: integrations.hosted.browserAnyWebsite === true,
+      commandsMayReachInternet: integrations.hosted.commandsNetless !== true };
     // Q45 leaf 0: the same port as last time when it is free, so the page's own stored choices survive a restart.
     const portFile = join(config.dataDir, "local-port.json");
     const server = await startServer(branch, {

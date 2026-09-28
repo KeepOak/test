@@ -53,6 +53,8 @@ Small documentation corrections can go directly into a pull request.
 
 Use descriptive commits, such as `feat: add task routing` or `docs: clarify setup`.
 
+To keep parallel pull requests from colliding: put new window styles in `public/app/styles/<area>.css` (linked from `public/index.html` after `app.css`, sorted by name), never at the end of `public/app.css`; keep `public/locales/*.json` sorted with `node scripts/locale-order.mjs`; and run `node scripts/setup-merge-drivers.mjs` once per clone so the locale files merge by key.
+
 Maintainers review contributions and decide what is merged. Community participation does not require direct write access to the repository.
 
 ## Contribution terms
