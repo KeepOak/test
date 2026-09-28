@@ -98,6 +98,14 @@ test("Edit Trunk › Accounts: an account picked for a connection is saved, reac
   await openAccounts(page, trunk.id);
   assert.equal(await page.locator(`.dlg [data-tk-pool="${POOL}"]`).getAttribute("value"), second);
 
+  /* A paused account is listed but cannot be taken. */
+  await call("/api/accounts/update", { pool: POOL, account: "primary", disabled: true });
+  await reload(page);
+  await openAccounts(page, trunk.id);
+  const primary = (await gselChoices(page.locator(`.dlg [data-tk-pool="${POOL}"]`))).find((c) => c.value === "primary");
+  assert.equal(primary.off, true, "a paused account cannot be picked");
+  assert.match(primary.words, /can't answer now/);
+
   /* Back to no pick: the key goes, and the chat goes back to the owner's default. */
   await pickGsel(page.locator(`.dlg [data-tk-pool="${POOL}"]`), "");
   await waitFor(async () => !(POOL in (await call(`/api/trunks/${trunk.id}`)).trunk.keys.accounts));
@@ -136,8 +144,17 @@ test("Settings › Models › Second opinion is live: the switch, who checks and
   await page.locator("#m-second-max").fill("9000");
   await page.locator("#m-second-max").press("Tab");
   await waitFor(async () => (await call("/api/second-opinion")).advisorMaxTokens === 9000);
-  const kept = await call("/api/second-opinion");
+  let kept = await call("/api/second-opinion");
   assert.deepEqual(kept, { advisor: true, advisorPreset: POOL, advisorMaxTokens: 9000, debateExchanges: 2, debateMaxTokens: 90000 });
+  /* The debate's own limits, from the same card. */
+  assert.equal(await page.locator('[data-act="m-debate-rounds"][data-v="2"]').getAttribute("aria-pressed"), "true");
+  await page.locator('[data-act="m-debate-rounds"][data-v="3"]').click();
+  await waitFor(async () => (await call("/api/second-opinion")).debateExchanges === 3);
+  await page.locator("#m-debate-max").fill("120000");
+  await page.locator("#m-debate-max").press("Tab");
+  await waitFor(async () => (await call("/api/second-opinion")).debateMaxTokens === 120000);
+  kept = await call("/api/second-opinion");
+  assert.equal(kept.advisorMaxTokens, 9000, "the check's own ceiling is kept");
 
   await reload(page);
   await openModels(page, "second");

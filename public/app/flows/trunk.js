@@ -213,7 +213,9 @@ const accountName = (pool, a) => poolById(pool)?.accounts?.find((x) => x.id === 
 function poolRow(tr, pool, keys) {
   const picked = keys.accounts[pool.id] ?? "", known = pool.accounts.some((a) => a.id === picked);
   const none = keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-none");
-  const options = [["", none], ...pool.accounts.map((a) => [a.id, accountName(pool.id, a)])];
+  /* An account the accounts screen says cannot answer now (signed out, a duplicate, paused) is shown but cannot be taken. */
+  const ready = (a) => poolById(pool.id)?.accounts?.find((x) => x.id === a.id)?.ready !== false;
+  const options = [["", none], ...pool.accounts.map((a) => [a.id, ready(a) ? accountName(pool.id, a) : t("window.flows.trunk.acc-not-ready", { name: accountName(pool.id, a) }), !ready(a) && a.id !== picked])];
   const label = t("window.flows.trunk.acc-pick-for", { name: pool.label });
   const pick = gsel({ sw: "tk-pool", label, options, value: known ? picked : "", attrs: `data-tk-pool="${esc(pool.id)}" data-id="${esc(tr.id)}"` });
   return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)}</b><span class="right">${pick}</span><small></small></div>`;
