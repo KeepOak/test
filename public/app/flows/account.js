@@ -29,7 +29,7 @@ export async function loadAccounts() {
 export const pools = () => A.view?.pools ?? [];
 export const poolById = (id) => pools().find((p) => p.pool === id);
 /* Every account in the engine's order, pool by pool, with the pool's own facts beside it. */
-export const allAccounts = () => pools().flatMap((p) => p.accounts.map((a) => ({ ...a, pool: p.pool, poolName: p.name ?? p.pool, kind: p.kind, first: p.defaultAccount === a.id && a.ready === true })));
+export const allAccounts = () => pools().flatMap((p) => p.accounts.map((a) => ({ ...a, pool: p.pool, poolName: p.name ?? p.pool, kind: p.kind, first: p.defaultAccount === a.id && a.ready === true, answering: p.answering === true })));
 export const accountDetail = (a, service) => [a.customLabel, a.identity?.organization, service, a.signInProblem].filter(Boolean).join(" · ");
 const accountOf = (el) => allAccounts().find((a) => a.pool === el.dataset.pool && a.id === el.dataset.id);
 /* A household person (GET /api/profiles names them as active) may look, but every change is the owner's: the engine
