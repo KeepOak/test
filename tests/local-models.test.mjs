@@ -499,3 +499,13 @@ test("L6 pictures and context length are read from what the runtime reports", ()
   assert.equal(contextLengthOf({ "llama.context_length": 8192, "general.parameter_count": 3 }), 8192);
   assert.equal(contextLengthOf(undefined), null);
 });
+
+test("local-runtime health is red, not optional, when a connection answers from this computer and nothing runs here", async () => {
+  const nothing = async () => { throw new Error("connection refused"); };
+  const runtimes = new LocalRuntimes({ ollamaBaseUrl: "http://127.0.0.1:9", lmStudioBaseUrl: "http://127.0.0.1:9", fetch: nothing });
+  const optional = await runtimes.health();
+  assert.equal(optional.ok, true, "with no connection here, a missing runtime is only optional");
+  const needed = await runtimes.health(true);
+  assert.equal(needed.ok, false);
+  assert.match(needed.summary, /answers from this computer, but no model is running here/);
+});
