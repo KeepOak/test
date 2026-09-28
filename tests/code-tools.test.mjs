@@ -129,10 +129,16 @@ test("a patch keeps Windows line endings and refuses a file it cannot change", a
   });
   assert.equal(await read(workspace, "windows.txt"), "one\r\nTWO\r\n");
 
-  await put(workspace, "big.txt", "x".repeat(40000));
+  // selfdev: a large file (Branch's own docs are a megabyte) is changed in place; past 8 MiB it is refused.
+  await put(workspace, "big.txt", `${"x".repeat(40000)}\nlast\n`);
+  await app.runtime.executeTool("files.patch", {
+    patch: ["--- a/big.txt", "+++ b/big.txt", "@@ -2,1 +2,1 @@", "-last", "+LAST", ""].join("\n"),
+  });
+  assert.equal(await read(workspace, "big.txt"), `${"x".repeat(40000)}\nLAST\n`);
+  await put(workspace, "huge.txt", `${"x".repeat(9 * 1024 * 1024)}\nlast\n`);
   await assert.rejects(app.runtime.executeTool("files.patch", {
-    patch: ["--- a/big.txt", "+++ b/big.txt", "@@ -1,1 +1,1 @@", "-x", "+y", ""].join("\n"),
-  }), /larger than 32 KiB/);
+    patch: ["--- a/huge.txt", "+++ b/huge.txt", "@@ -2,1 +2,1 @@", "-last", "+LAST", ""].join("\n"),
+  }), /larger than 8 MiB/);
 });
 
 test("files.edit refuses an ambiguous replacement and records the change it does make", async (t) => {
