@@ -1,7 +1,7 @@
 /* Settings area: one nav panel, one page at a time. Every page is in pages/<id>.js; parts.js has shared helpers.
    Search uses a module variable (not S.setQ) to persist between draws without rebuilding state. */
 
-import { $, esc, renderNow, paint } from "../core/dom.js";
+import { $, esc, renderNow, paint, afterDraw } from "../core/dom.js";
 import { S, E, level, save, ownerHere } from "../core/state.js";
 import { on, has } from "../core/actions.js";
 import { ic, closePop } from "../core/ui.js";
@@ -190,6 +190,15 @@ export function draw() {
     </nav>
     <div class="set-page"><div class="set-col">${pageContent}</div></div>
   </div>`;
+}
+
+/* Where the person was before Settings (a conversation or a place), so Esc takes them back there: the "?" list's
+   "Close anything: Esc" (QA pass 2). Read after every drawing, so it is whatever was last on screen outside Settings. */
+let before = "chat";
+afterDraw(() => { if (S.view !== "settings") before = S.view; });
+export function leaveSettings() {
+  S.view = before;
+  renderNow();
 }
 
 export function init() {

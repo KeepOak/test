@@ -105,3 +105,26 @@ test("the window works from the keyboard: conversations by number and in turn, t
   assert.deepEqual(unringed, [], "every stop shows where the keyboard is");
   assert.deepEqual(errors, []);
 });
+
+/* QA pass 2: the "?" list says "Close anything: Esc", and Esc in Settings closes it back to where the person was: a
+   place stays that place, a conversation that conversation. A popover or a dialog in Settings closes first.
+   Mutation: in public/app/main.js escape() drop the settings branch and this goes red. */
+test("Esc closes Settings back to where you were", async (t) => {
+  const { page, errors } = await newWindow(t, { provider });
+  await page.evaluate(async () => { window.__S = (await import("/app/core/state.js")).S; });
+  const mod = "ControlOrMeta";
+  await page.locator('#side [data-act="view"][data-v="inbox"]').first().click();
+  await page.waitForFunction(() => window.__S.view === "inbox");
+  await page.keyboard.press(`${mod}+Comma`);
+  await page.waitForFunction(() => window.__S.view === "settings");
+  await page.locator('[data-act="setlevel"][data-v="advanced"]').click(); // something in Settings has the keyboard
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__S.view === "inbox");
+  await page.evaluate(() => { const b = Object.assign(document.createElement("button"), { type: "button" }); b.dataset.act = "view"; b.dataset.v = "chat"; document.body.append(b); b.click(); b.remove(); });
+  await page.waitForFunction(() => window.__S.view === "chat" && document.querySelector("#prompt"));
+  await page.keyboard.press(`${mod}+Comma`);
+  await page.waitForFunction(() => window.__S.view === "settings");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__S.view === "chat");
+  assert.deepEqual(errors, []);
+});

@@ -18,6 +18,7 @@ import { openConversation, rereadOpen } from "./chat/chat.js";
 import { forgetChips } from "./chat/chips.js";
 import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
+import { leaveSettings } from "./settings/settings.js";
 import { splash, splashDone } from "./shell/inperson.js";
 import { initLanguage, t } from "../i18n.js";
 
@@ -179,12 +180,14 @@ async function boot() {
   splashDone();
 }
 
-/* Escape, as the prototype's: the popover, else the dialog, else Focus mode; and the phone's list closes. */
+/* Escape, as the prototype's: the popover, else the dialog, else Focus mode, else Settings back to where the person was;
+   and the phone's list closes. */
 function escape() {
   const app = $("#app");
   if (document.querySelector(".pop")) closePop({ refocus: true });
   else if (dialog()) closeDlg();
   else if (app?.classList.contains("focus")) { app.classList.remove("focus"); renderNow(); }
+  else if (S.view === "settings") leaveSettings();
   app?.classList.remove("side-open");
 }
 
