@@ -1199,9 +1199,15 @@ export class BranchBrowser {
           // live-stage: kept before anything is typed, so no frame of the window is taken with the value showing.
           await this.keepFilled(this.entry(context), page, found);
           check();
+          // RES-710 review: a Locator finds its box again when it types, so the page could move between the check
+          // above and the typing. The box is held as it is now, the website is checked once more just before, and a
+          // page that moves after that takes the box away with it (fill then throws).
+          const held = await found.elementHandle({ timeout: 2000 }).catch(() => null);
+          if (!held) throw new Error(`Branch could not find that ${box} box.`);
+          if (host && hostOf(page.url()) !== host.toLowerCase()) { await held.dispose(); throw new Error('The page moved to another website, so nothing was typed.'); }
           // Nothing thrown from inside `fill` is passed on: a page library writes what it was asked
           // to type into its own message, and that message must never leave this method.
-          try { await found.fill(value); } catch { throw new Error(`Branch could not type into that ${box} box.`); }
+          try { await held.fill(value); } catch { throw new Error(`Branch could not type into that ${box} box.`); } finally { await held.dispose().catch(() => undefined); }
           return { typed: box };
         });
       },
