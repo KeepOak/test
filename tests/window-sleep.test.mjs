@@ -15,7 +15,31 @@ import { startServer } from "../dist/server.js";
 
 const MIN = 60 * 1000;
 
-async function fixture(t) {
+async function syncSetup(page, delayRefresh) {
+  let release = () => {}, received = () => {}, finished = false;
+  const held = new Promise((resolve) => { release = resolve; });
+  const captured = new Promise((resolve) => { received = resolve; });
+  const delayed = async (route) => { const response = await route.fetch(); received(); await held; await route.fulfill({ response }); };
+  if (delayRefresh) await page.route("**/api/state", delayed, { times: 1 });
+  const ready = page.evaluate(async () => {
+    const { refresh, E } = await import("/app/core/state.js"), { renderNow } = await import("/app/core/dom.js");
+    await refresh();
+    renderNow();
+    if ((E.state?.runs ?? []).some((run) => ["running", "queued"].includes(run.status))) throw new Error("Sleep fixture still has setup tasks running");
+  }).then(() => { finished = true; });
+  try {
+    if (delayRefresh) {
+      let timeout;
+      try { await Promise.race([captured, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Setup refresh was never captured")), 30000); })]); }
+      finally { clearTimeout(timeout); }
+      assert.equal(finished, false, "clock readiness waits for the deliberately held engine refresh");
+      release();
+    }
+    await ready;
+  } finally { release(); if (delayRefresh) await page.unroute("**/api/state", delayed); }
+}
+
+async function fixture(t, { delayRefresh = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-sleep-"));
   let release = () => {};
   const held = new Promise((resolve) => { release = resolve; });
@@ -41,6 +65,7 @@ async function fixture(t) {
     if (character) await call(`/api/trunks/${trunk.id}`, { character });
     trunks[name] = trunk;
   }
+  await app.trunks.introduced(); // creation returns before its model task completes; a late reply correctly wakes the window
   await call("/api/delight/settings", { pets: { on: true, kind: "fennec" }, background: { on: true } });
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, reducedMotion: "no-preference", serviceWorkers: "block" });
   const errors = [];
@@ -51,6 +76,22 @@ async function fixture(t) {
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("#side .keeper .petbox").waitFor({ state: "attached" });
+  /* Finish the last coherent engine snapshot and draw before ageing it. Sidebar visibility alone precedes live
+     refreshes; a response arriving after fastForward is new activity at that time. Keep rAF running for real decoding. */
+  await syncSetup(page, delayRefresh);
+  await page.evaluate(async () => {
+    const { E, S } = await import("/app/core/state.js"), { afterDraw } = await import("/app/core/dom.js");
+    const { windowRest } = await import("/app/core/sleep.js");
+    const trace = [];
+    const snapshot = (event) => ({ event, at: Date.now(), rest: windowRest(), classes: document.documentElement.className,
+      chat: S.chat, runs: (E.state?.runs ?? []).map(({ id, status }) => [id, status]) });
+    const record = (event) => { trace.push(snapshot(event)); if (trace.length > 30) trace.shift(); };
+    for (const event of ["focus", "pointermove", "pointerdown", "keydown"]) addEventListener(event, () => record(event));
+    afterDraw(() => record("draw"));
+    window.sleepTestDiagnostic = () => ({ now: snapshot("failure"), trace,
+      videos: [...document.querySelectorAll("video")].map((video) => ({ source: video.getAttribute("src"), paused: video.paused,
+        key: video.closest("[data-rk]")?.dataset.rk, classes: video.closest("[data-rk]")?.className })) });
+  });
   const work = () => { app.runtime.run({ prompt: "keep working", sessionId: trunks.Busy.chatSessionId }).catch(() => {}); };
   return { page, errors, trunks, work };
 }
@@ -58,9 +99,21 @@ async function fixture(t) {
 const face = (page, trunk) => page.locator(`#side [data-rk="t:${trunk.id}"]`).first();
 const loopOf = (page, trunk) => face(page, trunk).evaluate((el) => el.querySelector("video")?.getAttribute("src") ?? el.querySelector("img")?.getAttribute("src") ?? "");
 const playing = (page) => page.evaluate(() => [...document.querySelectorAll("video")].filter((v) => !v.paused).length);
-const open = (page, trunk) => page.evaluate((id) => document.querySelector(`#side [data-id="${id}"]`)?.click(), trunk.chatSessionId);
+async function waitFor(page, predicate, arg) {
+  try { await page.waitForFunction(predicate, arg); }
+  catch (error) {
+    const detail = `\nSleep diagnostic: ${JSON.stringify(await page.evaluate(() => window.sleepTestDiagnostic()).catch(() => ({ unavailable: true })))}`;
+    error.message += detail;
+    error.stack += detail;
+    throw error;
+  }
+}
+const open = (page, trunk) => page.evaluate(async (id) => {
+  const { openConversation } = await import("/app/chat/chat.js");
+  await openConversation(id); // finish its message/extras reads before advancing the clock
+}, trunk.chatSessionId);
 /* Waits (no fixed sleep) until a face's loop matches, and, with still, until that loop is paused. */
-const settled = (page, trunk, pattern, still = false) => page.waitForFunction(([id, source, still]) => {
+const settled = (page, trunk, pattern, still = false) => waitFor(page, ([id, source, still]) => {
   const el = document.querySelector(`#side [data-rk="t:${id}"]`), v = el?.querySelector("video");
   const src = v?.getAttribute("src") ?? el?.querySelector("img")?.getAttribute("src") ?? "";
   return new RegExp(source).test(src) && (!still || !!v?.paused);
@@ -71,16 +124,16 @@ async function busy(page, ms) {
 }
 
 test("left alone, every face, the pet and the scene fall asleep; after ten minutes nothing plays", async (t) => {
-  const { page, errors, trunks } = await fixture(t);
+  const { page, errors, trunks } = await fixture(t, { delayRefresh: true });
   await page.clock.fastForward(2 * MIN + 5000);
-  await page.waitForFunction(() => document.documentElement.classList.contains("doze18") && !!document.querySelector("#side .petbox.zz11"));
+  await waitFor(page, () => document.documentElement.classList.contains("doze18") && !!document.querySelector("#side .petbox.zz11"));
   await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "a character plays its sleeping loop");
   assert.equal(await face(page, trunks.Ledger).evaluate((el) => el.classList.contains("rest18")), true);
   assert.equal(await page.locator("#side .petbox.zz11").count(), 1, "the pet naps");
   assert.equal(await page.locator("#bgLayer .paint11").evaluate((el) => el.getAnimations().every((a) => a.playState === "paused")), true, "the scene's drift holds");
   await page.clock.fastForward(8 * MIN + 5000);
-  await page.waitForFunction(() => document.documentElement.classList.contains("still18")
+  await waitFor(page, () => document.documentElement.classList.contains("still18")
     && [...document.querySelectorAll("video")].every((v) => v.paused) && !document.getAnimations().some((a) => a.playState === "running"));
   assert.equal(await playing(page), 0, "no loop plays after the long sleep");
   assert.equal(await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length), 0, "no CSS animation runs");
@@ -106,9 +159,9 @@ test("only the open conversation's Trunk stays awake while you use the window; h
 test("input wakes the window and the open conversation's face at once, gently", async (t) => {
   const { page, errors, trunks } = await fixture(t);
   await page.clock.fastForward(10 * MIN + 5000);
-  await page.waitForFunction(() => document.documentElement.classList.contains("still18"));
+  await waitFor(page, () => document.documentElement.classList.contains("still18"));
   await page.mouse.move(700, 400);
-  await page.waitForFunction(() => !document.documentElement.classList.contains("doze18"));
+  await waitFor(page, () => !document.documentElement.classList.contains("doze18"));
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains("wake18")), true, "the window plays its wake");
   assert.equal(await page.locator("#side .petbox.zz11").count(), 0, "the pet wakes");
   assert.match(await page.locator(".hero11 video").getAttribute("src"), /anim-idle/, "Branch, whose conversation is open, wakes");
@@ -120,7 +173,7 @@ test("input wakes the window and the open conversation's face at once, gently", 
 test("a Trunk at work never sleeps", async (t) => {
   const { page, errors, trunks, work } = await fixture(t);
   work();
-  await page.waitForFunction((id) => document.querySelector(`#side [data-rk="t:${id}"]`)?.dataset.st === "work", trunks.Busy.id, { timeout: 30000 });
+  await waitFor(page, (id) => document.querySelector(`#side [data-rk="t:${id}"]`)?.dataset.st === "work", trunks.Busy.id);
   await page.clock.fastForward(10 * MIN + 5000);
   await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Busy), /tide\/work/, "its working loop stays");
