@@ -433,7 +433,7 @@ test("Matrix holds a request open, retries with a widening wait, and stops when 
   await app.channels.attach(adapter, { activation: "mention", pairing: false, allowlist: ["@alice:example.org"] });
 
   await until(() => adapter.health().state === "reconnecting" || syncs.length > 1, "the first failure is retried");
-  const sent = await until(() => sends[0], "an answer in the room");
+  const sent = await until(() => sends.find(({ path }) => path.includes('/send/m.room.message/')), "an answer in the room");
   assert.match(sent.path, /^\/_matrix\/client\/v3\/rooms\/!room%3Aexample\.org\/send\/m\.room\.message\//);
   assert.match(sent.body.body, /are you awake/);
   assert.equal(sent.headers.authorization, `Bearer ${TOKEN}`);
