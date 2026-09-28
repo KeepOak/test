@@ -114,3 +114,18 @@ test("the owner's own Trunk runs npm and git unwalled; a Trunk the owner set to 
   assert.equal(existsSync(join(root, "careful.txt")), false, "a sandboxed Trunk cannot write outside the workspace");
   assert.ok(app.store.events(held.run.id).some((event) => event.kind === "sandbox.outside_caller" && /sandboxed/.test(event.data.who)));
 });
+
+/* Q4: the owner's other computers are reached over SSH, which no wall here can hold, so only the owner's own work may use
+   them. Mutation: take remoteTools out of the beforeTool check in src/index.ts and the refusals go. */
+test("the owner's other computers are refused to anyone but the owner, and stay the owner's own", async (t) => {
+  const { asTask } = await fixture(t);
+  const own = await asTask({}, "remote.list", {});
+  assert.equal(own.error, undefined, own.error);
+  assert.deepEqual(own.result.computers, []);
+  for (const [started, who] of [[{ personProfileId: "p1" }, /household person/], [{ shortLivedKey: true }, /a key/], [{ source: "a2a" }, /another program/], [{ lentTo: "profile:p2" }, /lent conversation/]])
+    for (const tool of ["remote.list", "remote.run"]) {
+      const { error } = await asTask(started, tool, tool === "remote.run" ? { computer: "tower", program: "ls", args: [] } : {});
+      assert.match(error ?? "", /is not run for/, `${tool} for ${JSON.stringify(started)}`);
+      assert.match(error ?? "", who);
+    }
+});

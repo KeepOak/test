@@ -58,7 +58,7 @@ import { registerSessions } from "./sessions.js";
 import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
-import { heldOnly, outsideCaller, outsideProgramRefusal } from "./outside-commands.js";
+import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
 import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
@@ -859,9 +859,10 @@ export async function createBranch(options: {
       && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
     // RES-253 (src/outside-commands.ts): a program started for someone other than the owner is held to the workspace
     // behind the system's own wall, with no network, or refused where no wall can run.
-    const who = !walledTools.includes(name) || !context.runId ? null
+    const who = !(walledTools.includes(name) || remoteTools.includes(name)) || !context.runId ? null
       : outsideCaller(runOrigin(store, context.runId)) ?? (trunkSandboxed(context.trunk) ? "a Trunk the owner set to run sandboxed" : null);
     if (!who) return held;
+    if (remoteTools.includes(name)) throw new Error(outsideRemoteRefusal(who, name));
     if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
     store.event(context.runId, "sandbox.outside_caller", { tool: name, who });
     return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.workspace };

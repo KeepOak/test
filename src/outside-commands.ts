@@ -26,5 +26,12 @@ export function outsideCaller(origin: RunOrigin): string | null {
 
 /** The tools that start a program; only a command can be held to one folder, so the other two are refused. */
 export const heldOnly = "shell.execute";
+/**
+ * The owner's other computers (src/remote/ssh-workspace.ts) are reached over SSH, which no wall on this computer can hold:
+ * every byte goes through ssh to a computer that can reach anything. So they are the owner's own work alone.
+ */
+export const remoteTools: readonly string[] = ["remote.list", "remote.files", "remote.read", "remote.run"];
+export const outsideRemoteRefusal = (who: string, tool: string): string =>
+  `${tool} is not run for ${who}: the owner's other computers are reached over SSH, which nothing here can hold back, so only the owner's own work may use them.`;
 export const outsideProgramRefusal = (who: string, tool: string): string =>
   `${tool} is not run for ${who}: a program started for someone other than the owner runs only as a command (shell.execute), held to the workspace with no network.`;
