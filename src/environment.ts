@@ -76,8 +76,9 @@ export function environmentTool(channelOf: (runId: string) => string | null): To
     // skills.read: on the short list every chat has (src/channels/chat-permissions.ts), and like it only reads.
     // Not always open: the line in the system text already answers "which device are you on?", and every always-open
     // tool takes a place a task's own toolboxes need. It sits with how Branch is set up (the settings toolbox).
-    name: "environment.about", permission: "skills.read", reach: "local", group: "settings",
+    name: "environment.about", permission: "skills.read", reach: "local",
     description: "This computer and how Branch runs on it: name, operating system, processor, memory, desktop app or background gateway, the chat app a message came in on, local time and time zone.",
+    group: "settings",
     parameters: z.object({}).strict(),
     execute: async (_input, context) => {
       void _input;
