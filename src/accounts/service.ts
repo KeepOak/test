@@ -148,7 +148,7 @@ export class AccountsService {
   }
   private async readClaude(pool: string, account: string): Promise<PlanWindowSaid[]> {
     const env = strippedEnvironment();
-    if (account !== primaryAccount) env[accountHomeVariables["claude-code"]!] = this.homeOf(pool, account);
+    env[accountHomeVariables["claude-code"]!] = account === primaryAccount ? this.primaryClaudeHome : this.homeOf(pool, account);
     const asked = this.claudeReads.then(() => (this.deps.claudeUsage ?? runClaudeUsage)(env));
     this.claudeReads = asked.catch(() => undefined);
     const answer = await asked;

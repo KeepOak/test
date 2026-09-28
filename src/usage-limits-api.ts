@@ -8,6 +8,7 @@ import { presetRunsLocally, type ModelRouter } from "./models.js";
 import { primaryAccount } from "./accounts/settings.js";
 import { planLimitWindow } from "./plan-windows.js";
 import type { Store } from "./store.js";
+import type { SessionLock } from "./session-lock.js";
 import { limitsView, saveUsageLimitsSettings, usageLimitsSettings, type LimitsAccount, type LimitsView } from "./usage-limits.js";
 import { askable, nextDelayMs, OpenRouterKeyReader } from "./usage-limits-openrouter.js";
 import { glanceFrom, saveProgressNote, saveUsageGlanceSettings, usageGlanceSettings, type GlanceMonth, type UsageGlance } from "./usage-glance.js";
@@ -36,6 +37,7 @@ export class UsageLimitsError extends Error {
 
 interface LimitsApp {
   store: Store;
+  sessionLock?: Pick<SessionLock, "refusal">;
   runtime: { owner: string; models: ModelRouter; steer?: (runId: string, text: string) => unknown };
 }
 
@@ -173,6 +175,14 @@ export function usageGlance(app: LimitsApp, now = Date.now()): UsageGlance {
   return addable.length && glance.available ? { ...glance, addable } : glance;
 }
 
+/** The window's first reading includes verified identities; owner visibility is checked again after the await. */
+export async function readUsageGlance(app: LimitsApp): Promise<UsageGlance> {
+  if (!ownerHere(app.store) || app.sessionLock?.refusal("GET", usageGlancePath)) return { available: false };
+  await accountsServiceFor(app.runtime.models)?.readIdentities().catch(() => undefined);
+  if (app.sessionLock?.refusal("GET", usageGlancePath)) return { available: false };
+  return usageGlance(app);
+}
+
 /* ---------- a Claude Code signed in on this computer but not added yet ----------
  * The popover lists connections, so a Claude Code subscription the owner is signed in to here, but never added to
  * Branch, did not show at all. Looking at the popover asks Claude Code's own status command (at most every five
@@ -270,7 +280,7 @@ export async function usageLimitsRoute(app: LimitsApp, request: IncomingMessage,
     if (method !== "POST") throw new UsageLimitsError(405, "Use POST");
     z.object({}).strict().parse(await readBody() ?? {});
     await lookForClaude(app);
-    return usageGlance(app);
+    return readUsageGlance(app);
   }
   if (path === "/api/usage/limits/refresh") {
     requireOwnerHere(app.store);
