@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shape.js";
 import type { ModelPreset, ModelRouter } from "./models.js";
@@ -22,6 +23,14 @@ export const DecisionSettingsSchema = z.object({
   minConfidence: z.number().min(0.5).max(0.99).default(0.75),
   /** The longest list it filters at once; longer lists are split. */
   maxList: z.number().int().min(10).max(2000).default(400),
+  /**
+   * What the decisions are used for, beyond the Try it box. Each is off as shipped: every use is a model call the owner
+   * did not make, which costs on a paid connection (and works this computer on a local one).
+   * route: in a room, a message that names nobody goes to the member whose job fits it (src/trunks/rooms.ts).
+   * inbox: Inbox › Needs you is sorted by a 1-10 urgency score, deadlines and money first (`urgency` below).
+   */
+  route: z.boolean().default(false),
+  inbox: z.boolean().default(false),
 }).strict();
 export type DecisionSettings = z.infer<typeof DecisionSettingsSchema>;
 
@@ -61,6 +70,16 @@ export interface DecisionResult {
 // One declaration each, so tests/settings-history-writers.test.mjs can read both keys (neither is a Settings setting).
 const settingsKey = "decision-models";
 const logKey = "decision-log";
+const urgencyKey = "decision-urgency";
+const UrgencySchema = z.object({ entries: z.array(z.object({ key: z.string(), hash: z.string(), score: z.number().int().min(1).max(10), at: z.number() })).default([]) }).strict();
+/** One thing waiting in the Inbox, by the window's own key for its row, and the words it shows. */
+export const UrgencyInputSchema = z.object({
+  items: z.array(z.object({ key: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(600) }).strict()).max(50),
+}).strict();
+/** Scored at most this many a request, so opening the Inbox never starts a long run of model calls. */
+export const urgencyPerRequest = 8;
+/** A Trunk the room may hand a message to: its name, and its job as the owner wrote it. */
+export interface PickMember { id: string; name: string; job: string }
 const LogSchema = z.object({ entries: z.array(z.object({ at: z.number(), ms: z.number() })).default([]) }).strict();
 
 function prompt(input: DecisionInput): string {
@@ -138,6 +157,59 @@ export class DecisionModels {
     const answer = await this.ask(prompt(input), SHAPES[input.kind], preset);
     if (answer.status === "refused") throw new Error(answer.reason);
     return checkDecision(input, answer.value as Raw);
+  }
+
+  /**
+   * "Send each message to the right Trunk": which member's job fits a room message that names nobody, or null when the
+   * switch is off, fewer than two can answer, their names are not told apart, or the model is not sure. The message is
+   * the question; the members' jobs are material to weigh, and a pick must be one of their names.
+   */
+  async pickTrunk(message: string, members: readonly PickMember[]): Promise<{ id: string; why: string } | null> {
+    const settings = this.settings();
+    if (!settings.route || members.length < 2 || members.length > 20) return null;
+    const names = members.map((member) => member.name.trim().slice(0, 80));
+    if (new Set(names.map((name) => name.toLowerCase())).size !== names.length || names.some((name) => !name)) return null;
+    // The message goes first and whole (up to 400 characters), so it is never cut off; each job has an equal share of
+    // what is left of the 1,000 a question may hold, and every member is named.
+    const said = message.replace(/\s+/g, " ").trim().slice(0, 400), head = `Which Trunk's job fits this message best? The message: ${said}. Their jobs: `;
+    const share = Math.max(0, Math.floor((1000 - head.length) / members.length) - 4);
+    const jobs = members.map((member, at) => `${names[at]}: ${member.job.replace(/\s+/g, " ").trim() || "no job written"}`.slice(0, share)).join("; ");
+    const question = `${head}${jobs}`.slice(0, 1000);
+    const result = await this.decide({ kind: "pick", question, options: names });
+    if (result.confidence < settings.minConfidence) return null;
+    const at = names.findIndex((name) => name.toLowerCase() === result.choice?.toLowerCase());
+    return at < 0 ? null : { id: members[at]!.id, why: result.why };
+  }
+
+  /**
+   * "Sort the Inbox by urgency": a 1-10 score for each waiting item, deadlines and money first. A score is kept by the
+   * row's key and its words, so an item is asked about once; at most `urgencyPerRequest` new ones are asked per call,
+   * and the rest are scored on the next. Refused while the switch is off. An item the model could not score is left
+   * without a score (it keeps its place), and the first refusal is said.
+   */
+  async urgency(raw: unknown): Promise<{ scores: Record<string, number>; pending: number; problem: string | null }> {
+    if (!this.settings().inbox) throw Object.assign(new Error("Sort the Inbox by urgency is off. Switch it on in Settings › Models."), { status: 409 });
+    const { items } = UrgencyInputSchema.parse(raw);
+    const kept = this.urgencyLog(), scores: Record<string, number> = {};
+    const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 32);
+    let asked = 0, pending = 0, problem: string | null = null;
+    for (const item of items) {
+      const h = hash(item.text), known = kept.find((entry) => entry.key === item.key && entry.hash === h);
+      if (known) { scores[item.key] = known.score; continue; }
+      if (asked >= urgencyPerRequest) { pending++; continue; }
+      asked++;
+      try {
+        const result = await this.decide({ kind: "score", question: `How urgent is this for the person it waits on, 1 to 10? Deadlines and money come first. It says: ${item.text}` });
+        scores[item.key] = result.score!;
+        kept.push({ key: item.key, hash: h, score: result.score!, at: Date.now() });
+      } catch (error) { problem ??= (error as Error).message; }
+    }
+    this.store.save("settings", this.owner, urgencyKey, { entries: kept.slice(-500) });
+    return { scores, pending, problem };
+  }
+  private urgencyLog() {
+    const parsed = UrgencySchema.safeParse(this.store.get("settings", this.owner, urgencyKey)?.data ?? {});
+    return parsed.success ? parsed.data.entries : [];
   }
 
   private log() {

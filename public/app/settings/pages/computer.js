@@ -29,6 +29,7 @@ import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17, viewOf } fr
 import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
 import { computer17 } from "../p17-more.js";
 import { siteRow, loadSites, initSites } from "../sites17.js"; // Site skills (siteb17)
+import { initCiSetup } from "../ci-setup.js"; // wire-greyed: Branch in CI › Copy the setup
 
 const D = { coding: null, notes: null, prs: null, devices: null, desktop: null, wall: null, reach: null, appAsk: null };
 const onMode = (mode) => (mode ? mode !== "off" : false);
@@ -70,6 +71,7 @@ export function init() {
     "sw:f15-keep-large-tool-outputs", "sw:f15-read-jupyter-notebooks", "sw:f15-review-checks-and-a-checklist-per-task",
     "lend15", "dev-remove", "dev-remove-yes", "sw:c-screen", "sw:c-ask", "sw:f15-work-in-apps-in-the-background", "c-where"]);
   on("lend15", (el) => stopLending(el.dataset.v));
+  initCiSetup();
   on("dev-remove", (el) => removeDialog(el.dataset.v));
   on("dev-remove-yes", (el) => removeDevice(el.dataset.v));
   on("c-where", (el) => where(el.dataset.v));
@@ -209,7 +211,7 @@ const codeTechnical = () => sec15(t("window.settings.computer.code-technical"),
   code15(t("window.settings.computer.files-branch-never-reads"), t("window.settings.computer.like-gitignore"), ".branchignore")
   + sw("Read a file before editing it", "Refuses an edit to a file it hasn’t read in this task.")
   + sw("Keep large tool outputs", "Saved to a file instead of cut off.")
-  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup"), "soon", "f15-branch-in-ci"));
+  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup"), "ci-open"));
 
 const computerMore = () => sec15(t("window.settings.computer.on-a-computer-more"),
   sw("Work in apps in the background", "Through the accessibility tree, without taking the screen.")
