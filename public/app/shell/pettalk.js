@@ -14,14 +14,14 @@ export const hintDue = ({ rank = "Bronze", tipsOn = true, lastHint = 0, at = Dat
 
 /**
  * The line to say, or null for nothing worth saying.
- * now: { waiting: [{ who }], lockdown, models, running: [{ who }], view, owner, keys: { palette, sideList },
+ * now: { waiting: [{ who }], lockdown, noModel, running: [{ who }], view, owner, keys: { palette, sideList },
  *        rank, tipsOn, lastHint, at }; `words(key, values)` puts a line into the window's language.
  */
 export function petLine(now, words) {
   const waiting = now.waiting?.[0];
   if (waiting) return { kind: "news", text: words("window.shell.scene.who-needs-a-yes-its-in", { who: waiting.who || "Branch" }) };
   if (now.lockdown) return { kind: "news", text: words("window.shell.scene.lockdown-on") };
-  if (now.owner && now.models === 0) return { kind: "news", text: words("window.shell.scene.no-model") };
+  if (now.owner && now.noModel) return { kind: "news", text: words("window.shell.scene.no-model") };
   const running = now.running ?? [];
   if (running.length === 1) return { kind: "news", text: words("window.shell.scene.working-one", { who: running[0].who || "Branch" }) };
   if (running.length > 1) return { kind: "news", text: words("window.shell.scene.working-many", { count: running.length }) };

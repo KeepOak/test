@@ -244,7 +244,7 @@ function facts() {
   return {
     waiting: (E.state?.attention ?? []).filter((w) => !w.parentRunId),
     lockdown: !!document.getElementById("app")?.classList.contains("locked"),
-    models: Array.isArray(E.state?.models?.presets) ? E.state.models.presets.length : undefined,
+    noModel: !!E.state?.modelNeeded, // the engine's own "no model yet" (chat/nomodel.js reads the same)
     running: runs.map((r) => ({ who: ownName(r.sessionId) || E.state?.identity?.name || "" })),
     view: S.view, owner: ownerHere(),
     keys: { palette: key("palette"), sideList: key("sideList") },

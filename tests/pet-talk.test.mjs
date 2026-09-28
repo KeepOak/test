@@ -16,15 +16,15 @@ const words = (key, values = {}) => {
   return en[key].replace(/\{(\w+)\}/g, (_, name) => String(values[name]));
 };
 const at = Date.parse("2026-09-28T12:00:00Z");
-const base = { waiting: [], lockdown: false, models: 2, running: [], view: "chat", owner: true, keys: { palette: "Ctrl K", sideList: "Ctrl B" },
+const base = { waiting: [], lockdown: false, noModel: false, running: [], view: "chat", owner: true, keys: { palette: "Ctrl K", sideList: "Ctrl B" },
   rank: "Bronze", tipsOn: true, lastHint: 0, at };
 const say = (change) => petLine({ ...base, ...change }, words);
 
 test("news of the moment comes first, at every rank, in the order it matters", () => {
   assert.equal(say({ waiting: [{ who: "Ledger" }], lockdown: true, running: [{ who: "Scout" }] }).text, "Ledger needs a yes. It’s in your Inbox.");
   assert.match(say({ lockdown: true, running: [{ who: "Scout" }] }).text, /^Lockdown is on/);
-  assert.match(say({ models: 0 }).text, /^No model is connected yet/);
-  assert.deepEqual(say({ models: 0, owner: false }), petLine({ ...base, owner: false }, words), "a household person is not told to add a model");
+  assert.match(say({ noModel: true }).text, /^No model is connected yet/);
+  assert.deepEqual(say({ noModel: true, owner: false }), petLine({ ...base, owner: false }, words), "a household person is not told to add a model");
   assert.equal(say({ running: [{ who: "Scout" }] }).text, "Scout is working on it.");
   assert.equal(say({ running: [{ who: "Scout" }, { who: "Ledger" }] }).text, "2 tasks are working.");
   for (const rank of ["Gold", "Diamond", "Godly"]) assert.equal(say({ rank, running: [{ who: "Scout" }] }).kind, "news", `${rank} still hears the news`);
