@@ -3288,7 +3288,7 @@ Two switches, both saved in `settings/reflection` (`src/reflection/`). Looking b
 
 **Receipts.** Each successful tool result is hashed and signed with a key derived from the locker key. `GET /api/runs/:id/receipts` classifies every tool event (success, modified, forged, unsigned, failed, blocked, stalled). `POST /api/receipts/verify` with `{ runId, data }` (the event's data) says whether a result is still the one the runtime observed.
 
-**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `warn` (keep the text, add warnings), `redact` (replace flagged lines with a notice) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event.
+**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `redact` by default (replace flagged lines with a notice), or `warn` (keep the text, add warnings) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event. What the browser reads off a page (`browser.snapshot`, `browser.extract`, `browser.shape`) always has such lines taken out, with a `note` saying how many, and a file read with `files.read` does the same.
 
 **Exit criteria for delegated tasks.** `specialists.delegate` and fan-out tasks accept `checks` (same shape as a run's checks); a miss fails the child with the reason and the parent sees it as unresolved with that evidence.
 
