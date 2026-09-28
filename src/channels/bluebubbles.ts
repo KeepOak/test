@@ -17,8 +17,11 @@ import { defineService, PollingChannel, secretName } from "./parity-common.js";
  * with the password taken out of anything a lower layer says, so it never reaches a log, a card or a chat.
  *
  * Endpoints, from the same commit (`.../api/v1/httpRoutes.ts` and the message and attachment routers):
- * - `POST /api/v1/message/query` `{ limit, sort, after, with: ["chat", "attachment"] }` (L471-L474; validator
- *   `messageValidator.ts` L50-L62);
+ * - `POST /api/v1/message/query` `{ limit, sort, where, with: ["chat", "attachment"] }` (L471-L474; validator
+ *   `messageValidator.ts` L50-L62). New messages are read by the Messages database's own row number
+ *   (`message.ROWID > :rowid`; the serializer hands it out as `originalROWID`, `MessageSerializer.ts` L130; `where` is
+ *   applied as written, `databases/imessage/index.ts` L286-L291), not by date: a message that reaches the Mac late
+ *   keeps its sender's earlier time, and a date cursor would pass it by;
  * - `POST /api/v1/message/text` `{ chatGuid, tempGuid, message, method: "apple-script" }` (L429-L432; AppleScript needs
  *   a tempGuid, `messageValidator.ts` L97-L100);
  * - `POST /api/v1/message/attachment`, multipart `attachment` plus `chatGuid, tempGuid, name, method, isAudioMessage`
@@ -43,7 +46,7 @@ const ChatSchema = z.object({ guid: z.string().min(1).max(200), style: z.number(
 const FileSchema = z.object({ guid: z.string().regex(/^[\w:.-]{1,120}$/), mimeType: z.string().max(100).nullish(), transferName: z.string().max(300).nullish(),
   totalBytes: z.number().nullish() }).passthrough();
 const MessageSchema = z.object({
-  guid: z.string().min(1).max(200), text: z.string().nullish(), isFromMe: z.boolean().default(false), dateCreated: z.number().nullish(),
+  guid: z.string().min(1).max(200), text: z.string().nullish(), isFromMe: z.boolean().default(false), originalROWID: z.number().int().nonnegative().nullish(),
   handle: HandleSchema.nullish(), chats: z.array(ChatSchema).default([]), attachments: z.array(z.unknown()).default([]),
   isAudioMessage: z.boolean().nullish(),
 }).passthrough();
@@ -65,8 +68,8 @@ export function serverAllowed(server: string): boolean {
 
 export class BlueBubblesChannel extends PollingChannel {
   readonly kind = "bluebubbles";
-  /** The newest message time seen, in milliseconds, which the next look starts from. */
-  private after = 0;
+  /** The highest row number of the Messages database seen, which the next look starts after. */
+  private rowid = 0;
   private readonly seen = new Set<string>();
   private refused: string | null = null;
   private readonly fetchImpl: typeof fetch;
@@ -118,16 +121,16 @@ export class BlueBubblesChannel extends PollingChannel {
   }
 
   protected async poll(first: boolean): Promise<InboundMessage[]> {
-    const query = first ? { limit: 1, sort: "DESC" } : { limit: 50, sort: "ASC", after: this.after, with: ["chat", "attachment"] };
+    const query = first ? { limit: 1, sort: "DESC" }
+      : { limit: 100, sort: "ASC", where: [{ statement: "message.ROWID > :rowid", args: { rowid: this.rowid } }], with: ["chat", "attachment"] };
     const rows = ListSchema.parse(await this.json("POST", "message/query", query)).data.flatMap((row) => {
       const parsed = MessageSchema.safeParse(row);
       return parsed.success ? [parsed.data] : [];
     });
-    // Taking stock needs no clock of this computer's: an empty Mac has no history, so starting from 0 then answers only
-    // what arrives next, and the Mac's own times are compared with the Mac's own times.
+    // An empty Mac has no history, so starting after row 0 then answers only what arrives next.
     const out: InboundMessage[] = [];
     for (const row of rows) {
-      this.after = Math.max(this.after, row.dateCreated ?? 0);
+      this.rowid = Math.max(this.rowid, row.originalROWID ?? 0);
       if (this.seen.has(row.guid)) continue;
       this.seen.add(row.guid);
       if (this.seen.size > 1000) this.seen.delete(this.seen.values().next().value!);
@@ -208,7 +211,9 @@ export class BlueBubblesChannel extends PollingChannel {
 export const blueBubblesService = defineService({
   kind: "bluebubbles", name: "iMessage through BlueBubbles", docs: "https://docs.bluebubbles.app/server",
   needs: ["A Mac that stays on, signed in to Messages, running the BlueBubbles server app",
-    "The server's address (https, or a plain http address on your own network)", "The server password, saved as a secret"],
+    "The server's https address, as the BlueBubbles server shows it (its Cloudflare or dynamic DNS link)",
+    "The server password, saved as a secret",
+    "Only for an address on your own network instead: private addresses allowed under Computer → Network reach"],
   receives: "polls",
   settings: z.object({
     server: z.string().url().max(300).refine(serverAllowed, "Use an https address, or a plain http address on this computer or your own network"),

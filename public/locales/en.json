@@ -10132,6 +10132,6 @@
   "channel-setup.r.bluebubbles.noCheck": "The BlueBubbles server takes its password only in the address, so the setup page does not send it anywhere to test; it is tried when the switch goes on, and a wrong password is named on the card.",
   "channel-setup.r.bluebubbles.noApp": "Nothing to install on this computer: the BlueBubbles server runs on the Mac, and you keep using Messages on your phone.",
   "channel-setup.r.bluebubbles.step-1": "On a Mac that stays on and is signed in to Messages, install the BlueBubbles server app from bluebubbles.app and finish its own setup.",
-  "channel-setup.r.bluebubbles.step-2": "In the BlueBubbles server, copy the server address (an https link, or the Mac's address on your own network) and the server password.",
+  "channel-setup.r.bluebubbles.step-2": "In the BlueBubbles server, copy its https address (its Cloudflare or dynamic DNS link) and the server password. The Mac's address on your own network works only once private addresses are allowed under Computer → Network reach.",
   "channel-setup.r.bluebubbles.step-3": "Paste them here. Branch asks the server for new messages every few seconds and sends through it with AppleScript, so the Mac does not need BlueBubbles' Private API."
 }

@@ -8,6 +8,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture, until, delay, pairingWalk, assertNoSecret } from "./channels-parity-kit.mjs";
 import { BlueBubblesChannel, blueBubblesService, serverAllowed } from "../dist/channels/bluebubbles.js";
+import { buildParityChannel } from "../dist/channels/parity-config.js";
+import { NetworkPolicy } from "../dist/network-policy.js";
 
 const PASSWORD = "SECRET-BLUEBUBBLES-PW-/+&?= 42";
 const SERVER = "https://mac.example.org";
@@ -25,7 +27,10 @@ function fakeServer({ password = PASSWORD } = {}) {
     calls.push({ path: u.pathname, password: u.searchParams.get("password"), method: init.method, body, redirect: init.redirect });
     if (u.searchParams.get("password") !== password) return Response.json({ status: 401, message: "Unauthorized" }, { status: 401 });
     if (u.pathname === "/api/v1/message/query") {
-      const list = body.sort === "DESC" ? messages.slice(-body.limit).reverse() : messages.filter((m) => m.dateCreated >= (body.after ?? 0)).slice(0, body.limit);
+      // The where clause Branch sends, applied the way the server applies it (message.ROWID > :rowid); ordered by date.
+      const after = body.where?.find((w) => w.statement === "message.ROWID > :rowid")?.args.rowid;
+      const list = body.sort === "DESC" ? messages.slice(-body.limit).reverse()
+        : messages.filter((m) => m.originalROWID > after).sort((a, b) => a.dateCreated - b.dateCreated).slice(0, body.limit);
       return Response.json({ status: 200, data: list });
     }
     if (u.pathname === "/api/v1/message/text" || u.pathname === "/api/v1/message/attachment") return Response.json({ status: 200, data: { guid: `sent-${calls.length}` } });
@@ -33,8 +38,8 @@ function fakeServer({ password = PASSWORD } = {}) {
     if (download) return new Response(new Uint8Array([7, 7, 7]), { headers: { "content-type": "image/jpeg" } });
     return new Response("{}", { status: 404 });
   };
-  const say = (text, { from = "+15550001111", chat = "iMessage;-;+15550001111", style = 45, attachments = [], isAudioMessage = false, isFromMe = false } = {}) =>
-    messages.push({ guid: `m-${messages.length + 1}`, text, isFromMe, dateCreated: ++time, handle: { address: from }, chats: [{ guid: chat, style, displayName: style === 43 ? "Family" : "" }], attachments, isAudioMessage });
+  const say = (text, { from = "+15550001111", chat = "iMessage;-;+15550001111", style = 45, attachments = [], isAudioMessage = false, isFromMe = false, sentAt = ++time } = {}) =>
+    messages.push({ guid: `m-${messages.length + 1}`, originalROWID: messages.length + 1, text, isFromMe, dateCreated: sentAt, handle: { address: from }, chats: [{ guid: chat, style, displayName: style === 43 ? "Family" : "" }], attachments, isAudioMessage });
   return { calls, fetch, say, fail: (make) => { failWith = make; } };
 }
 const channelOn = (server, extra = {}) => new BlueBubblesChannel({ id: "bluebubbles", server: SERVER, password: PASSWORD, passwordSecret: "BLUEBUBBLES_PASSWORD",
@@ -51,6 +56,17 @@ test("the address rule: https anywhere, plain http only on this computer or the 
   assert.throws(() => new BlueBubblesChannel({ id: "b", server: "http://mac.example.org", password: "x", passwordSecret: "B" }), /https address/);
 });
 
+test("with the network rules as shipped, a server on the local network is refused until private addresses are allowed", async () => {
+  const config = { type: "bluebubbles", id: "bb", server: "http://192.168.1.20:1234", activation: "mention", pairing: true, allowlist: [] };
+  const credential = async () => PASSWORD;
+  await assert.rejects(buildParityChannel(config, { credential, policy: new NetworkPolicy({}, async () => []) }), /private or local address/);
+  await assert.rejects(buildParityChannel({ ...config, server: "http://my-mac.local:1234" }, { credential, policy: new NetworkPolicy({}, async () => []) }), /private network/);
+  const allowed = await buildParityChannel(config, { credential, policy: new NetworkPolicy({ allowPrivateAddresses: true }, async () => []) });
+  assert.equal(allowed.kind, "bluebubbles", "allowed once the owner allows private addresses");
+  const https = await buildParityChannel({ ...config, server: "https://mac.example.org" }, { credential, policy: new NetworkPolicy({}, async () => ["93.184.216.34"]) });
+  assert.equal(https.kind, "bluebubbles", "the https link BlueBubbles gives works as shipped");
+});
+
 test("BlueBubbles: history is left alone, a stranger pairs, and replies go back through AppleScript with the password only in the address", async (t) => {
   const context = await fixture(t);
   const server = fakeServer();
@@ -61,7 +77,7 @@ test("BlueBubbles: history is left alone, a stranger pairs, and replies go back 
   await until(() => channel.health().state === "connected", "took stock");
   await until(() => server.calls.length >= 3, "polled again");
   assert.deepEqual(server.calls[0].body, { limit: 1, sort: "DESC" }, "the first look only takes stock");
-  assert.deepEqual(server.calls[1].body, { limit: 50, sort: "ASC", after: 1_000_001, with: ["chat", "attachment"] });
+  assert.deepEqual(server.calls[1].body, { limit: 100, sort: "ASC", where: [{ statement: "message.ROWID > :rowid", args: { rowid: 1 } }], with: ["chat", "attachment"] });
   assert.ok(server.calls.every((call) => call.password === PASSWORD && call.redirect === "error"), "the password in the address, and no redirect followed with it");
 
   const texts = () => server.calls.filter((c) => c.path === "/api/v1/message/text").map((c) => c.body.message);
@@ -71,6 +87,10 @@ test("BlueBubbles: history is left alone, a stranger pairs, and replies go back 
   assert.equal(reply.method, "apple-script", "no Private API needed");
   assert.match(reply.tempGuid, /^[0-9a-f-]{36}$/, "AppleScript sends need a tempGuid");
 
+  // A message that reaches the Mac late keeps its sender's earlier time; it is still read, because the cursor is the row.
+  const before = context.provider.requests.length;
+  server.say("sent while my phone was offline", { sentAt: 5 });
+  await until(() => context.provider.requests.length > before, "the late message is answered");
   const asked = context.provider.requests.length;
   server.say("sent from the Mac itself", { isFromMe: true });
   await delay(120);

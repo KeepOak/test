@@ -10132,6 +10132,6 @@
   "channel-setup.r.bluebubbles.noCheck": "Der BlueBubbles-Server nimmt sein Passwort nur in der Adresse an, deshalb schickt die Einrichtungsseite es nirgendwohin zum Testen; es wird beim Einschalten ausprobiert, und ein falsches Passwort wird auf der Karte genannt.",
   "channel-setup.r.bluebubbles.noApp": "Auf diesem Computer ist nichts zu installieren: Der BlueBubbles-Server läuft auf dem Mac, und du nutzt weiter Nachrichten auf deinem Telefon.",
   "channel-setup.r.bluebubbles.step-1": "Installiere auf einem Mac, der eingeschaltet bleibt und in Nachrichten angemeldet ist, die BlueBubbles-Server-App von bluebubbles.app und schließe ihre eigene Einrichtung ab.",
-  "channel-setup.r.bluebubbles.step-2": "Kopiere im BlueBubbles-Server die Serveradresse (einen https-Link oder die Adresse des Macs in deinem eigenen Netzwerk) und das Serverpasswort.",
+  "channel-setup.r.bluebubbles.step-2": "Kopiere im BlueBubbles-Server seine https-Adresse (seinen Cloudflare- oder Dynamic-DNS-Link) und das Serverpasswort. Die Adresse des Macs in deinem eigenen Netzwerk funktioniert erst, wenn private Adressen unter Computer → Netzwerkreichweite erlaubt sind.",
   "channel-setup.r.bluebubbles.step-3": "Füge sie hier ein. Branch fragt den Server alle paar Sekunden nach neuen Nachrichten und sendet über ihn mit AppleScript, daher braucht der Mac die Private API von BlueBubbles nicht."
 }

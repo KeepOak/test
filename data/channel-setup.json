@@ -1178,7 +1178,7 @@
    "turnOn": "switch",
    "steps": [
     "On a Mac that stays on and is signed in to Messages, install the BlueBubbles server app from bluebubbles.app and finish its own setup.",
-    "In the BlueBubbles server, copy the server address (an https link, or the Mac's address on your own network) and the server password.",
+    "In the BlueBubbles server, copy its https address (its Cloudflare or dynamic DNS link) and the server password. The Mac's address on your own network works only once private addresses are allowed under Computer → Network reach.",
     "Paste them here. Branch asks the server for new messages every few seconds and sends through it with AppleScript, so the Mac does not need BlueBubbles' Private API."
    ],
    "fields": [
