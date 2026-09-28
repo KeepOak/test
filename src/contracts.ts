@@ -373,6 +373,12 @@ export interface ToolContext {
    */
   writesConfinedTo?: string;
   /**
+   * selfdev: set only by the runtime, for a command in the owner's selected Full Access (src/runtime.ts
+   * `ownerFullAccessFor`): a command held to the self-development worktree may then reach the network (npm
+   * install, downloads) while its writes stay held to that folder. Never set for anyone else.
+   */
+  ownerFullAccess?: boolean;
+  /**
    * mac7/eval-honesty: a question asked in isolation — a grader marking work Branch itself did.
    * Nothing the owner has remembered, written down, installed or asked for standing reaches it, and
    * nothing it does is learned from. See `RunOptions.isolated`.

@@ -63,7 +63,7 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   }
   let wall;
   try {
-    wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry }), readOnly: restored },
+    wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry, open: plan.open === true }), readOnly: restored },
       { executable: program, args: plan.args, cwd: plan.cwd, env },
       { workspace: plan.workspace, temp, held: true, covered, secrets: Object.fromEntries(plan.secrets.map((name) => [name, ''])) },
       { ...deps, platform: 'linux' });

@@ -1300,6 +1300,8 @@ export const OUTBOUND = [
   /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
+  // selfdev: GitHub Enterprise's own /api/v3 and /api/graphql addresses, called outwards; not routes of ours.
+  /^src\/integrations\/github\.ts$/,
 ];
 
 export const SAMPLE_ID = "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f";

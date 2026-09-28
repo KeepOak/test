@@ -1,9 +1,10 @@
+import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import { scrubSecrets } from "../locker.js";
 import type { NetworkPolicy } from "../network-policy.js";
 import type { TrackerIssue } from "./issue-context.js";
 import { readGitHubChecks, type GitHubChecks } from "./github-checks.js";
-import { mergeEvidence, normalMerge, markReadyForReview, type MergeEvidence, type MergePin } from "./github-merge.js";
+import { ChecksPending, mergeEvidence, normalMerge, markReadyForReview, type MergeEvidence, type MergeLine, type MergePin } from "./github-merge.js";
 
 /**
  * A small, direct connection to GitHub for the few things people actually ask for: make me a
@@ -17,6 +18,8 @@ export const GitHubConfigSchema = z.object({
   tokenSecret: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).default("GITHUB_TOKEN"),
   timeoutMs: z.number().int().min(1000).max(60000).default(20000),
   maxBytes: z.number().int().min(4096).max(1048576).default(262144),
+  /** How often github.wait_for_checks looks again while checks are still running. */
+  checksPollSeconds: z.number().int().min(1).max(120).default(15),
 }).strict();
 export type GitHubConfig = z.infer<typeof GitHubConfigSchema>;
 export type TokenSource = () => Promise<string>;
@@ -118,16 +121,58 @@ export class GitHubAccess {
     repositoryPath.parse(input.repo);
     return readGitHubChecks((method, path) => this.request(method, path), input);
   }
-  async mergeReview(repo: string, number: number): Promise<MergeEvidence> {
+  async mergeReview(repo: string, number: number, line: MergeLine = "self"): Promise<MergeEvidence> {
     repositoryPath.parse(repo);
     if (!Number.isSafeInteger(number) || number < 1) throw new Error("Use the pull request's positive number.");
-    return mergeEvidence((method, path, body) => this.request(method, path, body), (input) => this.checks(input), repo, number);
+    return mergeEvidence((method, path, body) => this.request(method, path, body), (input) => this.checks(input), repo, number, false, line);
   }
-  /** Verify protection/checks while the task's PR is still a draft; no model verdict is accepted. */
+  /** Verify the checks while the task's PR is still a draft; no model verdict is accepted. */
   async draftReview(repo: string, number: number): Promise<MergeEvidence> {
     repositoryPath.parse(repo);
     if (!Number.isSafeInteger(number) || number < 1) throw new Error("Use the pull request's positive number.");
     return mergeEvidence((method, path, body) => this.request(method, path, body), (input) => this.checks(input), repo, number, true);
+  }
+  /**
+   * Waits, up to `seconds`, for every check on the pull request's exact latest commit to finish, then says
+   * whether it may merge. Queued, running or not-yet-reported checks are "pending", never "passed".
+   */
+  async waitForChecks(input: { repo: string; number: number; seconds: number }, signal: AbortSignal,
+    sleep = (ms: number) => wait(ms, undefined, { signal })): Promise<ChecksVerdict> {
+    repositoryPath.parse(input.repo);
+    const until = Date.now() + input.seconds * 1000;
+    for (;;) {
+      const verdict = await this.checkVerdict(input.repo, input.number);
+      const left = until - Date.now();
+      if (verdict.state !== "pending" || left <= 0) return verdict;
+      await sleep(Math.min(left, this.config.checksPollSeconds * 1000));
+    }
+  }
+  /** One look: passed (with the exact commit), failed (with why) or still pending (with what is running). */
+  async checkVerdict(repo: string, number: number): Promise<ChecksVerdict> {
+    const row = await this.request("GET", `repos/${repo}/pulls/${number}`) as { draft?: unknown; merged?: unknown };
+    if (row.merged === true) return { state: "merged", repo, number, summary: "This pull request is already merged." };
+    const draft = row.draft === true;
+    try {
+      const evidence = await mergeEvidence((method, path, body) => this.request(method, path, body), (ref) => this.checks(ref), repo, number, draft, "any");
+      return { state: "passed", repo, number, headSha: evidence.headSha, base: evidence.base, draft,
+        checks: evidence.checks.checks.map((check) => `${check.name}: ${check.result}`),
+        summary: `Every check on ${evidence.headSha.slice(0, 12)} finished and passed${draft ? "; the pull request is still a draft" : ""}.` };
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      return { state: error instanceof ChecksPending ? "pending" : "failed", repo, number, draft, summary: text.slice(0, 600) };
+    }
+  }
+  /**
+   * An ordinary project's pull request, merged only when every check on its exact latest commit passed; the
+   * merge names that commit, so anything pushed after the checks were read is refused by GitHub itself.
+   */
+  async mergeChecked(repo: string, number: number): Promise<{ merged: true; sha: string; headSha: string; repository: string; number: number }> {
+    repositoryPath.parse(repo);
+    if (/\/branch-agent$/i.test(repo))
+      throw new Error("A change to Branch itself is finished with branch.finish_source_change, which checks its contract, tests and review too.");
+    const evidence = await this.mergeReview(repo, number, "any");
+    const merged = await normalMerge((method, path, body) => this.request(method, path, body), evidence);
+    return { ...merged, headSha: evidence.headSha, repository: repo, number };
   }
   private graphqlUrl(): string {
     const base = new URL(this.config.apiBase);
@@ -163,6 +208,9 @@ export class GitHubAccess {
     return { repository: input.repo, number: created.number, title: created.title, address: created.html_url };
   }
 }
+
+export type ChecksVerdict = { state: "passed" | "pending" | "failed" | "merged"; repo: string; number: number; summary: string;
+  headSha?: string; base?: string; draft?: boolean; checks?: string[] };
 
 /** GitHub's HTTP answers in words the owner can act on; the reply body is already scrubbed. */
 export function explainGitHub(status: number, text: string): string {

@@ -11,7 +11,7 @@ import type { Projects } from "./projects.js";
 import type { ToolRegistry } from "./registry.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
-import { ContractTermsSchema, selfDevelopmentLine, selfDevelopmentLockdownRefusal, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { ContractTermsSchema, selfDevelopmentBase, selfDevelopmentBaseWords, selfDevelopmentLine, selfDevelopmentLockdownRefusal, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
 import { lockdownActive } from "./lockdown.js";
 
 export const branchRepository = "stabrea/Branch-Agent";
@@ -20,7 +20,7 @@ const nameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/, "Use lowercase 
  * A change to Branch itself starts from, and is proposed back to, one line only: the line Beta builds
  * (src/desktop/dev-build.ts `betaLine`). Nothing reaches the running app except as a merged change there.
  */
-const baseSchema = z.string().refine((value) => value === selfDevelopmentLine, `A change to Branch itself starts from ${selfDevelopmentLine}, the line Beta builds, and is proposed back to it.`);
+const baseSchema = z.string().refine(selfDevelopmentBase, `A change to Branch itself starts from ${selfDevelopmentBaseWords}, and is proposed back to it.`);
 const repositorySchema = z.string().url().default(`https://github.com/${branchRepository}.git`);
 
 export interface SelfDevelopmentDeps {
@@ -98,7 +98,8 @@ function projectInstructions(name: string, base: string): string {
     "On Windows these commands run inside WSL; when one says WSL is not ready (no Node.js or no bubblewrap there), tell the owner plainly what is missing and offer to set it up, and set it up only after the owner's yes.",
     `When the owner asks for a pull request, use github.pull_request_from_changes with name ${name}, targetRepository ${branchRepository}, and base ${base}.`,
     "The pull-request summary must include a Why merge this section in plain words, and the test evidence: each command run and its pass and fail counts.",
-    "Open a draft; never merge it, never send to a shared line, and never change a repository's settings or branch protection. The owner can review and merge the exact tested commit in Inbox after making the pull request ready on GitHub, if the protected branch enforces required checks for administrators. Beta builds it after that.",
+    "Open it as a draft, and never send to a shared line or change a repository's settings or branch protection.",
+    "To finish it, wait with github.wait_for_checks until every check on the exact commit has passed (pending is never passed), then call branch.finish_source_change with this worktree, the repository and the pull request number: in the owner's selected Full Access it gets an independent read-only review and merges the checked commit; otherwise the owner reviews and merges it in Inbox. Include branch.finish_source_change in the contract's permissions for that. Beta builds a merged change and tries it on a copy of the owner's data before it swaps in.",
   ].join(" ");
 }
 
@@ -194,7 +195,7 @@ const toolName = "branch.prepare_source_change";
 export const PrepareSourceChangeSchema = z.object({
   name: nameSchema, repository: repositorySchema, base: baseSchema.default(selfDevelopmentLine), contract: ContractTermsSchema,
 }).strict();
-const contractDescription = "contract: the terms this change is held to, written down before anything changes: allowedPaths (globs inside the worktree, such as src/ui/** or tests/button.test.mjs), permissions (every tool name that may change something, such as files.write, git.commit, github.pull_request_from_changes), expectedTests, definitionOfDone, sideEffects and rollbackPlan.";
+const contractDescription = "contract: the terms this change is held to, written down before anything changes: allowedPaths (globs inside the worktree, such as src/ui/** or tests/button.test.mjs), permissions (every tool name that may change something, such as files.write, git.commit, github.pull_request_from_changes, branch.finish_source_change), expectedTests, definitionOfDone, sideEffects and rollbackPlan.";
 
 /** Only the owner, in the Branch app, may start or widen a change to Branch itself. */
 /**

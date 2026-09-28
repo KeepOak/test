@@ -4,11 +4,12 @@ import { audit } from "./audit.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentTaskRun } from "./task-scope.js";
 import { lockdownActive } from "./lockdown.js";
-import { contractHash, selfDevelopmentLine, selfDevelopmentLockdownRefusal } from "./self-development-contract.js";
+import { contractHash, selfDevelopmentBase, selfDevelopmentLockdownRefusal } from "./self-development-contract.js";
 import { boundedDiff } from "./self-development-diff.js";
 import { cleanHead, SelfDevelopmentEvidence, sourceGit } from "./self-development-evidence.js";
 import type { SelfDevelopmentDeps } from "./self-development.js";
 import { ownerGitHubConnection } from "./integrations/git-tools.js";
+import { ChecksPending } from "./integrations/github-merge.js";
 import { repositoryPath } from "./integrations/github.js";
 import { HttpError } from "./server-http.js";
 import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
@@ -85,7 +86,7 @@ export class SelfDevelopmentMerges {
     const github = await (draft ? ownerGitHubConnection(this.deps.registry).draftReview(input.repo, input.number)
       : ownerGitHubConnection(this.deps.registry).mergeReview(input.repo, input.number));
     authorize();
-    if (github.base !== selfDevelopmentLine || github.headSha !== head || github.head !== branch) throw new Error("The pull request does not match this contract's branch, tested head and Beta base.");
+    if (!selfDevelopmentBase(github.base) || github.headSha !== head || github.head !== branch) throw new Error("The pull request does not match this contract's branch, tested head and base line.");
     if (await cleanHead(this.deps, contract, signal) !== head || this.deps.contracts.current(this.deps.owner, input.worktree)?.revision !== contract.revision)
       throw new Error("The source or contract changed during review. Start again.");
     authorize();
@@ -175,7 +176,7 @@ export class SelfDevelopmentMerges {
       throw new Error("The reviewed contract, diff, tests, head, base or checks changed. Review again.");
     await github.readyReviewed(refreshed.github, gate);
     gate();
-    const ready = await this.checkedSnapshot(input, context, false);
+    const ready = await this.afterReady(input, context);
     if (fingerprint(ready) !== fingerprint(before) || ownerGitHubConnection(this.deps.registry) !== github)
       throw new Error("The pull request changed after becoming ready. Review it in GitHub; no merge was sent.");
     const actor = this.autoOwner(input, context);
@@ -187,6 +188,16 @@ export class SelfDevelopmentMerges {
       subject: `${input.repo}#${input.number} ${ready.github.headSha}`, runId: context.runId,
       reason: `Independent read-only task ${result.runId} passed; exact tested protected commit merged normally.`, source: "owner", outcome: "merged" });
     return { ...merged, repository: input.repo, number: input.number, reviewedHead: ready.github.headSha, reviewerRunId: result.runId };
+  }
+  /** GitHub works out a newly ready pull request's mergeability again; that short wait is pending, never passed. */
+  private async afterReady(input: ReviewInput, context: ToolContext): Promise<Snapshot> {
+    for (let attempt = 1; ; attempt++) {
+      try { return await this.checkedSnapshot(input, context, false); }
+      catch (error) {
+        if (!(error instanceof ChecksPending) || attempt >= 20) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+    }
   }
   private grant(id: string): Grant {
     const grant = this.grants.get(id);

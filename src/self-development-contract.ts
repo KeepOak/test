@@ -34,6 +34,14 @@ export const widenToolName = "branch.widen_source_contract";
 export const widenReason = "Branch asks you every time before it widens what it may change in its own source";
 /** The one line a change to Branch itself starts from and is proposed back to: the line Beta builds after a merge. */
 export const selfDevelopmentLine = betaLine;
+/**
+ * selfdev: a scratch line for proving the loop end to end (`selfdev-proof/...`). Beta never builds it, so a change
+ * proposed to it and merged there never reaches the running app. It must already exist; Branch only proposes to it.
+ */
+export const selfDevelopmentProofLine = /^selfdev-proof\/[A-Za-z0-9._-]{1,60}$/;
+/** Where a change to Branch itself may start from and be proposed back to: the Beta line, or a scratch proof line. */
+export const selfDevelopmentBase = (base: unknown): boolean => base === selfDevelopmentLine || (typeof base === "string" && selfDevelopmentProofLine.test(base));
+export const selfDevelopmentBaseWords = `${selfDevelopmentLine}, the line Beta builds (or a selfdev-proof/ scratch line that Beta never builds)`;
 export const selfDevelopmentLockdownRefusal = "Lockdown is on, so Branch does not work on its own source: nothing is prepared, changed, widened or sent. Turn Lockdown off in Settings to allow this again.";
 /** The only line of work a change to Branch itself is sent on: a fresh `branch/…` line, never a shared one. */
 const sentLine = /^refs\/heads\/branch\/[A-Za-z0-9._-]{1,60}$/;
@@ -553,7 +561,7 @@ function sendPinned(name: string, args: unknown, repositories: readonly string[]
   const repo = String(input.repo ?? "").toLowerCase();
   if (!repositories.includes(repo))
     return `A change to Branch itself is proposed only to ${repositories.join(" or ")}, where this worktree was made from, so no pull request is opened in ${String(input.repo ?? "") || "that repository"}.`;
-  if (input.base !== selfDevelopmentLine) return `A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds.`;
+  if (!selfDevelopmentBase(input.base)) return `A change to Branch itself is proposed only to ${selfDevelopmentBaseWords}.`;
   if (input.draft !== true) return "A change to Branch itself is opened only as a draft pull request, for the owner to review.";
   const head = String(input.head ?? "").replace(/^[A-Za-z0-9-]{1,39}:/, "");
   return sentLine.test(`refs/heads/${head}`) ? null : `${head || "That line"} is not a branch/… line of work, so no pull request is opened from it.`;
