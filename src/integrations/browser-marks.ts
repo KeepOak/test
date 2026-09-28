@@ -119,7 +119,10 @@ function describeElements(options: DescribeOptions): { candidates: Candidate[]; 
       : tag === 'a' ? 'link'
       : tag === 'input' ? `input:${(element.getAttribute('type') ?? 'text').toLowerCase().slice(0, 20)}` : tag;
     const own = (element as HTMLElement).innerText ?? element.textContent ?? '';
-    const label = element.id ? document.querySelector(`label[for="${CSS.escape(element.id)}"]`)?.textContent ?? '' : '';
+    // Its label, whether it names the box by id or wraps it (<label>Attach <input type=file></label>).
+    const labels = (element as HTMLInputElement).labels;
+    const label = labels?.length ? [...labels].map(one => one.textContent ?? '').join(' ')
+      : element.id ? document.querySelector(`label[for="${CSS.escape(element.id)}"]`)?.textContent ?? '' : '';
     const name = clean(element.getAttribute('aria-label') || own.trim() || label.trim()
       || element.getAttribute('placeholder') || element.getAttribute('title')
       || element.getAttribute('alt') || element.getAttribute('name') || '');
