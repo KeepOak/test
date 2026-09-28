@@ -68,7 +68,10 @@ test("a program's sign-in is read from its own documented status command, and on
   t.after(() => discardTemp(bin));
   for (const name of ["claude", "claude.cmd", "gemini", "gemini.cmd"]) await writeFile(join(bin, name), "", { mode: 0o755 });
   process.env.PATH = bin;
-  assert.equal((await checkProgram({ service }, { id: "claude-code" }, exits(0))).signedIn, true);
+  const savedSignIn = await checkProgram({ service }, { id: "claude-code" }, exits(0));
+  assert.equal(savedSignIn.signedIn, true);
+  assert.equal(savedSignIn.taskReady, null, "saved credentials do not prove a live task can run");
+  assert.match(savedSignIn.message, /saved sign-in.*first task/i);
   const out = await checkProgram({ service }, { id: "claude-code" }, exits(1));
   assert.equal(out.signedIn, false);
   assert.match(out.message, /is not signed in/);

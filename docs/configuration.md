@@ -494,7 +494,9 @@ Install the browser once:
 npx playwright install chromium --only-shell
 ```
 
-Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
+Branch's browser is on with no configuration file: it may open any website the network rules allow (`"anyWebsite": true`), and every picture, script and request a page makes is held to those rules too, so a page cannot reach this computer or your home network unless the network rules allow private addresses. The owner's approval rules and the per-task caps below still apply.
+
+To hold it to a list of websites instead, create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
 
 ```json
 {
@@ -503,6 +505,8 @@ Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
   }
 }
 ```
+
+The browser section takes either `allowedOrigins` or `"anyWebsite": true`, never both. A configuration file without a browser section leaves the browser off.
 
 Origins must match exactly, including port. Browser requests to other origins, HTTP redirects, WebSockets and service workers are blocked. Redirecting sites may therefore fail even when the final destination is otherwise allowed. Browser fill supports non-password fields; credentials go through a saved sign-in instead (below). Unless a saved sign-in is chosen, each task gets a fresh profile, not your existing signed-in browser.
 
@@ -842,6 +846,29 @@ Routes: `GET/POST /api/workspace-editor/settings`, `GET /api/workspace-editor/li
 `tests/code-editor.test.mjs`. Works the same on Windows, macOS and Linux.
 
 ## Channels (Telegram)
+
+### Message intake and reconnecting
+
+`GET /api/channels/formatting` returns `formats`; owner-only `POST /api/channels/formatting { channel, mode }`
+saves one supported app's `native` (default) or `plain` choice. Changes apply to the connected adapter's next send
+or edit, including live steps and queued delivery retries, and survive a restart. Plain mode removes presentation
+markers while retaining code contents and link destinations. Slack uses plain_text blocks, Matrix omits HTML, Telegram
+omits entities, and Discord escapes remaining literal symbols. Discord reserves half its text budget before
+splitting to keep escape characters inside the service's message limit.
+
+Settings › Chat apps reads `intake` from `GET /api/channels`; `POST /api/channels/intake` saves only the named
+fields and is owner-only. `edited` and `albums` default to true: edited messages replace a version still being
+gathered, and a photo album joins one turn. An edit after that turn has started is its own message.
+`splitWaitMs` is 0, 1000 (default), or 3000; messages from the same live chat arriving during that wait join a turn.
+Fetched messages after a restart stay separate. Albums still wait at least one second when split waiting is off.
+
+`watchdog` defaults to true. A watched connection with no service contact for `stalledAfterSeconds` (30–3600,
+default 90) becomes stalled. After a further `reconnectMinutes` (1, 3, or 10; default 3), it restarts at most once
+per that interval. Empty successful polls count as contact; a quiet chat does not cause a restart. A failed or
+ineffective restart produces a reason on the app's card until contact returns.
+
+`presence` defaults to false because it changes the public bot profile. Telegram can publish Online while running
+and Offline, back soon when stopped; switching it off clears the description. Lockdown prevents those writes.
 
 Create a bot with @BotFather, then either save its token as the secret `TELEGRAM_BOT_TOKEN` in the default project or export it as an environment variable, and add to the integrations file:
 
@@ -8804,6 +8831,7 @@ short-lived key can read them but never change them.
 | | `contextWindowTokens` | `null` (20,000) | Room in one request, used both for folding and for the "too long" stop. |
 | How far one task may go (Settings, Permissions) | `maxSteps` | `60` | Model rounds in one task of the owner's (and in a background sub-task). Each question to the model and each tool call is one step. A task that uses them all ends as one out of rounds does: its best answer, then what it spent them on and where this setting is, never the bare words "Step budget exhausted". Event: `rounds.exhausted` (`by`: `steps`) |
 | | `spendCapDollars` | `null` | The task stops before its next model round once it has cost about this much, sub-tasks included. A model with no price on file cannot be checked; the task notes that once (`limits.spend_unpriced`). |
+| | `messagesPerConversationHour` | `60` | Maximum messages starting tasks in one conversation over a rolling hour; 1–1,000. A refused message stays in the window's draft. |
 | Trying the model service again (Settings, Advanced) | `apiRetries` | `null` (launch setting, 2) | Tries after a busy or failed request, 0 to 5. |
 | | `localFirstReplySeconds` | `null` (launch `localFirstReplyMs`, 300) | Longest a model on this computer may take to start each reply (it may be loading into memory), 5 to 1800. Hosted models are not affected. |
 | | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 60. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
@@ -10269,3 +10297,50 @@ Nothing ever rebuilds a map on its own. A stale map is a row saying so; you pres
 Settings fields (`learn`): `mode` (off, when-needed, on -- when-needed at first) and `steps`, how many stops
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
+
+## The desktop app's engine process
+
+The desktop app runs the engine in a process of its own and hands it what it needs when it starts (`EngineConfigSchema`, src/desktop/engine-link.ts). None of these is set by hand; they are listed so every declared field is written down.
+
+- `dataDir`, `workspace`: the data folder and workspace, the same ones the app would use itself.
+- `providerEnv`: the saved model connection as provider variables, or none.
+- `version`: the app's version.
+- `executable`, `installRoot`, `packaged`: the installed program file and folder (none when run from source), and whether this is a packaged app.
+- `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
+- `appPid`: the window's main process, so the engine knows when the app is gone.
+- `testHooks`: test builds only, never in a packaged app.
+
+## Long work: carrying on after a restart or a limit
+
+Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+
+- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
+- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+
+## Seasons: overnight learning
+
+Saved in the owner's `settings/seasons` record, declared by `SeasonsSettingsSchema` in
+`src/seasons/settings.ts`. Household learning uses these switches while keeping each person's work
+and memory separate. A partial settings update preserves omitted fields. See [Seasons](seasons.md).
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `rings` | `on` | `off` or `on`: consolidate memory overnight with an undoable journal. |
+| `nightFrom` | `1` | Local start hour, 0–23, inclusive. |
+| `nightTo` | `6` | Local end hour, 0–23, exclusive. |
+| `idleMinutes` | `30` | 5–720 minutes without task activity before overnight work begins. |
+| `paidModels` | `false` | Permit models billed per call for overnight work; otherwise only local or subscription connections qualify. |
+| `minScore` | `0.6` | 0–1: minimum score before a fact is promoted. |
+| `minRecallCount` | `3` | 1–20: minimum recall count before promotion. |
+| `minUniqueQueries` | `2` | 1–20: minimum distinct queries before promotion. |
+
+The Gardener extends this record with the following settings when its feature is installed:
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `gardener` | `on` | `off` or `on`: draft and evaluate skills from the four supported triggers. |
+| `minGain` | `0.1` | 0.01–1: minimum measured improvement needed to adopt a skill. |
+| `staleAfterDays` | `14` | 1–365: unused adopted skills are marked stale after this many days. |
+| `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
+| `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
+| `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |

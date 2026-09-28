@@ -209,7 +209,7 @@ export function runSteps(store: Store, runId: string, deps: StepsDeps) {
     .map(({ step }) => ({ ...step, icon: stepIcon(step.kind, step.kind === "tool" ? step.detail : "") }));
   const tip = deps.chain.entries.at(-1)?.hash ?? null;
   return {
-    runId: run.id, sessionId: run.sessionId, title: store.runTitles([run]).get(run.id) ?? firstLine(run.prompt), status: run.status,
+    runId: run.id, sessionId: run.sessionId, title: firstLine(store.runTitles([run]).get(run.id) ?? run.prompt), status: run.status,
     seconds: Math.max(0, Math.round((Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 100) / 10),
     cost: deps.cost(run.id), steps, helpers, switched: switchedLines(events),
     chain: { mode: deps.chain.mode, entries: deps.chain.entries.length, tip },

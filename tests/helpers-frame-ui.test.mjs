@@ -289,6 +289,9 @@ test("a household person's own helpers are theirs, never the owner's, and the ow
   const ownerRelease = new Map(gates);
   const dana = app.store.profiles.create({ name: "Dana", pin: "4826" });
   app.runtime.roles.save(dana.id, { role: "owner" }); // a role that may hand work to helpers
+  /* The window starts again by itself when the person changes (public/app/main.js watchPerson); a reload of our own
+     raced that one and was aborted, so the window's own restart is what is waited for. */
+  const restarted = page.waitForEvent("framenavigated", { predicate: (frame) => frame === page.mainFrame(), timeout: 30000 });
   app.store.profiles.switch({ profileId: dana.id, pin: "4826" });
   let parent;
   try {
@@ -308,7 +311,7 @@ test("a household person's own helpers are theirs, never the owner's, and the ow
     for (const h of hers) assert.equal((await api(`sessions/${h.sessionId}`)).status, 200, "and each helper's own conversation");
     assert.ok(!hers.some((h) => Object.values(owner.byName).some((o) => o.runId === h.runId)), "none of them is the owner's");
     // In the window she sees her conversation's helpers, and only hers.
-    await page.reload();
+    await restarted;
     await page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
     await openChat(parent.sessionId);
     await page.waitForFunction(() => /2 helpers · done/.test(document.querySelector("#conversation .hl17c")?.textContent ?? ""), null, { timeout: 15000 });

@@ -20,6 +20,7 @@ import { migrate, migrateDown, formatOf, DataTooNewError } from "../dist/never-b
 import { recoverAfterRestart, lateNote, releaseInterruptedSchedules } from "../dist/never-break/resume.js";
 import { channelPosition } from "../dist/never-break/channel-position.js";
 import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gateway-config.js";
+import { saveLongWorkSettings } from "../dist/long-work.js";
 
 const sha = (text) => createHash("sha256").update(text).digest("hex");
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("BRANCH_") && name !== "NODE_OPTIONS"));
@@ -653,8 +654,10 @@ test("a chat task that may already have sent something is not done again when th
   assert.equal(app.store.get("settings", "local", "channel-replay:hand:7:old"), undefined, "a hold nobody used is forgotten after a week");
 });
 
-test("a task cut off by Branch closing is cancelled with the switch off, as before, and interrupted with it on", async (t) => {
-  for (const mode of ["off", "on"]) {
+/* #483: "carry on after a restart" (long work) ships on, so a task cut off by Branch closing is interrupted, to be carried
+   on, even with the gateway off. Only with both off is it cancelled, as before. */
+test("a task cut off by Branch closing is cancelled with the gateway and carrying on both off, and interrupted otherwise", async (t) => {
+  for (const [mode, resumeAfterRestart] of [["off", false], ["off", true], ["on", false]]) {
     const root = await temp(t);
     await mkdir(join(root, "d"), { recursive: true });
     await saveGatewayConfig(join(root, "d"), GatewayConfigSchema.parse({ mode }));
@@ -665,6 +668,7 @@ test("a task cut off by Branch closing is cancelled with the switch off, as befo
       request.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     }) };
     const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider });
+    saveLongWorkSettings(app.store, app.runtime.owner, { resumeAfterRestart });
     const task = app.runtime.run({ prompt: "think for a long time", onTextDelta: () => undefined }).catch((error) => error);
     await waiting;
     await app.close();
@@ -672,6 +676,6 @@ test("a task cut off by Branch closing is cancelled with the switch off, as befo
     const reopened = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider: scripted([say("x")]) });
     const [run] = reopened.store.runs("local");
     await reopened.close();
-    assert.equal(run.status, mode === "off" ? "cancelled" : "interrupted", mode);
+    assert.equal(run.status, mode === "off" && !resumeAfterRestart ? "cancelled" : "interrupted", `gateway ${mode}, carrying on ${resumeAfterRestart}`);
   }
 });
