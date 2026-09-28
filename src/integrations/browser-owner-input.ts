@@ -17,11 +17,13 @@ export const OwnerInputSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text'), text: z.string().min(1).max(8192) }).strict(),
   z.object({ kind: z.literal('key'), key }).strict(),
   z.object({ kind: z.enum(['back', 'forward', 'reload']) }).strict(),
+  /** The words the owner selected on the page, for the owner's own clipboard. */
+  z.object({ kind: z.literal('copy') }).strict(),
 ]);
 export type OwnerInput = z.infer<typeof OwnerInputSchema>;
 
 /** Page input only. A drag is one ordered write, and releases its button even when control is revoked. */
-export async function ownerPageInput(page: Page, input: OwnerInput, check: () => void): Promise<{ done: true }> {
+export async function ownerPageInput(page: Page, input: OwnerInput, check: () => void): Promise<{ done: true; text?: string }> {
   const size = page.viewportSize();
   if (!size) throw new Error('This page has no supported input viewport.');
   const at = (x: number, y: number) => ({ x: Math.min(size.width - 1, x * size.width), y: Math.min(size.height - 1, y * size.height) });
@@ -50,6 +52,10 @@ export async function ownerPageInput(page: Page, input: OwnerInput, check: () =>
   else if (input.kind === 'key') await page.keyboard.press(input.key);
   else if (input.kind === 'back') await page.goBack({ waitUntil: 'domcontentloaded' });
   else if (input.kind === 'forward') await page.goForward({ waitUntil: 'domcontentloaded' });
-  else await page.reload({ waitUntil: 'domcontentloaded' });
+  else if (input.kind === 'copy') {
+    // Selected page words only: a box's own value (a password among them) is never part of a selection.
+    const text = await page.evaluate(() => String(globalThis.getSelection?.()?.toString() ?? '').slice(0, 20_000));
+    return { done: true, text };
+  } else await page.reload({ waitUntil: 'domcontentloaded' });
   return { done: true };
 }
