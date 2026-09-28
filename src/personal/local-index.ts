@@ -4,6 +4,7 @@ import { FeatureModeSchema } from "../feature-switches.js";
 import { lockdownActive } from "../lockdown.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
+import { byCard, recordedWrite } from "../settings-kit/recorded-write.js";
 import { clip, outsideTextNote, personalMode, type PersonalPart } from "./settings.js";
 import { localIndexKey, localIndexShipsAs } from "./local-index-switch.js";
 export { localIndexKey, localIndexShipsAs, localIndexTools } from "./local-index-switch.js";
@@ -79,7 +80,8 @@ export class LocalIndex {
   settings() { return localIndexSettings(this.deps.store, this.deps.owner); }
   save(input: unknown) {
     const next = LocalIndexSettingsSchema.parse({ ...this.settings(), ...(input as object) });
-    this.deps.store.save("settings", this.deps.owner, localIndexKey, next);
+    const { store, owner } = this.deps;
+    recordedWrite(store, owner, byCard("local-index"), [localIndexKey], () => store.save("settings", owner, localIndexKey, next));
     return next;
   }
   private state() { return StateSchema.parse(this.deps.store.get("settings", this.deps.owner, localIndexStateKey)?.data ?? {}); }
@@ -167,6 +169,8 @@ export function registerLocalIndex(registry: Pick<ToolRegistry, "register">, ind
   registry.register({
     name: "index.search", permission: "index.read",
     description: "Search the owner's mail and calendars in the local index kept on this computer (inbox, Gmail, Outlook, Google and Outlook calendars), fastest first stop for 'find the email about…'.",
+    // What it touches is this computer's copy, of one source or of all of them.
+    target: (args) => `the local index${args.source ? ` (${args.source})` : ""}`,
     parameters: IndexSearchSchema, execute: async (input) => index.search(input),
   });
 }
