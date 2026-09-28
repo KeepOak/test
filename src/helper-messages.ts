@@ -86,7 +86,7 @@ async function resumeHelper(runtime: Runtime, helper: string, text: string, minu
   const prompt = `Message from your lead (the task that started you). Carry on from where you stopped:
 ${text}`;
   const started = await runtime.delegateBackground(prompt, context, permissions, helperInstructions,
-    { timeoutMs: minutes * 60_000, sessionId: run.sessionId });
+    { timeoutMs: minutes * 60_000, sessionId: run.sessionId, tellsLead: true });
   runtime.store.event(context.runId, "delegation.helper_resumed", { childRunId: started.childRunId, from: helper });
   return { resumed: true, helper: started.childRunId, from: helper, note: "It carries on in its own conversation; you are told when it finishes." };
 }
@@ -109,7 +109,7 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
     execute: async (input, context: ToolContext) => {
       const permissions = input.permissions ?? [...context.permissions];
       const started = await runtime.delegateBackground(input.brief, context, permissions, helperInstructions,
-        { timeoutMs: input.minutes * 60_000, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
+        { timeoutMs: input.minutes * 60_000, tellsLead: true, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
       return { helper: started.childRunId, minutes: input.minutes, note: "It works in the background; you are told when it finishes." };
     },
   });

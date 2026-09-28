@@ -995,8 +995,9 @@ export async function createBranch(options: {
   registerSchedules(registry, scheduler);
   // selfdev (SELF-303): helpers the lead starts talk to it while they work, and tell it when they finish.
   registerHelperMessages(registry, runtime);
+  // Only helpers started for the lead (helpers.start) wake it; other background work keeps its result for the parent, as before.
   runtime.onBackgroundFinished = (result) => {
-    if (!result.parentRunId) return;
+    if (!result.parentRunId || !result.tellsLead) return;
     const said = `finished (${result.status}). Its report:
 ${result.output || "(it said nothing)"}`;
     try { tellTask(runtime, result.parentRunId, `helper ${result.childRunId.slice(0, 8)}`, said, fromHelper); }
