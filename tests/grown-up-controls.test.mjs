@@ -34,8 +34,10 @@ test("the gateway is one on/off switch that saves and redraws from the engine", 
   assert.equal((await call("/api/never-break")).mode, "off");
   await page.waitForFunction(() => { const sw = document.querySelector("#main #gw-mode"); return sw && !sw.disabled && !sw.checked; });
   await gateway.click();
-  for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode !== "on"; tries++) await page.waitForTimeout(100);
-  assert.equal((await call("/api/never-break")).mode, "on");
+  // QA retest 2026-09-28 (G1): the Gateway switch runs the gateway ("when-needed") and leaves "Carry on interrupted work",
+  // the switch that saves "on", as it was.
+  for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode === "off"; tries++) await page.waitForTimeout(100);
+  assert.equal((await call("/api/never-break")).mode, "when-needed");
   await page.waitForFunction(() => document.querySelector("#main #gw-mode")?.checked === true);
   await page.setViewportSize({ width: 400, height: 900 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
