@@ -1,5 +1,5 @@
 /* Ctrl K, 1:1 with the prototype's palette: one box that finds an action, a conversation (the engine's list), a place
-   or a settings page, moved through with the arrows and opened with Enter. Only actions this window answers to are
+   a settings page or any row on one (settings/find.js), moved through with the arrows and opened with Enter. Only actions this window answers to are
    offered. Dogfood D13: it also finds words inside conversations (a reply's too) and Library documents by name or words,
    from the engine's own search (GET /api/search, asked once typing pauses): a message opens its conversation with the
    words found, a document opens to read (places/docread.js). */
@@ -15,7 +15,7 @@ import { api } from "../core/api.js";
 import { FIND } from "../chat/find.js";
 import { plain } from "../chat/markdown.js";
 import { openDocument } from "../places/docread.js";
-import { NAV } from "../settings/settings.js";
+import { NAV, findSettings, openSetting } from "../settings/settings.js";
 import { pressed, binding, spoken } from "./keys.js";
 import { PLACES } from "./shell.js"; // every place the sidebar lists, Team included
 import { t } from "../../i18n.js";
@@ -83,7 +83,9 @@ function all(searching, q = "") {
     [t("window.shell.search.messages"), messages],
     [t("nav.documents"), docs],
     [t("ew.places"), PLACES.map(([v, i, l]) => go(say(l), t("window.shell.palette.place"), i, () => { S.view = v; renderNow(); }))],
-    [t("memory.movein.kind.setting"), NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id)))],
+    [t("memory.movein.kind.setting"), [...NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id))),
+      /* Every settings row too (settings/find.js), the owner's only: a row opens its page and is marked there. */
+      ...findSettings(q, 8).map((row) => ({ ...go(row.title, [row.pageName, row.card].filter(Boolean).join(" › "), "gear", () => openSetting(row)), found: true }))]],
   ];
 }
 
