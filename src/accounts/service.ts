@@ -14,6 +14,7 @@ import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
 import { CliAgentProvider, accountHomeVariables, claudeDefaultEffort, claudeDefaultModel, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import { ClaudeSubscriptionProvider, type ClaudeSubscriptionDependencies } from "../providers/claude-subscription.js";
+import { claudeCodePool, claudeSubscriptionPreset } from "../providers/claude-models.js";
 import { currentAccountCall, refuseSignInForTrunk, withAccountCall } from "./context.js";
 import type { Store } from "../store.js";
 import { ChatGPTAccounts } from "./chatgpt-accounts.js";
@@ -267,6 +268,7 @@ export class AccountsService {
   /** Which list a connection belongs to, or null when it can only ever have one account. */
   poolFor(preset: Pick<ModelPreset, "id">): { pool: string; kind: AccountKind } | null {
     if (preset.id.startsWith(chatgptPresetPrefix)) return { pool: "chatgpt", kind: "chatgpt" };
+    if (claudeSubscriptionPreset(preset.id)) return { pool: claudeCodePool, kind: "cli" };
     if (preset.id.startsWith("cli-") && accountHomeVariables[preset.id.slice(4)]) return { pool: preset.id, kind: "cli" };
     const record = savedConnections(this.deps.store, this.deps.owner).find((saved) => saved.id === preset.id);
     const entry = record ? catalogEntry(record.catalogId) : undefined;
@@ -275,15 +277,15 @@ export class AccountsService {
 
   /** The hook ModelRouter runs on every connection it registers. */
   wrap = (preset: ModelPreset): ModelPreset => {
-    const claude = preset.id === "cli-claude-code";
+    const claude = !!claudeSubscriptionPreset(preset.id);
     // models-ui: a connection registered before Claude had a default model of its own (its model was the command) gets
     // Branch's default, Opus 5.5 at medium; a model it names and an effort already set are left as they are.
     if (claude && preset.model === "claude") preset = { ...preset, model: claudeDefaultModel };
-    if (claude && !preset.reasoning) preset = { ...preset, reasoning: claudeDefaultEffort };
-    const original = claude ? this.programConnection(preset.id, primaryAccount, preset.model) : unwrapProvider(preset.provider);
+    if (preset.id === claudeCodePool && !preset.reasoning) preset = { ...preset, reasoning: claudeDefaultEffort };
+    const original = claude ? this.programConnection(claudeCodePool, primaryAccount, preset.model) : unwrapProvider(preset.provider);
     // The program's first account is the connection itself: what it prints about its plan is that account's.
-    if ((original instanceof CliAgentProvider || original instanceof ClaudeSubscriptionProvider) && preset.id.startsWith("cli-claude-code") && !original.onOutput)
-      original.onOutput = (stdout) => this.notePlanWindows(preset.id, primaryAccount, claudePlanWindows(stdout, this.now()));
+    if (claude && (original instanceof CliAgentProvider || original instanceof ClaudeSubscriptionProvider) && !original.onOutput)
+      original.onOutput = (stdout) => this.notePlanWindows(claudeCodePool, primaryAccount, claudePlanWindows(stdout, this.now()));
     const found = this.on() ? this.poolFor(preset) : null;
     if (!found) return original === preset.provider ? preset : { ...preset, provider: original };
     return { ...preset, provider: pooled(original, this.hooksFor(found.pool, found.kind, preset)) };
