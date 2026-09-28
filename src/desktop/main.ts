@@ -41,9 +41,10 @@ import { registerEditMenu } from "./context-menu.js";
 import { appMenuTemplate, helpChannel, type HelpItem } from "./app-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
-import { electronBannerWindow } from "./banner-window.js";
+import type { BannerWindowFactory } from "../integrations/desktop-banner.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
-import { stagedEngine, updateCanary } from "../never-break/canary.js";
+// Loaded when an update is tried, not with the app (PLAT-192: the tray start keeps main small).
+const canaryCode = () => import("../never-break/canary.js");
 import { runStagedSmoke, smokeReportPath } from "./beta-smoke.js";
 import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
@@ -526,10 +527,15 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     testHooks: !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1",
   };
   const banners = new Map<number, { close(): void }>();
-  const showBanner = electronBannerWindow({
-    create: (options) => new BrowserWindow(options),
-    workArea: () => screen.getPrimaryDisplay().workArea,
-  });
+  // The Stop notice's code is loaded the first time screen control shows it, not with the app.
+  let bannerFactory: BannerWindowFactory | undefined;
+  const showBanner: BannerWindowFactory = async (closed, notice) => {
+    bannerFactory ??= (await import("./banner-window.js")).electronBannerWindow({
+      create: (options) => new BrowserWindow(options),
+      workArea: () => screen.getPrimaryDisplay().workArea,
+    });
+    return bannerFactory(closed, notice);
+  };
   const host = new EngineHost({
     fork: () => utilityProcess.fork(fileURLToPath(new URL("./engine-process.js", import.meta.url)), [],
       { serviceName: "Branch Agent engine", stdio: "inherit" }),
@@ -644,15 +650,16 @@ function watchDesktopCrashes(host: EngineHost): void {
 
 /** mac3/never-break: the update's canary step for this computer (src/never-break/canary.ts). */
 function desktopCanary(dataDir: string, snapshot: () => Promise<string>) {
-  return updateCanary({ dataDir, platform: process.platform, executableName: appEntryName(process.platform),
-    fromVersion: app.getVersion(), target: installedAppRoot(app.isPackaged, process.platform, process.execPath), snapshot });
+  return async (stagedDir: string, version: string, how?: { required: boolean }) => (await canaryCode()).updateCanary({ dataDir,
+    platform: process.platform, executableName: appEntryName(process.platform), fromVersion: app.getVersion(),
+    target: installedAppRoot(app.isPackaged, process.platform, process.execPath), snapshot })(stagedDir, version, how);
 }
 /**
  * Beta: the staged new version started for real, hidden, on a folder of its own in this computer's temporary folder
  * (src/desktop/beta-smoke.ts); never the owner's data. Answers the owner's sentence when it failed, or null.
  */
-function betaTryOut(stagedDir: string): Promise<string | null> {
-  const { executable } = stagedEngine(stagedDir, process.platform, appEntryName(process.platform));
+async function betaTryOut(stagedDir: string): Promise<string | null> {
+  const { executable } = (await canaryCode()).stagedEngine(stagedDir, process.platform, appEntryName(process.platform));
   return runStagedSmoke({ executable, args: [] }, join(app.getPath("temp"), "branch-agent-try-out"), process.env);
 }
 /** mac3/never-break: asks the background engine, which holds the database, for a copy of it. */

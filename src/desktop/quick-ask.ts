@@ -1,5 +1,5 @@
 import type { BrowserWindow, GlobalShortcut, IpcMain, IpcMainInvokeEvent } from "electron";
-import { keyCombo, shortcutDefaults } from "../comfort/settings.js";
+import { keyCombo, shortcutDefaults } from "../comfort/keys.js";
 
 /** The page asks main to read the keys again after the owner changed them; it hands nothing over. */
 export const quickAskRefreshChannel = "branch:quick-ask-keys";
