@@ -1191,6 +1191,43 @@
    "noApp": "Messages comes with every Mac; there is nothing to install."
   },
   {
+   "id": "bluebubbles",
+   "name": "iMessage through BlueBubbles",
+   "family": "parity",
+   "turnOn": "switch",
+   "steps": [
+    "On a Mac that stays on and is signed in to Messages, install the BlueBubbles server app from bluebubbles.app and finish its own setup.",
+    "In the BlueBubbles server, copy its https address (its Cloudflare or dynamic DNS link) and the server password. The Mac's address on your own network works only once private addresses are allowed under Computer → Network reach.",
+    "Paste them here. Branch asks the server for new messages every few seconds and sends through it with AppleScript, so the Mac does not need BlueBubbles' Private API."
+   ],
+   "fields": [
+    {
+     "name": "server",
+     "what": "The BlueBubbles server's address",
+     "kind": "url"
+    }
+   ],
+   "paste": [
+    {
+     "secret": "BLUEBUBBLES_PASSWORD",
+     "what": "The BlueBubbles server password"
+    }
+   ],
+   "noCreate": "There is no account to create: BlueBubbles runs on your own Mac and answers as your Apple Account. It is a separate open-source app, not made by Apple; Branch never installs it.",
+   "noCheck": "The BlueBubbles server takes its password only in the address, so the setup page does not send it anywhere to test; it is tried when the switch goes on, and a wrong password is named on the card.",
+   "noApp": "Nothing to install on this computer: the BlueBubbles server runs on the Mac, and you keep using Messages on your phone.",
+   "entry": {
+    "type": "bluebubbles",
+    "id": "bluebubbles",
+    "server": "{{server}}"
+   },
+   "sources": [
+    "https://bluebubbles.app/",
+    "https://docs.bluebubbles.app/server",
+    "https://github.com/BlueBubblesApp/bluebubbles-server"
+   ]
+  },
+  {
    "id": "msteams-bot",
    "name": "Microsoft Teams (bot)",
    "family": "parity",
