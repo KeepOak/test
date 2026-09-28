@@ -58,9 +58,16 @@ async function fixture(t, provider) {
 
 /** Where an element of the engine's page is drawn in the window: the frame is drawn whole, centred across, from the top. */
 async function onFrame(w, selector) {
-  await framed(w.page);
-  const box = await w.enginePage().locator(selector).boundingBox(), size = w.enginePage().viewportSize();
-  const img = await w.page.locator("#stage7 .owner-browser7-img").boundingBox();
+  // The stage is drawn anew as the engine's state changes, which replaces its picture element: a measurement taken
+  // across a redraw finds no box, so it is taken again until every part is measured in one go.
+  let box = null, size = null, img = null;
+  for (let i = 0; i < 50 && !(box && size && img); i++) {
+    await framed(w.page);
+    box = await w.enginePage().locator(selector).boundingBox(); size = w.enginePage().viewportSize();
+    img = await w.page.locator('#stage7 .owner-browser7-img[src^="data:image/jpeg"]:not([hidden])').boundingBox();
+    if (!(box && size && img)) await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(box && size && img, `measured ${selector} on the drawn frame`);
   const scale = Math.min(img.width / size.width, img.height / size.height), left = img.x + (img.width - size.width * scale) / 2;
   return { x: left + (box.x + box.width / 2) * scale, y: img.y + (box.y + box.height / 2) * scale };
 }
