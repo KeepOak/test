@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { _electron } from "playwright";
-import { connected, desktopOptions } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, STARTUP_MS } from "./fixtures/desktop-options.mjs";
 
 const BLOCK_MS = 3000;
 /** The window's main process's event-loop delay, 99th percentile, while the engine is blocked. */
@@ -27,7 +27,7 @@ test("the window stays responsive while the engine is busy, and the engine comes
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const electron = await _electron.launch(options);
   try {
-    const page = await electron.firstWindow();
+    const page = await electron.firstWindow({ timeout: STARTUP_MS });
     await connected(page);
     const origin = new URL(page.url()).origin;
     const firstPid = await electron.evaluate(() => globalThis.branchEngineForTests.pid);
