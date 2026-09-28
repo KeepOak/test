@@ -9397,7 +9397,7 @@
   "window.chat-steps.line-hint": "A longer line is shortened: a sentence at a word, a file path in the middle so its name stays.",
   "window.chat-steps.characters": "characters",
   "window.chat-steps.line-range": "Choose a whole number from 40 to 400.",
-  "window.chat-steps.each-app": "Each connected app can follow the choice above or have its own.",
+  "window.chat-steps.each-app": "Each app",
   "window.chat-steps.same-as-all": "Same as all",
   "window.chat-steps.app-detail": "Steps in {name}",
   "window.chat-steps.sw-commands": "Show commands as code",

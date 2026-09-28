@@ -9398,7 +9398,7 @@
   "window.chat-steps.line-hint": "Une ligne plus longue est raccourcie : une phrase à un mot, un chemin au milieu pour garder le nom du fichier.",
   "window.chat-steps.characters": "caractères",
   "window.chat-steps.line-range": "Choisissez un nombre entier de 40 à 400.",
-  "window.chat-steps.each-app": "Chaque app connectée peut suivre le choix ci-dessus ou avoir le sien.",
+  "window.chat-steps.each-app": "Chaque app",
   "window.chat-steps.same-as-all": "Comme toutes",
   "window.chat-steps.app-detail": "Étapes dans {name}",
   "window.chat-steps.sw-commands": "Afficher les commandes en code",

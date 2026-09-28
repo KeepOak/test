@@ -514,7 +514,8 @@ export class ChannelRouter {
   stepsView() {
     return { settings: this.stepsSettings(), apps: [...this.adapters.values()].map(({ adapter }) => {
       const caps = stepsCapsOf(adapter.kind), display = this.stepsDisplay(adapter.id);
-      return { id: adapter.id, kind: adapter.kind, edit: !!adapter.edit, display,
+      const name = caps ? (adapter.id === adapter.kind ? caps.name : `${caps.name} (${adapter.id})`) : adapter.id;
+      return { id: adapter.id, kind: adapter.kind, name, edit: !!adapter.edit, display,
         shows: caps ? stepsBehaviour(caps, display) : stepsBehaviour({ kind: adapter.kind, name: adapter.kind, edit: !!adapter.edit,
           code: "plain", maxText: adapter.maxTextLength ?? 3500, reactions: !!adapter.react, typing: !!adapter.sendTyping, replies: false,
           ...(adapter.paidPerMessage ? { paid: true } : {}) }, display) };

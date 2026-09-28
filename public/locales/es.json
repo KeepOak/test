@@ -9397,7 +9397,7 @@
   "window.chat-steps.line-hint": "Una línea más larga se acorta: una frase en una palabra, una ruta por el medio para que quede el nombre.",
   "window.chat-steps.characters": "caracteres",
   "window.chat-steps.line-range": "Elige un número entero de 40 a 400.",
-  "window.chat-steps.each-app": "Cada app conectada puede seguir la opción de arriba o tener la suya.",
+  "window.chat-steps.each-app": "Cada app",
   "window.chat-steps.same-as-all": "Igual que todas",
   "window.chat-steps.app-detail": "Pasos en {name}",
   "window.chat-steps.sw-commands": "Mostrar los comandos como código",

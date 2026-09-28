@@ -38,9 +38,9 @@ export function stepsCard(state, level) {
     const apps = (steps.apps ?? []).map((app) => {
       const own = steps.settings?.apps?.[app.id]?.detail ?? "";
       const opts = [["", t("window.chat-steps.same-as-all")], ["off", t("accounts.switch.off")], ...detailChoices()];
-      return `<div class="ctl"><b>${esc(app.id)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.chat-steps.app-detail", { name: app.id }))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${own === v}" data-act="cs-app" data-v="${esc(`${app.id}:${v}`)}">${esc(l)}</button>`).join("")}</span></span><small>${esc(app.shows)}</small></div>`;
+      return `<div class="ctl"><b>${esc(app.name)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.chat-steps.app-detail", { name: app.name }))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${own === v}" data-act="cs-app" data-v="${esc(`${app.id}:${v}`)}">${esc(l)}</button>`).join("")}</span></span><small>${esc(app.shows)}</small></div>`;
     }).join("");
-    if (apps) body += `<p class="hint">${esc(t("window.chat-steps.each-app"))}</p>${apps}`;
+    if (apps) return sec15(t("window.chat-steps.title"), body) + sec15(t("window.chat-steps.each-app"), apps);
   }
   return sec15(t("window.chat-steps.title"), body);
 }

@@ -9397,7 +9397,7 @@
   "window.chat-steps.line-hint": "Längere Zeilen werden gekürzt: ein Satz an einem Wort, ein Pfad in der Mitte, damit der Dateiname bleibt.",
   "window.chat-steps.characters": "Zeichen",
   "window.chat-steps.line-range": "Wähle eine ganze Zahl von 40 bis 400.",
-  "window.chat-steps.each-app": "Jede verbundene App kann der Wahl oben folgen oder eine eigene haben.",
+  "window.chat-steps.each-app": "Jede App",
   "window.chat-steps.same-as-all": "Wie alle",
   "window.chat-steps.app-detail": "Schritte in {name}",
   "window.chat-steps.sw-commands": "Befehle als Code zeigen",
