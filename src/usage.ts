@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { Run, Event } from "./contracts.js";
 import { estimateCost, type ModelPrice } from "./pricing.js";
+import { countedUsageTask } from "./conversation-bootstrap.js";
 
 export interface UsageAggregate {
   date: string;
@@ -157,7 +158,7 @@ export class UsageStore {
     const runs = this.db
       .prepare(
         `SELECT id, session_id, status, created_at, source FROM tasks
-         WHERE created_at >= ? AND status NOT IN ('running', 'needs_input')
+         WHERE created_at >= ? AND status NOT IN ('running', 'needs_input') AND ${countedUsageTask(this.db)}
          ORDER BY created_at DESC`
       )
       .all(cutoff) as Array<{ id: string; session_id: string; status: string; created_at: string; source: string }>;
@@ -355,7 +356,7 @@ export class UsageStore {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
     const runs = this.db
-      .prepare(`SELECT id FROM tasks WHERE status NOT IN ('running', 'needs_input') AND created_at >= ? ORDER BY created_at DESC`)
+      .prepare(`SELECT id FROM tasks WHERE status NOT IN ('running', 'needs_input') AND created_at >= ? AND ${countedUsageTask(this.db)} ORDER BY created_at DESC`)
       .all(monthStart) as Array<{ id: string }>;
 
     let total = 0, cost = 0, unpricedRuns = 0;

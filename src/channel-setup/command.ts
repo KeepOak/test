@@ -36,6 +36,8 @@ export interface ConnectBackend {
 export interface SaveAnswer {
   saved: string[]; checked: boolean | null; botName: string | null; checkNote: string | null;
   switched: FeatureMode | null; connectNote: string | null; entry: string | null; pairing: string | null;
+  /** Whether the app connected to the running Branch just now (null when not tried: the Telegram card, or Branch closed). */
+  connected?: boolean | null;
 }
 
 const yes = (answer: string): boolean => /^\s*(y|yes|o|oui)\s*$/i.test(answer);
@@ -146,8 +148,8 @@ function report(io: ConnectIo, recipe: Recipe, answer: SaveAnswer): void {
   if (answer.saved.length) io.write(`Saved in the locker as ${answer.saved.join(", ")}. It is not shown again.`);
   if (answer.switched) io.write(`${recipe.name} is switched ${answer.switched === "on" ? "on" : "to when needed"}.`);
   else if (recipe.turnOn !== "file") io.write(`${recipe.name} stays off until you switch it on under Customize, Chat apps.`);
+  if (answer.connected === true) io.write(`${recipe.name} is connected now. Nothing needs restarting.`);
   if (answer.connectNote) io.write(answer.connectNote);
-  if (answer.entry) io.write(`Add this to "channels" in your connections file, then restart Branch:\n  ${answer.entry}`);
 }
 
 async function pair(io: ConnectIo, backend: ConnectBackend, answer: SaveAnswer): Promise<void> {

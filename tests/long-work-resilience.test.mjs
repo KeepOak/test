@@ -41,6 +41,7 @@ import { freshState } from "../dist/accounts/pool.js";
 import { isNetworkDrop, limitResetsAt, resumeMode, LongWorkSettingsSchema } from "../dist/long-work.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { switchedLines } from "../dist/run-steps.js";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 
 const POOL = "cli-claude-code";
 
@@ -75,7 +76,7 @@ async function until(check, label, ms = 30000) {
 const limited = { code: 1, stdout: "", stderr: "Claude usage limit reached." };
 const answer = (text) => ({ code: 0, stdout: JSON.stringify({ result: text }), stderr: "" });
 /** Claude Code, answered per account folder by a stand-in; `outcomes(who, n)` says what each call gets. */
-function program(fx, service, outcomes) {
+async function program(t, fx, service, outcomes) {
   const seen = [];
   const run = async (row, prompt, signal, limits, home) => {
     const who = home ? home.path.split(/[\\/]/).pop() : "primary";
@@ -85,13 +86,14 @@ function program(fx, service, outcomes) {
   registerCliAgent(fx.app.runtime.models, { id: "claude-code" }, {}, run);
   fx.app.runtime.models.configure(fx.app.runtime.owner, { activePreset: POOL });
   service.deps.spawnAgent = run;
+  await fakeClaudeAccounts(t, service); // Claude Code answers through its native transport; the stand-in plays each account
   return seen;
 }
 
 test("a plan limit moves the work to the owner's next account, by default, and says so", async (t) => {
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
-  const seen = program(fx, service, (who) => (who === "primary" ? limited : null));
+  const seen = await program(t, fx, service, (who) => (who === "primary" ? limited : null));
   assert.equal(service.on(), true, "several accounts per connection ships on");
   const work = (await addAccount(service, { pool: POOL, label: "Work" })).accounts.at(-1).id;
   assert.equal(service.settings().pools[0].autoSwitch, true, "moving to the next account ships on");
@@ -118,11 +120,12 @@ test("a plan limit with nowhere to move waits for the plan meter's reset and car
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
   let second = "";
-  const seen = program(fx, service, (who, n) => ((who === "primary" && n === 1) || who === second ? limited : null));
+  // The plan meter knows when the window refills: 2.5 s after the limit is hit. Set as the limit is hit, so a slow first
+  // call (a busy build machine) never finds the reset already past and the limit's end unknown.
+  const meter = () => service.statesOf(POOL).set("primary", { ...(service.statesOf(POOL).get("primary") ?? freshState()), resetAt: new Date(Date.now() + 2500).toISOString() });
+  const seen = await program(t, fx, service, (who, n) => ((who === "primary" && n === 1) ? (meter(), limited) : who === second ? limited : null));
   setMode(service, { mode: "on" });
   second = (await addAccount(service, { pool: POOL, label: "Second" })).accounts.at(-1).id; // at its limit too: nowhere to move
-  // The plan meter knows when the window refills.
-  service.statesOf(POOL).set("primary", { ...freshState(), resetAt: new Date(Date.now() + 1500).toISOString() });
   const started = Date.now();
   const run = await fx.call("run", { prompt: "hello" });
   assert.equal(run.status, "completed", run.output);
@@ -141,7 +144,7 @@ test("a plan limit with nowhere to move waits for the plan meter's reset and car
 test("while it waits for a limit the task shows the wait, its reset time and the next step, and Stop ends it", async (t) => {
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
-  program(fx, service, () => limited);
+  await program(t, fx, service, () => limited);
   setMode(service, { mode: "on" });
   await addAccount(service, { pool: POOL, label: "Second" }); // at its limit too: nowhere to move
   const resets = new Date(Date.now() + 60 * 60_000).toISOString();
