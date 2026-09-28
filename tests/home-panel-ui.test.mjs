@@ -144,3 +144,24 @@ test("a file attached in the panel stays in the panel's box, and goes with the d
   assert.equal(sent.attachments?.[0]?.name, "notes.txt", "the file went with the message");
   assert.deepEqual(errors, []);
 });
+
+test("a row picked on the page (a task in Inbox › History) is part of the snapshot, named by its kind and title", async (t) => {
+  const { app, page, errors } = await fixture(t);
+  const run = app.store.createRun(app.runtime.owner, "Reconcile the September receipts");
+  app.store.finish(run.id, "completed", "Done.");
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await page.locator('#side [data-act="view"][data-v="inbox"]').click();
+  await page.locator('[data-act="ptab"][data-place="inbox"][data-v="history"]').click();
+  const row = page.locator("#main .prow").filter({ hasText: "Reconcile the September receipts" });
+  await row.locator("b").click();
+  await page.locator('.titlebar [data-act="home19"]').click();
+  await page.locator('[data-act="home19-see"]').click();
+  const shown = await page.locator(".hm19-sent").textContent();
+  assert.match(shown, /Selected task: Reconcile the September receipts/, "the task row is in what is sent");
+  await page.locator("#home19-prompt").fill("Is this one finished?");
+  await page.locator("#home19-prompt").press("Enter");
+  await page.locator("#home19 .b .txt").filter({ hasText: "Noted." }).waitFor({ timeout: 60000 });
+  assert.ok(sent(app).includes(`${shown}\n\nIs this one finished?`), "the engine got it");
+  assert.deepEqual(errors, []);
+});

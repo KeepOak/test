@@ -10137,5 +10137,9 @@
   "window.home.snap.sent": "Wird vor deiner Nachricht gesendet",
   "window.home.snap.page": "Arbeitet an: {page}",
   "window.home.snap.picked": "Ausgewählt: „{words}“",
-  "window.home.attach": "Dateien anhängen"
+  "window.home.attach": "Dateien anhängen",
+  "window.home.snap.row.conversation": "Ausgewählte Unterhaltung: {name}",
+  "window.home.snap.row.task": "Ausgewählte Aufgabe: {name}",
+  "window.home.snap.row.file": "Ausgewählte Datei: {name}",
+  "window.home.snap.row.item": "Ausgewählt: {name}"
 }

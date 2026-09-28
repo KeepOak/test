@@ -10137,5 +10137,9 @@
   "window.home.snap.sent": "Sent in front of your message",
   "window.home.snap.page": "Working on: {page}",
   "window.home.snap.picked": "Selected: “{words}”",
-  "window.home.attach": "Attach files"
+  "window.home.attach": "Attach files",
+  "window.home.snap.row.conversation": "Selected conversation: {name}",
+  "window.home.snap.row.task": "Selected task: {name}",
+  "window.home.snap.row.file": "Selected file: {name}",
+  "window.home.snap.row.item": "Selected: {name}"
 }

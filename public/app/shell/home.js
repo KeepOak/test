@@ -2,8 +2,8 @@
    whoever answers a new conversation) opens in a panel beside any page: a conversation, Settings, a place. It has its own
    message box and its own conversation, read from and sent to the engine like any other (POST /api/run, or the busy
    send while a task works there).
-   Above the box sits "Working on": a snapshot of the page the person is on (its name, and the words they selected on it,
-   if any). Its eye shows the exact words that go in front of the message; its x leaves them out until the page changes.
+   Above the box sits "Working on": a snapshot of the page the person is on (its name, the row they last picked on it
+   (a conversation, a task or a file, from the page's own lists) and the words they selected on it, if any). Its eye shows the exact words that go in front of the message; its x leaves them out until the page changes.
    The panel's full-page button opens its conversation (or a new one) as the page, with the draft in the box and the
    snapshot still attached, as a chip by the box that the next message carries (chat/chat.js addSendPrefix). */
 
@@ -19,7 +19,7 @@ import { attachedChips, pickFiles, readyUploads, filesSent, hasFiles, moveFiles 
 import { newConversationMode } from "../chat/chips.js";
 import { t } from "../../i18n.js";
 
-const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: false, left: null, picked: null, carried: null };
+const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: false, left: null, picked: null, row: null, carried: null };
 const BUSY = ["running", "queued", "waiting", "needs_input"];
 
 /* ---------- who the panel talks to ---------- */
@@ -42,9 +42,27 @@ function snapshot() {
   const page = pageNow();
   if (!page || H.left === page) return null;
   const picked = H.picked?.page === page ? H.picked.words : "";
-  return { page, picked };
+  const row = H.row?.page === page ? H.row : null;
+  return { page, picked, row };
 }
-const snapshotText = (snap) => (snap ? [t("window.home.snap.page", { page: snap.page }), snap.picked ? t("window.home.snap.picked", { words: snap.picked }) : ""].filter(Boolean).join("\n") : "");
+const rowText = (row) => t(`window.home.snap.row.${row.kind}`, { name: row.name });
+const snapshotText = (snap) => (snap ? [t("window.home.snap.page", { page: snap.page }), snap.row ? rowText(snap.row) : "", snap.picked ? t("window.home.snap.picked", { words: snap.picked }) : ""].filter(Boolean).join("\n") : "");
+
+/* The row the person picked on the page, by what the page's own list says it is: a conversation (a row that opens one),
+   a file (a row with a file's tile), a task (a row that replays or steers a run), else an item; named by its title. */
+const ROWS = "#main .prow, #main .row[data-id], #main .rw18 .row";
+function kindOf(row) {
+  if (row.matches('[data-act="chat"]') || row.querySelector('[data-act="chat"]')) return "conversation";
+  if (row.querySelector(".fi")) return "file";
+  if (row.querySelector('[data-act="replay"], [data-act^="lw-"], [data-act="bgopen15"]')) return "task";
+  return "item";
+}
+function notePickedRow(e) {
+  const row = e.target.closest?.(ROWS);
+  if (!row || row.closest("#home19")) return;
+  const name = (row.querySelector("b")?.textContent ?? row.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (name) H.row = { page: pageNow(), kind: kindOf(row), name };
+}
 
 /* The words the person selected on the page (not in the panel), kept with the page they were on. */
 function notePicked() {
@@ -74,7 +92,7 @@ function snapRow() {
   const snap = snapshot();
   if (!snap) return "";
   const seen = H.seeing ? `<pre class="hm19-sent" aria-label="${t("window.home.snap.sent")}">${esc(snapshotText(snap))}</pre>` : "";
-  return `<div class="hm19-snap"><span class="hm19-chip">${ic("pin", "s")}<span class="grow"><small>${t("window.home.snap.title")}</small><b>${esc(snap.page)}</b>${snap.picked ? `<small class="hm19-pick">“${esc(snap.picked.slice(0, 80))}”</small>` : ""}</span>`
+  return `<div class="hm19-snap"><span class="hm19-chip">${ic("pin", "s")}<span class="grow"><small>${t("window.home.snap.title")}</small><b>${esc(snap.page)}</b>${snap.row ? `<small class="hm19-pick">${esc(rowText(snap.row))}</small>` : ""}${snap.picked ? `<small class="hm19-pick">“${esc(snap.picked.slice(0, 80))}”</small>` : ""}</span>`
     + `<button class="icon-btn" type="button" data-act="home19-see" aria-expanded="${H.seeing}" aria-label="${t("window.home.snap.see")}" data-tip="${t("window.home.snap.see")}">${ic("eye", "s")}</button>`
     + `<button class="icon-btn" type="button" data-act="home19-drop" aria-label="${t("window.home.snap.remove")}" data-tip="${t("window.home.snap.remove")}">${ic("x", "s")}</button></span>${seen}</div>`;
 }
@@ -216,5 +234,7 @@ export function initHome() {
   document.addEventListener("submit", (e) => { if (e.target.id === "home19-form") { e.preventDefault(); send(); } });
   document.addEventListener("keydown", (e) => { if (e.target.id === "home19-prompt" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
   document.addEventListener("selectionchange", notePicked);
+  document.addEventListener("pointerdown", notePickedRow, true);
+  document.addEventListener("focusin", notePickedRow);
   afterDraw(drawHome); // after the view is drawn: "Working on" reads the page the person now sees
 }
