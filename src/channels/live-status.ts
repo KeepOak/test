@@ -82,6 +82,12 @@ export function renderProgress(steps: readonly { label: string; name?: string; s
   return [`Working on it${steps.length ? ` (${done} of ${steps.length} steps done)` : ""}…`,
     ...(earlier > 0 ? [`(${earlier} earlier)`] : []), ...lines].join("\n").slice(0, limit);
 }
+const thinkingWords = "is thinking…", workingWords = "is working…";
+/** A step as a status line: "is Reading notes.md…", short enough for the app's status. */
+const statusOf = (label: string): string => {
+  const words = label.charAt(0).toLowerCase() + label.slice(1);
+  return `is ${words.length > 60 ? `${words.slice(0, 59)}…` : words}${words.endsWith("…") ? "" : "…"}`;
+};
 /** A tool step in words: the label the app already shows for it, on one short line. */
 function stepLabel(data: Record<string, unknown>): string {
   const label = typeof data.label === "string" && data.label.trim() ? data.label : String(data.name ?? "a step");
@@ -99,7 +105,9 @@ export class LiveStatus {
   private closed = false;
   private state: LiveState | null = null;
   private wanted: LiveState | null = null;
-  private readonly failures = { typing: 0, react: 0, edit: 0 };
+  private readonly failures = { typing: 0, react: 0, edit: 0, status: 0 };
+  /** The status line last asked for, so the same words are not sent again. */
+  private statusShown = "";
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private typingTimer: ReturnType<typeof setInterval> | undefined;
   private editTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,7 +125,7 @@ export class LiveStatus {
    */
   constructor(private readonly target: LiveTarget, private readonly guard: OutboundGuard,
     private readonly timing: LiveTiming = defaultLiveTiming, private readonly patient = false,
-    private readonly stepsSource?: StepsSource) {
+    private readonly stepsSource?: StepsSource, private readonly separateReply = false) {
     this.limit = Math.min(target.adapter.maxTextLength ?? 3500, 3500);
     this.awake = !patient;
   }
@@ -127,6 +135,7 @@ export class LiveStatus {
     if (this.awake) this.keepTyping();
   }
   private keepTyping(): void {
+    this.status(thinkingWords);
     this.typing();
     if (!this.target.adapter.sendTyping || this.typingTimer) return;
     this.typingTimer = setInterval(() => this.typing(), this.timing.typingEveryMs);
@@ -157,6 +166,8 @@ export class LiveStatus {
     if (kind === "tool.started") {
       this.steps.push({ id, label: stepLabel(data), name: String(data.name ?? ""), state: "working" });
       this.setState("tool");
+      // A group's status names no file or command (Hermes Agent's "verb" live status); a direct chat's says the step.
+      this.status(this.target.kindsOnly ? workingWords : statusOf(stepLabel(data)));
     } else if (kind === "tool.completed" || kind === "tool.failed" || kind === "tool.stalled") {
       const step = this.steps.find((s) => s.state === "working" && s.id === id) ?? this.steps.find((s) => s.state === "working");
       if (step) step.state = kind === "tool.completed" ? "done" : "failed";
@@ -164,6 +175,7 @@ export class LiveStatus {
       // Words written before a tool call are not the reply; the next round writes that afresh.
       this.reply = "";
       this.setState("thinking");
+      this.status(thinkingWords);
     } else {
       // The steps come from the task's whole record, so anything it does may change them.
       if (this.stepsSource) this.scheduleEdit();
@@ -174,7 +186,7 @@ export class LiveStatus {
   /** A piece of the reply as the model writes it. */
   text(delta: string): void {
     // The steps message stays the steps; the reply goes out on its own at the end.
-    if (this.closed || this.streamBlocked || this.stepsSource) return;
+    if (this.closed || this.streamBlocked || this.stepsSource || this.separateReply) return;
     if (this.reply.length <= this.limit) this.reply += delta;
     this.scheduleEdit();
   }
@@ -187,6 +199,7 @@ export class LiveStatus {
     if (this.closed) return null;
     this.closed = true;
     this.stopTimers();
+    this.clearStatus();
     this.wanted = outcome;
     // A patient status that never woke has shown nothing, and ends the same way.
     if (!this.awake) return null;
@@ -194,7 +207,7 @@ export class LiveStatus {
     return this.enqueue(async () => {
       await this.applyReaction();
       if (!this.progressId) return null;
-      if (outcome === "done" && reply !== undefined && fitsOne(reply, this.limit)) {
+      if (!this.separateReply && outcome === "done" && reply !== undefined && fitsOne(reply, this.limit)) {
         const text = await this.checked(reply);
         if (text !== null && fitsOne(text, this.limit) && await this.editTo(text)) return { messageId: this.progressId, text };
       }
@@ -224,6 +237,7 @@ export class LiveStatus {
   cancel(): void {
     this.closed = true;
     this.stopTimers();
+    this.clearStatus();
   }
   private render(): RichText {
     if (this.stepsSource) return this.stepsSource.render(this.limit);
@@ -238,6 +252,26 @@ export class LiveStatus {
     if (text === null) return null;
     const spans = text === rendered.text ? rendered.spans : [];
     return { text, format: { ...(spans.length ? { spans } : {}), ...(this.stepsSource ? { quiet: true } : {}) } };
+  }
+  /**
+   * The app's working-status line (Slack's assistant status), scrubbed like every word that goes out, sent only when it
+   * changes. Two failures in a row (no scope, not an assistant thread) and it is left alone for the rest of the task.
+   */
+  private status(words: string): void {
+    const { adapter, chatId, messageId } = this.target;
+    if (this.closed || !adapter.setStatus || !this.awake || words === this.statusShown || this.failures.status >= giveUpAfter || !this.permitted()) return;
+    this.statusShown = words;
+    void this.enqueue(async () => {
+      const checked = await this.checked(words);
+      if (checked === null) return;
+      await adapter.setStatus!(chatId, messageId, checked).then(() => { this.failures.status = 0; }, () => { this.failures.status++; });
+    });
+  }
+  private clearStatus(): void {
+    const { adapter, chatId, messageId } = this.target;
+    if (!adapter.setStatus || !this.statusShown || this.failures.status >= giveUpAfter) return;
+    this.statusShown = "";
+    void this.enqueue(() => adapter.setStatus!(chatId, messageId, "").catch(() => undefined));
   }
   private typing(): void {
     const { adapter, chatId } = this.target;

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { runAsNode } from "../child-env.js";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js";
-import { strippedEnvironment, ProgramLimitError, type AccountHome } from "./cli-agent.js";
+import { strippedEnvironment, ProgramLimitError, claudeDefaultModel, type AccountHome } from "./cli-agent.js";
 import { NativeAdmission, type NativeConnector } from "./claude-subscription-admission.js";
 import { ProviderHttpError } from "../provider-retry.js";
 import { isOutOfRoomThinking } from "../provider-stream.js";
@@ -37,7 +37,7 @@ async function invocation(root: string, options: Readonly<ClaudeSubscriptionOpti
   const mcp = { mcpServers: { branch: { command: process.execPath,
     args: [fileURLToPath(new URL("./claude-subscription-inert.cjs", import.meta.url)), join(root, "tools.json")],
     env: runAsNode(process.execPath) } } };
-  const args = ["-p", "--model", options.model ?? "sonnet", "--input-format", "stream-json", "--output-format", "stream-json",
+  const args = ["-p", "--model", options.model ?? claudeDefaultModel, "--input-format", "stream-json", "--output-format", "stream-json",
     "--verbose", "--include-partial-messages", "--tools", "", "--system-prompt-file", join(root, "system.md"), "--settings", join(root, "settings.json"),
     "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--max-turns", "1", "--permission-mode", "dontAsk",
     "--no-session-persistence", "--mcp-config", JSON.stringify(mcp), ...(request.reasoning ? ["--effort", request.reasoning] : [])];
@@ -140,7 +140,7 @@ export class ClaudeSubscriptionProvider implements Provider {
       throw new Error("Claude subscription account home must be its owner's absolute CLAUDE_CONFIG_DIR");
     if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 3600000))
       throw new Error("Claude subscription timeout must be between 100 milliseconds and one hour");
-    this.model = options.model ?? "sonnet";
+    this.model = options.model ?? claudeDefaultModel;
     this.options = Object.freeze({ ...options, ...(options.accountHome ? { accountHome: Object.freeze({ ...options.accountHome }) } : {}) });
   }
   async complete(request: CompletionRequest): Promise<Completion> {

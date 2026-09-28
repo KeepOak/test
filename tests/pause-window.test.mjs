@@ -190,12 +190,14 @@ test("the shell: Lockdown's banner above Settings, greyed controls say why, and 
   // In the browser, Minimise and Quit say why they stay greyed.
   assert.equal(await tip('.win [data-act="win-min"]'), en["window.why.win-min"]);
   assert.equal(await tip('.win [data-act="quit"]'), en["window.why.quit"]);
-  // The workspace switcher's only workspace, and the update popover's Remind me tomorrow.
+  // The workspace switcher's only workspace. The update popover offers Remind me tomorrow only when the desktop app has an
+  // update ready (tests/wire-greyed-update-remind-ui.test.mjs), so a browser's has none.
   await page.locator('#statusbar [data-act="machines"]').click();
   assert.equal(await tip('.pop [data-act="ws"]'), en["window.why.ws"]);
   await page.keyboard.press("Escape");
   await page.locator('#statusbar [data-act="updmenu"]').click();
-  assert.equal(await tip('.pop [data-act="closepop"]'), en["window.why.update-remind"]);
+  await page.locator(".pop").first().waitFor();
+  assert.equal(await page.locator('.pop [data-act="upd-snooze"]').count(), 0);
   await page.keyboard.press("Escape");
 
   // /bg: greyed with its reason while the shared commands are off; once on, it puts /bg in the message box.

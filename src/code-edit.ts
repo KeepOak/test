@@ -9,6 +9,7 @@ import type { ToolRegistry } from "./registry.js";
 import { parsePatch, applyHunks, patchFileList, patchTargets } from "./patch.js";
 import { replaceText } from "./text-replace.js";
 import { bracketValidation, canCheckBrackets, typeScriptValidation } from "./code-syntax.js";
+import { refuseRemovedLines } from "./files.js";
 import { runAsNode } from "./child-env.js";
 
 /**
@@ -250,7 +251,7 @@ export function registerCodeEdit(registry: ToolRegistry, files: WorkspaceFiles, 
     name: "files.edit", permission: "files.write",
     description: "Replace text inside one workspace file. Read it first and copy `find` from it, with nearby lines so it is unique; `replace` is the new text. Empty `find` appends (or creates the file). To move, rename or sort files, use files.move.",
     parameters: editParameters,
-    execute: async (a, c: ToolContext) => editor.edit(a, c),
+    execute: async (a, c: ToolContext) => { refuseRemovedLines(String(a.replace ?? "")); return editor.edit(a, c); },
   });
   registry.register({
     name: "files.validate", permission: "files.read",

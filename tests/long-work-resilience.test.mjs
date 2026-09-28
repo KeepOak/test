@@ -120,11 +120,12 @@ test("a plan limit with nowhere to move waits for the plan meter's reset and car
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
   let second = "";
-  const seen = await program(t, fx, service, (who, n) => ((who === "primary" && n === 1) || who === second ? limited : null));
+  // The plan meter knows when the window refills: 2.5 s after the limit is hit. Set as the limit is hit, so a slow first
+  // call (a busy build machine) never finds the reset already past and the limit's end unknown.
+  const meter = () => service.statesOf(POOL).set("primary", { ...(service.statesOf(POOL).get("primary") ?? freshState()), resetAt: new Date(Date.now() + 2500).toISOString() });
+  const seen = await program(t, fx, service, (who, n) => ((who === "primary" && n === 1) ? (meter(), limited) : who === second ? limited : null));
   setMode(service, { mode: "on" });
   second = (await addAccount(service, { pool: POOL, label: "Second" })).accounts.at(-1).id; // at its limit too: nowhere to move
-  // The plan meter knows when the window refills.
-  service.statesOf(POOL).set("primary", { ...freshState(), resetAt: new Date(Date.now() + 1500).toISOString() });
   const started = Date.now();
   const run = await fx.call("run", { prompt: "hello" });
   assert.equal(run.status, "completed", run.output);

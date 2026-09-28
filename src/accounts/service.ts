@@ -12,7 +12,7 @@ import { pinnedFetch } from "../pinned-fetch.js";
 import { estimateCost, pricingSettings } from "../pricing.js";
 import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
-import { CliAgentProvider, accountHomeVariables, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
+import { CliAgentProvider, accountHomeVariables, claudeDefaultEffort, claudeDefaultModel, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import { ClaudeSubscriptionProvider, type ClaudeSubscriptionDependencies } from "../providers/claude-subscription.js";
 import { currentAccountCall, refuseSignInForTrunk, withAccountCall } from "./context.js";
 import type { Store } from "../store.js";
@@ -275,7 +275,10 @@ export class AccountsService {
   /** The hook ModelRouter runs on every connection it registers. */
   wrap = (preset: ModelPreset): ModelPreset => {
     const claude = preset.id === "cli-claude-code";
-    if (claude && preset.model === "claude") preset = { ...preset, model: "sonnet" };
+    // models-ui: a connection registered before Claude had a default model of its own (its model was the command) gets
+    // Branch's default, Opus 5.5 at medium; a model it names and an effort already set are left as they are.
+    if (claude && preset.model === "claude") preset = { ...preset, model: claudeDefaultModel };
+    if (claude && !preset.reasoning) preset = { ...preset, reasoning: claudeDefaultEffort };
     const original = claude ? this.programConnection(preset.id, primaryAccount, preset.model) : unwrapProvider(preset.provider);
     // The program's first account is the connection itself: what it prints about its plan is that account's.
     if ((original instanceof CliAgentProvider || original instanceof ClaudeSubscriptionProvider) && preset.id.startsWith("cli-claude-code") && !original.onOutput)
@@ -425,7 +428,7 @@ export class AccountsService {
     return made;
   }
   private claudeConnection(pool: string, account: string, model: string): Provider {
-    const native = new ClaudeSubscriptionProvider({ owner: this.deps.owner, model: model === "claude" ? "sonnet" : model,
+    const native = new ClaudeSubscriptionProvider({ owner: this.deps.owner, model: model === "claude" ? claudeDefaultModel : model,
       accountHome: { name: "CLAUDE_CONFIG_DIR", path: account === primaryAccount ? this.primaryClaudeHome : this.homeOf(pool, account) } }, this.deps.claudeSubscription);
     native.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
     return new Proxy(native, { get: (target, property) => {
