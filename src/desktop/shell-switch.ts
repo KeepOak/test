@@ -60,11 +60,12 @@ export async function takeHandOver(userData: string, version: string, now = Date
 }
 
 /**
- * The invisible moment for a shell switch: the window is not on screen (hidden in the tray or minimised), or the owner
- * has stepped away (no input for two minutes, or the screen is locked). Never while it is in front of them in use.
+ * The invisible moment for a shell switch: the window is not on screen (hidden in the tray or minimised), the screen is
+ * locked, or the owner has stepped away from it (no input for two minutes and another window in front). Never while it
+ * is in front of them, even untouched: the old window goes before the new one comes, and they would see the gap.
  */
-export function invisibleMoment(state: { visible: boolean; minimized: boolean; idle: "active" | "idle" | "locked" | "unknown" }): boolean {
-  return !state.visible || state.minimized || state.idle === "idle" || state.idle === "locked";
+export function invisibleMoment(state: { visible: boolean; minimized: boolean; focused?: boolean; idle: "active" | "idle" | "locked" | "unknown" }): boolean {
+  return !state.visible || state.minimized || state.idle === "locked" || (state.idle === "idle" && state.focused === false);
 }
 export const invisibleWaitWords = "The new version is ready. It takes over the moment Branch is minimised or in the tray, or when you step away; your conversations and chat apps keep running.";
 

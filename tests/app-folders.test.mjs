@@ -124,13 +124,14 @@ test("what the window had open reaches the new version once, and only that versi
 });
 
 test("the switch waits for the invisible moment: out of sight, or the owner away; never in front of them in use", async () => {
-  assert.equal(invisibleMoment({ visible: true, minimized: false, idle: "active" }), false);
+  assert.equal(invisibleMoment({ visible: true, minimized: false, focused: true, idle: "active" }), false);
+  assert.equal(invisibleMoment({ visible: true, minimized: false, focused: true, idle: "idle" }), false, "in front of them, even untouched, it waits");
   for (const state of [{ visible: false, minimized: false, idle: "active" }, { visible: true, minimized: true, idle: "active" },
-    { visible: true, minimized: false, idle: "idle" }, { visible: true, minimized: false, idle: "locked" }]) assert.equal(invisibleMoment(state), true);
+    { visible: true, minimized: false, focused: false, idle: "idle" }, { visible: true, minimized: false, idle: "locked" }]) assert.equal(invisibleMoment(state), true);
   const dir = await mkdtemp(join(tmpdir(), "branch-handover-"));
   try {
     let visible = true, polls = 0, kept = null;
-    const window = { isVisible: () => visible, isMinimized: () => false, isDestroyed: () => false,
+    const window = { isVisible: () => visible, isMinimized: () => false, isDestroyed: () => false, isFocused: () => true,
       webContents: { executeJavaScript: async () => kept } };
     const hook = handOverHook({ window: () => window, userData: dir, power: { getSystemIdleState: () => "active" }, sleep: async () => { polls++; if (polls === 2) visible = false; if (polls === 3) kept = "{\"drafts\":{}}"; } });
     assert.deepEqual(await hook({ version: "2.0.0", stillWanted: () => true }), { minimized: true });

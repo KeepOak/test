@@ -218,7 +218,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       await inPage(shell, `const box = document.getElementById("prompt"); box.value = ${JSON.stringify(draft)}; box.dispatchEvent(new Event("input", { bubbles: true }));`);
       const pid = await shell.evaluate("process.pid");
       // What main does at the switch (shell-window.ts handOverHook): the window is in the tray, so the moment is now.
-      await shell.evaluate(`(async () => {
+      const handed = await shell.evaluate(`(async () => {
         const { BrowserWindow, powerMonitor, app } = require("electron");
         const hook = require(require("node:path").join(process.resourcesPath, "app", "dist", "desktop", "shell-window.js")).handOverHook;
         const window = BrowserWindow.getAllWindows().find((one) => one.webContents.getURL().includes("desktop=1"));
@@ -257,17 +257,20 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       // Asked while the inspectors are still on it, then they let go (a program whose inspector left first never ends).
       await shell.evaluate(`require("electron").app.quit(), "asked"`).catch(() => undefined);
       shell.close(); listeners.get(port - 1)?.close();
-      return { draft, asking };
+      // Out of sight at the hand-over (in the tray or minimised): the owner sees no gap, however long the switch takes.
+      return { draft, asking, outOfSight: handed?.minimized === true };
     };
 
     // ---- three updates, back to back ----
     const gaps = [], listeners = new Map();
     let pendingChecks = 0;
+    const seen = []; // how long the owner could see Branch with no window, per switch
     for (let at = 1; at <= 3; at++) {
       progress(`update ${at}`);
-      const { draft, asking: from } = await switchTo(versions[at - 1], versions[at], base + at);
+      const { draft, asking: from, outOfSight } = await switchTo(versions[at - 1], versions[at], base + at);
       const up = JSON.parse(await until(`${versions[at]}'s window`, () => readFile(shellUpMarker(scratch, versions[at]), "utf8"), 180_000, 250));
       gaps.push(Date.parse(up.at) - from);
+      seen.push(outOfSight ? 0 : gaps.at(-1));
       started.add(up.pid);
       assert.equal(up.restored, true, "the new window put back what the old one had open before saying it was up");
       shell = await inspector(base + at); shells.push(shell);
@@ -290,6 +293,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       progress(`update ${at} done in ${gaps.at(-1)} ms`);
     }
     assert.ok(model.streamed.words > wordsAtStart, "the answer kept streaming through the updates");
+    assert.deepEqual(seen, [0, 0, 0], "each switch happened out of the owner's sight: they never saw Branch without its window");
 
     // ---- all four finish, each exactly once ----
     model.letGo();
@@ -337,7 +341,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
     const stock = await stat(join(dist, "electron.exe"));
     const linked = (await Promise.all(programs.map((name) => stat(join(root, name))))).every((one) => one.ino === stock.ino);
     const summary = JSON.stringify({ updates: 3, rollback: true, programs: programs.length, sameFileAsStock: linked, gatewayPid: gateway, enginePid: worker,
-      gatewayRequests: asked, gatewayFailures: failed, windowBackMs: gaps, pendingVersionsKept: pendingChecks, pendingVersionsLost: 0, streamedWords: model.streamed.words });
+      gatewayRequests: asked, gatewayFailures: failed, switchMs: gaps, seenNoWindowMs: seen, pendingVersionsKept: pendingChecks, pendingVersionsLost: 0, streamedWords: model.streamed.words });
     progress(`PASSED ${summary}`);
     console.log("chaos proof", summary);
   }

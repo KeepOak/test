@@ -1,9 +1,8 @@
 import { app } from "electron";
 import { existsSync, readFileSync } from "node:fs";
-import { rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Updater, UpdateDeferredError, type LiveHooks } from "./updater.js";
-import { WindowUpdateDeferred } from "./live-window-ipc.js";
+import { gatewayInstall } from "./gateway-install.js";
 import { versionedLayout } from "./app-folders.js";
 import { UpdateLoop, type LoopPlan } from "./update-loop.js";
 import { installedAppRoot } from "./install-root.js";
@@ -69,22 +68,9 @@ export async function gatewayUpdates(options: GatewayUpdatesOptions): Promise<{ 
     plan: async (facts) => await options.engine("/api/comfort/update-plan", facts) as LoopPlan,
     updater,
     install: async () => {
-      if (options.shellOpen()) throw new UpdateDeferredError("A window opened, so it takes the update.");
-      // Live changes (window and engine) go through this gateway's own engine, as a window's would.
-      updater.useLive(options.live());
-      const adopt = options.adopt ?? (<T>(action: () => Promise<T>) => action());
-      const installed = await adopt(() => updater.install({ automatic: true })).catch((error: unknown) => {
-        if (error instanceof WindowUpdateDeferred) throw new UpdateDeferredError(error.message);
-        throw error;
-      });
-      if ("live" in installed) return;
-      // A new version of the app itself: in use from the next window. Nothing runs from it yet, so no script is needed.
-      try {
-        if (!appFolders) throw new Error("This copy keeps the older layout, so a change to the app itself waits for its window.");
-        await rename(join(appFolders.root, "current.next.json"), join(appFolders.root, "current.json"));
-        updater.switchedWithoutWindow();
-        diagnose("updater", "info", "Updated with no window open", { fields: { to: updater.status.installed.version } });
-      } catch (error) { updater.failed((error as Error).message); throw error; }
+      const done = await gatewayInstall({ shellOpen: options.shellOpen, updater, live: options.live, appFolders,
+        ...(options.adopt ? { adopt: options.adopt } : {}) });
+      if (done === "switched") diagnose("updater", "info", "Updated with no window open", { fields: { to: updater.status.installed.version } });
     },
     tell: (words) => diagnose("updater", "warn", words),
   });
