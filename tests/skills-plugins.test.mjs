@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { crc32 } from "node:zlib";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -157,18 +158,37 @@ function registryServer(t, options = {}) {
   return { state, server, started: new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)), url: () => `http://127.0.0.1:${server.address().port}/index.json` };
 }
 
-test("a signed registry entry is checked, a forged one is refused, and an unsigned one is labelled", async (t) => {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const spki = publicKey.export({ type: "spki", format: "der" }).toString("base64");
-  const registry = registryServer(t, { publicKey: spki, sign: (entry) => signRegistryEntry(privateKey, "Test registry", entry) });
+test("a registry's key is trusted only once pinned here, and a pinned registry cannot swap or drop its key", async (t) => {
+  const first = generateKeyPairSync("ed25519"), second = generateKeyPairSync("ed25519");
+  const spki = (pair) => pair.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  const options = { publicKey: spki(first), sign: (entry) => signRegistryEntry(first.privateKey, "Test registry", entry) };
+  const registry = registryServer(t, options);
   await registry.started;
   const { app, api } = await fixture(t, [say("ok")], { web: { allowPrivateAddresses: true } });
   const index = await api("registry/browse", { url: registry.url() });
-  assert.deepEqual(index.skills.map((skill) => [skill.id, skill.signed]), [["helper", "checked"], ["forged", "invalid"]]);
+  assert.equal(index.key.status, "not-pinned", "a key the registry supplies about itself is not trusted by itself");
+  assert.deepEqual(index.skills.map((skill) => [skill.id, skill.signed]), [["helper", "untrusted"], ["forged", "invalid"]]);
   await assert.rejects(api("registry/install", { url: registry.url(), skillId: "forged" }), /signature for this skill does not match/);
+  await assert.rejects(api("registry/trust", { url: registry.url(), fingerprint: "0".repeat(64) }), /not the one you approved/);
+  const trusted = await api("registry/trust", { url: registry.url(), fingerprint: index.key.published });
+  assert.equal(trusted.key.status, "pinned");
+  const pinned = await api("registry/browse", { url: registry.url() });
+  assert.deepEqual(pinned.skills.map((skill) => [skill.id, skill.signed]), [["helper", "checked"], ["forged", "invalid"]]);
   const installed = await api("registry/install", { url: registry.url(), skillId: "helper" });
   assert.equal(installed.origin.signed, "checked");
   assert.equal(app.store.skills.list("local").length, 1);
+  // Whoever controls the registry now publishes another key and signs with it: nothing from it is taken.
+  Object.assign(options, { publicKey: spki(second), sign: (entry) => signRegistryEntry(second.privateKey, "Test registry", entry) });
+  registry.state.version = "2.0.0";
+  const swapped = await api("registry/browse", { url: registry.url() });
+  assert.equal(swapped.key.status, "changed");
+  assert.equal(swapped.skills[0].signed, "invalid");
+  await assert.rejects(api("registry/update", { skillId: installed.id }), /not the one you trusted/);
+  // Or it drops its key and its signatures altogether: still refused, never shown as merely unsigned.
+  Object.assign(options, { publicKey: undefined, sign: undefined });
+  const dropped = await api("registry/browse", { url: registry.url() });
+  assert.equal(dropped.skills[0].signed, "invalid");
+  await assert.rejects(api("registry/update", { skillId: installed.id }), /no longer publishes the signing key/);
   // A registry with no key at all still works, and says plainly that nothing was signed.
   const plain = registryServer(t);
   await plain.started;
@@ -231,6 +251,9 @@ test("a plugin adds nothing until the owner switches it on, and its tool is stil
   const { app, api, dataDir } = await fixture(t);
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "example.mjs"), pluginSource());
+  await writeFile(join(dataDir, "plugins", "example.plugin.json"), JSON.stringify({ id: "example", name: "Example plugin",
+    description: "Repeats what it is told.", permissions: ["files.read"],
+    tools: [{ name: "plugin.example.echo", description: "Repeat a word.", permission: "files.read" }], hooks: ["run.finished"] }));
   await writeFile(join(dataDir, "plugins", "greedy.mjs"), pluginSource("shell.execute").replace('id: "example"', 'id: "greedy"').replaceAll("plugin.example.echo", "plugin.greedy.echo"));
   const listed = await api("plugins");
   assert.deepEqual(listed.plugins.map((plugin) => [plugin.id, plugin.enabled]).sort(), [["example", false], ["greedy", false]]);
@@ -270,6 +293,33 @@ test("suggestions come from the words in recent tasks and never switch anything 
   assert.ok(suggestions[0].matched.includes("invoices"));
   assert.equal(app.store.skills.view("local", invoices.id).activeVersion, null, "a suggestion never switches a skill on");
 });
+
+test("inspecting a plugin reads its manifest and never runs its code; switching it on does", async (t) => {
+  const { app, api, dataDir } = await fixture(t);
+  const folder = join(dataDir, "plugins"), marker = join(dataDir, "ran.txt");
+  await mkdir(folder, { recursive: true });
+  const code = (id, permissions) => `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, ${JSON.stringify(id)});
+export default { id: ${JSON.stringify(id)}, name: "Marker", permissions: ${JSON.stringify(permissions)},
+  tools: [{ name: "plugin.${id}.look", description: "look", permission: "files.read", run: async () => "looked" },
+    { name: "plugin.${id}.shell", description: "shell", permission: "shell.execute", run: async () => "ran a shell" }] };
+`;
+  await writeFile(join(folder, "marker.mjs"), code("marker", ["files.read", "shell.execute"]));
+  await writeFile(join(folder, "marker.plugin.json"), JSON.stringify({ id: "marker", name: "Marker", permissions: ["files.read"] }));
+  await writeFile(join(folder, "bare.mjs"), code("bare", ["files.read"]));
+  const shown = await api("plugins/marker/inspect", {});
+  assert.deepEqual([shown.manifest, shown.permissions], [true, ["files.read"]], "what the manifest says");
+  const bare = await api("plugins/bare/inspect", {});
+  assert.equal(bare.manifest, false);
+  assert.match(bare.leftOut[0], /no manifest/);
+  assert.equal(existsSync(marker), false, "looking at either plugin ran none of its code");
+  const on = await api("plugins/marker/enable", {});
+  assert.equal(readFileSync(marker, "utf8"), "marker", "switching it on is what runs it");
+  assert.ok(app.registry.names().includes("plugin.marker.look"));
+  assert.ok(!app.registry.names().includes("plugin.marker.shell"), "a permission the manifest did not list is never granted");
+  assert.ok(on.leftOut.some((line) => /plugin\.marker\.shell/.test(line)));
+});
+
 
 test("a skill package's hooks fire only while its skill is switched on", async (t) => {
   const { app, api } = await fixture(t);
