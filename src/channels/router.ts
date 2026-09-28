@@ -1045,11 +1045,11 @@ export class ChannelRouter {
   /** Writes down which conversation the chat is on, then sends the answer or the question. */
   private async finishTurn(turn: ChatTurnState, run: Run, quoted: string): Promise<Outcome> {
     const message = turn.messages[0]!, live = turn.live;
+    this.store.save("settings", this.runtime.owner, `channel-session:${message.channel}:${message.chatId}`, { sessionId: run.sessionId, channel: message.channel, chatId: message.chatId,
+      title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt });
     // hot-update: a newer engine took this task over and carries it on; its answer goes to the chat from there
     // (carryOnReply), so nothing is said from here: no "could not finish", and no second answer.
     if (run.status === "interrupted" && this.handedOver(run.id)) { live?.cancel(); return "replied"; }
-    this.store.save("settings", this.runtime.owner, `channel-session:${message.channel}:${message.chatId}`, { sessionId: run.sessionId, channel: message.channel, chatId: message.chatId,
-      title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt });
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
     // A task that stopped to ask goes out as a question with buttons, not as words to read.
@@ -1080,6 +1080,21 @@ export class ChannelRouter {
     clearTimeout(timer);
     return this.turns.size === 0;
   }
+  /**
+   * The chat message a task began from, through every engine it was carried on in: each carried-on task names the one
+   * it carried on (`resumedFrom`), and only the first holds the chat's mark (`channel.inbound`).
+   */
+  private chatOrigin(runId: string): { channel?: unknown; chatId?: unknown; messageId?: unknown } | undefined {
+    let id: string | undefined = runId;
+    for (let hops = 0; id && hops < 50; hops++) {
+      const events = this.store.events(id);
+      const inbound = events.find((event) => event.kind === "channel.inbound");
+      if (inbound) return inbound.data as { channel?: unknown; chatId?: unknown; messageId?: unknown };
+      const from = events.find((event) => event.kind === "run.started")?.data.resumedFrom;
+      id = typeof from === "string" ? from : undefined;
+    }
+    return undefined;
+  }
   private handedOver(runId: string): boolean {
     return !!this.store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.handed_over' LIMIT 1").get(runId);
   }
@@ -1089,7 +1104,7 @@ export class ChannelRouter {
    * nothing for it (finishTurn), and a chat app that sent its message once never sends it again.
    */
   async carryOnReply(runId: string, resumed: Promise<Run | undefined>): Promise<boolean> {
-    const inbound = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data as { channel?: unknown; chatId?: unknown; messageId?: unknown } | undefined;
+    const inbound = this.chatOrigin(runId);
     if (typeof inbound?.channel !== "string" || typeof inbound.chatId !== "string") return false;
     const run = await resumed ?? this.store.run(runId);
     if (!run || run.status === "interrupted") return false; // handed on again: the next engine answers it

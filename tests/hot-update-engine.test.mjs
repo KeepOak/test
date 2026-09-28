@@ -167,12 +167,51 @@ test("a chat app's turn handed to a newer engine is answered in that chat once, 
   assert.equal(outcome.ok, true, outcome.why ?? "");
   assert.deepEqual(outcome.handedOver, [run.id]);
   assert.equal((await posted).status, 200, "the chat service's post was answered by the engine it reached");
-  await until(() => chat.replies.length >= 1);
+  for (const end = Date.now() + 60000; chat.replies.length < 1 && Date.now() < end;) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(chat.replies.length >= 1, "the chat got its answer");
   await new Promise((resolve) => setTimeout(resolve, 1500));
   assert.equal(chat.replies.length, 1, `one answer, once: ${JSON.stringify(chat.replies)}`);
   assert.match(JSON.stringify(chat.replies[0]), /Answered after the update\./);
   assert.doesNotMatch(JSON.stringify(chat.replies), /could not finish/);
   assert.equal(model.asked.length, 3, "no step was asked of the model twice");
+});
+
+test("a chat app's turn carried through two engine updates back to back is answered once, by the last engine", { timeout: 300000 }, async (t) => {
+  const model = await scriptedModel(t, [{ tool: "checklist.read", args: {} }, { tool: "files.list", args: {}, held: true },
+    { tool: "checklist.read", args: {}, held: true }, { text: "Answered after two updates." }]);
+  const chat = await chatService(t), secret = "hot-chat-token-0123456789";
+  const config = await mkdtemp(join(tmpdir(), "branch-hot-chat-"));
+  t.after(() => discardTemp(config));
+  const integrations = join(config, "integrations.json");
+  await writeFile(integrations, JSON.stringify({ web: { allowPrivateAddresses: true }, channels: [{ id: "mattermost", type: "chat", service: "mattermost",
+    webhookUrlSecret: "HOT_CHAT_HOOK", secretSecret: "HOT_CHAT_SECRET", activation: "always", pairing: false, allowlist: ["user-9"] }] }));
+  const extra = { BRANCH_INTEGRATIONS: integrations, HOT_CHAT_HOOK: chat.hook, HOT_CHAT_SECRET: secret };
+  const { host, url, started, call } = await setUp(t, model, extra);
+  const live = await liveBuild();
+  const address = (await call("/api/channels/addresses")).body.addresses.find((one) => one.channel === "mattermost")?.address;
+  const posted = fetch(new URL(new URL(address, url).pathname, url), { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: secret, post_id: "p-hot-2", channel_id: "c1", channel_name: "town-square", user_id: "user-9", user_name: "alice", text: "What is on this week?" }) });
+  posted.catch(() => undefined);
+  // Each engine in turn is working on the task when the next takes over: it stops after its step and is carried on.
+  const working = async () => (await call("/api/state")).body.runs.find((each) => each.status === "running");
+  for (const [hop, step] of [[1, 1], [2, 2]]) {
+    await model.until(step + 1);
+    const run = await until(working);
+    const handing = host.handOver({ fork: () => nodeChild(join(live.appRoot, `h${hop}`), live.engine, started, extra), commit: NEW, drainMs: 0, settleMs: 60000 });
+    await until(async () => (await events(call, run.id)).some((event) => event.kind === "run.handover_asked"));
+    model.release(step);
+    const outcome = await handing;
+    assert.equal(outcome.ok, true, outcome.why ?? "");
+    assert.deepEqual(outcome.handedOver, [run.id], `update ${hop} carried the chat's task on`);
+  }
+  assert.equal((await posted).status, 200);
+  await model.until(4);
+  for (const end = Date.now() + 60000; chat.replies.length < 1 && Date.now() < end;) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(chat.replies.length >= 1, "the chat got its answer");
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(chat.replies.length, 1, `one answer, once: ${JSON.stringify(chat.replies)}`);
+  assert.match(JSON.stringify(chat.replies[0]), /Answered after two updates\./);
+  assert.equal(model.asked.length, 4, "no step was asked of the model twice");
 });
 
 test("a new engine that fails its check is ended and the app's own engine carries the work on instead", { timeout: 240000 }, async (t) => {
