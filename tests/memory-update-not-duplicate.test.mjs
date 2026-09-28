@@ -117,6 +117,8 @@ test("a start date is kept only when the owner's words name that year; a day is 
   assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01" }, "Remember: I lived in Paris from 2019."), { text: "x", validFrom: "2019-05-01T00:00:00.000Z" });
   assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01T10:00:00Z" }, "since May 2019"), { text: "x", validFrom: "2019-05-01T10:00:00.000Z" });
   assert.deepEqual(withSaidStart({ text: "x", validFrom: "now" }, "Remember: I live in Atlanta."), { text: "x" }, "\"now\" is taken as now");
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "2024-01-01" }, undefined), { text: "x", validFrom: "2024-01-01T00:00:00.000Z" }, "a call from outside a task keeps its date");
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "now" }, undefined), { text: "x" });
   assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01T14:29:00-04:00" }, "in 2019"), { text: "x", validFrom: "2019-05-01T18:29:00.000Z" }, "an offset is read");
   assert.deepEqual(detail({ text: "Denver", entity: "person", attribute: "currentCity" }, {}), { entity: "me", attribute: "home" }, "camelCase");
   // qwen2.5:7b's own call: a day nobody said. It used to be refused ("validFrom is not in the right format") until the loop

@@ -97,7 +97,7 @@ export const PutMemorySchema = z.object({
    * SELF-202: any short text, read by withSaidStart. qwen2.5:7b wrote days ("2026-09-28"), moments with an offset, and
    * "now"; each was refused, and sometimes the model gave up, so nothing was remembered.
    */
-  validFrom: z.string().trim().max(40).optional(),
+  validFrom: z.string().trim().max(40).meta({ format: "date-time" }).optional(), // still described as a moment
   scope: z.enum(["private", "shared"]).optional(),
   /** What kind of thing this is. A task-scratch note is cleared when the job that made it ends. */
   kind: FactKindSchema.optional(),
@@ -690,8 +690,9 @@ export function withSaidStart<T extends { validFrom?: string | undefined }>(valu
   const { validFrom: said, ...rest } = value;
   const year = /^(\d{4})-/.exec(said)?.[1];
   const when = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(said) ? `${said}T00:00:00.000Z` : said);
-  // Unreadable ("now"), or a year the words never named: the fact is kept, from now.
-  if (!year || Number.isNaN(when) || !request?.includes(year)) return rest as T;
+  // Unreadable ("now"), or a year the task's words never named: the fact is kept, from now. A call from outside a task
+  // (no words to check against: a program, a test, the owner's own tool call) keeps a readable date as given.
+  if (!year || Number.isNaN(when) || (request !== undefined && !request.includes(year))) return rest as T;
   return { ...rest, validFrom: new Date(when).toISOString() } as T;
 }
 /** The detail the owner's own request names, clause by clause ("Remember: I live in Atlanta."), when the fact shares a word with it. */
