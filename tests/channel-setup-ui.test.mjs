@@ -284,3 +284,16 @@ test("the wizard connects without a restart and says when it could not; who answ
   assert.deepEqual(outside, [], "nothing left this computer");
   assert.deepEqual(errors, []);
 });
+
+/* The personal-number WhatsApp card says the ban risk first, before any step, and names the official path. */
+test("the personal-number WhatsApp wizard shows the risk before anything is set up", async (t) => {
+  const { page, errors, outside } = await signedIn(t);
+  await openChannels(page);
+  await openWizard(page, "whatsapp-web");
+  const alert = page.locator('.dlg [role="alert"]').first();
+  assert.match(await alert.textContent(), /unofficial client.*can be banned.*spare number.*Cloud API/s);
+  assert.match(await page.locator(".dlg .chw-steps12").textContent(), /Link/, "a Link step to scan the bridge's code");
+  assert.match(await page.locator(".dlg").textContent(), /administrator rights/);
+  assert.deepEqual(outside, []);
+  assert.deepEqual(errors, []);
+});
