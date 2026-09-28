@@ -153,9 +153,19 @@ export class MemoryReview {
     const data = { ...ProposalSchema.parse(input), fact: fact === null ? null : ProposedFactSchema.parse(fact) };
     if ((data.kind === "put" || data.kind === "update") && !data.text) throw new Error("A memory suggestion needs text");
     if (tidyingKinds.includes(data.kind) && !data.memoryIds.length) throw new Error("A tidying suggestion needs the facts it applies to");
+    // QA retest 2026-09-28 (m12): the same fact suggested again while the first is still waiting is that suggestion,
+    // not a second row the owner has to accept or reject twice.
+    const waiting = data.kind === "put" ? this.samePut(owner, data) : undefined;
+    if (waiting) return waiting;
     const proposal: Proposal = { ...data, id: randomUUID(), status: "pending", createdAt: new Date().toISOString(), decidedAt: null };
     this.db.prepare("INSERT INTO memory_proposals(id,owner,data,status,created_at,decided_at) VALUES(?,?,?,?,?,NULL)").run(proposal.id, owner, JSON.stringify(data), "pending", proposal.createdAt);
     return proposal;
+  }
+  /** A waiting suggestion to remember the same words with the same details (spacing and case aside), if there is one. */
+  private samePut(owner: string, data: { text?: string | undefined; fact: unknown; skillId?: string | null | undefined }): Proposal | undefined {
+    const words = (text: string | undefined) => String(text ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+    const key = JSON.stringify([words(data.text), data.fact ?? null, data.skillId ?? null]);
+    return this.proposals(owner, "pending").find((one) => one.kind === "put" && JSON.stringify([words(one.text), one.fact ?? null, one.skillId ?? null]) === key);
   }
   proposals(owner: string, status: Proposal["status"] | "all" = "pending"): Proposal[] {
     const rows = status === "all"
