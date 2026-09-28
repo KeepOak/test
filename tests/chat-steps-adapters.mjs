@@ -5,7 +5,7 @@
  * computer: every web call goes to `record`, which answers like a service that accepted it.
  */
 import { z } from "zod";
-import { parityServices } from "../dist/channels/connectors.js";
+import { parityServices } from "../dist/channels/parity-services.js";
 import { channelCatalog } from "../dist/channels/catalog.js";
 import { DiscordAdapter, EmailAdapter, MatrixAdapter, MetaMessagingAdapter, SignalAdapter, SlackAdapter, TelegramAdapter,
   WebhookChatAdapter, WhatsAppAdapter } from "../dist/index.js";

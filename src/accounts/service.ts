@@ -285,7 +285,7 @@ export class AccountsService {
     if (!cursor) this.cursors.set(pool, cursor = { value: 0 });
     const store = this.deps.store, owner = this.deps.owner;
     return {
-      owner, pool, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
+      owner, pool, name: preset.name, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
       settings: () => this.usablePool(pool),
       providerFor: (account: string) => this.providerFor(pool, kind, preset, account),
       refresh: (account: string) => this.refreshSignIn(kind, account),
