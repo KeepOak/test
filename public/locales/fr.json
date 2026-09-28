@@ -7027,6 +7027,10 @@
   "window.flows.chw.digit": "Chiffre {n}",
   "window.flows.chw.found-bot": "Bot trouvé : @{name}",
   "window.flows.chw.get-app": "Obtenir l’application {name}",
+  "window.flows.chw.link": "Associer",
+  "window.flows.chw.link-done": "Associé : {number}",
+  "window.flows.chw.link-scan": "Sur le téléphone du numéro choisi, ouvrez WhatsApp, Réglages, Appareils connectés, Connecter un appareil, et scannez ce code. Il change toutes les quelques secondes.",
+  "window.flows.chw.link-starting": "Démarrage de la session du pont…",
   "window.flows.chw.listening": "{name} est enregistré et attend ses messages",
   "window.flows.chw.live-now": "{name} est connecté maintenant",
   "window.flows.chw.make-first": "Créez d’abord le bot ou l’application sur le service.",
@@ -10070,5 +10074,10 @@
   "window.places.library17.import-spreadsheet": "Importer une feuille de calcul",
   "window.places.library17.import-spreadsheet-hint": "Choisissez un fichier CSV, TSV, JSON ou Excel. Branch le garde dans la Bibliothèque et prépare une question SELECT que vous pouvez lancer.",
   "window.places.library17.import-spreadsheet-limit": "Choisissez une feuille de calcul de moins de 8 Mo.",
-  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau."
+  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau.",
+  "channel-setup.r.whatsapp-web.field-server": "L’adresse du pont sur cet ordinateur, par exemple http://127.0.0.1:3000",
+  "channel-setup.r.whatsapp-web.noCheck": "Le pont est vérifié quand Branch associe le numéro : il doit tourner sur cet ordinateur et accepter la clé.",
+  "channel-setup.r.whatsapp-web.noCreate": "Il n’y a pas de bot à créer : le pont se connecte à WhatsApp comme appareil associé du numéro choisi, grâce à un code que vous scannez.",
+  "channel-setup.r.whatsapp-web.paste-WAHA_API_KEY": "La clé d’API donnée au pont (WAHA_API_KEY)",
+  "channel-setup.r.whatsapp-web.warning": "Ceci pilote un numéro WhatsApp personnel par un client non officiel, ce que les conditions de WhatsApp interdisent : le numéro peut être banni. Utilisez un numéro de rechange que vous pouvez perdre. L’API officielle WhatsApp Business Cloud (l’autre carte WhatsApp) ne présente pas ce risque."
 }

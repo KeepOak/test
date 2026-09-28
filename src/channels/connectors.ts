@@ -224,6 +224,7 @@ import { wechatOfficialService, wecomAppService } from "./wechat.js"; // mac6/bu
  * src/channels/parity-config.ts, and sits behind its own off / on / when-needed switch, off until
  * the owner turns it on. Adding a service is one file and one line here.
  */
+import { whatsappWebService } from "./whatsapp-web.js";
 export const parityServices: ParityService[] = [
   ircService, twitchService, gotifyService, imessageService,
   teamsBotService, webexService, synologyChatService, zaloService, flockService, pumbleService,
@@ -233,4 +234,6 @@ export const parityServices: ParityService[] = [
   vkService, qqBotService, guildedService, revoltService, mumbleService,
   // mac6/bucket-16: the rest of the chat apps.
   kookService, wechatOfficialService, wecomAppService,
+  // A personal WhatsApp number through the WAHA bridge the owner runs (src/channels/whatsapp-web.ts).
+  whatsappWebService,
 ];

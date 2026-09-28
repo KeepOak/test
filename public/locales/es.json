@@ -7026,6 +7026,10 @@
   "window.flows.chw.digit": "Cifra {n}",
   "window.flows.chw.found-bot": "Bot encontrado: @{name}",
   "window.flows.chw.get-app": "Consigue la app de {name}",
+  "window.flows.chw.link": "Vincular",
+  "window.flows.chw.link-done": "Vinculado: {number}",
+  "window.flows.chw.link-scan": "En el teléfono con el número elegido, abre WhatsApp, Ajustes, Dispositivos vinculados, Vincular un dispositivo, y escanea este código. Cambia cada pocos segundos.",
+  "window.flows.chw.link-starting": "Iniciando la sesión del puente…",
   "window.flows.chw.listening": "{name} está guardado y a la espera de sus mensajes",
   "window.flows.chw.live-now": "{name} ya está conectado",
   "window.flows.chw.make-first": "Crea primero el bot o la app en el servicio.",
@@ -10069,5 +10073,10 @@
   "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
+  "channel-setup.r.whatsapp-web.field-server": "La dirección del puente en este ordenador, por ejemplo http://127.0.0.1:3000",
+  "channel-setup.r.whatsapp-web.noCheck": "El puente se comprueba cuando Branch vincula el número: tiene que estar en marcha en este ordenador y aceptar la clave.",
+  "channel-setup.r.whatsapp-web.noCreate": "No hay que crear ningún bot: el puente entra en WhatsApp como dispositivo vinculado del número que elijas, con un código que escaneas.",
+  "channel-setup.r.whatsapp-web.paste-WAHA_API_KEY": "La clave de API que diste al puente (WAHA_API_KEY)",
+  "channel-setup.r.whatsapp-web.warning": "Esto maneja un número personal de WhatsApp con un cliente no oficial, algo que las condiciones de WhatsApp no permiten, así que el número puede ser bloqueado. Usa un número de repuesto que puedas perder. La API oficial WhatsApp Business Cloud (la otra tarjeta de WhatsApp) no tiene ese riesgo."
 }

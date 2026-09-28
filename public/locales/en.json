@@ -7026,6 +7026,10 @@
   "window.flows.chw.digit": "Digit {n}",
   "window.flows.chw.found-bot": "Found the bot: @{name}",
   "window.flows.chw.get-app": "Get the {name} app",
+  "window.flows.chw.link": "Link",
+  "window.flows.chw.link-done": "Linked: {number}",
+  "window.flows.chw.link-scan": "On the phone with the number you chose, open WhatsApp, Settings, Linked devices, Link a device, and scan this code. It changes every few seconds.",
+  "window.flows.chw.link-starting": "Starting the bridge's session…",
   "window.flows.chw.listening": "{name} is saved and listening for its messages",
   "window.flows.chw.live-now": "{name} is connected now",
   "window.flows.chw.make-first": "Make the bot or app on the service first.",
@@ -10069,5 +10073,10 @@
   "window.places.library17.import-spreadsheet": "Import a spreadsheet",
   "window.places.library17.import-spreadsheet-hint": "Choose a CSV, TSV, JSON or Excel file. Branch keeps it in Library and fills in a SELECT question you can run.",
   "window.places.library17.import-spreadsheet-limit": "Choose a spreadsheet smaller than 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "The file could not be read. Choose it again."
+  "window.places.library17.import-spreadsheet-read-error": "The file could not be read. Choose it again.",
+  "channel-setup.r.whatsapp-web.field-server": "The bridge's address on this computer, for example http://127.0.0.1:3000",
+  "channel-setup.r.whatsapp-web.noCheck": "The bridge is checked when Branch links the number: it has to be running on this computer and accept the key.",
+  "channel-setup.r.whatsapp-web.noCreate": "There is no bot to make: the bridge signs in to WhatsApp as a linked device of the number you choose, by a code you scan.",
+  "channel-setup.r.whatsapp-web.paste-WAHA_API_KEY": "The API key you gave the bridge (WAHA_API_KEY)",
+  "channel-setup.r.whatsapp-web.warning": "This drives a personal WhatsApp number through an unofficial client, which WhatsApp's terms do not allow, so the number can be banned. Use a spare number you can lose. The official WhatsApp Business Cloud API (the other WhatsApp card) has no such risk."
 }

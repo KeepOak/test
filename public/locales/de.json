@@ -7026,6 +7026,10 @@
   "window.flows.chw.digit": "Ziffer {n}",
   "window.flows.chw.found-bot": "Bot gefunden: @{name}",
   "window.flows.chw.get-app": "{name}-App holen",
+  "window.flows.chw.link": "Verknüpfen",
+  "window.flows.chw.link-done": "Verknüpft: {number}",
+  "window.flows.chw.link-scan": "Öffne auf dem Telefon mit der gewählten Nummer WhatsApp, Einstellungen, Verknüpfte Geräte, Gerät hinzufügen, und scanne diesen Code. Er wechselt alle paar Sekunden.",
+  "window.flows.chw.link-starting": "Die Sitzung der Brücke startet…",
   "window.flows.chw.listening": "{name} ist gespeichert und wartet auf Nachrichten",
   "window.flows.chw.live-now": "{name} ist jetzt verbunden",
   "window.flows.chw.make-first": "Erstelle zuerst den Bot oder die App beim Dienst.",
@@ -10069,5 +10073,10 @@
   "window.places.library17.import-spreadsheet": "Tabelle importieren",
   "window.places.library17.import-spreadsheet-hint": "Wähle eine CSV-, TSV-, JSON- oder Excel-Datei. Branch behält sie in der Bibliothek und füllt eine SELECT-Frage aus, die du ausführen kannst.",
   "window.places.library17.import-spreadsheet-limit": "Wähle eine Tabelle, die kleiner als 8 MB ist.",
-  "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal."
+  "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal.",
+  "channel-setup.r.whatsapp-web.field-server": "Die Adresse der Brücke auf diesem Computer, zum Beispiel http://127.0.0.1:3000",
+  "channel-setup.r.whatsapp-web.noCheck": "Die Brücke wird geprüft, wenn Branch die Nummer verknüpft: Sie muss auf diesem Computer laufen und den Schlüssel annehmen.",
+  "channel-setup.r.whatsapp-web.noCreate": "Es gibt keinen Bot zu erstellen: Die Brücke meldet sich bei WhatsApp als verknüpftes Gerät der gewählten Nummer an, über einen Code, den du scannst.",
+  "channel-setup.r.whatsapp-web.paste-WAHA_API_KEY": "Der API-Schlüssel, den du der Brücke gegeben hast (WAHA_API_KEY)",
+  "channel-setup.r.whatsapp-web.warning": "Damit wird eine private WhatsApp-Nummer über einen inoffiziellen Client gesteuert, was die Nutzungsbedingungen von WhatsApp nicht erlauben; die Nummer kann gesperrt werden. Nimm eine Zweitnummer, auf die du verzichten kannst. Die offizielle WhatsApp Business Cloud API (die andere WhatsApp-Karte) hat dieses Risiko nicht."
 }
