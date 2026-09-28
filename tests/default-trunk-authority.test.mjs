@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, on } from "./trunks-helpers.mjs";
+import { fixture, on, setupTrunk } from "./trunks-helpers.mjs";
 import { defaultPointer } from "../dist/trunks/defaults.js";
 
 test("an authority grant rolls back when its audit cannot be written", async t => {
@@ -21,7 +21,7 @@ test("an authority grant rolls back when its audit cannot be written", async t =
 test("an introduction's routing fallback never grants owner authority; an explicit same-id choice does", async t => {
   const { app } = await fixture(t);
   on(app);
-  const ada = app.trunks.create({ name: "Ada" });
+  const ada = setupTrunk(app, { name: "Ada" });
   await app.trunks.introduced();
   assert.equal(app.trunks.defaultTrunk()?.id, ada.id, "setup finished after the introduction, so routing has a fallback");
   assert.equal(app.store.get("governance", app.runtime.owner, defaultPointer), undefined);
@@ -44,7 +44,7 @@ test("an introduction's routing fallback never grants owner authority; an explic
 test("trusted default settlement records authority, and removal records its successor; pure reads do neither", async t => {
   const { app } = await fixture(t);
   on(app);
-  const ada = app.trunks.create({ name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
+  const ada = setupTrunk(app, { name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
   await app.trunks.introduced();
   for (let read = 0; read < 3; read++) assert.equal(app.trunks.defaultTrunk().id, ada.id);
   assert.equal(app.trunks.ownerDefault(), undefined);

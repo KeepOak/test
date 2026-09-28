@@ -40,6 +40,7 @@ export function firewallFor(app: Branch) {
   return firewallView({
     policy: app.web.policy.settings(),
     browserOrigins: app.reach.browserOrigins,
+    browserAnyWebsite: app.reach.browserAnyWebsite,
     scriptsMayReachInternet: codeRunSettings(app.store, app.runtime.owner).network,
     commandsMayReachInternet: app.reach.commandsMayReachInternet,
   });
@@ -82,7 +83,7 @@ export async function sandboxRemoteApi(
   if (get && path === "/api/firewall") return firewallFor(app);
   if (post && path === "/api/firewall/test") {
     const { address } = AddressSchema.parse(await readBody(request));
-    return testFirewall((target) => app.web.policy.assertAllowed(target), address, app.reach.browserOrigins);
+    return testFirewall((target) => app.web.policy.assertAllowed(target), address, app.reach.browserOrigins, app.reach.browserAnyWebsite);
   }
 
   // How much one conversation, or one person messaging from outside, may ask for.

@@ -194,3 +194,17 @@ test("selfdev: a checkout a cut clone left (no commit behind HEAD, no worktree) 
   const unknown = await run({ status: "timed_out", stdout: "", stderr: "", exitCode: null, command: "git" });
   assert.ok(!unknown.some((call) => call.startsWith("clone ")), "an answer that is not 'no commit' keeps it too");
 });
+
+test("selfdev: only the task chain that wrote a worktree's contract counts as having prepared it", async () => {
+  const { preparedByTask } = await import("../dist/self-development-contract.js");
+  const book = new ContractBook(new DatabaseSync(":memory:"));
+  const folder = "branch-agent-source/.branch-worktrees/self-fix";
+  book.create("local", { taskRunId: "lead", sourceSha: sha, worktreePath: folder, terms, sendRepositories: ["stabrea/branch-agent"] });
+  const parents = { helper: "lead", grandchild: "helper", other: null };
+  const store = { events: (id) => [{ kind: "run.started", data: { parentRunId: parents[id] ?? null } }] };
+  assert.equal(preparedByTask(store, book, "local", folder, "lead"), true);
+  assert.equal(preparedByTask(store, book, "local", folder, "grandchild"), true, "a helper of that task works in it too");
+  assert.equal(preparedByTask(store, book, "local", folder, "other"), false, "another task does not");
+  assert.equal(preparedByTask(store, book, "someone-else", folder, "lead"), false, "another owner's book has no such contract");
+  assert.equal(preparedByTask(store, book, "local", "branch-agent-source/.branch-worktrees/self-other", "lead"), false);
+});
