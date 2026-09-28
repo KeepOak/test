@@ -177,7 +177,9 @@ function followState() {
   wakeFaces(keys);
 }
 
-for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) addEventListener(ev, touch, { capture: true, passive: true });
+for (const ev of ["pointermove", "keydown", "wheel", "touchstart"]) addEventListener(ev, touch, { capture: true, passive: true });
+/* core/dom.js records the press at document capture first, so waking cannot replace its control before the click. */
+document.addEventListener("pointerdown", touch, { capture: true, passive: true });
 addEventListener("focus", touch);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { lastSeen = 0; touch(); } });
 document.addEventListener("pointerover", (e) => { const keys = faceKeys(e.target); if (keys.length) wakeFaces(keys); });
