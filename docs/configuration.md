@@ -3765,13 +3765,28 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 
 That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
-**GitLab** can be read in the same way, with its own token saved as `GITLAB_TOKEN`:
+**GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
+ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
+(gitlab.com, or your own server; https only, plain http only for one on this computer) and a personal access token with
+the `api` scope. Branch checks the token with GitLab first (`GET /user`) and keeps it only if GitLab accepts it, in the
+locker of the project that is active at that moment, as `GITLAB_TOKEN`, where Settings › Secrets lists it. The token is
+never read back into the window. **Disconnect** takes it out of the locker again, after a yes.
 
-```json
-{ "git": { "gitlab": { "tokenSecret": "GITLAB_TOKEN" } } }
-```
+Once connected (and while the switch is not off) these tools reach the index:
 
-That registers `gitlab.issues`, `gitlab.releases` and `gitlab.pipelines` behind `gitlab.read`. Reading only: GitLab's endpoints for changing things are shaped differently enough from GitHub's that offering half of them would mislead you about what Branch can actually do. The token is read from whichever project is active at the moment of the call, is sent only in the request header, is never written into a web address, and is scrubbed out of anything reported back — it cannot appear in Activity, in a receipt, or in an error message. Every GitHub address goes through the same network policy as web reading, so an address that is blocked there is refused here too. Nothing is installed on your account; your own GitHub App can be used instead of a token (below).
+- `gitlab.issues`, `gitlab.issue` (one in full, with what people wrote under it), `gitlab.merge_requests`,
+  `gitlab.merge_request` (its description, comments and how its pipeline went), `gitlab.pipelines` and
+  `gitlab.releases`, behind `gitlab.read`, which only looks;
+- `gitlab.create_issue`, `gitlab.comment` (under an issue or a merge request), `gitlab.open_merge_request` (a draft when
+  you say so: "Draft: " is put in front of the title) and `gitlab.create_project` (private unless you say otherwise),
+  behind `gitlab.manage`, which asks you first, like `github.manage`.
+
+Routes: `GET /api/gitlab` (the switch, whether it is connected and to whom), `POST /api/gitlab` `{ mode }`,
+`POST /api/gitlab/connect` `{ token, apiBase? }` and `POST /api/gitlab/disconnect` `{}`, each change the owner's only.
+An older launch settings file that names GitLab (`{ "git": { "gitlab": { "tokenSecret": "GITLAB_TOKEN" } } }`) still
+works: its address and token name are handed to the same connection, and the token is read from the active project at
+each call, until you connect in the window. The token is sent only in the request header, is never written into a web
+address, and is scrubbed out of anything reported back. Every GitHub address goes through the same network policy as web reading, so an address that is blocked there is refused here too. Nothing is installed on your account; your own GitHub App can be used instead of a token (below).
 
 **Your own GitHub App instead of a personal token (A2227).** Save the app's private key (the `.pem`
 GitHub gave you) in your secrets, then name it, the app number and the installation number:

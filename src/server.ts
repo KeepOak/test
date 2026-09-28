@@ -317,6 +317,7 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 // questions at once, and what each project has cost.
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
+import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
@@ -776,6 +777,7 @@ function toolInventory(app: Branch) {
     "shell.execute": "ready (configured host commands)",
     "git.remote": "ready (sending to a server switched on)",
     "github.manage": "ready (GitHub token saved)",
+    "gitlab.read": "ready (GitLab connected)", "gitlab.manage": "ready (GitLab connected)",
     "browser.read": "ready (configured origins)", "browser.act": "ready (configured origins)",
     "browser.interact": "ready (configured origins)",
   };
@@ -1033,6 +1035,12 @@ async function api(
     return webPagesApi({ store: app.store, owner: app.runtime.owner, requireOwner: (what) => app.store.profiles.requireOwner(what) },
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
+    });
+  // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
+  if (handlesGitLabPath(path))
+    return gitlabApi({ connection: app.gitlab, store: app.store, owner: app.runtime.owner,
+      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof GitLabApiError ? new HttpError(error.status, error.message) : error;
     });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))
