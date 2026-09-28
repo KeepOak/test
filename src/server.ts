@@ -1936,6 +1936,10 @@ async function api(
     // Redesign phase 1 (integration review): a new conversation's mode is held to what the picker allows here.
     const modeRefused = input.mode && !input.sessionId ? modeRefusal(app, input.mode) : null;
     if (modeRefused) throw new HttpError(403, modeRefused);
+    // QA retest 2026-09-28 (m10): which model a new conversation answers with is the owner's pick at the window, as it
+    // is in its model menu; a short-lived key or a household person does not choose one.
+    if (input.preset && !input.sessionId && (!app.store.profiles.isOwner() || startedWithShortLivedKey()))
+      throw new HttpError(403, "Only the owner, at the app, picks the model a new conversation answers with.");
     // Wave 6: a task started while somebody's profile is switched on is filed under their name.
     let userMessageId: number | undefined;
     const run = await runForCurrentPerson(app, {
@@ -1953,6 +1957,7 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      ...(input.preset && !input.sessionId ? { conversationPreset: input.preset } : {}),
       // long-work: a task started from the window may work for hours; its budgets and the stall watch still hold it.
       timeoutMs: longTaskDeadlineMs,
       // Projects are the owner's: a household person's new conversation is never filed under one of them by name. A task
