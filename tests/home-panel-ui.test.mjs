@@ -165,3 +165,18 @@ test("a row picked on the page (a task in Inbox › History) is part of the snap
   assert.ok(sent(app).includes(`${shown}\n\nIs this one finished?`), "the engine got it");
   assert.deepEqual(errors, []);
 });
+
+test("the panel is the default Trunk's: named and faced as it, and it writes in that Trunk's own conversation", async (t) => {
+  const { app, page, errors } = await fixture(t);
+  const trunks = await page.evaluate(async () => (await fetch("/api/trunks", { headers: { authorization: `Bearer ${sessionStorage.getItem("branch-token") ?? ""}` } })).json());
+  const home = trunks.trunks.find((tr) => tr.id === trunks.defaultId);
+  assert.ok(home?.chatSessionId, "the engine names a default Trunk with its own conversation");
+  await page.locator('.titlebar [data-act="home19"]').click();
+  await page.locator(".hm19-h b").filter({ hasText: home.name }).waitFor();
+  assert.ok(await page.locator(".hm19-h .av").count(), "it wears the Trunk's own face");
+  await page.locator("#home19-prompt").fill("Hello default Trunk");
+  await page.locator("#home19-prompt").press("Enter");
+  await page.locator("#home19 .b .txt").filter({ hasText: "Noted." }).waitFor({ timeout: 60000 });
+  assert.ok(app.store.messages(home.chatSessionId).some((m) => m.role === "user" && m.content.endsWith("Hello default Trunk")), "the words went to the default Trunk's conversation");
+  assert.deepEqual(errors, []);
+});

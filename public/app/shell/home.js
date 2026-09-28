@@ -1,5 +1,5 @@
-/* RES-701, from OpenClaw 2.0: the Home panel. The default Trunk (GET /api/trunks defaultId; until the engine names one,
-   whoever answers a new conversation) opens in a panel beside any page: a conversation, Settings, a place. It has its own
+/* RES-701, from OpenClaw 2.0: the Home panel. The default Trunk (GET /api/trunks defaultId, in its own conversation;
+   while the engine names none, as with Trunks off, a conversation of the panel's own) opens in a panel beside any page: a conversation, Settings, a place. It has its own
    message box and its own conversation, read from and sent to the engine like any other (POST /api/run, or the busy
    send while a task works there).
    Above the box sits "Working on": a snapshot of the page the person is on (its name, the row they last picked on it
@@ -8,7 +8,7 @@
    snapshot still attached, as a chip by the box that the next message carries (chat/chat.js addSendPrefix). */
 
 import { $, esc, afterDraw, paintChanged, applyCss, render, renderNow } from "../core/dom.js";
-import { S, E, save, refresh, ownName, ownerHere } from "../core/state.js";
+import { S, E, save, refresh, ownName, ownerHere, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
@@ -23,7 +23,8 @@ const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: fals
 const BUSY = ["running", "queued", "waiting", "needs_input"];
 
 /* ---------- who the panel talks to ---------- */
-export const homeTrunk = () => (E.defaultTrunkId ? E.trunks.find((tr) => tr.id === E.defaultTrunkId) ?? null : null);
+/* The default Trunk the engine names (GET /api/trunks defaultId, core/state.js defaultTrunk), in its own conversation. */
+export const homeTrunk = () => defaultTrunk() ?? null;
 const homeSid = () => homeTrunk()?.chatSessionId ?? S.home19?.sid ?? null;
 const panelOpen = () => S.home19?.open === true;
 const keep = (patch) => { S.home19 = { open: false, sid: null, ...S.home19, ...patch }; save(); };
