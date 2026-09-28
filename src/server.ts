@@ -1122,7 +1122,8 @@ async function api(
   // --- mac7/connect: the Set up panel for each chat app (src/channel-setup/) ---
   if (handlesChannelSetupPath(path))
     return channelSetupApi({ store: app.store, owner: app.runtime.owner, fetch: app.web.policy.guard(globalThis.fetch),
-      telegram: app.neverBreak.telegram, requireOwner: (what) => app.store.profiles.requireOwner(what) },
+      telegram: app.neverBreak.telegram, live: app.channelSetup, thisComputer: !throughADoor(request),
+      requireOwner: (what) => app.store.profiles.requireOwner(what) },
     request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof SetupRefusal ? new HttpError(error.status, error.message) : error;
     });
@@ -4551,6 +4552,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
     void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
+    // CHAT-147: every other chat app set up in the window; each problem goes to the diagnostics.
+    void app.channelSetup.connectSaved().catch((error: unknown) => console.error(`Chat apps did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
     await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
