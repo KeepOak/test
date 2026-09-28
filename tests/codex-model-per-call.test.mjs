@@ -149,3 +149,47 @@ test("a hand-off to Codex names Branch's model unless the task names its own", (
   assert.ok(!programCall("claude-code", "/work").args.includes("--model"), "Claude Code keeps its own choice");
   assert.ok(codexVerified.includes(codexDefaultModel));
 });
+
+test("Codex answering as a model works in Branch's own empty folder, and only there skips the repository trust check", async () => {
+  const { codexArgs, codexWorkDir } = await import("../dist/providers/cli-agent.js");
+  const dir = codexWorkDir();
+  assert.match(dir, /branch-codex-work$/);
+  const calls = [];
+  const provider = new CliAgentProvider(cliAgentCatalog.find((row) => row.id === "codex"), {}, async (row) => {
+    calls.push(row.args);
+    return { code: 0, stdout: JSON.stringify({ type: "item.completed", item: { id: "1", type: "agent_message", text: "ok" } }), stderr: "" };
+  });
+  await provider.complete(request());
+  const args = calls[0];
+  assert.deepEqual(args.slice(args.indexOf("-C"), args.indexOf("-C") + 3), ["-C", dir, "--skip-git-repo-check"]);
+  assert.deepEqual(codexArgs(["exec", "--json", "-"], "gpt-5.5"), ["exec", "-c", "model=gpt-5.5", "--json", "-"], "no folder given: the trust check stays");
+  assert.ok(!programCall("codex", "/work").args.includes("--skip-git-repo-check"), "a hand-off to the owner's own folder keeps Codex's trust check");
+});
+
+test("a program that prints nothing at all is stopped with a plain reason instead of hanging", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-codex-silent-"));
+  t.after(() => discardTemp(root));
+  const script = join(root, "silent.cjs");
+  await writeFile(script, "process.stdin.resume(); setTimeout(() => {}, 60000);");
+  const codex = cliAgentCatalog.find((row) => row.id === "codex");
+  const provider = new CliAgentProvider({ ...codex, command: process.execPath, args: [script, ...codex.args] }, { firstOutputMs: 1500 }, runCliAgent);
+  const started = Date.now();
+  await assert.rejects(provider.complete(request()), /said nothing at all for 2 seconds, so it was stopped/);
+  assert.ok(Date.now() - started < 20000, "stopped at the silence limit, not the whole task's");
+});
+
+test("Codex's answer is taken at the end of its turn, not after it has spent its time closing its own tool servers", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-codex-slow-exit-"));
+  t.after(() => discardTemp(root));
+  const script = join(root, "slow-exit.cjs");
+  await writeFile(script, `process.stdin.resume(); process.stdin.on("end", () => {
+    console.log(JSON.stringify({ type: "item.completed", item: { id: "1", type: "agent_message", text: "done" } }));
+    console.log(JSON.stringify({ type: "turn.completed" }));
+    setTimeout(() => process.exit(0), 8000);
+  });`);
+  const codex = cliAgentCatalog.find((row) => row.id === "codex");
+  const provider = new CliAgentProvider({ ...codex, command: process.execPath, args: [script, ...codex.args] }, {}, runCliAgent);
+  const started = Date.now();
+  assert.equal((await provider.complete(request())).content, "done");
+  assert.ok(Date.now() - started < 6000, `answered at the turn's end (${Date.now() - started} ms)`);
+});

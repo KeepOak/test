@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
@@ -111,9 +114,20 @@ export const cliAgentCatalog: CliAgentRow[] = [
  */
 export { codexDefaultModel };
 /** Codex's arguments with the chosen model named, right after `exec` (Codex reads `-c key=value` as a one-call setting). */
-export function codexArgs(args: readonly string[], model: string): string[] {
+export function codexArgs(args: readonly string[], model: string, workDir: string | null = null): string[] {
   const at = args.indexOf("exec");
-  return at < 0 ? [...args] : [...args.slice(0, at + 1), "-c", `model=${model}`, ...args.slice(at + 1)];
+  // QA 2026-09-28: Codex answering as a model works in Branch's own empty folder, which Branch made and nothing else
+  // uses, so the git-repository trust check is skipped for that one folder only; any other folder keeps it.
+  const where = workDir ? ["-C", workDir, "--skip-git-repo-check"] : [];
+  return at < 0 ? [...args] : [...args.slice(0, at + 1), "-c", `model=${model}`, ...where, ...args.slice(at + 1)];
+}
+/** OpenAI's own `codex` program as Branch knows it (not a command the owner typed), which alone gets Branch's folder. */
+const ownCodex = (row: CliAgentRow): boolean => row.id === "codex" && row.command === "codex";
+/** Branch's own working folder for Codex: empty, private to this user, made on first use. */
+export function codexWorkDir(): string {
+  const dir = join(tmpdir(), "branch-codex-work");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
 }
 
 /** Only what a program needs to find itself and its own sign-in; nothing else of the owner's. */
@@ -129,14 +143,17 @@ export interface CliAgentLimits {
   timeoutMs?: number;
   /** Most characters of answer kept; anything past this is dropped rather than held in memory. */
   maxOutputChars?: number;
+  /** QA 2026-09-28: how long the program may print nothing at all before it is stopped as stuck. */
+  firstOutputMs?: number;
 }
+type SpawnLimits = Required<Pick<CliAgentLimits, "timeoutMs" | "maxOutputChars">> & Pick<CliAgentLimits, "firstOutputMs">;
 export type SpawnAgent = (
-  row: CliAgentRow, prompt: string, signal: AbortSignal, limits: Required<CliAgentLimits>,
+  row: CliAgentRow, prompt: string, signal: AbortSignal, limits: SpawnLimits,
   /** mac6/accounts: the one extra variable naming this account's own folder (CLAUDE_CONFIG_DIR, ...). */
   home?: AccountHome,
   /** Live steps: each whole line the program prints, as it prints it (stream-json is one event a line). */
   onLine?: (line: string) => void,
-) => Promise<{ code: number | null; stdout: string; stderr: string; missing?: boolean }>;
+) => Promise<{ code: number | null; stdout: string; stderr: string; missing?: boolean; silent?: boolean }>;
 
 /** Branch's whole transcript as the one question the tool is asked. */
 export function agentPromptFrom(request: CompletionRequest): string {
@@ -293,23 +310,30 @@ export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLin
     const warm = readsStreamJson(row.args), key = JSON.stringify([row.command, row.args, home?.name ?? "", home?.path ?? ""]);
     const child = (warm ? spareFor(key) : null) ?? startProgram(row, env);
     let stdout = "", stderr = "", settled = false;
-    const finish = (code: number | null, missing?: boolean): void => {
+    const finish = (code: number | null, missing?: boolean, silent?: boolean): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(quiet);
       signal.removeEventListener("abort", stop);
       // The next question finds a copy already started, as long as this one worked.
       if (warm && code === 0) prepareSpare(key, row, env);
-      resolve({ code, stdout, stderr, ...(missing ? { missing: true } : {}) });
+      resolve({ code, stdout, stderr, ...(missing ? { missing: true } : {}), ...(silent ? { silent: true } : {}) });
     };
     const stop = (): void => { child.kill(); finish(null); };
     const timer = setTimeout(stop, limits.timeoutMs);
     timer.unref?.();
+    // A program that prints nothing at all is stuck (a prompt nobody will answer, a model it hangs on): stopped early.
+    const quiet = limits.firstOutputMs ? setTimeout(() => { child.kill(); finish(null, false, true); }, limits.firstOutputMs) : undefined;
+    quiet?.unref?.();
     signal.addEventListener("abort", stop, { once: true });
     // stream-json ends with its result line; the program may take seconds more to exit, which nobody needs to wait for.
-    const settlesOnResult = printsStreamJson(row.args);
+    // QA 2026-09-28: Codex's exec --json ends its turn with turn.completed (or turn.failed), then may take 40 seconds more
+    // shutting its own tool servers down; the answer is whole at that line, so nobody waits for the exit either.
+    const settlesOnResult = printsStreamJson(row.args) || printsCodexEvents(row);
     let partial = "";
     child.stdout!.on("data", (chunk: Buffer) => {
+      clearTimeout(quiet);
       const text = chunk.toString("utf8");
       if (stdout.length < limits.maxOutputChars) stdout += text;
       if (!onLine && !settlesOnResult) return;
@@ -318,11 +342,14 @@ export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLin
       if (partial.length > 1_000_000) partial = ""; // one line that never ends is not an event
       for (const line of lines) {
         if (onLine) { try { onLine(line); } catch { /* a step not shown never stops the program */ } }
-        if (settlesOnResult && line.startsWith("{\"type\":\"result\"")) {
-          finish(0);
+        const ended = line.startsWith("{\"type\":\"result\"") || line.startsWith("{\"type\":\"turn.completed\"") ? 0
+          : line.startsWith("{\"type\":\"turn.failed\"") ? 1 : null;
+        if (settlesOnResult && ended !== null) {
+          finish(ended);
           // Left to exit by itself, without keeping Branch running; one that hangs on is stopped a little later.
           holdOpen(child, false);
-          setTimeout(() => { if (child.exitCode === null) child.kill(); }, 15_000).unref?.();
+          // Codex is left to close its own tool servers (stopping it would leave them running); anything else is stopped.
+          if (!printsCodexEvents(row)) setTimeout(() => { if (child.exitCode === null) child.kill(); }, 15_000).unref?.();
         }
       }
     });
@@ -341,7 +368,7 @@ export class CliAgentProvider implements Provider {
   readonly name: string;
   /** Its own timeout (limits.timeoutMs) decides when it has taken too long, never the silence watchdog. */
   readonly keepsOwnTime = true;
-  private readonly limits: Required<CliAgentLimits>;
+  private readonly limits: SpawnLimits;
   /** mac6/accounts: say plainly when the program reports a plan limit (set for accounts in a list). */
   detectLimits = false;
   /** Handed everything the program printed, so the plan windows it reported can be kept (src/plan-windows.ts). */
@@ -358,7 +385,7 @@ export class CliAgentProvider implements Provider {
     private readonly home?: AccountHome,
   ) {
     this.name = `${cliAgentShape}:${row.id}`;
-    this.limits = { timeoutMs: limits.timeoutMs ?? 180_000, maxOutputChars: limits.maxOutputChars ?? 200_000 };
+    this.limits = { timeoutMs: limits.timeoutMs ?? 180_000, maxOutputChars: limits.maxOutputChars ?? 200_000, firstOutputMs: limits.firstOutputMs ?? 60_000 };
   }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
@@ -380,6 +407,8 @@ export class CliAgentProvider implements Provider {
     if (outcome.missing)
       throw new Error(`"${this.row.command}" is not on this computer, so Branch cannot use ${this.row.name}. Install it, or pick another model.`);
     if (outcome.stdout) this.onOutput?.(outcome.stdout);
+    if (outcome.code === null && outcome.silent)
+      throw new Error(`${this.row.name} said nothing at all for ${Math.round((this.limits.firstOutputMs ?? 0) / 1000)} seconds, so it was stopped. Run ${this.row.command} in a terminal to check it starts, then retry or pick another model.`);
     if (outcome.code === null)
       throw new Error(`${this.row.name} took too long and was stopped. Ask again, or pick another model.`);
     const failed = failedResult(this.row, outcome.stdout);
@@ -426,7 +455,7 @@ export class CliAgentProvider implements Provider {
         return said.code === 0 && !said.missing ? said.stdout.trim().slice(0, 200) || null : null;
       },
       tryModel: async (model: string): Promise<CodexTry> => {
-        const row = { ...this.row, args: codexArgs(this.row.args, model) };
+        const row = { ...this.row, args: codexArgs(this.row.args, model, ownCodex(this.row) ? codexWorkDir() : null) };
         const said = await run(row, "Reply with the word OK.");
         const failed = failedResult(row, said.stdout);
         if (said.code === 0 && failed === null && answerFrom(row, said.stdout)) return "accepted";
@@ -435,7 +464,7 @@ export class CliAgentProvider implements Provider {
     };
   }
   private withModel(row: CliAgentRow): CliAgentRow {
-    return row.id === "codex" ? { ...row, args: codexArgs(row.args, this.codexModel()) } : row;
+    return row.id === "codex" ? { ...row, args: codexArgs(row.args, this.codexModel(), ownCodex(this.row) ? codexWorkDir() : null) } : row;
   }
   /** It publishes no list of models of its own: the tool decides what it is using. */
   modelsList(): null { return null; }
