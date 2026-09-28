@@ -20,6 +20,7 @@ import { AG, saveUi } from "../../chat/agent17.js";
 import { LANGUAGES, language, t } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 import { canSpeak, chooseLanguage } from "../../shell/language.js";
+import { gsel } from "../../core/gsel.js";
 
 const pressed = (on) => `aria-pressed="${!!on}"`;
 const segAct = (title, sub, opts, cur, act) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l, a]) => `<button type="button" ${pressed(v === cur)} data-act="${a ?? act}" data-v="${v}">${esc(l)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
@@ -111,8 +112,8 @@ const ownName = (code) => {
 };
 function languageSection() {
   const now = language();
-  const opts = LANGUAGES.map(({ id }) => `<option value="${esc(id)}"${id === now ? " selected" : ""}>${esc(ownName(id))}</option>`).join("");
-  return `<div class="sec"><h2>${t("appearance.language")}</h2><div class="ctl"><b>${t("appearance.language")}</b><span class="right"><select class="inp" id="lang" data-sw="lang" aria-label="${t("appearance.language")}">${opts}</select></span><small>${t("window.settings.appearance.dates-and-numbers-follow-it-too")}</small></div></div>`;
+  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now });
+  return `<div class="sec"><h2>${t("appearance.language")}</h2><div class="ctl"><b>${t("appearance.language")}</b><span class="right">${pick}</span><small>${t("window.settings.appearance.dates-and-numbers-follow-it-too")}</small></div></div>`;
 }
 /* The window is drawn again in the new words; English says so as the prototype does. */
 async function pickLanguage(code) {

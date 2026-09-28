@@ -279,6 +279,7 @@ import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
 import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
+import { practiceRunsEnabled, savePracticeRuns } from "./practice-runs.js";
 import { setupIds } from "./channel-setup/service.js";
 import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
@@ -1738,6 +1739,11 @@ async function api(
     const { url } = z.object({ url: z.string().url().max(2000) }).strict().parse(await readBody(request));
     return app.skillRegistry.browse(url);
   }
+  // The owner's yes to a registry's signing key, by the fingerprint browsing showed them (src/registry-install.ts).
+  if (request.method === "POST" && path === "/api/registry/trust") {
+    const { url, fingerprint } = z.object({ url: z.string().url().max(2000), fingerprint: z.string().regex(/^[0-9a-fA-F]{64}$/) }).strict().parse(await readBody(request));
+    return { key: await app.skillRegistry.trustKey(url, fingerprint) };
+  }
   if (request.method === "POST" && path === "/api/registry/install") {
     const { url, skillId } = z.object({ url: z.string().url().max(2000), skillId: z.string().min(1).max(64) }).strict().parse(await readBody(request));
     return app.skillRegistry.install(url, skillId);
@@ -1849,6 +1855,13 @@ async function api(
     // The checks really write files and really save facts, so they do it in a project and under a
     // name of their own: nothing they do reaches the owner's folder or the owner's memory.
     return runToolChecksSafely(app, AbortSignal.timeout(120000));
+  if (path === "/api/practice-runs") {
+    if (request.method === "GET") return { enabled: practiceRunsEnabled(app.store, app.runtime.owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    app.store.profiles.requireOwner("Practice run availability");
+    try { return { enabled: savePracticeRuns(app.store, app.runtime.owner, await readBody(request)) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   if (request.method === "GET" && path === "/api/policy")
     // Q259: the owner's approval rules (paths, commands, limits) are theirs; a household person is sent none of them.
     return { policy: app.store.profiles.isOwner() ? readPolicy(app.store, app.runtime.owner) : null, presets: policyPresets(),
@@ -1936,6 +1949,10 @@ async function api(
     // Redesign phase 1 (integration review): a new conversation's mode is held to what the picker allows here.
     const modeRefused = input.mode && !input.sessionId ? modeRefusal(app, input.mode) : null;
     if (modeRefused) throw new HttpError(403, modeRefused);
+    // QA retest 2026-09-28 (m10): which model a new conversation answers with is the owner's pick at the window, as it
+    // is in its model menu; a short-lived key or a household person does not choose one.
+    if (input.preset && !input.sessionId && (!app.store.profiles.isOwner() || startedWithShortLivedKey()))
+      throw new HttpError(403, "Only the owner, at the app, picks the model a new conversation answers with.");
     // Wave 6: a task started while somebody's profile is switched on is filed under their name.
     let userMessageId: number | undefined;
     const run = await runForCurrentPerson(app, {
@@ -1953,6 +1970,7 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      ...(input.preset && !input.sessionId ? { conversationPreset: input.preset } : {}),
       // long-work: a task started from the window may work for hours; its budgets and the stall watch still hold it.
       timeoutMs: longTaskDeadlineMs,
       // Projects are the owner's: a household person's new conversation is never filed under one of them by name. A task

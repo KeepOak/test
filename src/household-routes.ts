@@ -289,6 +289,7 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/activity", "tasks working now, only the person's own (profiles.scope(), #324)"),
   read("/api/commands", "the typed commands a household person may send; the owner's saved commands left out (Q259)"),
   read("/api/policy", "the presets and the person's own waiting questions; the owner's policy is null (Q259)"),
+  read("/api/practice-runs", "only whether practice is available, so a person can practice their own task"),
   read("/api/conversation-mode", "the mode chip of the person's own conversation (another conversation's id reads as none)"),
   read("/api/conversation-mode/settings", "what a new conversation starts on, which the mode chip's answer already carries"),
   read("/api/usage/glance", "the status bar's ring, which answers a household person with nothing"),

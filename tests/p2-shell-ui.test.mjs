@@ -15,6 +15,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { pickGsel } from "./gsel.mjs";
 
 const scripted = { name: "scripted", async complete() { return { content: "Here it is.", toolCalls: [] }; } };
 const PROTOTYPE = new URL("../design/redesign/prototype.html", import.meta.url);
@@ -92,7 +93,7 @@ async function notInPrototype(words) {
 async function chooseFrench(f) {
   await f.page.keyboard.press("Escape");
   await settingsPage(f.page, "appearance");
-  await f.page.locator("#lang").selectOption("fr");
+  await pickGsel(f.page.locator("#lang"), "fr");
   await f.page.waitForFunction(() => document.documentElement.lang === "fr");
   assert.equal((await f.call("/api/look")).language, "fr", "the engine keeps the choice");
   await f.page.locator(".set-back").click();
