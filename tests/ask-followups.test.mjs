@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { savePracticeRuns } from "../dist/practice-runs.js";
 
 const repliedNote = /their answer is their newest message/;
 const system = (request) => String(request.messages[0]?.content ?? "");
@@ -93,6 +94,7 @@ test("a reply to a practice run's question keeps it a practice run: nothing is r
   const f = await fixture(t);
   const first = await f.app.runtime.run({ prompt: "plan my trip", dryRun: true });
   assert.equal(first.status, "needs_input", "control: the practice run asked where to");
+  savePracticeRuns(f.app.store, f.app.runtime.owner, { enabled: false });
   const reply = await f.call("run", { prompt: "Paris", sessionId: first.sessionId });
   assert.equal(reply.status, 200, JSON.stringify(reply.body));
   assert.equal(reply.body.id, first.id, "control: the reply went to the task that asked");

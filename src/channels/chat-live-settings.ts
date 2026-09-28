@@ -53,10 +53,11 @@ const settingKey = "chat-live-switches";
 export const chatLiveShipsOn: Partial<ChatLiveSwitches> = { liveStatus: "when-needed", steering: "when-needed", splitting: "when-needed", steps: "on" };
 
 /**
- * Commands in the owner's paired direct chat (owner, 2026-09-27: useful features ship on). /stop, /status, /new, /help
- * and the rest act only on that chat's own conversation, and the person is one the owner approved by pairing code, so
- * they read there even while `commands` is off as shipped. A group, and anyone let in only by an allowlist, keep the
- * switch as it is; once the owner sets the switch, their choice holds everywhere, off included.
+ * Commands in the owner's own paired direct chat (owner, 2026-09-27: useful features ship on). /stop, /status, /new,
+ * /help and the rest act only on that chat's own conversation, so an account the owner approved by pairing code and
+ * named as their own (the router's `ownAccount`) reads them even while `commands` is off as shipped. A paired friend,
+ * a group, and anyone let in only by an allowlist keep the switch as it is; once the owner sets the switch, their
+ * choice holds everywhere, off included.
  */
 export function commandsInPairedDm(store: Store, owner: string): boolean {
   const saved = chatLiveSwitches(store, owner);
