@@ -5,7 +5,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -275,4 +275,23 @@ test("a short-lived key's refusal from the one gate names the key", async (t) =>
   savePolicy(branch.store, "local", { preset: "custom", rules: [{ tool: "files.write", decision: "deny" }] });
   await assert.rejects(underShortLivedKey(() => branch.runtime.executeTool("files.write", { path: "k.txt", content: "x" }, owner)),
     /short-lived key/);
+});
+
+test("under Read only, a hand-pressed action that changes a file is refused, over HTTP too", async (t) => {
+  const { branch, root } = await app(t);
+  savePolicy(branch.store, "local", { preset: "read-only" });
+  await assert.rejects(branch.runtime.executeTool("files.write", { path: "note.txt", content: "x" }, owner),
+    (error) => error instanceof PolicyRefusedError);
+  const server = await startServer(branch, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const response = await fetch(`${server.url}/api/action`, { method: "POST",
+    headers: { authorization: `Bearer ${server.token}`, origin: server.url, "content-type": "application/json" },
+    body: JSON.stringify({ tool: "files.write", args: { path: "note.txt", content: "x" } }) });
+  const said = await response.json();
+  assert.match(said.error ?? "", /do not allow/, JSON.stringify(said));
+  assert.ok(response.status >= 400, `refused (${response.status})`);
+  await assert.rejects(access(join(root, "workspace", "note.txt")), "no file was written");
+  // Looking still works under Read only.
+  await writeFile(join(root, "workspace", "seen.txt"), "hello");
+  assert.equal((await branch.runtime.executeTool("files.read", { path: "seen.txt" }, owner)).content, "hello");
 });

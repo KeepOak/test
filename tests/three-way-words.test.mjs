@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { openSettingsPage, setLevel, settingsWindow } from "./settings-window.mjs";
+import { watchSettled } from "./page-settled.mjs";
 
 const WORDS = { en: ["Off", "When needed", "On"], fr: ["Désactivé", "Au besoin", "Activé"] };
 
@@ -15,15 +16,8 @@ const WORDS = { en: ["Off", "When needed", "On"], fr: ["Désactivé", "Au besoin
 async function everySwitch(t) {
   const { page, errors } = await settingsWindow(t, { name: "three-way" });
   errors.length = 0;
-  // A page draws its choices once the engine has answered what it reads, so each page is read when nothing is in flight
-  // (the live event stream aside, which stays open).
-  const pending = new Set();
-  const api = (request) => new URL(request.url()).pathname.startsWith("/api/") && !request.url().includes("/api/events/stream");
-  page.on("request", (request) => { if (api(request)) pending.add(request); });
-  for (const done of ["requestfinished", "requestfailed"]) page.on(done, (request) => pending.delete(request));
-  page.settled = async () => {
-    for (let quiet = 0; quiet < 3;) { await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20)))); quiet = pending.size ? 0 : quiet + 1; }
-  };
+  // A page draws its choices once the engine has answered what it reads, so each page is read when nothing is in flight.
+  page.settled = watchSettled(page);
   await openSettingsPage(page, "general");
   await setLevel(page, "technical");
   const pages = await page.locator('button.nav[data-act="setpage"]').evaluateAll((links) => links.map((link) => link.dataset.v));

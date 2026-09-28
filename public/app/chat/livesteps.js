@@ -24,10 +24,11 @@ const OPENED = new Set();
 
 /**
  * A follower of one task's live steps at a time, drawn into the block with id `block` inside the scroll box `scroll`
- * (a selector). onAsk runs when a question starts waiting, onGone when the task's steps can no longer be read.
+ * (a selector). onAsk runs when a question starts waiting, onGone when the task's steps can no longer be read, onShow
+ * when the first steps have no block to go in yet.
  */
-export function liveFollower({ block, scroll, onAsk = () => {}, onGone = () => {} }) {
-  const L = { runId: null, snap: null, ctl: null, all: false, frame: 0, block, scroll, onAsk, onGone };
+export function liveFollower({ block, scroll, onAsk = () => {}, onGone = () => {}, onShow = onGone }) {
+  const L = { runId: null, snap: null, ctl: null, all: false, frame: 0, block, scroll, onAsk, onGone, onShow };
   FOLLOWERS.set(block, L);
   const me = {
     follow(runId) {
@@ -93,7 +94,9 @@ function take(L, snap) {
 function draw(L) {
   L.frame = 0;
   const block = document.getElementById(L.block);
-  if (!block) return;
+  // The first steps have no block to go in yet: the view is drawn again with it, rather than waiting for something
+  // else to redraw (on a slow machine nothing may, and the steps never showed).
+  if (!block) { if (L.snap?.steps?.length) L.onShow(); return; }
   const box = block.closest(L.scroll) ?? $(L.scroll);
   const atEnd = box && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   block.innerHTML = lines(L);
@@ -164,8 +167,8 @@ function lines(L) {
 }
 
 /* The chat hands in what to do when a question appears (read the waiting questions, so its card shows). */
-export function initLive({ onAsk, onGone }) {
-  MAIN.set({ onAsk, onGone });
+export function initLive({ onAsk, onGone, onShow }) {
+  MAIN.set({ onAsk, onGone, onShow: onShow ?? onGone });
   on("live-all", (el) => { const L = FOLLOWERS.get(el.dataset.v || "live-steps"); if (L) { L.all = true; draw(L); } });
   // A line opened stays open while the list is drawn again (toggle does not bubble, so it is heard on the way down).
   document.addEventListener("toggle", (event) => {

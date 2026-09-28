@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { describesScreen } from '../screen-guard.js'; // dogfood follow-up
 import { z } from 'zod';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { mcpClient, mcpValidator } from './mcp-sdk.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -61,13 +61,15 @@ const through = (client: Client): CallThrough =>
 function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: string[]): ToolDefinition {
   if (JSON.stringify(redact(tool, secrets)) !== JSON.stringify(tool))
     throw new Error('MCP discovery contains a configured credential');
-  const validate = new AjvJsonSchemaValidator().getValidator(tool.inputSchema as JsonSchemaType);
+  // The schema checker is made on the first call, so listing a server's tools loads no part of the SDK.
+  let validate: ((args: unknown) => { valid: boolean }) | undefined;
   const name = mcpToolName(config.id, tool.name);
   // Dogfood follow-up: a server's computer-use or screen tool, by its annotations' title, name, description or inputs.
   const screen = describesScreen({ name: tool.name, title: tool.annotations?.title ?? tool.title, description: tool.description, inputSchema: tool.inputSchema });
   return { name, description: tool.description?.slice(0, 2000) ?? tool.name, external: true, ...(screen ? { screen: true } : {}),
     permission: name, parameters: z.record(z.string(), z.unknown()), inputSchema: tool.inputSchema,
     execute: async (args: unknown, context: ToolContext) => {
+      validate ??= new (await mcpValidator())().getValidator(tool.inputSchema as JsonSchemaType);
       if (!validate(args).valid) throw new Error('MCP arguments do not match the configured tool schema');
       try {
         const result = await call(tool.name, args as Record<string, unknown>, context) as { isError?: boolean };
@@ -148,7 +150,7 @@ export function registerCachedMcp(
     const fresh = live.tools?.find(tool => tool.name === name);
     if (fresh && JSON.stringify(fresh.inputSchema) !== remembered.get(name)) {
       remembered.set(name, JSON.stringify(fresh.inputSchema));
-      const check = new AjvJsonSchemaValidator().getValidator(fresh.inputSchema as JsonSchemaType);
+      const check = new (await mcpValidator())().getValidator(fresh.inputSchema as JsonSchemaType);
       if (!check(args).valid) throw new Error('MCP server changed this tool since Branch last spoke to it');
     }
     const result = await live.call(name, args, context);
@@ -178,8 +180,8 @@ export async function openMcp(
 ) {
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
-  const { transport, secrets } = makeTransport(config, env, policy);
-  const client = new Client({ name: 'branch', version: '0.1.0' });
+  const { transport, secrets } = await makeTransport(config, env, policy);
+  const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' });
   try {
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
     await client.connect(transport as Transport, { timeout: startupTimeoutMs });
