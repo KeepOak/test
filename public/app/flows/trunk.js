@@ -559,7 +559,8 @@ export function init() {
   markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
-  on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); if (ed.tab === "accounts") loadKeys(ed.id); });
+  on("st-tab", (el) => { if (!ed) return; keepFields(); // only while an editor is open
+    ed.tab = el.dataset.v; drawEditor(); if (ed.tab === "accounts") loadKeys(ed.id); });
   computersChanged(() => { if (ed?.tab === "its17d" && dialog()?.querySelector(".editor")) drawEditor(); }); // only while the editor is open
   on("st-colour", (el) => { keepFields(); ed.d.colour = hex(el.dataset.v); drawEditor(); });
   on("st-shape", (el) => { keepFields(); ed.d.shape = SHAPE_NAMES[+el.dataset.v] ?? null; drawEditor(); });
