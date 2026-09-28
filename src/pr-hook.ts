@@ -11,7 +11,7 @@ import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import type { WorkspaceFiles } from "./files.js";
 import { WalkRules } from "./walk-rules.js"; // mac7/walk-rules
-import { pullRequestPinned, pushRefusal, pushRepositoryRefusal, selfDevelopmentLine } from "./self-development-contract.js"; // Q12
+import { pullRequestPinned, pushRefusal, pushRepositoryRefusal, selfDevelopmentBase, selfDevelopmentBaseWords } from "./self-development-contract.js"; // Q12
 import { githubRepositoryOf } from "./github-address.js";
 export { githubRepositoryOf };
 
@@ -169,7 +169,7 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   // A change to Branch itself goes out only as the owner's own step, asked about (`sourceSendHold`), never by the
   // hook when a task finishes, and only as a proposal to the line Beta builds.
   if (walked && input.byItself) throw new Error("A change to Branch itself is sent only when you say yes to that step, never by itself when a task finishes.");
-  if (walked && where.base !== selfDevelopmentLine) throw new Error(`A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds, so nothing was sent.`);
+  if (walked && !selfDevelopmentBase(where.base)) throw new Error(`A change to Branch itself is proposed only to ${selfDevelopmentBaseWords}, so nothing was sent.`);
   // selfdev: without a saved connection, only a change to Branch itself, asked about, may use the computer's own sign-in.
   if (!saved && (!walked || input.byItself)) throw new Error(connectFirst);
   // The repository it opens in must be one written with the contract when the worktree was made.
