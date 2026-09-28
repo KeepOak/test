@@ -552,6 +552,7 @@ test("L19 a person presses Dictate, sees the words appear, and the microphone cl
   await dictate.waitFor({ state: "visible", timeout: 15000 });
   assert.notEqual(await dictate.getAttribute("aria-disabled"), "true", "Dictate is live");
   assert.equal(app.dictation.open, false, "a microphone was open before anybody pressed anything");
+  const before = app.store.runs(owner).map((run) => run.id).sort();
 
   await dictate.click();
   // The listening row is on for exactly as long as the microphone is.
@@ -564,7 +565,7 @@ test("L19 a person presses Dictate, sees the words appear, and the microphone cl
     null, { timeout: 15000 });
 
   // Nothing was sent: the words sit in the box and the conversation is still empty.
-  assert.equal(app.store.runs(owner).length, 0, "dictation sent the message instead of filling the box");
+  assert.deepEqual(app.store.runs(owner).map((run) => run.id).sort(), before, "dictation sent the message instead of filling the box");
 
   // Done stops it, and the microphone closes with it.
   await page.locator('[data-act="dict-done"]').click();

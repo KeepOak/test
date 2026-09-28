@@ -4424,3 +4424,18 @@ audio.docread18m{width:100%}
 .native-screen-tools form, .native-screen-tools label { display:flex; align-items:center; gap:8px; margin:0; }
 .native-screen-tools select, .native-screen-tools input { padding:6px 8px; max-width:320px; }
 .native-screen-tools [role=status] { font-size:12px; flex-basis:100%; }
+
+/* area: wallpaper toolbar
+   The wallpaper already covers the window. Keep the title row clear, with glass only beneath its controls;
+   its native-control reservation and drag regions retain the existing layout. Content stays solid below the row. */
+.app .titlebar,.app .titlebar.merged14,.app.has-bg .titlebar:not(.merged14){
+  background:transparent;border-bottom:0;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.app .titlebar::before,.app .titlebar::after{content:none}
+.app .titlebar .head{background:transparent;border:0;box-shadow:none}
+.app .titlebar :is(.tb-btn,.icon-btn,.win button,.head-st17):not(:hover):not([aria-pressed="true"]){
+  color:var(--ink);background:color-mix(in srgb,var(--raise) var(--toolbar-a,68%),transparent);-webkit-backdrop-filter:var(--chrome-blur);backdrop-filter:var(--chrome-blur);border-radius:7px}
+.app .titlebar :is(.tb-btn,.icon-btn,.head-st17,.win button:not(.close)):is(:hover,:focus-visible,[aria-pressed="true"]){
+  color:var(--ink);background:color-mix(in srgb,var(--raise) var(--toolbar-hot-a,82%),transparent)}
+@media (prefers-reduced-transparency:reduce){.app{--toolbar-a:100%;--toolbar-hot-a:100%}}
+.app.has-bg.merged14 #main{background:linear-gradient(to bottom,transparent var(--tb-h,52px),var(--bg) var(--tb-h,52px))}
+.app.peek .titlebar{background:transparent;box-shadow:none;border:0}

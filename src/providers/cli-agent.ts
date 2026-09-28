@@ -460,6 +460,6 @@ export function registerCliAgent(
 ): { id: string; name: string; note: string; terms: CliAgentRow["terms"] } {
   const row = rowFor(input);
   const id = `cli-${row.id}`;
-  models.register({ id, name: row.name, provider: new CliAgentProvider(row, limits, spawnAgent), model: row.command });
+  models.register({ id, name: row.name, provider: new CliAgentProvider(row, limits, spawnAgent), model: row.id === "claude-code" ? "sonnet" : row.command });
   return { id, name: row.name, note: row.note, terms: row.terms };
 }

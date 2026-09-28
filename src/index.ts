@@ -612,6 +612,7 @@ export async function createBranch(options: {
     allowedForThisRun: allowedForThisRun(store, runtime.owner, context) }, folder); // mac7/tests-unattended: --allow-tests
   // Locking the app: after a quiet spell the locker stays shut until the owner unlocks it again.
   const sessionLock = new SessionLock(store, runtime.owner);
+  runtime.fullAccessLocked = () => sessionLock.locked();
   store.secrets.gate = () => sessionLock.require();
   // Batch 26 (wave 8): the owner's own password manager, asked at the call boundary and only when
   // they have switched it on. It waits for the same unlock the locker does.
@@ -724,6 +725,7 @@ export async function createBranch(options: {
   const selfDevelopment: SelfDevelopmentDeps = {
     workspace, owner: options.owner ?? "local", projects: store.projects, registry, policy: web.policy,
     git: (input, signal) => gitRunner.run(input, signal), contracts: selfContracts, store,
+    fullAccessOwner: (context) => runtime.ownerFullAccessFor(context, true),
   };
   offerSelfDevelopment(selfDevelopment);
   // A change to Branch itself asked for from a chat: the chat only files it, and only the owner answers,
@@ -1113,6 +1115,11 @@ export async function createBranch(options: {
     store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir, userAgent,
     ...(chatgpt ? { chatgpt } : {}),
   });
+  // The account factory may be supplied by a newer Accounts service. An explicit account request
+  // still refuses in Runtime when the factory is unavailable; never substitute the parent's account.
+  const helperAccounts = accounts as typeof accounts & { resolveHelper?: typeof runtime.resolveHelperModel };
+  if (helperAccounts.resolveHelper) runtime.resolveHelperModel = (preset, accountRef, sessionId) =>
+    helperAccounts.resolveHelper!(preset, accountRef, sessionId);
   // ---- end mac6/accounts ----
   // Nothing is shared with other AI tools until the owner turns it on in Settings.
   const mcpServer = await startMcpServer(registry, store, runtime, knowledge, files);
@@ -1337,7 +1344,7 @@ export async function createBranch(options: {
   // defaulttrunk: the default Trunk is the owner's own assistant, so it answers on every chat app, as Branch always did.
   const reachRefusal = (channel: string, trunkId: string): string | null => {
     const trunk = trunks.records.find(trunkId);
-    return trunk && trunk.id !== trunks.defaultTrunk()?.id && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
+    return trunk && trunk.id !== trunks.ownerDefault()?.id && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
       ? `${trunk.name} does not answer on ${channel}. The owner can allow it under Customize → Trunks.` : null;
   };
   channels.trunkReach = (channel, sessionId) => {
@@ -1346,7 +1353,7 @@ export async function createBranch(options: {
       ?? trunks.pausedForConversation(sessionId, "it did not answer"); // eng-trunk-controls
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
-  channels.defaultTrunk = () => trunks.ensureDefault()?.id ?? null;
+  channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
   channels.bindingFor = (channel, chatId) => channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "");
   channels.routingTrunks = () => trunks.records.list().map(({ id, name, handle }) => ({ id, name, handle }));
   const removedTrunk = trunks.onRemoved;

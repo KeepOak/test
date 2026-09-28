@@ -220,6 +220,7 @@ import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-co
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
+import { conversationBootstrapIds } from "./conversation-bootstrap.js";
 import { builtInImagePrices, imagePricedAt, mediaSettings, saveMediaSettings } from "./media-settings.js";
 // Bucket 17.
 import { bucket17Api, handlesBucket17, readMediaBody } from "./media-understand-api.js";
@@ -905,7 +906,8 @@ function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
-  const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
+  const bootstrap = conversationBootstrapIds(app.store.sqlite, scope);
+  const runs = app.store.runs(scope).filter((run) => !bootstrap.has(run.id)), aside = asideRuns(app, scope, runs);
   const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),

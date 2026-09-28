@@ -368,10 +368,13 @@ async function fakeApi(t, routes) {
 test("GitHub checks and releases come back in plain words, with the token only in the header", async (t) => {
   const { app } = await fixture(t);
   const api = await fakeApi(t, {
-    "/repos/me/thing/commits/main/check-runs": {
+    "/repos/me/thing/commits/main": { sha: "a".repeat(40) },
+    [`/repos/me/thing/commits/${"a".repeat(40)}/status`]: { sha: "a".repeat(40), total_count: 0, statuses: [] },
+    [`/repos/me/thing/commits/${"a".repeat(40)}/check-runs`]: {
+      total_count: 2,
       check_runs: [
-        { name: "tests", status: "completed", conclusion: "success", details_url: "https://example.invalid/1" },
-        { name: "lint", status: "completed", conclusion: "failure", details_url: "https://example.invalid/2" },
+        { id: 1, head_sha: "a".repeat(40), name: "tests", status: "completed", conclusion: "success", details_url: "https://example.invalid/1" },
+        { id: 2, head_sha: "a".repeat(40), name: "lint", status: "completed", conclusion: "failure", details_url: "https://example.invalid/2" },
       ],
     },
     "/repos/me/thing/releases": [{ tag_name: "v1.2.0", name: "Winter", published_at: "2026-01-02T00:00:00Z", body: "notes", html_url: "https://example.invalid/r" }],

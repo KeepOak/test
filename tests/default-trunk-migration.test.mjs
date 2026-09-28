@@ -56,6 +56,7 @@ test("the migration puts every conversation with a Trunk, keeps everything else 
   const plainA = await app.runtime.run({ prompt: "plain one" });
   const plainB = await app.runtime.run({ prompt: "plain two" });
   const ada = app.trunks.create({ name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
+  app.trunks.edit(ada.id, { reach: { channels: ["chat"], commands: false } });
   await app.trunks.introduced();
   const routine = await app.runtime.run({ prompt: "Bo's routine", trunkId: bo.id });
   const chosen = await app.runtime.run({ prompt: "for Bo" });
