@@ -1,8 +1,7 @@
-/* The pets, 1:1 with the prototype's gallery (petGallery12, with pass 17e's additions; the last definition wins): Little
-   Branch, the 34 painted pets of pass 12 (DATA12.pets), pass 17's six and the three pixel pets. The engine keeps which
+/* The pets: the 34 painted pets of pass 12 (DATA12.pets), pass 17's six and the three pixel pets. The engine keeps which
    one (GET/POST /api/delight/settings pets.kind, src/achievements.ts petKinds); a kind is the prototype's id, and the
    painted squirrel is "pet-squirrel", its key there, as "squirrel" is the pixel one.
-   A picture pet is a still and a walk loop from /art/pets; Little Branch is Branch's own art and loops (/art/anim-*.webm).
+   A picture pet is a still and a walk loop from /art/pets. Branch's mascot belongs only in the logo.
    A pixel pet is drawn from its rows of letters and its colours onto a small canvas, as the prototype's drawPet does,
    and moves by the frame: its feet step while it walks, and it holds still while it naps or motion is reduced. Any
    canvas marked data-px="<kind>" is painted as it lands, so a region redrawn with innerHTML is never left blank. */
@@ -28,18 +27,16 @@ export const PIXEL = {
 const picture = (id, kind = id) => ({ kind, still: `/art/pets/${id}.webp`, walk: `/art/pets/${id}-walk.webm`, isNew: NEW17.includes(id) });
 /* In the gallery's order. */
 export const PETS = [
-  { kind: "sprout", still: "/art/branch-wave.webp", walk: "/art/anim-walk.webm", sprout: true },
   ...PAINTED.map((id) => picture(id, id === "squirrel" ? "pet-squirrel" : id)),
   ...NEW17.map((id) => picture(id)),
   ...Object.keys(PIXEL).map((kind) => ({ kind, pixel: true })),
 ];
-export const petOf = (kind) => PETS.find((p) => p.kind === kind);
+/* Display an old mascot choice as a regular pet without rewriting its saved name or switches. */
+export const petOf = (kind) => PETS.find((p) => p.kind === (kind === "sprout" ? "fennec" : kind));
 /* The name the gallery shows: "Pixel squirrel" for a pixel pet, the pet's own name otherwise. */
 export const petLabel = (p) => t(p.pixel ? `window.settings.appearance.pixel-${p.kind}` : `delight.pet.kind.${p.kind}`);
 /* The kind in a sentence ("Hazel the squirrel"). */
-export const petKindName = (kind) => t(`delight.pet.kind.${kind}`);
-/* Little Branch's loop for what the pet is doing. */
-export const sproutLoop = (mood) => `/art/anim-${["walk", "work", "sleep", "yay"].includes(mood) ? mood : "walk"}.webm`;
+export const petKindName = (kind) => t(`delight.pet.kind.${petOf(kind)?.kind ?? kind}`);
 
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)");
 export const calmPets = () => !!E.state?.preferences?.reduceMotion || REDUCE.matches;
@@ -80,8 +77,7 @@ REDUCE.addEventListener?.("change", paintPixels);
 document.addEventListener("visibilitychange", paintPixels);
 onRest(paintPixels);
 
-/* Only loops you can see play, as the prototype's pass 13a has it: the pet's, Branch's in the delight places (the empty
-   conversation, setup's welcome, the cheer card) and the feature pictures pause off screen or folded away, and start
+/* Only loops you can see play: pets and feature pictures pause off screen or folded away, and start
    again only if this paused them, so a napping pet stays still. (A hidden window pauses every loop, core/art17.js; the
    Trunks' own figures are not touched here.) A loop paused here is marked data-off13; whoever plays a loop again leaves
    a marked one alone. */
