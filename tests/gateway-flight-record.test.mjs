@@ -7,7 +7,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +45,10 @@ test("the gateway writes when it starts, when its engine stops, and why it close
   assert.ok(await until(async () => (await record(dataDir)).some((line) => line.message === "The engine stopped unexpectedly")), "an engine that stopped is written down");
   assert.ok(await until(async () => (await record(dataDir)).filter((line) => line.message === "The engine is ready").length >= 2), "and a new one came up");
 
-  const quit = spawnSync(process.execPath, [cli, "quit"], { env, encoding: "utf8", timeout: 60000, windowsHide: true });
+  // Asked without blocking: this test is the gateway's parent, and on Linux and macOS a parent stuck in spawnSync cannot
+  // reap the gateway once it exits, so `branch quit` saw its process id alive until it gave up.
+  const quit = await promisify(execFile)(process.execPath, [cli, "quit"], { env, encoding: "utf8", timeout: 60000, windowsHide: true })
+    .catch((error) => ({ stdout: String(error.stdout ?? ""), stderr: String(error.stderr ?? error.message) }));
   assert.match(quit.stdout, /has closed/, quit.stdout + quit.stderr);
   assert.equal(await ended, 0, "branch quit closes the gateway itself, cleanly");
   const last = (await record(dataDir)).at(-1);
