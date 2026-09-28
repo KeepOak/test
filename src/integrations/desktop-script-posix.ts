@@ -329,8 +329,8 @@ async function linuxWindows(exec: PosixExec, xdotool: string, signal: AbortSigna
 }
 
 /** The steps Linux takes for one action. */
-export async function runLinux(exec: PosixExec, xdotool: string, action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
-  if (action === 'pointer' || action === 'hold-key' || action === 'cursor' || action === 'release') return linuxPointer(exec, xdotool, action, payload, signal);
+export async function runLinux(exec: PosixExec, xdotool: string, action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal, xwininfo: string | null = null): Promise<Record<string, unknown>> {
+  if (action === 'pointer' || action === 'hold-key' || action === 'cursor' || action === 'release') return linuxPointer(exec, xdotool, action, payload, signal, xwininfo);
   if (action === 'windows') return { windows: await linuxWindows(exec, xdotool, signal) };
   if (action === 'open') {
     if (!payload.path) throw unavailableOnLinux('Starting a program by name');
@@ -383,12 +383,30 @@ export function parseShellGeometry(output: string): { x: number; y: number; widt
  * Brings the window to the front and checks that it is the active window before anything is pressed: X11 has no
  * reliable "what is on top at this spot", and the active window is what receives the press. Gives back its geometry.
  */
-async function frontWindow(exec: PosixExec, xdotool: string, id: string, signal: AbortSignal): Promise<{ x: number; y: number; width: number; height: number }> {
+/**
+ * Where a window's own area starts on the screen. `xdotool getwindowgeometry` counts a window manager's frame offset
+ * twice for a framed window, so `xwininfo` (x11-utils) is asked when this computer has it; without it the xdotool
+ * answer stands, which is right for a window with no frame.
+ */
+export function parseXwininfo(output: string): { x: number; y: number } | null {
+  const x = /Absolute upper-left X:\s*(-?\d+)/.exec(output)?.[1], y = /Absolute upper-left Y:\s*(-?\d+)/.exec(output)?.[1];
+  return x !== undefined && y !== undefined ? { x: Number(x), y: Number(y) } : null;
+}
+async function windowBox(exec: PosixExec, xdotool: string, xwininfo: string | null, id: string, signal: AbortSignal): Promise<{ x: number; y: number; width: number; height: number }> {
+  const box = parseShellGeometry((await exec(xdotool, ['getwindowgeometry', '--shell', id], signal)).stdout);
+  if (xwininfo) {
+    const info = await exec(xwininfo, ['-id', id], signal);
+    const origin = info.exitCode === 0 ? parseXwininfo(info.stdout) : null;
+    if (origin) return { ...box, ...origin };
+  }
+  return box;
+}
+async function frontWindow(exec: PosixExec, xdotool: string, id: string, signal: AbortSignal, xwininfo: string | null = null): Promise<{ x: number; y: number; width: number; height: number }> {
   const raised = await exec(xdotool, ['windowactivate', '--sync', id], signal);
   if (raised.exitCode !== 0) throw new Error('That window is no longer open.');
   const active = (await exec(xdotool, ['getactivewindow'], signal)).stdout.trim();
   if (active !== id) throw new Error('Another window is in front of that one, so nothing was done. Bring it up first.');
-  const box = parseShellGeometry((await exec(xdotool, ['getwindowgeometry', '--shell', id], signal)).stdout);
+  const box = await windowBox(exec, xdotool, xwininfo, id, signal);
   if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width < 1) throw new Error('That window is no longer open.');
   return box;
 }
@@ -431,7 +449,7 @@ export function xdotoolPointerArgs(payload: Record<string, unknown>, id: string,
 }
 
 /** Pointer verbs, holding keys, where the pointer is, and letting go, on an X11 desktop. */
-export async function linuxPointer(exec: PosixExec, xdotool: string, action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+export async function linuxPointer(exec: PosixExec, xdotool: string, action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal, xwininfo: string | null = null): Promise<Record<string, unknown>> {
   const run = async (args: string[]) => {
     const outcome = await exec(xdotool, args, signal);
     if (outcome.exitCode !== 0) throw new Error(outcome.stderr.includes('BadWindow') ? 'That window is no longer open.' : 'xdotool could not do that on this computer.');
@@ -447,12 +465,12 @@ export async function linuxPointer(exec: PosixExec, xdotool: string, action: Des
     const where = parseShellGeometry((await run(['getmouselocation', '--shell'])).replace(/^SCREEN=.*$/m, ''));
     const at = [where.x, where.y];
     if (!payload.handle) return { at };
-    const box = parseShellGeometry(await run(['getwindowgeometry', '--shell', windowId(payload.handle)]));
+    const box = await windowBox(exec, xdotool, xwininfo, windowId(payload.handle), signal);
     const inside = at[0]! >= box.x && at[1]! >= box.y && at[0]! < box.x + box.width && at[1]! < box.y + box.height;
     return { at, window: [at[0]! - box.x, at[1]! - box.y], inside };
   }
   const id = windowId(payload.handle);
-  const box = await frontWindow(exec, xdotool, id, signal);
+  const box = await frontWindow(exec, xdotool, id, signal, xwininfo);
   if (action === 'hold-key') {
     const chord = xdotoolHoldChord(String(payload.chord));
     const ms = Math.max(100, Math.min(10000, Number(payload.ms) || 500));

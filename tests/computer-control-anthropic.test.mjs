@@ -230,3 +230,21 @@ test("the owner's own screenshot hides Branch through the host's lease and is re
   windows = [notepad, { title: "Bitwarden", program: "Bitwarden", handle: "9", processId: 1, minimised: false }];
   await assert.rejects(desktop.ownerShot(AbortSignal.timeout(5000)), /handles passwords/);
 });
+
+test("Linux: a framed window's own area comes from xwininfo when there is one (xdotool counts the frame twice)", async () => {
+  const { parseXwininfo } = await import("../dist/integrations/desktop-script-posix.js");
+  assert.deepEqual(parseXwininfo("  Absolute upper-left X:  101\n  Absolute upper-left Y:  120\n  Relative upper-left X:  1\n"), { x: 101, y: 120 });
+  assert.equal(parseXwininfo("nothing"), null);
+  const calls = [];
+  const exec = async (program, args) => {
+    calls.push([program, args[0]]);
+    if (program === "xwininfo") return { status: "completed", exitCode: 0, stdout: "Absolute upper-left X:  101\nAbsolute upper-left Y:  120\n", stderr: "" };
+    if (args[0] === "getactivewindow") return { status: "completed", exitCode: 0, stdout: "42\n", stderr: "" };
+    if (args[0] === "getwindowgeometry") return { status: "completed", exitCode: 0, stdout: "X=102\nY=140\nWIDTH=400\nHEIGHT=300\n", stderr: "" };
+    if (args[0] === "getmouselocation") return { status: "completed", exitCode: 0, stdout: "X=191\nY=160\n", stderr: "" };
+    return { status: "completed", exitCode: 0, stdout: "", stderr: "" };
+  };
+  assert.deepEqual((await linuxPointer(exec, "xdotool", "cursor", { handle: "42" }, AbortSignal.timeout(5000), "xwininfo")).window, [90, 40]);
+  const clicked = await linuxPointer(exec, "xdotool", "pointer", { handle: "42", kind: "click", at: { point: { x: 50, y: 60 } }, button: "left", count: 1 }, AbortSignal.timeout(5000), "xwininfo");
+  assert.deepEqual(clicked.at, [151, 180]);
+});

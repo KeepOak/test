@@ -1027,7 +1027,7 @@ export class DesktopScriptRunner {
       await writeFile(script, macDesktopScript, { mode: 0o600 });
       return runMac(exec, script, action, payload, signal);
     }
-    return runLinux(exec, locate('xdotool')!, action, payload, signal);
+    return runLinux(exec, locate('xdotool')!, action, payload, signal, locate('xwininfo'));
   }
   /** parity-b2 (smooth): the one program the owner's live view of this screen reads from on Windows, started on first use. */
   liveProcess(target?: NativeCaptureTarget, exclusion?: CaptureExclusion): LiveScreenProcess | null {
