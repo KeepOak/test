@@ -1,0 +1,94 @@
+import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import type { ToolContext } from "./contracts.js";
+import { startedWithShortLivedKey } from "./key-context.js";
+import { contractHash, remoteBroken, type SelfDevelopmentContract } from "./self-development-contract.js";
+import type { SelfDevelopmentDeps } from "./self-development.js";
+
+export type TestEvidence = { id: string; sha: string; contractHash: string; worktree: string; runId: string; command: string[]; passed: number; at: string };
+type Pending = { contract: SelfDevelopmentContract; sha: string; command: string[] };
+type ReviewInput = { executable?: unknown; cwd?: unknown; args?: unknown };
+type ReviewResult = { status?: unknown; exitCode?: unknown; truncated?: unknown; stdout?: unknown };
+export async function sourceGit(deps: SelfDevelopmentDeps, worktree: string, args: string[], signal: AbortSignal): Promise<string> {
+  const answer = await deps.git({ cwd: resolve(deps.workspace, worktree), args, timeoutMs: 60_000, maxOutputBytes: 262_144 }, signal);
+  if (answer.status !== "completed" || answer.truncated) throw new Error("Branch could not completely verify the source worktree.");
+  return answer.stdout.trim();
+}
+export async function cleanHead(deps: SelfDevelopmentDeps, contract: SelfDevelopmentContract, signal: AbortSignal): Promise<string> {
+  const head = await sourceGit(deps, contract.worktreePath, ["rev-parse", "HEAD"], signal);
+  if (!/^[a-f0-9]{40}$/.test(head)) throw new Error("The worktree's exact commit is unavailable.");
+  const refusal = await remoteBroken(deps, contract, signal, head);
+  if (refusal) throw new Error(refusal);
+  if (await sourceGit(deps, contract.worktreePath, ["status", "--porcelain=v1", "--untracked-files=all"], signal))
+    throw new Error("Commit all changes before testing the exact version for owner review.");
+  return head;
+}
+
+async function originalRunner(deps: SelfDevelopmentDeps, contract: SelfDevelopmentContract, head: string, signal: AbortSignal): Promise<void> {
+  for (const path of ["scripts/review.mjs", "scripts/build-ts.mjs"]) {
+    const original = await sourceGit(deps, contract.worktreePath, ["rev-parse", `${contract.sourceSha}:${path}`], signal);
+    const tested = await sourceGit(deps, contract.worktreePath, ["rev-parse", `${head}:${path}`], signal);
+    if (original !== tested) throw new Error(`The change edits ${path}; its runner evidence needs independent review on GitHub.`);
+  }
+  const scriptsAt = async (sha: string) => {
+    const body = await sourceGit(deps, contract.worktreePath, ["show", `${sha}:package.json`], signal);
+    return (JSON.parse(body) as { scripts?: unknown }).scripts;
+  };
+  if (JSON.stringify(await scriptsAt(contract.sourceSha)) !== JSON.stringify(await scriptsAt(head)))
+    throw new Error("The change edits package scripts; its runner evidence needs independent review on GitHub.");
+}
+
+/** Evidence exists only for a real, guarded review command with clean identical heads before and after. */
+export class SelfDevelopmentEvidence {
+  private readonly passed = new Map<string, TestEvidence>();
+  private readonly pending = new WeakMap<ToolContext, Pending>();
+  constructor(private readonly deps: SelfDevelopmentDeps) {}
+  install(): void {
+    const registry = this.deps.registry, before = registry.beforeTool, after = registry.afterTool;
+    registry.beforeTool = async (name, args, context) => {
+      const held = await before?.(name, args, context);
+      await this.before(name, args, context, held?.writesConfinedTo);
+      return held;
+    };
+    registry.afterTool = async (name, args, result, context) => {
+      await this.after(name, result, context);
+      return after ? after(name, args, result, context) : result;
+    };
+  }
+  get(worktree: string): TestEvidence | null { return this.passed.get(worktree) ?? null; }
+  private async before(name: string, input: unknown, context: ToolContext, confined?: string): Promise<void> {
+    this.pending.delete(context);
+    if (name !== "shell.execute" || startedWithShortLivedKey() || context.owner !== this.deps.owner || context.source !== "owner" || context.dryRun) return;
+    const args = input as ReviewInput;
+    if (args.executable !== "node" || typeof args.cwd !== "string" || !Array.isArray(args.args) || !confined) return;
+    const contract = this.deps.contracts.current(this.deps.owner, args.cwd);
+    if (!contract || resolve(confined) !== resolve(this.deps.workspace, contract.worktreePath)) return;
+    const expected = ["scripts/review.mjs", "--jobs", "1", ...contract.expectedTests];
+    if (!contract.expectedTests.every((file) => /^tests\/[A-Za-z0-9._/-]+\.test\.mjs$/.test(file))
+      || JSON.stringify(args.args) !== JSON.stringify(expected)) return;
+    this.passed.delete(contract.worktreePath);
+    const sha = await cleanHead(this.deps, contract, context.signal);
+    await originalRunner(this.deps, contract, sha, context.signal);
+    this.pending.set(context, { contract, sha, command: ["node", ...expected] });
+  }
+  private async after(name: string, input: unknown, context: ToolContext): Promise<void> {
+    const pending = this.pending.get(context);
+    this.pending.delete(context);
+    if (name !== "shell.execute" || !pending) return;
+    const result = input as ReviewResult;
+    if (result.status !== "completed" || result.exitCode !== 0 || result.truncated || typeof result.stdout !== "string"
+      || !/all steps passed in/.test(result.stdout) || /skipped|FAIL /i.test(result.stdout)) return;
+    let passed = 0;
+    for (const file of pending.contract.expectedTests) {
+      const line = result.stdout.split("\n").find((line) => line.startsWith("PASS ") && line.includes(` ${file} `));
+      const counts = line ? /\b([0-9]+)\/([0-9]+) passed\b/.exec(line) : null;
+      if (!counts || counts[1] !== counts[2] || Number(counts[1]) < 1) return;
+      passed += Number(counts[1]);
+    }
+    const current = this.deps.contracts.current(this.deps.owner, pending.contract.worktreePath);
+    if (!current || contractHash(current) !== contractHash(pending.contract)
+      || await cleanHead(this.deps, current, context.signal) !== pending.sha) return;
+    this.passed.set(current.worktreePath, { id: randomUUID(), sha: pending.sha, contractHash: contractHash(current), worktree: current.worktreePath,
+      runId: context.runId, command: pending.command, passed, at: new Date().toISOString() });
+  }
+}
