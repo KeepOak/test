@@ -48,6 +48,8 @@ export class SignalAdapter implements ChannelAdapter {
   private lines: Interface | undefined;
   private state: ChannelHealth = { state: "reconnecting", reason: "Looking for signal-cli" };
   private nextId = 1;
+  /** Who sent each recent message (by its timestamp), for a reaction or a quote on it. */
+  private readonly authors = new Map<string, string>();
   constructor(private readonly options: SignalOptions) { this.id = options.id; }
   botName(): string | null { return this.options.account; }
   health(): ChannelHealth { return this.state; }
@@ -78,6 +80,10 @@ export class SignalAdapter implements ChannelAdapter {
     const text = envelope?.dataMessage?.message;
     if (!envelope?.source || !text) return null;
     const group = envelope.dataMessage?.groupInfo?.groupId;
+    if (envelope.timestamp !== undefined) {
+      this.authors.set(String(envelope.timestamp), envelope.source);
+      if (this.authors.size > 200) this.authors.delete(this.authors.keys().next().value!);
+    }
     return {
       channel: this.id, chatId: group ?? envelope.source, chatKind: group ? "group" : "direct",
       ...(group ? { chatTitle: `group ${group.slice(0, 12)}` } : {}),
@@ -85,13 +91,29 @@ export class SignalAdapter implements ChannelAdapter {
       text, addressed: !group, messageId: String(envelope.timestamp ?? Date.now()),
     };
   }
-  async send(chatId: string, text: string): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+    // CHAT-116: a reply quotes the person's own message (signal-cli's quoteTimestamp and quoteAuthor).
+    const author = replyToMessageId ? this.authors.get(replyToMessageId) : undefined;
+    const quote = author ? { quoteTimestamp: Number(replyToMessageId), quoteAuthor: author } : {};
+    return this.request("send", { ...this.target(chatId), message: text.slice(0, this.maxTextLength), ...quote });
+  }
+  /** CHAT-109: Signal's typing indicator (it lasts about 15 seconds; the live status asks again while the task works). */
+  async sendTyping(chatId: string): Promise<void> {
+    this.request("sendTyping", this.target(chatId));
+  }
+  /** CHAT-112: a status reaction on the person's message; Signal keeps one reaction per sender, so the new one replaces it. */
+  async react(chatId: string, messageId: string, emoji: string): Promise<void> {
+    const author = this.authors.get(messageId);
+    if (!author) throw new Error("Signal: that message is not one Branch received");
+    this.request("sendReaction", { ...this.target(chatId), emoji, targetAuthor: author, targetTimestamp: Number(messageId) });
+  }
+  private target(chatId: string): Record<string, unknown> {
+    return chatId.startsWith("+") ? { recipient: [chatId] } : { groupId: chatId };
+  }
+  private request(method: string, params: Record<string, unknown>): string {
     if (!this.child?.stdin?.writable) throw new Error("signal-cli is not running, so the message could not be sent");
     const id = this.nextId++;
-    const isGroup = !chatId.startsWith("+");
-    const params = isGroup ? { groupId: chatId, message: text.slice(0, this.maxTextLength) }
-      : { recipient: [chatId], message: text.slice(0, this.maxTextLength) };
-    this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "send", params, id }) + "\n");
+    this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params, id }) + "\n");
     return String(id);
   }
 }

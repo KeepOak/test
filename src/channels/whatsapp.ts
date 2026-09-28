@@ -55,6 +55,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private deliver: ((message: InboundMessage) => Promise<void>) | null = null;
   /** When each person last wrote, so we know whether we may still answer them. */
   private readonly lastHeard = new Map<string, number>();
+  /** The newest message each person sent, which WhatsApp's typing indicator is shown against. */
+  private readonly lastMessage = new Map<string, string>();
   constructor(private readonly options: WhatsAppOptions) {
     this.id = options.id;
     this.base = (options.apiBase ?? "https://graph.facebook.com/v21.0").replace(/\/$/, "");
@@ -82,6 +84,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       for (const message of change.value.messages) {
         const name = change.value.contacts.find((contact) => contact.wa_id === message.from)?.profile?.name;
         this.lastHeard.set(message.from, this.now());
+        if (message.type !== "reaction") this.lastMessage.set(message.from, message.id);
         const inbound = this.inbound(message, name);
         if (!inbound || !this.deliver) continue;
         accepted++;
@@ -132,6 +135,28 @@ export class WhatsAppAdapter implements ChannelAdapter {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("That voice note is larger than 20 MB, so it was not used");
     return bytes;
+  }
+  /**
+   * CHAT-109: WhatsApp's typing indicator, shown against the person's newest message (it marks that message read, as
+   * the Cloud API does) and dropped by WhatsApp after 25 seconds or when the reply arrives.
+   */
+  async sendTyping(chatId: string): Promise<void> {
+    const messageId = this.lastMessage.get(chatId);
+    if (!messageId) throw new Error("WhatsApp shows typing only against a message the person sent");
+    await this.post({ messaging_product: "whatsapp", status: "read", message_id: messageId, typing_indicator: { type: "text" } });
+  }
+  /** CHAT-112: a status reaction on the person's message; WhatsApp keeps one reaction per sender, so the new one replaces it. */
+  async react(chatId: string, messageId: string, emoji: string): Promise<void> {
+    await this.post({ messaging_product: "whatsapp", recipient_type: "individual", to: chatId, type: "reaction",
+      reaction: { message_id: messageId, emoji } });
+  }
+  private async post(body: Record<string, unknown>): Promise<void> {
+    const response = await this.fetch(`${this.base}/${encodeURIComponent(this.options.phoneNumberId)}/messages`, {
+      method: "POST", headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json" },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
+    });
+    if (response.status === 429) throw Object.assign(new Error("WhatsApp asked us to slow down"), { retryAfter: 5 });
+    if (!response.ok) throw new Error(`WhatsApp refused that (${response.status})`);
   }
   async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
     const heard = this.lastHeard.get(chatId);
