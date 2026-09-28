@@ -8534,7 +8534,7 @@
   "window.settings.advanced.archive-facts-unused-for": "Fakten archivieren, ungenutzt seit",
   "window.settings.advanced.branch-service": "Branch-Dienst",
   "window.settings.advanced.browse": "Durchsuchen",
-  "window.settings.advanced.built-and-kept-on-this-computer": "Auf diesem Computer erstellt und gespeichert, für schnellere Antworten: Ihr Posteingang, Gmail, Outlook und Ihre Google- und Outlook-Kalender, jeweils nur solange ihr eigener Schalter an ist. Aus, bis Sie es wählen: Es behält eine Kopie auf dieser Festplatte und liest alles im gewählten Zeitraum. Nachrichten aus Chat-Apps sind schon in Branchs eigenem Verlauf.",
+  "window.settings.advanced.built-and-kept-on-this-computer": "Auf diesem Computer erstellt und gespeichert, für schnellere Antworten: Ihr Posteingang, Gmail, Outlook und Ihre Google- und Outlook-Kalender, jeweils erst wenn verbunden und ihr eigener Schalter an ist. Höchstens 20.000 Einträge. Nachrichten aus Chat-Apps sind schon in Branchs eigenem Verlauf.",
   "window.settings.advanced.check-a-skill-is-ready-first": "Zuerst prüfen, ob ein Skill bereit ist",
   "window.settings.advanced.check-install-requests-for-malware": "Installationsanfragen auf Schadsoftware prüfen",
   "window.settings.advanced.checks-and-retries-in-procedures": "Prüfungen und Wiederholungen in Prozeduren",

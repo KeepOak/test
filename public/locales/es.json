@@ -8534,7 +8534,7 @@
   "window.settings.advanced.archive-facts-unused-for": "Archivar los datos sin usar durante",
   "window.settings.advanced.branch-service": "Servicio de Branch",
   "window.settings.advanced.browse": "Explorar",
-  "window.settings.advanced.built-and-kept-on-this-computer": "Creado y guardado en este ordenador, para respuestas más rápidas: tu bandeja de entrada, Gmail, Outlook y tus calendarios de Google y Outlook, cada uno solo mientras su propio interruptor esté activado. Desactivado hasta que lo elijas: guarda una copia en este disco y lee todo en los días que elijas. Los mensajes de las apps de chat ya están en el historial de Branch.",
+  "window.settings.advanced.built-and-kept-on-this-computer": "Creado y guardado en este ordenador, para respuestas más rápidas: tu bandeja de entrada, Gmail, Outlook y tus calendarios de Google y Outlook, cada uno solo cuando esté conectado y su propio interruptor activado. Como máximo 20 000 elementos. Los mensajes de las apps de chat ya están en el historial de Branch.",
   "window.settings.advanced.check-a-skill-is-ready-first": "Comprobar primero que una habilidad está lista",
   "window.settings.advanced.check-install-requests-for-malware": "Revisar las peticiones de instalación en busca de malware",
   "window.settings.advanced.checks-and-retries-in-procedures": "Comprobaciones y reintentos en los procedimientos",

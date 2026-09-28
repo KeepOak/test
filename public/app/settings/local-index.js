@@ -1,7 +1,7 @@
 /* Settings › Advanced › A local index of mail and calendars (RES-718): the engine's switch and how far back it copies
    (POST /api/local-index), what is kept per source, its size and when it was last brought up to date (GET), Update now
    (POST /api/local-index/update) and, after a yes, Delete the index (POST /api/local-index/delete). The switch keeps its
-   id from the greyed row it replaces. It ships off: the copy uses this computer's disk (the owner's rule (e)). */
+   id from the greyed row it replaces. It ships on ("when needed"), for the sources already connected and switched on. */
 import { esc, render } from "../core/dom.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -70,5 +70,5 @@ export function initLocalIndex() {
   on("li-update", () => update());
   on("li-delete", () => askDelete());
   on("li-delete-yes", () => remove());
-  document.addEventListener("change", (e) => { if (e.target?.id === SWITCH) change({ mode: e.target.checked ? "on" : "off" }); });
+  document.addEventListener("change", (e) => { if (e.target?.id === SWITCH) change({ mode: e.target.checked ? "when-needed" : "off" }); });
 }

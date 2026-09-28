@@ -1,4 +1,4 @@
-/* RES-718: the local index of mail and calendars. It ships off (the owner's rule (e)); switched on it copies each source
+/* RES-718: the local index of mail and calendars. It ships on ("when needed", the coordinator's call); it copies each source
    only through its connector while that part's own switch is on and it is set up, drops a source's rows once it is not,
    keeps only the days chosen (events ahead stay), never refetches what it holds, searches on this computer, and
    "Delete the index" removes every row. Nothing of it travels in a backup.
@@ -42,29 +42,29 @@ async function fixture(t) {
   return { app, owner, index, api, fetched };
 }
 
-test("it ships off, reads nothing while off, and switched on copies only through a part that is on", async (t) => {
+test("it ships on, 90 days back, copies only through a part that is on, and switched off reads nothing", async (t) => {
   const f = await fixture(t);
-  assert.equal(f.index.settings().mode, "off", "ships off under (e)");
-  assert.deepEqual(await f.index.run(NOW, true), { ran: false });
-  assert.deepEqual(f.fetched.gmail, [], "nothing is read while off");
-  const tools = switchedToolTiers(f.app.store, f.owner, f.app.registry.names());
-  assert.ok(tools.hidden.includes("index.search"), "off, its search is not advertised");
+  assert.deepEqual([f.index.settings().mode, f.index.settings().days], ["when-needed", 90], "ships on, 90 days back");
+  assert.equal(switchedToolTiers(f.app.store, f.owner, f.app.registry.names()).hidden.includes("index.search"), false, "its search is in the index");
 
   savePersonalMode(f.app.store, f.owner, "google", { mode: "off" });
-  await f.api("POST", "/api/local-index", { mode: "on" });
   await f.index.run(NOW, true);
   assert.equal(f.index.view().total, 0, "Google is switched off, so nothing of it is copied");
   savePersonalMode(f.app.store, f.owner, "google", { mode: "on" });
   await f.index.run(NOW, true);
   const view = f.index.view();
   assert.deepEqual([view.counts.gmail, view.counts["google-calendar"]], [1, 1], "the 200-day-old message is outside the 90 days; the event ahead stays");
-  assert.deepEqual(switchedToolTiers(f.app.store, f.owner, f.app.registry.names()).hidden.includes("index.search"), false);
+
+  await f.api("POST", "/api/local-index", { mode: "off" });
+  assert.deepEqual(await f.index.run(NOW + DAY, true), { ran: false }, "the owner's off is kept: nothing more is read");
+  assert.equal(f.fetched.gmail.length, 1, "one read, from the run while Google was on");
+  assert.ok(switchedToolTiers(f.app.store, f.owner, f.app.registry.names()).hidden.includes("index.search"), "off, its search is not advertised");
 });
 
 test("it searches on this computer, never refetches what it holds, drops a switched-off source, and Delete removes it all", async (t) => {
   const f = await fixture(t);
   savePersonalMode(f.app.store, f.owner, "google", { mode: "on" });
-  await f.api("POST", "/api/local-index", { mode: "on", days: 365 });
+  await f.api("POST", "/api/local-index", { days: 365 });
   await f.index.run(NOW, true);
   await f.index.run(NOW + 60_000, true);
   assert.deepEqual(f.fetched.gmail, [["m1", "m2"], []], "the second run fetches nothing it already holds");
@@ -94,7 +94,10 @@ test("the engine's own index names the five sources, and its search is a local r
   assert.deepEqual(Object.keys(f.app.localIndex.view().counts), ["inbox", "gmail", "outlook", "google-calendar", "outlook-calendar"]);
   const tool = f.app.registry.inventory().find((one) => one.name === "index.search");
   assert.equal(tool?.permission, "index.read");
-  await assert.rejects(f.app.registry.execute("index.search", { text: "lease" }, f.app.runtime.context({ runId: "li", permissions: ["index.read"] })), /switched off/);
+  const run = (args) => f.app.registry.execute("index.search", args, f.app.runtime.context({ runId: "li", permissions: ["index.read"] }));
+  assert.deepEqual((await run({ text: "lease" })).found, [], "on as shipped: nothing connected, nothing found");
+  await f.app.localIndex.save({ mode: "off" });
+  await assert.rejects(run({ text: "lease" }), /switched off/);
 });
 
 test("the connectors' own fetchers: Gmail skips what is held, Outlook asks once for the window, both only while their part is on", async (t) => {

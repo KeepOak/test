@@ -8535,7 +8535,7 @@
   "window.settings.advanced.archive-facts-unused-for": "Archiver les faits inutilisés depuis",
   "window.settings.advanced.branch-service": "Service Branch",
   "window.settings.advanced.browse": "Parcourir",
-  "window.settings.advanced.built-and-kept-on-this-computer": "Construit et gardé sur cet ordinateur, pour des réponses plus rapides : votre boîte de réception, Gmail, Outlook et vos agendas Google et Outlook, chacun seulement tant que son propre interrupteur est activé. Désactivé tant que vous ne le choisissez pas : il garde une copie sur ce disque et lit tout sur la période choisie. Les messages des applis de discussion sont déjà dans l’historique de Branch.",
+  "window.settings.advanced.built-and-kept-on-this-computer": "Construit et gardé sur cet ordinateur, pour des réponses plus rapides : votre boîte de réception, Gmail, Outlook et vos agendas Google et Outlook, chacun seulement une fois connecté et son propre interrupteur activé. 20 000 éléments au plus. Les messages des applis de discussion sont déjà dans l’historique de Branch.",
   "window.settings.advanced.check-a-skill-is-ready-first": "Vérifier d’abord qu’une compétence est prête",
   "window.settings.advanced.check-install-requests-for-malware": "Chercher des logiciels malveillants dans les demandes d’installation",
   "window.settings.advanced.checks-and-retries-in-procedures": "Vérifications et nouvelles tentatives dans les procédures",

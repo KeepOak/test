@@ -9838,10 +9838,11 @@ through your network rules.
 **A local index of mail and calendars (RES-718).** Settings › Advanced › "A local index of mail and calendars" keeps a
 copy of your inbox (the email channel's, over IMAP), Gmail, Outlook and your Google and Outlook calendars on this
 computer, so `index.search` (behind `index.read`, which only looks, on this computer) answers "find the email about the
-lease" without asking each server. It **ships off** under the owner's rule (e): it keeps a copy on this disk and reads
-everything in the days you choose.
+lease" without asking each server. It **ships on** ("when needed"), 90 days back: a capped index of your own mail on
+your own disk is none of the off-reasons, and it runs only for sources already connected and switched on. Switch it off
+in the same row, and delete what it holds there.
 
-Switched on:
+While on:
 - Every half hour (or at **Update now**) it brings each source up to date, only through that part's own connector. The
   part's own switch, its sign-in and Lockdown still decide, and a source that is switched off or signed out has its rows
   dropped at the next run.

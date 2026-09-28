@@ -1,12 +1,12 @@
 /* wire-greyed (RES-718): Settings › Advanced › "A local index of mail and calendars" was greyed ("Branch keeps no local
-   index"). It is now the engine's switch (POST /api/local-index), off as shipped (the owner's rule (e)); on, it says what
+   index"). It is now the engine's switch (POST /api/local-index), on as shipped ("when needed"): it says what
    it keeps and how far back, can be brought up to date now, and, after a yes, Delete the index removes every row.
    Mutation: in public/app/settings/pages/advanced.js draw nothing in place of localIndexRow(): red. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { openSettingsPage, settingsWindow, setLevel } from "./settings-window.mjs";
 
-test("the local index: a live switch that ships off, how far back, Update now, and Delete after a yes", { timeout: 180000 }, async (t) => {
+test("the local index: a live switch that ships on, how far back, Update now, and Delete after a yes", { timeout: 180000 }, async (t) => {
   const { app, page, errors, call } = await settingsWindow(t, { name: "wire-local-index" });
   await openSettingsPage(page, "general");
   await setLevel(page, "advanced");
@@ -14,11 +14,9 @@ test("the local index: a live switch that ships off, how far back, Update now, a
   const box = page.locator("#f15-a-local-index-of-mail-calendar-and-messa");
   await box.waitFor();
   assert.equal(await box.getAttribute("aria-disabled"), null, "the switch is live");
-  assert.equal(await box.isChecked(), false, "it ships off: it copies the owner's mail onto this disk");
-
-  await box.click();
+  assert.equal(await box.isChecked(), true, "it ships on");
   await page.locator('[data-act="li-days"][data-v="90"][aria-pressed="true"]').waitFor();
-  assert.equal((await call("/api/local-index")).settings.mode, "on");
+  assert.equal((await call("/api/local-index")).settings.mode, "when-needed", "90 days back as shipped");
   await page.locator('[data-act="li-days"][data-v="365"]').click();
   await page.locator('[data-act="li-days"][data-v="365"][aria-pressed="true"]').waitFor();
   assert.equal((await call("/api/local-index")).settings.days, 365);

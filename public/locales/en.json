@@ -8534,7 +8534,7 @@
   "window.settings.advanced.archive-facts-unused-for": "Archive facts unused for",
   "window.settings.advanced.branch-service": "Branch service",
   "window.settings.advanced.browse": "Browse",
-  "window.settings.advanced.built-and-kept-on-this-computer": "Built and kept on this computer, for faster answers: your inbox, Gmail, Outlook and your Google and Outlook calendars, each only while its own switch is on. Off until you choose: it keeps a copy on this disk and reads everything in the days you pick. Chat apps' messages are already in Branch's own history.",
+  "window.settings.advanced.built-and-kept-on-this-computer": "Built and kept on this computer, for faster answers: your inbox, Gmail, Outlook and your Google and Outlook calendars, each only once it is connected and its own switch is on. At most 20,000 items. Chat apps' messages are already in Branch's own history.",
   "window.settings.advanced.check-a-skill-is-ready-first": "Check a skill is ready first",
   "window.settings.advanced.check-install-requests-for-malware": "Check install requests for malware",
   "window.settings.advanced.checks-and-retries-in-procedures": "Checks and retries in procedures",

@@ -172,7 +172,7 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // mac7/vault-autofill (R17-068): filling a saved sign-in (src/vault-autofill.ts). Written out here
   // rather than imported, because that module reads this one for the three-way switch.
   { reason: "filling a saved sign-in is switched on", tools: signInFillTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "vault-autofill") },
-  // RES-718: searching the local index of mail and calendars (src/personal/local-index.ts); ships off, (e).
+  // RES-718: searching the local index of mail and calendars (src/personal/local-index.ts); ships on: src/personal/local-index-switch.ts.
   { reason: "the local index of mail and calendars is switched on", tools: localIndexTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, localIndexKey, "mode", localIndexShipsAs) },
   // Bucket 21 hook: tools for people building on Branch (src/sdk-kit.ts).
   { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit", "mode", "when-needed") }, // ships on: src/sdk-kit-switch.ts sdkKitShipsAs

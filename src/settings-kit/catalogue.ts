@@ -414,7 +414,7 @@ const reach: SettingSpec[] = [
   },
   // Defaults audit (2026-09-28): ships "when needed" (src/sdk-kit-switch.ts sdkKitShipsAs), read as the module reads it.
   shipsAs(one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach", modeFrom(sdkKitMode)), sdkKitShipsAs),
-  // RES-718: ships off under (e): a copy of the owner's mail and calendars on this computer's disk.
+  // RES-718: ships "when needed" (src/personal/local-index-switch.ts): it runs only for sources already connected and on.
   shipsAs(one("local-index", "A local index of mail and calendars", "settings-kit.name.local-index", "settings:advanced", "reach", modeFrom((store, owner) => localIndexSettings(store, owner).mode)), localIndexShipsAs),
   // r17-i integration review: every reach and platform switch reaches further when raised (src/reach/settings.ts).
   // src/server.ts saves them through Reach, so the tools and the relay follow the switch at once.

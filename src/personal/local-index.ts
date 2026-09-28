@@ -13,8 +13,8 @@ export { localIndexKey, localIndexShipsAs, localIndexTools } from "./local-index
  * RES-718: a local index of the owner's mail and calendars, built and kept on this computer so a search answers from
  * here instead of asking each server every time (Settings › Advanced › "A local index of mail and calendars").
  *
- * It ships off, under the owner's rule (e): it keeps a copy of everything in the days chosen, on this computer's disk,
- * and reads it all to do so. Switched on, every half hour it brings each source up to date: the inbox the email channel
+ * It ships on ("when needed"): a capped copy of the owner's own mail on the owner's own disk is none of (a)–(f). It
+ * runs only for sources that are already connected and switched on; every half hour it brings each up to date: the inbox the email channel
  * reads (IMAP), Gmail and Outlook, and Google and Outlook calendars. Only through their own connectors, so each part's
  * own switch, its sign-in and Lockdown still decide; a source that is switched off or signed out has its rows dropped at
  * the next run. At most 200 new items a source a run, the days chosen (30, 90 or 365; events also 60 days ahead) and
@@ -167,7 +167,7 @@ export class LocalIndex {
 
 export function registerLocalIndex(registry: Pick<ToolRegistry, "register">, index: LocalIndex): void {
   registry.register({
-    name: "index.search", permission: "index.read",
+    name: "index.search", permission: "index.read", group: "personal",
     description: "Search the owner's mail and calendars in the local index kept on this computer (inbox, Gmail, Outlook, Google and Outlook calendars), fastest first stop for 'find the email about…'.",
     // What it touches is this computer's copy, of one source or of all of them.
     target: (args) => `the local index${args.source ? ` (${args.source})` : ""}`,
