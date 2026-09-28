@@ -11,7 +11,8 @@ import { startServer } from "../dist/server.js";
 import { saveOnboarding } from "../dist/onboarding.js";
 import { defaultTrunkId } from "../dist/trunks/defaults.js";
 import { chatThread } from "../dist/channels/threads.js";
-import { fixture, on } from "./trunks-helpers.mjs";
+import { narrowTrunk } from "../dist/trunks/restore-narrow.js";
+import { fixture, on, setupTrunk } from "./trunks-helpers.mjs";
 
 function fakeChat(id = "chat") {
   const sent = [];
@@ -37,7 +38,7 @@ test("exactly one default while any Trunk exists: the first, the owner's pick, t
   const { app } = await fixture(t);
   on(app);
   assert.equal(app.trunks.defaultTrunk(), undefined, "no Trunk, no default");
-  const ada = app.trunks.create({ name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
+  const ada = setupTrunk(app, { name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
   await app.trunks.introduced();
   setupOver(app);
   assert.equal(app.trunks.defaultTrunk().id, ada.id, "the first Trunk (setup's) is the default");
@@ -111,7 +112,7 @@ test("the default's turn is the owner's own: the same memory scope and tools as 
   setupOver(app);
   const plain = app.runtime.trunkShape({ prompt: "x" });
   assert.equal(plain, null);
-  const main = app.trunks.create({ name: "Main" }), other = app.trunks.create({ name: "Other" });
+  const main = setupTrunk(app, { name: "Main" }), other = app.trunks.create({ name: "Other" });
   await app.trunks.introduced();
   app.trunks.ensureDefault(); // trusted setup settlement records the authority designation
   const shape = app.runtime.trunkShape({ prompt: "x", trunkId: main.id });
@@ -179,4 +180,28 @@ test("a chat's binding wins over the default; a bound Trunk answers only where i
   assert.equal(bound.trunkId, io.id);
   const plain = await say("hi", "free");
   assert.equal(plain.trunkId, main.id, "no binding: the default, which never needs reach");
+});
+
+test("only a Trunk setup's own request makes may become the default by being oldest; no edit or restore can claim it", async (t) => {
+  const { app, root } = await fixture(t);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const post = async (path, body, origin) => (await fetch(server.url + path, { method: "POST", headers: { authorization: `Bearer ${server.token}`,
+    origin: server.url, "content-type": "application/json", "x-branch-origin": origin }, body: JSON.stringify(body) }));
+  const handMade = (await (await post("/api/trunks", { name: "Before" }, "window")).json()).trunk;
+  const first = (await (await post("/api/trunks", { name: "First" }, "setup")).json()).trunk;
+  const later = (await (await post("/api/trunks", { name: "Later" }, "window")).json()).trunk;
+  await app.trunks.introduced();
+  const saved = (id) => app.store.get("governance", app.runtime.owner, `trunk:${id}`).data;
+  assert.equal(saved(first.id).fromSetup, true, "setup's first Trunk is marked by setup's own request");
+  assert.equal(saved(handMade.id).fromSetup, undefined);
+  assert.equal(saved(later.id).fromSetup, undefined, "setup's mark ends with the window's next request");
+  assert.equal((await post(`/api/trunks/${later.id}`, { fromSetup: true }, "window")).status, 400, "the edit route cannot claim it");
+  assert.equal(saved(later.id).fromSetup, undefined);
+  assert.equal((await post("/api/onboarding", { done: true }, "setup")).status, 200);
+  assert.equal(app.trunks.ownerDefault().id, first.id, "setup's first Trunk is the default, though an older one was made by hand");
+  assert.equal(app.trunks.records.list().length, 3, "no Trunk was made beside it");
+  assert.equal(app.trunks.shapeOf({ prompt: "x", trunkId: handMade.id }).owners, undefined, "the hand-made Trunk keeps its narrowing");
+  const narrowed = JSON.parse(narrowTrunk(JSON.stringify(saved(first.id))).data);
+  assert.equal(narrowed.fromSetup, undefined, "a restored Trunk is never setup's first Trunk on this computer");
 });
