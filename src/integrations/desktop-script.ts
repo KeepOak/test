@@ -22,7 +22,9 @@ export type { CaptureExclusion, NativeCaptureTarget } from '../desktop/capture-l
 export const powerShellPath = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 
 /** Windows actions; the script does exactly one of these per run and then exits. */
-export type DesktopAction = 'windows' | 'capture-targets' | 'screenshot' | 'read' | 'click' | 'scroll' | 'type' | 'key' | 'act' | 'open' | 'clipboard';
+export type DesktopAction = 'windows' | 'capture-targets' | 'screenshot' | 'read' | 'click' | 'scroll' | 'type' | 'key' | 'act' | 'open' | 'clipboard'
+  // computer-control: the tools' own pointer verbs (button, double click, move, drag, wheel) and a close-up picture.
+  | 'pointer' | 'zoom';
 
 const CaptureInputSchema = z.object({
   handle: z.string().regex(/^[1-9][0-9]{0,18}$/),
@@ -91,8 +93,43 @@ public class BranchDesktop {
     SetCursorPos(x, y);
     mouse_event(0x0800, 0, 0, unchecked((uint)(steps * 120)), IntPtr.Zero);
   }
+  // computer-control: physical pixels everywhere (window boxes, UI Automation boxes, the pointer), so a point read on a
+  // scaled display lands where it was read. Called once, before any window is looked at.
+  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  [DllImport("user32.dll")] static extern uint GetDoubleClickTime();
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  /** The top-level window that would receive a click at this point: what is really on top there. */
+  public static IntPtr RootAt(int x, int y) { var p = new POINT(); p.X = x; p.Y = y; return GetAncestor(WindowFromPoint(p), 2); }
+  static uint Down(string b) { return b == "right" ? 0x0008u : b == "middle" ? 0x0020u : 0x0002u; }
+  static uint Up(string b) { return b == "right" ? 0x0010u : b == "middle" ? 0x0040u : 0x0004u; }
+  static byte Vk(string m) { return m == "ctrl" ? (byte)0x11 : m == "shift" ? (byte)0x10 : (byte)0x12; }
+  public static void Hold(string[] mods, bool down) { foreach (var m in mods) keybd_event(Vk(m), 0, down ? 0u : 0x0002u, IntPtr.Zero); }
+  public static void Press(int x, int y, string button, int count) {
+    SetCursorPos(x, y);
+    int gap = (int)Math.Min(120, GetDoubleClickTime() / 4);
+    for (int i = 0; i < count; i++) {
+      mouse_event(Down(button), 0, 0, 0, IntPtr.Zero); mouse_event(Up(button), 0, 0, 0, IntPtr.Zero);
+      if (i + 1 < count) System.Threading.Thread.Sleep(gap);
+    }
+  }
+  /** Press, glide in small steps (so the program sees a drag, not a jump), and always let go. */
+  public static void Drag(int x1, int y1, int x2, int y2, string button) {
+    SetCursorPos(x1, y1); System.Threading.Thread.Sleep(40);
+    mouse_event(Down(button), 0, 0, 0, IntPtr.Zero);
+    try { for (int i = 1; i <= 16; i++) { SetCursorPos(x1 + (x2 - x1) * i / 16, y1 + (y2 - y1) * i / 16); System.Threading.Thread.Sleep(15); } }
+    finally { mouse_event(Up(button), 0, 0, 0, IntPtr.Zero); }
+  }
+  public static void WheelAt(int x, int y, int steps, bool sideways) {
+    SetCursorPos(x, y);
+    mouse_event(sideways ? 0x01000u : 0x0800u, 0, 0, unchecked((uint)(steps * 120)), IntPtr.Zero);
+  }
 }
 '@
+[void][BranchDesktop]::SetProcessDpiAwarenessContext([IntPtr](-4))
 
 $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Payload)) | ConvertFrom-Json
 $auto = [System.Windows.Automation.AutomationElement]
@@ -214,12 +251,23 @@ function Read-Node($node) {
   $pattern = $null
   try { if ($node.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) { $value = [string]$pattern.Current.Value } } catch { $value = '' }
   $role = $node.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+  # computer-control: a handle on this exact part (UI Automation's runtime id) and where it sits in the window, so a
+  # tool can act on it by ref even when several parts share a name. The box is in window pixels, like a picture's.
+  $ref = ''
+  try { $ref = (@($node.GetRuntimeId()) -join '.') } catch { $ref = '' }
+  $box = $null
+  $area = $node.Current.BoundingRectangle
+  if ($script:origin -and -not $area.IsEmpty -and $area.Width -gt 0 -and $area.Height -gt 0) {
+    $box = @([int]($area.X - $script:origin.Left), [int]($area.Y - $script:origin.Top), [int]$area.Width, [int]$area.Height)
+  }
   return [pscustomobject]@{
     role = $role
     name = $node.Current.Name
     value = $value
     id = $node.Current.AutomationId
     enabled = $node.Current.IsEnabled
+    ref = $ref
+    box = $box
   }
 }
 
@@ -274,6 +322,74 @@ function Find-Writable($root, $name) {
   return $null
 }
 
+# computer-control: the part a tool names, by the ref desktop.read gave it or by its name. Searched inside this window only.
+function Find-Ref($root, $ref) {
+  if (-not ([string]$ref -match '^-?[0-9]+(\.-?[0-9]+){0,15}$')) { throw 'That ref is not one desktop.read gave. Read the window again.' }
+  $ids = [int[]]@(([string]$ref).Split('.') | ForEach-Object { [int]$_ })
+  $condition = New-Object System.Windows.Automation.PropertyCondition($auto::RuntimeIdProperty, $ids)
+  return $root.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $condition)
+}
+function Find-Part($root, $spec) {
+  if ($spec.ref) {
+    $node = Find-Ref $root $spec.ref
+    if ($node -eq $null) { throw 'That part is no longer in the window (the window changed). Read the window again.' }
+    return $node
+  }
+  $node = Find-Named $root $spec.name
+  if ($node -eq $null) { throw ('Nothing in that window is called "' + $spec.name + '". Use desktop.read to see what is there.') }
+  return $node
+}
+function Window-Rect($handle) {
+  $rect = New-Object BranchDesktop+RECT
+  if (-not [BranchDesktop]::GetWindowRect($handle, [ref]$rect)) { throw 'That window is no longer open.' }
+  return $rect
+}
+# A picture's promise: the window is where it was when the picture (or the reading) its points came from was taken.
+function Assert-Seen($handle) {
+  if (-not $request.expect) { return }
+  $rect = Window-Rect $handle
+  $now = @{ x = $rect.Left; y = $rect.Top; w = $rect.Right - $rect.Left; h = $rect.Bottom - $rect.Top }
+  foreach ($axis in @('x', 'y', 'w', 'h')) {
+    if ($now[$axis] -ne [int]$request.expect.$axis) { throw 'That window moved or changed size since the picture its points came from. Take a new picture first. Nothing was done.' }
+  }
+}
+# The screen point for a spot: the middle of a named part, a point in window pixels, or the middle of the window.
+function Spot-Of($handle, $spec) {
+  $rect = Window-Rect $handle
+  if ($spec -and ($spec.ref -or $spec.name)) {
+    $node = Find-Part ($auto::FromHandle($handle)) $spec
+    $box = $node.Current.BoundingRectangle
+    if ($box.IsEmpty -or $box.Width -le 0) { throw 'That part has no place on the screen right now (it may be scrolled out of view).' }
+    $x = [int]($box.X + $box.Width / 2); $y = [int]($box.Y + $box.Height / 2)
+  } elseif ($spec -and $spec.point) {
+    $x = $rect.Left + [int]$spec.point.x; $y = $rect.Top + [int]$spec.point.y
+  } else {
+    $x = [int](($rect.Left + $rect.Right) / 2); $y = [int](($rect.Top + $rect.Bottom) / 2)
+  }
+  if ($x -lt $rect.Left -or $x -ge $rect.Right -or $y -lt $rect.Top -or $y -ge $rect.Bottom) { throw 'That spot is outside the window. Nothing was done.' }
+  return @{ x = $x; y = $y }
+}
+# What is really on top at that spot must be this window: never a click through onto something covering it (another
+# program, a password prompt, or Branch's own window).
+function Assert-Uncovered($handle, $at) {
+  if ([BranchDesktop]::RootAt($at.x, $at.y) -ne $handle) { throw 'Another window covers that spot, so nothing was done. Bring this window up or move what covers it.' }
+}
+function Scroll-Part($node, $direction, $amount) {
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $pattern = $null; $at = $node
+  for ($i = 0; $i -lt 6 -and $at -ne $null; $i++) {
+    if ($at.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$pattern)) { break }
+    $pattern = $null; $at = $walker.GetParent($at)
+  }
+  if ($pattern -eq $null) { return $false }
+  $none = [System.Windows.Automation.ScrollAmount]::NoAmount
+  $step = if ($direction -eq 'up' -or $direction -eq 'left') { [System.Windows.Automation.ScrollAmount]::SmallDecrement } else { [System.Windows.Automation.ScrollAmount]::SmallIncrement }
+  for ($i = 0; $i -lt $amount; $i++) {
+    if ($direction -eq 'up' -or $direction -eq 'down') { $pattern.Scroll($none, $step) } else { $pattern.Scroll($step, $none) }
+  }
+  return $true
+}
+
 function Bring-Forward($handle) {
   [void][BranchDesktop]::ShowWindow($handle, 9)
   [void][BranchDesktop]::SetForegroundWindow($handle)
@@ -286,7 +402,7 @@ switch ($Action) {
   'windows' { $result = @{ windows = @(Get-Windows) } }
   'capture-targets' {
     $monitors = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
-      @{ kind = 'monitor'; deviceName = $_.DeviceName; bounds = @{ x = $_.Bounds.X; y = $_.Bounds.Y; w = $_.Bounds.Width; h = $_.Bounds.Height } }
+      @{ kind = 'monitor'; deviceName = $_.DeviceName; primary = $_.Primary; bounds = @{ x = $_.Bounds.X; y = $_.Bounds.Y; w = $_.Bounds.Width; h = $_.Bounds.Height } }
     })
     $result = @{ monitors = $monitors; windows = @(Get-Windows) }
   }
@@ -295,7 +411,9 @@ switch ($Action) {
       $handle = Get-Handle
       if ([BranchDesktop]::IsIconic($handle)) { throw 'That window is minimised, so there is nothing to photograph. Bring it up first.' }
       $size = Save-Window $handle $request.outPath
-      $result = @{ width = $size.width; height = $size.height; method = $size.method; title = [BranchDesktop]::Title($handle) }
+      $o = Window-Rect $handle
+      $result = @{ width = $size.width; height = $size.height; method = $size.method; title = [BranchDesktop]::Title($handle)
+        bounds = @{ x = $o.Left; y = $o.Top; w = $o.Right - $o.Left; h = $o.Bottom - $o.Top } }
     } else {
       $screens = [System.Windows.Forms.Screen]::AllScreens
       $index = [int]$request.display - 1
@@ -307,8 +425,11 @@ switch ($Action) {
   }
   'read' {
     $handle = Get-Handle
+    $script:origin = Window-Rect $handle
     $tree = Read-Tree ($auto::FromHandle($handle)) ([int]$request.limit)
-    $result = @{ nodes = @($tree.nodes); more = $tree.more; title = [BranchDesktop]::Title($handle) }
+    $o = $script:origin
+    $result = @{ nodes = @($tree.nodes); more = $tree.more; title = [BranchDesktop]::Title($handle)
+      bounds = @{ x = $o.Left; y = $o.Top; w = $o.Right - $o.Left; h = $o.Bottom - $o.Top } }
   }
   'click' {
     $handle = Get-Handle
@@ -335,6 +456,7 @@ switch ($Action) {
         Assert-CaptureInput $handle
         $box = $node.Current.BoundingRectangle
         $at = @([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2))
+        Assert-Uncovered $handle @{ x = [int]($box.X + $box.Width / 2); y = [int]($box.Y + $box.Height / 2) }
         [BranchDesktop]::Click([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2))
         $result = @{ how = 'point'; name = $node.Current.Name; at = $at }
       }
@@ -342,6 +464,7 @@ switch ($Action) {
       if ($request.expectedTarget) {
         if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
         $point = Capture-Point $handle
+        Assert-Uncovered $handle $point
         [BranchDesktop]::Click($point.x, $point.y)
         $result = @{ how = 'point'; name = ''; at = @($point.x, $point.y) }
         break
@@ -352,6 +475,7 @@ switch ($Action) {
       $y = $rect.Top + [int]$request.y
       if ($x -gt $rect.Right -or $y -gt $rect.Bottom) { throw 'That point is outside the window.' }
       if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
+      Assert-Uncovered $handle @{ x = $x; y = $y }
       [BranchDesktop]::Click($x, $y)
       $result = @{ how = 'point'; name = ''; at = @($x, $y) }
     }
@@ -361,8 +485,83 @@ switch ($Action) {
     if (-not $request.expectedTarget -or [int]$request.steps -eq 0 -or [int]$request.steps -lt -10 -or [int]$request.steps -gt 10) { throw 'Scroll needs a selected target and between one and ten wheel steps.' }
     if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was scrolled.' }
     $point = Capture-Point $handle
+    Assert-Uncovered $handle $point
     [BranchDesktop]::Wheel($point.x, $point.y, [int]$request.steps)
     $result = @{ how = 'wheel'; steps = [int]$request.steps }
+  }
+  'pointer' {
+    # computer-control: the tools' pointer verbs. The window comes to the front, the spot must be inside it and this
+    # window must be what is really on top there; modifier keys are always let go, and the owner's pointer goes back
+    # where it was after a click, drag or wheel (a hover leaves it resting where it was asked to).
+    $handle = Get-Handle
+    Assert-Seen $handle
+    $mods = [string[]]@($request.modifiers | Where-Object { $_ -in @('ctrl', 'shift', 'alt') })
+    $button = [string]$request.button
+    if ($button -notin @('left', 'right', 'middle')) { $button = 'left' }
+    $kind = [string]$request.kind
+    if ($kind -eq 'scroll' -and ($request.at.ref -or $request.at.name) -and $mods.Length -eq 0) {
+      $node = Find-Part ($auto::FromHandle($handle)) $request.at
+      if (Scroll-Part $node ([string]$request.direction) ([int]$request.amount)) {
+        $result = @{ how = 'scroll-pattern'; at = @(); title = [BranchDesktop]::Title($handle) }
+        break
+      }
+    }
+    if ($kind -notin @('click', 'move', 'drag', 'scroll')) { throw ('Unknown pointer action: ' + $kind) }
+    if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was done.' }
+    Assert-Seen $handle
+    $from = Spot-Of $handle $(if ($kind -eq 'drag') { $request.from } else { $request.at })
+    Assert-Uncovered $handle $from
+    $to = $null
+    if ($kind -eq 'drag') { $to = Spot-Of $handle $request.to; Assert-Uncovered $handle $to }
+    $rest = New-Object BranchDesktop+POINT
+    [void][BranchDesktop]::GetCursorPos([ref]$rest)
+    [BranchDesktop]::Hold($mods, $true)
+    try {
+      if ($kind -eq 'click') { [BranchDesktop]::Press($from.x, $from.y, $button, [Math]::Max(1, [Math]::Min(3, [int]$request.count))) }
+      elseif ($kind -eq 'drag') { [BranchDesktop]::Drag($from.x, $from.y, $to.x, $to.y, $button) }
+      elseif ($kind -eq 'scroll') {
+        $steps = [Math]::Max(1, [Math]::Min(10, [int]$request.amount))
+        $sign = if ($request.direction -eq 'down' -or $request.direction -eq 'left') { -1 } else { 1 }
+        [BranchDesktop]::WheelAt($from.x, $from.y, $sign * $steps, ($request.direction -eq 'left' -or $request.direction -eq 'right'))
+      } else {
+        [void][BranchDesktop]::SetCursorPos($from.x, $from.y)
+        Start-Sleep -Milliseconds ([Math]::Max(0, [Math]::Min(10000, [int]$request.hoverMs)))
+      }
+    } finally {
+      [BranchDesktop]::Hold($mods, $false)
+      if ($kind -ne 'move') { [void][BranchDesktop]::SetCursorPos($rest.X, $rest.Y) }
+    }
+    $landed = if ($to) { $to } else { $from }
+    $result = @{ how = $kind; at = @($landed.x, $landed.y); title = [BranchDesktop]::Title($handle) }
+  }
+  'zoom' {
+    # computer-control: a close-up of part of one window, taken from the window itself (never the screen on top of it),
+    # at its full size and larger for a small part, so small print and small targets can be read.
+    $handle = Get-Handle
+    Assert-Seen $handle
+    if ([BranchDesktop]::IsIconic($handle)) { throw 'That window is minimised, so there is nothing to look at. Bring it up first.' }
+    $rect = Window-Rect $handle
+    $w = $rect.Right - $rect.Left; $h = $rect.Bottom - $rect.Top
+    $r = $request.region; $scale = [Math]::Max(1, [Math]::Min(4, [int]$request.scale))
+    if ([int]$r.x -lt 0 -or [int]$r.y -lt 0 -or [int]$r.width -lt 1 -or [int]$r.height -lt 1 -or ([int]$r.x + [int]$r.width) -gt $w -or ([int]$r.y + [int]$r.height) -gt $h) { throw 'That part is not inside the window. Nothing was done.' }
+    $full = New-Object System.Drawing.Bitmap($w, $h)
+    $method = 'window'
+    $graphics = [System.Drawing.Graphics]::FromImage($full)
+    $hdc = $graphics.GetHdc()
+    $printed = [BranchDesktop]::PrintWindow($handle, $hdc, 2)
+    $graphics.ReleaseHdc($hdc)
+    if (-not $printed) { $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing.Size($w, $h))); $method = 'screen' }
+    $graphics.Dispose()
+    $close = New-Object System.Drawing.Bitmap(([int]$r.width * $scale), ([int]$r.height * $scale))
+    $g = [System.Drawing.Graphics]::FromImage($close)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+    $g.DrawImage($full, (New-Object System.Drawing.Rectangle(0, 0, $close.Width, $close.Height)), (New-Object System.Drawing.Rectangle([int]$r.x, [int]$r.y, [int]$r.width, [int]$r.height)), [System.Drawing.GraphicsUnit]::Pixel)
+    $g.Dispose(); $full.Dispose()
+    $close.Save($request.outPath, [System.Drawing.Imaging.ImageFormat]::Png)
+    $result = @{ width = $close.Width; height = $close.Height; scale = $scale; method = $method; title = [BranchDesktop]::Title($handle)
+      bounds = @{ x = $rect.Left; y = $rect.Top; w = $w; h = $h } }
+    $close.Dispose()
   }
   'type' {
     $handle = Get-Handle
@@ -686,6 +885,8 @@ export class DesktopScriptRunner {
     payload = captureInputPayload(action, payload);
     if (this.platform !== 'win32' && (action === 'capture-targets' || action === 'scroll' || payload.expectedTarget))
       throw new Error('This selected native monitor or window view is available on Windows only. Choose an explicitly supported computer target.');
+    if (this.platform !== 'win32' && (action === 'pointer' || action === 'zoom'))
+      throw new Error('Right-click, double-click, dragging, hovering, the scroll wheel and close-ups work on Windows for now. Use desktop.click with a name here.');
     if (this.platform !== 'win32') return this.runPosix(action, payload, signal);
     assertRealScreenAllowed(); // dogfood follow-up: never the real screen from a test without the opt-in
     const script = await this.scriptPath();

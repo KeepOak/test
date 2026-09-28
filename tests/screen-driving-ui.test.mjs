@@ -81,7 +81,7 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   await page.locator('[data-act="stage"][data-v="computer"]').first().click();
   await page.locator("#native-target option").filter({ hasText: "Notes - Notepad" }).waitFor({ state: "attached" });
   await page.locator("#native-target").selectOption({ label: "Notes - Notepad" });
-  await page.getByRole("button", { name: "Share selected window", exact: true }).click();
+  await page.getByRole("button", { name: "Show", exact: true }).click();
   const cursor = page.locator("#stage7 .real-ag");
   await cursor.waitFor({ state: "visible", timeout: 20000 });
   const place = await page.evaluate(() => {

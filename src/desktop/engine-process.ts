@@ -20,6 +20,7 @@ import { runningTaskCount } from "./quit-guard.js";
 import type { BannerNotice, BannerWindow, BannerWindowFactory } from "../integrations/desktop-banner.js";
 import type { LoginItem, LoginItemState } from "../install/autostart.js";
 import { Link, ToEngineSchema, type EngineConfig } from "./engine-link.js";
+import { trustedCaptureLease } from "./capture-link.js";
 
 interface Port {
   on(event: "message", listener: (event: { data: unknown }) => void): unknown;
@@ -91,6 +92,8 @@ async function start(config: EngineConfig): Promise<void> {
     dataDir: config.dataDir, workspace: config.workspace, presets: presets(config), chatgpt,
     bannerWindow: remoteBanner(),
     findComputers: realDeviceNetwork(), // find-computers: the same parts and rules as `branch start` (src/devices/network.ts)
+    // computer-control: only this window's own main process can hide Branch's windows from a computer view.
+    nativeCaptureLease: trustedCaptureLease(link, true),
   });
   let integrationClose: (() => Promise<void>) | undefined;
   let serverClose: (() => Promise<void>) | undefined;

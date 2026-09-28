@@ -133,14 +133,14 @@ test('a stale selection cannot resurrect or close the newer view after delayed e
   assert.equal(f.state.open, 1); await f.screen.close();
 });
 
-test('own/browser windows, monitors and missing process provenance never become opaque choices', async () => {
+test('own/browser windows and missing process provenance never become opaque choices', async () => {
   const f = fixture();
   f.windows.push({ ...f.windows[0], handle: '13', program: 'chrome', title: 'Notepad' },
     { ...f.windows[0], handle: '14', processId: 99 }, { ...f.windows[0], handle: '15', program: '' },
     { ...f.windows[0], handle: '16', className: 'Chrome_WidgetWin_1', program: 'renamed' });
   const list = await f.screen.targets(f.access, new AbortController().signal);
   assert.deepEqual(list.targets.map((v) => v.label), ['Editor']);
-  assert.match(list.notice, /Browser windows and displays/);
+  assert.match(list.notice, /browser windows are left out/);
 });
 
 test('late snapshot provenance change discards pixels before publishing them', async () => {
@@ -173,4 +173,49 @@ test('an abandoned selection expires without a stream and releases its native po
   const f = fixture(); await selected(f);
   t.mock.timers.tick(5001); await Promise.resolve();
   assert.equal(f.state.closed, 1); assert.equal(f.state.effects.length, 0);
+});
+// computer-control: a whole display, offered only through the host's proof (captureTargets has already acquired and
+// released the exclusion lease), framed exactly, never clicked through, and still able to pause every task.
+function withDisplay() {
+  const f = fixture(), display = { kind: 'monitor', deviceName: '\\.\DISPLAY1', bounds: { x: 0, y: 0, w: 1920, h: 1080 } };
+  const frames = { method: 'monitor', screen: display.bounds, target: display };
+  f.screen.deps.desktop.captureTargets = async (_, guard) => { guard(); f.state.listed++;
+    return { monitors: [{ ...display, primary: true }, { kind: 'monitor', deviceName: '\\.\DISPLAY2', primary: false, bounds: { x: 1920, y: 0, w: 1280, h: 1024 } }], windows: f.windows, excludedProcessId: 99 }; };
+  const open = f.screen.deps.desktop.chatScreen;
+  f.screen.deps.desktop.chatScreen = async (owner, options) => {
+    const port = await open(owner, options), held = { value: false };
+    port.takeOver = () => { held.value = true; }; port.handBack = () => { held.value = false; };
+    port.frames.next = async () => ({ bytes: Buffer.from('jpeg'), type: 'image/jpeg', width: 1280, height: 720, windows: [], after: [], ...frames });
+    return Object.assign(port, { held });
+  };
+  return { f, display, frames };
+}
+
+test('displays are offered first with their size, the main one marked, without device names reaching the window', async () => {
+  const { f } = withDisplay();
+  const list = await f.screen.targets(f.access, new AbortController().signal);
+  assert.deepEqual(list.targets.map((v) => [v.kind, v.label, v.primary]),
+    [['monitor', 'Display 1 (main) · 1920×1080', true], ['monitor', 'Display 2 · 1280×1024', false], ['window', 'Editor', false]]);
+  assert.ok(list.targets.every((v) => v.target === undefined && v.deviceName === undefined));
+});
+
+test('a display frames only as itself, and is driven with the owner\'s own hands, never through the view', async () => {
+  const { f, frames } = withDisplay();
+  const list = await f.screen.targets(f.access, new AbortController().signal);
+  const choice = await f.screen.select(f.access, list.targets[0].id, new AbortController().signal);
+  f.screen.view(f.access, choice.viewId).streaming = true;
+  const frame = await f.screen.frame(f.access, choice.viewId, 1280, new AbortController().signal);
+  assert.equal(frame.label, 'Display 1 (main) · 1920×1080');
+  f.screen.painted(f.access, choice.viewId, frame.frameId);
+  assert.deepEqual(await f.screen.control(f.access, choice.viewId, frame.frameId, true), { control: true });
+  const next = await f.screen.frame(f.access, choice.viewId, 1280, new AbortController().signal);
+  f.screen.painted(f.access, choice.viewId, next.frameId);
+  await assert.rejects(f.screen.input(f.access, choice.viewId, next.frameId, { action: 'click', window: 'Editor', x: 0.5, y: 0.5 }, new AbortController().signal),
+    /use your own mouse and keyboard/);
+  assert.deepEqual(f.state.effects, [], 'nothing reached the display');
+  // A frame of another size or place than the display chosen is dropped, and the view closes.
+  f.screen.view(f.access, choice.viewId);
+  frames.screen = { x: 0, y: 0, w: 1920, h: 1200 };
+  await assert.rejects(f.screen.frame(f.access, choice.viewId, 1280, new AbortController().signal), /changed/);
+  assert.equal(f.state.closed, 1);
 });

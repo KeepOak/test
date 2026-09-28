@@ -42,6 +42,8 @@ import { appMenuTemplate, helpChannel, type HelpItem } from "./app-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
+import { release as osRelease } from "node:os";
+import { captureService } from "./capture-service.js"; // computer-control: Branch's windows never appear in its own computer view
 // mac3/never-break: trying a new version on a copy of the data before an update.
 import { stagedEngine, updateCanary } from "../never-break/canary.js";
 import { runStagedSmoke, smokeReportPath } from "./beta-smoke.js";
@@ -84,6 +86,8 @@ let quitReason: QuitReason = "person";
 let runningNow: () => Promise<number> = async () => 0;
 /** The engine's own process, when this window started one (not when it joined a background engine). */
 let engine: EngineHost | undefined;
+/** computer-control: lets go of every capture lease the current engine holds (src/desktop/capture-service.ts). */
+let closeCapture: () => void = () => undefined;
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -437,6 +441,18 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     create: (options) => new BrowserWindow(options),
     workArea: () => screen.getPrimaryDisplay().workArea,
   });
+  // computer-control: the engine asks main to hide every Branch window from screen capture while a computer view is open
+  // (Windows WDA_EXCLUDEFROMCAPTURE through setContentProtection). Main decides which windows; the engine names none.
+  closeCapture();
+  const capture = captureService({
+    platform: process.platform, release: osRelease(), processId: process.pid, windows: () => BrowserWindow.getAllWindows(),
+    onCreated: (listener) => {
+      const created = (_event: unknown, created: BrowserWindow) => listener(created);
+      app.on("browser-window-created", created);
+      return () => { app.off("browser-window-created", created); };
+    },
+  });
+  closeCapture = () => { try { capture.close(); } catch (error) { console.error("Capture cleanup:", error); } };
   const host = new EngineHost({
     fork: () => utilityProcess.fork(fileURLToPath(new URL("./engine-process.js", import.meta.url)), [],
       { serviceName: "Branch Agent engine", stdio: "inherit" }),
@@ -445,6 +461,8 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
       "vault-read": () => chatgpt.read(),
       "vault-write": (tokens) => chatgpt.write(tokens as Parameters<FileTokenVault["write"]>[0]),
       "vault-clear": () => chatgpt.clear(),
+      "capture-acquire": (args) => capture.acquire(args),
+      "capture-release": (args) => capture.release(args),
       "banner-open": async (args) => {
         const { bannerId, notice } = BannerOpenSchema.parse(args);
         const shown = await showBanner(() => { banners.delete(bannerId); host.tell(`banner-closed:${bannerId}`); }, notice);
@@ -459,7 +477,8 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
       // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below).
       quit: () => { quitReason = "command"; app.quit(); },
     },
-    onGone: (code) => console.error(`The engine stopped (code ${code}); starting it again.`),
+    // A stopped engine's leases die with it, so Branch's windows are not left hidden from capture after it has gone.
+    onGone: (code) => { closeCapture(); console.error(`The engine stopped (code ${code}); starting it again.`); },
     onBack: (url) => {
       // The engine's own stop is written into its record of failures, as a window's or helper's is.
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
@@ -609,7 +628,7 @@ else {
     window?.focus();
   });
   app.on("activate", () => window?.show());
-  app.on("will-quit", () => globalShortcut.unregisterAll()); // pass 17: quick-ask keys go with the app
+  app.on("will-quit", () => { globalShortcut.unregisterAll(); closeCapture(); }); // pass 17: quick-ask keys go with the app; computer-control: and capture leases
   app.on("before-quit", (event) => {
     if (quitting) return;
     event.preventDefault();

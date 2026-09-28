@@ -1,8 +1,9 @@
 /* parity-b2: the window reads This computer's screen (GET /api/panels/screen, src/local-screen.ts) only while the owner
-   has the computer view open on it and has chosen what it shows: nothing before, and the stream is let go, and the
-   engine's reader with it, once the view is closed, switched to the browser, hidden or locked. All screens never reads
-   This computer when This computer is not one of the screens it draws. The screen is the stand-in of
-   tests/local-screen-fixture.mjs, which counts its frames and whether it was let go. */
+   has the computer view open on it: nothing before, and the stream is let go, and the engine's reader with it, once the
+   view is closed, switched to the browser, hidden or locked. computer-control: opening the view shows the main display
+   by itself, and a view shown again shows what the owner last chose. All screens never reads This computer when This
+   computer is not one of the screens it draws. The screen is the stand-in of tests/local-screen-fixture.mjs, which
+   counts its frames and whether it was let go. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -35,7 +36,7 @@ async function windowWith(t, prepare) {
   const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  return { page, taken, errors, run, server, open: async () => {
+  return { page, taken, seen, errors, run, server, open: async () => {
     await page.goto(server.url);
     await page.getByLabel("Session token", { exact: true }).fill(server.token);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -44,11 +45,11 @@ async function windowWith(t, prepare) {
     await page.locator("#conversation .b").first().waitFor({ timeout: 30000 });
   } };
 }
-/* The owner chooses the stand-in's app window in the view (#610: nothing is shown before a choice). */
+/* The owner chooses the stand-in's app window in the view. */
 async function choose(page) {
   await page.locator("#native-target option").filter({ hasText: "Fixture editor" }).waitFor({ state: "attached", timeout: 15000 });
   await page.locator("#native-target").selectOption({ label: "Fixture editor" });
-  await page.getByRole("button", { name: "Share selected window", exact: true }).click();
+  await page.getByRole("button", { name: "Show", exact: true }).click();
   await page.locator("#stage7 .livescr-img[src^='data:image/jpeg']").waitFor({ timeout: 15000 });
 }
 /* The frames taken after the window has had a moment to let go, over `ms`, and whether the reader is still open. */
@@ -65,9 +66,10 @@ test("This computer's screen streams only while its view is open and showing, an
   const { page, taken, errors } = w;
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "nothing is read before the view opens");
   const open = page.locator('.head [data-act="stage"][data-v="computer"]').first();
+  const live = () => page.locator("#stage7 .livescr-img[src^='data:image/jpeg']").waitFor({ timeout: 15000 });
   await open.click();
-  assert.deepEqual(await flatFor(taken, 800), { more: 0, open: 0 }, "open but nothing chosen: nothing is read");
-  await choose(page);
+  await live();
+  assert.ok(w.seen.kinds.length >= 1 && w.seen.kinds.every((kind) => kind === "monitor"), "the main display opens by itself");
   const started = taken.count;
   await pause(1000);
   assert.ok(taken.count - started >= 3, `several frames a second while open (${taken.count - started} in a second)`);
@@ -76,19 +78,23 @@ test("This computer's screen streams only while its view is open and showing, an
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "closed: it stops, and the reader is let go");
 
   await open.click();
+  await live();
   await choose(page);
+  assert.equal(w.seen.kinds.at(-1), "window");
   await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: true, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "hidden: it stops");
+  const opened = w.seen.opened;
   await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: false, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
-  await choose(page);
+  await live();
   const shown = taken.count;
   await pause(1500);
-  assert.ok(taken.count > shown, "shown again and chosen: it starts again");
+  assert.ok(taken.count > shown, "shown again: it starts again");
+  assert.deepEqual([w.seen.opened - opened, w.seen.kinds.at(-1)], [1, "window"], "with the window the owner chose, not the display");
 
   await page.locator('#stage7 .st7-sw [data-act="stage"][data-v="browser"]').click();
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "switched to the browser: it stops");
   await page.locator('#stage7 .st7-sw [data-act="stage"][data-v="computer"]').click();
-  await choose(page);
+  await live();
   await page.evaluate(() => document.getElementById("app").classList.add("locked-b17"));
   assert.deepEqual(await flatFor(taken), { more: 0, open: 0 }, "Branch locked: it stops");
   assert.deepEqual(errors, []);

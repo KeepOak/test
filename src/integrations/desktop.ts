@@ -11,6 +11,7 @@ import {
   type WindowInfo,
   DesktopClickSchema, DesktopClipboardSchema, DesktopKeySchema, DesktopOpenSchema,
   DesktopReadSchema, DesktopScreenshotSchema, DesktopTypeSchema, DesktopWindowsSchema,
+  DesktopMoveSchema, DesktopDragSchema, DesktopScrollSchema, DesktopWaitSchema, DesktopZoomSchema,
 } from './desktop-config.js';
 import { DesktopScriptRunner, screenBox, type LiveScreenProcess, type ScreenBox, type NativeCaptureTarget, type CaptureExclusion } from './desktop-script.js';
 import { DesktopBanner } from './desktop-banner.js';
@@ -28,6 +29,18 @@ import { CaptureExclusionSchema } from '../desktop/capture-lease.js';
  * window it touched.
  */
 interface RunState { actions: number; stopped: boolean; controller: AbortController }
+/**
+ * computer-control: what a picture or a reading of one window promised: that window, at that place and size. A point
+ * a tool takes from it is refused once the window has moved or been resized (OpenClaw's frame binding), instead of
+ * landing somewhere else. Kept per task, in memory only.
+ */
+interface Seen { runId: string; handle: string; bounds: { x: number; y: number; w: number; h: number } }
+type Spot = { name?: string | undefined; ref?: string | undefined; point?: { x: number; y: number } | undefined };
+const spotOf = (input: Spot): Spot => ({
+  ...(input.name !== undefined ? { name: input.name } : {}), ...(input.ref !== undefined ? { ref: input.ref } : {}),
+  ...(input.point !== undefined ? { point: input.point } : {}),
+});
+const described = (spot: Spot): string => spot.name ?? (spot.ref ? `part ${spot.ref}` : spot.point ? `point ${spot.point.x},${spot.point.y}` : 'the middle');
 /** Where the newest click of a task that is still going landed on the screen, and whose task it is. */
 export interface Pointer { x: number; y: number; at: string; runId: string; trunk: string | null }
 /** Said to a task whose screen action waited while the owner drove, and was stopped or ran out of time waiting. */
@@ -50,6 +63,10 @@ export class DesktopControl {
   private readonly nativeCaptureLease: NativeCaptureLease | undefined;
   private readonly nativeScreens = new Set<ChatNativeScreen>();
   private nativeOpening = false;
+  /** computer-control: pictures and readings a task's points may come from (Seen). */
+  private readonly seen = new Map<string, Seen>();
+  /** computer-control: this program and its parent (in the desktop app, the main process that owns Branch's windows): no tool touches their windows. */
+  private readonly ownProcesses = new Set([process.pid, process.ppid].filter((pid) => Number.isSafeInteger(pid) && pid > 0));
   /** Where screenshots are kept; without it, taking one is refused rather than lost. */
   artifacts: RunArtifacts | undefined;
   /** What Windows itself allows. Left unset, only Branch's own switch is consulted, as before. */
@@ -241,6 +258,8 @@ export class DesktopControl {
     if (hits.length > 1 && !hits.some((window) => window.title.toLowerCase() === wanted))
       throw new Error(`More than one window matches "${match}": ${hits.map((w) => w.title).join('; ')}. Say which one.`);
     if (chosen.restricted) throw new Error(chosen.restricted);
+    // computer-control: Branch's own window is never a target: a task clicking there could answer its own questions.
+    if (this.ownProcesses.has(Number(chosen.processId))) throw new Error("That window is Branch's own, which Branch never clicks or types into. Choose another window.");
     return chosen;
   }
   /**
@@ -281,15 +300,18 @@ export class DesktopControl {
     if (!input.window) await this.assertNothingPrivateOnScreen(signal);
     const temporary = await this.runner.temporaryPng(`shot-${randomUUID().slice(0, 8)}`);
     try {
+      let handle = '';
       const answer = input.window
-        ? (await this.onWindow(input.window, signal, (target) => this.runner.run('screenshot', { handle: target.handle, outPath: temporary }, signal))).answer
-        : await this.runner.run('screenshot', { display: input.display ?? 1, outPath: temporary }, signal);
+        ? (await this.onWindow(input.window, signal, (target) => { handle = String(target.handle); return this.runner.run('screenshot', { handle: target.handle, outPath: temporary }, signal); })).answer
+        : await this.hidingBranch(() => this.runner.run('screenshot', { display: input.display ?? 1, outPath: temporary }, signal));
       // Some windows cannot be photographed on their own, and Windows copies that patch of the
       // screen instead — which would show anything sitting on top. Check again before keeping it.
       if (answer.method === 'screen') await this.assertNothingPrivateOnScreen(signal);
       const kept = await artifacts.write(context.runId, `desktop-${randomUUID().slice(0, 8)}.png`, 'image/png', await readFile(temporary));
       this.record(context, 'desktop.screenshot', String(answer.title ?? ''), { width: answer.width, height: answer.height });
-      return { ...kept, window: String(answer.title ?? ''), width: answer.width, height: answer.height };
+      const shot = handle ? this.remember(context, { ...answer, handle }) : undefined;
+      return { ...kept, window: String(answer.title ?? ''), width: answer.width, height: answer.height,
+        ...(shot ? { shot, points: 'Points are window pixels, as in this picture. Pass this shot with them.' } : {}) };
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
     }
@@ -352,11 +374,24 @@ export class DesktopControl {
     await this.assertNothingPrivateOnScreen(signal);
     const temporary = await this.runner.temporaryPng(`watch-${randomUUID().slice(0, 8)}`);
     try {
-      await this.runner.run('screenshot', { display: 1, outPath: temporary, region }, signal);
+      await this.hidingBranch(() => this.runner.run('screenshot', { display: 1, outPath: temporary, region }, signal));
       return new Uint8Array(await readFile(temporary));
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
     }
+  }
+  /**
+   * computer-control: a picture of a whole screen leaves Branch's own windows out where the desktop app can hide them
+   * (the same lease as the owner's live view), so a Trunk never sees its own conversation mirrored back. Where it cannot
+   * (outside the desktop app, an older Windows) the picture is taken as before.
+   */
+  private async hidingBranch<T>(take: () => Promise<T>): Promise<T> {
+    const host = this.nativeCaptureLease;
+    if (!host) return take();
+    const leaseId = randomBytes(16).toString('hex');
+    let held = false;
+    try { CaptureExclusionSchema.parse(await host.acquire(leaseId)); held = true; } catch { /* no proved host here: as before */ }
+    try { return await take(); } finally { if (held) await host.release(leaseId).catch(() => undefined); }
   }
   /** A picture taken off the screen itself cannot hide a password manager that is showing, so it is refused instead. */
   private async assertNothingPrivateOnScreen(signal: AbortSignal): Promise<void> {
@@ -372,21 +407,136 @@ export class DesktopControl {
     const parts = (raw as Record<string, unknown>[]).filter(Boolean).map((node) => ({
       role: String(node.role ?? ''), name: String(node.name ?? '').slice(0, 200),
       value: String(node.value ?? '').slice(0, 200), enabled: node.enabled !== false,
+      ...(typeof node.ref === 'string' && /^-?[0-9]+(\.-?[0-9]+){0,15}$/.test(node.ref) ? { ref: node.ref } : {}),
+      ...(Array.isArray(node.box) && node.box.length === 4 && node.box.every(Number.isFinite) ? { box: node.box.map(Number) } : {}),
     }));
     this.record(context, 'desktop.read', window.title, { parts: parts.length });
-    return { window: window.title, parts, more: Boolean(answer.more) };
+    const shot = this.remember(context, { ...answer, handle: window.handle });
+    return { window: window.title, parts, more: Boolean(answer.more), ...(shot ? { shot } : {}) };
   }
 
-  async click(input: z.infer<typeof DesktopClickSchema>, context: ToolContext) {
-    const signal = await this.begin(context, 'desktop.click');
-    const where = input.name ? { name: input.name } : { x: input.point!.x, y: input.point!.y };
-    const { window, answer } = await this.onWindow(input.window, signal,
-      (target) => this.runner.run('click', { handle: target.handle, ...where }, signal));
-    this.record(context, 'desktop.click', window.title, { what: input.name ?? 'a point', how: answer.how });
+  /**
+   * computer-control: a picture or reading of a window, remembered so points taken from it can be checked against where
+   * the window is now. The answer's own bounds are the window's at that moment.
+   */
+  private remember(context: ToolContext, answer: Record<string, unknown>): string | undefined {
+    const box = answer.bounds as Record<string, unknown> | undefined, handle = String(answer.handle ?? '');
+    const bounds = box && ['x', 'y', 'w', 'h'].every((axis) => Number.isSafeInteger(box[axis]))
+      ? { x: Number(box.x), y: Number(box.y), w: Number(box.w), h: Number(box.h) } : null;
+    if (!bounds || !/^[1-9][0-9]{0,18}$/.test(handle)) return undefined;
+    const id = randomBytes(8).toString('hex');
+    this.seen.set(id, { runId: context.runId, handle, bounds });
+    while (this.seen.size > 64) this.seen.delete(this.seen.keys().next().value!);
+    return id;
+  }
+  /** The window a picture promised, for a point taken from it; refused for another task's picture or another window. */
+  private expected(context: ToolContext, shot: string | undefined, window: WindowInfo): Record<string, unknown> {
+    if (!shot) return {};
+    const seen = this.seen.get(shot);
+    if (!seen || seen.runId !== context.runId) throw new Error('That picture is not one this task took. Take a new picture of the window first.');
+    if (seen.handle !== String(window.handle)) throw new Error('That picture was of another window. Take a picture of this one first.');
+    return { expect: seen.bounds };
+  }
+  /** Where the newest pointer action landed, for the owner's live view to draw this Trunk's cursor there. */
+  private landed(context: ToolContext, answer: Record<string, unknown>): void {
     const spot = Array.isArray(answer.at) && answer.at.length === 2 ? answer.at.map(Number) : [];
     if (spot.length === 2 && spot.every(Number.isFinite))
       this.pointerAt = { x: spot[0]!, y: spot[1]!, at: new Date().toISOString(), runId: context.runId, trunk: context.trunk ?? null };
-    return { window: window.title, clicked: String(answer.name ?? input.name ?? 'a point'), how: String(answer.how ?? '') };
+  }
+
+  async click(input: z.input<typeof DesktopClickSchema>, context: ToolContext) {
+    const signal = await this.begin(context, 'desktop.click');
+    const button = input.button ?? 'left', count = input.count ?? 1;
+    const plain = button === 'left' && count === 1 && !input.modifiers?.length && !input.shot && !input.ref;
+    const spot = spotOf(input);
+    // A plain left click keeps the old path: a named part is pressed through UI Automation (the pointer never moves).
+    // A ref, another button, a double or triple click, held keys or a checked picture go through the pointer verbs.
+    const { window, answer } = await this.onWindow(input.window, signal, (target) => plain
+      ? this.runner.run('click', { handle: target.handle, ...(spot.point ? { x: spot.point.x, y: spot.point.y } : { name: spot.name }) }, signal)
+      : this.runner.run('pointer', { handle: target.handle, kind: 'click', at: spot, button, count,
+        modifiers: input.modifiers ?? [], ...this.expected(context, input.shot, target) }, signal));
+    const how = count === 3 ? 'triple-click' : count === 2 ? 'double-click' : button === 'left' ? String(answer.how ?? 'click') : `${button}-click`;
+    this.record(context, 'desktop.click', window.title, { what: described(spot), how, button, count });
+    this.landed(context, answer);
+    return { window: window.title, clicked: String(answer.name || spot.name || described(spot)), how };
+  }
+
+  /** computer-control: move the pointer onto something and rest there, to show a tooltip or open a hover menu. */
+  async move(input: z.input<typeof DesktopMoveSchema>, context: ToolContext) {
+    const signal = await this.begin(context, 'desktop.move');
+    const spot = spotOf(input), hoverMs = input.hoverMs ?? 800;
+    const { window, answer } = await this.onWindow(input.window, signal, (target) =>
+      this.runner.run('pointer', { handle: target.handle, kind: 'move', at: spot, hoverMs, ...this.expected(context, input.shot, target) }, signal));
+    this.record(context, 'desktop.move', window.title, { to: described(spot), hoverMs });
+    this.landed(context, answer);
+    return { window: window.title, over: described(spot), restedMs: hoverMs };
+  }
+
+  /** computer-control: press on one spot, glide to another and let go, both inside the same window. */
+  async drag(input: z.input<typeof DesktopDragSchema>, context: ToolContext) {
+    const signal = await this.begin(context, 'desktop.drag');
+    const from = spotOf(input.from), to = spotOf(input.to), button = input.button ?? 'left';
+    const { window, answer } = await this.onWindow(input.window, signal, (target) =>
+      this.runner.run('pointer', { handle: target.handle, kind: 'drag', from, to, button, modifiers: input.modifiers ?? [],
+        ...this.expected(context, input.shot, target) }, signal));
+    this.record(context, 'desktop.drag', window.title, { from: described(from), to: described(to), button });
+    this.landed(context, answer);
+    return { window: window.title, dragged: `${described(from)} to ${described(to)}` };
+  }
+
+  /**
+   * computer-control: scroll a list, page or document. A named part scrolls through UI Automation when it can (the
+   * pointer stays where it is); otherwise the wheel turns over the spot, or over the middle of the window.
+   */
+  async scroll(input: z.input<typeof DesktopScrollSchema>, context: ToolContext) {
+    const signal = await this.begin(context, 'desktop.scroll');
+    const spot = spotOf(input), amount = input.amount ?? 3;
+    const { window, answer } = await this.onWindow(input.window, signal, (target) =>
+      this.runner.run('pointer', { handle: target.handle, kind: 'scroll', at: spot, direction: input.direction, amount,
+        modifiers: input.modifiers ?? [], ...this.expected(context, input.shot, target) }, signal));
+    this.record(context, 'desktop.scroll', window.title, { at: described(spot), direction: input.direction, amount, how: answer.how });
+    this.landed(context, answer);
+    return { window: window.title, scrolled: `${input.direction} ${amount}`, how: answer.how === 'scroll-pattern' ? 'the list itself' : 'the mouse wheel' };
+  }
+
+  /**
+   * computer-control: wait for a program to catch up. Touches nothing and uses none of the task's screen actions, but
+   * ends at once on Stop or a cancel, and says so when the switch went off or the owner took over meanwhile.
+   */
+  async wait(input: z.infer<typeof DesktopWaitSchema>, context: ToolContext) {
+    if (!this.enabled(context.owner)) throw new Error(switchedOffMessage);
+    const state = this.runs.get(context.runId);
+    if (state?.stopped) throw new Error('You pressed Stop, so Branch has let go of your screen and keyboard.');
+    const signal = AbortSignal.any([context.signal, ...(state ? [state.controller.signal] : [])]);
+    await new Promise<void>((done, fail) => {
+      if (signal.aborted) { fail(new Error('The wait was stopped.')); return; }
+      const stop = () => { clearTimeout(timer); fail(new Error('The wait was stopped.')); };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', stop); done(); }, Math.round(input.seconds * 1000));
+      signal.addEventListener('abort', stop, { once: true });
+    });
+    if (!this.enabled(context.owner)) throw new Error(switchedOffMessage);
+    if (this.driving) throw new Error(drivingMessage);
+    return { waited: input.seconds };
+  }
+
+  /** computer-control: a close-up of part of one window, for small print and small targets. Its points stay window pixels. */
+  async zoom(input: z.infer<typeof DesktopZoomSchema>, context: ToolContext) {
+    const artifacts = this.artifacts;
+    if (!artifacts) throw new Error('Taking a picture is switched off because there is nowhere to keep it.');
+    const signal = await this.begin(context, 'desktop.zoom');
+    const { region } = input, scale = Math.max(1, Math.min(4, Math.floor(800 / Math.max(region.width, region.height))));
+    const temporary = await this.runner.temporaryPng(`zoom-${randomUUID().slice(0, 8)}`);
+    try {
+      const { window, answer } = await this.onWindow(input.window, signal, (target) =>
+        this.runner.run('zoom', { handle: target.handle, region, scale, outPath: temporary, ...this.expected(context, input.shot, target) }, signal));
+      if (answer.method === 'screen') await this.assertNothingPrivateOnScreen(signal);
+      const kept = await artifacts.write(context.runId, `desktop-zoom-${randomUUID().slice(0, 8)}.png`, 'image/png', await readFile(temporary));
+      this.record(context, 'desktop.zoom', window.title, { region, scale });
+      return { ...kept, window: window.title, width: answer.width, height: answer.height, scale,
+        points: `This close-up starts at window point (${region.x}, ${region.y}) at ${scale}x: a spot (a, b) in it is window point (${region.x} + a/${scale}, ${region.y} + b/${scale}).` };
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
   }
 
   async type(input: z.infer<typeof DesktopTypeSchema>, context: ToolContext) {
@@ -400,13 +550,13 @@ export class DesktopControl {
     return { window: window.title, into: String(answer.into ?? ''), how: String(answer.how ?? ''), nowReads: String(answer.value ?? '').slice(0, 2000) };
   }
 
-  async key(input: z.infer<typeof DesktopKeySchema>, context: ToolContext) {
-    const keys = keyChord(input.chord);
+  async key(input: z.input<typeof DesktopKeySchema>, context: ToolContext) {
+    const keys = keyChord(input.chord).repeat(input.repeat ?? 1);
     const signal = await this.begin(context, 'desktop.key');
     const { window } = await this.onWindow(input.window, signal,
       (target) => this.runner.run('key', { handle: target.handle, keys }, signal));
-    this.record(context, 'desktop.key', window.title, { chord: input.chord });
-    return { window: window.title, pressed: input.chord };
+    this.record(context, 'desktop.key', window.title, { chord: input.chord, repeat: input.repeat ?? 1 });
+    return { window: window.title, pressed: input.chord, ...((input.repeat ?? 1) > 1 ? { times: input.repeat } : {}) };
   }
 
   /**
@@ -447,6 +597,7 @@ export class DesktopControl {
   /** When a task ends, the notice comes down and its allowance is forgotten. */
   async closeRun(context: Pick<ToolContext, 'runId'>): Promise<void> {
     if (this.pointerAt?.runId === context.runId) this.pointerAt = null;
+    for (const [id, seen] of this.seen) if (seen.runId === context.runId) this.seen.delete(id);
     if (!this.runs.delete(context.runId)) return;
     await this.banner.hide();
   }

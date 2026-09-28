@@ -40,10 +40,12 @@ test('real local routes require explicit owned target and deny short keys, doors
 test('route journey enumerates opaque external editor, streams painted frame, controls once and releases on disconnect', async t => {
   const { seen, sid, server, call } = await world(t);
   const list = await (await call(`/api/panels/screen/targets?session=${sid}`)).json();
-  assert.equal(list.targets.length, 1); assert.equal(list.targets[0].kind, 'window');
-  assert.equal(list.targets[0].handle, undefined); assert.equal(list.targets[0].processId, undefined);
-  assert.equal((await call('/api/panels/screen/target', { sessionId: sid, targetId: list.targets[0].id, handle: '12' })).status, 400);
-  const chosen = await (await call('/api/panels/screen/target', { sessionId: sid, targetId: list.targets[0].id })).json();
+  // computer-control: the display comes first (the stand-in host proved Branch's windows are hidden), then the editor.
+  assert.deepEqual(list.targets.map((v) => [v.kind, v.label, v.primary]), [['monitor', 'Whole screen · 1920×1080', true], ['window', 'Fixture editor', false]]);
+  const editor = list.targets[1];
+  assert.equal(editor.handle, undefined); assert.equal(editor.processId, undefined); assert.equal(list.targets[0].deviceName, undefined);
+  assert.equal((await call('/api/panels/screen/target', { sessionId: sid, targetId: editor.id, handle: '12' })).status, 400);
+  const chosen = await (await call('/api/panels/screen/target', { sessionId: sid, targetId: editor.id })).json();
   const cancel = new AbortController();
   const response = await fetch(`${server.url}/api/panels/screen?session=${sid}&view=${chosen.viewId}&width=900`, { headers: { authorization: `Bearer ${server.token}` }, signal: cancel.signal });
   assert.equal(response.status, 200);
