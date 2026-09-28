@@ -76,6 +76,7 @@ test("a Trunk's turn carries its instructions, its tools and its memory scope, h
     ? call("memory.put", { text: "Bo's own note", source: "trunk" }) : null)];
   const { app, provider } = await fixture(t, rules);
   on(app);
+  app.trunks.ensureDefault(true); // Bo is an additional Trunk, distinct from the person's default.
   const bo = app.trunks.create({ name: "Bo", title: "Helper" });
   await app.trunks.introduced();
   const owner = app.runtime.context();
@@ -279,6 +280,7 @@ test("a Trunk as one file: nothing it holds and no reach travels with it", async
 test("a chat app reaches a Trunk only where its switch allows it", async (t) => {
   const { app } = await fixture(t);
   on(app);
+  app.trunks.ensureDefault(true);
   const io = app.trunks.create({ name: "Io" });
   await app.trunks.introduced();
   assert.match(app.channels.trunkReach("telegram", io.chatSessionId), /Io does not answer on telegram/);
