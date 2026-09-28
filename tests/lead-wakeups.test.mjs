@@ -12,6 +12,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveBackgroundSettings } from "../dist/processes.js";
+import { z } from "zod";
 import { discardTemp } from "./temp-dir.mjs";
 
 async function fixture(t, firstCall) {
@@ -185,8 +186,21 @@ test("a program commands may run can be left running and wakes its conversation,
   assert.deepEqual(app.processes.commandPrograms(), {}, "nothing while no shell is set up");
   // What the launch does when it sets up shell.execute (src/integrations/bootstrap.ts): the same list reaches process.start.
   app.ownClis.attach({ extra: () => ({}) }, ["node"], { node: { path: process.execPath, args: [] } });
+  app.registry.register({ name: "shell.execute", permission: "shell.execute", description: "Run a command (a stand-in for the launch's shell).",
+    parameters: z.object({}).strict(), execute: async () => ({}) });
   const started = await run({ prompt: "Run the tests in the background", mode: "full" });
   assert.equal(started.status, "completed", started.output);
   assert.ok(await until(() => prompts.length >= 2), JSON.stringify(prompts));
   assert.match(prompts[1], /"the tests", finished \(exit code 0\)\. Its last lines:\ntests passed/);
+  // Only a task that may run commands may leave one running, and a helper is never woken in its own conversation.
+  const context = app.runtime.context({ runId: started.id });
+  const noCommands = { ...context, permissions: new Set([...context.permissions].filter((one) => one !== "shell.execute")) };
+  await assert.rejects(app.registry.execute("process.start", { program: "node", args: ["-e", "1"] }, noCommands), /not one of the programs/);
+  await assert.rejects(app.registry.execute("process.start", { program: "node", args: ["-e", "1"], wakeOnExit: true }, { ...context, depth: 1 }), /helper cannot be woken/);
+  await assert.rejects(app.registry.execute("schedules.wake_later", { message: "x", inMinutes: 5 }, { ...context, depth: 1 }), /helper cannot set wake-ups/);
+  // What a wake-up starts carries the tools of the task that asked for it, no more.
+  const woke = app.store.runs(app.runtime.owner).find((one) => one.sessionId === started.sessionId && one.id !== started.id);
+  const asked = app.store.events(started.id).find((e) => e.kind === "run.started").data.permissions;
+  const carried = app.store.events(woke.id).find((e) => e.kind === "run.started").data.permissions;
+  assert.ok(carried.every((one) => asked.includes(one)), "never more than the task that asked");
 });
