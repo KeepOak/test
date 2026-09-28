@@ -46,6 +46,7 @@ const reviewedComputedKeys = new Set([
   "src/registry-install.ts: pinKey",
   "src/accounts/settings.ts: sessionKey",
   "src/add-ons/export.ts: this.key",
+  "src/add-ons/index.ts: addOnSettingsKey", // RES-251: "add-ons" is held for the owner's yes (insideBranch loosens)
   "src/add-ons/lists.ts: this.key",
   "src/add-ons/package-shelf.ts: recordKey",
   "src/add-ons/pipelines.ts: key",

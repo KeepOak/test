@@ -28,6 +28,13 @@ export const AddOnSettingsSchema = z.object({
   wallEveryPlugin: z.boolean().default(false),
   /** Windows only: run add-on code as its own program even though Windows has no file and network wall. */
   windowsWithoutWall: z.boolean().default(false),
+  /**
+   * RES-251: hand-placed plugins the owner lets run inside Branch, one by one (a model connection or a chat service
+   * lives only there). Adding one is less careful: the owner's yes, never under Lockdown (`AddOns.setInside`).
+   */
+  insideBranch: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/)).max(50).default([]),
+  /** RES-251: those already switched on when the wall started shipping on, kept running as before until the owner walls them. */
+  grandfathered: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/)).max(50).default([]),
 }).strict();
 export type AddOnSettings = z.infer<typeof AddOnSettingsSchema>;
 
@@ -87,6 +94,7 @@ export function saveAddOnSettings(store: Pick<Store, "get" | "save">, owner: str
   const current = addOnSettings(store, owner);
   const sent = Object.fromEntries(Object.entries(change.modes ?? {}).filter(([, mode]) => mode !== undefined));
   const next = AddOnSettingsSchema.parse({
+    ...current,
     modes: { ...current.modes, ...sent },
     wallEveryPlugin: change.wallEveryPlugin ?? current.wallEveryPlugin,
     windowsWithoutWall: change.windowsWithoutWall ?? current.windowsWithoutWall,

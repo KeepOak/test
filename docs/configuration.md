@@ -9454,9 +9454,12 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   claiming a wall. A plugin the owner placed themselves runs there as its own program with the job object's limits.
 - **Hand-placed plugins run as their own program too (RES-251).** "Also run plugin files I put in the plugins folder
   myself in their own walled program" (`wallEveryPlugin`) ships on: no plugin runs inside Branch unless the owner
-  chose that. A walled plugin brings no model connections or chat services, since those live inside Branch; a
-  plugin that needs them runs inside only after the owner switches the wall off, which is less careful, so it needs
-  the owner's yes (`confirmLoosening`) and is refused under Lockdown. A walled plugin is held to the same add-on
+  chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
+  (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
+  with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
+  Branch; the owner lets one plugin run inside (`POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
+  (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
   interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
 - **Branch as a plugin.** A `.branch-export.json` file is trusted only for folders Branch remembers writing, so a
   record planted in a folder cannot make Branch remove or overwrite the owner's files. A folder with a file the

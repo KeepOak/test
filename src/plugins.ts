@@ -251,6 +251,13 @@ export class Plugins {
     this.loaded.delete(id);
   }
   /** Switches a plugin off: its tools leave the catalog, its hooks stop, and it stays off next time. */
+  /** RES-251: loads a switched-on plugin again, with the grant the owner gave, so a change of where it runs takes hold. */
+  async reload(id: string): Promise<void> {
+    const saved = this.saved(id);
+    if (!saved?.enabled || !this.loaded.has(id)) return;
+    this.unload(id);
+    await this.enable(id, saved.grant?.permissions);
+  }
   disable(id: string): { id: string; enabled: false } {
     this.unload(id);
     const saved = this.saved(id);

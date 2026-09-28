@@ -164,6 +164,8 @@ export const thisComputerSettings: readonly string[] = [
   "studies", "trunk-receipts",
   // Q230, keys worked out in code: the shell a coding task snapshots, and this computer's memory-history status.
   "coding-shell-snapshot", "memory-history-status",
+  // RES-251: which hand-placed plugins on this disk were kept running inside Branch when the wall began shipping on.
+  "add-ons-plugin-wall-kept",
 ];
 /** NAS 23e7382: one row per add-on file on this disk, its fingerprint (src/safety-extras/wasm-add-ons.ts). */
 const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
