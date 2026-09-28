@@ -12,6 +12,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { settingsWindow } from "./settings-window.mjs";
 import { saveComfort } from "../dist/comfort/settings.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const provider = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
 const CONTROLS = { width: 138, height: 44 }; // Windows 11's three buttons at 100 %, as Electron draws them (overlayHeight)
@@ -168,7 +169,7 @@ test("a household person's window never draws the ready card or its Install", as
       await route.fulfill({ response, json: { ...(await response.json()), isOwner: false } });
     });
   }, name: "titlebar-household" });
-  await page.waitForFunction(async () => (await import("/app/core/state.js")).E.profiles?.isOwner === false);
+  await waitInPage(page, async () => (await import("/app/core/state.js")).E.profiles?.isOwner === false);
   await show(page, "overview");
   assert.equal(await page.locator(".upd18c, [data-act='install']").count(), 0);
   assert.equal(await page.evaluate(() => window.statusCalls), 0, "the updater is not even asked in a household person's window");

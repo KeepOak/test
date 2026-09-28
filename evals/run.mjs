@@ -55,7 +55,11 @@ async function main() {
   let modelBlock = model.unavailable ?? null;
   if (!modelBlock && model.kind !== "standin") {
     await warmRemote(model);
-    const probe = await makeContext({ task: { id: "preflight" }, model, root: join(scratch(args), "preflight"), port: args.basePort });
+    // Started fresh every run, as each task's own engine is: kept, it gained one model connection a run until the engine's
+    // cap of 32 refused the next ("At most 32 model presets") and every task read as "needs local model".
+    const preflightRoot = join(scratch(args), "preflight");
+    await rm(preflightRoot, { recursive: true, force: true });
+    const probe = await makeContext({ task: { id: "preflight" }, model, root: preflightRoot, port: args.basePort });
     try { await probe.start(); modelBlock = await preflight(probe.engine); } catch (error) { modelBlock = `model did not start: ${error.message}`; }
     finally { await probe.stop().catch(() => undefined); }
   }

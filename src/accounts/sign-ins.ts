@@ -213,6 +213,7 @@ async function inspectProgram(host: SignInsHost, input: unknown, run: RunStatus)
 
 function programEnv(host: SignInsHost, id: string, account: string | undefined): NodeJS.ProcessEnv {
   const env = strippedEnvironment();
+  if (id === "claude-code" && (!account || account === primaryAccount)) env.CLAUDE_CONFIG_DIR = host.service.primaryClaudeHome;
   const variable = accountHomeVariables[id];
   if (account && account !== primaryAccount && variable) env[variable] = host.service.homeOf(`cli-${id}`, account);
   return env;

@@ -5,7 +5,10 @@ import { ChannelPolicySchema, type ChannelAdapter } from "./router.js";
 import { connectWebSocket, type WebSocketConnect } from "./ws-client.js";
 import { openSocket, type ParityDeps, type ParityService } from "./parity-common.js";
 import { paritySwitch, SwitchedChannel } from "./parity-switch.js";
-import { parityServices } from "./connectors.js";
+import { PARITY_KINDS } from "./parity-kinds.js";
+
+/* The services themselves are loaded on first use (parity-services.ts): an engine with none connected never holds them. */
+const services = async (): Promise<ParityService[]> => (await import("./parity-services.js")).parityServices;
 import { channelMark, type ChannelMark } from "./catch-up.js"; // mac6/bucket-16
 
 /**
@@ -17,11 +20,10 @@ import { channelMark, type ChannelMark } from "./catch-up.js"; // mac6/bucket-16
  * setting is refused by name when Branch starts rather than ignored.
  */
 export function parityKinds(): [string, ...string[]] {
-  const kinds = parityServices.map((service) => service.kind);
-  return kinds as [string, ...string[]];
+  return [...PARITY_KINDS] as [string, ...string[]];
 }
-export function parityService(kind: string): ParityService | undefined {
-  return parityServices.find((service) => service.kind === kind);
+export async function parityService(kind: string): Promise<ParityService | undefined> {
+  return (await services()).find((service) => service.kind === kind);
 }
 
 const channelId = z.string().regex(/^[a-z][a-z0-9_-]{0,29}$/);
@@ -32,7 +34,7 @@ export const ParityChannelSchema = z.object({
 export type ParityChannelConfig = z.infer<typeof ParityChannelSchema>;
 
 export function isParityChannel(value: { type: string }): boolean {
-  return parityServices.some((service) => service.kind === value.type);
+  return (PARITY_KINDS as readonly string[]).includes(value.type);
 }
 
 export interface ParityHost {
@@ -55,7 +57,7 @@ function ownSettings(config: ParityChannelConfig): Record<string, unknown> {
 
 /** Builds one service's channel and puts it behind the owner's switch for that service. */
 export async function buildParityChannel(config: ParityChannelConfig, host: ParityHost): Promise<ChannelAdapter> {
-  const service = parityService(config.type);
+  const service = await parityService(config.type);
   if (!service) throw new Error(`There is no chat service called ${config.type}`);
   const platform = host.platform ?? process.platform;
   if (service.platforms && !service.platforms.includes(platform))
@@ -90,8 +92,8 @@ function platformName(platform: NodeJS.Platform): string {
 }
 
 /** What the setup card lists: every service, its switch, and what to write to connect it. */
-export function paritySummary(store: Store, owner: string, platform: NodeJS.Platform = process.platform) {
-  return parityServices.map((service) => ({
+export async function paritySummary(store: Store, owner: string, platform: NodeJS.Platform = process.platform) {
+  return (await services()).map((service) => ({
     kind: service.kind, name: service.name, docs: service.docs, needs: service.needs,
     receives: service.receives, switch: paritySwitch(store, owner, service.kind),
     available: !service.platforms || service.platforms.includes(platform),
