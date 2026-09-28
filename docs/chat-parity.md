@@ -174,7 +174,7 @@ proved against stand-in adapters and providers; real account connections remain 
 | WA | — | ✅ | — |
 | SG | ✅ | ✅ | — |
 | IM | ✅ tapbacks | ✅ | — |
-| MX | ✅ | ✅ | — |
+| MX | ✅ | ✅ | ✅ `m.reaction` on the exact inbound event; own previous status is redacted before replacement (stand-in proof) |
 | EM, SMS | — | — | — |
 
 ### Slash commands and menus
@@ -293,7 +293,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | keybase | yes | — | — | — | — | — | — | — | — | 3500 |
 | kook | yes | — | — | — | — | — | — | — | — | 4000 |
 | mastodon | yes | — | — | — | — | — | — | — | — | default |
-| matrix | yes | — | yes | — | — | — | — | — | — | 3500 |
+| matrix | yes | yes | yes | yes | — | — | — | — | — | 3500 |
 | mqtt | yes | — | — | — | — | — | — | — | — | 3500 |
 | mumble | yes | — | — | — | — | — | — | — | — | 3500 |
 | nextcloud-talk | yes | — | — | — | — | — | — | — | — | default |
