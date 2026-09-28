@@ -68,11 +68,13 @@ test("a quiet start makes no window, and a task that starts waiting plays the ch
 test("with pop-ups off, a quiet start tells nothing", async (t) => {
   const { electron, call, notes, windows } = await trayStart(t);
   await call("onboarding", { popups: false });
-  const looks = () => electron.evaluate(() => globalThis.branchTrayNotifierForTests?.looks ?? 0);
   await askingTask(call);
-  // The notifier has looked since the task started waiting: it saw it, and kept quiet.
-  const seenAt = await looks();
-  await until(async () => (await looks()) > seenAt, "the notifier looks again after the task waits");
+  // The look that would have told the owner is the one that marks the waiting task as seen: once it has, it kept quiet.
+  const waiting = (await call("state")).attention.map((one) => one.runId);
+  await until(async () => {
+    const seen = await electron.evaluate(() => globalThis.branchTrayNotifierForTests?.seenRuns() ?? []);
+    return waiting.every((id) => seen.includes(id));
+  }, "the notifier has seen the waiting task");
   assert.deepEqual(await notes(), [], "nothing is told with pop-ups off");
   assert.equal(await windows(), 0);
 });

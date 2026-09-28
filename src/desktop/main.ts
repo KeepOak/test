@@ -229,9 +229,10 @@ async function startTrayNotifier(url: string, key: () => string): Promise<TrayNo
 }
 
 /** Opens the window (made on first use) and brings it forward; `hash` names a conversation to open it at. */
-let makeWindow: ((hash?: string) => Promise<void>) | undefined;
+let makeWindow: ((hash?: string, show?: boolean) => Promise<void>) | undefined;
 async function showWindow(hash = ""): Promise<void> {
-  if (!window && makeWindow) await makeWindow(hash);
+  // A window made now shows itself as soon as it can draw (buildWindow's ready-to-show), not once its page has loaded.
+  if (!window && makeWindow) { await makeWindow(hash, true); return; }
   window?.show();
   window?.focus();
 }
@@ -240,7 +241,7 @@ async function createWindow(
   url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean = () => true,
 ): Promise<void> {
   let making: Promise<void> | undefined;
-  makeWindow = (hash = "") => (making ??= buildWindow(url, key, settings, update, reachable, hash).then(() => {
+  makeWindow = (hash = "", show = false) => (making ??= buildWindow(url, key, settings, update, reachable, hash, show).then(() => {
     trayNotifier?.stop();
     trayNotifier = undefined;
   }));
@@ -257,7 +258,7 @@ async function createWindow(
 }
 
 async function buildWindow(
-  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean, hash: string,
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean, hash: string, show: boolean,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -364,7 +365,9 @@ async function buildWindow(
     }
   });
   // "Start quietly in the corner of the taskbar" keeps the window hidden until the tray icon is used.
-  window.once("ready-to-show", () => { if (!startsMinimized(process.argv)) window?.show(); });
+  window.once("ready-to-show", () => {
+    if (!startsMinimized(process.argv) || show) { window?.show(); if (show) window?.focus(); }
+  });
   const loaded = new Promise<void>((done) => window?.webContents.once("did-finish-load", () => done()));
   pageLoaded = loaded;
   // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the

@@ -46,8 +46,10 @@ export class TrayNotifier {
   private timer: NodeJS.Timeout | undefined;
   private checking: Promise<void> | null = null;
   private again = false;
-  /** How many looks have been taken (a test reads it to know the notifier has seen what happened). */
+  /** How many looks have been taken. */
   looks = 0;
+  /** The waiting tasks it has already looked at (told, or kept quiet about). */
+  seenRuns(): string[] { return [...(this.seen ?? [])]; }
 
   constructor(private readonly deps: TrayNotifyDeps) {}
 
