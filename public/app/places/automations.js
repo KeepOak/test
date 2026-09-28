@@ -7,6 +7,7 @@ import { S, E, refresh } from "../core/state.js";
 import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { initRecipeRun, recipeRunLive } from "./recipe-run.js";
 import { api } from "../core/api.js";
 import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
 import { trigCard, initTriggerCard } from "./trigger-card.js";
@@ -124,10 +125,9 @@ function promptRow(p) {
   return `<div class="prow"><span class="ico-tile">${ic("star", "s")}</span><span class="grow"><b>${esc(p.title ?? "")}${p.command ? ` <code>/${esc(p.command)}</code>` : ""}</b><small>${esc([p.group, clip80(p.body)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="prompt-use" data-v="${esc(p.id ?? "")}">${t("prompts.action.use")}</button></div>`;
 }
 
-/* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js). Running a recipe
-   (POST /api/flows-boards/recipes/<id>/run) calls its saved tools directly as the owner, outside a task's approval
-   questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed with
-   its reason (window.why.recipe-run). */
+/* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js). Run shows
+   every call it will make, its checks, its clean-up and its tries first, and runs it as the owner only from that dialog
+   (./recipe-run.js). */
 function procedureRow(p) {
   const steps = Array.isArray(p.data?.definition?.steps) ? p.data.definition.steps.length : 0;
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t(steps === 1 ? "window.chat.steps.one" : "window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
@@ -312,7 +312,8 @@ export function init() {
     const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
     if (add) add.disabled = !e.target.value.trim();
   });
-  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run"]);
+  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
+  initRecipeRun();
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
     if (!card) return;
