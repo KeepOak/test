@@ -117,8 +117,9 @@ jobs:
       - run: node -e "require('electron')"
       # The browser, kept between runs and keyed on the Playwright version, so a new version starts a new copy. The
       # install still runs: with the browser already there it only checks it (Playwright marks a copy complete only
-      # once the whole download landed). Only Linux needs the system libraries; on Windows `--with-deps` installed
-      # the Media Foundation feature, three minutes of every Windows share.
+      # once the whole download landed). No system packages: the hosted images already carry what the headless shell
+      # needs (every browser file passed without them on run 36461239418), and `--with-deps` spent 13 to 38 s of
+      # every Linux share on apt; on Windows it installed the Media Foundation feature, three minutes a share.
       - id: playwright
         shell: bash
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
@@ -129,7 +130,7 @@ jobs:
             ~/Library/Caches/ms-playwright
             ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-headless-shell
-      - run: npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium --only-shell
+      - run: npx playwright install chromium --only-shell
       # Ubuntu 24.04 turns off unprivileged user namespaces, which is what Electron's own sandbox is
       # built on, so every desktop test died with "Process failed to launch!" before reaching a
       # single assertion. This relaxes it on the build machine only. The app is not changed.
@@ -157,6 +158,11 @@ jobs:
           BRANCH_TEST_TIMINGS: ${{ runner.temp }}/test-timings.json
           BRANCH_TEST_CONCURRENCY: ${{ matrix.concurrency }}
           BRANCH_TEST_FILE_TIMEOUT: '360'
+          # Every file, and every `branch` a CLI test starts, loads the same ~1,200 built modules; V8's compiled code
+          # is kept on disk for the share, so each process after the first skips compiling them. It is checked
+          # against each module's source, so a changed file is compiled afresh. Measured on run 36461239418: the
+          # files that start the CLI took 377 s instead of 570 s.
+          NODE_COMPILE_CACHE: ${{ runner.temp }}/node-compile-cache
       # How long each file took, so tests/shard-weights.json can be refreshed from a real run.
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

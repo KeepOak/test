@@ -124,6 +124,7 @@ against its adapter, then renders one fixed task for every app.
 | Revolt (`revolt`) | — | plain words | 2000 | — | yes | — | — | One summary line above the reply (plain words) |
 | Mumble (`mumble`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
 | KOOK (`kook`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| iMessage through BlueBubbles (`bluebubbles`) | — | plain words | 3000 | — | — | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
 | WeChat Official Account (`wechat-mp`) | — | plain words | 600 | — | — | off: no edits, so no progress | — | One summary line above the reply (plain words) |
 | WeCom app (`wecom-app`) | — | plain words | 600 | — | — | off; native stream message type instead | — | One summary line above the reply (plain words) |
 | Mattermost (`mattermost`) | — | plain words | 4000 | — | yes | new (edits in place) | partial draft preview | One summary line above the reply (plain words) |
@@ -376,6 +377,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 
 | Adapter | Send | Edit | Typing | React | Buttons | Voice out | File out | Files in | Voice in | Max text |
 |---|---|---|---|---|---|---|---|---|---|---|
+| bluebubbles | yes | — | — | — | — | yes (audio file without the Private API) | yes | yes | yes | 3000 |
 | bluesky | yes | — | — | — | — | — | — | — | — | 1000 |
 | deltachat | yes | — | — | — | — | — | — | — | — | 3500 |
 | discord | yes | yes | yes | yes | yes | — | yes | yes | yes | 2000 |
