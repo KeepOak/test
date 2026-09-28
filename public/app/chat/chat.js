@@ -337,6 +337,7 @@ export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => (vi
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
+export const sendingWithoutSession = () => C.sending && !C.sessionId;
 /** Whether the open conversation's message is being answered now. */
 export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S.chat;
 
@@ -595,6 +596,17 @@ const HOOKS = {
   readAloud: (before) => readNewReply(before, C.messages),
 };
 
+function adoptDraft(sessionId) {
+  if (C.sessionId) return () => undefined;
+  const box = $("#prompt"), words = S.drafts.new;
+  const caret = box ? [box.selectionStart, box.selectionEnd] : null;
+  if (typeof words === "string") { S.drafts[sessionId] = words; delete S.drafts.new; }
+  return () => {
+    const after = $("#prompt");
+    if (S.chat === sessionId && after && caret) after.setSelectionRange(...caret);
+  };
+}
+
 async function sendPlain(prompt) {
   const before = replyMark(C.messages);
   C.messages.push({ role: "user", content: prompt });
@@ -605,10 +617,12 @@ async function sendPlain(prompt) {
   watchThinking(true);
   renderNow();
   let started = false;
+  let restoreDraft = () => undefined;
   try {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     filesSent();
+    restoreDraft = adoptDraft(run.sessionId);
     practiceSent();
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
@@ -634,6 +648,7 @@ async function sendPlain(prompt) {
     await loadExtras(C.sessionId);
     renderNow();
     $("#prompt")?.focus();
+    restoreDraft();
   }
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
 }
