@@ -203,6 +203,7 @@ test("Trunks: a chat's task is never a lesson a Trunk learns from", async (t) =>
   app.trunks.setMode("trunks", { mode: "on" });
   app.trunks.setMode("teach", { mode: "on" });
   const gu = app.trunks.create({ name: "Gu" });
+  app.trunks.setDefault(gu.id);
   await app.trunks.introduced();
   app.trunks.teaching.watch(gu.id);
   const run = await say('please files.write {"path":"report.md","content":"# Report"}');
