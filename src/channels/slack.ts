@@ -36,6 +36,16 @@ const envelopeSchema = z.object({
   type: z.string(), envelope_id: z.string().optional(),
   payload: z.object({ event: eventSchema.optional(), event_id: z.string().optional() }).passthrough().optional(),
 }).passthrough();
+/** A button pressed on a question (Socket Mode `interactive`, Block Kit `block_actions`). */
+const actionSchema = z.object({
+  type: z.literal("block_actions"),
+  user: z.object({ id: z.string(), username: z.string().optional(), name: z.string().optional() }).passthrough(),
+  channel: z.object({ id: z.string() }).passthrough(),
+  message: z.object({ ts: z.string(), thread_ts: z.string().optional(), text: z.string().optional() }).passthrough(),
+  actions: z.array(z.object({ action_id: z.string(), value: z.string().optional(), action_ts: z.string().optional() }).passthrough()).min(1),
+}).passthrough();
+/** The action ids Branch's own buttons carry, so a press on some other app's button is never read as an answer. */
+const answerAction = /^branch_answer_\d$/;
 
 /** Turns the markdown the assistant writes into the shape Slack renders. */
 export function toMrkdwn(text: string): string {
@@ -130,6 +140,7 @@ export class SlackAdapter implements ChannelAdapter {
     const { envelope_id: id, payload, type } = envelope.data;
     if (id) this.socket?.send(JSON.stringify({ envelope_id: id }));
     if (type === "disconnect") { this.socket?.close(); return; }
+    if (type === "interactive") { const pressed = this.fromButton(payload); if (pressed) void onMessage(pressed).catch(() => undefined); return; }
     const eventId = payload?.event_id;
     if (!payload?.event || (eventId && this.seen.has(eventId))) return;
     if (eventId) { this.seen.add(eventId); if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!); }
@@ -154,6 +165,52 @@ export class SlackAdapter implements ChannelAdapter {
       // Replying to this id keeps the answer in the thread the question was asked in.
       messageId: event.thread_ts ?? event.ts ?? "",
       ...(event.thread_ts && event.ts ? { reactTo: event.ts } : {}),
+    };
+  }
+  /**
+   * CHAT-062: a question with Block Kit buttons. Each button's value is the answer and the fingerprint of the exact
+   * request, as on Telegram; the words stay in `text` too, for notifications and for apps that cannot show blocks.
+   */
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const words = slackText(text).slice(0, 2900);
+    const result = await this.call("chat.postMessage", this.options.token, {
+      channel: chatId, text: words, ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: words } },
+        { type: "actions", elements: buttons.slice(0, 5).map((button, index) => ({
+          type: "button", action_id: `branch_answer_${index}`, value: button.value.slice(0, 2000),
+          text: { type: "plain_text", text: button.label.slice(0, 75) },
+          ...(button.value.startsWith("y") ? { style: "primary" } : button.value.startsWith("n") ? { style: "danger" } : {}),
+        })) },
+      ],
+    });
+    const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
+    return parsed.success ? parsed.data.ts : undefined;
+  }
+  /**
+   * A pressed button, as an ordinary addressed message carrying the button's own value; the router reads it as an answer
+   * to what this chat is waiting on, with every rule a typed y or n meets. Only Branch's own buttons count. The question
+   * then loses its buttons and says who answered, so it cannot be pressed twice.
+   */
+  private fromButton(payload: unknown): InboundMessage | null {
+    const parsed = actionSchema.safeParse(payload);
+    if (!parsed.success) return null;
+    const { user, channel, message, actions } = parsed.data;
+    const action = actions[0]!;
+    if (!answerAction.test(action.action_id) || !action.value || user.id === this.user?.id) return null;
+    if (this.options.channels?.length && !this.options.channels.includes(channel.id)) return null;
+    const chosen = action.value.startsWith("y") ? "Yes" : action.value.startsWith("n") ? "No" : "an answer";
+    void this.call("chat.update", this.options.token, { channel: channel.id, ts: message.ts, text: message.text ?? "",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: (message.text ?? "").slice(0, 2900) || " " } },
+        { type: "context", elements: [{ type: "mrkdwn", text: `<@${user.id}> chose ${chosen}.` }] }] }).catch(() => undefined);
+    const direct = channel.id.startsWith("D");
+    return {
+      channel: this.id, chatId: channel.id, chatKind: direct ? "direct" : "group",
+      ...(direct ? {} : { chatTitle: `channel ${channel.id}` }),
+      senderId: user.id, senderName: user.username ?? user.name ?? user.id,
+      text: action.value, addressed: true,
+      // The reply goes to the thread the question was asked in.
+      messageId: message.thread_ts ?? message.ts,
     };
   }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
