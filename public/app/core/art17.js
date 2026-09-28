@@ -8,6 +8,7 @@
 import { esc } from "./dom.js";
 import { E } from "./state.js";
 import { sleeps } from "./sleep.js";
+import { drop17, hold17, play17 } from "./held.js";
 
 /* The prototype's key → [what it shows, file without its extension, still only]. */
 export const ART17 = {
@@ -23,7 +24,7 @@ export const ART17 = {
 /* Characters: the engine's catalogue (GET /api/trunks characters, read from public/art/agents/manifest-*.json and Branch's
    own art, src/trunks/characters.ts), in the prototype's LOOKS order. Each has a still and a loop per state it acts out;
    a state it has no loop for falls back to idle. The engine keeps which one a Trunk wears (src/trunks/record.ts character). */
-export const looks17 = () => (Array.isArray(E.characters) ? E.characters : []);
+export const looks17 = () => (Array.isArray(E.characters) ? E.characters.filter((look) => look.id !== "branch") : []);
 export const look17 = (id) => (id ? looks17().find((l) => l.id === id) : undefined);
 /* The prototype marks only pass 17's own characters New (markNew17: the ids of its LOOKS17). */
 export const NEW17 = new Set(["sorrel", "skein", "nib"]);
@@ -77,11 +78,25 @@ function kept(key, make) {
   if (!node) { node = make(); list.push(node); pool.set(key, list); }
   return node;
 }
+/* A redraw reuses its current nodes first. Old views then release their decoders and leave the pool,
+   so visiting different characters and galleries does not keep every video alive for the whole session. */
+function retireMedia() {
+  for (const [key, nodes] of pool) {
+    const live = nodes.filter((node) => node.isConnected);
+    for (const node of nodes) {
+      if (node.isConnected) continue;
+      const videos = node.tagName === "VIDEO" ? [node] : node.querySelectorAll("video");
+      for (const video of videos) drop17(video);
+    }
+    if (live.length) pool.set(key, live);
+    else pool.delete(key);
+  }
+}
 function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
   if (v && gate && gatedLoop(v)) gate(v);
-  else if (v?.paused && !v.dataset.off13 && !document.hidden && !sleeps(v)) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
+  else if (v?.paused && !v.dataset.off13 && !document.hidden && !sleeps(v)) play17(v).catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
 }
 
 function fillMedia(slot) {
@@ -108,6 +123,7 @@ function fillArt(slot) {
 export function fill17(root = document) {
   root.querySelectorAll("[data-m17]").forEach(fillMedia);
   root.querySelectorAll("[data-art17]").forEach(fillArt);
+  retireMedia();
 }
 
 /* Hovering a still in a gallery plays its loop, as the prototype's pickers do. */
@@ -124,13 +140,13 @@ function hoverLoop(e) {
 /* Regions, dialogs and panels all draw outside one place, so any drawn placeholder is filled as it lands. */
 new MutationObserver(() => fill17()).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", () => fill17());
-/* A loop nobody can see (the window hidden or minimised) is paused, and carries on when the window is shown again,
+/* A loop nobody can see (the window hidden or minimised) is held (core/held.js), and carries on when the window is shown again,
    unless it was paused for another reason: scrolled off screen (data-off13, core/pets.js) or a napping pet (.zz11). */
 document.addEventListener("visibilitychange", () => {
   for (const v of document.querySelectorAll("video")) {
     if (!v.autoplay || !v.loop) continue;
-    if (document.hidden) v.pause();
-    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11") && !sleeps(v)) v.play().catch((error) => console.warn(error.message));
+    if (document.hidden) hold17(v);
+    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11") && !sleeps(v)) play17(v).catch((error) => console.warn(error.message));
   }
 });
 document.addEventListener("pointerover", hoverLoop);
