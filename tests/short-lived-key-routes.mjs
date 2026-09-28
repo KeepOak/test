@@ -912,6 +912,7 @@ export const ROUTES = {
   "/api/plugins/sample/inspect": "owner POST",
   "/api/pins": "look", // mac7/wake-pins: which settings the owner pinned, for everybody who uses this computer
   "/api/policy": "owner POST",
+  "/api/practice-runs": "owner POST", // Read availability only; owner changes the global switch.
   "/api/policy/approve": "task POST",
   "/api/practice": "owner POST",
   "/api/preferences": "owner POST",
