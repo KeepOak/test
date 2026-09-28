@@ -88,10 +88,10 @@ async function chooseSearch(v) {
    version (POST /api/reach/notes/rewrite; nothing is saved). Keep this version saves it over the note (POST
    /api/reach/notes with the note's stamp, so a note changed meanwhile is refused in the engine's words). */
 const RW = { notes: [], id: "", style: "clearer", out: null };
-const STYLES = ["clearer", "shorter", "fix", "list", "formal"];
+const STYLES = () => [["clearer", t("reach.notes.clearer")], ["shorter", t("reach.notes.shorter")], ["fix", t("reach.notes.fix")], ["list", t("reach.notes.list")], ["formal", t("reach.notes.formal")]];
 function drawRewrite() {
   const options = RW.notes.map((n) => `<option value="${esc(n.id)}"${n.id === RW.id ? " selected" : ""}>${esc(n.title || n.body.slice(0, 40))}</option>`).join("");
-  const styles = STYLES.map((s) => `<button type="button" aria-pressed="${RW.style === s}" data-act="ad-rw-style" data-v="${s}">${t("reach.notes." + s)}</button>`).join("");
+  const styles = STYLES().map(([s, words]) => `<button type="button" aria-pressed="${RW.style === s}" data-act="ad-rw-style" data-v="${s}">${words}</button>`).join("");
   const body = RW.notes.length
     ? `<p class="lead-b17">${t("reach.notes.purpose")}</p><div class="ctl"><b>${t("reach.notes.title")}</b><span class="right"><select class="inp" id="ad-rw-note" aria-label="${t("reach.notes.title")}">${options}</select></span><small></small></div>`
       + `<div class="ctl"><b>${t("reach.notes.style")}</b><span class="right"><span class="seg" role="group" aria-label="${t("reach.notes.style")}">${styles}</span></span><small>${t("reach.notes.styleHint")}</small></div>`
