@@ -293,5 +293,5 @@ test("models-ui: a helper a Trunk starts answers with the Trunk's own pick, neve
   await assert.rejects(f.app.runtime.delegate("Read proof.txt", context, ["files.read"], "", { model: pool, accountRef: { pool, account: third } }),
     /may use only the account picked for it/);
   const unpicked = { ...context, trunkKeys: { copyFromOwner: false, accounts: {} } };
-  await assert.rejects(f.app.runtime.delegate("Read proof.txt", unpicked, ["files.read"], "", { model: pool }), /no key picked/);
+  await assert.rejects(f.app.runtime.delegate("Read proof.txt", unpicked, ["files.read"], "", { model: pool }), /no account picked/);
 });
