@@ -1,5 +1,6 @@
 import { attachmentKind, voiceFileName } from "./media.js";
 import { z } from "zod";
+import { ReactionAnswers } from "./reaction-answers.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
 import { assertMetaSigned, metaChallenge } from "./meta-graph.js";
 
@@ -41,6 +42,7 @@ const valueSchema = z.object({
     voice: z.object({ id: z.string().min(1).max(200), mime_type: z.string().max(100).optional() }).passthrough().optional(),
     // CHAT-105: pictures, videos and files, each with an optional caption.
     image: mediaSchema.optional(), video: mediaSchema.optional(), document: mediaSchema.optional(),
+    reaction: z.object({ message_id: z.string().min(1).max(200), emoji: z.string().max(40).optional() }).passthrough().optional(),
   }).passthrough()).default([]),
 }).passthrough();
 const webhookSchema = z.object({
@@ -60,11 +62,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private deliver: ((message: InboundMessage) => Promise<void>) | null = null;
   /** When each person last wrote, so we know whether we may still answer them. */
   private readonly lastHeard = new Map<string, number>();
+  /** Questions a 👍 / 👎 reaction may answer (src/channels/reaction-answers.ts). */
+  private readonly answers: ReactionAnswers;
   constructor(private readonly options: WhatsAppOptions) {
     this.id = options.id;
     this.base = (options.apiBase ?? "https://graph.facebook.com/v21.0").replace(/\/$/, "");
     this.fetch = options.fetch ?? globalThis.fetch;
     this.now = options.now ?? Date.now;
+    this.answers = new ReactionAnswers(this.now);
+  }
+  watchAnswers(chatId: string, messageId: string, senderId: string, fingerprint: string): void {
+    this.answers.watch(messageId, chatId, senderId, fingerprint);
   }
   botName(): string | null { return this.options.phoneNumberId; }
   health(): ChannelHealth { return this.state; }
@@ -87,13 +95,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
       for (const message of change.value.messages) {
         const name = change.value.contacts.find((contact) => contact.wa_id === message.from)?.profile?.name;
         this.lastHeard.set(message.from, this.now());
-        const inbound = this.inbound(message, name);
+        const inbound = message.type === "reaction" ? this.answer(message, name) : this.inbound(message, name);
         if (!inbound || !this.deliver) continue;
         accepted++;
         await this.deliver(inbound).catch(() => undefined);
       }
     }
     return { accepted };
+  }
+  /** A reaction on one of Branch's own questions, from the person it asked, is that question's answer. */
+  private answer(message: { id: string; from: string; reaction?: { message_id: string; emoji?: string | undefined } | undefined }, name?: string): InboundMessage | null {
+    const said = message.reaction ? this.answers.read(message.reaction.message_id, message.from, message.from, message.reaction.emoji ?? "") : null;
+    return said ? { channel: this.id, chatId: message.from, chatKind: "direct", senderId: message.from, senderName: name ?? message.from,
+      text: said, addressed: true, messageId: message.id } : null;
   }
   private inbound(
     message: {

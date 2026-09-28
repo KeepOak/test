@@ -95,6 +95,8 @@ const telegramTarget = (address: string): { chat_id: number; message_thread_id?:
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly kind = "telegram";
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   private readonly base: string;
   private readonly fetch: typeof fetch;
@@ -347,7 +349,9 @@ export class TelegramAdapter implements ChannelAdapter {
   async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
       ...telegramTarget(chatId), text, ...formatted({ spans: format?.spans }),
-      reply_markup: { inline_keyboard: [buttons.map((button) => ({ text: button.label, callback_data: button.value }))] },
+      // Yes / No side by side; a longer list (the /model menu) one button a row, so each name can be read whole.
+      reply_markup: { inline_keyboard: buttons.length > 3 ? buttons.map((button) => [{ text: button.label, callback_data: button.value }])
+        : [buttons.map((button) => ({ text: button.label, callback_data: button.value }))] },
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
     });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);

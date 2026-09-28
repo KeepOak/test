@@ -28,12 +28,15 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
+import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { activationFor, activationGate, groupActivations, setGroupActivation } from "./group-activation.js"; // group chats
 import type { GroupReading } from "./addressing.js";
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
+import { ModelPicker, staleModelMenu } from "./model-picker.js";
+import { listModels } from "../model-switch.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -141,6 +144,11 @@ export interface ChannelAdapter {
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
    */
   sendButtons?(chatId: string, text: string, buttons: ApprovalButton[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /**
+   * True where `sendButtons` shows a list of up to 25 choices and a press comes back carrying the button's own value
+   * (Telegram, Discord, Slack), so a choice like `/model`'s can be a menu. Absent: buttons are for yes and no only.
+   */
+  readonly listButtons?: boolean;
   // ---- Optional live-status methods (wave mac2, chat-live; used by live-status.ts) -------------
   // Any adapter may add any of these three; leave one out and the chat simply goes without it.
   // Rules every adapter follows (Telegram, Slack, Discord and Matrix are the worked examples):
@@ -166,6 +174,12 @@ export interface ChannelAdapter {
    * the status shows only as typing and progress.
    */
   react?(chatId: string, messageId: string, emoji: string, previous?: string): Promise<void>;
+  /**
+   * An app without buttons that reads reactions: from now on, a thumbs up (or check) or thumbs down (or cross) by
+   * `senderId` on the question message `messageId` in this chat comes back as the answer to that question
+   * (`y:<fingerprint>` or `n:<fingerprint>`), once (src/channels/reaction-answers.ts). Absent means answers are typed.
+   */
+  watchAnswers?(chatId: string, messageId: string, senderId: string, fingerprint: string): void;
   /**
    * The app's own working-status line in a thread (Slack's assistant status, "is thinking…"): `words` says what the
    * task is doing now, "" clears it. `threadId` is the person's message, as the reply threads under it. Absent means
@@ -249,6 +263,8 @@ export function typedApproval(text: string): "y" | "n" | null {
   return ["approve", "yes"].includes(match[1]!.toLowerCase()) ? "y" : "n";
 }
 export const nothingToApprove = "Nothing here is waiting for a yes or no.";
+/** Added where the app reads reactions on the question (src/channels/reaction-answers.ts). */
+export const reactionNote = "Or react \u{1F44D} or \u{1F44E} to this message.";
 /** PR #289: a typed answer that cannot be matched to the question this chat was shown, while several wait. */
 export const severalWaitingInChat = "More than one request is waiting in this conversation. Answer them with their own buttons, or in the app.";
 /** PR #289: the question the chat was shown no longer waits, so a "y" cannot answer it. */
@@ -419,7 +435,7 @@ export class ChannelRouter {
     }
     if (!this.pump) { this.pump = setInterval(() => void this.flush(), this.pumpMs); this.pump.unref(); }
     void this.refreshCommandMenus(); // CHAT-161: the app's own command picker lists what this chat can send
-    if (!this.watchdog) { this.watchdog = setInterval(() => void this.checkStalled(), this.watchdogMs); this.watchdog.unref(); }
+    if (!this.watchdog) { this.watchdog = setInterval(() => void this.watchTick(), this.watchdogMs); this.watchdog.unref(); }
     if (this.intake().presence) void this.presence(adapter, presenceWords.online);
     await this.flush();
   }
@@ -452,6 +468,29 @@ export class ChannelRouter {
    * wait), and one still stalled after being started again, or that could not start, says so on its card. An app
    * that is reached with nothing new is never restarted.
    */
+  /**
+   * CHAT-134: one beat of the watchdog. A beat that comes far later than it should means this computer slept: every
+   * connection is then started again at once (a socket or long poll from before a sleep usually never says it died),
+   * rather than waiting for "stalled after" to pass. Otherwise the usual stall check.
+   */
+  async watchTick(now = Date.now()): Promise<void> {
+    const slept = this.lastBeat !== 0 && now - this.lastBeat > Math.max(60_000, this.watchdogMs * 4);
+    this.lastBeat = now;
+    if (slept && this.intake().watchdog) await this.wake();
+    else await this.checkStalled(now);
+  }
+  private lastBeat = 0;
+  /** After a sleep: every connected app that can start again does, each on its own so one failure stops no other. */
+  async wake(): Promise<void> {
+    await Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
+      if (!adapter.restart) return;
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      this.watch.set(id, state);
+      try { await adapter.restart(this.handlerFor()); state.lastRestartAt = Date.now(); state.problem = null; }
+      catch (error) { state.problem = `${adapter.kind} could not reconnect after this computer woke: ${error instanceof Error ? error.message : String(error)}`; }
+      if (this.adapters.get(id)?.adapter !== adapter) await adapter.stop().catch(() => undefined);
+    }));
+  }
   async checkStalled(now = Date.now()): Promise<void> {
     const intake = this.intake();
     for (const [id, { adapter }] of this.adapters) {
@@ -850,14 +889,19 @@ export class ChannelRouter {
     if (nonce) for (const button of buttons) button.value += `:${nonce}`;
     const text = mayApprove ? checked.text : `${checked.text}\n\n${approveInWindow(waiting.label || waiting.tool || "that")}`;
     const format = faithful && mayApprove ? { spans: [{ offset: asked.length, length: command!.length, kind: "block" as const, language: "shell" }] } : undefined;
+    // An app without buttons that reads reactions (src/channels/reaction-answers.ts) takes a thumbs up or down too.
+    const reacts = !adapter.sendButtons && !!adapter.watchAnswers && !!waiting.fingerprint;
+    const note = `${mayApprove ? approvalFallbackNote : "Reply n (or /deny) for no."}${reacts ? ` ${mayApprove ? reactionNote : "Or react \u{1F44E}."}` : ""}`;
+    let questionId: string | undefined;
     const sent = adapter.sendButtons
       ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId, format).then(() => true, () => false)
-      : await this.deliver(message.channel, message.chatId, `${text}\n\n${mayApprove ? approvalFallbackNote : "Reply n (or /deny) for no."}`,
-        key, message.messageId).then((done) => done.sent, () => false);
+      : await this.deliver(message.channel, message.chatId, `${text}\n\n${note}`, key, message.messageId)
+        .then((done) => { questionId = done.messageId; return done.sent; }, () => false);
     // Q259: a question answered elsewhere while it was being sent is not recorded as shown.
     const still = this.runtime.waitingApprovals(sessionId).some((one) => one.fingerprint === waiting.fingerprint && one.runId === waiting.runId);
     if (sent && still && waiting.fingerprint)
       this.shownInChat.set(`${message.channel}\u0000${message.chatId}`, { sessionId, fingerprint: waiting.fingerprint });
+    if (sent && still && reacts && questionId) adapter.watchAnswers!(message.chatId, questionId, message.senderId, waiting.fingerprint!);
     if (sent && still && faithful && waiting.fingerprint && nonce) {
       if (this.shownCommands.size >= 1000) this.shownCommands.delete(this.shownCommands.keys().next().value!);
       this.shownCommands.set(`${message.channel}\u0000${message.chatId}\u0000${waiting.fingerprint}`, nonce);
@@ -874,6 +918,9 @@ export class ChannelRouter {
     }
     if (saved) message = { ...message, text: saved.text };
     // ---- end of the bucket 12 hook ----
+    // A press on /model's menu is /model with that connection, by the same rules as typing it.
+    const picked = this.modelPicker.read(chatKey(message), this.sessionFor(message.channel, message.chatId), message.text);
+    if (picked) return this.pickModel(message, picked);
     const command = this.commandIn(message);
     if (command) return this.command(message, command);
     // A bare "y", "a" or "n" answers whatever this chat's conversation is waiting on, rather than
@@ -1007,6 +1054,7 @@ export class ChannelRouter {
   /** Carries out a chat command and sends its answer back. */
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
+    if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
@@ -1026,6 +1074,34 @@ export class ChannelRouter {
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
     return "replied";
+  }
+  /** `/model` menus sent to chats, so a press can be read back (src/channels/model-picker.ts). */
+  private readonly modelPicker = new ModelPicker();
+  /**
+   * CHAT-079: `/model` on its own, where the app's buttons carry a list: the connections as buttons, this chat's own
+   * marked. False when the chat has no conversation yet or the app has no such buttons; the list then goes as words.
+   */
+  private async offerModels(message: InboundMessage): Promise<boolean> {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const sessionId = this.sessionFor(message.channel, message.chatId);
+    if (!adapter?.sendButtons || !adapter.listButtons || !sessionId) return false;
+    const { active, choices } = listModels(this.runtime.models, this.runtime.owner, sessionId);
+    if (!choices.length) return false;
+    const now = choices.find((choice) => choice.id === active);
+    const checked = await this.outboundGuard(`Which model answers in this chat?${now ? ` Now: ${now.name}.` : ""} Pick one, or type /model and a name.`);
+    if (checked.blocked) return false;
+    const buttons = this.modelPicker.offer(chatKey(message), sessionId, choices, active);
+    return adapter.sendButtons(message.chatId, checked.text, buttons, message.messageId).then(() => true, () => false);
+  }
+  /** A press on a `/model` menu: typed `/model <that one>` in effect, if this person may still use `/model` here. */
+  private async pickModel(message: InboundMessage, picked: { preset: string } | { stale: true }): Promise<Outcome> {
+    const command = "stale" in picked ? null : this.commandIn({ ...message, text: `/model ${picked.preset}` });
+    if (!command) {
+      await this.deliver(message.channel, message.chatId, staleModelMenu, `model-stale:${message.channel}:${message.messageId}`, message.messageId)
+        .catch(() => undefined);
+      return "replied";
+    }
+    return this.command(message, command);
   }
   /** Keeps the chat in the list of chats, but pointed at no conversation. */
   private forgetSession(channel: string, chatId: string): void {
@@ -1207,6 +1283,8 @@ export class ChannelRouter {
         prompt: [heard.prompt, ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : {}), permissions: this.chatPermissions(message),
         // A chat cannot prove who is typing, so its task is never the owner's own (see RunSource).
         source: "channel",
+        // Which app it came in on, for the model's line saying where it runs (src/environment.ts).
+        channel: chatAppName(this.adapters.get(message.channel)?.adapter.kind ?? message.channel),
         onStarted: (started) => {
           // mac3/never-break: a task a chat started is left for the chat app to send again after a restart.
           this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
