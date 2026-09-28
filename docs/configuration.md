@@ -878,6 +878,33 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 `tokenEnv` names an environment variable instead of a secret. Each chat (direct or group) keeps its own conversation. A sender who is neither on the `allowlist` (Telegram user ids) nor approved receives a six-digit code; approve it in **Settings → Channels** or with `POST /api/channels/pairings/approve {code}`. With `pairing: false`, strangers are told the assistant is private. In groups, `activation: "mention"` answers only messages that mention the bot or reply to it; `"always"` answers everything. A channel task may only read and answer, and nothing else unless you say so (see **What a chat may do beyond talking** below). `GET /api/channels` lists connected channels, pending and approved people.
 
+### Group chats: when the assistant answers there
+
+In a group the assistant answers when it is **@mentioned**, **replied to**, or **called by name** as a whole word
+("Juniper, what's the time?"; "junipers" does not count, and a generic name such as "Bot" or "Assistant" never does).
+A direct chat is always answered. On each app:
+
+- **Telegram**: a mention, a reply to one of its messages, or its name. With BotFather's default privacy mode on, a
+  group hands a bot only mentions, replies and commands, so its name alone and "Every message" reach it only once
+  privacy mode is off (send `/setprivacy` to @BotFather, choose Disable, then remove the bot from the group and add it
+  again) or the bot is an admin of that group. Branch asks Telegram (`getMe` `can_read_all_group_messages`, then
+  `getChatMember`) and says so when "Every message" is chosen.
+- **Discord**: a mention, a reply, or its user or display name, in a server channel. Discord does not let bots into
+  group DMs.
+- **Slack**: a mention, its name, or a reply in a thread it started. Group messages (several people in one DM) are
+  groups too; the wizard's Slack app has `mpim:history` and `message.mpim`. Invite the bot to a channel first.
+- **Matrix**: a mention (in the text, a pill in `formatted_body`, or `m.mentions`), a reply to one of its messages, or
+  its name. A room with only you and it (the server's `m.joined_member_count` of 2) is a direct chat.
+- **Signal**: an @mention of its number, or a reply to one of its messages. Groups were never answered before.
+
+**Every message, per group.** Settings › Chat apps › **Group chats** lists each group the assistant has answered in,
+with **Only when mentioned** and **Every message** (`POST /api/channels/groups {"channel", "chatId", "activation":
+"mention" | "always" | null}`, where null follows the app's own `activation`). The owner can also type
+`/activation always` or `/activation mention` in the group from one of their own chat accounts (the exact list
+`/platform` and `/sethome` use), on Telegram, Discord, Slack or Matrix, whose servers vouch for who sent a message;
+from anybody else it is an ordinary group message. In a group answered at every message, a stranger who did not speak
+to the assistant is let be, rather than sent a pairing code at each message.
+
 ### What every channel shares
 
 `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.

@@ -27,6 +27,8 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
+import { activationFor, activationGate, groupActivations, setGroupActivation } from "./group-activation.js"; // group chats
+import type { GroupReading } from "./addressing.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -116,6 +118,11 @@ export interface ChannelAdapter {
    * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
    */
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /**
+   * Group chats: whether the app hands the bot every message in this group (Telegram's privacy mode, admin status), and
+   * what to change when it does not. Absent means the app does not say; "every message" is then the owner's to try.
+   */
+  groupReading?(chatId?: string): Promise<GroupReading>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -490,7 +497,35 @@ export class ChannelRouter {
       intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
+      groups: this.groups(owner), // group chats: when the assistant answers in each
     };
+  }
+  /**
+   * Group chats the assistant has answered in, and any with a choice of their own, each with when it answers there:
+   * its own choice, or the app's (`activation` in the connections file, "mention" unless set).
+   */
+  groups(owner: string): { channel: string; chatId: string; title: string; activation: "mention" | "always"; own: boolean }[] {
+    const own = groupActivations(this.store, owner);
+    const seen = this.store.list("settings", owner).flatMap((record) => {
+      const data = record.data as { channel?: unknown; chatId?: unknown; title?: unknown; kind?: unknown };
+      return record.id.startsWith("channel-session:") && data.kind === "group" && typeof data.channel === "string" && typeof data.chatId === "string"
+        ? [{ channel: data.channel, chatId: data.chatId, title: typeof data.title === "string" ? data.title : data.chatId }] : [];
+    });
+    const all = new Map<string, { channel: string; chatId: string; title: string }>();
+    for (const group of [...seen, ...own]) all.set(`${group.channel}\u0000${group.chatId}`, { channel: group.channel, chatId: group.chatId, title: group.title });
+    return [...all.values()].slice(0, 200).map((group) => {
+      const mine = own.find((one) => one.channel === group.channel && one.chatId === group.chatId);
+      const fallback = this.adapters.get(group.channel)?.policy.activation ?? "mention";
+      return { ...group, activation: mine?.activation ?? fallback, own: !!mine };
+    });
+  }
+  /** Settings › Chat apps: one group's choice, with what the app says about reading every message there. */
+  async setGroup(input: unknown): Promise<{ activation: "mention" | "always" | null; reading: GroupReading | null }> {
+    const activation = setGroupActivation(this.store, this.runtime.owner, input, "from the Branch app");
+    const { channel, chatId } = input as { channel: string; chatId: string };
+    const adapter = this.adapters.get(channel)?.adapter;
+    const reading = activation === "always" && adapter?.groupReading ? await adapter.groupReading(chatId).catch(() => null) : null;
+    return { activation, reading };
   }
   /** Changes the chat extras' switches (chat-live-settings.ts); the ones not named stay as they are. */
   setSwitches(input: unknown): ChatLiveSwitches {
@@ -538,7 +573,15 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
-    if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
+    // Group chats: `/activation` from the owner's own account is read even when the assistant was not mentioned.
+    const activated = await activationGate(this.store, this.runtime.owner, message, adapter);
+    if (activated) {
+      if (activated.reply) await adapter.send(message.chatId, activated.reply, message.messageId).catch(() => undefined);
+      return "ignored";
+    }
+    // Each group's own choice (Settings › Chat apps, or /activation), else the app's.
+    const activation = message.chatKind === "group" ? activationFor(this.store, this.runtime.owner, message, policy.activation) : policy.activation;
+    if (message.chatKind === "group" && activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
     const held = platformGate(this.store, this.runtime.owner, message);
     if (held) {
@@ -549,6 +592,8 @@ export class ChannelRouter {
     const access = this.access(message, policy);
     if (access !== "allowed") {
       if (message.caughtUp) return "ignored"; // mac6/bucket-16 integration
+      // In a group that is answered at every message, a stranger who did not speak to the assistant gets no pairing code.
+      if (message.chatKind === "group" && !message.addressed) return "ignored";
       const text = access === "pairing"
         ? `I don't know you yet. Ask my owner to approve code ${this.pairingCode(message)} under Settings → Channels, then message me again.`
         : "This assistant is private.";
@@ -1046,7 +1091,7 @@ export class ChannelRouter {
   private async finishTurn(turn: ChatTurnState, run: Run, quoted: string): Promise<Outcome> {
     const message = turn.messages[0]!, live = turn.live;
     this.store.save("settings", this.runtime.owner, `channel-session:${message.channel}:${message.chatId}`, { sessionId: run.sessionId, channel: message.channel, chatId: message.chatId,
-      title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt });
+      title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt, kind: message.chatKind });
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
     // A task that stopped to ask goes out as a question with buttons, not as words to read.

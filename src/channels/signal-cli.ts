@@ -29,7 +29,12 @@ const envelopeSchema = z.object({
   params: z.object({
     envelope: z.object({
       source: z.string().optional(), sourceName: z.string().optional(), timestamp: z.number().optional(),
-      dataMessage: z.object({ message: z.string().optional(), groupInfo: z.object({ groupId: z.string().optional() }).passthrough().optional() }).passthrough().optional(),
+      dataMessage: z.object({ message: z.string().optional(), groupInfo: z.object({ groupId: z.string().optional() }).passthrough().optional(),
+        /** Who a group message @mentions, by number or account id. */
+        mentions: z.array(z.object({ number: z.string().nullish(), uuid: z.string().nullish() }).passthrough()).optional(),
+        /** The message this one replies to, and who wrote it. */
+        quote: z.object({ author: z.string().nullish(), authorNumber: z.string().nullish() }).passthrough().optional(),
+      }).passthrough().optional(),
     }).passthrough().optional(),
   }).passthrough().optional(),
 }).passthrough();
@@ -78,11 +83,16 @@ export class SignalAdapter implements ChannelAdapter {
     const text = envelope?.dataMessage?.message;
     if (!envelope?.source || !text) return null;
     const group = envelope.dataMessage?.groupInfo?.groupId;
+    // In a group: an @mention of the assistant's number, or a reply to one of its messages (Signal groups were never answered).
+    const me = this.options.account;
+    const mentioned = (envelope.dataMessage?.mentions ?? []).some((mention) => mention.number === me);
+    const quote = envelope.dataMessage?.quote;
+    const repliedTo = !!quote && (quote.authorNumber === me || quote.author === me);
     return {
       channel: this.id, chatId: group ?? envelope.source, chatKind: group ? "group" : "direct",
       ...(group ? { chatTitle: `group ${group.slice(0, 12)}` } : {}),
       senderId: envelope.source, senderName: envelope.sourceName ?? envelope.source,
-      text, addressed: !group, messageId: String(envelope.timestamp ?? Date.now()),
+      text, addressed: !group || mentioned || repliedTo, messageId: String(envelope.timestamp ?? Date.now()),
     };
   }
   async send(chatId: string, text: string): Promise<string | undefined> {

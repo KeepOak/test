@@ -24,7 +24,7 @@ import { nativeFormat, pill17d, stateOf } from "../../flows/chatapps17d.js";
 import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, groups: [], reading: {} };
 const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
@@ -35,6 +35,7 @@ async function loadApps() {
   A.channels = live?.channels ?? [];
   A.intake = live?.intake ?? null;
   A.live = live?.live ?? null;
+  A.groups = live?.groups ?? [];
   A.apps = setup?.channels ?? [];
   await loadFormats();
   render();
@@ -50,10 +51,36 @@ export function draw() {
   let html = `<h1>${esc(t("dashboard.links.chats"))}</h1><p class="lede">${esc(t("window.p17d.chat-apps-lede"))}</p>
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
+  html += groupsSection();
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>`;
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
   return html;
+}
+
+/* Group chats: when the assistant answers in each group it has talked in (GET /api/channels `groups`), saved with
+   POST /api/channels/groups. "Every message" only reaches it where the app hands the bot every message; when the app
+   says it does not (Telegram's privacy mode), its own words say what to change, under the group. */
+const groupKey = (g) => `${g.channel}\u0000${g.chatId}`;
+function groupRow(g) {
+  const choice = (value, words) => `<button type="button" aria-pressed="${g.activation === value}" data-act="ca-group" data-ch="${esc(g.channel)}" data-id="${esc(g.chatId)}" data-v="${value}">${esc(words)}</button>`;
+  const fix = A.reading[groupKey(g)];
+  return `<div class="ctl"><b>${esc(g.title)} <small>${esc(nameOf(g.channel))}</small></b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.group-when", { title: g.title }))}">${choice("mention", t("window.p17d.group-mention"))}${choice("always", t("window.p17d.group-always"))}</span></span>${fix ? `<small role="alert">${esc(fix)}</small>` : ""}</div>`;
+}
+function groupsSection() {
+  if (A.channels === null) return "";
+  const rows = A.groups.map(groupRow).join("");
+  return sec15(t("window.p17d.groups"), `<p class="hint">${esc(t("window.p17d.groups-hint"))}</p>${rows || `<p class="empty">${esc(t("window.p17d.groups-none"))}</p>`}`);
+}
+async function saveGroup(el) {
+  const group = A.groups.find((g) => g.channel === el.dataset.ch && g.chatId === el.dataset.id);
+  try {
+    const answer = await api("channels/groups", { channel: el.dataset.ch, chatId: el.dataset.id, activation: el.dataset.v, ...(group ? { title: group.title } : {}) });
+    const key = `${el.dataset.ch}\u0000${el.dataset.id}`;
+    if (answer.reading?.everyMessage === false && answer.reading.fix) A.reading[key] = answer.reading.fix;
+    else delete A.reading[key];
+  } catch (error) { toast(error.message); }
+  await loadApps();
 }
 
 /* Each switch: the field it saves. */
@@ -103,7 +130,8 @@ async function saveSteps(on) {
 
 export function init() {
   initFormatting();
-  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-group", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  on("ca-group", (el) => saveGroup(el));
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {

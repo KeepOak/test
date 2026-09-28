@@ -1,3 +1,4 @@
+import { calledByName, type GroupReading } from "./addressing.js";
 import { z } from "zod";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
@@ -31,6 +32,8 @@ const eventSchema = z.object({
   type: z.string(), channel: z.string().optional(), user: z.string().optional(), text: z.string().optional(),
   ts: z.string().optional(), thread_ts: z.string().optional(), channel_type: z.string().optional(),
   subtype: z.string().optional(), bot_id: z.string().optional(),
+  /** On a reply in a thread: who started the thread, so a reply in a thread the bot started counts as speaking to it. */
+  parent_user_id: z.string().optional(),
 }).passthrough();
 const envelopeSchema = z.object({
   type: z.string(), envelope_id: z.string().optional(),
@@ -145,16 +148,25 @@ export class SlackAdapter implements ChannelAdapter {
     if (this.options.channels?.length && !this.options.channels.includes(event.channel)) return null;
     const direct = event.channel_type === "im";
     const mentioned = event.type === "app_mention" || (!!this.user && event.text.includes(`<@${this.user.id}>`));
+    const inItsThread = !!this.user && !!event.thread_ts && event.parent_user_id === this.user.id;
+    const named = !direct && calledByName(event.text, [this.user?.name]);
     const text = this.user ? event.text.replace(new RegExp(`<@${this.user.id}>`, "g"), "").trim() : event.text;
     return {
       channel: this.id, chatId: event.channel, chatKind: direct ? "direct" : "group",
-      ...(direct ? {} : { chatTitle: `channel ${event.channel}` }),
+      ...(direct ? {} : { chatTitle: event.channel_type === "mpim" ? `group message ${event.channel}` : `channel ${event.channel}` }),
       senderId: event.user, senderName: event.user, text: text || event.text,
-      addressed: direct || mentioned,
+      addressed: direct || mentioned || inItsThread || named,
       // Replying to this id keeps the answer in the thread the question was asked in.
       messageId: event.thread_ts ?? event.ts ?? "",
       ...(event.thread_ts && event.ts ? { reactTo: event.ts } : {}),
     };
+  }
+  /**
+   * Slack hands the bot every message in a channel or group message it has been added to, through the message.channels,
+   * message.groups and message.mpim events in the app's settings. Whether an older app has all three cannot be asked.
+   */
+  async groupReading(): Promise<GroupReading> {
+    return { everyMessage: null, fix: "Slack hands the bot every message only in channels and group messages it has been added to (/invite the bot there), and only when the app subscribes to the message.channels, message.groups and message.mpim events; an app made from the wizard's settings does." };
   }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {

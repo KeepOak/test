@@ -1,3 +1,4 @@
+import { calledByName, type GroupReading } from "./addressing.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat } from "./router.js";
@@ -33,13 +34,19 @@ export interface MatrixOptions {
 }
 const eventSchema = z.object({
   type: z.string(), event_id: z.string().optional(), sender: z.string().optional(),
-  content: z.object({ msgtype: z.string().optional(), body: z.string().optional() }).passthrough().optional(),
+  content: z.object({ msgtype: z.string().optional(), body: z.string().optional(), formatted_body: z.string().optional(),
+    /** Intentional mentions (Matrix 1.7): the users a message is for. */
+    "m.mentions": z.object({ user_ids: z.array(z.string()).optional() }).passthrough().optional(),
+    "m.relates_to": z.object({ "m.in_reply_to": z.object({ event_id: z.string().optional() }).passthrough().optional() }).passthrough().optional(),
+  }).passthrough().optional(),
 }).passthrough();
 const syncSchema = z.object({
   next_batch: z.string(),
   rooms: z.object({
     join: z.record(z.string(), z.object({
       timeline: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
+      /** How many have joined, when the server says: two is a direct chat with the assistant. */
+      summary: z.object({ "m.joined_member_count": z.number().optional() }).passthrough().optional(),
     }).passthrough()).default({}),
   }).passthrough().optional(),
 }).passthrough();
@@ -119,13 +126,16 @@ export class MatrixAdapter implements ChannelAdapter {
     const first = this.since === undefined;
     this.since = body.next_batch;
     const messages: InboundMessage[] = [];
-    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
+    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {})) {
+      const joined = room.summary?.["m.joined_member_count"];
+      if (joined !== undefined) this.members.set(roomId, joined);
       for (const event of room.timeline?.events ?? []) {
         if (event.type === "m.room.encrypted") { this.encryptedSeen++; continue; }
         const inbound = this.inbound(roomId, event);
         // The first answer carries whatever was already there; answering it would reply to history.
         if (inbound && !first) messages.push(inbound);
       }
+    }
     return messages;
   }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
@@ -135,13 +145,24 @@ export class MatrixAdapter implements ChannelAdapter {
     const chatId = handle(roomId, "room");
     if (chatId !== roomId) this.rooms.set(chatId, roomId);
     const name = this.options.userId.split(":")[0]!.replace(/^@/, "");
+    // A room of two (the person and the assistant) is a direct chat; the server says how many have joined.
+    const direct = (this.members.get(roomId) ?? 3) <= 2;
+    const content = event.content ?? {};
+    const mentioned = text.includes(this.options.userId) || (content.formatted_body ?? "").includes(this.options.userId)
+      || (content["m.mentions"]?.user_ids ?? []).includes(this.options.userId);
+    const replyTo = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
+    const repliedTo = !!replyTo && [...this.sent.values()].includes(replyTo);
     return {
-      channel: this.id, chatId, chatKind: "group", chatTitle: roomId,
+      channel: this.id, chatId, chatKind: direct ? "direct" : "group", ...(direct ? {} : { chatTitle: roomId }),
       senderId: handle(sender, "who"), senderName: sender, text,
-      addressed: text.includes(this.options.userId) || text.includes(name),
+      addressed: direct || mentioned || repliedTo || calledByName(text, [name]),
       messageId: handle(event.event_id ?? randomUUID(), "msg"),
     };
   }
+  /** How many have joined each room, from the server's room summary. */
+  private readonly members = new Map<string, number>();
+  /** An unencrypted room hands the assistant every message in it. */
+  async groupReading(): Promise<GroupReading> { return { everyMessage: true }; }
   /** The events this adapter sent, by the short handle it gave them, so a message it sent can be edited (the newest 200). */
   private readonly sent = new Map<string, string>();
   /** "typing…" in the room for a few seconds. */

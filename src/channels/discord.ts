@@ -1,3 +1,4 @@
+import { calledByName, type GroupReading } from "./addressing.js";
 import { z } from "zod";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
@@ -24,7 +25,7 @@ export interface DiscordOptions {
 }
 /** GUILDS, GUILD_MESSAGES, DIRECT_MESSAGES and MESSAGE_CONTENT: what reading a message needs. */
 const intents = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
-const userSchema = z.object({ id: z.string(), username: z.string().optional(), bot: z.boolean().optional() }).passthrough();
+const userSchema = z.object({ id: z.string(), username: z.string().optional(), global_name: z.string().nullish(), bot: z.boolean().optional() }).passthrough();
 const createSchema = z.object({
   id: z.string(), channel_id: z.string(), guild_id: z.string().optional(), content: z.string().default(""),
   author: userSchema, mentions: z.array(userSchema).default([]),
@@ -50,7 +51,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private socket: WebSocketConnection | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private state: ChannelHealth = { state: "reconnecting", reason: "Connecting to Discord" };
-  private user: { id: string; name: string } | null = null;
+  private user: { id: string; name: string; shown?: string } | null = null;
   private session: { id: string; url: string } | null = null;
   private sequence: number | null = null;
   private stopping = false;
@@ -64,6 +65,10 @@ export class DiscordAdapter implements ChannelAdapter {
     this.connect = options.connect ?? connectWebSocket;
   }
   botName(): string | null { return this.user?.name ?? null; }
+  /** A connected bot has Message Content Intent (Discord refuses the connection without it), so it reads every message. */
+  async groupReading(): Promise<GroupReading> {
+    return this.state.state === "connected" ? { everyMessage: true } : { everyMessage: null };
+  }
   health(): ChannelHealth { return this.state; }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     this.loop = this.run(onMessage);
@@ -137,7 +142,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private beat(): void { this.socket?.send(JSON.stringify({ op: 1, d: this.sequence })); }
   private ready(data: unknown): void {
     const parsed = readySchema.parse(data);
-    this.user = { id: parsed.user.id, name: parsed.user.username ?? parsed.user.id };
+    this.user = { id: parsed.user.id, name: parsed.user.username ?? parsed.user.id, ...(parsed.user.global_name ? { shown: parsed.user.global_name } : {}) };
     this.session = { id: parsed.session_id, url: parsed.resume_gateway_url ?? this.options.gatewayUrl ?? "" };
     if (!this.session.url) this.session = null;
     this.state = { state: "connected" };
@@ -149,11 +154,13 @@ export class DiscordAdapter implements ChannelAdapter {
     const mentioned = message.mentions.some((mention) => mention.id === this.user?.id);
     const repliedTo = message.referenced_message?.author?.id === this.user?.id;
     const text = this.user ? message.content.replace(new RegExp(`<@!?${this.user.id}>`, "g"), "").trim() : message.content;
+    // Called by name in a server channel ("Branch, …"); Discord hands the content over with Message Content Intent on.
+    const named = !direct && calledByName(message.content, [this.user?.name, this.user?.shown]);
     return {
       channel: this.id, chatId: message.channel_id, chatKind: direct ? "direct" : "group",
       ...(message.guild_id ? { chatTitle: `channel ${message.channel_id}` } : {}),
       senderId: message.author.id, senderName: message.author.username ?? message.author.id,
-      text: text || message.content, addressed: direct || mentioned || repliedTo, messageId: message.id,
+      text: text || message.content, addressed: direct || mentioned || repliedTo || named, messageId: message.id,
       ...(spoken ? { voice: {
         mediaType: spoken.content_type ?? "audio/ogg",
         seconds: spoken.duration_secs,
