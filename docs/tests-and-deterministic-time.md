@@ -2,7 +2,7 @@
 
 ## One CI workflow
 
-Every pull request runs one workflow, `Checks`, and one required check, `Checks / verify-suite`.
+Every pull request runs one workflow, `Checks`, and exactly one required check, `Checks / verify-suite`.
 `scripts/run-tests.mjs --lane=<system>` runs each test file once, on the system that can run it: Linux runs every
 file but the desktop app's; Windows runs the desktop app's, the Windows helpers, the uninstall and console files and
 every file with a Windows-only test; macOS every file with a macOS-only test. Each lane is split into shares by
