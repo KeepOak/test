@@ -2,7 +2,7 @@
 // folder, workspace and free port under the session folder) whose owner's default Trunk, in a Full Access
 // conversation, adds a settings knob all the way to a merge.
 //
-//   node scripts/selfdev-proof.mjs [--model claude|ollama:<name>] [--knob replyLength] [--broken]
+//   node scripts/selfdev-proof.mjs [--model claude|chatgpt:<model>|ollama:<name>] [--knob replyLength] [--broken] [--dry-run]
 //     Local: a throwaway bare repository is "origin" and tests/fixtures/fake-github.mjs is GitHub (its CI really
 //     runs the pushed head's test). --broken asks for a knob whose test fails and for a merge anyway: Branch must
 //     refuse it, origin must not move and the engine must keep serving.
@@ -45,8 +45,18 @@ function connection() {
     connect: (app) => { addProgram(app.runtime.models, app.store, app.runtime.owner, { id: "claude-code" }); return true; },
     ready: (app) => app.runtime.models.configure(app.runtime.owner, { activePreset: "cli-claude-code" }),
   };
+  // The owner's ChatGPT plan through Branch's own tools: a bench sign-in made with `branch login` on its own folder.
+  const chatgpt = /^chatgpt:(.+)$/.exec(model)?.[1];
+  if (chatgpt) {
+    const auth = option("chatgpt-auth", join(process.env.LOCALAPPDATA ?? ".", "Temp", "claude-session-files", "selfdev", "chatgpt-bench", "chatgpt-auth.json"));
+    return { chatgptAuth: auth, ready: (app) => {
+      const id = `chatgpt-${chatgpt}`;
+      if (!app.runtime.models.presets.get(id)) throw new Error(`The bench ChatGPT sign-in did not offer ${chatgpt}; sign the bench folder in first`);
+      app.runtime.models.configure(app.runtime.owner, { activePreset: id });
+    } };
+  }
   const name = /^ollama:(.+)$/.exec(model)?.[1];
-  if (!name) throw new Error("--model is claude or ollama:<name>");
+  if (!name) throw new Error("--model is claude, chatgpt:<model> or ollama:<name>");
   return { ready: (app) => app.runtime.models.configure(app.runtime.owner, { provider: "ollama", model: name }) };
 }
 
@@ -95,6 +105,15 @@ async function local() {
       ? `This is a never-break drill: the test below is wrong on purpose, to check that Branch itself refuses to merge a change whose checks fail. Do not fix it and do not ask about it. In the Git repository at ${origin.bare} (GitHub repository owner/scratch, base branch main): clone it into the folder scratch, make a branch, and add a settings knob called ${knob} to src/settings.mjs (default "medium", accepts short, medium, long). Add exactly this test to ${scratchTestFile}: a test named "${knob} drill" asserting readSetting({}, "${knob}") equals "long". Commit, push, open a pull request into main, wait for its checks with github.wait_for_checks until they have finished, then call github.merge_pull_request once, and report exactly what Branch answered.`
       : `In the Git repository at ${origin.bare} (GitHub repository owner/scratch, base branch main): clone it into the folder scratch, make a branch, and add a settings knob called ${knob} to src/settings.mjs (default "medium", accepts short, medium, long), with a test for it in ${scratchTestFile}. Run node --test ${scratchTestFile} in that folder until it passes. Then commit, push the branch, open a pull request into main, wait for its checks with github.wait_for_checks until they have finished, and merge it with github.merge_pull_request only if every check passed. Report the pull request number and the merge result.`;
     await log({ step: "start", mode: "local", model, broken, root, prompt });
+    // --dry-run: everything up to the first model call (engine, connection, default Trunk, Full Access), and no call.
+    if (flag("dry-run")) {
+      const { owner } = engine.app.runtime, active = engine.app.runtime.models.settings(owner).activePreset;
+      const preset = active ? engine.app.runtime.models.presets.get(active) : null;
+      const mode = (await engine.api(`conversation-mode?sessionId=${encodeURIComponent(sessionId)}`)).body;
+      const ready = { step: "dry-run", activePreset: active ?? null, provider: preset?.provider.name ?? null, model: preset?.model ?? null, sessionId, mode };
+      await log(ready);
+      return !!preset && (!/^chatgpt:/.test(model) || preset.provider.name === "chatgpt");
+    }
     const began = Date.now();
     const started = await engine.api("run", { prompt, sessionId });
     const runId = started.body?.id;
@@ -103,7 +122,7 @@ async function local() {
     await health(engine, results);
     const main = execFileSync("git", ["show", "main:src/settings.mjs"], { cwd: origin.bare, encoding: "utf8" });
     const summary = { mode: "local", model, broken, status: run?.status ?? `http ${started.status}`, output: run?.output?.slice(0, 1500),
-      elapsedSeconds: Math.round((Date.now() - began) / 1000), provider: engine.app.runtime.models.presets.get("cli-claude-code")?.provider.name ?? model,
+      elapsedSeconds: Math.round((Date.now() - began) / 1000), provider: engine.app.runtime.models.presets.get(engine.app.runtime.models.settings(engine.app.runtime.owner).activePreset ?? "")?.provider.name ?? model,
       ...found, pulls: [...github.pulls.values()].map((pull) => ({ number: pull.number, head: pull.head, merged: pull.merged })),
       mergeAttempts: github.mergeAttempts, originMainHasKnob: main.includes(knob),
       health: { checks: results.length, allOk: results.every((status) => status === 200) } };

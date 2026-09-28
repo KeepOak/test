@@ -5,13 +5,14 @@
  * real GitHub for scripts/selfdev-proof.mjs --github).
  */
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { request } from "node:http";
 import { promisify } from "node:util";
 import { createBranch } from "../../dist/index.js";
 import { startServer } from "../../dist/server.js";
 import { loadIntegrations } from "../../dist/integrations/bootstrap.js";
+import { ChatGPTAuth, FileTokenVault } from "../../dist/chatgpt-auth.js";
 
 const run = promisify(execFile);
 const git = async (cwd, ...args) => (await run("git", args, { cwd, windowsHide: true })).stdout.trim();
@@ -110,9 +111,14 @@ export async function startEngine(root, options) {
   };
   const file = join(root, "integrations.json");
   await writeFile(file, JSON.stringify(integrations, null, 2));
+  // `chatgptAuth`: a bench ChatGPT sign-in (Branch's own chatgpt-auth.json from `branch login` on a bench folder, never
+  // another program's) is copied in, and copied back on close, so its refreshed tokens stay one chain.
+  const chatgptFile = join(dataDir, "chatgpt-auth.json");
+  if (options.chatgptAuth) { await mkdir(dataDir, { recursive: true }); await copyFile(options.chatgptAuth, chatgptFile); }
+  const chatgpt = () => options.chatgptAuth ? { chatgpt: new ChatGPTAuth(new FileTokenVault(chatgptFile), { userAgent: "BranchAgent" }) } : {};
   // `connect(app)` saves a model connection and asks for a restart, as the owner's app does when one is added.
-  let app = await createBranch({ workspace, dataDir, ...(options.provider ? { provider: options.provider } : {}) });
-  if (options.connect && await options.connect(app)) { await app.close(); app = await createBranch({ workspace, dataDir }); }
+  let app = await createBranch({ workspace, dataDir, ...chatgpt(), ...(options.provider ? { provider: options.provider } : {}) });
+  if (options.connect && await options.connect(app)) { await app.close(); app = await createBranch({ workspace, dataDir, ...chatgpt() }); }
   let loaded;
   try {
     await options.ready?.(app);
@@ -134,5 +140,8 @@ export async function startEngine(root, options) {
     return { status: answer.status, body: parsed };
   };
   return { app, server, api, workspace, dataDir,
-    close: async () => { await server.close().catch(() => undefined); await loaded.close().catch(() => undefined); await app.close(); } };
+    close: async () => {
+      await server.close().catch(() => undefined); await loaded.close().catch(() => undefined); await app.close();
+      if (options.chatgptAuth) await copyFile(chatgptFile, options.chatgptAuth).catch(() => undefined);
+    } };
 }
