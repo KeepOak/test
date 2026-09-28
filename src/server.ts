@@ -31,6 +31,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
 import { PackageInstallSchema } from "./skill-packages.js";
@@ -65,7 +66,7 @@ import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watc
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
 import { replayRun } from "./replay.js";
-import { meteringFolder, meteringSettings, saveMeteringSettings, writeMeteringFile } from "./metering.js";
+import { MeteringExportSchema, meteringFolder, meteringSettings, saveMeteringSettings, writeMeteringFile } from "./metering.js";
 import { TryToolSchema, toolForms, tryToolByHand } from "./playground.js";
 import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { exportTemplate, importTemplate } from "./templates.js";
@@ -143,6 +144,7 @@ import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
+import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -219,7 +221,9 @@ import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-co
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
-import { builtInImagePrices, imagePricedAt, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { conversationBootstrapIds } from "./conversation-bootstrap.js";
+import { builtInImagePrices, imagePricedAt, knownPictureModels, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { providerImages } from "./media-images.js";
 // Bucket 17.
 import { bucket17Api, handlesBucket17, readMediaBody } from "./media-understand-api.js";
 import { troubleshootApi } from "./troubleshoot.js"; // w911 (A0374) hook.
@@ -286,7 +290,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -902,7 +906,8 @@ function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
-  const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
+  const bootstrap = conversationBootstrapIds(app.store.sqlite, scope);
+  const runs = app.store.runs(scope).filter((run) => !bootstrap.has(run.id)), aside = asideRuns(app, scope, runs);
   const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
@@ -1011,6 +1016,10 @@ async function api(
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
   }
+  if (handlesSourceMergePath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
+  }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))
     return workspaceEditorApi({
@@ -1113,7 +1122,8 @@ async function api(
   // --- mac7/connect: the Set up panel for each chat app (src/channel-setup/) ---
   if (handlesChannelSetupPath(path))
     return channelSetupApi({ store: app.store, owner: app.runtime.owner, fetch: app.web.policy.guard(globalThis.fetch),
-      telegram: app.neverBreak.telegram, requireOwner: (what) => app.store.profiles.requireOwner(what) },
+      telegram: app.neverBreak.telegram, live: app.channelSetup, thisComputer: !throughADoor(request),
+      requireOwner: (what) => app.store.profiles.requireOwner(what) },
     request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof SetupRefusal ? new HttpError(error.status, error.message) : error;
     });
@@ -1303,7 +1313,13 @@ async function api(
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
     // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
     const away = app.store.putAwayConversations(scope, { limit: 1 });
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })),
+    // defaulttrunk: which Trunk each is a thread with (its own chat, a room side, a thread), so the list shows it under that
+    // Trunk with its face. The owner's Trunks only: a household person's list names none.
+    const personal = app.store.profiles.isOwner() ? null : app.trunks.personDefault();
+    const trunkOf = (sessionId: string) => app.store.profiles.isOwner()
+      ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null
+      : personal?.threads.get(sessionId)?.trunkId ?? null;
+    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
       archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
@@ -1429,7 +1445,9 @@ async function api(
   if (request.method === "GET" && path === "/api/onboarding") return onboardingState(app);
   if (request.method === "POST" && path === "/api/onboarding") {
     if (!app.store.profiles.isOwner()) throw new HttpError(403, "Setting up Branch belongs to the owner. Switch back to the owner's profile to use it.");
-    saveOnboarding(app.store, app.runtime.owner, await readBody(request));
+    const saved = saveOnboarding(app.store, app.runtime.owner, await readBody(request));
+    // defaulttrunk: setup finished or skipped with no Trunk made: the engine makes the default Trunk, quietly.
+    if (saved.done || saved.skipped) app.trunks.ensureDefault();
     return onboardingState(app);
   }
   // Wave mac3 (terminal): the theme `branch theme` and Settings › Appearance share (src/terminal-theme.ts).
@@ -1458,7 +1476,8 @@ async function api(
     return voiceApi(voiceDeps(app), request.method ?? "GET", path, () => readBody(request));
   // Pictures and sounds (wave 5): what the media tools should use, and everything they have made.
   if (request.method === "GET" && path === "/api/media/settings")
-    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt };
+    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt,
+      pictures: picturesNow(app), pictureModels: knownPictureModels };
   if (request.method === "POST" && path === "/api/media/settings")
     return { settings: saveMediaSettings(app.store, app.runtime.owner, await readBody(request)) };
   // w911 (A1753) hook: plain-language page test scenarios, drafted, accepted and run as suites.
@@ -1662,6 +1681,13 @@ async function api(
     return secondOpinionSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/second-opinion")
     return saveSecondOpinionSettings(app.store, app.runtime.owner, await readBody(request));
+  // models-ui (MODEL-051): each specialist's own model and account when a call names none (src/helper-defaults.ts).
+  if (request.method === "GET" && path === "/api/helper-defaults")
+    return helperDefaultsView(app.store, app.runtime.owner, app.runtime.models);
+  if (request.method === "POST" && path === "/api/helper-defaults") {
+    saveHelperDefault(app.store, app.runtime.owner, app.runtime.models, await readBody(request));
+    return helperDefaultsView(app.store, app.runtime.owner, app.runtime.models);
+  }
   if (request.method === "GET" && path === "/api/orchestration")
     return orchestrationSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/orchestration")
@@ -1955,9 +1981,12 @@ async function api(
       throw new HttpError(403, "Only the owner, at the app, picks the model a new conversation answers with.");
     // Wave 6: a task started while somebody's profile is switched on is filed under their name.
     let userMessageId: number | undefined;
+    // defaulttrunk: a new conversation that names nobody is a thread with the default Trunk (a temporary one stays nobody's).
+    const home = !input.sessionId && !input.temporary ? app.trunks.homeForNew() : null;
     const run = await runForCurrentPerson(app, {
       prompt: input.prompt,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(home ? { trunkId: home } : {}),
       ...(input.temporary ? { temporary: true } : {}),
       ...(input.checks ? { checks: CompletionCheckSchema.parse(input.checks) } : {}),
       ...(input.dryRun ? { dryRun: true } : {}),
@@ -2117,7 +2146,8 @@ async function api(
     }
   }
   if (request.method === "POST" && path === "/api/usage/metering/now") {
-    const written = await writeMeteringFile(meteringDeps(app));
+    const { range } = MeteringExportSchema.parse(await readBody(request, 1024).catch(() => ({})) ?? {});
+    const written = await writeMeteringFile(meteringDeps(app), new Date(), range);
     return { ...written, metering: meteringSettings(app.store, app.runtime.owner) };
   }
   if (request.method === "GET" && path === "/api/usage/budget") {
@@ -3154,6 +3184,15 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
   }
   return { amount: runs.length ? amount : null, currency: "USD" };
 }
+/**
+ * models-ui: the connection that makes pictures now (src/media.ts preset: the owner's plan for "media") and the kind of
+ * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
+ */
+function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
+  const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  const where = preset ? providerImages(preset.provider) : null;
+  return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
+}
 function runCost(app: Branch, runId: string) {
   const usage = app.store.usage(runId);
   const named = app.store.events(runId).filter((e) => e.kind.startsWith("model.") && e.data.model !== undefined);
@@ -3947,6 +3986,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
         return;
       }
+      // "Take over" and "Hand back" for this computer's screen: the owner at this computer's own window, and nobody else.
+      if (request.method === "POST" && (path === screenTakeOverPath || path === screenHandBackPath)) {
+        z.object({}).strict().parse(await readBody(request));
+        try {
+          send(response, 200, screenControl({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("POST", path) }, app.desktop ?? null, path));
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
@@ -4505,6 +4553,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
     void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
+    // CHAT-147: every other chat app set up in the window; each problem goes to the diagnostics.
+    void app.channelSetup.connectSaved().catch((error: unknown) => console.error(`Chat apps did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
     await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);

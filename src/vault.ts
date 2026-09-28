@@ -53,6 +53,8 @@ export class SecretScrubber {
     this.seen.set(value, name);
   }
   get size(): number { return this.seen.size; }
+  /** The values themselves, for a guard that looks for them where they must not go (src/egress-guard.ts). */
+  values(): string[] { return [...this.seen.keys()]; }
   text(input: string): string {
     let result = input;
     for (const [value, name] of this.seen) result = scrubSecrets(result, { [name]: value });

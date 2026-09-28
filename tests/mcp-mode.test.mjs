@@ -18,6 +18,8 @@ async function fixture(t) {
     // The fake servers these tests talk to run on this computer's own loopback address.
     web: { allowPrivateAddresses: true },
   });
+  // The MCP door offers nothing while sharing is off, so these tests share (no tools) first.
+  app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: [], a2a: false });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => {
     await server.close();

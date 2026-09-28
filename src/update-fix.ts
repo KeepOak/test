@@ -42,6 +42,8 @@ function ensureKeeper(app: Pick<DiagnosticContext["app"], "store" | "runtime" | 
     app.store.save("settings", app.runtime.owner, updateKeeperKey, { trunkId: assigned });
     return { trunkId: assigned, made: false };
   }
+  // defaulttrunk: the keeper is never the default Trunk; with none yet, the default is made first (quietly).
+  app.trunks.ensureDefault(true);
   const made = app.trunks.create({ name: keeperName, title: "Keeps Branch's updates working", description: "Looks at an update that did not go through and says how to fix it." });
   app.trunks.edit(made.id, { instructions: keeperInstructions, sharedFacts: false });
   app.store.save("settings", app.runtime.owner, updateKeeperKey, { trunkId: made.id });
