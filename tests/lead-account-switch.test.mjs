@@ -13,6 +13,7 @@ import { createBranch } from "../dist/index.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsSettings, saveAccountsSettings } from "../dist/accounts/settings.js";
+import { saveUsageGlanceSettings } from "../dist/usage-glance.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const pool = "cli-claude-code", second = "aaaaaaaa";
@@ -113,9 +114,15 @@ test("a running task is asked for a handoff once, and only when every account is
   await app.scheduler.tick();
   assert.equal(app.store.events(task.id).filter((e) => e.kind === "usage.handoff_asked").length, 0, "one account still has room: it moves there, no handoff");
   used(second, 98.5);
+  // The owner's switch for asking tasks to save their progress rules the handoff too.
+  saveUsageGlanceSettings(app.store, app.runtime.owner, { saveProgress: "off" });
+  await app.scheduler.tick();
+  assert.equal(app.store.events(task.id).filter((e) => e.kind === "usage.handoff_asked").length, 0, "switched off, never asked");
+  saveUsageGlanceSettings(app.store, app.runtime.owner, { saveProgress: "ask" });
   await app.scheduler.tick();
   await app.scheduler.tick();
   assert.equal(app.store.events(task.id).filter((e) => e.kind === "usage.handoff_asked").length, 1, "asked once");
+  assert.equal(app.store.events(task.id).find((e) => e.kind === "run.steered")?.data.from, "Branch (every account is near its plan limit)", "said as Branch's own note");
   const usage = await app.registry.execute("accounts.usage", {}, app.runtime.context({ runId: task.id }));
   assert.equal(usage.everyAccountNear, true);
   assert.deepEqual(usage.accounts.map((one) => one.percentUsed), [99, 99]);

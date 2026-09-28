@@ -5,7 +5,7 @@ import type { Runtime } from "./runtime.js";
 import { accountsServiceFor } from "./accounts/service.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
-import { shareLeft } from "./usage-glance.js";
+import { shareLeft, usageGlanceSettings } from "./usage-glance.js";
 import { limitsNow } from "./usage-limits-api.js";
 import type { LimitRow } from "./usage-limits.js";
 
@@ -84,6 +84,8 @@ const topLevel = (runtime: Runtime, runId: string): boolean =>
  * it could use is near its limit. Called on the scheduler's tick; reads only what Branch already holds.
  */
 export function askForHandoffs(runtime: Runtime, now = Date.now()): void {
+  // The owner's one switch for asking running tasks to save their progress (Settings, the usage ring) rules this too.
+  if (usageGlanceSettings(runtime.store, runtime.owner).saveProgress === "off") return;
   for (const run of runtime.store.activeRuns(runtime.owner)) {
     if (run.status !== "running" || !topLevel(runtime, run.id)) continue;
     let usage: ConnectionUsage | null;
@@ -94,7 +96,7 @@ export function askForHandoffs(runtime: Runtime, now = Date.now()): void {
     if (asked?.window === window) continue;
     runtime.store.save("settings", runtime.owner, `handoff-asked:${run.sessionId}`, { window, at: new Date(now).toISOString() });
     runtime.store.event(run.id, "usage.handoff_asked", { connection: usage.connection, accounts: usage.accounts.length, resetAt: usage.resetAt });
-    try { runtime.steer(run.id, handoffNote(usage)); } catch { /* it finished meanwhile */ }
+    try { runtime.steer(run.id, handoffNote(usage), "Branch (every account is near its plan limit)"); } catch { /* it finished meanwhile */ }
   }
 }
 
