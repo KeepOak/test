@@ -12,6 +12,7 @@
 
 import { E, S } from "./state.js";
 import { render, afterDraw } from "./dom.js";
+import { hold17, play17 } from "./held.js";
 
 export const DOZE_MS = 2 * 60 * 1000;
 export const STILL_MS = 10 * 60 * 1000;
@@ -74,10 +75,10 @@ export function sleeps(v) {
 function sweep() {
   for (const v of document.querySelectorAll("video")) {
     if (!v.autoplay || !v.loop) continue;
-    if (sleeps(v)) { if (!v.paused) { v.pause(); v.dataset.rest18 = "1"; } }
+    if (sleeps(v)) { if (!v.paused) { hold17(v); v.dataset.rest18 = "1"; } }
     else if (v.dataset.rest18) {
       delete v.dataset.rest18;
-      if (!document.hidden && !v.dataset.off13 && !v.closest(".zz11")) v.play().catch((error) => console.warn(error.message));
+      if (!document.hidden && !v.dataset.off13 && !v.closest(".zz11")) play17(v).catch((error) => console.warn(error.message));
     }
   }
 }

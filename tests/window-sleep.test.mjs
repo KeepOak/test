@@ -89,7 +89,7 @@ async function fixture(t, { delayRefresh = false } = {}) {
     for (const event of ["focus", "pointermove", "pointerdown", "keydown"]) addEventListener(event, () => record(event));
     afterDraw(() => record("draw"));
     window.sleepTestDiagnostic = () => ({ now: snapshot("failure"), trace,
-      videos: [...document.querySelectorAll("video")].map((video) => ({ source: video.getAttribute("src"), paused: video.paused,
+      videos: [...document.querySelectorAll("video")].map((video) => ({ source: video.getAttribute("src") ?? video.dataset.held17, held: !!video.dataset.held17, paused: video.paused,
         key: video.closest("[data-rk]")?.dataset.rk, classes: video.closest("[data-rk]")?.className })) });
   });
   const work = () => { app.runtime.run({ prompt: "keep working", sessionId: trunks.Busy.chatSessionId }).catch(() => {}); };
@@ -97,7 +97,8 @@ async function fixture(t, { delayRefresh = false } = {}) {
 }
 
 const face = (page, trunk) => page.locator(`#side [data-rk="t:${trunk.id}"]`).first();
-const loopOf = (page, trunk) => face(page, trunk).evaluate((el) => el.querySelector("video")?.getAttribute("src") ?? el.querySelector("img")?.getAttribute("src") ?? "");
+/* A face held still has let its file go (core/held.js): data-held17 names the loop it shows. */
+const loopOf = (page, trunk) => face(page, trunk).evaluate((el) => { const v = el.querySelector("video"); return v?.getAttribute("src") ?? v?.dataset.held17 ?? el.querySelector("img")?.getAttribute("src") ?? ""; });
 const playing = (page) => page.evaluate(() => [...document.querySelectorAll("video")].filter((v) => !v.paused).length);
 async function waitFor(page, predicate, arg) {
   try { await page.waitForFunction(predicate, arg); }
@@ -115,7 +116,7 @@ const open = (page, trunk) => page.evaluate(async (id) => {
 /* Waits (no fixed sleep) until a face's loop matches, and, with still, until that loop is paused. */
 const settled = (page, trunk, pattern, still = false) => waitFor(page, ([id, source, still]) => {
   const el = document.querySelector(`#side [data-rk="t:${id}"]`), v = el?.querySelector("video");
-  const src = v?.getAttribute("src") ?? el?.querySelector("img")?.getAttribute("src") ?? "";
+  const src = v?.getAttribute("src") ?? v?.dataset.held17 ?? el?.querySelector("img")?.getAttribute("src") ?? "";
   return new RegExp(source).test(src) && (!still || !!v?.paused);
 }, [trunk.id, pattern.source, still]);
 /* The owner at the window: a pointer move now and then. */
@@ -136,6 +137,10 @@ test("left alone, every face, the pet and the scene fall asleep; after ten minut
   await waitFor(page, () => document.documentElement.classList.contains("still18")
     && [...document.querySelectorAll("video")].every((v) => v.paused) && !document.getAnimations().some((a) => a.playState === "running"));
   assert.equal(await playing(page), 0, "no loop plays after the long sleep");
+  // Held still, a loop gives back its decoder: none has a frame loaded, and those that had played keep their loop's name.
+  const decoders = await page.evaluate(() => [...document.querySelectorAll("video")].map((v) => ({ ready: v.readyState, held: !!v.dataset.held17 })));
+  assert.deepEqual(decoders.filter((v) => v.ready !== 0), [], "no held loop keeps a decoder");
+  assert.ok(decoders.some((v) => v.held), "the loops that played were held, not only paused");
   assert.equal(await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length), 0, "no CSS animation runs");
   assert.deepEqual(errors, []);
 });
