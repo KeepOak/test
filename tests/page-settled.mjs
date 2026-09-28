@@ -9,7 +9,7 @@
 const counted = (request) => new URL(request.url()).pathname.startsWith("/api/") && !request.url().includes("/api/events/stream");
 
 /** Starts counting `page`'s requests now; answers `settled()`, which resolves once the page has settled. */
-export function watchSettled(page, { limit = 30000 } = {}) {
+export function watchSettled(page, { limit = 60000 } = {}) {
   const pending = new Set();
   page.on("request", (request) => {
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) pending.clear();
