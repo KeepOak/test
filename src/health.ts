@@ -1,3 +1,4 @@
+import { presetRunsLocally } from "./models.js";
 import { randomBytes } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -71,9 +72,9 @@ function checkAttention(app: Branch): HealthItem {
 }
 
 /** Ollama and LM Studio on this computer: whether they run, what they hold, what last went wrong. */
-async function checkLocalRuntimes(): Promise<HealthItem> {
+async function checkLocalRuntimes(app: Branch): Promise<HealthItem> {
   try {
-    const report = await localRuntimes().health();
+    const report = await localRuntimes().health([...app.runtime.models.presets.values()].some(presetRunsLocally));
     return item("Models on this computer", report.ok, report.summary, report.fix);
   } catch (error) {
     return item("Models on this computer", true, `Could not ask: ${failure(error)}`);
@@ -83,7 +84,7 @@ async function checkLocalRuntimes(): Promise<HealthItem> {
 export async function healthReport(app: Branch, options: { probeProvider?: boolean } = {}): Promise<HealthReport> {
   const items = (await Promise.all([
     checkDatabase(app), checkWorkspace(app), checkDeviceKey(app), checkModels(app, options.probeProvider ?? false), checkChatGPT(app),
-    checkLocalRuntimes(),
+    checkLocalRuntimes(app),
   ])).filter((i): i is HealthItem => i !== null);
   items.push(checkChannels(app), checkSchedules(app), checkAttention(app));
   return { ok: items.every((i) => i.ok), checkedAt: new Date().toISOString(), items };
