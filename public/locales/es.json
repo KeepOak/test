@@ -10056,5 +10056,16 @@
   "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
-  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
+  "window.home.label": "Preguntar a {name} junto a esta página",
+  "window.home.close": "Cerrar el panel",
+  "window.home.full": "Abrir a página completa",
+  "window.home.empty": "Pregunta a {name} por lo que hay en esta página, o cualquier otra cosa.",
+  "window.home.needs-you": "Esperando tu respuesta.",
+  "window.home.snap.title": "Trabajando en",
+  "window.home.snap.see": "Ver lo que se envía",
+  "window.home.snap.remove": "No incluirlo",
+  "window.home.snap.sent": "Se envía delante de tu mensaje",
+  "window.home.snap.page": "Trabajando en: {page}",
+  "window.home.snap.picked": "Seleccionado: «{words}»"
 }
