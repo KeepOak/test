@@ -32,8 +32,8 @@ async function fixture(t) {
   ]);
   const provider = { name: "scripted", async complete(request) {
     systems.push(request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n"));
-    const said = [...request.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const last = request.messages.filter((m) => m.role !== "system").at(-1);
+    const said = [...request.messages].reverse().find((m) => m.role === "user" && !String(m.content).startsWith("<system-reminder>"))?.content ?? "";
+    const last = request.messages.filter((m) => m.role !== "system" && !String(m.content).startsWith("<system-reminder>")).at(-1);
     if (last?.role === "tool") results.push(last.content);
     const steps = [...script.entries()].find(([key]) => said.includes(key))?.[1];
     const lastAsked = request.messages.map((m) => m.role).lastIndexOf("user");
