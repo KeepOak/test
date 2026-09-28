@@ -596,7 +596,14 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .set-level{margin-top:14px;padding:12px 10px 4px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--ink-2)}
 label.opt{cursor:pointer}
 label.opt input{grid-row:span 2;accent-color:var(--ink);margin:0}
-select.inp{height:32px;padding:0 8px}
+.gsel{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 8px 0 10px;max-width:100%;text-align:left;cursor:pointer;color:var(--ink)}
+.gsel .gsel-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gsel svg.i{flex:none;width:14px;height:14px;color:var(--ink-3)}
+.gsel[aria-expanded="true"]{border-color:var(--accent)}
+.pop.gsel-pop{z-index:80}
+.gsel-pop .gsel-q{position:sticky;top:-6px;margin:-6px -6px 4px;padding:6px;background:var(--raise);z-index:1}
+.gsel-pop .gsel-q .inp{width:100%}
+.gsel-pop .mi[aria-disabled="true"]{opacity:.45;cursor:default}
 
 /* ---------- pass 4: owner critiques ---------- */
 .body{grid-template-columns:var(--side-w,292px) minmax(0,1fr)}
@@ -3639,7 +3646,7 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .yp-em{width:34px;height:34px;border-radius:10px;font-size:18px;display:grid;place-items:center}
 .yp-em[aria-pressed="true"]{background:var(--fill-2);outline:2px solid var(--accent)}
 .yp .sec{margin-top:14px}
-.yp select.inp{max-width:270px}
+.yp .gsel{max-width:270px}
 .ob-name-yp{margin:4px 0 12px}
 
 /* area: setup-resume */
@@ -4023,10 +4030,10 @@ p.ic-t,div.ic-t{display:flex}
 .off-sw{margin:8px 0}
 .off-sw p{margin:0}
 .off-sw .acts{display:flex;gap:8px;align-items:center}
-/* A Trunk's "Which model": the window's ordinary select on a solid surface, never over the row's own words, stacked on a narrow window. */
+/* A Trunk's "Which model": the window's own dropdown on a solid surface, never over the row's own words, stacked on a narrow window. */
 .ctl.tm-model18{grid-template-columns:minmax(0,1fr) minmax(0,260px)}
 .ctl.tm-model18 .right{min-width:0}
-.ctl.tm-model18 select.inp{width:100%;min-width:0;background:var(--raise);color:var(--ink)}
+.ctl.tm-model18 .gsel{width:100%;min-width:0;background:var(--raise);color:var(--ink)}
 .ctl.tm-model18 .tm-why{grid-column:1 / -1;margin:6px 0 0}
 @media (max-width:560px){.ctl.tm-model18{grid-template-columns:minmax(0,1fr)}.ctl.tm-model18 .right{grid-row:auto;grid-column:1}}
 /* The model menu's reason line, and a connection a Trunk cannot use. */

@@ -18,9 +18,10 @@ import { openDlg, closeDlg, closePop, toast, COLOURS, hex } from "../core/ui.js"
 import { E, activeId, ownerHere } from "../core/state.js";
 import { face, profilePath, knowPicture } from "../core/faces.js";
 import { pickButton, picked } from "./photo-pick.js";
-import { chooseLanguage, canSpeak, languageOptions } from "../shell/language.js";
+import { chooseLanguage, canSpeak, languageChoices } from "../shell/language.js";
 import { applockRow, initApplock, load as loadLock } from "../settings/applock17.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const EMOJI = ["🙂", "😎", "🦊", "🐻", "🐼", "🦉", "🐙", "🌻", "🌳", "🍀", "⭐", "🔥", "🎧", "🎨", "🚀", "☕"];
 const P = { who: null, about: null };
@@ -44,14 +45,14 @@ function pictureRows(a) {
 
 function zoneRow(a) {
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const zones = (Intl.supportedValuesOf?.("timeZone") ?? []).map((z) => `<option value="${esc(z)}"${a.timezone === z ? " selected" : ""}>${esc(z.replaceAll("_", " "))}</option>`).join("");
-  const select = `<select class="inp" id="yp-tz" aria-label="${t("window.profile.timezone")}"><option value=""${a.timezone ? "" : " selected"}>${esc(t("window.profile.timezone-computer", { zone: here }))}</option>${zones}</select>`;
+  const zones = (Intl.supportedValuesOf?.("timeZone") ?? []).map((z) => [z, z.replaceAll("_", " ")]);
+  const select = gsel({ id: "yp-tz", label: t("window.profile.timezone"), options: [["", t("window.profile.timezone-computer", { zone: here })], ...zones], value: a.timezone ?? "" });
   return `<div class="ctl"><b>${t("window.profile.timezone")}</b><span class="right">${select}</span><small>${t("window.profile.timezone-hint")}</small></div>`;
 }
 
 /* The owner's own: language, time zone, App lock, the PIN for switching back, and connected accounts. */
 function ownerRows(a) {
-  const lang = `<div class="ctl"><b>${t("appearance.language")}</b><span class="right"><select class="inp" id="yp-lang" aria-label="${t("appearance.language")}">${languageOptions()}</select></span></div>`;
+  const lang = `<div class="ctl"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "yp-lang", label: t("appearance.language"), options: languageChoices(), value: language() })}</span></div>`;
   const back = `<div class="ctl"><b>${t("window.places.team.ask-for-my-pin-when-switching")}</b><span class="right"><button class="btn sm" type="button" data-act="yp-go" data-to="p-open-team" data-v="signin">${t("ov.open")}</button></span><small>${E.profiles?.ownerPin ? t("household.pin.isSet") : t("window.places.team.off-by-default")}</small></div>`;
   const accounts = `<div class="ctl"><b>${t("window.profile.accounts")}</b><span class="right"><button class="btn sm" type="button" data-act="yp-go" data-to="setgo" data-v="accounts">${t("ov.open")}</button></span><small>${t("window.profile.accounts-hint")}</small></div>`;
   return `<div class="sec"><h2>${t("window.profile.region")}</h2>${lang}${zoneRow(a)}</div><div class="sec"><h2>${t("window.profile.security")}</h2>${applockRow()}${back}</div><div class="sec">${accounts}</div>`;
