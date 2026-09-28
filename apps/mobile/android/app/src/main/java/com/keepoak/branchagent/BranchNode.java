@@ -50,8 +50,8 @@ import org.json.JSONTokener;
  * says so plainly rather than making a key of some other kind.
  */
 final class BranchNode {
-    /** What this phone could do for Branch, before the owner's refusals (apps/mobile/web/phone-node.js). */
-    static final List<String> OFFERS = Arrays.asList("camera", "location", "open-url", "speak", "listen", "canvas");
+    /** What this phone does for Branch when lent, before the owner's refusals (PH-03: BranchLend, phone-node.js APP_OFFERS). */
+    static final List<String> OFFERS = BranchLend.OFFERS;
     /** What this phone can promise never to do (apps/mobile/web/rules.js DEVICE_REFUSALS). */
     static final List<String> REFUSALS = Arrays.asList("camera", "screen", "listen", "run");
     private static final String KEY_ALIAS = "branch-node";
@@ -218,6 +218,28 @@ final class BranchNode {
         signature.initSign(privateKey(record));
         signature.update(text.getBytes(StandardCharsets.UTF_8));
         return Base64.encodeToString(signature.sign(), Base64.NO_WRAP);
+    }
+
+    /**
+     * PH-03: the hello's signature on the device socket, over exactly {@link BranchLend#helloText} for this phone's own
+     * id and the challenge's nonce. No other text is signed through here, so nothing can collect a session with it.
+     */
+    String helloSignature(String nonce) throws Exception {
+        JSONObject record = load();
+        if (record == null || !record.has("nodeId")) throw new IllegalStateException("This phone is not lent.");
+        String text = BranchLend.helloText(record.getString("nodeId"), nonce);
+        if (text == null) throw new SecurityException("refused");
+        return sign(record, text);
+    }
+
+    /** PH-03: the Branch this phone is lent to and its id there, the address checked again by the address rule; or null. */
+    String[] lendTarget() {
+        JSONObject record = load();
+        if (record == null) return null;
+        String hub = record.optString("hub", ""), id = record.optString("nodeId", "");
+        String checked = BranchRules.checkOrigin(hub);
+        if (checked == null || !checked.equals(hub) || !id.matches("^[a-f0-9]{16}$")) return null;
+        return new String[] {checked, id};
     }
 
     /** mac7/residuals: this phone's public key, made and kept now when it has none, so the page can show the check code. */
