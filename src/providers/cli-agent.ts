@@ -102,6 +102,23 @@ export const cliAgentCatalog: CliAgentRow[] = [
     } },
 ];
 
+/**
+ * QA 2026-09-28: Branch never leans on the owner's own Codex settings (~/.codex/config.toml, which it never edits). The
+ * owner's said `model = "gpt-6-sol"`, which Codex refuses with a ChatGPT sign-in ("not supported when using Codex with a
+ * ChatGPT account"), so every task through Codex failed. Each call now names its model (`-c model=...`): the one the
+ * Codex connection has in Branch, one of the models Codex takes with a ChatGPT sign-in. These are the ones checked to
+ * answer that way (chatgpt-provider.ts, 2026-09-17); GPT-6 Sol was refused on 2026-09-28 and the rest of the GPT-6
+ * family is unproven, so they are left out until checked.
+ */
+export const codexModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5"] as const;
+export const codexDefaultModel: string = codexModels[0];
+const supportedWords = (): string => codexModels.join(", ");
+/** Codex's arguments with the chosen model named, right after `exec` (Codex reads `-c key=value` as a one-call setting). */
+export function codexArgs(args: readonly string[], model: string): string[] {
+  const at = args.indexOf("exec");
+  return at < 0 ? [...args] : [...args.slice(0, at + 1), "-c", `model=${model}`, ...args.slice(at + 1)];
+}
+
 /** Only what a program needs to find itself and its own sign-in; nothing else of the owner's. */
 const passedThrough = ["PATH", "PATHEXT", "SYSTEMROOT", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOME", "TEMP", "TMP"];
 export function strippedEnvironment(): NodeJS.ProcessEnv {
@@ -195,12 +212,14 @@ function failedResult(row: CliAgentRow, stdout: string): string | null {
 }
 
 /** Fixed explanations: arbitrary stderr may contain credentials or private file contents. */
-function programFailure(row: CliAgentRow, code: number, evidence: string): string {
+function programFailure(row: CliAgentRow, code: number, evidence: string, model: string | null = null): string {
   if (/not inside a trusted directory|untrusted (?:directory|folder)|directory.*not trusted/i.test(evidence))
     return `${row.name} refused the current folder because it is not trusted. Open that folder in ${row.command} and approve it there, then try again. Branch keeps the program's trust checks enabled.`;
   // QA retest 2026-09-28: Codex set (in its own settings) to a model its ChatGPT sign-in cannot use says so in its failed turn.
   if (/\bmodel\b[^\n]{0,80}\b(?:is not supported|not supported|is not available|does not exist)|model_not_found|unsupported model/i.test(evidence))
-    return `${row.name} is set to use a model this sign-in cannot use. Choose another model in ${row.command}'s own settings, then retry the task.`;
+    return model && row.id === "codex"
+      ? `${row.name} cannot use ${model} with this sign-in. Choose one it supports (${supportedWords()}) for the Codex connection in Branch, then retry the task.`
+      : `${row.name} is set to use a model this sign-in cannot use. Choose another model in ${row.command}'s own settings, then retry the task.`;
   if (/\b401\b|unauthori[sz]ed|authentication (?:required|failed)|not (?:logged|signed) in|(?:oauth|access|refresh) token.*(?:expired|invalid)|invalid.*(?:oauth|access|refresh) token/i.test(evidence))
     return `${row.name} could not use its saved sign-in. Open Settings → Accounts and sign in again to ${row.name}, then retry the task.`;
   if (limitWords.test(evidence))
@@ -329,6 +348,8 @@ export class CliAgentProvider implements Provider {
   detectLimits = false;
   /** Handed everything the program printed, so the plan windows it reported can be kept (src/plan-windows.ts). */
   onOutput: ((stdout: string) => void) | null = null;
+  /** QA 2026-09-28: the model Branch chose for Codex, named on every call so the owner's own settings never decide it. */
+  model?: string;
   constructor(
     private readonly row: CliAgentRow,
     limits: CliAgentLimits = {},
@@ -341,7 +362,7 @@ export class CliAgentProvider implements Provider {
   }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
-    const row = this.rowFor(request);
+    const row = this.withModel(this.rowFor(request));
     // Live steps: Claude Code's stream-json and Codex's exec --json say its thinking and each tool as it goes; the window
     // shows them live. A lean call (no tools of its own) also streams its words as they are written.
     const streams = row.args.includes("--include-partial-messages");
@@ -366,7 +387,7 @@ export class CliAgentProvider implements Provider {
     if ((outcome.code !== 0 || failed !== null) && (this.home || this.detectLimits) && limitWords.test(evidence))
       throw new ProgramLimitError(`${this.row.name} says this account has reached its plan limit.`);
     if (outcome.code !== 0 || failed !== null)
-      throw new Error(programFailure(this.row, outcome.code, evidence));
+      throw new Error(programFailure(this.row, outcome.code, evidence, this.row.id === "codex" ? this.codexModel() : null));
     const content = answerFrom(this.row, outcome.stdout);
     if (!content) throw new Error(`${this.row.name} answered with nothing at all.`);
     if (!streamed) request.onTextDelta?.(content); // streamed words were the preview already; the answer is `content`
@@ -382,6 +403,16 @@ export class CliAgentProvider implements Provider {
     // With no tools the owner's hooks, MCP servers and skills have nothing to do, so they are not loaded (leanClaudeArgs).
     const lean = this.row.args.includes("stream-json") ? leanClaudeArgs : [];
     return { ...this.row, args: [...this.row.args, ...lean, "--tools", ""] };
+  }
+  /** Codex's chosen model, refused in plain words before the program starts when Codex cannot use it with a ChatGPT sign-in. */
+  private codexModel(): string {
+    const model = this.model ?? codexDefaultModel;
+    if (!(codexModels as readonly string[]).includes(model))
+      throw new Error(`${this.row.name} cannot use ${model} with a ChatGPT sign-in. Choose one it supports: ${supportedWords()}.`);
+    return model;
+  }
+  private withModel(row: CliAgentRow): CliAgentRow {
+    return row.id === "codex" ? { ...row, args: codexArgs(row.args, this.codexModel()) } : row;
   }
   /** It publishes no list of models of its own: the tool decides what it is using. */
   modelsList(): null { return null; }
@@ -554,6 +585,9 @@ export function registerCliAgent(
 ): { id: string; name: string; note: string; terms: CliAgentRow["terms"] } {
   const row = rowFor(input);
   const id = `cli-${row.id}`;
-  models.register({ id, name: row.name, provider: new CliAgentProvider(row, limits, spawnAgent), model: row.command });
+  const provider = new CliAgentProvider(row, limits, spawnAgent);
+  // QA 2026-09-28: Codex answers with Branch's choice, never whatever the owner's own Codex settings name.
+  if (row.id === "codex") provider.model = codexDefaultModel;
+  models.register({ id, name: row.name, provider, model: provider.model ?? row.command });
   return { id, name: row.name, note: row.note, terms: row.terms };
 }
