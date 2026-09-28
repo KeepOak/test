@@ -29,6 +29,8 @@ export async function startFakeGitHub(options) {
   const checks = new Map(); // sha -> { runs: [], workflows: [] }
   const mergeAttempts = [];
   const requests = [];
+  const outputs = new Map(); // sha -> what its test run printed, for the job log
+  const reruns = [];
   let nextId = 1000;
   let closed = false;
   const timers = new Set();
@@ -63,6 +65,7 @@ export async function startFakeGitHub(options) {
       const promote = { id: nextId++, name: "promote", head_sha: sha, status: "completed", conclusion: "skipped", app: { id: 15368 } };
       state.runs.push(test, promote);
       const passed = await runTests(sha);
+      test.log = outputs.get(sha) ?? "";
       Object.assign(test, { status: "completed", conclusion: passed ? "success" : "failure" });
       state.runs.push({ id: nextId++, name: "verify-suite", head_sha: sha, status: "completed", conclusion: passed ? "success" : "failure", app: { id: 15368 } });
       Object.assign(slowFlow, { status: "completed", conclusion: passed ? "success" : "failure" });
@@ -78,9 +81,10 @@ export async function startFakeGitHub(options) {
       await git(work, "checkout", "--quiet", sha);
       // Not as a child of a running test: node --test inside one reports to the parent and exits 0 whatever happened.
       const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "NODE_TEST_CONTEXT"));
-      await run(process.execPath, ["--test", options.testFile], { cwd: work, env, windowsHide: true, timeout: 120_000 });
+      const done = await run(process.execPath, ["--test", options.testFile], { cwd: work, env, windowsHide: true, timeout: 120_000 });
+      outputs.set(sha, `${done.stdout}${done.stderr}`);
       return true;
-    } catch { return false; }
+    } catch (error) { outputs.set(sha, `${error?.stdout ?? ""}${error?.stderr ?? ""}\nError: Process completed with exit code 1.`); return false; }
     finally { await rm(dir, { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined); }
   }
 
@@ -165,6 +169,19 @@ export async function startFakeGitHub(options) {
       const rows = checks.get(sha)?.workflows ?? [];
       return [200, { total_count: rows.length, workflow_runs: rows }];
     }
+    // A job's log: GitHub answers with a short-lived address on its own storage, reached without the token.
+    if (method === "GET" && (match = /^\/actions\/jobs\/(\d+)\/logs$/.exec(rest))) {
+      const found = [...checks.values()].flatMap((state) => state.runs).find((row) => row.id === Number(match[1]));
+      return found ? [302, { location: `/storage/logs/${found.id}` }] : [404, { message: "Not Found" }];
+    }
+    if (method === "POST" && (match = /^\/actions\/runs\/(\d+)\/rerun-failed-jobs$/.exec(rest))) {
+      const sha = [...checks.entries()].find(([, state]) => state.workflows.some((row) => row.id === Number(match[1])))?.[0];
+      if (!sha) return [404, { message: "Not Found" }];
+      reruns.push({ sha, run: Number(match[1]) });
+      checks.delete(sha);
+      startCi(sha);
+      return [201, {}];
+    }
     if ((match = /^\/rules\/branches\/(.+)$/.exec(rest))) return [200, []];
     if ((match = /^\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})$/.exec(rest))) {
       const [, base, head] = match;
@@ -188,10 +205,20 @@ export async function startFakeGitHub(options) {
       const url = new URL(request.url ?? "/", "http://fake");
       requests.push({ method: request.method, path: url.pathname });
       let status = 500, payload = { message: "fake GitHub failed" };
+      const stored = /^\/storage\/logs\/(\d+)$/.exec(url.pathname);
+      if (stored) {
+        // The storage address carries its own short-lived permission; the token must never be sent there.
+        const found = [...checks.values()].flatMap((state) => state.runs).find((row) => row.id === Number(stored[1]));
+        const sentToken = !!request.headers.authorization;
+        response.writeHead(found && !sentToken ? 200 : 403, { "content-type": "text/plain" });
+        response.end(found && !sentToken ? String(found.log ?? "").split("\n").map((line) => `2026-09-28T10:00:00.0000000Z ${line}`).join("\n") : "denied");
+        return;
+      }
       try {
         if (request.headers.authorization !== `Bearer ${options.token}`) [status, payload] = [401, { message: "Bad credentials" }];
         else [status, payload] = await route(request.method ?? "GET", url, text ? JSON.parse(text) : undefined);
       } catch (error) { payload = { message: error instanceof Error ? error.message : String(error) }; }
+      if (status === 302) { response.writeHead(302, { location: payload.location }); response.end(); return; }
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(payload));
     });
@@ -200,7 +227,7 @@ export async function startFakeGitHub(options) {
   const address = server.address();
   return {
     apiBase: `http://127.0.0.1:${address.port}/`,
-    pulls, mergeAttempts, requests,
+    pulls, mergeAttempts, requests, reruns,
     ciPending, ciGreen,
     close: async () => {
       closed = true;

@@ -1019,6 +1019,7 @@ export const ROUTES = {
   "/api/retrieval/search": "task POST",
   "/api/rules": "look",
   "/api/rules/add": "owner POST",
+  "/api/self-rules": "owner POST", // selfdev: Settings › Branch itself (src/self-rules.ts)
   "/api/rules/allowed": "look",
   "/api/rules/allowed/revoke": "owner POST",
   "/api/rules/remove": "owner POST",

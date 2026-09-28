@@ -116,7 +116,7 @@ function projectInstructions(name: string, base: string): string {
     `When the owner asks for a pull request, use github.pull_request_from_changes with name ${name}, targetRepository ${branchRepository}, and base ${base}.`,
     "The pull-request summary must include a Why merge this section in plain words, and the test evidence: each command run and its pass and fail counts.",
     "Open it as a draft, and never send to a shared line or change a repository's settings or branch protection.",
-    "To finish it, wait with github.wait_for_checks until every check on the exact commit has passed (pending is never passed), then call branch.finish_source_change with this worktree, the repository and the pull request number: in the owner's selected Full Access it gets an independent read-only review and merges the checked commit; otherwise the owner reviews and merges it in Inbox. Include branch.finish_source_change in the contract's permissions for that. Beta builds a merged change and tries it on a copy of the owner's data before it swaps in.",
+    "To finish it, wait with github.wait_for_checks until every check on the exact commit has passed (pending is never passed; when one fails, read why with github.check_logs, fix it and push again, or run a flaky one again with github.rerun_failed_checks), then call branch.finish_source_change with this worktree, the repository and the pull request number: in the owner's selected Full Access it gets an independent read-only review and merges the checked commit; otherwise the owner reviews and merges it in Inbox. Include branch.finish_source_change in the contract's permissions for that. Beta builds a merged change and tries it on a copy of the owner's data before it swaps in.",
   ].join(" ");
 }
 
@@ -220,7 +220,8 @@ const contractDescription = "contract: the terms this change is held to, written
  * context a tool call carries: a helper a chat's task set going carries its own context, but its record leads back
  * to the chat (src/key-context.ts, `runOrigin`).
  */
-function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: ToolContext) => boolean): void {
+export function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: ToolContext) => boolean,
+  doing = "prepare Branch Agent source changes"): void {
   const origin = context.runId ? runOrigin(store, context.runId) : null;
   // A household person's task records source "owner" too, so it is told apart by whose it is (NAS c7bbf84), and
   // the window must be on the owner's profile, as `ownerWorkOnly` and `Runtime.ownersOwnTask` ask.
@@ -230,7 +231,7 @@ function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: T
   if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk
     || (context.trunkKeys && defaultTurn?.(context) !== true)
     || (origin && (origin.source !== "owner" || origin.shortLivedKey || origin.keyIds.length > 0 || origin.personProfileId || origin.lentTo)))
-    throw new Error("Only the owner in the Branch app can prepare Branch Agent source changes.");
+    throw new Error(`Only the owner in the Branch app can ${doing}.`);
   if (lockdownActive(store, context.owner)) throw new Error(selfDevelopmentLockdownRefusal);
 }
 

@@ -156,7 +156,7 @@ import { clientToolsPath, serveClientToolSocket } from "./interop/client-tools.j
 import { LOOK_LANGUAGES, lookApi } from "./terminal-theme.js";
 // Wave mac3: the owner's control dashboard, a page of its own at /dashboard.
 import {
-  DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile,
+  DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile, registerRestartTool,
 } from "./dashboard-api.js";
 // Wave mac3 (commands): the one slash-command table's routes.
 import { CommandApiError, commandsApi, handlesCommandsPath } from "./commands/api.js";
@@ -259,6 +259,7 @@ import { socketPath as deviceSocketPath } from "./devices/protocol.js";
 import { deploymentApi, shipAutostart, type DeploymentContext } from "./deployment-api.js";
 import { shipKeepRunningOn } from "./keep-running.js"; // the ship-on rule: keeping Branch running
 import { quitRequest } from "./install/quit.js"; // bucket 22
+import { changeSelfRule, SelfRuleRefusal, selfRulesPath, selfRulesView } from "./self-rules.js";
 import { clearRunning, writeRunning } from "./install/running.js";
 import { readFirstStart, recordFirstStart } from "./install/update-backup.js";
 import { readDesktopSettings, saveDesktopSettings } from "./integrations/desktop-config.js";
@@ -1925,6 +1926,17 @@ async function api(
     if (refusal) throw new HttpError(409, refusal);
     return { policy: recordedWrite(app.store, app.runtime.owner, { writer: "owner-in-window", source: "card", detail: "policy" }, ["policy"],
       () => savePolicy(app.store, app.runtime.owner, input)) };
+  }
+  // Settings › Branch itself: what Branch may do about itself, as approval rules (src/self-rules.ts); owner only.
+  if (path === selfRulesPath && (request.method === "GET" || request.method === "POST")) {
+    app.store.profiles.requireOwner("What Branch may do about itself");
+    const names = app.registry.names();
+    if (request.method === "GET") return selfRulesView(app.store, app.runtime.owner, names);
+    if (startedWithShortLivedKey()) throw new HttpError(401, "A short-lived key cannot change what Branch may do about itself. Do that in the app window.");
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    try { return changeSelfRule(app.store, app.runtime.owner, input, confirmLoosening, app.registry, names); } catch (error) {
+      throw error instanceof SelfRuleRefusal ? new HttpError(409, error.message) : error;
+    }
   }
   if (request.method === "POST" && path === "/api/policy/approve") {
     const input = z.object({ sessionId: z.string().uuid(), decision: z.enum(["allow", "deny"]),
@@ -3709,6 +3721,11 @@ export { offLimitsToHousehold, offLimitsToShortLivedKeys };
 import { offLimitsToShortLivedKeys } from "./caller-policy.js";
 /** Tests only: see `policyProbe` below. */
 export const policyProbeHeader = "x-branch-policy-probe";
+/** selfdev: an engine the desktop app runs in a process of its own, whose engine host starts it again when it stops. */
+function hostedEngine(options: { presence?: "app" | "daemon" | undefined; presencePid?: number | undefined }): boolean {
+  return options.presence === "app" && options.presencePid !== undefined && options.presencePid !== process.pid && typeof process.send === "function";
+}
+
 export async function startServer(
   app: Branch,
   options: {
@@ -4059,7 +4076,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // The key was already checked and its use counted above; this only reads what it may do.
         const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
         const answer = await dashboardApi(app, request, path, {
-          dataDir: options.dataDir, access, readBody: () => readBody(request),
+          dataDir: options.dataDir, access, readBody: () => readBody(request), deps: { hosted: hostedEngine(options) },
         }).catch((error: unknown) => {
           throw error instanceof DashboardApiError ? new HttpError(error.status, error.message) : error;
         });
@@ -4610,6 +4627,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
+    registerRestartTool(app, options.dataDir, { hosted: hostedEngine(options) }); // selfdev: only a real start can be started again by what watches it
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
     void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
