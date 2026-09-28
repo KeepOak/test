@@ -20,43 +20,20 @@ export function reserveControls() {
   apply();
 }
 
-/* Their glyphs follow the look: the colour the row really is under them (every theme, light or dark, chosen or
-   following the computer, over the painted scene behind the glass) is measured there and told to the desktop app
-   (branchDesktop.windowLook, src/desktop/window-chrome-ipc.ts), which draws the glyphs to read on it (WCAG AA) and
-   shades a hovered button against it. Measured by laying each background under that point, outermost first, on one
-   pixel; told only when it changed, and again after every change to the look. */
-const pixel = Object.assign(document.createElement("canvas"), { width: 1, height: 1 });
-function groundAt(x, y) {
-  const layers = [];
-  for (let el = document.elementFromPoint(x, y); el; el = el.parentElement) layers.unshift(getComputedStyle(el).backgroundColor);
-  if (!layers.length) return null;
-  const paint = pixel.getContext("2d", { willReadFrequently: true });
-  paint.globalCompositeOperation = "source-over";
-  paint.fillStyle = "#ffffff";
-  paint.fillRect(0, 0, 1, 1);
-  for (const colour of layers) {
-    paint.fillStyle = "transparent";
-    paint.fillStyle = colour;
-    paint.fillRect(0, 0, 1, 1);
-  }
-  const [r, g, b] = paint.getImageData(0, 0, 1, 1).data;
-  return `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
-}
-
-const G = { queued: false, told: null, failed: "" };
+/* The title row can be transparent over a painted scene, so CSS background colours cannot tell us the actual pixel.
+   Ask the authenticated desktop window to sample one pixel just outside the native buttons. Only its own main process
+   sees the pixel; the page receives success, never image bytes. */
+const G = { queued: false, failed: "" };
 async function tell() {
   G.queued = false;
   const overlay = navigator.windowControlsOverlay;
   if (!overlay?.visible) return;
   const area = overlay.getTitlebarAreaRect();
-  const ground = groundAt(Math.min(innerWidth - 1, area.x + area.width + 1), Math.max(0, area.y + 1));
-  if (!ground || ground === G.told) return;
-  G.told = ground;
+  const x = Math.min(innerWidth - 2, area.x + area.width + 2), y = Math.max(0, area.y + 2);
   try {
-    await window.branchDesktop.windowLook(ground);
+    await window.branchDesktop.windowLook({ sample: { x, y } });
     G.failed = "";
   } catch (error) {
-    G.told = null;
     if (error.message !== G.failed) toast(error.message);
     G.failed = error.message;
   }
@@ -76,5 +53,6 @@ export function followControlsLook() {
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", schedule);
   document.addEventListener("transitionend", (event) => { if (/background|color/.test(event.propertyName)) schedule(); });
   navigator.windowControlsOverlay.addEventListener?.("geometrychange", schedule);
+  setInterval(() => { if (!document.hidden) schedule(); }, 2000); // a moving painted scene changes without a CSS mutation
   schedule();
 }
