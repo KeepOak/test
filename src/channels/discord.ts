@@ -35,7 +35,19 @@ const createSchema = z.object({
   }).passthrough()).default([]),
 }).passthrough();
 const payloadSchema = z.object({ op: z.number(), d: z.unknown().optional(), s: z.number().nullish(), t: z.string().nullish() }).passthrough();
-const readySchema = z.object({ user: userSchema, session_id: z.string(), resume_gateway_url: z.string().optional() }).passthrough();
+const readySchema = z.object({ user: userSchema, session_id: z.string(), resume_gateway_url: z.string().optional(),
+  application: z.object({ id: z.string() }).passthrough().optional() }).passthrough();
+/** A slash command chosen from Discord's picker (interaction type 2, APPLICATION_COMMAND). */
+const slashSchema = z.object({ id: z.string().min(1).max(64), token: z.string().min(1).max(300), type: z.literal(2),
+  channel_id: z.string().min(1).max(64), guild_id: z.string().optional(), context: z.number().optional(),
+  user: userSchema.optional(), member: z.object({ user: userSchema }).passthrough().optional(),
+  data: z.object({ name: z.string().regex(/^[a-z0-9_-]{1,32}$/), options: z.array(z.object({ name: z.string(), value: z.unknown() }).passthrough()).optional() }).passthrough(),
+}).passthrough();
+const interactionSchema = z.object({ id: z.string().min(1).max(64), token: z.string().min(1).max(300), type: z.literal(3),
+  channel_id: z.string().min(1).max(64), guild_id: z.string().optional(), context: z.number().optional(),
+  user: userSchema.optional(), member: z.object({ user: userSchema }).passthrough().optional(),
+  data: z.object({ custom_id: z.string().regex(/^[yan]:[a-f0-9]{32}(?::[a-f0-9]{12})?$/), component_type: z.literal(2) }).passthrough(),
+}).passthrough();
 
 export class DiscordAdapter implements ChannelAdapter {
   readonly kind = "discord";
@@ -57,6 +69,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private loop: Promise<void> | null = null;
   /** Empty until a rate-limit header tells us to hold off; the next send waits for it. */
   private readyAt = 0;
+  private readonly pressed = new Set<string>();
   constructor(private readonly options: DiscordOptions) {
     this.id = options.id;
     this.base = (options.apiBase ?? "https://discord.com/api/v10").replace(/\/$/, "");
@@ -121,9 +134,68 @@ export class DiscordAdapter implements ChannelAdapter {
     if (payload.op === 9) { this.session = null; this.socket?.close(); return; }
     if (payload.op !== 0) return;
     if (payload.t === "READY") return this.ready(payload.d);
+    if (payload.t === "INTERACTION_CREATE")
+      return (payload.d as { type?: unknown } | undefined)?.type === 2 ? this.slash(payload.d, onMessage) : this.button(payload.d, onMessage);
     if (payload.t !== "MESSAGE_CREATE") return;
     const inbound = this.inbound(createSchema.parse(payload.d));
     if (inbound) await onMessage(inbound).catch(() => undefined);
+  }
+  /** Gateway-authenticated component events retain Discord's actual sender and DM context. */
+  private async button(data: unknown, onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    const parsed = interactionSchema.safeParse(data);
+    if (!parsed.success) return;
+    const input = parsed.data, user = input.user ?? input.member?.user;
+    if (!user || user.bot || this.pressed.has(input.id)) return;
+    if (this.pressed.size >= 500) this.pressed.delete(this.pressed.values().next().value!);
+    this.pressed.add(input.id);
+    const ack = await this.fetch(`${this.base}/interactions/${encodeURIComponent(input.id)}/${encodeURIComponent(input.token)}/callback`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: 6 }), signal: AbortSignal.timeout(2000),
+    }).catch(() => null);
+    if (!ack?.ok) return;
+    await onMessage({ channel: this.id, chatId: input.channel_id, chatKind: input.context === 1 && !input.guild_id ? "direct" : "group",
+      senderId: user.id, senderName: user.username ?? user.id, text: input.data.custom_id, addressed: true,
+      messageId: `interaction:${input.id}` }).catch(() => undefined);
+  }
+  /**
+   * CHAT-161: a command chosen from Discord's own picker. Discord is told at once (only the person sees "Running /x"), and
+   * the command then goes to the router as the words `/name what followed`, from the person who chose it, where every
+   * rule for a typed command applies: pairing, the allowlist, the chat commands switch and each command's own level.
+   */
+  private async slash(data: unknown, onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    const parsed = slashSchema.safeParse(data);
+    if (!parsed.success) return;
+    const input = parsed.data, user = input.user ?? input.member?.user;
+    if (!user || user.bot || this.pressed.has(input.id)) return;
+    if (this.pressed.size >= 500) this.pressed.delete(this.pressed.values().next().value!);
+    this.pressed.add(input.id);
+    const words = input.data.options?.find((option) => option.name === "text")?.value;
+    const line = `/${input.data.name}${typeof words === "string" && words.trim() ? ` ${words.trim().slice(0, 4000)}` : ""}`;
+    const ack = await this.fetch(`${this.base}/interactions/${encodeURIComponent(input.id)}/${encodeURIComponent(input.token)}/callback`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: 4, data: { content: `Running ${line.slice(0, 200)}`, flags: 64, allowed_mentions: { parse: [] } } }), signal: AbortSignal.timeout(2500),
+    }).catch(() => null);
+    if (!ack?.ok) return;
+    await onMessage({ channel: this.id, chatId: input.channel_id, chatKind: input.context === 1 && !input.guild_id ? "direct" : "group",
+      senderId: user.id, senderName: user.username ?? user.id, text: line, addressed: true, messageId: `interaction:${input.id}` }).catch(() => undefined);
+  }
+  /** The application this bot belongs to (from READY), whose commands Discord lists in its picker. */
+  private application: string | null = null;
+  /** The last command list asked for, registered once the application is known. */
+  private menu: { command: string; description: string }[] | null = null;
+  /**
+   * CHAT-161: Branch's commands in Discord's own "/" picker, as global application commands (one bulk overwrite, so a
+   * command taken out of the list is taken out of Discord too). Each takes what follows it as one optional text option.
+   */
+  async setCommands(commands: { command: string; description: string }[]): Promise<void> {
+    this.menu = commands;
+    if (!this.application) return; // registered on READY
+    const body = commands.slice(0, 100).map((one) => ({ name: one.command, type: 1, description: one.description.slice(0, 100) || one.command,
+      options: [{ type: 3, name: "text", description: "What follows the command", required: false, max_length: 4000 }] }));
+    const response = await this.fetch(`${this.base}/applications/${encodeURIComponent(this.application)}/commands`, {
+      method: "PUT", headers: { ...this.headers(), "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
+    });
+    this.noteLimits(response);
+    if (!response.ok) throw new Error(`Discord refused the command list (${response.status})`);
   }
   private hello(data: unknown): void {
     const interval = this.options.heartbeatMs ?? z.object({ heartbeat_interval: z.number() }).passthrough().parse(data).heartbeat_interval;
@@ -138,6 +210,10 @@ export class DiscordAdapter implements ChannelAdapter {
   private ready(data: unknown): void {
     const parsed = readySchema.parse(data);
     this.user = { id: parsed.user.id, name: parsed.user.username ?? parsed.user.id };
+    if (parsed.application?.id && parsed.application.id !== this.application) {
+      this.application = parsed.application.id;
+      if (this.menu) void this.setCommands(this.menu).catch(() => undefined);
+    }
     this.session = { id: parsed.session_id, url: parsed.resume_gateway_url ?? this.options.gatewayUrl ?? "" };
     if (!this.session.url) this.session = null;
     this.state = { state: "connected" };
@@ -213,11 +289,11 @@ export class DiscordAdapter implements ChannelAdapter {
       })),
     }];
   }
-  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const wait = this.readyAt - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
     const body = JSON.stringify({
-      content: text.slice(0, this.maxTextLength),
+      content: this.content(text, format),
       components: DiscordAdapter.components(buttons),
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}),
     });

@@ -344,8 +344,10 @@ test("replies show the assistant's own face, and a Trunk set to 3D is a 3D stand
   await f.page.locator("#prompt").press("Enter");
   const plain = f.page.locator("#main .b").filter({ hasText: "Here it is." }).first();
   await plain.waitFor({ timeout: 15000 });
-  // The owner (2026-09-26): Branch's face is its own animated character, its loop or, with motion reduced, its still.
-  assert.equal(await plain.locator('.gut .av.fig17r :is(video[src^="/art/anim-"], img[src^="/art/branch-"])').count(), 1, "Branch's own face");
+  // The owner (2026-09-27): Branch's mascot is its logo only, so its own reply is signed with the logo mark, and no
+  // character loop of Branch's is decoded for it.
+  assert.equal(await plain.locator(".gut .av.brand .mark-face").count(), 1, "Branch's own face is its logo");
+  assert.equal(await plain.locator('.gut video[src^="/art/anim-"]').count(), 0, "no Branch character loop in a reply");
   // A Trunk's reply carries the Trunk's own face, not Branch's.
   await row(f.page, trunk).click();
   await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", trunk.chatSessionId);
