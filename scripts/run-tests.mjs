@@ -15,7 +15,7 @@
 // that never exited once held a build machine for an hour. BRANCH_TEST_TIMINGS=<file> writes each file's seconds,
 // which is where the weights come from (scripts/test-weights.mjs). `--list` prints the files and runs nothing.
 // `--files-from=selected-tests.json` runs an explicit selector-produced subset and refuses any path that is not part
-// of the discovered suite. It cannot be combined with sharding.
+// of the discovered suite, and an empty subset. With --lane and --shard it is split like the whole suite.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -135,24 +135,26 @@ export function parseShard(argv) {
   return { index: index - 1, total };
 }
 
-/** Read an explicit selector-produced subset and prove every entry belongs to the discovered suite. */
-export function parseFilesFrom(argv, groups, read = (file) => readFileSync(file, "utf8")) {
+/**
+ * Read an explicit selector-produced subset, prove every entry belongs to the discovered suite (`all`), and keep only
+ * those files in `groups` (a lane's, when --lane is given), so --lane and --shard then split the subset. An empty
+ * subset is refused: a run of nothing must never read as green.
+ */
+export function parseFilesFrom(argv, groups, read = (file) => readFileSync(file, "utf8"), all = groups) {
   const flag = argv.find((arg) => arg.startsWith("--files-from="));
   if (!flag) return null;
-  if (argv.some((arg) => arg.startsWith("--shard=") || arg.startsWith("--lane="))) throw new Error("--files-from cannot be combined with --shard or --lane");
   const file = flag.slice("--files-from=".length);
   const parsed = JSON.parse(read(file));
   if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) {
     throw new Error("--files-from must contain a JSON array of test paths");
   }
+  if (!parsed.length) throw new Error("--files-from names no test files; refusing an empty run");
   const normalized = parsed.map(posix);
   if (new Set(normalized).size !== normalized.length) throw new Error("--files-from contains a duplicate test");
-  const discovered = new Map([...groups.shared, ...groups.browser, ...groups.desktop].map((entry) => [posix(entry), entry]));
-  return normalized.map((entry) => {
-    const match = discovered.get(entry);
-    if (!match) throw new Error(`Selected test was not discovered: ${entry}`);
-    return match;
-  });
+  const discovered = new Set([...all.shared, ...all.browser, ...all.desktop].map(posix));
+  for (const entry of normalized) if (!discovered.has(entry)) throw new Error(`Selected test was not discovered: ${entry}`);
+  const wanted = new Set(normalized);
+  return Object.fromEntries(Object.entries(groups).map(([name, files]) => [name, files.filter((one) => wanted.has(posix(one)))]));
 }
 
 /** Turn an otherwise silent worker death into a named, actionable CI failure. */
@@ -260,18 +262,18 @@ function report(result) {
 
 function chooseFiles(argv) {
   const all = testGroups();
-  const explicit = parseFilesFrom(argv, all);
   const { lane, groups: laned } = laneGroups(argv, all);
-  const groups = onlyGroups(laned, process.env.BRANCH_TEST_GROUPS);
+  const explicit = parseFilesFrom(argv, laned, undefined, all);
+  const groups = onlyGroups(explicit ?? laned, process.env.BRANCH_TEST_GROUPS);
   const { index, total } = parseShard(argv);
   const weights = loadWeights(lane ? LANES[lane] : process.platform);
-  const mine = new Set(explicit ?? shareFiles(groups, index, total, weights));
-  const pickFrom = (list) => list.filter((file) => mine.has(file));
-  const chosen = { shared: pickFrom(groups.shared), browser: pickFrom(groups.browser), desktop: pickFrom(groups.desktop) };
+  const chosen = Object.fromEntries(Object.entries(groups).map(([name]) => [name, []]));
+  const mine = new Set(shareFiles(groups, index, total, weights));
+  for (const [name, list] of Object.entries(groups)) chosen[name] = list.filter((file) => mine.has(file));
   const count = chosen.shared.length + chosen.browser.length + chosen.desktop.length;
   const everything = all.shared.length + all.browser.length + all.desktop.length;
-  console.log(explicit ? `Selected ${count} of ${everything} test files.`
-    : `${lane ? `Lane ${lane}, share` : "Share"} ${index + 1} of ${total}: ${count} of ${everything} test files.`);
+  console.log(`${explicit ? "Selected subset, " : ""}${lane ? `lane ${lane}, ` : ""}share ${index + 1} of ${total}: ${count} of ${everything} test files.`);
+  if (explicit && !count) throw new Error("This share of the selected subset has no test files; refusing an empty run");
   return { chosen, weights };
 }
 
