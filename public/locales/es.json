@@ -6446,6 +6446,8 @@
   "window.chat-steps.overflow-hint": "Cuando los pasos ya no caben en un mensaje, siguen en uno nuevo, o solo se guardan los más recientes.",
   "window.chat-steps.overflow-roll": "Seguir en un mensaje nuevo",
   "window.chat-steps.overflow-trim": "Mantener los más recientes",
+  "window.chat-steps.pictures": "Imágenes del navegador",
+  "window.chat-steps.pictures-hint": "Mientras una tarea trabaja en el navegador de Branch, una imagen de la página de vez en cuando, con las casillas de contraseña tapadas. Nunca en un grupo.",
   "window.chat-steps.same-as-all": "Igual que todas",
   "window.chat-steps.sw-cleanup": "Quitar los pasos tras una buena respuesta",
   "window.chat-steps.sw-cleanup-hint": "Cuando llega la respuesta, el mensaje de pasos se quita si la app lo permite. Una tarea que falló lo conserva.",

@@ -6446,6 +6446,8 @@
   "window.chat-steps.overflow-hint": "Passen die Schritte nicht mehr in eine Nachricht, geht es in einer neuen weiter, oder nur die neuesten bleiben.",
   "window.chat-steps.overflow-roll": "In neuer Nachricht fortsetzen",
   "window.chat-steps.overflow-trim": "Die neuesten behalten",
+  "window.chat-steps.pictures": "Bilder des Browsers",
+  "window.chat-steps.pictures-hint": "Während eine Aufgabe in Branchs Browser arbeitet, ab und zu ein Bild der Seite, Passwortfelder abgedeckt. Nie in einer Gruppe.",
   "window.chat-steps.same-as-all": "Wie alle",
   "window.chat-steps.sw-cleanup": "Schritte nach guter Antwort entfernen",
   "window.chat-steps.sw-cleanup-hint": "Sobald die Antwort da ist, wird die Schritte-Nachricht entfernt, wo die App es erlaubt. Eine fehlgeschlagene Aufgabe behält sie.",

@@ -6446,6 +6446,8 @@
   "window.chat-steps.overflow-hint": "When the steps no longer fit one message, they carry on in a new one, or only the newest are kept.",
   "window.chat-steps.overflow-roll": "Continue in a new message",
   "window.chat-steps.overflow-trim": "Keep the newest",
+  "window.chat-steps.pictures": "Pictures of the browser",
+  "window.chat-steps.pictures-hint": "While a task works in Branch's browser, a picture of the page now and then, with password boxes covered. Never in a group.",
   "window.chat-steps.same-as-all": "Same as all",
   "window.chat-steps.sw-cleanup": "Remove the steps after a good answer",
   "window.chat-steps.sw-cleanup-hint": "Once the answer arrives, the steps message is removed where the app allows it. A task that went wrong keeps it.",
