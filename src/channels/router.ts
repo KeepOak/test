@@ -1406,7 +1406,10 @@ export class ChannelRouter {
   /**
    * A press on the live browser's Take over or Hand back. Only in the direct chat the task came from, by the person who
    * started it, who is still allowed to talk to Branch (paired or on the list); never under Lockdown or a locked Branch. Taking over
-   * only ever stops the task at its next browser step; handing back lets it carry on as it would have.
+   * only ever stops the task at its next browser step; handing back lets it carry on as it would have. An allowlisted sender
+   * counts the same as a paired one: the owner put either there, and both may already steer this task, which a pause gives
+   * no more than. The page itself is driven only from Branch's window or app, never from the chat. A held step stops waiting
+   * on its own after ten minutes (browser-control.ts agentTurn), and every press that changed hands is on the task's record.
    */
   private async pressHold(message: InboundMessage, op: "take" | "give", runId: string): Promise<Outcome> {
     const say = (text: string) => this.deliver(message.channel, message.chatId, text, `browser-hold:${message.messageId}`, message.messageId)
@@ -1418,10 +1421,11 @@ export class ChannelRouter {
     try {
       const who = await this.browserHold(runId, op);
       this.holders.set(runId, who);
+      this.store.event(runId, "browser.hands", { from: "chat", channel: message.channel, pressed: op === "take" ? "take over" : "hand back", holder: who });
       const turn = this.turns.get(chatKey(message));
       if (turn?.runId === runId) turn.live?.refreshPicture();
       return say(who === "owner"
-        ? "You have the browser. The task waits at its next browser step. Drive it from Branch's window or app, then press Hand back."
+        ? "You have the browser. The task waits at its next browser step, for up to ten minutes. Drive it from Branch's window or app, then press Hand back."
         : "Handed back. The task carries on in the browser.");
     } catch (error) {
       return say(error instanceof Error ? error.message : String(error));

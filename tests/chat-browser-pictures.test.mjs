@@ -163,4 +163,7 @@ test("one picture kept up to date in place, with Take over and Hand back that re
   assert.ok(calls.some((c) => c.op === "send" && /Both pages seen/.test(c.text)), "the task carried on and finished");
   assert.equal(calls.filter((c) => c.op === "picture").length, 1, "one picture message, kept in place");
   assert.deepEqual(calls.filter((c) => c.op === "repicture").at(-1).buttons, [], "no buttons once the task is over");
+  const run = app.store.runs(app.runtime.owner).find((r) => r.status === "completed");
+  const hands = app.store.events(run.id).filter((e) => e.kind === "browser.hands").map((e) => `${e.data.pressed}:${e.data.holder}`);
+  assert.deepEqual(hands, ["take over:owner", "hand back:task"], "each press that changed hands is on the task's record");
 });
