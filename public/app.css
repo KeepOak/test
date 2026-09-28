@@ -246,7 +246,7 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .btn.pri:hover{opacity:.88}
 .btn.ghost{border-color:transparent;background:none;color:var(--ink-2)}
 .btn.ghost:hover{background:var(--fill);color:var(--ink)}
-.btn.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn.bad{background:var(--bad);border-color:var(--bad);color:var(--on-btn)} /* the button words of the light or dark the red sits in: AA in both */
 .btn.sm{height:28px;padding:0 11px;font-size:12.5px}
 .link{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;font-size:13px}
 .link:hover{text-decoration-color:var(--ink)}
