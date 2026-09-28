@@ -46,7 +46,7 @@ test("Settings search finds every row, with its page and level, and opens it mar
 
   // Nothing found says so, and Enter opens the best row.
   await box.fill("zzqx nothing like this");
-  await page.locator(".set-found .hint").waitFor();
+  await page.locator(".set-col .set-none").waitFor();
   await box.fill("summarise older turns");
   await page.locator(".set-found .set-hit").first().waitFor();
   await box.press("Enter");
@@ -74,5 +74,26 @@ test("Settings search finds every row, with its page and level, and opens it mar
   await option.click();
   await page.locator('[data-act="setlevel"][data-v="technical"][aria-pressed="true"]').waitFor();
   await page.locator(".set-col .ctl.found18", { hasText: "Repair the history before each call" }).waitFor();
+
+  // Every row drawn on every page (and Models tab) at Technical is found on its page, read at the same moment.
+  const pages = await page.locator('.set-nav [data-act="setpage"]').evaluateAll((all) => all.map((b) => b.dataset.v));
+  const missing = [];
+  for (const id of pages) {
+    await openSettingsPage(page, id);
+    const tabs = id === "models" ? await page.locator('.set-col [data-act="mtab"]').evaluateAll((all) => all.map((b) => b.dataset.v)) : [""];
+    for (const tab of tabs) {
+      if (tab) await page.locator(`.set-col [data-act="mtab"][data-v="${tab}"]`).click();
+      missing.push(...await page.evaluate(async (id) => {
+        const { findSettings } = await import("/app/settings/settings.js");
+        const { ROWS, rowKey } = await import("/app/settings/find.js");
+        return [...document.querySelectorAll(`.set-col :is(${ROWS})`)].filter((row) => row.getClientRects().length).flatMap((row) => {
+          const [card, title] = rowKey(row).split("\u001f");
+          if (!title) return []; // a row with no title of its own has nothing to be found by
+          return findSettings(title).some((r) => r.page === id && r.title === title && r.card === card) ? [] : [`${id} › ${card} › ${title}`];
+        });
+      }, id));
+    }
+  }
+  assert.deepEqual(missing, [], "every drawn row is in the index");
   assert.deepEqual(errors, []);
 });

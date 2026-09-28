@@ -90,14 +90,12 @@ export async function openSetting(row) {
   closePop();
   if (level() < row.level) { S.level = ["regular", "advanced", "technical"][row.level]; save(); }
   if (row.tab) models.showTab(row.tab);
-  jumping = { ...row, until: Date.now() + 5000 };
-  marked = null;
+  jumping = { ...row, until: Date.now() + 5000 }; // set before the page is drawn: a redraw with nothing new calls no after()
   await go(row.page);
-  if (S.setPage === row.page) renderNow();
 }
 function land(col) {
   const want = jumping ?? marked;
-  if (!want || !col) return;
+  if (!want || !col || S.setPage !== want.page) return;
   const key = `${want.card}\u001f${want.title}`;
   const row = [...col.querySelectorAll(ROWS)].find((el) => rowKey(el) === key);
   if (!row) { if (jumping && Date.now() > jumping.until) jumping = null; return; }
@@ -110,11 +108,11 @@ function land(col) {
   row.querySelector("input,button,select,textarea")?.focus({ preventScroll: true });
 }
 
-const hitRow = (row, i) => `<button class="set-hit" type="button" role="listitem" data-act="sethit" data-i="${i}"${row.note ? ` data-tip="${esc(row.note)}"` : ""}><b>${esc(row.title)}</b><small>${esc([row.pageName, row.tabName, row.card].filter(Boolean).join(" › "))}</small>${row.level > level() ? `<span class="pill idle">${esc(row.level === 2 ? t("settingsGrown.level.technical") : t("settings.page.advanced"))}</span>` : ""}</button>`;
+const hitRow = (row, i) => `<li><button class="set-hit" type="button" data-act="sethit" data-i="${i}"${row.note ? ` data-tip="${esc(row.note)}"` : ""}><b>${esc(row.title)}</b><small>${esc([row.pageName, row.tabName, row.card].filter(Boolean).join(" › "))}</small>${row.level > level() ? `<span class="pill idle">${esc(row.level === 2 ? t("settingsGrown.level.technical") : t("settings.page.advanced"))}</span>` : ""}</button></li>`;
 function found(q, rows) {
   hits = rows.slice(0, 40);
-  return `<div class="set-found" role="list" aria-label="${esc(t("window.settings.settings.found", { query: q.trim() }))}">${hits.map(hitRow).join("")
-    || `<p class="hint">${t("window.settings.settings.nothing-found")}</p>`}</div>`;
+  return hits.length ? `<ul class="set-found" aria-label="${esc(t("window.settings.settings.found", { query: q.trim() }))}">${hits.map(hitRow).join("")}</ul>`
+    : `<p class="hint set-none">${t("window.settings.settings.nothing-found")}</p>`;
 }
 
 /* A page starts (registers its actions, fetches its data) the first time it is opened after sign-in, and re-reads its
@@ -140,6 +138,8 @@ function notice(id) {
 let asked = null;
 async function go(id) {
   asked = id;
+  searchText = ""; // a page asked for is shown, never the rows an earlier search found
+  marked = null;
   notice(id);
   const reading = open(id);
   if (PAGES[id]?.waitFirst) await reading;
@@ -200,8 +200,6 @@ export function init() {
 
   on("setpage", (el) => {
     closePop();
-    searchText = ""; // a page picked from the list is shown, not the rows found
-    marked = null;
     go(el.dataset.v);
   });
 
@@ -217,6 +215,7 @@ export function init() {
     closePop();
     S.view = "settings";
     S.setPage = "updates";
+    searchText = "";
     open(S.setPage);
     renderNow();
   });

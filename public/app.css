@@ -4402,7 +4402,7 @@ audio.docread18m{width:100%}
 .hb18c .b18c svg.i{width:70%;height:70%}
 
 /* area: settings search (UI-091: every row is found, settings/find.js) */
-.set-found{display:grid;gap:2px}
+.set-found{display:grid;gap:2px;margin:0;padding:0;list-style:none}
 .set-hit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;width:100%;padding:10px 12px;border:0;border-radius:10px;background:none;color:var(--ink);text-align:left;cursor:pointer}
 .set-hit:hover,.set-hit:focus-visible{background:var(--wash17,var(--fill))}
 .set-hit b{font-weight:500;min-width:0;overflow-wrap:anywhere}
