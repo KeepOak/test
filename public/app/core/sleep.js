@@ -11,7 +11,7 @@
    window pauses everything as before (core/art17.js, core/figures.js, core/pebble.js, core/pets.js). */
 
 import { E, S, defaultTrunk, threadTrunk } from "./state.js";
-import { render, afterDraw } from "./dom.js";
+import { render, renderNow, afterDraw } from "./dom.js";
 
 export const DOZE_MS = 2 * 60 * 1000;
 export const STILL_MS = 10 * 60 * 1000;
@@ -92,8 +92,9 @@ export const onRest = (fn) => { listeners.push(fn); };
 let shown = "";
 function changed() {
   const stage = windowRest(), html = document.documentElement;
+  const woke = !!shown && shown !== "awake" && stage === "awake";
   if (stage !== shown) {
-    if (shown && shown !== "awake" && stage === "awake") wakeUp(html);
+    if (woke) wakeUp(html);
     html.classList.toggle("doze18", stage !== "awake");
     html.classList.toggle("still18", stage === "still");
     shown = stage;
@@ -102,7 +103,8 @@ function changed() {
   for (const fn of listeners) {
     try { fn(); } catch (error) { console.error(error); }
   }
-  render();
+  // Waking is drawn in the same moment as the window's wake class, so no face shows its sleeping loop after it.
+  if (woke) renderNow(); else render();
   plan();
 }
 /* A short wake, for the window's own motion; a face plays its own (app.css .av.wake18, core/pebble.js "wake"). */
