@@ -84,6 +84,43 @@ async function chooseSearch(v) {
   await loadAll();
 }
 
+/* Rewrite short notes: pick one of the owner's notes (GET /api/reach/notes) and a style, and the engine suggests a new
+   version (POST /api/reach/notes/rewrite; nothing is saved). Keep this version saves it over the note (POST
+   /api/reach/notes with the note's stamp, so a note changed meanwhile is refused in the engine's words). */
+const RW = { notes: [], id: "", style: "clearer", out: null };
+const STYLES = ["clearer", "shorter", "fix", "list", "formal"];
+function drawRewrite() {
+  const options = RW.notes.map((n) => `<option value="${esc(n.id)}"${n.id === RW.id ? " selected" : ""}>${esc(n.title || n.body.slice(0, 40))}</option>`).join("");
+  const styles = STYLES.map((s) => `<button type="button" aria-pressed="${RW.style === s}" data-act="ad-rw-style" data-v="${s}">${t("reach.notes." + s)}</button>`).join("");
+  const body = RW.notes.length
+    ? `<p class="lead-b17">${t("reach.notes.purpose")}</p><div class="ctl"><b>${t("reach.notes.title")}</b><span class="right"><select class="inp" id="ad-rw-note" aria-label="${t("reach.notes.title")}">${options}</select></span><small></small></div>`
+      + `<div class="ctl"><b>${t("reach.notes.style")}</b><span class="right"><span class="seg" role="group" aria-label="${t("reach.notes.style")}">${styles}</span></span><small>${t("reach.notes.styleHint")}</small></div>`
+      + (RW.out ? `<pre class="code6" data-css="white-space:pre-wrap;margin:12px 0 0;max-height:40vh;overflow:auto">${esc(RW.out.suggestion)}</pre>` : "")
+    : `<p class="empty">${t("reach.notes.purpose")}</p>`;
+  const foot = `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button>`
+    + (RW.notes.length ? `<button class="btn" type="button" data-act="ad-rw-go">${t("reach.notes.rewrite")}</button>` : "")
+    + (RW.out ? `<button class="btn pri" type="button" data-act="ad-rw-keep">${t("reach.notes.keep")}</button>` : "");
+  openDlg({ title: t("window.settings.advanced.rewrite-short-notes"), body, foot });
+}
+async function openRewrite() {
+  try { RW.notes = (await api("reach/notes")).notes ?? []; } catch (error) { toast(error.message); return; }
+  RW.id = RW.notes.some((n) => n.id === RW.id) ? RW.id : RW.notes[0]?.id ?? "";
+  RW.out = null;
+  drawRewrite();
+}
+async function rewriteNow() {
+  RW.id = document.getElementById("ad-rw-note")?.value || RW.id;
+  try { RW.out = await api("reach/notes/rewrite", { id: RW.id, style: RW.style }); } catch (error) { toast(error.message); return; }
+  drawRewrite();
+}
+async function keepRewrite() {
+  const note = RW.notes.find((n) => n.id === RW.out?.id);
+  if (!note) return;
+  try { await api("reach/notes", { id: note.id, title: note.title, body: RW.out.suggestion, expected: RW.out.basedOn }); } catch (error) { toast(error.message); return; }
+  toast(t("accounts.saved"));
+  await openRewrite();
+}
+
 /* Outside memory: the engine's four choices (none, Mem0, Honcho, Hindsight), pressed from its own value. */
 // Words are read as the row is drawn, never at load, when the language is not in yet.
 const OUTSIDE = () => [["none", t("comfort.placeholder.none")], ["mem0", "Mem0"], ["honcho", "Honcho"], ["hindsight", "Hindsight"]];
@@ -171,7 +208,7 @@ export function draw() {
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.search-documents-by-meaning")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-search-documents-by-meaning\" aria-label=\"${t("window.settings.advanced.search-documents-by-meaning")}\" data-sw=\"set\"><small>${t("window.settings.advanced.finds-the-lease-clause-about-repairs")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.a-local-index-of-mail-calendar")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-a-local-index-of-mail-calendar-and-messa\" aria-label=\"${t("window.settings.advanced.a-local-index-of-mail-calendar")}\" data-sw=\"set\"><small>${t("window.settings.advanced.built-and-kept-on-this-computer")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.keep-versions-of-what-trunks-make")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-keep-versions-of-what-trunks-make\" aria-label=\"${t("window.settings.advanced.keep-versions-of-what-trunks-make")}\" data-sw=\"set\"><small>${t("window.settings.advanced.every-file-in-made-for-you")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.rewrite-short-notes")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"rewrite-short-notes\">${t("personal.signin.try")}</button></span><small>${t("window.settings.advanced.clearer-shorter-fixed-or-more-formal")}</small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.rewrite-short-notes")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"ad-rewrite\">${t("personal.signin.try")}</button></span><small>${t("window.settings.advanced.clearer-shorter-fixed-or-more-formal")}</small></div>`;
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.pinned-skills")}</h2>`;
@@ -228,7 +265,11 @@ export function init() {
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
   on("ad-search", (el) => chooseSearch(el.dataset.v));
-  markLive(["adv-logs", "ad-orders", "ad-outside", "ad-search", "sw:ad-searx", "sw:ad-facts", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  on("ad-rewrite", () => openRewrite());
+  on("ad-rw-style", (el) => { RW.style = el.dataset.v; RW.id = document.getElementById("ad-rw-note")?.value || RW.id; RW.out = null; drawRewrite(); });
+  on("ad-rw-go", () => rewriteNow());
+  on("ad-rw-keep", () => keepRewrite());
+  markLive(["adv-logs", "ad-orders", "ad-outside", "ad-search", "sw:ad-searx", "ad-rewrite", "ad-rw-style", "ad-rw-go", "ad-rw-keep", "sw:ad-rw-note", "sw:ad-facts", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
     if (e.target.id === "ad-searx") { if (e.target.value.trim()) await chooseSearch("searxng"); return; }
@@ -242,4 +283,4 @@ export function init() {
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
-export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "ad-search": true, "sw:ad-searx": true, "sw:ad-facts": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
+export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "ad-search": true, "sw:ad-searx": true, "ad-rewrite": true, "ad-rw-style": true, "ad-rw-go": true, "ad-rw-keep": true, "sw:ad-rw-note": true, "sw:ad-facts": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };

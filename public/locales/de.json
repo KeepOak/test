@@ -9646,7 +9646,6 @@
   "window.why.f15-search-documents-by-meaning": "Immer an, wenn dein Modelldienst Bedeutungen vergleichen kann: Dokumente werden nach Bedeutung und nach Wörtern durchsucht. Es gibt keinen Schalter.",
   "window.why.f15-a-local-index-of-mail-calendar-and-messa": "Branch führt keinen lokalen Index: Es durchsucht dein Postfach und deine Kalender bei jeder Frage auf deren eigenen Servern.",
   "window.why.f15-keep-versions-of-what-trunks-make": "Immer an: Jedes Mal, wenn eine Datei unter demselben Namen aufbewahrt wird, wird sie eine neue Version mit Prüfsumme, bis zu 20. Es gibt keinen Schalter.",
-  "window.why.rewrite-short-notes": "Das Fenster hat dafür keine Notizauswahl. Frag in einem Gespräch: Branch schreibt eine seiner Notizen klarer, kürzer, korrigiert, als Liste oder förmlicher um, als Vorschlag.",
   "window.why.f15-always-read-in-full": "Branch heftet eine Fähigkeit immer an ein einzelnes Gespräch, nicht an alle, deshalb gibt es hier nichts für alle zu wählen.",
   "window.why.f15-deep-research-reports": "Tiefenrecherche hat in Branch keinen eigenen Schalter.",
   "window.why.f15-edit-documents-exactly": "Genaue Dokumentänderungen haben in Branch keinen eigenen Schalter.",

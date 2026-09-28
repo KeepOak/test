@@ -9646,7 +9646,6 @@
   "window.why.f15-search-documents-by-meaning": "Always on when your model service can compare meaning: documents are searched by meaning as well as by words. There's no switch.",
   "window.why.f15-a-local-index-of-mail-calendar-and-messa": "Branch keeps no local index: it searches your mailbox and calendars on their own servers each time you ask.",
   "window.why.f15-keep-versions-of-what-trunks-make": "Always on: each time a file is kept under the same name it becomes a new version with its checksum, up to 20. There's no switch.",
-  "window.why.rewrite-short-notes": "The window has no note picker for this. Ask in a conversation: Branch rewrites one of its notes clearer, shorter, fixed, as a list or more formal, as a suggestion.",
   "window.why.f15-always-read-in-full": "Branch pins a skill to one conversation at a time, not to every conversation, so there's nothing to choose for all of them here.",
   "window.why.f15-deep-research-reports": "Deep research has no switch of its own in Branch.",
   "window.why.f15-edit-documents-exactly": "Exact document edits have no switch of their own in Branch.",

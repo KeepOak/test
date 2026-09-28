@@ -9647,7 +9647,6 @@
   "window.why.f15-search-documents-by-meaning": "Toujours actif quand votre service de modèles sait comparer le sens : les documents sont cherchés par le sens comme par les mots. Il n'y a pas d'interrupteur.",
   "window.why.f15-a-local-index-of-mail-calendar-and-messa": "Branch ne garde aucun index local : il cherche dans votre boîte mail et vos agendas, sur leurs propres serveurs, à chaque demande.",
   "window.why.f15-keep-versions-of-what-trunks-make": "Toujours actif : chaque fois qu'un fichier est conservé sous le même nom, il devient une nouvelle version avec sa somme de contrôle, jusqu'à 20. Il n'y a pas d'interrupteur.",
-  "window.why.rewrite-short-notes": "La fenêtre n'a pas de choix de note pour cela. Demandez-le dans une conversation : Branch réécrit une de ses notes plus claire, plus courte, corrigée, en liste ou plus formelle, sous forme de suggestion.",
   "window.why.f15-always-read-in-full": "Branch épingle une compétence à une seule conversation à la fois, pas à toutes, il n'y a donc rien à choisir ici pour toutes.",
   "window.why.f15-deep-research-reports": "La recherche approfondie n’a pas d’interrupteur propre dans Branch.",
   "window.why.f15-edit-documents-exactly": "Les modifications exactes de documents n’ont pas d’interrupteur propre dans Branch.",
