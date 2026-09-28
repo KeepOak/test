@@ -9,7 +9,7 @@
 //   - CPU (CDP TaskDuration) with the rows playing and with them still; zero page errors.
 // Screenshots of the list at 1440 and 390, light and dark, go to OUT.
 // Run: PORT=<port> TOKEN=<session token> [OUT=<folder>] node design/redesign/tools/verify-animated-characters.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const fs = require("fs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;

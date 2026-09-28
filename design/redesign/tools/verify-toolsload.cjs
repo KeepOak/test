@@ -8,7 +8,7 @@
      saves "when-needed";
    - the engine's process is the same one throughout (ENGINE_PID still running, the same session answering): nothing
      was restarted; zero page errors. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT = "3808", TOKEN, ENGINE_PID } = process.env;
 const base = `http://127.0.0.1:${PORT}`;

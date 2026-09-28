@@ -9,7 +9,7 @@
      and the room shows the engine's own words, "<agent> didn't answer: …";
    - the room's member picker (New › New room): the agent's chip, "name · where it runs"; picking it seats it
      (POST /api/trunks/rooms {agents}), which GET /api/trunks/rooms/<id> confirms. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { join } = require("node:path");
 
 const { PORT = "3763", TOKEN, ROOM, SID, AGENT, SHOTS } = process.env;

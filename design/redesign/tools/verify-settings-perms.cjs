@@ -3,7 +3,7 @@
    In a headless browser: the box shows the engine's figure (60 as shipped), a new figure is saved and confirmed through
    GET /api/knobs (limits.messagesPerConversationHour), and a figure that is not a whole number is not sent. What the
    limit does to tasks is covered by tests/conversation-rate.test.mjs. */
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 
 const BASE = `http://127.0.0.1:${process.env.PORT}`, TOKEN = process.env.TOKEN;
