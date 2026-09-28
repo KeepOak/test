@@ -137,11 +137,17 @@ export class ModelRouter {
    * one that has several accounts answers through its pool; with that switch off it changes nothing.
    */
   presetHook: ((preset: ModelPreset) => ModelPreset) | null = null;
+  /** QA retest 2026-09-28 (T1): called each time a first model is set up where there was none. */
+  private readonly firstModelListeners: (() => void)[] = [];
+  onFirstModel(listener: () => void): void { this.firstModelListeners.push(listener); }
   /** Adds a preset at runtime, for example after a ChatGPT sign-in. Existing ids are replaced in place. */
   register(preset: ModelPreset): void {
     presetId.parse(preset.id);
     if (this.registry.size >= 32 && !this.registry.has(preset.id)) throw new Error("At most 32 model presets");
+    const first = this.registry.size === 0;
     this.registry.set(preset.id, this.presetHook ? this.presetHook(preset) : preset);
+    // Told after the registration returns, so a listener that starts work never runs inside whoever is setting up the model.
+    if (first) for (const listener of this.firstModelListeners) queueMicrotask(() => { try { listener(); } catch { /* never fails a registration */ } });
   }
   /** Removes exactly one preset by name. Removing the last one leaves no model set up, which is said plainly. */
   remove(id: string): boolean {

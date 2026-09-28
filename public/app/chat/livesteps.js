@@ -101,6 +101,19 @@ export function said(say, english) {
 }
 
 const dur = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s` : `${s < 10 ? s.toFixed(1) : Math.round(s)}s`);
+/* Consecutive finished lines that say the same thing are one line with "(×N)" after it, as the chat apps show them
+   (src/channels/progress-render.ts, after Hermes Agent); the newest of them keeps its details to open. */
+export function foldSteps(steps) {
+  const out = [];
+  for (const s of steps) {
+    const last = out.at(-1);
+    const same = last && last.state === "done" && s.state === "done" && last.kind === s.kind && last.depth === s.depth
+      && last.icon === s.icon && last.label === s.label && last.result === s.result;
+    if (same) out[out.length - 1] = { ...s, times: (last.times ?? 1) + 1 };
+    else out.push(s);
+  }
+  return out;
+}
 function line(s) {
   const busy = s.state === "running";
   const end = busy ? `<span class="ls-spin" role="img" aria-label="${esc(t("window.chat.live.working"))}"></span>`
@@ -109,13 +122,14 @@ function line(s) {
   const came = s.result ? `<small>${esc(said(s.say?.result, s.result))}</small>` : "";
   // long-work: a wait says when it ends, in the owner's own clock.
   const until = s.until && Number.isFinite(Date.parse(s.until)) ? `<span class="ls-time">${esc(new Date(s.until).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }))}</span>` : "";
-  const head = `<span class="ls-t">${esc(said(s.say?.label, s.label))}</span>${came}${until}${end}`;
+  const times = s.times > 1 ? ` <span class="ls-times">(×${formatNumber(s.times)})</span>` : "";
+  const head = `<span class="ls-t">${esc(said(s.say?.label, s.label))}${times}</span>${came}${until}${end}`;
   const more = [s.kind === "think" && s.label.length > 140 ? `<p>${esc(s.label)}</p>` : "", s.input ? `<pre>${esc(s.input)}</pre>` : "", s.output ? `<pre>${esc(s.output)}</pre>` : ""].join("");
   const body = more ? `<details data-ls="${esc(s.id)}"${L.open.has(s.id) ? " open" : ""}><summary>${head}</summary>${more}</details>` : `<div class="ls-row">${head}</div>`;
   return `<li class="ls-${esc(s.state)} ls-${esc(s.kind)}${s.depth ? " ls-in" : ""}"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>${body}</li>`;
 }
 function lines() {
-  const steps = L.snap?.steps ?? [];
+  const steps = foldSteps(L.snap?.steps ?? []);
   const cut = !L.all && steps.length > SHOWN;
   const shown = cut ? steps.slice(-SHOWN) : steps;
   const all = cut ? `<button type="button" class="btn ghost sm ls-all" data-act="live-all">${esc(t("window.chat.live.show-all", { count: L.snap.total ?? steps.length }))}</button>` : "";
