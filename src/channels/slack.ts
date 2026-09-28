@@ -174,7 +174,7 @@ export class SlackAdapter implements ChannelAdapter {
   async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
     const words = slackText(text).slice(0, 2900);
     const result = await this.call("chat.postMessage", this.options.token, {
-      channel: chatId, text: words, ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      channel: chatId, text: words, ...(replyToMessageId ? { thread_ts: replyToMessageId.split("#")[0] } : {}),
       blocks: [
         { type: "section", text: { type: "mrkdwn", text: words } },
         { type: "actions", elements: buttons.slice(0, 5).map((button, index) => ({
@@ -189,8 +189,9 @@ export class SlackAdapter implements ChannelAdapter {
   }
   /**
    * A pressed button, as an ordinary addressed message carrying the button's own value; the router reads it as an answer
-   * to what this chat is waiting on, with every rule a typed y or n meets. Only Branch's own buttons count. The question
-   * then loses its buttons and says who answered, so it cannot be pressed twice.
+   * to what this chat is waiting on, with every rule a typed y or n meets. Only Branch's own buttons count. The buttons
+   * stay as they are, as on Telegram: a press the router refuses (a stranger, a yes that belongs in the window) must not
+   * take them away from the person who may answer, and a second press on an answered question is told so.
    */
   private fromButton(payload: unknown): InboundMessage | null {
     const parsed = actionSchema.safeParse(payload);
@@ -199,23 +200,20 @@ export class SlackAdapter implements ChannelAdapter {
     const action = actions[0]!;
     if (!answerAction.test(action.action_id) || !action.value || user.id === this.user?.id) return null;
     if (this.options.channels?.length && !this.options.channels.includes(channel.id)) return null;
-    const chosen = action.value.startsWith("y") ? "Yes" : action.value.startsWith("n") ? "No" : "an answer";
-    void this.call("chat.update", this.options.token, { channel: channel.id, ts: message.ts, text: message.text ?? "",
-      blocks: [{ type: "section", text: { type: "mrkdwn", text: (message.text ?? "").slice(0, 2900) || " " } },
-        { type: "context", elements: [{ type: "mrkdwn", text: `<@${user.id}> chose ${chosen}.` }] }] }).catch(() => undefined);
     const direct = channel.id.startsWith("D");
     return {
       channel: this.id, chatId: channel.id, chatKind: direct ? "direct" : "group",
       ...(direct ? {} : { chatTitle: `channel ${channel.id}` }),
       senderId: user.id, senderName: user.username ?? user.name ?? user.id,
       text: action.value, addressed: true,
-      // The reply goes to the thread the question was asked in.
-      messageId: message.thread_ts ?? message.ts,
+      // The reply goes to the thread the question was asked in; the press's own time after "#" keeps two presses in one
+      // thread apart, so each gets its own answer (the delivery keys are made from this).
+      messageId: `${message.thread_ts ?? message.ts}#${action.action_ts ?? Date.now()}`,
     };
   }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {
-      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId.split("#")[0] } : {}),
     });
     const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
     return parsed.success ? parsed.data.ts : undefined;
@@ -254,7 +252,7 @@ export class SlackAdapter implements ChannelAdapter {
     if (!upload.ok) throw new Error(`Slack would not take the file (${upload.status})`);
     await this.call("files.completeUploadExternal", this.options.token, {
       files: [{ id: slot.file_id, title: file.name }], channel_id: chatId,
-      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(replyToMessageId ? { thread_ts: replyToMessageId.split("#")[0] } : {}),
     });
     return slot.file_id;
   }
