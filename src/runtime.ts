@@ -581,6 +581,8 @@ export interface RunOptions {
   conversationMode?: ConversationMode;
   /** Dogfood B26: the thinking level a conversation begun by this message keeps (the model menu before a first message). */
   conversationReasoning?: ReasoningEffort;
+  /** QA retest 2026-09-28 (m10): the model a conversation begun by this message answers with (the model menu before a first message). */
+  conversationPreset?: string;
   /** Dogfood D14: the project a conversation begun by this message is filed under; absent, the active project. */
   conversationProject?: string;
   /** The `traceparent` header of the request that asked for this task, so one trace crosses agents. */
@@ -1392,6 +1394,9 @@ ${run.output.slice(0, 6000)}`;
     });
     if (options.sessionId && this.activeSessions.has(options.sessionId))
       throw new Error("Session already has an active run");
+    // QA retest 2026-09-28 (m10): a model picked for a new conversation is refused before anything is written, not after.
+    if (!options.sessionId && options.conversationPreset && !this.models.presets.has(options.conversationPreset))
+      throw new Error(`Unknown model preset ${options.conversationPreset}`);
     const project = !options.sessionId && options.conversationProject ? this.store.projects.of(this.owner, options.conversationProject).id : undefined;
     const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false, "web", project);
     // Redesign phase 1: only a conversation begun here is given a mode; one that exists keeps what it had.
@@ -1399,6 +1404,9 @@ ${run.output.slice(0, 6000)}`;
     // Dogfood B26: the level picked before the first message is this conversation's own, as one picked in it would be.
     if (!options.sessionId && options.conversationReasoning)
       this.models.configureSession(this.owner, run.sessionId, { reasoning: options.conversationReasoning });
+    // QA retest 2026-09-28 (m10): so is the model picked there; the owner's default for new conversations is left alone.
+    if (!options.sessionId && options.conversationPreset)
+      this.models.configureSession(this.owner, run.sessionId, { preset: options.conversationPreset });
     return run;
   }
   /** Redesign phase 1: a new conversation's mode; Plan also means "Show me the plan first". */
