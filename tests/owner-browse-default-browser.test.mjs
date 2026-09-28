@@ -116,7 +116,8 @@ test("any-website mode checks every request a page makes, not only the page itse
   const page = await site(t, { "/": `<title>Outside</title><img src="${inside.origin}/secret?img"><script>fetch("${inside.origin}/secret?fetch").catch(() => {})</script>` });
   const browser = new BranchBrowser({ anyWebsite: true });
   const pagePort = new URL(page.origin).port;
-  browser.policy = { async assertAllowed(target) { if (target.port !== pagePort) throw new Error(`${target.host} points at this computer or a private network`); } };
+  browser.policy = { async assertAllowed(target) { if (target.port !== pagePort) throw new Error(`${target.host} points at this computer or a private network`); },
+    async allowedAddresses(target) { await this.assertAllowed(target); return null; } };
   t.after(() => browser.close());
   const context = { owner: "owner-1", workspace: ".", runId: "any-website", signal: new AbortController().signal, budget: new Budget(),
     permissions: new Set(["browser.read"]), depth: 0 };
