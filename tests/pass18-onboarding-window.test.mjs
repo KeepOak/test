@@ -220,6 +220,9 @@ test("Welcome: Bring back your Branch brings a backup back after setup's Trunk i
   await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
   await page.locator(".toast").filter({ hasText: /^Brought back \d+ items\./ }).first().waitFor();
   assert.equal(app.trunks.records.find(trunk.id), undefined, "setup's untouched Trunk gave way to the backup");
+  // The success toast appears before the post-restore refresh finishes. The hidden file input can
+  // be set while Restore is disabled, so wait for the same readiness a person needs to select again.
+  await page.waitForFunction(() => document.querySelector('[data-act="ob-restore"]')?.disabled === false);
   await app.runtime.run({ prompt: "hi there" }); // the person wrote
   await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
   await page.locator(".toast").filter({ hasText: /already has conversations/ }).first().waitFor();
