@@ -7093,6 +7093,7 @@
   "window.flows.first.claude": "Your Claude account",
   "window.flows.first.dismiss": "Dismiss",
   "window.flows.first.finds": "{keys} finds anything.",
+  "window.flows.first.guided": "Guided setup, connects without a restart",
   "window.flows.first.gw": "Keep your Trunks running when Branch is closed",
   "window.flows.first.gw-hint": "The gateway keeps Telegram, your phone and automations working, and restarts Branch if it stops.",
   "window.flows.first.hi": "Hi, I’m Branch.",

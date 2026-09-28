@@ -254,3 +254,33 @@ test("the checks go past who-am-I: Discord's Message Content Intent, Slack's Soc
     { values: { server: "https://matrix.example.org", userId: "@branch:matrix.example.org", MATRIX_ACCESS_TOKEN: "syt_matrix_token_value" }, enable: "on" }),
     (error) => error.status === 422 && /belongs to @someone:matrix\.example\.org/.test(error.message));
 });
+
+/* Review attack on #635: saving Signal, Keybase or Delta Chat starts the program the owner typed, now and at every start.
+   A door (a paired phone's own key, a phone holding the window's key through the paired door, a caller beyond this
+   computer) is already refused every Set up save by the caller rules (src/caller-policy.ts `outlastsAPhone`); the
+   service refuses a program-starting app through a door as well, so the rule holds even if that list changes. */
+test("an app that starts a program on this computer is set up only at this computer, never through a door", async (t) => {
+  const { world } = await import("./caller-policy-world.mjs");
+  const w = await world();
+  t.after(() => w.close());
+  await w.call("POST", "/api/channel-setup", { mode: "on" });
+  const values = { path: "/nonexistent-branch-test/signal-cli", account: "+15551234567" };
+  for (const kind of ["phone", "legacy", "remote"]) {
+    const who = w.callers[kind];
+    const refused = await w.call("POST", "/api/channel-setup/signal/check", { values, enable: "on" }, who.key, who.base, who.headers);
+    assert.equal(refused.status, 403, `${kind}: ${refused.text}`);
+  }
+  assert.equal(savedEntries(w.app.store, w.app.runtime.owner).signal, undefined, "nothing was kept to start later");
+  const here = await w.call("POST", "/api/channel-setup/signal/check", { values, enable: "on" });
+  assert.equal(here.status, 200, here.text);
+  assert.equal(here.body.connected, false, "no program there, so it says so");
+  // The service's own refusal, with the caller rules out of the way.
+  const host = { store: w.app.store, owner: w.app.runtime.owner, fetch: async () => { throw new Error("nothing is asked"); }, thisComputer: false,
+    live: { connect: async () => assert.fail("a door never connects a program"), disconnect: async () => true } };
+  for (const id of ["signal", "keybase", "deltachat"])
+    await assert.rejects(saveSetup(host, id, { values: { path: "/x/tool", account: "+15551234567" }, enable: "on" }),
+      (error) => error.status === 403 && /starts a program on this computer/.test(error.message), id);
+  const bluesky = await saveSetup({ ...host, live: { connect: async () => ({ connected: true, channel: "bluesky", botName: null, address: null, note: null }), disconnect: async () => true } },
+    "bluesky", { values: { handle: "helper.bsky.social", BLUESKY_APP_PASSWORD: "abcd-efgh-ijkl-mnop" }, enable: "on" });
+  assert.equal(bluesky.connected, true, "an app that starts nothing here is not held back by this rule");
+});

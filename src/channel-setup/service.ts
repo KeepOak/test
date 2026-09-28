@@ -91,7 +91,14 @@ export interface SetupHost {
     connect: (recipe: Recipe, entry: Record<string, unknown>, values: Values) => Promise<LiveOutcome>;
     disconnect: (id: string) => Promise<boolean>;
   };
+  /**
+   * False when the request came through a door (a paired phone's own key, the paired door, a caller beyond this
+   * computer: src/remote/window-key.ts). Absent means this computer (the window's own key, or `branch connect`).
+   */
+  thisComputer?: boolean;
 }
+/** Apps whose settings name a program on this computer that Branch then starts (signal-cli, keybase, deltachat-rpc-server). */
+export const startsAProgram = (recipe: Recipe): boolean => recipe.fields.some((field) => field.name === "path");
 const telegramApi = "https://api.telegram.org/";
 /** The card's recipe with its check pointed at the stand-in, when a test set one. */
 function checkedAt(recipe: Recipe, host: SetupHost): Recipe {
@@ -132,6 +139,10 @@ export async function saveSetup(host: SetupHost, id: string, input: SaveInput): 
     throw new SetupRefusal(409, "Setting up chat apps from here is switched off. Turn it on under Customize, Chat apps.");
   const recipe = recipeFor(id);
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
+  // Saving such an app starts the program it names, now and at every start, so it is set up only at this computer,
+  // as everything else that runs a program here is (the /adapt rule in src/commands/catalog.ts).
+  if (startsAProgram(recipe) && host.thisComputer === false)
+    throw new SetupRefusal(403, `${recipe.name} starts a program on this computer, so it can only be set up in the Branch app on this computer.`);
   if (recipe.turnOn === "guided" && !host.telegram) throw new SetupRefusal(503, "The Telegram card is not available in this launch.");
   const values = readValues(recipe, input.values);
   const entry = entryFor(recipe, values); // refused before anything is asked or kept when the panel cannot finish it

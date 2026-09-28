@@ -34,7 +34,7 @@ function accounts() {
   return `<h1>${t("window.flows.first.accounts")}</h1><p class="lede">${t("window.flows.first.accounts-lede")}</p><div class="ways">${rows}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-next">${t("action.next")}</button></div>`;
 }
 function apps() {
-  const rows = F.channels.slice(0, 4).map((c) => `<button class="way" type="button" data-act="ch-open" data-v="${esc(c.id)}"><span data-css="display:flex;align-items:center;gap:10px">${logo(c.id, c.name, 26)}<b>${esc(c.name)}</b></span><small>${t("window.flows.first.two-minutes")}</small></button>`).join("");
+  const rows = F.channels.slice(0, 4).map((c) => `<button class="way" type="button" data-act="ch-open" data-v="${esc(c.id)}"><span data-css="display:flex;align-items:center;gap:10px">${logo(c.id, c.name, 26)}<b>${esc(c.name)}</b></span><small>${t("window.flows.first.guided")}</small></button>`).join("");
   return `<h1>${t("window.flows.first.anywhere")}</h1><p class="lede">${t("window.flows.first.anywhere-lede")}</p><div class="ways">${rows}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-next">${t("action.next")}</button><button class="btn ghost" type="button" data-act="fr-next">${t("window.flows.first.later")}</button></div>`;
 }
 function recs() {

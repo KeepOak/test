@@ -7094,6 +7094,7 @@
   "window.flows.first.claude": "Votre compte Claude",
   "window.flows.first.dismiss": "Fermer",
   "window.flows.first.finds": "{keys} trouve tout.",
+  "window.flows.first.guided": "Configuration guidée, connexion sans redémarrage",
   "window.flows.first.gw": "Garder vos Trunks actifs quand Branch est fermé",
   "window.flows.first.gw-hint": "La passerelle fait fonctionner Telegram, votre téléphone et les automatisations, et redémarre Branch s’il s’arrête.",
   "window.flows.first.hi": "Bonjour, je suis Branch.",

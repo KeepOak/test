@@ -1111,7 +1111,8 @@ async function api(
   // --- mac7/connect: the Set up panel for each chat app (src/channel-setup/) ---
   if (handlesChannelSetupPath(path))
     return channelSetupApi({ store: app.store, owner: app.runtime.owner, fetch: app.web.policy.guard(globalThis.fetch),
-      telegram: app.neverBreak.telegram, live: app.channelSetup, requireOwner: (what) => app.store.profiles.requireOwner(what) },
+      telegram: app.neverBreak.telegram, live: app.channelSetup, thisComputer: !throughADoor(request),
+      requireOwner: (what) => app.store.profiles.requireOwner(what) },
     request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof SetupRefusal ? new HttpError(error.status, error.message) : error;
     });
