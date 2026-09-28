@@ -1,4 +1,10 @@
 {
+  "window.what.server-config": "Configuration du serveur d’outils",
+  "window.what.server-config-hint": "Connectez cet exemple dans Personnaliser → Outils → Connecteurs avant la demande. Cette configuration utilise le serveur inclus dans cette copie de Branch.",
+  "window.what.fill-blanks": "Complétez la demande. Branch la placera dans une nouvelle conversation pour que vous puissiez la vérifier avant de l’envoyer.",
+  "window.what.your-text": "Votre texte",
+  "window.what.prepare-draft": "Préparer le brouillon",
+  "window.what.fill-required": "Complétez chaque champ avant de préparer le brouillon.",
   "window.chat-command.title": "Commandes depuis votre discussion",
   "window.chat-command.on": "Vos comptes associés sélectionnés peuvent demander des commandes. Chaque commande exacte demande votre accord.",
   "window.chat-command.off": "Désactivé. Les commandes attendent votre accord dans la fenêtre de Branch.",
