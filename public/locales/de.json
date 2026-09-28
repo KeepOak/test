@@ -10121,6 +10121,7 @@
   "window.chat.live.moved-credit": "Zu „{to}“ gewechselt – „{from}“ hat kein Guthaben mehr",
   "window.chat.live.moved-refused": "Zu „{to}“ gewechselt – „{from}“ wurde vom Dienst abgelehnt",
   "window.chat.live.moved-model": "Zu „{to}“ gewechselt – „{from}“ kann {model} nicht nutzen",
+  "window.chat.stage.driving": "Sie steuern · {name} ist pausiert",
   "practice.task": "Diese Aufgabe proben",
   "practice.next-hint": "Zeigen, was sich ändern würde, ohne diese Änderungen auszuführen. Gilt für die nächste Nachricht. Modellnutzung zählt weiterhin.",
   "practice.off": "Probeläufe sind unter Einstellungen > Berechtigungen aus.",

@@ -10122,6 +10122,7 @@
   "window.chat.live.moved-credit": "Passé à « {to} » — « {from} » n'a plus de crédit",
   "window.chat.live.moved-refused": "Passé à « {to} » — « {from} » a été refusé par le service",
   "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}",
+  "window.chat.stage.driving": "C’est vous qui pilotez · {name} est en pause",
   "practice.task": "Essayer cette tâche",
   "practice.next-hint": "Montrer ce qui changerait sans effectuer ces changements. S'applique au prochain message. L'utilisation du modèle compte toujours.",
   "practice.off": "Les essais sont désactivés dans Paramètres > Autorisations.",
