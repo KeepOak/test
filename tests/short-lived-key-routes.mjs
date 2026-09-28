@@ -922,6 +922,9 @@ export const ROUTES = {
   "/api/pricing": "owner POST",
   "/api/privacy": "owner POST",
   "/api/processes": "task POST",
+  // workbench: what a conversation still has going (read), and cancelling one of its wake-ups (never with a short-lived key).
+  "/api/open-work": "look",
+  "/api/open-work/wakeups/[0-9a-f-]{36}": "other DELETE",
   "/api/profiles": "owner POST",
   "/api/profiles/:id/remove": "owner POST",
   "/api/profiles/:id/role": "owner POST",
