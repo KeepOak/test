@@ -46,6 +46,8 @@ export class TrayNotifier {
   private timer: NodeJS.Timeout | undefined;
   private checking: Promise<void> | null = null;
   private again = false;
+  /** How many looks have been taken (a test reads it to know the notifier has seen what happened). */
+  looks = 0;
 
   constructor(private readonly deps: TrayNotifyDeps) {}
 
@@ -87,6 +89,7 @@ export class TrayNotifier {
   private async look(): Promise<void> {
     const now = await this.snapshot();
     if (this.stopped) return;
+    this.looks++;
     const first = this.seen === null;
     const waiting = this.deps.rules.waitingNews(now.state.attention, this.seen);
     const ended = this.deps.rules.doneNews(now.state.runs, this.before);

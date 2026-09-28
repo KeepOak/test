@@ -223,6 +223,7 @@ async function startTrayNotifier(url: string, key: () => string): Promise<TrayNo
     log: (line) => console.error(line),
   });
   notifier.start();
+  if (testing) (globalThis as { branchTrayNotifierForTests?: TrayNotifier }).branchTrayNotifierForTests = notifier;
   return notifier;
 }
 
@@ -699,6 +700,9 @@ if (process.argv.includes(refreshShortcutsFlag)) {
     .then((code) => app.exit(code), () => app.exit(1));
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  // PLAT-192: a quiet start may have no window at all, and the tray's sound page comes and goes; Branch keeps running in
+  // the tray (the main window only ever hides), and it ends only by Quit (app.quit).
+  app.on("window-all-closed", () => undefined);
   app.on("second-instance", () => void showWindow());
   app.on("activate", () => void showWindow());
   app.on("will-quit", () => globalShortcut.unregisterAll()); // pass 17: quick-ask keys go with the app
