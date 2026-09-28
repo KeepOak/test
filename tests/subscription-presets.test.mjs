@@ -9,8 +9,8 @@ import { accountsServiceFor } from "../dist/accounts/service.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const pool = "cli-claude-code";
-const choices = [[pool, "sonnet"], [`${pool}-opus`, "opus"], [`${pool}-haiku`, "haiku"],
-  [`${pool}-opus-5-5`, "claude-opus-5-5"], [`${pool}-sonnet-5`, "claude-sonnet-5"], [`${pool}-haiku-4-5`, "claude-haiku-4-5"]];
+const choices = [[pool, "claude-opus-5-5"], [`${pool}-sonnet`, "sonnet"], [`${pool}-opus`, "opus"], [`${pool}-haiku`, "haiku"],
+  [`${pool}-sonnet-5`, "claude-sonnet-5"], [`${pool}-haiku-4-5`, "claude-haiku-4-5"]];
 const registered = (app) => choices.filter(([id]) => app.runtime.models.presets.has(id)).map(([id]) => id);
 async function rootFor(t) {
   const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true });
@@ -38,17 +38,17 @@ async function open({ root, closers }) {
 }
 
 test("Claude model choices and an explicit fixed model return after restart; forgetting either connection or variant removes the family", async (t) => {
-  for (const forgotten of [pool, `${pool}-opus-5-5`]) {
+  for (const forgotten of [pool, `${pool}-sonnet-5`]) {
     const root = await rootFor(t);
     let engine = await open(root);
     assert.equal((await engine.post("/api/providers/cli-agents", { id: "claude-code" })).status, 200);
     assert.deepEqual(registered(engine.app), choices.map(([id]) => id));
     assert.equal(engine.app.runtime.models.presets.get(pool).name, "Claude Code (installed on this computer)");
-    assert.equal((await engine.post("/api/models", { activePreset: `${pool}-opus-5-5` })).status, 200);
+    assert.equal((await engine.post("/api/models", { activePreset: `${pool}-sonnet-5` })).status, 200);
     await engine.close();
     engine = await open(root);
     for (const [id, model] of choices) assert.equal(engine.app.runtime.models.presets.get(id)?.model, model);
-    assert.equal(engine.app.runtime.models.settings(engine.app.runtime.owner).activePreset, `${pool}-opus-5-5`);
+    assert.equal(engine.app.runtime.models.settings(engine.app.runtime.owner).activePreset, `${pool}-sonnet-5`);
     const provider = { name: "scripted", async complete() { return { content: "local", toolCalls: [] }; } };
     engine.app.runtime.models.register({ id: `${pool}-custom`, name: "Independent", model: "custom", provider });
     assert.equal((await engine.post("/api/connections/forget", { id: forgotten })).status, 200);

@@ -61,8 +61,8 @@ test("production registration routes the saved/default Claude account through Br
 test("supported Claude subscription choices route the requested model through Branch tools and share one account pool", async (t) => {
   const f = await fixture(t, { runtime: true });
   await writeFile(join(f.root, "workspace", "proof.txt"), "selected subscription model proof\n");
-  const choices = [[pool, "sonnet"], [`${pool}-opus`, "opus"], [`${pool}-haiku`, "haiku"],
-    [`${pool}-opus-5-5`, "claude-opus-5-5"], [`${pool}-sonnet-5`, "claude-sonnet-5"], [`${pool}-haiku-4-5`, "claude-haiku-4-5"]];
+  const choices = [[pool, "claude-opus-5-5"], [`${pool}-sonnet`, "sonnet"], [`${pool}-opus`, "opus"], [`${pool}-haiku`, "haiku"],
+    [`${pool}-sonnet-5`, "claude-sonnet-5"], [`${pool}-haiku-4-5`, "claude-haiku-4-5"]];
   for (const [id, model] of choices) {
     const preset = f.app.runtime.models.presets.get(id);
     assert.ok(preset, `${id} is selectable`);
@@ -88,9 +88,9 @@ test("Claude model variants use canonical account switching and helper account r
   await writeFile(join(f.root, "workspace", "proof.txt"), "variant helper proof\n");
   const session = f.app.store.createSession(owner);
   saveSessionChoice(f.app.store, owner, session, pool, second);
-  const run = await f.app.runtime.run({ prompt: "Read proof.txt", sessionId: session, model: `${pool}-opus-5-5`, permissions: ["files.read"] });
+  const run = await f.app.runtime.run({ prompt: "Read proof.txt", sessionId: session, model: `${pool}-sonnet-5`, permissions: ["files.read"] });
   assert.equal(run.status, "completed"); assert.match(run.output, /variant helper proof/);
-  assert.ok(f.seen.every((body) => body.model === "claude-opus-5-5"));
+  assert.ok(f.seen.every((body) => body.model === "claude-sonnet-5"));
   assert.ok(f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, second)));
   const before = f.launches.length;
   const helper = await f.app.runtime.delegate("Read proof.txt", f.app.runtime.context({ runId: run.id }), ["files.read"], "", {
