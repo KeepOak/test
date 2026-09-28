@@ -35,6 +35,8 @@ const downloads = {
     url: "https://github.com/matrix-construct/tuwunel/releases/download/v1.9.3/v1.9.3-release-all-x86_64-v1-linux-gnu-tuwunel.zst" },
   gotify: { file: "gotify-windows-amd64.exe.zip", sha256: "dea4183870bff3fecbc158aebb12a4a9ed69be9da18d1ba6a5d3490ae530bbb1",
     url: "https://github.com/gotify/server/releases/download/v3.1.1/gotify-windows-amd64.exe.zip" },
+  deltachat: { file: "deltachat-rpc-server-2.62.0-win64.exe", sha256: "b2813cd7f40379c8c5a255dc4d67f8c81a9d7ee4652031ebf04563b3bcb09cee",
+    url: "https://github.com/chatmail/core/releases/download/v2.62.0/deltachat-rpc-server-win64.exe" },
   ntfy: { file: "ntfy_2.28.0_linux_amd64.tar.gz", sha256: "881a1530e30e01f1dec202c7f41e1664e57edfb7844e73e21e345159ac3ea9b7",
     url: "https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/ntfy_2.28.0_linux_amd64.tar.gz" },
 };
@@ -105,7 +107,8 @@ async function emailUp() {
   const jar = await fetchPinned(downloads.greenmail);
   const pid = startDetached("java", [`-Dgreenmail.smtp.hostname=127.0.0.1`, `-Dgreenmail.smtp.port=${ports.smtp}`,
     `-Dgreenmail.imap.hostname=127.0.0.1`, `-Dgreenmail.imap.port=${ports.imap}`,
-    "-Dgreenmail.users=branch:branchpw@branch.localhost,sam:sampw@branch.localhost", "-Dgreenmail.users.login=email",
+    // Delta Chat gets mailboxes of its own, so its encrypted mail never meets the plain email walk's.
+    "-Dgreenmail.users=branch:branchpw@branch.localhost,sam:sampw@branch.localhost,dcbot:dcbotpw@branch.localhost,dcsam:dcsampw@branch.localhost", "-Dgreenmail.users.login=email",
     "-Dgreenmail.verbose=false", "-jar", jar], home);
   await listening(ports.smtp, "GreenMail SMTP", pid);
   await listening(ports.imap, "GreenMail IMAP");
@@ -239,6 +242,11 @@ setsid -f runuser -u mumble-server -- mumble-server -ini ${inWsl}/mumble/mumble.
   await listening(ports.mumble, "Mumble");
   return { state: { host: "127.0.0.1", port: ports.mumble } };
 }
+/** Delta Chat: no server of its own. The rpc program (one Windows binary) talks to GreenMail above. */
+async function deltachatUp() {
+  const path = await fetchPinned(downloads.deltachat);
+  return { state: { path, domain: "branch.localhost", smtp: { host: "127.0.0.1", port: ports.smtp }, imap: { host: "127.0.0.1", port: ports.imap } } };
+}
 
 async function up() {
   mkdirSync(home, { recursive: true });
@@ -250,11 +258,20 @@ async function up() {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
-  const irc = await ircUp(), email = await emailUp(), xmpp = await xmppUp(), matrix = await matrixUp();
-  const mqtt = await mqttUp(), gotify = await gotifyUp(), ntfy = await ntfyUp(), mumble = await mumbleUp();
-  const state = { pids: [irc.pid, email.pid, gotify.pid], servers: { irc: irc.state, email: email.state, xmpp: xmpp.state,
-    matrix: matrix.state, mqtt: mqtt.state, gotify: gotify.state, ntfy: ntfy.state, mumble: mumble.state } };
-  writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+  const starters = { irc: ircUp, email: emailUp, xmpp: xmppUp, matrix: matrixUp, mqtt: mqttUp, gotify: gotifyUp, ntfy: ntfyUp,
+    mumble: mumbleUp, deltachat: deltachatUp };
+  const state = { pids: [], servers: {} };
+  try {
+    for (const [name, start] of Object.entries(starters)) {
+      const started = await start();
+      if (started.pid) state.pids.push(started.pid);
+      state.servers[name] = started.state;
+      writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`); // written as it goes, so down can always stop what started
+    }
+  } catch (error) {
+    down({ quiet: true });
+    throw error;
+  }
   console.log(`Up. State in ${stateFile}. Run: node scripts/real-chat/servers.mjs test`);
 }
 function down({ quiet = false } = {}) {

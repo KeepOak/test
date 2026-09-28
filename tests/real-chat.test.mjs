@@ -11,7 +11,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { connect as tcp } from "node:net";
+import { createInterface } from "node:readline";
 import { connect as tlsConnect } from "node:tls";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
@@ -359,6 +361,69 @@ test("Mumble, for real: a local Mumble server", { skip: state.servers.mumble ? f
   t.after(() => person.socket.destroy());
   const session = await until(() => person.users.get(bot), "Mumble: the assistant is on the server");
   await ownerWalk(context, { label: "Mumble", heard: () => person.texts.map(htmlText), say: async (text) => person.say(session, text) });
+});
+
+// ---- Delta Chat: the person is a second deltachat-rpc-server, driven over its own JSON-RPC, on the same mail server ----
+function deltaProgram(path, accountsPath) {
+  const child = spawn(path, [], { env: { ...process.env, DC_ACCOUNTS_PATH: accountsPath }, windowsHide: true });
+  const waiting = new Map();
+  let id = 0;
+  createInterface({ input: child.stdout }).on("line", (line) => {
+    const answer = JSON.parse(line), waiter = waiting.get(answer.id);
+    if (!waiter) return;
+    waiting.delete(answer.id);
+    if (answer.error) waiter.reject(new Error(answer.error.message)); else waiter.resolve(answer.result);
+  });
+  child.stderr.resume();
+  const call = (method, ...params) => new Promise((resolve, reject) => {
+    const n = ++id;
+    waiting.set(n, { resolve, reject });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: n, method, params })}\n`);
+  });
+  const stopped = new Promise((resolve) => child.once("exit", resolve));
+  return { call, stop: () => { child.kill(); return stopped; } };
+}
+async function deltaAccount(program, { smtp, imap, domain }, user) {
+  const account = await program.call("add_account");
+  await program.call("add_or_update_transport", account, { addr: `${user}@${domain}`, password: `${user}pw`,
+    imapServer: imap.host, imapPort: imap.port, imapSecurity: "plain", smtpServer: smtp.host, smtpPort: smtp.port, smtpSecurity: "plain" });
+  return account;
+}
+test("Delta Chat, for real: deltachat-rpc-server on the local mail server", { skip: state.servers.deltachat ? false : notRunning("Delta Chat") }, async (t) => {
+  const server = state.servers.deltachat;
+  // Both mailboxes start empty, so nothing from an earlier, interrupted run is read again.
+  const empty = ["STORE 1:* +FLAGS (\\Deleted)", "EXPUNGE"];
+  for (const user of ["dcbot", "dcsam"]) await imapBodies(server.imap, `${user}@${server.domain}`, `${user}pw`, empty);
+  const root = await mkdtemp(join(tmpdir(), "branch-real-deltachat-"));
+  // The owner's setup, done once in the program as Branch's setup page asks: an account, and its invite link to share.
+  const setup = deltaProgram(server.path, join(root, "assistant"));
+  const assistant = await deltaAccount(setup, server, "dcbot");
+  await setup.call("set_config", assistant, "displayname", "Branch");
+  const invite = await setup.call("get_chat_securejoin_qr_code", assistant, null);
+  await setup.stop();
+  const context = await engine(t);
+  saveParitySwitches(context.app.store, context.app.runtime.owner, { deltachat: "on" }, ["deltachat"]);
+  await connect(context.app, { type: "deltachat", id: "deltachat", path: server.path, accountsPath: join(root, "assistant"),
+    activation: "mention", pairing: true, allowlist: [] }, {});
+  await until(() => context.app.channels.summary().channels.find((c) => c.id === "deltachat")?.health?.state === "connected", "Delta Chat: the assistant's program is running");
+  // The person scans the invite (Delta Chat's secure join) and writes in the chat it opens.
+  const phone = deltaProgram(server.path, join(root, "person"));
+  let reading = true;
+  t.after(async () => { reading = false; await phone.stop(); await discardTemp(root); }); // after Branch lets go of its program
+  const person = await deltaAccount(phone, server, "dcsam");
+  const texts = [];
+  void (async () => {
+    while (reading) {
+      const next = await phone.call("get_next_event").catch(() => null);
+      if (!next) return;
+      if (next.contextId === person && next.event.kind === "IncomingMsg") texts.push((await phone.call("get_message", person, next.event.msgId)).text ?? "");
+    }
+  })();
+  await phone.call("start_io", person);
+  const chat = await phone.call("secure_join", person, invite);
+  // The join is a short exchange of mail with the assistant's own program; the chat can be written in once it is done.
+  await until(() => phone.call("can_send", person, chat), "Delta Chat: the person joined by the invite", 60_000);
+  await ownerWalk(context, { label: "Delta Chat", heard: () => texts, say: (text) => phone.call("misc_send_text_message", person, chat, text) });
 });
 
 // ---- Every other app: why it is not tested for real ----
