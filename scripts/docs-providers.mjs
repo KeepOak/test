@@ -70,10 +70,13 @@ function notes(catalog) {
 }
 
 const catalog = JSON.parse(await readFile(resolve("data/providers.json"), "utf8"));
+// The same counts tests/docs-counts.test.mjs reads from the code: "custom" is the address of your own.
+const online = catalog.services.filter((entry) => entry.kind === "cloud" && entry.id !== "custom").length;
+const here = catalog.services.filter((entry) => entry.kind === "local").length;
 const rawBlock = [
   start,
   "",
-  `Branch knows ${catalog.services.length} model services. Every one of them has been tested against a fake of the`,
+  `Branch knows ${catalog.services.length} model services (${online} online, ${here} that run on this computer, and one address of your own). Every one of them has been tested against a fake of the`,
   "service, not against the real one, so treat this as \"Branch speaks the right language\", not as",
   "\"this was tried on a live account\". Addresses and prices were last checked on " + catalog.pricedAt + ".",
   "",
