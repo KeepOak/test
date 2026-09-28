@@ -11,6 +11,7 @@ import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
+import { gsel } from "../../core/gsel.js";
 import { ctl } from "../parts.js";
 import { A, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { localPicker, freshPick, initLocalPick } from "../../flows/localpick.js";
@@ -142,10 +143,19 @@ function debateRows() {
     + row(rounds, knobSeg(rounds, "m-debate-rounds", [[1, "1"], [2, "2"], [3, "3"]], X.second?.debateExchanges), t("window.settings.models.debate-rounds-sub"))
     + row(most, tokenBox("debateMaxTokens", "m-debate-max", most), t("window.settings.models.debate-ceiling-sub")) + "</div>";
 }
+/* Who checks: the same model or one of the connections, one choice per connection, so a glass list: as a row of buttons
+   it wrapped onto two lines at 1400 px (QA pass 2). Drawn once the engine has said which it is; a household person
+   sees it greyed with why. */
+function whoChecks(by) {
+  if (by === undefined) return "";
+  const owner = ownerHere(), label = t("window.settings.models.second-who");
+  const options = [["", t("window.settings.models.second-same")], ...(E.state?.models?.presets ?? []).map((p) => [p.id, p.name])]; // gsel escapes them
+  return `<span class="right">${gsel({ id: owner ? "m-second-by" : "m-second-by-owner", label, options, value: by, attrs: owner ? "" : 'data-why="knobs-owner-only"' })}</span>`;
+}
 function secondTab() {
   const by = X.second ? X.second.advisorPreset ?? "" : undefined;
   return swRow("m-second", esc(t("window.settings.models.second-check")), esc(t("window.settings.models.second-check-sub")), SW["m-second"][0]())
-    + row(t("window.settings.models.second-who"), knobSeg(t("window.settings.models.second-who"), "m-second-by", [["", t("window.settings.models.second-same")], ...presetChoices()], by), t("window.settings.models.second-who-sub"))
+    + row(t("window.settings.models.second-who"), whoChecks(by), t("window.settings.models.second-who-sub"))
     + row(t("window.settings.models.second-ceiling"), secondCeiling(), t("window.settings.models.second-ceiling-sub"))
     + debateRows();
 }
@@ -223,6 +233,7 @@ export function init() {
   document.addEventListener("change", (e) => {
     if (e.target.id === "m-steps") saveSteps(e.target);
     else if (e.target.id === "m-second-max" || e.target.id === "m-debate-max") saveSecondCeiling(e.target);
+    else if (e.target.id === "m-second-by") setSecond({ advisorPreset: e.target.value || null });
     else if (KNOB[e.target.id]) saveKnob(e.target);
     else if (SW[e.target.id]) SW[e.target.id][1](e.target.checked);
   });
@@ -237,18 +248,17 @@ export function init() {
   on("m-orlist", () => { OR.open = true; if (OR.list) renderNow(); else loadCompanies(); });
   on("m-orco", (el) => toggleCompany(el.dataset.v));
   on("m-def", (el) => setDefault(el));
-  on("m-second-by", (el) => setSecond({ advisorPreset: el.dataset.v || null }));
   on("m-debate-rounds", (el) => setSecond({ debateExchanges: Number(el.dataset.v) }));
   on("m-img", (el) => setPictureModel(el.dataset.v));
   on("m-vid-svc", (el) => setVideoService(el.dataset.v));
-  markLive(["m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
+  markLive(["sw:m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
   markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "m-orco", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
 export function load() { loadAccounts(); loadKnobs(); loadMore(); loadDecisions17d(); return freshPick(); }
 
 export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
-  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
+  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "sw:m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
 
 /* Q002: the engine's other settings these rows keep, each the owner's: the R17-E cards (GET /api/model-savings: the
    planning model, OpenRouter's picks, keeping Claude's cache warm), each saved alone with POST /api/model-savings
