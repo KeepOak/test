@@ -121,19 +121,19 @@ async function fixture(t) {
   return { app, api, server, page, errors, person, at, helpersOf, runBy, release: (who) => model.gates.get(who)?.(), ...model };
 }
 
-/** The window opened afresh on conversation `sid` for whoever is at it now. A switch of profile makes the window start
-    again by itself, so an opening that races it is tried again. The opening counts only once `sid` is the window's open
-    conversation (S.chat): in CI a message typed after an opening went into a new conversation (a new session, in Ask
-    first, which rightly asks before handing work to helpers), so the helpers never started. The likely cause, not
-    reproduced here, is the page from before the switch restarting itself on its own address after the link was followed;
-    this check waits for the real state, whatever moved it. */
+/** Open only after disposing of the previous profile's document and reading the person now at the engine. Opening
+    #open sets S.chat before that document's profile watcher can reset it; checking the conversation alone therefore
+    lets a queued profile reset put the next message in a new Ask first conversation. */
 async function openAs(f, sid) {
+  const profile = f.app.store.profiles.active()?.id ?? null;
   const opened = () => f.page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
   for (let tries = 0; ; tries++) {
-    // A fresh address each time: a change of the hash alone would keep the page that was there.
     try {
+      await f.page.goto("about:blank", { waitUntil: "load" });
       await f.page.goto(`${f.server.url}/?fresh=${Date.now()}#open=${sid}`, { waitUntil: "load" });
       await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
+      const here = await f.page.evaluate(async () => (await import("/app/core/state.js")).E.profiles?.active?.id ?? null);
+      if (here !== profile) throw new Error("The profile reset has not finished.");
       await opened();
       return;
     } catch (error) {
@@ -150,6 +150,53 @@ async function ownerAtWork(f) {
   const parent = f.runBy("check the owner's invoices");
   return { done, parent, helpers: f.helpersOf(parent) };
 }
+
+test("a queued profile reset cannot leave a helper message in a new Ask first conversation", async (t) => {
+  const f = await fixture(t);
+  const before = (await f.api("profiles")).body;
+  const dana = f.person("Dana", "4826");
+  f.at(dana);
+  const first = await f.api("run", { prompt: "hello" });
+  let stale = 0, oldDocument;
+  let release;
+  const held = new Promise((done) => { release = done; });
+  t.after(release);
+  await f.page.addInitScript(() => {
+    const ask = window.fetch, id = Math.random().toString(36).slice(2);
+    window.fetch = (url, options = {}) => {
+      const headers = new Headers(options.headers);
+      headers.set("x-profile-reset-fixture", id);
+      return ask(url, { ...options, headers });
+    };
+  });
+  // Hold the previous profile's completed read across opening. This is the stale boot picture which makes the
+  // profile watcher reset the document after #open has already been consumed. Run/approval APIs use the actual server.
+  await f.page.route("**/api/profiles", async (route) => {
+    const document = route.request().headers()["x-profile-reset-fixture"];
+    if (!stale && document) {
+      oldDocument = document;
+      stale += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(before) });
+    }
+    if (document && document === oldDocument) await held;
+    return route.continue();
+  });
+  await openAs(f, first.body.sessionId);
+  assert.equal(stale, 1, "the controlled stale profile read was delivered");
+  assert.equal(await f.page.evaluate(async () => (await import("/app/core/state.js")).E.profiles?.active?.id), dana.id,
+    "the previous profile's document must be gone before typing");
+  const request = f.page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/run");
+  await f.page.locator("#prompt").fill("check Dana's receipts");
+  await f.page.locator("#prompt").press("Enter");
+  assert.equal((await request).postDataJSON().sessionId, first.body.sessionId, "the message stays in her opened conversation");
+  assert.ok(await until(() => f.gates.has("gamma") && f.gates.has("delta")), "her helpers start without a new conversation's approval");
+  const parent = f.runBy("check Dana's receipts");
+  assert.equal(f.helpersOf(parent).length, 2);
+  assert.ok(!f.app.runtime.approvals.waiting().some((q) => q.runId === parent && q.tool === "delegate.parallel"));
+  for (const release of f.gates.values()) release();
+  assert.ok(await until(() => f.app.store.run(parent).status === "completed"));
+  assert.deepEqual(f.errors, []);
+});
 
 test("a household person sees, stops and steers their own task's helpers live, and never the owner's", async (t) => {
   const f = await fixture(t);
