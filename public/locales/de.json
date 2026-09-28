@@ -2395,6 +2395,8 @@
   "glance.setting.saveNote": "Es fragt nur, etwa fünf Sekunden lang. Nichts passiert, außer du drückst Fortschritt speichern, und es fragt einmal pro Kontingentzeitraum.",
   "glance.title": "Was jede Verbindung noch übrig hat",
   "glance.usedNext": "als Nächstes genutzt",
+  "glance.trunksOn": "Trunks auf diesem Konto: {names}",
+  "glance.trunkMeter": "{trunk} auf {name} ({account})",
   "glance.measuring": "wird nach deiner nächsten Nachricht gemessen",
   "glance.measureNow": "Jetzt messen",
   "glance.offer.claude": "Nutzungsguthaben hinzufügen",

@@ -2395,6 +2395,8 @@
   "glance.setting.saveNote": "Solo pregunta, durante unos cinco segundos. No pasa nada salvo que pulses Guardar el progreso, y pregunta una vez por cada periodo de asignación.",
   "glance.title": "Lo que le queda a cada conexión",
   "glance.usedNext": "se usa a continuación",
+  "glance.trunksOn": "Trunks en esta cuenta: {names}",
+  "glance.trunkMeter": "{trunk} en {name} ({account})",
   "glance.measuring": "se mide después de tu próximo mensaje",
   "glance.measureNow": "Medir ahora",
   "glance.offer.claude": "Añadir créditos de uso",

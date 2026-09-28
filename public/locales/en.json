@@ -2395,6 +2395,8 @@
   "glance.setting.saveNote": "It only asks, for about five seconds. Nothing happens unless you press Save progress, and it asks once per allowance window.",
   "glance.title": "What each connection has left",
   "glance.usedNext": "used next",
+  "glance.trunksOn": "Trunks on this account: {names}",
+  "glance.trunkMeter": "{trunk} on {name} ({account})",
   "glance.measuring": "measuring after your next message",
   "glance.measureNow": "Measure now",
   "glance.offer.claude": "Add usage credits",
