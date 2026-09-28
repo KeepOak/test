@@ -9,6 +9,7 @@
 import { t } from "../../i18n.js";
 import { E } from "./state.js";
 import { windowRest, sleeps, onRest } from "./sleep.js";
+import { hold17, play17 } from "./held.js";
 
 const PAINTED = ["mossfrog", "leafhog", "fennec", "otter", "capybara", "cloverbun", "owlet", "shellsnail", "jelly", "cloudsheep",
   "pebblecrab", "caterpillar", "sprigdragon", "turtle", "penguin", "puppy", "kitten", "raccoon", "koala", "sloth", "fruitbat",
@@ -82,9 +83,9 @@ onRest(paintPixels);
    Trunks' own figures are not touched here.) A loop paused here is marked data-off13; whoever plays a loop again leaves
    a marked one alone. */
 const LOOPS = ".petbox video, .pets12 video, .ob-pets15 video, .cheer11 video, .hero11 video, .ob-stage11 video, .slot17e video";
-const resume = (v) => { if (!document.hidden && !v.dataset.off13 && !calmPets() && !v.closest(".zz11") && !sleeps(v)) v.play().catch((error) => console.warn(error.message)); };
+const resume = (v) => { if (!document.hidden && !v.dataset.off13 && !calmPets() && !v.closest(".zz11") && !sleeps(v)) play17(v).catch((error) => console.warn(error.message)); };
 const onScreen = new IntersectionObserver((seen) => seen.forEach(({ target: v, isIntersecting }) => {
   if (isIntersecting) { if (v.dataset.off13) { delete v.dataset.off13; resume(v); } }
-  else if (!v.paused) { v.dataset.off13 = "1"; v.pause(); }
+  else if (!v.paused) { v.dataset.off13 = "1"; hold17(v); }
 }), { rootMargin: "120px" });
 new MutationObserver(() => document.querySelectorAll(LOOPS).forEach((v) => onScreen.observe(v))).observe(document.body, { childList: true, subtree: true });
