@@ -188,7 +188,7 @@ export class LiveStatus {
     if (kind === "tool.started") {
       this.steps.push({ id, label: stepLabel(data), name: String(data.name ?? ""), state: "working" });
       this.setState("tool");
-      if (this.due && !this.progressId && this.target.adapter.edit) void this.openProgress();
+      this.openIfDue();
     } else if (kind === "tool.completed" || kind === "tool.failed" || kind === "tool.stalled") {
       const step = this.steps.find((s) => s.state === "working" && s.id === id) ?? this.steps.find((s) => s.state === "working");
       if (step) step.state = kind === "tool.completed" ? "done" : "failed";
@@ -197,11 +197,16 @@ export class LiveStatus {
       this.reply = "";
       this.setState("thinking");
     } else {
-      // The steps come from the task's whole record, so anything it does may change them.
-      if (this.stepsSource) this.scheduleEdit();
+      // The steps come from the task's whole record, so anything it does may change them (an installed program's own
+      // steps arrive as program.step.* events, and may be the first step of all).
+      if (this.stepsSource) { this.openIfDue(); this.scheduleEdit(); }
       return;
     }
     this.scheduleEdit();
+  }
+  /** The task has worked long enough and now has a step to show: the progress message opens. */
+  private openIfDue(): void {
+    if (this.due && !this.progressId && this.target.adapter.edit && this.hasSteps()) void this.openProgress();
   }
   /** A piece of the reply as the model writes it. */
   text(delta: string): void {

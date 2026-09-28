@@ -13,7 +13,7 @@ import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifact
 import { decide, readSenderAllowlist } from "./allowlist.js";
 import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
-import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
+import { chatSteps, compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
@@ -834,7 +834,9 @@ export class ChannelRouter {
     const commands = this.switches().commands;
     const hint = commands === "on" ? "Tap Menu or type / for commands: /new starts afresh, /stop stops a task, /help lists the rest."
       : commands === "when-needed" ? "While I work, /stop stops me and /status says what I am doing." : "";
-    const text = [`Hi, I'm ${name}, running in Branch on ${hostname()}.`,
+    // The computer's name is for the owner's own chats; a group only hears that this is Branch.
+    const where = message.chatKind === "direct" ? ` on ${hostname()}` : "";
+    const text = [`Hi, I'm ${name}, running in Branch${where}.`,
       "Ask me anything or give me something to do, and I will answer here.", hint].filter(Boolean).join(" ");
     await this.deliver(message.channel, message.chatId, text, `start:${message.channel}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
     return "replied";
@@ -1257,10 +1259,10 @@ export class ChannelRouter {
     return this.adapters.get(message.channel)?.adapter.replyQuotes === true;
   }
   /** The message a turn's next message quotes, if any: the newest message it answers. */
-  private quoteIn(turn: ChatTurnState): string | undefined {
+  private quoteIn(turn: ChatTurnState, part: "answer" | "status" = "answer"): string | undefined {
     const first = turn.messages[0]!, last = turn.messages.at(-1)!;
     if (!this.quotes(first)) return first.messageId; // the thread it belongs in, as before
-    return nextQuote(turn.quote, last.messageId);
+    return nextQuote(turn.quote, last.messageId, part);
   }
   /** The same rule for one message sent outside a turn (a command's answer, a refusal). */
   private quoteFor(message: InboundMessage): string | undefined {
@@ -1276,7 +1278,7 @@ export class ChannelRouter {
     const steps = switches.steps !== "off" && message.chatKind === "direct" ? this.stepsOf(runOf) : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
       allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", react: this.style(message).react,
-      ...(turn ? { quote: () => this.quoteIn(turn), adopt: () => turn.reply?.surrender() ?? Promise.resolve(null) } : {}) },
+      ...(turn ? { quote: () => this.quoteIn(turn, "status"), adopt: () => turn.reply?.surrender() ?? Promise.resolve(null) } : {}) },
     (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
   }
   private replyFor(message: InboundMessage, turn?: ChatTurnState): ReplyStream | null {
@@ -1321,7 +1323,7 @@ export class ChannelRouter {
     return {
       view,
       render: (limit, final) => renderChatSteps(view(), { limit, scrub: (text) => this.hideLeaks(text), ...(final ? { final } : {}) }),
-      count: () => view().steps.length,
+      count: () => chatSteps(view().steps).length, // the steps the message would show, not Branch finding its tools
     };
   }
   /** mac6/bucket-16 integration: whether a sender may use a connected chat app, without offering a code. */

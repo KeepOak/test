@@ -9,12 +9,14 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { setTimeout as delay } from "node:timers/promises"; // only as the poll tick of until()
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, TelegramAdapter, DiscordAdapter, SlackAdapter } from "../dist/index.js";
 import { nextQuote, quoteState, saveReplyStyle, replyStyle } from "../dist/channels/reply-style.js";
 
-const fast = { progressAfterMs: 5, editEveryMs: 5, typingEveryMs: 1000, reactEveryMs: 5 };
+// A progress message may open at once (progressAfterMs 0): each model below waits until the chat shows the task is
+// thinking, which is after that moment, so the old "Done · 0 steps" message would have had its chance.
+const fast = { progressAfterMs: 0, editEveryMs: 5, typingEveryMs: 1000, reactEveryMs: 5 };
 async function until(check, label, ms = 10_000) {
   const end = Date.now() + ms;
   while (Date.now() < end) { const value = check(); if (value) return value; await delay(5); }
@@ -38,21 +40,25 @@ function fakeApp(kind, { edit = true } = {}) {
   const finalOf = (id) => calls.filter((c) => c.op === "edit" && c.id === id).at(-1)?.text ?? sends().find((s) => s.id === id)?.text;
   return { adapter, calls, sends, finalOf };
 }
-/** A model that answers after `ms`, optionally taking one step first and writing words before it. */
-function model({ steps = 0, ms = 40, preamble = "", gate } = {}) {
+/**
+ * A model that answers once `ready()` holds (the test's condition, never a fixed wait), optionally taking steps first
+ * and writing words before its first step; `gate` holds the answer until the test opens it.
+ */
+function model({ steps = 0, preamble = "", gate } = {}) {
   let round = 0;
-  return { name: "stand-in", requests: 0, async complete(request) {
-    this.requests++;
+  const provider = { name: "stand-in", requests: 0, ready: () => true, preambleShown: () => true, async complete(request) {
+    provider.requests++;
     round++;
+    await until(provider.ready, "the chat shows the task is thinking");
     if (round <= steps) {
-      if (preamble) { request.onTextDelta?.(preamble); await delay(30); }
+      if (preamble && round === 1) { request.onTextDelta?.(preamble); await until(provider.preambleShown, "the words before the step"); }
       return { content: "", toolCalls: [{ id: `c${round}`, name: "files.list", arguments: "{\"path\":\".\"}" }] };
     }
     if (gate) await gate;
-    await delay(ms);
     request.onTextDelta?.("Here it is. ");
     return { content: "Here it is.", toolCalls: [] };
   } };
+  return provider;
 }
 async function fixture(t, kind, provider, { edit = true, style } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-turn-ending-"));
@@ -64,6 +70,8 @@ async function fixture(t, kind, provider, { edit = true, style } = {}) {
   if (style) saveReplyStyle(app.store, app.runtime.owner, { channel: kind, ...style }, [kind]);
   const chat = fakeApp(kind, { edit });
   await app.channels.attach(chat.adapter, { activation: "always", pairing: true, allowlist: ["owner"] });
+  // Thinking is shown (🤔) only after the moment a progress message could open, so each turn below lives past it.
+  provider.ready = () => !edit || style?.react === false || chat.calls.some((c) => c.op === "react" && c.emoji === "🤔");
   return { app, chat };
 }
 let ids = 100;
@@ -72,7 +80,7 @@ const inbound = (kind, text, extra = {}) => ({ channel: kind, chatId: "c1", chat
 
 for (const kind of ["telegram", "discord", "slack", "matrix"]) {
   test(`${kind}: a turn with no step posts only its answer, unquoted in a one-to-one chat`, async (t) => {
-    const { app, chat } = await fixture(t, kind, model({ ms: 60 }));
+    const { app, chat } = await fixture(t, kind, model());
     assert.equal(await app.channels.handle(inbound(kind, "Hi")), "replied");
     const sends = chat.sends();
     assert.equal(sends.length, 1, `one message, not a status and an answer: ${JSON.stringify(sends)}`);
@@ -102,7 +110,9 @@ for (const kind of ["telegram", "discord", "slack", "matrix"]) {
 }
 
 test("words written before a step become the steps message, so the answer still lands below the steps", async (t) => {
-  const { app, chat } = await fixture(t, "telegram", model({ steps: 1, preamble: "Let me look at the folder first, " }));
+  const provider = model({ steps: 1, preamble: "Let me look at the folder first, " });
+  const { app, chat } = await fixture(t, "telegram", provider);
+  provider.preambleShown = () => chat.sends().length === 1; // the start of a reply is already in the chat
   assert.equal(await app.channels.handle(inbound("telegram", "what is here?")), "replied");
   const sends = chat.sends();
   const [first, second] = sends;
@@ -115,7 +125,6 @@ test("words written before a step become the steps message, so the answer still 
 
 test("an app that cannot edit gets one message: the answer, with a steps line only when there were steps", async (t) => {
   const { app, chat } = await fixture(t, "whatsapp", model({ steps: 1 }), { edit: false });
-  app.channels.liveTiming = { ...fast, progressAfterMs: 0 };
   assert.equal(await app.channels.handle(inbound("whatsapp", "tidy up")), "replied");
   assert.equal(chat.sends().length, 1);
   assert.equal(chat.sends()[0].replyTo, undefined);
@@ -124,13 +133,14 @@ test("an app that cannot edit gets one message: the answer, with a steps line on
 test("auto quoting: a newer message arriving before the answer makes the answer quote the one it answers", async (t) => {
   let open;
   const gate = new Promise((resolve) => { open = resolve; });
-  const { app, chat } = await fixture(t, "telegram", model({ gate }));
+  const provider = model({ gate });
+  const { app, chat } = await fixture(t, "telegram", provider);
   app.channels.setSwitches({ steering: "off" });
   const first = inbound("telegram", "first question");
   const answered = app.channels.handle(first);
-  await delay(20);
+  await until(() => provider.requests === 1, "the first question is being answered");
+  // Let in synchronously, before handle's first wait, so it is the chat's newest message when the gate opens.
   const later = app.channels.handle(inbound("telegram", "second question"));
-  await delay(20);
   open();
   assert.equal(await answered, "replied");
   await later;
@@ -140,16 +150,20 @@ test("auto quoting: a newer message arriving before the answer makes the answer 
   assert.equal(replies[1].replyTo, undefined, "the newest question's answer needs no quote");
 });
 
-test("groups quote the first message of an answer; off and all do what they say", async (t) => {
-  const { app, chat } = await fixture(t, "telegram", model());
+test("groups quote the answer, not the status beside it; off and all do what they say", async (t) => {
+  const { app, chat } = await fixture(t, "telegram", model({ steps: 2 }));
   const asked = inbound("telegram", "hello all", { chatKind: "group", chatTitle: "Team", chatId: "g1" });
   await app.channels.handle(asked);
-  assert.equal(chat.sends()[0].replyTo, asked.messageId);
+  const sends = chat.sends();
+  assert.equal(sends.length, 2, "a short progress message, then the answer");
+  assert.equal(sends[0].replyTo, undefined, "the progress message does not use up the quote");
+  assert.equal(sends[1].replyTo, asked.messageId, "the answer says who it answers");
+  assert.equal(chat.finalOf(sends[1].id), "Here it is.");
   const state = (mode, kind = "direct") => quoteState(mode, kind, () => false);
   const off = state("off"), all = state("all"), first = state("first"), auto = state("auto");
   assert.deepEqual([nextQuote(off, "m"), nextQuote(off, "m")], [undefined, undefined]);
   assert.deepEqual([nextQuote(all, "m"), nextQuote(all, "m")], ["m", "m"]);
-  assert.deepEqual([nextQuote(first, "m"), nextQuote(first, "m")], ["m", undefined]);
+  assert.deepEqual([nextQuote(first, "m", "status"), nextQuote(first, "m")], ["m", undefined], "first is the first, status or not");
   assert.deepEqual([nextQuote(auto, "m"), nextQuote(auto, "m")], [undefined, undefined]);
   let late = false;
   const turned = quoteState("auto", "direct", () => late);

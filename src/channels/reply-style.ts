@@ -55,17 +55,21 @@ export function quoteState(mode: QuoteMode, chatKind: "direct" | "group", interl
   return { mode, chatKind, interleaved, sent: 0, quoted: false };
 }
 /**
- * The message id the next message of an answer quotes, or undefined, and counts that message as sent. In a one-to-one
- * chat on "auto" the first message sent after the answer became ambiguous quotes, so a reply that follows its own steps
- * message still quotes when a newer message came in meanwhile.
+ * The message id the next message of an answer quotes, or undefined, and counts that message as sent. `part` says
+ * whether it is the answer itself (its words, a question it asks) or a status beside it (the steps message).
+ *
+ * On "auto" a status message never quotes: the answer carries the quote, once. In a group that is the answer's first
+ * message; in a one-to-one chat it is the first answer message sent after the answer became unclear, so a reply that
+ * follows its own steps message still quotes when a newer message came in meanwhile. "first" is Hermes's rule: the
+ * first message of the answer, whichever it is.
  */
-export function nextQuote(state: QuoteState, messageId: string): string | undefined {
+export function nextQuote(state: QuoteState, messageId: string, part: "answer" | "status" = "answer"): string | undefined {
   const first = state.sent === 0;
   state.sent++;
   const quote = state.mode === "all" ? true
     : state.mode === "first" ? first
-      : state.mode === "off" ? false
-        : state.chatKind === "group" ? first : !state.quoted && state.interleaved();
+      : state.mode === "off" || part === "status" || state.quoted ? false
+        : state.chatKind === "group" ? true : state.interleaved();
   if (quote) state.quoted = true;
   return quote ? messageId : undefined;
 }
