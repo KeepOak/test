@@ -1,3 +1,4 @@
+import { environmentTool } from "./environment.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
@@ -75,6 +76,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { connectionName } from "./accounts/manage.js"; // models-ui: a Trunk's pools by name
 import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
@@ -676,6 +678,7 @@ export async function createBranch(options: {
   };
   registerDocuments(registry, documents);
   registerAttachmentTools(registry, store, attachments);
+  registry.register(environmentTool((runId) => runtime.channelOf(runId))); // where Branch is running, on request
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",
@@ -873,6 +876,8 @@ export async function createBranch(options: {
   channels.liveAllowed = () => !lockedDown(store, runtime.owner);
   // ...and nothing key-shaped or secret shows in a step label or streamed text (mac2/leak-guard).
   channels.hideLeaks = (text) => redactLeaksIn(store.secrets.scrubber.deep(text)).value;
+  // Data carried out in an address a task opens (src/egress-guard.ts): the values the locker has unlocked.
+  runtime.egress.secrets = () => store.secrets.scrubber.values();
   runtime.hideSecrets = (value) => {
     // mac2/leak-guard: key-shaped values nobody looked up are hidden in logs and question cards too.
     const scrubbed = redactLeaksIn(store.secrets.scrubber.deep(value)).value;
@@ -1296,7 +1301,8 @@ export async function createBranch(options: {
   // R17-005: a Trunk's account is its own conversation's choice in the accounts work (src/accounts/).
   const trunkAccounts = {
     get connected() { return accountsSettings(store, runtime.owner).mode !== "off"; },
-    pools: () => accountsSettings(store, runtime.owner).pools.map((pool) => ({ id: pool.pool, label: pool.pool,
+    // models-ui: the connection's own name ("Claude Code", "ChatGPT"), so keyPlan's notes read as the window's lists do.
+    pools: () => accountsSettings(store, runtime.owner).pools.map((pool) => ({ id: pool.pool, label: connectionName(accounts, pool.pool),
       accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) })),
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
