@@ -8,7 +8,7 @@
 
 import { $, esc, applyCss, onRender } from "../core/dom.js";
 import { app, av, toast, ic, closePop, closeDlg } from "../core/ui.js";
-import { E, refresh } from "../core/state.js";
+import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
@@ -159,6 +159,9 @@ function welcome() {
 function placeWelcome() {
   const card = $(".welcome10"), dock = $("#main .dock"), root = app();
   if (!card || !root) return;
+  /* It belongs to the conversation, where it keeps clear of the message box; over Settings or a place it would sit on
+     their own controls (the Appearance language picker, a card's buttons), so there it waits unseen. */
+  card.hidden = S.view !== "chat";
   const over = dock?.getClientRects().length ? root.getBoundingClientRect().bottom - dock.getBoundingClientRect().top + 12 : 0;
   card.style.bottom = over > 0 ? `${Math.round(over)}px` : "";
 }
