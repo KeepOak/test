@@ -132,7 +132,9 @@ test("the real script reads parts with refs, presses a named button without the 
   assert.ok(button.box[0] >= 0 && button.box[1] >= 0 && button.box[2] > 100, `inside the window: ${button.box}`);
   assert.deepEqual([reading.bounds.x, reading.bounds.y], [-30000, -30000], "the window's own place, far off every screen");
 
+  console.log(`# the button as read: ${JSON.stringify(button)}; the window: ${JSON.stringify(reading.bounds)}`);
   const pressed = await runner.run("click", { handle: proof.handle, name: "Proof button" }, signal());
+  console.log(`# pressed: ${JSON.stringify(pressed)}; the window after: ${JSON.stringify(await listed(proof.handle))}`);
   assert.equal(pressed.how, "invoke", "pressed through UI Automation: the pointer never moved");
   assert.match(await titled(proof.handle, /^Branch proof 1 /), /^Branch proof 1 /, "the button's own handler ran once");
 

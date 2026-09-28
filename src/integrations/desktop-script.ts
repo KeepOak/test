@@ -1102,9 +1102,12 @@ export class LiveScreenProcess {
   }
 
   private async takeFrame(maxWidth: number, signal: AbortSignal): Promise<LiveAnswer> {
+    // computer-control: the first frame also starts the program, which compiles its C# (slow on a busy computer), so it
+    // is given a minute; every frame after it has twenty seconds.
+    const starting = !this.child;
     const child = this.child ?? await this.start(signal);
     const line = await new Promise<string>((ok, fail) => {
-      const timer = setTimeout(() => stop('The screen did not answer in time.'), 20000);
+      const timer = setTimeout(() => stop('The screen did not answer in time.'), starting ? 60000 : 20000);
       const stop = (why: string) => { this.end(child); this.settle(new Error(why)); };
       const aborted = () => stop('That was stopped before it finished.');
       const done = () => { clearTimeout(timer); signal.removeEventListener('abort', aborted); };
