@@ -81,11 +81,11 @@ test("settings.find and settings.list find the round limit by plain words, with 
     assert.deepEqual(found.choices.map((one) => one.setting), [setting], `"${request}" finds the round limit and nothing else`);
     const [only] = found.choices;
     assert.equal(only.value, "auto", "no figure of the owner's own yet");
-    assert.deepEqual(only.range, { min: 2, max: 60, or: "auto" });
+    assert.deepEqual(only.range, { min: 2, max: 500, or: "auto" });
     assert.match(only.note, /12 rounds/);
     assert.match(only.note, /40 when the task works on the project's files/);
     assert.match(found.question, /It is auto now/);
-    assert.match(found.question, /from 2 to 60/);
+    assert.match(found.question, /from 2 to 500/);
   }
   const listed = await tool("settings.list", { search: "rounds" });
   assert.deepEqual(listed.shown.map((row) => row.setting), [setting]);
@@ -94,7 +94,7 @@ test("settings.find and settings.list find the round limit by plain words, with 
   assert.equal(row.where, "settings:advanced");
   assert.equal(row.value, "auto");
   assert.equal(row.startsAs, "auto");
-  assert.deepEqual(row.choices, { min: 2, max: 60, or: "auto" });
+  assert.deepEqual(row.choices, { min: 2, max: 500, or: "auto" });
   assert.equal(row.lessCareful, null, "more rounds spend only on the connected model, so it is an ordinary change");
   const advanced = await tool("settings.list", { search: "settings:advanced" });
   assert.ok(advanced.shown.some((one) => one.setting === setting), "it is listed with the other Advanced settings");

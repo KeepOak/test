@@ -62,6 +62,15 @@ function keepFields() {
   const n = $("#st-name"), r = $("#st-role");
   if (n) ed.d.name = n.value;
   if (r) ed.d.title = r.value;
+  for (const box of document.querySelectorAll("[data-personality-file]")) {
+    const file = ed.files?.find((file) => file.name === box.dataset.personalityFile);
+    if (file) file.text = box.value;
+  }
+}
+
+function filesTab() {
+  markLive((ed.files ?? []).map((file) => `sw:personality-${file.name}`));
+  return (ed.files ?? []).map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button></div>`).join("");
 }
 
 /* The pebble as this editor would save it: the draft's colour, shape, eyes and motion over the saved face. */
@@ -273,8 +282,8 @@ function drawEditor() {
   if (!tr) { closeDlg(); ed = null; return; }
   const old = dialog()?.querySelector(".editor") ? dialog() : null;
   const kept = [".dlg-b", ".looks-tl"].map((q) => old?.querySelector(q)?.scrollTop ?? 0);
-  const tabs = [["look", t("window.flows.trunk.look")], ["may", t("autonomy.orders.authority")], ["its17d", t("window.p17d.its-computers")], ["accounts", t("window.flows.trunk.accounts")]].map(([k, l]) => `<button class="tab" role="tab" type="button" aria-selected="${ed.tab === k}" data-act="st-tab" data-v="${k}">${l}</button>`).join("");
-  const body = ed.tab === "look" ? lookPicker(tr) + emojiRow(tr) + lookTab(tr, ed.d) : ed.tab === "its17d" ? itsTab(tr.id) : ed.tab === "accounts" ? accountsTab(tr) : mayTab(tr);
+  const tabs = [["look", t("window.flows.trunk.look")], ["may", t("autonomy.orders.authority")], ["its17d", t("window.p17d.its-computers")], ["files", t("pane.files")], ["accounts", t("window.flows.trunk.accounts")]].map(([k, l]) => `<button class="tab" role="tab" type="button" aria-selected="${ed.tab === k}" data-act="st-tab" data-v="${k}">${l}</button>`).join("");
+  const body = ed.tab === "look" ? lookPicker(tr) + emojiRow(tr) + lookTab(tr, ed.d) : ed.tab === "its17d" ? itsTab(tr.id) : ed.tab === "files" ? filesTab() : ed.tab === "accounts" ? accountsTab(tr) : mayTab(tr);
   const el = openDlg({ title: t("trunks.editing", { name: tr.name }), wide: true,
     body: `<div class="editor"><div class="big">${av(draftFace(tr), 84)}<button class="btn sm" type="button" data-act="st-shuffle">${t("studio.shuffle")}</button></div><div data-css="display:grid;gap:14px;min-width:0"><div class="tabs" data-css="margin:0" role="tablist">${tabs}</div>${body}</div></div>`,
     foot: `<button class="btn bad rm-tl" type="button" data-act="remove" data-id="${esc(tr.id)}">${t("window.flows.trunk.remove-trunk")}</button><button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="st-save">${t("action.save")}</button>` });
@@ -559,7 +568,27 @@ export function init() {
   markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
-  on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); if (ed.tab === "accounts") loadKeys(ed.id); });
+  on("st-tab", async (el) => {
+    keepFields();
+    const id = ed.id;
+    if (el.dataset.v === "files" && !ed.files) {
+      try { const data = await api(`trunks/${id}/files`); if (ed?.id !== id) return; ed.files = data.files; }
+      catch (error) { toast(error.message); return; }
+    }
+    ed.tab = el.dataset.v; drawEditor();
+    if (ed.tab === "accounts") loadKeys(ed.id);
+  });
+  markLive(["trunk-default", "trunk-file-save"]);
+  on("trunk-default", async (el) => {
+    try { await api(`trunks/${el.dataset.id}/default`, {}); await refresh(); }
+    catch (error) { toast(error.message); }
+  });
+  on("trunk-file-save", async (el) => {
+    keepFields();
+    const id = ed.id, file = ed.files.find((file) => file.name === el.dataset.name);
+    try { await api(`trunks/${id}/files`, { name: file.name, text: file.text }); await refresh(); }
+    catch (error) { toast(error.message); }
+  });
   computersChanged(() => { if (ed?.tab === "its17d" && dialog()?.querySelector(".editor")) drawEditor(); }); // only while the editor is open
   on("st-colour", (el) => { keepFields(); ed.d.colour = hex(el.dataset.v); drawEditor(); });
   on("st-shape", (el) => { keepFields(); ed.d.shape = SHAPE_NAMES[+el.dataset.v] ?? null; drawEditor(); });
