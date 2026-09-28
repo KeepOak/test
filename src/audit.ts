@@ -49,6 +49,8 @@ export const auditActions = [
   "lock.changed",
   // P17-D: the computers a Trunk may use, or how many tasks it may run at once, were changed (src/trunks/computers.ts).
   "trunk.computers",
+  // models-ui: the most a Trunk may spend in a month was set, changed or cleared (src/trunks/spend-cap.ts).
+  "trunk.spend_cap",
 ] as const;
 export type AuditAction = (typeof auditActions)[number];
 
@@ -127,6 +129,7 @@ const actionLabels: Record<AuditAction, string> = {
   "trunk.paused": "A Trunk was paused or resumed",
   "lock.changed": "The App lock PIN was set, changed or removed",
   "trunk.computers": "The computers a Trunk may use were changed",
+  "trunk.spend_cap": "A Trunk's monthly spending limit was changed",
 };
 export const auditLabel = (action: AuditAction): string => actionLabels[action];
 
