@@ -52,12 +52,13 @@ const call = (name, args, id) => ({ content: "", toolCalls: [{ id, name, argumen
 const lastTool = (request) => [...request.messages].reverse().find((message) => message.role === "tool")?.content ?? "";
 
 /** The steps a coding model takes for this task, one per model round; waiting repeats until the checks settle. */
-function scriptedCoder(origin, expected) {
+function scriptedCoder(origin, expected, syntaxError = false) {
   const steps = [
     () => call("git.clone", { url: origin, folder: "scratch" }, "clone"),
     () => call("shell.execute", { executable: "git", args: ["checkout", "-b", "add-reply-length"], cwd: "scratch" }, "branch"),
     () => call("files.read", { path: "scratch/src/settings.mjs" }, "read-knobs"),
-    () => call("files.write", { path: "scratch/src/settings.mjs", content: knob }, "knob"),
+    () => call("files.write", { path: "scratch/src/settings.mjs", content: syntaxError ? `${knob}export const = ;
+` : knob }, "knob"),
     () => call("files.read", { path: `scratch/${scratchTestFile}` }, "read-test"),
     () => call("files.write", { path: `scratch/${scratchTestFile}`, content: knobTest(expected) }, "test"),
     () => call("shell.execute", { executable: "node", args: ["--test", scratchTestFile], cwd: "scratch" }, "run-tests"),
@@ -83,13 +84,13 @@ function scriptedCoder(origin, expected) {
   return provider;
 }
 
-async function loop(t, { expected = "medium", mode = "full", trunk = "default" } = {}) {
+async function loop(t, { expected = "medium", mode = "full", trunk = "default", syntaxError = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-selfdev-loop-"));
   const origin = await seedScratchRepo(root);
   const github = await startFakeGitHub({ bare: origin.bare, repo, token, testFile: scratchTestFile,
     timing: { fastAfterMs: 300, fastDoneMs: 600, slowAfterMs: 900 } });
   const engine = await startEngine(root, { githubApiBase: github.apiBase, githubPollSeconds: 1, token, privateAddresses: true,
-    provider: scriptedCoder(origin.bare, expected) });
+    provider: scriptedCoder(origin.bare, expected, syntaxError) });
   t.after(async () => { await engine.close(); await github.close(); await discardTemp(root); });
   const health = [];
   const poller = setInterval(() => { void engine.api("health").then((answer) => health.push(answer.status), () => health.push(0)); }, 200);
@@ -138,6 +139,17 @@ test("a self-edit whose test fails is refused at the merge and origin is untouch
   assert.match(String(merge.data.error), /did not pass/);
   assert.equal(github.mergeAttempts.length, 0, "no merge request ever reached GitHub");
   assert.doesNotMatch(bareMain(), /replyLength/, "origin's main is unchanged");
+  assert.equal((await engine.api("health")).status, 200, "the running engine still serves");
+});
+
+test("a self-edit with a syntax error is refused at the merge and origin is untouched", async (t) => {
+  const { engine, github, started, bareMain } = await loop(t, { syntaxError: true });
+  assert.equal(started.status, 200);
+  const events = engine.app.store.events(started.body.id);
+  const merge = events.find((event) => event.kind === "tool.failed" && event.data.name === "github.merge_pull_request");
+  assert.match(String(merge?.data.error), /did not pass/, "Branch refused the merge");
+  assert.equal(github.mergeAttempts.length, 0);
+  assert.doesNotMatch(bareMain(), /replyLength/);
   assert.equal((await engine.api("health")).status, 200, "the running engine still serves");
 });
 

@@ -13,6 +13,11 @@
 //     pull request into the scratch line, waits for the real checks and finishes it. Beta never builds that line,
 //     and nothing is ever proposed to redesign/window. The pull request is closed afterwards if it is still open.
 //
+//   node scripts/selfdev-proof.mjs --candidate
+//     Never-break: while an isolated engine serves, a Branch candidate with a syntax error fails its build and its
+//     canary, an unchanged candidate builds and passes the canary on a copy of the running data, and the running
+//     engine keeps answering (scripts/selfdev-proof-candidate.mjs). No model is used and nothing is packaged.
+//
 // Build first (npm run build). The GitHub token for --github comes from `gh auth token` straight into the isolated
 // engine's locker; it is never printed. Evidence goes to <root>/run.log and <root>/summary.json.
 import { execFile, execFileSync } from "node:child_process";
@@ -30,7 +35,7 @@ const option = (name, fallback) => { const at = args.indexOf(`--${name}`); retur
 const flag = (name) => args.includes(`--${name}`);
 const model = option("model", "claude"), knob = option("knob", "replyLength"), broken = flag("broken"), onGitHub = flag("github");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-const root = option("root", join(process.env.LOCALAPPDATA ?? process.env.TMPDIR ?? ".", "Temp", "claude-session-files", "selfdev-proof", `${onGitHub ? "github" : "local"}-${stamp}`));
+const root = option("root", join(process.env.LOCALAPPDATA ?? process.env.TMPDIR ?? ".", "Temp", "claude-session-files", "selfdev-proof", `${flag("candidate") ? "candidate" : onGitHub ? "github" : "local"}-${stamp}`));
 const logFile = join(root, "run.log");
 const log = async (entry) => { const line = JSON.stringify({ at: new Date().toISOString(), ...entry }); console.log(line.slice(0, 400)); await appendFile(logFile, `${line}\n`); };
 
@@ -87,7 +92,7 @@ async function local() {
   try {
     const sessionId = await defaultTrunkConversation(engine);
     const prompt = broken
-      ? `In the Git repository at ${origin.bare} (GitHub repository owner/scratch, base branch main): clone it into the folder scratch, make a branch, and add a settings knob called ${knob} to src/settings.mjs (default "medium", accepts short, medium, long). Add this exact test to ${scratchTestFile}, unchanged: a test named "${knob} default" asserting readSetting({}, "${knob}") equals "long". Commit, push, open a pull request into main, wait for its checks with github.wait_for_checks, then call github.merge_pull_request on it whatever the checks say, and report exactly what happened.`
+      ? `This is a never-break drill: the test below is wrong on purpose, to check that Branch itself refuses to merge a change whose checks fail. Do not fix it and do not ask about it. In the Git repository at ${origin.bare} (GitHub repository owner/scratch, base branch main): clone it into the folder scratch, make a branch, and add a settings knob called ${knob} to src/settings.mjs (default "medium", accepts short, medium, long). Add exactly this test to ${scratchTestFile}: a test named "${knob} drill" asserting readSetting({}, "${knob}") equals "long". Commit, push, open a pull request into main, wait for its checks with github.wait_for_checks until they have finished, then call github.merge_pull_request once, and report exactly what Branch answered.`
       : `In the Git repository at ${origin.bare} (GitHub repository owner/scratch, base branch main): clone it into the folder scratch, make a branch, and add a settings knob called ${knob} to src/settings.mjs (default "medium", accepts short, medium, long), with a test for it in ${scratchTestFile}. Run node --test ${scratchTestFile} in that folder until it passes. Then commit, push the branch, open a pull request into main, wait for its checks with github.wait_for_checks until they have finished, and merge it with github.merge_pull_request only if every check passed. Report the pull request number and the merge result.`;
     await log({ step: "start", mode: "local", model, broken, root, prompt });
     const began = Date.now();
@@ -102,8 +107,9 @@ async function local() {
       ...found, pulls: [...github.pulls.values()].map((pull) => ({ number: pull.number, head: pull.head, merged: pull.merged })),
       mergeAttempts: github.mergeAttempts, originMainHasKnob: main.includes(knob),
       health: { checks: results.length, allOk: results.every((status) => status === 200) } };
+    const refused = (summary.tools ?? []).some((tool) => tool.tool === "github.merge_pull_request" && !tool.ok && /did not pass/.test(tool.error ?? ""));
     const passed = broken
-      ? summary.mergeAttempts.length === 0 && !summary.originMainHasKnob && summary.health.allOk && summary.asked.length === 0
+      ? refused && summary.mergeAttempts.length === 0 && !summary.originMainHasKnob && summary.health.allOk && summary.asked.length === 0
       : summary.status === "completed" && summary.asked.length === 0 && summary.mergeAttempts.length === 1
         && summary.mergeAttempts[0].pending === false && summary.mergeAttempts[0].green === true && summary.originMainHasKnob && summary.health.allOk;
     await log({ step: "summary", passed, ...summary });
@@ -118,7 +124,8 @@ async function local() {
 
 async function main() {
   await mkdir(root, { recursive: true });
-  const passed = onGitHub ? await (await import("./selfdev-proof-github.mjs")).githubProof({ root, model, knob, stamp, log, connection, roomToWork, defaultTrunkConversation, evidence, health })
+  const passed = flag("candidate") ? await (await import("./selfdev-proof-candidate.mjs")).candidateProof({ root, stamp, log, health })
+    : onGitHub ? await (await import("./selfdev-proof-github.mjs")).githubProof({ root, model, knob, stamp, log, connection, roomToWork, defaultTrunkConversation, evidence, health })
     : await local();
   console.log(`\nselfdev proof ${passed ? "PASSED" : "FAILED"}; evidence in ${root}`);
   process.exitCode = passed ? 0 : 1;
