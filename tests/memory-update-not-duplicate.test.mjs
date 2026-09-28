@@ -11,6 +11,7 @@
  * - src/memory-review.ts sessionSnapshot, and src/index.ts orderFacts: drop isCurrentFact: "an ended fact is never shown…".
  * - src/memory.ts search: drop isCurrentFact: "an ended fact is never shown…" (memory.search).
  * - src/memory.ts memory.put: drop withSaidStart: "a start date is kept only when…".
+ * - src/memory.ts PutMemorySchema: make source required again: "a fact saved without a source…".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -122,4 +123,15 @@ test("a start date is kept only when the owner's words name that year; a day is 
   await app.runtime.run({ prompt: "Remember: I live in Atlanta." });
   await app.runtime.run({ prompt: "Update where I live: I moved to Denver." });
   assert.deepEqual(current().filter((text) => /Atlanta|Denver/.test(text)), ["Now living in Denver"]);
+});
+
+test("a fact saved without a source is still saved, from where the task came; a generic word for the owner is the owner", async (t) => {
+  // qwen2.5:7b's own calls: no source at all (refused before, so nothing was remembered), and "personal" as the entity.
+  const { app, current } = await branch(t, [{ entity: "Taofiks_Legion", text: "Resides in Atlanta", kind: "fact-about-person" },
+    { entity: "personal", text: "I live in Denver.", source: "owner" }]);
+  await app.runtime.run({ prompt: "Remember: I live in Atlanta." });
+  const saved = app.store.exportMemory(app.runtime.owner).records.find((r) => /Atlanta/.test(r.data.text));
+  assert.ok(saved, "saved without a source");
+  assert.equal(saved.data.source, "The owner said so");
+  assert.deepEqual(detail({ text: "I live in Denver.", entity: "personal" }, {}), { entity: "me", attribute: "home" });
 });

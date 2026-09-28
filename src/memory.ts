@@ -89,7 +89,8 @@ export const UpdateMemorySchema = z.object({
 }).strict();
 export const PutMemorySchema = z.object({
   text: z.string().trim().min(1).max(4000),
-  source: z.string().trim().min(1).max(500),
+  /** SELF-202: when the model leaves it out, the task it came from says it (memory.put); a save is never refused for it. */
+  source: z.string().trim().min(1).max(500).optional(),
   entity: z.string().trim().min(1).max(120).optional(),
   attribute: z.string().trim().min(1).max(80).optional(),
   /** SELF-202: a day ("2026-09-28") is taken as well as a moment; qwen2.5:7b wrote days, and every save was refused. */
@@ -509,6 +510,9 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const asked = (context.source ?? "owner") === "owner" ? store.run(context.runId)?.prompt : undefined;
       value = canonicalDetail(withImpliedDetail(value, { ownerNames: ownerNames(), ...(asked ? { request: asked } : {}) }));
       value = withSaidStart(value, store.run(context.runId)?.prompt);
+      // SELF-202: qwen2.5:7b often left the source out; the save was refused and it gave up, so nothing was remembered.
+      // Where the fact came from is known here: the task, and who started it.
+      const source = value.source ?? ((context.source ?? "owner") === "owner" ? "The owner said so" : `A ${context.source} message`);
       const owner = memoryScope(store, context);
       const sessionId = store.run(context.runId)?.sessionId;
       if (sessionId && store.memorySuppressed(owner, sessionId))
@@ -518,10 +522,10 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const { scope: _requested, ...rest } = value; void _requested;
       // A kind decides how long the fact lasts unless it says otherwise: only a scribble is short-lived.
       const layer = layerForKind(value.kind ?? "fact-about-world");
-      const data = { ...rest, ...(scope ? { scope } : {}), layer, sourceRunId: context.runId };
+      const data = { ...rest, source, ...(scope ? { scope } : {}), layer, sourceRunId: context.runId };
       // A suggestion carries whose the fact is and what it is about, so the owner's yes saves it as this would have.
       const { text: _text, source: _source, sourceRunId: _run, ...fact } = data; void _text; void _source; void _run;
-      const proposal = staged(store, context, { kind: "put", text: value.text, source: value.source }, fact);
+      const proposal = staged(store, context, { kind: "put", text: value.text, source }, fact);
       if (proposal) return proposal;
       if (!provider?.isOutside(owner)) return store.save("memory", owner, randomUUID(), data, agent);
       const id = randomUUID();
@@ -726,7 +730,9 @@ export function impliedDetail(text: string): { entity?: string; attribute?: stri
   return work ? { entity: "me", attribute: "work" } : {};
 }
 
-const personAliases = new Set(["me", "i", "myself", "owner", "the owner", "person", "the person", "user", "the user", "self"]);
+const personAliases = new Set(["me", "i", "myself", "owner", "the owner", "person", "the person", "user", "the user", "self",
+  // SELF-202: the generic words qwen2.5:7b used for the owner's own facts.
+  "personal", "personal info", "personal information", "profile", "owner info", "user info", "user profile", "owner profile"]);
 const attributeAliases: Readonly<Record<string, string>> = {
   location: "home", residence: "home", city: "home", "lives in": "home", "where i live": "home", "home city": "home", "hometown": "home",
   // SELF-202: the other ways qwen2.5:7b named where the owner lives ("current residence" ended nothing saved as "home").
