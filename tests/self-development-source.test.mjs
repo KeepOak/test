@@ -164,3 +164,33 @@ test("Q187: a helper whose own context says owner, but whose task came from a ch
   await assert.rejects(call("mine"), (error) => !/Only the owner in the Branch app/.test(error.message), "control: the owner's own task gets past the check");
   stop();
 });
+
+test("selfdev: a checkout a cut clone left (no commit behind HEAD, no worktree) is cloned again; any other stays", async () => {
+  const run = async (headAnswer) => {
+    const calls = [];
+    let cloned = false, removed = false; // removal is real (the folder is not there), so it is marked where it is decided
+    const deps = {
+      workspace: "C:/owner/workspace-that-is-not-there", owner: "local", contracts: new ContractBook(new DatabaseSync(":memory:")),
+      projects: { save: (_owner, project) => project, setActive: (_owner, input) => input },
+      registry: {}, policy: { assertAllowed: async () => undefined }, store: { audit: { record: () => undefined } },
+      exists: async (path) => path.endsWith("branch-agent-source") ? !removed || cloned : path.endsWith(".branch-worktrees") ? false : cloned,
+      git: async ({ args }) => {
+        calls.push(args.join(" "));
+        if (args[0] === "clone") { cloned = true; return completed(); }
+        if (args.join(" ") === "rev-parse --verify --quiet HEAD^{commit}") return headAnswer;
+        if (args.join(" ") === "rev-parse --is-inside-work-tree") { removed = true; return completed("true\n"); }
+        if (args.join(" ").startsWith("remote get-url")) return completed("https://github.com/stabrea/Branch-Agent.git\n");
+        return completed(args[0] === "rev-parse" ? `${sha}\n` : "");
+      },
+    };
+    await prepareBranchSourceChange(deps, { name: "fix", repository: "https://github.com/stabrea/Branch-Agent.git", base: "redesign/window", contract: terms },
+      AbortSignal.timeout(1000));
+    return calls;
+  };
+  const unborn = await run({ status: "failed", stdout: "", stderr: "", exitCode: 1, command: "git" });
+  assert.ok(unborn.some((call) => call.startsWith("clone ")), "cloned again");
+  const whole = await run(completed(`${sha}\n`));
+  assert.ok(!whole.some((call) => call.startsWith("clone ")), "a real checkout is kept");
+  const unknown = await run({ status: "timed_out", stdout: "", stderr: "", exitCode: null, command: "git" });
+  assert.ok(!unknown.some((call) => call.startsWith("clone ")), "an answer that is not 'no commit' keeps it too");
+});

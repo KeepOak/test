@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
@@ -66,13 +66,30 @@ async function ensureSource(deps: SelfDevelopmentDeps, repository: { repo: strin
   const source = join(deps.workspace, sourceFolder);
   const exists = deps.exists ?? present;
   await deps.policy.assertAllowed(repository.url, "Branch Agent source repository");
+  // selfdev: a checkout with no commit is what a cut clone leaves behind; it is cloned again rather than used.
+  if ((await exists(source)) && await emptyCheckout(deps, source, signal)) await rm(source, { recursive: true, force: true, maxRetries: 5 });
   if (!(await exists(source))) {
-    await run(deps, deps.workspace, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 180_000);
+    // Branch's history is large: a clone is given half an hour. One cut short (a slow link, the task stopped) is
+    // removed at once, so the next attempt clones again instead of finding a checkout with nothing in it.
+    try { await run(deps, deps.workspace, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 1_800_000); }
+    catch (error) { await rm(source, { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined); throw error; }
   }
   const origin = repositoryAddress(await run(deps, source, ["remote", "get-url", "origin"], signal));
   if (origin.repo.toLowerCase() !== repository.repo.toLowerCase())
     throw new Error(`The existing ${sourceFolder} belongs to ${origin.repo}, not ${repository.repo}.`);
   return source;
+}
+
+/**
+ * selfdev: a checkout whose HEAD Git says is unborn, with no worktree made from it: what a clone cut short leaves
+ * (a later fetch may have added the base, but no worktree can be made from it). Any other answer keeps it.
+ */
+async function emptyCheckout(deps: SelfDevelopmentDeps, source: string, signal: AbortSignal): Promise<boolean> {
+  if (await (deps.exists ?? present)(join(source, ".branch-worktrees"))) return false;
+  const head = await deps.git({ cwd: source, args: ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], timeoutMs: 60_000 }, signal);
+  if (head.status !== "failed" || head.stdout.trim()) return false;
+  const inside = await deps.git({ cwd: source, args: ["rev-parse", "--is-inside-work-tree"], timeoutMs: 60_000 }, signal);
+  return inside.status === "completed" && inside.stdout.trim() === "true";
 }
 
 async function ensureUpstream(deps: SelfDevelopmentDeps, source: string, fork: boolean, signal: AbortSignal): Promise<string> {
@@ -169,14 +186,14 @@ export async function prepareBranchSourceChange(
       runId: runId ? runId.slice(0, 64) : null, outcome: "pending" });
   const source = await ensureSource(deps, repository, signal);
   const remote = await ensureUpstream(deps, source, repository.repo.toLowerCase() !== branchRepository.toLowerCase(), signal);
-  await run(deps, source, ["fetch", remote, input.base], signal, 180_000);
+  await run(deps, source, ["fetch", remote, input.base], signal, 900_000);
   const copyName = `self-${input.name}`, branch = `branch/self-${input.name}`;
   const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;
   const exists = deps.exists ?? present;
   const existing = await exists(sourceChangeFolder(deps.workspace, input.name));
   const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, remote, runId, terms, existing }, signal);
   if (!existing)
-    await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal);
+    await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal, 600_000);
   const projectId = `branch-agent-${input.name}`;
   const instructions = projectInstructions(input.name, input.base);
   deps.projects.save(deps.owner, { id: projectId, name: `Branch Agent: ${input.name}`, instructions,
