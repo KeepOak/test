@@ -15,7 +15,7 @@ import { checkReadiness, localProbe, needsFromMetadata, type Missing, type Needs
 import { lockedDown } from "../lockdown.js";
 import { ownersOwnTask } from "./origin.js";
 import { narrowed, Runner } from "./runner.js";
-import { autonomyMode, autonomyParts, autonomyTools, saveAutonomyMode, type AutonomyMode, type AutonomyPart } from "./settings.js";
+import { autonomyMode, autonomyParts, autonomyTools, requirePart, saveAutonomyMode, type AutonomyMode, type AutonomyPart } from "./settings.js";
 import { suggest, type Suggestion } from "./suggestions.js";
 import { registerAutonomyTools } from "./tools.js";
 import { ownerTimezone } from "../person-about.js"; // your-profile
@@ -72,11 +72,12 @@ export class Autonomy {
     this.ledger = new Ledger(store, owner, now);
     this.runner = new Runner(store, runtime, held, now);
     this.orders = new Orders({ store, owner, runner: this.runner, ledger: this.ledger, held, now });
-    this.procedures = new SelfStarting({ store, owner, runner: this.runner, ledger: this.ledger, held, now });
+    this.procedures = new SelfStarting({ store, owner, runner: this.runner, ledger: this.ledger, held, now, timezone: () => ownerTimezone(store, owner) });
     this.instructions = new Instructions(store, owner, this.ledger, now);
     this.loops = new Loops({ store, owner, runner: this.runner, now, transcript: (id) => this.transcript(id) });
     for (const part of autonomyParts) this.sync(part);
     this.procedures.recover();
+    if (this.mode("procedures") === "off") this.procedures.revokeQuestions();
     deps.registry.onRunFinished((context) => this.afterTask(context));
     byRuntime.set(runtime, this);
     registerPromptSource(runtime, this);
@@ -101,6 +102,7 @@ export class Autonomy {
     // Switched off: the turns of that part that are working now are cancelled too.
     const prefixes = turnPrefixes[part];
     if (mode === "off" && prefixes.length) this.runner.cancel((key) => prefixes.some((prefix) => key.startsWith(prefix)));
+    if (mode === "off" && part === "procedures") this.procedures.revokeQuestions();
     return mode;
   }
 
@@ -219,6 +221,11 @@ export class Autonomy {
   decide(id: string, yes: boolean): { entry: LedgerEntry; made?: unknown } {
     const waiting = this.ledger.get(id);
     if (!waiting || waiting.status !== "pending") throw new Error("Nothing waits under that id.");
+    if (yes && (waiting.kind === "start" || waiting.kind === "step")) {
+      if (lockedDown(this.store, this.owner)) throw new Error("Lockdown is on, so this flow cannot continue.");
+      requirePart(this.store, this.owner, "procedures");
+      this.procedures.requireQuestion(waiting);
+    }
     // Made first, so a draft that no longer fits stays waiting with the reason instead of being lost.
     const made = yes ? this.apply(waiting) : undefined;
     const entry = this.ledger.settle(id, yes);
@@ -235,6 +242,7 @@ export class Autonomy {
     // A change the owner proposed to a kept procedure names it; a new one does not.
     if (entry.kind === "procedure") return entry.payload.procedureId === undefined ? this.procedures.create(entry.payload.procedure) : this.procedures.applyChange(entry.payload);
     if (entry.kind === "instruction") return this.instructions.add(entry.payload);
+    if (entry.kind === "unattended") return this.procedures.allowUnattended(entry.payload);
     return undefined;
   }
 
