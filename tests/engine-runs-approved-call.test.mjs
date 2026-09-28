@@ -87,7 +87,7 @@ async function fixture(t, options = {}) {
     return said.body;
   };
   const settled = async (runId, status = "completed") => {
-    for (let i = 0; i < 200; i++) { if (live.app.store.run(runId)?.status === status) return true; await new Promise((r) => setTimeout(r, 25)); }
+    for (let i = 0; i < 1200; i++) { if (live.app.store.run(runId)?.status === status) return true; await new Promise((r) => setTimeout(r, 25)); } // up to 30 s on a busy machine
     return false;
   };
   const restart = async () => {

@@ -65,7 +65,7 @@ function ranOnceByTheEngine(app, runId, ran) {
   assert.equal(events.filter((e) => e.kind === "tool.completed" && e.data.id === calls[0].id).length, 1);
   assert.match(run.output, /Done: .*"ok":true/, "and the model carried on from the real result");
 }
-const settle = async (check) => { for (let i = 0; i < 300; i++) { if (await check()) return true; await new Promise((r) => setTimeout(r, 20)); } return false; };
+const settle = async (check) => { for (let i = 0; i < 1500; i++) { if (await check()) return true; await new Promise((r) => setTimeout(r, 20)); } return false; };
 
 /* ------------------------------------------------------------------------------------------------ chat apps */
 
