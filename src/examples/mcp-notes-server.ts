@@ -13,9 +13,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
-export const exampleServerName = "branch-example-notes";
-export const exampleServerVersion = "1.0.0";
-export const exampleTools = ["add_note", "list_notes"] as const;
+import { exampleServerName, exampleServerVersion } from "./mcp-notes-info.js";
+export { exampleServerName, exampleServerVersion, exampleTools } from "./mcp-notes-info.js";
 const maxNotes = 50, maxLength = 500;
 
 const tools = [
