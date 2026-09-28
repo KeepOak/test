@@ -30,7 +30,9 @@ const pressedQuick = (e) => (macDefault() ? comboOf(e) === "Alt+Space" : pressed
 
 export const quickItem = () => mi("qa17c", "quick17c", t("window.chat.quick.title"), binding("quickAsk") ? `<kbd>${esc(keysWords())}</kbd>` : "");
 
-const who = () => [{ id: "branch", name: "Branch", kind: "main" }, ...E.trunks.filter((tr) => !tr.hidden)];
+/* "Branch" here is the assistant with no Trunk, named as the window names it (Settings' "Back to …"), with the neutral
+   face every conversation without a Trunk wears (core/ui.js av()); never the mascot. */
+const who = () => [{ id: "branch", name: E.state?.identity?.name || "Branch", kind: "main" }, ...E.trunks.filter((tr) => !tr.hidden)];
 /* A new conversation with a Trunk needs the engine's "Choosing a Trunk to answer in any conversation" part switched on;
    until then its chip stays drawn and greyed. */
 const canPick = (c) => c.id === "branch" || (E.trunkModes?.conversations ?? "off") !== "off";

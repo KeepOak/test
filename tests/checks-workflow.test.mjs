@@ -5,25 +5,39 @@ import YAML from "yaml";
 
 const read = async (name) => YAML.parse(await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"));
 const workflow = await read("checks.yml");
-const fast = await read("pr-fast.yml");
 
-/* A pull request's newer run cancels its older one; nothing else is ever cancelled or replaced. A group shared by the
-   pushes to one branch let each merge into redesign/window cancel the run before it (no base run finished, so promote
-   never ran), and GitHub drops all but the newest pending run of a group even without cancel-in-progress. */
-test("the whole suite runs on every pull request and keeps every integration-trunk result", () => {
+/* A pull request's newer run cancels its older one. Pushes to a branch share one group per branch (never main or a
+   release branch, each of whose runs is kept) and are never cancelled
+   in progress: the running base run finishes and promote follows it, and a newer merge replaces only the pending run,
+   so a merge storm runs the whole suite once per batch. Everything else has a group of its own. */
+test("the whole suite runs on every pull request and once per batch of merges into redesign/window", () => {
   assert.equal(workflow.concurrency.group,
-    "${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || format('checks-run-{0}', github.run_id) }}");
+    "${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') && format('checks-base-{0}', github.ref) || format('checks-run-{0}', github.run_id) }}");
   assert.equal(workflow.concurrency["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}");
+  assert.equal(workflow.jobs.promote.concurrency["cancel-in-progress"], false);
   assert.ok(Object.hasOwn(workflow.on, "pull_request"));
   assert.ok(workflow.on.push.branches.includes("mac/**"), "release and beta gates read push runs on mac/cross-platform");
   assert.equal(workflow.on.schedule[0].cron, "17 3 * * *");
 });
 
+/* verify-suite is red unless the plan ran and every planned share passed; on a push there is no plan, so the whole
+   suite ran, since promote follows it. Mutations: drop `test "$PLAN" = success` (a crashed plan skips every share and
+   would pass), let a push run a plan (promote could follow a partial run) → this test goes red. */
 test("the suite ends in one required job, and nothing in it can hold a run past fifteen minutes", () => {
-  assert.deepEqual(workflow.jobs.verify.needs, ["test"]);
+  assert.deepEqual(workflow.jobs.verify.needs, ["plan", "test"]);
   assert.equal(workflow.jobs.verify.name, "verify-suite");
   assert.equal(workflow.jobs.verify.if, "always()");
+  const verify = workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n");
+  assert.match(verify, /if \[ "\$EVENT" = pull_request \]; then test "\$PLAN" = success; else test "\$PLAN" = skipped; MODE=full; fi/);
+  assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push always runs the whole suite");
+  assert.match(verify, /test "\$TEST" = success/);
+  // One command per line: bash -e does not stop on the left side of `a && b`.
+  assert.match(verify, /test "\$EVENT" = pull_request\n\s*test "\$TEST" = skipped/, "no test is skipped outside a docs-only pull request");
+  assert.doesNotMatch(verify, /&&/);
+  assert.match(verify, /PARTIAL/);
+  assert.equal(workflow.jobs.verify.steps[0].env.PLAN, "${{ needs.plan.result }}");
   assert.ok(workflow.jobs.test["timeout-minutes"] <= 15);
+  assert.ok(workflow.jobs.plan["timeout-minutes"] <= 5);
   const run = workflow.jobs.test.steps.find((step) => /run-tests\.mjs/.test(step.run ?? ""));
   assert.ok(Number(run.env.BRANCH_TEST_FILE_TIMEOUT) > 0, "a file that never exits is ended and named");
 });
@@ -38,17 +52,14 @@ test("the downloads and the phone apps are built for a release tag or by hand, n
   }
 });
 
-test("the fast pull-request gate has one job, a hard five-minute ceiling, and leaves broad changes to the suite", () => {
-  assert.deepEqual(Object.keys(fast.jobs), ["verify-fast"]);
-  assert.equal(fast.jobs["verify-fast"]["timeout-minutes"], 5);
-  assert.ok(Object.hasOwn(fast.on, "pull_request"));
-  assert.equal(fast.concurrency["cancel-in-progress"], true);
-  const serialized = JSON.stringify(fast.jobs["verify-fast"]);
-  assert.match(serialized, /select-affected-tests\.mjs/);
-  assert.match(serialized, /npm ci/);
-  assert.doesNotMatch(serialized, /actions\/workflows\/checks\.yml\/runs/, "the fast gate never waits on the suite");
-  const broad = fast.jobs["verify-fast"].steps.find((step) => /full-required/.test(step.if ?? ""));
-  assert.doesNotMatch(broad.run, /exit 1/);
+test("PR Fast Checks is folded into the plan job: one workflow per pull request", async () => {
+  await assert.rejects(readFile(new URL("../.github/workflows/pr-fast.yml", import.meta.url)), /ENOENT/);
+  const plan = workflow.jobs.plan.steps.map((step) => step.run ?? "").join("\n");
+  assert.match(plan, /select-affected-tests\.mjs --event="\$EVENT" --base-ref="\$BASE_REF"/);
+  assert.match(plan, /git diff --check HEAD\^1 HEAD/);
+  assert.match(plan, /check-docs\.mjs/);
+  assert.equal(workflow.jobs.plan.steps[0].with["fetch-depth"], 2, "the merge ref and the commit it merges onto");
+  assert.match(workflow.jobs.test.if, /needs\.plan\.result == 'skipped' \|\| \(needs\.plan\.result == 'success' && needs\.plan\.outputs\.mode != 'docs'\)/);
 });
 
 /* Every merge reaches the owner: a green push to redesign/window moves mac/cross-platform to that commit, fast-forward

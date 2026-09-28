@@ -172,6 +172,9 @@ test("Two more things: Accounts saves your own Google app, signs in on Google's 
   const secret = page.locator("#more18-google-secret");
   assert.equal(await secret.getAttribute("type"), "password");
   await secret.fill("gocspx-typed-in-the-window");
+  // A redraw before Save (an engine event arriving) keeps what was typed; seen losing it on Linux CI.
+  await page.evaluate(async () => (await import("/app/core/dom.js")).renderNow());
+  assert.equal(await secret.inputValue(), "gocspx-typed-in-the-window", "a redraw never takes the typed secret");
   await page.locator('[data-act="more18-save"][data-v="google"]').click();
   await until(async () => (await call("/api/personal/signin/google")).settings.clientSecretName === "GOOGLE_SIGNIN_CLIENT_SECRET", "the secret went into the locker (POST /api/personal/signin/google/secret)");
   assert.equal((await call("/api/personal/signin/google")).settings.clientId, "1234-abc.apps.googleusercontent.com", "saved through POST /api/personal/signin/google");
@@ -217,6 +220,9 @@ test("Welcome: Bring back your Branch brings a backup back after setup's Trunk i
   await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
   await page.locator(".toast").filter({ hasText: /^Brought back \d+ items\./ }).first().waitFor();
   assert.equal(app.trunks.records.find(trunk.id), undefined, "setup's untouched Trunk gave way to the backup");
+  // The success toast appears before the post-restore refresh finishes. The hidden file input can
+  // be set while Restore is disabled, so wait for the same readiness a person needs to select again.
+  await page.waitForFunction(() => document.querySelector('[data-act="ob-restore"]')?.disabled === false);
   await app.runtime.run({ prompt: "hi there" }); // the person wrote
   await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
   await page.locator(".toast").filter({ hasText: /already has conversations/ }).first().waitFor();
