@@ -1,6 +1,7 @@
+import { attachmentKind, voiceFileName } from "./media.js";
 import { z } from "zod";
 import { ReactionAnswers } from "./reaction-answers.js";
-import type { ChannelAdapter, ChannelHealth, InboundMessage } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
 import { assertMetaSigned, metaChallenge } from "./meta-graph.js";
 
 /**
@@ -29,6 +30,8 @@ export interface WhatsAppOptions {
   sessionWindowMs?: number;
   now?: () => number;
 }
+const mediaSchema = z.object({ id: z.string().min(1).max(200), mime_type: z.string().max(100).optional(),
+  caption: z.string().max(4096).optional(), filename: z.string().max(300).optional() }).passthrough();
 const valueSchema = z.object({
   messaging_product: z.string().optional(),
   contacts: z.array(z.object({ wa_id: z.string(), profile: z.object({ name: z.string().optional() }).passthrough().optional() }).passthrough()).default([]),
@@ -37,6 +40,8 @@ const valueSchema = z.object({
     text: z.object({ body: z.string() }).passthrough().optional(),
     audio: z.object({ id: z.string().min(1).max(200), mime_type: z.string().max(100).optional() }).passthrough().optional(),
     voice: z.object({ id: z.string().min(1).max(200), mime_type: z.string().max(100).optional() }).passthrough().optional(),
+    // CHAT-105: pictures, videos and files, each with an optional caption.
+    image: mediaSchema.optional(), video: mediaSchema.optional(), document: mediaSchema.optional(),
     reaction: z.object({ message_id: z.string().min(1).max(200), emoji: z.string().max(40).optional() }).passthrough().optional(),
   }).passthrough()).default([]),
 }).passthrough();
@@ -111,15 +116,20 @@ export class WhatsAppAdapter implements ChannelAdapter {
       id: string; from: string; type?: string | undefined; text?: { body: string } | undefined;
       audio?: { id: string; mime_type?: string | undefined } | undefined;
       voice?: { id: string; mime_type?: string | undefined } | undefined;
+      image?: z.infer<typeof mediaSchema> | undefined; video?: z.infer<typeof mediaSchema> | undefined; document?: z.infer<typeof mediaSchema> | undefined;
     },
     name?: string,
   ): InboundMessage | null {
     const spoken = message.voice ?? message.audio;
+    const media = message.image ?? message.video ?? message.document;
     const kind = message.type ?? "text";
-    if (!spoken && (kind !== "text" || !message.text?.body)) return null;
+    if (!spoken && !media && (kind !== "text" || !message.text?.body)) return null;
+    const mediaType = media?.mime_type?.split(";")[0] ?? (message.image ? "image/jpeg" : "application/octet-stream");
     return {
       channel: this.id, chatId: message.from, chatKind: "direct", senderId: message.from,
-      senderName: name ?? message.from, text: message.text?.body ?? "", addressed: true, messageId: message.id,
+      senderName: name ?? message.from, text: message.text?.body ?? media?.caption ?? "", addressed: true, messageId: message.id,
+      ...(media ? { attachments: [{ name: media.filename ?? `${message.image ? "photo" : message.video ? "video" : "file"}-${message.id.slice(-8)}`,
+        sourceId: media.id, mediaType, kind: attachmentKind(mediaType), bytes: () => this.downloadAudio(media.id, "file") }] } : {}),
       ...(spoken ? { voice: {
         mediaType: spoken.mime_type?.split(";")[0] ?? "audio/ogg",
         seconds: undefined,
@@ -131,29 +141,71 @@ export class WhatsAppAdapter implements ChannelAdapter {
    * WhatsApp hands over media in two steps: ask what address it lives at, then fetch it with the
    * same key. Both go to WhatsApp's own hosts and nowhere else.
    */
-  private async downloadAudio(mediaId: string): Promise<Uint8Array> {
+  private async downloadAudio(mediaId: string, what = "voice note"): Promise<Uint8Array> {
     const headers = { authorization: `Bearer ${this.options.token}` };
     const info = await this.fetch(`${this.base}/${encodeURIComponent(mediaId)}`, {
       headers, redirect: "error", signal: AbortSignal.timeout(20000),
     });
-    if (!info.ok) throw new Error(`WhatsApp would not say where that voice note is (${info.status})`);
+    if (!info.ok) throw new Error(`WhatsApp would not say where that ${what} is (${info.status})`);
     const where = z.object({ url: z.string().min(1).max(2000) }).passthrough().parse(await info.json());
     const target = new URL(where.url);
     // The hosts Meta serves media from. `fbsbx.com` is the one the media lookup usually answers
     // with, so it is listed alongside the others rather than being refused in practice.
     if (target.protocol !== "https:" || !/(^|\.)(whatsapp\.net|whatsapp\.com|fbcdn\.net|fbsbx\.com|facebook\.com)$/i.test(target.hostname))
-      throw new Error("That voice note is not hosted by WhatsApp, so it was not downloaded");
+      throw new Error(`That ${what} is not hosted by WhatsApp, so it was not downloaded`);
     const response = await this.fetch(target.href, { headers, redirect: "error", signal: AbortSignal.timeout(60000) });
-    if (!response.ok) throw new Error(`WhatsApp would not hand over that voice note (${response.status})`);
+    if (!response.ok) throw new Error(`WhatsApp would not hand over that ${what} (${response.status})`);
     const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("That voice note is larger than 20 MB, so it was not used");
+    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error(`That ${what} is larger than 20 MB, so it was not used`);
     return bytes;
   }
-  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+  /** WhatsApp's own limit for a document; pictures, video and audio have smaller ones, said when refused. */
+  readonly maxFileBytes = 100 * 1024 * 1024;
+  /**
+   * CHAT-105: a file into the chat, uploaded to WhatsApp first, then sent as a picture, video, audio or document (each
+   * with WhatsApp's own size limit: 5 MB, 16 MB, 16 MB and 100 MB). The 24-hour reply window applies as for words.
+   */
+  async sendFile(chatId: string, file: OutgoingFile, replyToMessageId?: string): Promise<string | undefined> {
+    this.assertWindow(chatId);
+    const type = file.mediaType.split(";")[0]!.toLowerCase();
+    const kind = ["image/jpeg", "image/png"].includes(type) ? "image" : ["video/mp4", "video/3gpp"].includes(type) ? "video"
+      : type.startsWith("audio/") ? "audio" : "document";
+    const limit = { image: 5, video: 16, audio: 16, document: 100 }[kind] * 1024 * 1024;
+    if (file.bytes.byteLength > limit) throw new Error(`WhatsApp takes ${kind === "document" ? "files" : `${kind === "image" ? "pictures" : kind}`} up to ${limit / 1024 / 1024} MB`);
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", type);
+    form.append("file", new Blob([new Uint8Array(file.bytes)], { type }), file.name);
+    const uploaded = await this.fetch(`${this.base}/${encodeURIComponent(this.options.phoneNumberId)}/media`, {
+      method: "POST", headers: { authorization: `Bearer ${this.options.token}` }, body: form, signal: AbortSignal.timeout(120000) });
+    if (!uploaded.ok) throw new Error(`WhatsApp refused the file (${uploaded.status})`);
+    const { id } = z.object({ id: z.string().min(1) }).passthrough().parse(await uploaded.json());
+    const media = { id, ...(file.caption && kind !== "audio" ? { caption: file.caption.slice(0, 1024) } : {}), ...(kind === "document" ? { filename: file.name } : {}) };
+    return this.post(chatId, { type: kind, [kind]: media }, replyToMessageId);
+  }
+  /** CHAT-094: a spoken reply as an audio message (an OGG/Opus one shows as a voice note). */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio }, replyToMessageId);
+  }
+  private assertWindow(chatId: string): void {
     const heard = this.lastHeard.get(chatId);
     const window = this.options.sessionWindowMs ?? 24 * 60 * 60 * 1000;
     if (heard !== undefined && this.now() - heard > window)
       throw new Error("Outside WhatsApp's 24-hour reply window; waiting until they write again");
+  }
+  private async post(chatId: string, message: Record<string, unknown>, replyToMessageId?: string): Promise<string | undefined> {
+    const response = await this.fetch(`${this.base}/${encodeURIComponent(this.options.phoneNumberId)}/messages`, {
+      method: "POST", headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: chatId, ...message,
+        ...(replyToMessageId ? { context: { message_id: replyToMessageId } } : {}) }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) throw new Error(`WhatsApp refused the message (${response.status})`);
+    const parsed = z.object({ messages: z.array(z.object({ id: z.string() }).passthrough()).default([]) }).passthrough().safeParse(await response.json().catch(() => ({})));
+    return parsed.success ? parsed.data.messages[0]?.id : undefined;
+  }
+  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+    this.assertWindow(chatId);
     const response = await this.fetch(`${this.base}/${encodeURIComponent(this.options.phoneNumberId)}/messages`, {
       method: "POST", headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json" },
       body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: chatId,

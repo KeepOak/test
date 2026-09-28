@@ -195,17 +195,49 @@ export class TelegramAdapter implements ChannelAdapter {
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
-    form.append("document", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    // CHAT-102: a picture Telegram can show (JPEG, PNG or WebP, up to 10 MB) goes as a photo, everything else as a file.
+    const method = telegramPhoto(file) ? "sendPhoto" : "sendDocument";
+    form.append(method === "sendPhoto" ? "photo" : "document", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
     if (file.caption) form.append("caption", file.caption.slice(0, 1024));
     if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/sendDocument`, { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
+    const response = await this.fetch(`${this.base}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw new Error(`Telegram sendDocument failed: ${parsed.description ?? response.status}`);
+    if (!parsed.ok) throw new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
-    if (!message.success) throw new Error("Telegram sendDocument failed: response missing message_id");
+    if (!message.success) throw new Error(`Telegram ${method} failed: response missing message_id`);
     return String(message.data.message_id);
   }
   // ---- end R17-C ----
+  /** The live browser in a chat: a photo with buttons, then the same message's photo replaced (editMessageMedia). */
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const form = new FormData(), target = telegramTarget(chatId);
+    form.append("chat_id", String(target.chat_id));
+    if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
+    form.append("photo", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    if (file.caption) form.append("caption", file.caption.slice(0, 1024));
+    if (buttons.length) form.append("reply_markup", JSON.stringify({ inline_keyboard: [buttons.map((b) => ({ text: b.label, callback_data: b.value }))] }));
+    form.append("disable_notification", "true");
+    if (replyToMessageId && /^\d+$/.test(replyToMessageId))
+      form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+    const response = await this.fetch(`${this.base}/sendPhoto`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const parsed = responseSchema.parse(await response.json());
+    if (!parsed.ok) throw Object.assign(new Error(`Telegram sendPhoto failed: ${parsed.description ?? response.status}`), retryOf(parsed));
+    const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
+    if (!message.success) throw new Error("Telegram sendPhoto failed: response missing message_id");
+    return String(message.data.message_id);
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string }[]): Promise<void> {
+    const form = new FormData();
+    form.append("chat_id", String(telegramTarget(chatId).chat_id));
+    form.append("message_id", messageId);
+    form.append("media", JSON.stringify({ type: "photo", media: "attach://picture", ...(file.caption ? { caption: file.caption.slice(0, 1024) } : {}) }));
+    form.append("picture", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    form.append("reply_markup", JSON.stringify({ inline_keyboard: buttons.length ? [buttons.map((b) => ({ text: b.label, callback_data: b.value }))] : [] }));
+    const response = await this.fetch(`${this.base}/editMessageMedia`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const parsed = responseSchema.parse(await response.json());
+    if (!parsed.ok && !/message is not modified/i.test(parsed.description ?? ""))
+      throw Object.assign(new Error(`Telegram editMessageMedia failed: ${parsed.description ?? response.status}`), retryOf(parsed));
+  }
   private async poll(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     while (!this.stopping.signal.aborted) {
       try {
@@ -448,4 +480,16 @@ export class TelegramAdapter implements ChannelAdapter {
       { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
     return parsed.result;
   }
+}
+
+/** What Telegram shows as a photo: JPEG, PNG or WebP, up to its 10 MB photo limit. */
+export function telegramPhoto(file: Pick<OutgoingFile, "mediaType" | "bytes">): boolean {
+  const type = file.mediaType.split(";")[0]!.toLowerCase();
+  return ["image/jpeg", "image/png", "image/webp"].includes(type) && file.bytes.byteLength <= 10 * 1024 * 1024;
+}
+
+/** Telegram's "wait this long" on a refusal, carried on the error so a live status can pause (live-status.ts retryAfterMs). */
+function retryOf(parsed: z.infer<typeof responseSchema>): { retryAfter?: number } {
+  const wait = parsed.parameters?.retry_after;
+  return typeof wait === "number" ? { retryAfter: wait } : {};
 }

@@ -152,6 +152,7 @@ import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
 import { loadWords, type Words } from "./terminal-words.js"; // the workspace's language, for a stopped task's sentences
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
+import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -188,7 +189,7 @@ import { underProject } from "./project-scope.js"; // dogfood-ux-2
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-2
 import { posix, resolve as resolvePath } from "node:path"; // mac7/walk-rules
 import { finishSetupOnFirstAnswer } from "./onboarding.js"; // dogfood B7
-import { PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
+import { HandedOverError, PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
 
 // R17-S11: sub-tasks at once is the owner's `parallelSubtasks` setting (shipped as 4, src/knobs/settings.ts).
 /** What the approval policy says about one tool call, before anything is done about it. */
@@ -223,7 +224,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -254,7 +255,9 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
 export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
-export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string }
+export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
+  /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
+  tellsLead?: boolean }
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
@@ -496,6 +499,27 @@ const namesNoModel = (preset: Pick<ModelPreset, "model"> & { provider?: { name: 
   unnamedModels.has(preset.model) || preset.provider?.name === mixtureProviderName
   || /^(cli-agent|app-server|retired):/.test(preset.provider?.name ?? "");
 /** Dogfood B18: the first system message, with the line that says which model and connection are answering. */
+/**
+ * selfdev (SELF-314): a task carried on after a restart starts again with a fresh catalog, and a model that had loaded
+ * its tools by name (tools.describe) would find its next call "not offered". So the carried-on task starts with the
+ * tools its conversation had been calling or had named, newest last, at most 24; only ones this task is offered.
+ */
+export function carriedOnTools(store: Pick<Store, "events">, runId: string, messages: readonly Message[],
+  tools: readonly { name: string }[], hidden: ReadonlySet<string> | readonly string[]): { name: string; reason: string }[] {
+  const resumed = store.events(runId).find((event) => event.kind === "run.started")?.data.resumedFrom;
+  if (typeof resumed !== "string") return [];
+  const offered = new Set(tools.map((tool) => tool.name)), off = new Set(hidden);
+  const lastSeen = new Map<string, number>(); // each name at its newest mention
+  let at = 0;
+  for (const message of messages) for (const call of message.toolCalls ?? []) {
+    let named: unknown[] = [];
+    if (call.name === "tools.describe") try { named = (JSON.parse(call.arguments) as { names?: unknown[] }).names ?? []; } catch { /* not a list */ }
+    for (const name of [call.name, ...named]) if (typeof name === "string") lastSeen.set(name, at++);
+  }
+  const newestLast = [...lastSeen.entries()].sort((a, b) => a[1] - b[1]).map(([name]) => name);
+  return newestLast.filter((name) => offered.has(name) && !off.has(name)).slice(-24)
+    .map((name) => ({ name, reason: "used before Branch was restarted" }));
+}
 export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset, "name" | "model"> & { provider?: { name: string } }): Message[] {
   const first = messages[0];
   if (first?.role !== "system") return messages;
@@ -685,6 +709,10 @@ export class Runtime {
   private readonly spendMembers = new Map<string, Set<string>>();
   /** Results of background specialists that finished after their parent, newest first. */
   readonly backgroundResults: BackgroundResult[] = [];
+  /** selfdev (SELF-303): told when a background helper finishes, so its lead hears without checking (src/helper-messages.ts). */
+  onBackgroundFinished: ((result: BackgroundResult) => void) | null = null;
+  /** workbench (SELF-307): what a conversation still has going, sent with every round and never stored (src/open-work.ts). */
+  openWork: ((sessionId: string) => string | null) | null = null;
   /** Per session: write tool calls whose outcome is unknown after an interruption, until a read has checked the state. */
   private readonly unreconciled = new Map<string, { name: string; arguments: string }[]>();
   /** Dogfood B7: set once a real model has answered and the first-run card is done with. */
@@ -912,16 +940,47 @@ export class Runtime {
     this.store.event(id, "run.pause_asked", { message: "Paused after this step. Nothing is lost." });
     return true;
   }
+  /** hot-update: set once a newer engine is taking over: the tasks that were working then (any other stops at its first step). */
+  private handingOverFrom: Set<string> | null = null;
+  /** hot-update: a newer engine takes over; tasks working now may drain, a task started from now on is carried on there. */
+  beginHandOver(): void { this.handingOverFrom ??= new Set(this.controllers.keys()); }
+  /** hot-update: the tasks working in this engine now. */
+  workingRuns(): string[] { return [...this.controllers.keys()]; }
+  /**
+   * hot-update: every task working here stops after the step it is on, to be carried on by a newer engine. Answers the
+   * tasks it asked; a task that finished before its next step simply finished.
+   */
+  handOver(): string[] {
+    const asked: string[] = [];
+    for (const id of this.controllers.keys()) {
+      let pausing = this.pausing.get(id);
+      if (!pausing) this.pausing.set(id, pausing = new AbortController());
+      if (!pausing.signal.aborted) {
+        pausing.abort(new HandedOverError());
+        this.store.event(id, "run.handover_asked", { message: "Branch is updating its engine; this task carries on in the new one after this step." });
+        asked.push(id);
+      }
+    }
+    return asked;
+  }
+  /** Resolves once no task works here, or after `ms`; answers whether none does. */
+  async idle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.controllers.size > 0 && Date.now() < until) await new Promise((done) => setTimeout(done, Math.min(50, Math.max(1, until - Date.now()))));
+    return this.controllers.size === 0;
+  }
   /** Throws once the owner has paused this task; called between steps. */
   private checkPaused(runId: string): void {
-    if (this.pausing.get(runId)?.signal.aborted) throw new PausedError();
+    if (this.handingOverFrom && !this.handingOverFrom.has(runId)) throw new HandedOverError();
+    const pausing = this.pausing.get(runId)?.signal;
+    if (pausing?.aborted) throw pausing.reason instanceof PausedError ? pausing.reason : new PausedError();
   }
   /** A wait that ends early when the task is stopped or paused. */
   private async waitOrPause(runId: string, ms: number, signal: AbortSignal): Promise<void> {
     let pausing = this.pausing.get(runId);
     if (!pausing) this.pausing.set(runId, pausing = new AbortController());
     try { await waitFor(ms, AbortSignal.any([signal, pausing.signal])); } catch (error) {
-      if (pausing.signal.aborted && !signal.aborted) throw new PausedError();
+      if (pausing.signal.aborted && !signal.aborted) throw pausing.signal.reason instanceof PausedError ? pausing.signal.reason : new PausedError();
       throw error;
     }
   }
@@ -1016,7 +1075,8 @@ export class Runtime {
     if (permissions.some((p) => !parent.permissions.has(p))) throw new Error("Delegation permission escalation denied");
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
     const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
@@ -1027,9 +1087,11 @@ export class Runtime {
     void startedAt;
     const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     void child.then((run) => {
-      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
+      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
+        ...(options.tellsLead ? { tellsLead: true } : {}) };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
+      try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
     }, () => undefined);
     for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
     if (!started) throw new Error("The background specialist did not start");
@@ -1711,7 +1773,9 @@ ${run.output.slice(0, 6000)}`;
       // technical text stays in the events and the log, where it belongs.
       output = this.plainEnding(run, error);
       // long-work: said in the record, so the step list, the Inbox and a restart all know the owner paused it.
-      if (error instanceof PausedError) this.store.event(run.id, "run.paused", { message: error.message });
+      // hot-update: a task handed to a newer engine is carried on there by itself, never shown as paused.
+      if (error instanceof HandedOverError) this.store.event(run.id, "run.handed_over", { message: error.message });
+      else if (error instanceof PausedError) this.store.event(run.id, "run.paused", { message: error.message });
       if (error instanceof NeedsInputError) {
         // Dogfood B21: the assistant's own question sat only in the banner at the top; it is its message, under the
         // last one, where the owner reads and answers.
@@ -1980,7 +2044,13 @@ ${run.output.slice(0, 6000)}`;
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
+      // selfdev (SELF-303): a helper's note that arrived as its lead finished is not lost: it goes to the lead's
+      // conversation as a new message, labelled as the helper's words. The owner's own late note is dropped as before.
+      const late = (this.steers.get(run.id) ?? []).filter((one) => one.from !== undefined && /^helper /.test(one.from));
       this.steers.delete(run.id);
+      if (late.length) queueMicrotask(() => {
+        for (const one of late) try { this.followUp(run.sessionId, fromHelper(one.from!, one.note), null, { originFrom: run.id }); } catch { /* the conversation is gone */ }
+      });
       this.recordToolWork(run, context, status);
       // What this conversation is carrying is written down at the end of every task, so closing the
       // app between one task and the next changes nothing about what the next one starts with. Only
@@ -2287,6 +2357,10 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
+      // workbench (SELF-307): the conversation's open work rides with the checklist, so folding never loses its numbers.
+      let open: string | null = null;
+      if (context.depth === 0) try { open = this.openWork?.(run.sessionId) ?? null; } catch { /* never breaks a round */ }
+      if (open) notes.every = { role: "system", content: [notes.every?.content, open].filter(Boolean).join("\n\n") };
       // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
@@ -3010,6 +3084,9 @@ ${run.output.slice(0, 6000)}`;
       // nothing about the request ever leaves this computer.
       ...this.meaningOption(run.id),
     });
+    // selfdev (SELF-314): a task carried on after a restart has its tools loaded again, as it had named them.
+    const carried = carriedOnTools(this.store, run.id, messages, tools, switched.hidden).map((entry) => entry.name);
+    if (carried.length) catalog.describe(carried);
     this.catalogs.set(run.id, catalog);
     // Only the owner's own task, read from what the task recorded at its start, never from whoever is at the window
     // now: never a household person's (or one in a conversation lent from them), a short-lived key's, a chat app's or
