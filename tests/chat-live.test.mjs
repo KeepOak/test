@@ -685,10 +685,13 @@ test("when needed: commands only while a task works, steering without the wait, 
   await app.channels.handle(message("/status"));
   assert.match(chat.sent().at(-1), /^Working for/);
   await app.channels.handle(message("/new"));
-  assert.equal(model.requests.length, 2, "while busy, /new is a note to the task, not a new task");
+  assert.match(chat.sent().at(-1), /still working.*\/stop first.*\/new/i, "fresh-thread commands do not quietly steer or abandon busy work");
+  assert.equal(model.requests.length, 2, "a busy fresh-thread command starts no new task");
+  await app.channels.handle(message("keep the invoices sorted"));
   model.open();
   assert.equal(await slow, "replied");
-  assert.ok(steered.some((note) => note === "/new"), "the message was steered into the running task");
+  assert.ok(steered.some((note) => note === "keep the invoices sorted"), "an ordinary note is steered into the running task without the gathering wait");
+  assert.equal(steered.includes("/new"), false, "a thread reset command is never passed off as task instructions");
 });
 
 test("when needed: careful splitting only for a reply with code in it", () => {

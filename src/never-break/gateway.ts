@@ -8,6 +8,7 @@ import { loadGatewayConfig, promoteGood, restoreGood, sameAsGood, type GatewayCo
 import { clearCrashes, markExited, markRunning, recordCrash } from "./gateway-state.js";
 import { clearWatch, readWatch, repairSwap, watchVerdict, type UpdateWatch } from "./canary.js";
 import { runAsNode } from "../child-env.js";
+import { quitPath, quitRequest } from "../install/quit.js";
 
 /**
  * The gateway: a small process that keeps Branch's public address open and keeps one worker — the
@@ -35,6 +36,11 @@ export interface GatewayOptions {
   rollBack?: (watch: UpdateWatch) => Promise<void>;
   /** Told about every worker that says it is ready, and every crash. */
   onWorker?: (event: { kind: "ready"; ready: WorkerReady } | { kind: "crash"; code: number | null; signal: string | null; tripped: boolean }) => void;
+  /**
+   * QA retest 2026-09-28 (m15): what `branch quit` does to this gateway. The engine behind it has no quit of its own, so
+   * the request used to be refused there and `branch quit` fell back to ending the process from outside (exit code 1).
+   */
+  quit?: () => void;
 }
 
 /** The engine, through this same runtime, with a message channel and no window on Windows. */
@@ -242,6 +248,11 @@ export class Gateway {
     if (!this.hostOk(request)) return plain(response, 403, "Host rejected");
     const path = (request.url ?? "/").split("?")[0];
     if (request.method === "GET" && path === "/gateway/health") return json(response, 200, this.health());
+    // `branch quit` closes the gateway itself (the engine goes with it), with the same checks the engine makes.
+    if (path === quitPath && this.options.quit) {
+      try { return json(response, 200, await quitRequest(request, { dataDir: this.options.dataDir, quit: this.options.quit })); }
+      catch (error) { return json(response, request.method === "POST" ? 403 : 405, { error: error instanceof Error ? error.message : String(error) }); }
+    }
     await this.forward(request, response, path ?? "/", true);
   }
 
@@ -257,7 +268,7 @@ export class Gateway {
       headers: this.forwardedHeaders(request, port) }, (reply) => {
       response.writeHead(reply.statusCode ?? 502, reply.headers);
       reply.pipe(response);
-      if (closing && (reply.statusCode ?? 500) < 300) reply.once("end", () => { void this.stop(); });
+      if (closing && (reply.statusCode ?? 500) < 300) reply.once("end", () => { if (this.options.quit) this.options.quit(); else void this.stop(); });
     });
     upstream.once("error", (error: NodeJS.ErrnoException) => {
       if (retry && ["ECONNREFUSED", "ECONNRESET"].includes(error.code ?? "") && !response.headersSent && !hasBody(request)) {
