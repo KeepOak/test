@@ -37,6 +37,18 @@ const envelopeSchema = z.object({
   type: z.string(), envelope_id: z.string().optional(),
   payload: z.object({ event: eventSchema.optional(), event_id: z.string().optional() }).passthrough().optional(),
 }).passthrough();
+/** A button pressed on a question (Socket Mode `interactive`, Block Kit `block_actions`). */
+const actionSchema = z.object({
+  type: z.literal("block_actions"),
+  user: z.object({ id: z.string(), username: z.string().optional(), name: z.string().optional() }).passthrough(),
+  channel: z.object({ id: z.string() }).passthrough(),
+  message: z.object({ ts: z.string(), thread_ts: z.string().optional(), text: z.string().optional() }).passthrough(),
+  actions: z.array(z.object({ action_id: z.string(), value: z.string().optional(), action_ts: z.string().optional() }).passthrough()).min(1),
+}).passthrough();
+/** The action ids Branch's own buttons carry, so a press on some other app's button is never read as an answer. */
+const answerAction = /^branch_answer_\d$/;
+/** The Slack thread a reply goes to: the timestamp before any "#" a button press added; anything else is no thread. */
+const threadOf = (id: string | undefined): string | undefined => { const ts = id?.split("#")[0]; return ts && /^\d+\.\d+$/.test(ts) ? ts : undefined; };
 
 /** Turns the markdown the assistant writes into the shape Slack renders. */
 export function toMrkdwn(text: string): string {
@@ -131,6 +143,7 @@ export class SlackAdapter implements ChannelAdapter {
     const { envelope_id: id, payload, type } = envelope.data;
     if (id) this.socket?.send(JSON.stringify({ envelope_id: id }));
     if (type === "disconnect") { this.socket?.close(); return; }
+    if (type === "interactive") { const pressed = this.fromButton(payload); if (pressed) void onMessage(pressed).catch(() => undefined); return; }
     if (type === "slash_commands") { const typed = this.fromSlash(payload); if (typed) void onMessage(typed).catch(() => undefined); return; }
     const eventId = payload?.event_id;
     if (!payload?.event || (eventId && this.seen.has(eventId))) return;
@@ -159,6 +172,50 @@ export class SlackAdapter implements ChannelAdapter {
     };
   }
   /**
+   * CHAT-062: a question with Block Kit buttons. Each button's value is the answer and the fingerprint of the exact
+   * request, as on Telegram; the words stay in `text` too, for notifications and for apps that cannot show blocks.
+   */
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const words = slackText(text).slice(0, 2900);
+    const result = await this.call("chat.postMessage", this.options.token, {
+      channel: chatId, text: words, ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: words } },
+        { type: "actions", elements: buttons.slice(0, 5).map((button, index) => ({
+          type: "button", action_id: `branch_answer_${index}`, value: button.value.slice(0, 2000),
+          text: { type: "plain_text", text: button.label.slice(0, 75) },
+          ...(button.value.startsWith("y") ? { style: "primary" } : button.value.startsWith("n") ? { style: "danger" } : {}),
+        })) },
+      ],
+    });
+    const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
+    return parsed.success ? parsed.data.ts : undefined;
+  }
+  /**
+   * A pressed button, as an ordinary addressed message carrying the button's own value; the router reads it as an answer
+   * to what this chat is waiting on, with every rule a typed y or n meets. Only Branch's own buttons count. The buttons
+   * stay as they are, as on Telegram: a press the router refuses (a stranger, a yes that belongs in the window) must not
+   * take them away from the person who may answer, and a second press on an answered question is told so.
+   */
+  private fromButton(payload: unknown): InboundMessage | null {
+    const parsed = actionSchema.safeParse(payload);
+    if (!parsed.success) return null;
+    const { user, channel, message, actions } = parsed.data;
+    const action = actions[0]!;
+    if (!answerAction.test(action.action_id) || !action.value || user.id === this.user?.id) return null;
+    if (this.options.channels?.length && !this.options.channels.includes(channel.id)) return null;
+    const direct = channel.id.startsWith("D");
+    return {
+      channel: this.id, chatId: channel.id, chatKind: direct ? "direct" : "group",
+      ...(direct ? {} : { chatTitle: `channel ${channel.id}` }),
+      senderId: user.id, senderName: user.username ?? user.name ?? user.id,
+      text: action.value, addressed: true,
+      // The reply goes to the thread the question was asked in; the press's own time after "#" keeps two presses in one
+      // thread apart, so each gets its own answer (the delivery keys are made from this).
+      messageId: `${message.thread_ts ?? message.ts}#${action.action_ts ?? Date.now()}`,
+    };
+  }
+  /**
    * CHAT-164: `/branch <command> [words]` from Slack's own picker (Slack keeps an app's slash commands in its settings,
    * and many plain names such as /status are Slack's own, so Branch has one). It reaches the router as `/<command>
    * words` from the person who typed it, with every rule a typed command meets; `/branch` alone is `/help`, and words
@@ -182,7 +239,8 @@ export class SlackAdapter implements ChannelAdapter {
   }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {
-      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId && /^\d+\.\d+$/.test(replyToMessageId) ? { thread_ts: replyToMessageId } : {}),
+      // A thread is Slack's own timestamp: a button press's "#time" is taken off, and a slash command's id is no thread.
+      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
     });
     const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
     return parsed.success ? parsed.data.ts : undefined;
@@ -198,6 +256,14 @@ export class SlackAdapter implements ChannelAdapter {
     if (old && old !== name)
       await this.call("reactions.remove", this.options.token, { channel: chatId, timestamp: messageId, name: old }).catch(() => undefined);
     await this.call("reactions.add", this.options.token, { channel: chatId, timestamp: messageId, name });
+  }
+  /**
+   * Slack's assistant status under the person's message ("Branch is thinking…"), as Hermes Agent and OpenClaw show it.
+   * It needs the app's Agents & AI Apps setting and the assistant:write scope; without them Slack refuses and the live
+   * status stops asking. "" clears it (posting the reply clears it too).
+   */
+  async setStatus(chatId: string, threadId: string, words: string): Promise<void> {
+    await this.call("assistant.threads.setStatus", this.options.token, { channel_id: chatId, thread_ts: threadId, status: words.slice(0, 100) });
   }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
@@ -221,7 +287,7 @@ export class SlackAdapter implements ChannelAdapter {
     if (!upload.ok) throw new Error(`Slack would not take the file (${upload.status})`);
     await this.call("files.completeUploadExternal", this.options.token, {
       files: [{ id: slot.file_id, title: file.name }], channel_id: chatId,
-      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
     });
     return slot.file_id;
   }

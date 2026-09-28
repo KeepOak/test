@@ -158,6 +158,12 @@ export interface ChannelAdapter {
    */
   react?(chatId: string, messageId: string, emoji: string, previous?: string): Promise<void>;
   /**
+   * The app's own working-status line in a thread (Slack's assistant status, "is thinking…"): `words` says what the
+   * task is doing now, "" clears it. `threadId` is the person's message, as the reply threads under it. Absent means
+   * the app has none; typing and the reaction carry the status there.
+   */
+  setStatus?(chatId: string, threadId: string, words: string): Promise<void>;
+  /**
    * Replaces the words of a message this adapter sent, cut to the app's own limit. An app that
    * refuses an edit because the words did not change must treat that as success (see telegram.ts).
    * Absent means there is no progress message and replies are not streamed.
@@ -216,7 +222,17 @@ export function readApprovalAnswer(value: string): { decision: "allow" | "deny";
  * never give a standing yes, so the letter for one is not offered. It used to be, and typing it did
  * not refuse in words — it fell through and sent the assistant the letter "a".
  */
-export const approvalFallbackNote = "Reply y for yes, or n for no.";
+export const approvalFallbackNote = "Reply y for yes, or n for no (or send /approve or /deny).";
+/**
+ * CHAT-066 (Hermes and OpenClaw): `/approve` and `/deny` typed, for an app with no buttons or a person who would rather
+ * type. They answer exactly as a pressed Yes or No does ("y" and "n"), so every rule for a chat's yes still holds.
+ */
+export function typedApproval(text: string): "y" | "n" | null {
+  const match = /^\/(approve|yes|deny|no)(?:@[\w.-]+)?\s*$/i.exec(text.trim());
+  if (!match) return null;
+  return ["approve", "yes"].includes(match[1]!.toLowerCase()) ? "y" : "n";
+}
+export const nothingToApprove = "Nothing here is waiting for a yes or no.";
 /** PR #289: a typed answer that cannot be matched to the question this chat was shown, while several wait. */
 export const severalWaitingInChat = "More than one request is waiting in this conversation. Answer them with their own buttons, or in the app.";
 /** PR #289: the question the chat was shown no longer waits, so a "y" cannot answer it. */
@@ -769,7 +785,7 @@ export class ChannelRouter {
     const format = faithful && mayApprove ? { spans: [{ offset: asked.length, length: command!.length, kind: "block" as const, language: "shell" }] } : undefined;
     const sent = adapter.sendButtons
       ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId, format).then(() => true, () => false)
-      : await this.deliver(message.channel, message.chatId, `${text}\n\n${mayApprove ? approvalFallbackNote : "Reply n for no."}`,
+      : await this.deliver(message.channel, message.chatId, `${text}\n\n${mayApprove ? approvalFallbackNote : "Reply n (or /deny) for no."}`,
         key, message.messageId).then((done) => done.sent, () => false);
     // Q259: a question answered elsewhere while it was being sent is not recorded as shown.
     const still = this.runtime.waitingApprovals(sessionId).some((one) => one.fingerprint === waiting.fingerprint && one.runId === waiting.runId);
@@ -795,7 +811,12 @@ export class ChannelRouter {
     if (command) return this.command(message, command);
     // A bare "y", "a" or "n" answers whatever this chat's conversation is waiting on, rather than
     // starting a new task. Anything longer is an ordinary message, whatever it happens to say.
-    const answered = await this.answerApproval(message.channel, message.chatId, message.text.trim(), message).catch(() => null);
+    const typed = typedApproval(message.text);
+    const answered = await this.answerApproval(message.channel, message.chatId, typed ?? message.text.trim(), message).catch(() => null);
+    if (!answered && typed) {
+      await this.deliver(message.channel, message.chatId, nothingToApprove, `answer-none:${message.messageId}`, message.messageId).catch(() => undefined);
+      return "replied";
+    }
     if (answered) {
       // PR #289: if the shown question no longer waits, re-show the waiting one instead of answering.
       if (answered.decision === "show-waiting-question" && answered.sessionId && answered.show) {

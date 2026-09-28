@@ -3,7 +3,10 @@
    the last 24 hours in numbers, and each decision, asked of that model and checked against what was offered
    (POST /api/decisions/decide). The answer, how sure it was, the time and the model are the engine's; $0.00 is said only
    for a model on this computer. The question and the list start empty: the prototype's are example data.
-   The three "used for" switches stay greyed: the engine does not yet route messages, sort the Inbox or filter lists with it.
+   What they are used for, each the engine's own switch (POST /api/decisions/settings { route | inbox }, off as shipped: every
+   use is a model call the owner did not make): a room message that names nobody goes to the Trunk whose job fits it
+   (src/trunks/rooms.ts), and Inbox › Needs you is sorted by urgency (POST /api/decisions/urgency, places/inbox.js).
+   "Filter long lists" stays greyed with its reason.
    Every word goes through t() (public/locales); a switch keeps its English title (its id) and shows through say(). */
 
 import { esc, render, $ } from "../core/dom.js";
@@ -49,7 +52,7 @@ export function decisions17d(lv) {
   if (!D.data) return "";
   const s = D.data.settings;
   const main = `<div class="sec x15-sec dm17d"><h2>${esc(t("window.p17d.decision-models"))}</h2><p class="hint">${esc(t("window.p17d.decision-models-hint"))}</p>
-    ${modelRow()}${sw15("Send each message to the right Trunk", "When you don’t say who, it picks from their jobs.")}${sw15("Sort the Inbox by urgency", "Deadlines and money first.")}${sw15("Filter long lists before a Trunk reads them", "Mail, files and search results it clearly doesn’t need are dropped.")}
+    ${modelRow()}${sw15("Send each message to the right Trunk", "When you don’t say who, it picks from their jobs.", s.route)}${sw15("Sort the Inbox by urgency", "Deadlines and money first.", s.inbox)}${sw15("Filter long lists before a Trunk reads them", "Mail, files and search results it clearly doesn’t need are dropped.")}
     ${tryIt()}</div>`;
   if (lv < 2) return main;
   const num = (id, title, sub, value, unit) => `<div class="ctl"><b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" value="${esc(value)}" aria-label="${esc(title)}" inputmode="decimal">${unit ? `<small>${esc(unit)}</small>` : ""}</span><small>${esc(sub)}</small></div>`;
@@ -92,7 +95,7 @@ async function saveSettings(change) {
 }
 
 export function initDecisions17d() {
-  markLive(["dmmodel17d", "dmkind17d", "dmrun17d", "sw:dm-q17d", "sw:dm-o17d", "sw:dm-sure17d", "sw:dm-max17d"]);
+  markLive(["dmmodel17d", "dmkind17d", "dmrun17d", "sw:dm-q17d", "sw:dm-o17d", "sw:dm-sure17d", "sw:dm-max17d", "sw:f15-send-each-message-to-the-right-trunk", "sw:f15-sort-the-inbox-by-urgency"]);
   on("dmkind17d", (el) => { D.q = $("#dm-q17d")?.value ?? D.q; D.kind = el.dataset.v; D.o = ""; D.out = ""; render(); });
   on("dmrun17d", () => decide());
   on("dmmodel17d", (el) => saveSettings({ model: el.dataset.v }));
@@ -104,6 +107,8 @@ export function initDecisions17d() {
     const n = Number(e.target.value);
     if (e.target.id === "dm-sure17d") saveSettings({ minConfidence: n });
     else if (e.target.id === "dm-max17d") saveSettings({ maxList: n });
+    else if (e.target.id === "f15-send-each-message-to-the-right-trunk") saveSettings({ route: e.target.checked });
+    else if (e.target.id === "f15-sort-the-inbox-by-urgency") saveSettings({ inbox: e.target.checked });
   });
   loadDecisions();
 }
