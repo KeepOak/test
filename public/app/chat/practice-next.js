@@ -5,9 +5,16 @@ import { closePop, toast } from "../core/ui.js";
 import { t } from "../../i18n.js";
 
 let enabled = false, next = false;
+/* Availability, read afresh; an open + menu's row follows it in place (the menu itself opens at once, never after this). */
 export async function loadPractice() {
   try { enabled = (await api("practice-runs")).enabled === true; }
   catch (error) { enabled = false; toast(error.message); }
+  const box = document.getElementById("pm-practice");
+  if (!box) return;
+  box.disabled = !enabled;
+  if (!enabled) { box.checked = false; next = false; }
+  const hint = box.closest(".row-in")?.nextElementSibling;
+  if (hint?.classList.contains("ph")) hint.textContent = t(enabled ? "practice.next-hint" : "practice.off");
 }
 export const practiceNext = () => next;
 export const practiceSent = () => { next = false; };

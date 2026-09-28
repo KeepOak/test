@@ -116,7 +116,8 @@ export function initPlus() {
   initPractice();
   /* Use a skill: the Skills list over the box; with no skill switched on, "/" in the box as before (the engine's commands). */
   on("skills15", () => { closePop(); if (!openSkills()) insert("/"); });
-  on("plusmenu", async (el) => { await loadPractice(); openPop(el, menu() + plusMore() + plus17d()); });
+  /* The menu opens (or closes, on its own button) at once; Practice's availability is refreshed behind it. */
+  on("plusmenu", (el) => { openPop(el, menu() + plusMore() + plus17d()); void loadPractice(); });
   on("attach", () => { closePop(); pickFiles(false); });
   on("add-folder", () => { closePop(); pickFiles(true); });
   on("unattach", (el) => removeFile(el.dataset.k));
