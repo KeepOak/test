@@ -293,6 +293,8 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { MiniAppDoor } from "./miniapp/door.js";
+import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
 import { handlesMiniAppPath, MiniAppApi } from "./miniapp/api.js";
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
@@ -3733,6 +3735,8 @@ export async function startServer(
     quit?: () => void;
     /** Trusted desktop broker status over the private engine Link; never supplied by a web request. */
     gatewayPower?: NeverBreakExtras["gatewayPower"];
+    /** How `tailscale` is run to learn the Mini App's HTTPS address (src/miniapp/phone-access.ts); tests stand in for it. */
+    tailscaleServe?: TailscaleRunner;
     /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
     onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
@@ -3821,6 +3825,29 @@ export async function startServer(
   // Counted separately from the session key, so a chat service that is set up wrongly can slow
   // itself down without ever standing between the owner and their own app.
   const webhookLimiter = new AuthLimiter(options.authLimits);
+  /**
+   * The Telegram Mini App's API, on Branch's own port and on the Mini App's door (src/miniapp/door.ts). A place that
+   * keeps sending launch data that isn't Telegram's, or a token that isn't live, waits like any wrong key; through the
+   * door every phone arrives from 127.0.0.1 and so shares that wait, which only the owner's own tailnet can reach.
+   */
+  const miniAppAnswer = async (path: string, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const from = requestSource(request.socket?.remoteAddress, request.headers);
+    const waiting = authLimiter.refusal(from, "Telegram Mini App");
+    if (waiting) { send(response, 429, { error: waiting }); return; }
+    const stopped = new AbortController();
+    request.once("aborted", () => stopped.abort());
+    response.once("close", () => { if (!response.writableEnded) stopped.abort(); });
+    try {
+      send(response, 200, await miniApp.handle(path, { method: request.method ?? "GET", token: bearerOf(request),
+        body: () => readBody(request, 16_384), signal: stopped.signal }));
+    } catch (error) {
+      if (error instanceof z.ZodError) { send(response, 400, { error: "That request wasn't understood." }); return; }
+      const refused = miniApp.error(error);
+      if (!refused) { send(response, 500, { error: "Something went wrong." }); return; }
+      if (refused.status === 401) noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the Telegram Mini App's launch data");
+      send(response, refused.status, { error: refused.message });
+    }
+  };
 
 /**
  * The widget sits on a page of the owner's own, so its call to the paired listener is cross-origin
@@ -3958,23 +3985,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // ---- The Telegram Mini App (src/miniapp/api.ts): no Branch key; Telegram's signed launch data and the App lock PIN
       // open a session held to one task's browser, and its token is good for these routes only. A place that keeps
       // sending launch data that isn't Telegram's, or a token that isn't live, waits like any wrong key. ----
-      if (handlesMiniAppPath(path)) {
-        const from = requestSource(request.socket?.remoteAddress, request.headers);
-        const waiting = authLimiter.refusal(from, "Telegram Mini App");
-        if (waiting) throw new HttpError(429, waiting);
-        const stopped = new AbortController();
-        request.once("aborted", () => stopped.abort());
-        response.once("close", () => { if (!response.writableEnded) stopped.abort(); });
-        const answer = await miniApp.handle(path, { method: request.method ?? "GET", token: bearerOf(request),
-          body: () => readBody(request, 16_384), signal: stopped.signal }).catch((error: unknown) => {
-          const refused = miniApp.error(error);
-          if (!refused) throw error;
-          if (refused.status === 401) noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the Telegram Mini App's launch data");
-          throw new HttpError(refused.status, refused.message);
-        });
-        send(response, 200, answer);
-        return;
-      }
+      if (handlesMiniAppPath(path)) { await miniAppAnswer(path, request, response); return; }
       const triggerFireMatch = /^\/api\/triggers\/([a-f0-9-]{36})\/fire$/.exec(path);
       if (triggerFireMatch && request.method === "POST") {
         // Counted on the webhook limiter, not the key's: a service set up with the wrong secret
@@ -4639,12 +4650,23 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     // CHAT-147: every other chat app set up in the window; each problem goes to the diagnostics.
     void app.channelSetup.connectSaved().catch((error: unknown) => console.error(`Chat apps did not connect: ${errorText(error)}`));
   }
+  // The Telegram Mini App's own door on this computer's loopback address, and where the owner's phone reaches it.
+  const miniAppDoor = new MiniAppDoor(app.store, app.runtime.owner, miniAppAnswer);
+  await miniAppDoor.open().catch((error: unknown) => console.error(`The Telegram Mini App's door did not open: ${errorText(error)}`));
+  const phoneAccess = new PhoneAccess(() => miniAppDoor.port, options.tailscaleServe);
+  void phoneAccess.refresh(); // so a task's first picture already knows whether the phone can reach the Mini App
+  app.channels.miniAppUrl = (runId) => {
+    const base = app.sessionLock.pinSet() ? phoneAccess.address() : null;
+    return base ? `${base}?run=${encodeURIComponent(runId)}` : null;
+  };
   if (options.presence) {
     await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
     await noteFirstStart(app, options.dataDir).catch(() => undefined);
   }
   return {
     url,
+    /** The Telegram Mini App's door (src/miniapp/door.ts) and where the owner's phone reaches it. */
+    miniAppDoor, phoneAccess,
     /** The window's key as it is now; removing a phone that was handed it replaces it. */
     get token(): string { return token; },
     remote,
@@ -4666,6 +4688,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingLockdown();
       browserControls.close();
       miniApp.close();
+      app.channels.miniAppUrl = undefined;
+      await miniAppDoor.close();
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops

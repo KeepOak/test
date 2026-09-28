@@ -227,6 +227,8 @@ export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Arr
 export interface ApprovalButton {
   label: string;
   value: string;
+  /** Telegram only: the button opens this HTTPS address as the bot's Mini App instead of sending `value`. */
+  webApp?: string;
 }
 
 /**
@@ -434,6 +436,8 @@ export class ChannelRouter {
    * throws the plain reason it cannot. `held` says who holds it without changing anything.
    */
   browserHold: ((runId: string, op: "take" | "give" | "held") => Promise<"owner" | "task" | "none">) | undefined;
+  /** The Telegram Mini App's address for this task's browser, while the owner's phone can reach it; null otherwise. */
+  miniAppUrl: ((runId: string) => string | null) | undefined;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
   /**
@@ -1403,11 +1407,14 @@ export class ChannelRouter {
   }
   /** Who holds each chat task's browser, as its picture's buttons last showed it. */
   private readonly holders = new Map<string, "owner" | "task" | "none">();
-  private holdButtons(runId: string | null): { label: string; value: string }[] {
+  private holdButtons(runId: string | null, telegram: boolean): ApprovalButton[] {
     if (!runId) return [];
     void this.browserHold?.(runId, "held").then((who) => { this.holders.set(runId, who); }, () => undefined);
-    return this.holders.get(runId) === "owner"
-      ? [{ label: "▶️ Hand back", value: `br:g:${runId}` }] : [{ label: "✋ Take over", value: `br:t:${runId}` }];
+    const hold = this.holders.get(runId) === "owner"
+      ? { label: "▶️ Hand back", value: `br:g:${runId}` } : { label: "✋ Take over", value: `br:t:${runId}` };
+    // Where the owner's phone can reach the Mini App (src/miniapp/phone-access.ts), it opens the page to drive it there.
+    const phone = telegram ? this.miniAppUrl?.(runId) ?? null : null;
+    return phone ? [hold, { label: "📱 Drive it here", value: "", webApp: phone }] : [hold];
   }
   /**
    * A press on the live browser's Take over or Hand back. Only in the direct chat the task came from, by the person who
@@ -1471,7 +1478,7 @@ export class ChannelRouter {
     const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
     // Pictures of Branch's browser while the task works in it: a direct chat only, where the owner has them on.
     const pictures = message.chatKind === "direct" && switches.steps !== "off" && display.pictures !== "off" && !!adapter.sendFile && !adapter.paidPerMessage;
-    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf()) : undefined;
+    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf(), adapter.kind === "telegram") : undefined;
     const picture = pictures ? async () => {
       const runId = runOf(), seen = runId ? await this.browserPicture(runId) : null;
       if (!seen) return null;

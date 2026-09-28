@@ -318,8 +318,8 @@ proved against stand-in adapters and providers; real account connections remain 
 ### Live screen and remote control from a chat (owner request, 2026-09-27)
 | | What the platform allows | H | O | B today |
 |---|---|---|---|---|
-| TG | `editMessageMedia` replaces a screenshot in place; inline keyboards; Mini App (WebApp) with signed `initData` | — | ◐ `/dashboard` Mini App (Tailscale only, owner `allowFrom`, signed `initData` checked) | — the live screen refuses every door on purpose (`liveScreenDoorRefusal`) |
-| DC | edit a message's attachments; buttons | — | — | — |
+| TG | `editMessageMedia` replaces a screenshot in place; inline keyboards; Mini App (WebApp) with signed `initData` | — | ◐ `/dashboard` Mini App (Tailscale only, owner `allowFrom`, signed `initData` checked) | ◐ a task's **browser** only (the computer's screen still refuses every door, `liveScreenDoorRefusal`): one picture replaced in place with Take over / Hand back, and a **Mini App** to drive it from the phone (`src/miniapp/`): Telegram's signed `initData` for the task's own person in their private chat, the App lock PIN for every session, a session held to that browser only (5 min idle, 30 min at most, ended by Lockdown or App lock), every hand-over and input on the task's record. It is served from its own loopback door, never Branch's port, and its button shows only while Tailscale forwards HTTPS to that door |
+| DC | edit a message's attachments; buttons | — | — | ◐ one picture replaced in place with Take over / Hand back |
 | SL | a file can't be replaced in place (each view is a new post); buttons | — | — | — |
 | WA | no edit (one picture per request); up to 3 reply buttons | — | — | — |
 | MX | `m.replace` of an image event; reactions | — | — | — |
