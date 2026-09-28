@@ -21,6 +21,7 @@ import { dashTile, readDash } from "./dashsw.js"; // parity B6: Dashboard in the
 import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./learn17d.js"; // pass 17 part D §3
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
 import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
+import { lockdownOn } from "../chat/approvals.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -71,6 +72,7 @@ const ADD = { mcp: ["tool-add", "Add a server"], skills: ["tool-add", "Add a ski
 
 function trunksTab() {
   const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}</b><small>${esc(tr.title ?? "")}</small>${liveLine18(tr)}</span>
+    <button class="btn sm" type="button" data-act="trunk-default" data-id="${esc(tr.id)}" aria-pressed="${tr.id === E.defaultTrunkId}">${t("look.badge.default")}</button>
     <button class="btn sm" type="button" data-act="edit" data-id="${esc(tr.id)}">${t("prompts.action.edit")}</button>
     <button class="btn ghost sm" type="button" data-act="pausetrunk" data-id="${esc(tr.id)}">${tr.paused ? t("autonomy.resume") : t("autonomy.pause")}</button></div>`).join("");
   /* The jobs in the language in force (flows/trunk.js TEMPLATE_WORDS, the same jobs in the same order); the face keeps the job's own name. */
@@ -281,7 +283,7 @@ export function draw() {
   const tab = S.tabs.customize || "trunks";
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
   const tabs = [["trunks", t("settingsDirectory.trunks"), E.trunks.length], ["tools", t("dashboard.filter.tools"), 0], ["specialists", t("nav.specialists"), 0], ["channels", t("place.customize.channels"), 0], ["everywhere", t("window.places.customize.everywhere"), 0]];
-  const lockBanner = E.state.lock ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
+  const lockBanner = lockdownOn() ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
   return `<main class="main enter11" id="main">${lockBanner}<div class="scroll"><div class="place${tab === "tools" ? " t9-place" : ""}">
     <h1>${t("place.customize")}</h1><p class="lede">${t("window.places.customize.who-your-trunks-are-what-they")}</p>
     ${tabBar(tabs, "customize", tab)}${(DRAW[tab] ?? trunksTab)()}</div></div></main>`;
