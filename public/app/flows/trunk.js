@@ -16,6 +16,7 @@ import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
+import { gsel } from "../core/gsel.js";
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
 /* The prototype's Bob is the engine's sway (the engine has no bob). */
@@ -177,8 +178,8 @@ const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span
    way to add one it can use underneath (places/switch-on.js); so is the row with none a Trunk can use. */
 function modelSeg(tr) {
   const models = E.state?.models, presets = models?.presets ?? [];
-  const opts = presets.map((p) => `<option value="${esc(p.id)}" ${tr.model === p.id ? "selected" : ""} ${trunkCanUse(p) ? "" : "disabled"}>${esc(p.name)}</option>`).join("");
-  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><select class="inp" id="tm-model-sel" data-id="${esc(tr.id)}" aria-label="${t("window.flows.trunk.which-model")}"><option value="" ${tr.model ? "" : "selected"}>${t("voice.default")}</option>${opts}</select></span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
+  const opts = [["", t("voice.default")], ...presets.map((p) => [p.id, p.name, !trunkCanUse(p)])];
+  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right">${gsel({ id: "tm-model-sel", label: t("window.flows.trunk.which-model"), options: opts, value: tr.model ?? "", attrs: `data-id="${esc(tr.id)}"` })}</span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
 }
 async function setModel(el) {
   const tr = trunkById(el.dataset.id);

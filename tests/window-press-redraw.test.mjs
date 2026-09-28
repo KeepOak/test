@@ -123,6 +123,8 @@ test("a tap on a phone leaves no tooltip behind; a mouse still gets one", async 
   // A greyed control ("Coming soon" as its tip): tapping it changes nothing, so nothing redraws the tip away either.
   // Named by what it is (its tag and data-* attributes, and its place among the controls that share them), not by an id
   // written on it: the window draws again as its reads arrive, and the control drawn in its place has no such id.
+  // The window draws its greyed controls as its reads arrive: wait for one on screen before naming it.
+  await page.waitForFunction(() => [...document.querySelectorAll("#app .soon[data-tip]")].some((n) => n.getClientRects().length && n.getBoundingClientRect().top > 0));
   const tipped = await page.evaluate(() => {
     const el = [...document.querySelectorAll("#app .soon[data-tip]")].find((n) => n.getClientRects().length && n.getBoundingClientRect().top > 0);
     const selector = el.tagName.toLowerCase() + ".soon" + [...el.attributes].filter((a) => a.name.startsWith("data-") && a.name !== "data-tip")

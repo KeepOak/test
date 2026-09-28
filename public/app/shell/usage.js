@@ -16,6 +16,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { waiting } from "../flows/whatsnew.js";
+import { snoozeUpdate } from "../chat/rec.js";
 import { allPaused } from "../flows/pause.js";
 import { t } from "../../i18n.js";
 import { resetWords } from "../core/usage-reset.js";
@@ -82,7 +83,50 @@ function limitRow(r) {
   const body = r.windows?.length
     ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}${r.note ? ` ${esc(r.note)}` : ""}</small>`
     : `<small>${esc(busy ? said : r.note)}</small>${measure}`;
-  return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}</div></div>`;
+  return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}${offerBlock(r)}</div></div>`;
+}
+
+/* ---------- more usage, where the service offers it (src/usage-offers.ts) ----------
+   The engine attaches row.offer only where the service sells more usage and this account is at or near its limit, and
+   row.limitNear with row.switches where its list moves on to the next account by itself. The button opens the
+   service's own page in the owner's browser; nothing is bought here, and the owner decides there. */
+const siteOf = (url) => { try { return new URL(url).hostname; } catch { return ""; } };
+function offerBlock(r) {
+  const pool = r.limitNear && r.switches ? `<small class="lim-pool">${esc(t("glance.poolSwitches"))}</small>` : "";
+  const offer = r.offer?.url ? r.offer : null;
+  if (!offer) return pool ? `<div class="lim-offer">${pool}</div>` : "";
+  const key = `glance.offer.${offer.id}`, label = t(key) === key ? offer.option : t(key), site = siteOf(offer.url);
+  // The account is named only when its label is who the service said it is, never a name like "Your sign-in".
+  const note = r.verified && r.accountLabel ? t("glance.offerNoteFor", { site, account: r.accountLabel }) : t("glance.offerNote", { site });
+  return `<div class="lim-offer"><button class="btn sm" type="button" data-act="limoffer" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "")}">${esc(label)}</button><small>${esc(note)}</small>${pool}</div>`;
+}
+/* The desktop window opens the page in the owner's browser (it accepts only the catalogue's pages); a browser tab opens a new tab. */
+function openOutside(url) {
+  const desktop = globalThis.branchDesktop;
+  if (typeof desktop?.openExternal === "function") return Promise.resolve(desktop.openExternal(url));
+  window.open(url, "_blank", "noopener");
+  return Promise.resolve();
+}
+/* When the owner comes back from the provider's page, that one row is read again, once, and shown in the popover: opened
+   again first if it was closed while the owner was away, so the new state is in front of them. */
+let returning = null;
+function leftForPage() { if (returning) returning.left = true; }
+async function cameBack() {
+  if (!returning?.left || document.visibilityState !== "visible") return;
+  const row = returning.row, at = document.querySelector('#statusbar [data-act="usagepop"]');
+  returning = null;
+  if (at && glance && !document.querySelector(".pop .lims")) openPop(at, popHTML(glance), { right: true });
+  if (row.readable) { checkRows([row]); return; }
+  const look = looks;
+  try { keep(await api("usage/glance")); } catch (error) { toast(error.message); return; }
+  redrawPop(look);
+}
+async function openOffer(el) {
+  const row = (glance?.rows ?? []).find((r) => r.connection === el.dataset.id && (r.account ?? "") === el.dataset.v);
+  if (!row?.offer?.url) return;
+  returning = { row, left: false };
+  try { await openOutside(row.offer.url); toast(t("glance.offerOpened", { site: siteOf(row.offer.url) })); }
+  catch (error) { returning = null; toast(error.message); }
 }
 
 /* A plan signed in on this computer that is not a connection yet (GET/POST glance `addable`, the engine's own sentence):
@@ -110,7 +154,7 @@ function updatePop(plan, next) {
     .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
   const title = held ?? (next ? t("window.flows.whatsnew.is-ready", { version: next.version }) : `Branch ${version}`);
   const lines = next?.lines.length ? `<ul class="steps-list" data-css="padding:0 10px 8px 28px;font-size:12.5px">${next.lines.slice(0, 3).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
-  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"), "", 'data-why="update-remind"')}`;
+  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${next ? mi("upd-snooze", "clock", t("window.shell.usage.remind-me-tomorrow"), "", `data-v="${esc(next.version)}" data-why="update-remind"`) : ""}`;
 }
 /* The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked. */
 async function openUpdates(el) {
@@ -270,7 +314,11 @@ function startInBackground() {
 }
 
 export function initUsage() {
-  markLive(["usagepop", "limmeasure", "limcheck", "limconnect", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
+  markLive(["usagepop", "limmeasure", "limcheck", "limconnect", "limoffer", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
+  on("limoffer", (el) => openOffer(el));
+  window.addEventListener("blur", leftForPage);
+  window.addEventListener("focus", cameBack);
+  document.addEventListener("visibilitychange", () => (document.visibilityState === "hidden" ? leftForPage() : cameBack()));
   on("tasks10", (el) => openTasks(el));
   on("bg-new", () => startInBackground());
   on("ckpt-save", saveProgress);
@@ -281,6 +329,7 @@ export function initUsage() {
   window.addEventListener("focus", meterCheck);
   on("limcheck", () => checkRows(glance?.rows ?? []));
   on("updmenu", (el) => openUpdates(el));
+  on("upd-snooze", (el) => { closePop(); snoozeUpdate(el.dataset.v); });
   on("limmeasure", async (el) => {
     el.disabled = true;
     try { await api("usage/limits/measure", { connection: el.dataset.id, account: el.dataset.v }); }

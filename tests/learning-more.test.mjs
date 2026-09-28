@@ -80,6 +80,20 @@ test("parts ship when needed but providers; switched off, tools not offered, cha
   assert.deepEqual(app.learningMore.outside.settings().active, "none");
 });
 
+test("defaults audit: a note written with nothing else set is shown, and the about-you block says so", async (t) => {
+  const { app, api, on, provider, owner } = await fixture(t);
+  await on("blocks");
+  // A card written whole before the switch shipped on: its off was the old default, never the owner's, so it reads as
+  // it ships (on), in the block as in the conversation.
+  app.store.save("settings", owner, "knobs-memory", { snapshotFacts: 20, snapshotChars: 2000, aboutYouOn: false, aboutYou: "I keep bees.", aboutYouChars: 1500 });
+  const view = await app.runtime.executeTool("memory.block_view", {});
+  assert.equal(view.blocks.find((b) => b.label === "about-you").shown, true);
+  await app.runtime.run({ prompt: "hello" });
+  assert.equal(provider.seen.at(-1).system.split("I keep bees").length - 1, 1, "the note goes in front of the conversation once");
+  await api("/api/knobs", { card: "memory", values: { aboutYouOn: false } });
+  assert.equal((await app.runtime.executeTool("memory.block_view", {})).blocks.find((b) => b.label === "about-you").shown, false, "the owner's off");
+});
+
 test("R17-052: blocks sit in front of the conversation, the assistant edits them within budget, and about-you is the Settings note", async (t) => {
   const { app, api, on, provider, owner } = await fixture(t);
   await on("blocks");
