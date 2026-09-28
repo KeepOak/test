@@ -681,6 +681,8 @@ export class Runtime {
   readonly backgroundResults: BackgroundResult[] = [];
   /** selfdev (SELF-303): told when a background helper finishes, so its lead hears without checking (src/helper-messages.ts). */
   onBackgroundFinished: ((result: BackgroundResult) => void) | null = null;
+  /** workbench (SELF-307): what a conversation still has going, sent with every round and never stored (src/open-work.ts). */
+  openWork: ((sessionId: string) => string | null) | null = null;
   /** Per session: write tool calls whose outcome is unknown after an interruption, until a read has checked the state. */
   private readonly unreconciled = new Map<string, { name: string; arguments: string }[]>();
   /** Dogfood B7: set once a real model has answered and the first-run card is done with. */
@@ -2252,6 +2254,10 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
+      // workbench (SELF-307): the conversation's open work rides with the checklist, so folding never loses its numbers.
+      let open: string | null = null;
+      if (context.depth === 0) try { open = this.openWork?.(run.sessionId) ?? null; } catch { /* never breaks a round */ }
+      if (open) notes.every = { role: "system", content: [notes.every?.content, open].filter(Boolean).join("\n\n") };
       // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
