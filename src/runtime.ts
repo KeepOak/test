@@ -213,7 +213,7 @@ interface GateOutcome {
   refusal: unknown | null; sandbox: SandboxChoice | null;
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
-export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle; /** Seasons: the connection the overnight work chose (never a billed one unless the owner allowed it); an unknown id is ignored. */ model?: string }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -688,6 +688,8 @@ export class Runtime {
   artifacts: RunArtifacts | null = null;
   /** Where a person's attached files are kept; without it, nothing can be attached. */
   attachments: Attachments | null = null;
+  /** Files from lasting owner conversations also belong in Library; temporary and household files stay separate. */
+  attachmentsFiled: ((session: string, owner: string, refs: AttachmentRef[]) => Promise<void>) | null = null;
   /** Hears a sound or watches a video attached to a message (this computer's ffmpeg and speech settings); null when nothing can. */
   understandAttached: ((owner: string) => Understander) | null = null;
   /** Pictures that came with this turn's files, waiting for the model to be chosen so it can be said truly whether they were shown. */
@@ -1227,7 +1229,8 @@ export class Runtime {
       ...(options.agent ? { agent: options.agent } : {}),
     };
     try {
-      const model = knobs.subtaskModel(this.store, this.owner, (id) => this.models.presets.has(id)); // R17-S11
+      const model = options.model && this.models.presets.has(options.model) ? options.model // Seasons
+        : knobs.subtaskModel(this.store, this.owner, (id) => this.models.presets.has(id)); // R17-S11
       return await this.track(() => this.execute({ prompt, signal: context.signal, ...(model ? { model } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
     } finally {
       clearTimeout(timer);
@@ -1520,6 +1523,13 @@ ${run.output.slice(0, 6000)}`;
         ...(options.system ? { system: options.system } : {}),
       });
       if (read) this.store.saveRead(run.sessionId, userMessageId, read);
+      // Only the owner's own lasting conversation files into Library: never a trigger, schedule, chat app, another program
+      // or a borrowed key, since Library passages are put in front of the owner's later tasks.
+      const ownersOwn = (options.source ?? "owner") === "owner" && !options.originFrom && !startedWithShortLivedKey();
+      if (!temporary && ownersOwn && attached.length && this.attachmentsFiled) {
+        try { await this.attachmentsFiled(run.sessionId, context.owner, attached); }
+        catch (error) { this.store.event(run.id, "documents.import_failed", { reason: errorText(error) }); }
+      }
       options.onUserMessageId?.(userMessageId);
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });

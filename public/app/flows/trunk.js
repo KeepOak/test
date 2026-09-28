@@ -242,9 +242,11 @@ async function saveEditor() {
   const body = { name: ed.d.name.trim(), title: ed.d.title.trim(), look: fullLook(tr), eyes: ed.d.eyes, ...(ed.d.colour ? { chosenColour: ed.d.colour } : {}) };
   try {
     await api(`trunks/${encodeURIComponent(ed.id)}`, body);
+    /* The window's own Trunks are read again before the editor closes: closing first left a moment in which Edit Trunk…
+       and the header still had the old name. A failed read is not a failed save; the next read carries the new name. */
+    await refresh().catch((error) => console.warn(error.message));
     closeDlg();
     ed = null;
-    await refresh();
     toast(t("window.flows.trunk.saved", { name: body.name }));
   } catch (error) { toast(error.message); }
 }
