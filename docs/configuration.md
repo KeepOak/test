@@ -5102,7 +5102,8 @@ Everything a program of your own needs to use Branch, in one place (bucket 21):
   each README says how to use it from a copy of the source. Branch refuses any web page on another
   address, so the React hooks run in a desktop app, React Native, a server-rendered page, or behind
   a development proxy.
-- **The switch.** Settings → Advanced → **Building on Branch**: off (the default), when needed, or on.
+- **The switch.** Settings → Advanced → **Building on Branch**: off, when needed (the default, under the ship-on rule:
+  the tools only read), or on.
   `GET`/`POST /api/sdk-kit` with `{"mode": "off" | "when-needed" | "on"}` does the same; only the owner
   may change it, and a short-lived key may not.
 - **Tools for an AI coding tool.** With the switch not off, `sdk.routes` lists the web routes (by group
@@ -8875,7 +8876,7 @@ short-lived key can read them but never change them.
 | | `serviceTier` | `standard` | `priority` sends `service_tier: "priority"` to OpenAI-style services and `service_tier: "auto"` to Claude; `flex` sends `flex` to OpenAI-style services only. `standard` sends nothing. |
 | Showing a model's thinking (Settings, Appearance) | `showReasoning` | `true` | Off removes `<think>`, `<thinking>` and `<reasoning>` blocks from answers and from the live text. |
 | How much it remembers at the start (Library, Memory) | `snapshotFacts`, `snapshotChars` | `20`, `2000` | The memory snapshot a new conversation starts with. |
-| | `aboutYouOn`, `aboutYou`, `aboutYouChars` | `false`, `""`, `1500` | The owner's own note, put in front of the owner's conversations as background (never a household person's). |
+| | `aboutYouOn`, `aboutYou`, `aboutYouChars` | `true`, `""`, `1500` | The owner's own note, put in front of the owner's conversations as background (never a household person's). On as shipped: nothing is added until the note is written. |
 | | memory provider | Branch's own | "Branch's own plus Hindsight" is the same switch as the Hindsight card (`asks-hindsight`); the address stays there. |
 | Hiding key-like values (Settings, Permissions) | `sensitivity` | `standard` | `strict` also hides long random-looking strings with digits and both cases. |
 | | `exceptions` | `[]` | Kinds of value not hidden. A private key is never let through. Owner only. |
