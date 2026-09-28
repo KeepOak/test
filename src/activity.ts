@@ -125,7 +125,7 @@ const host = (value: unknown): string => { try { return new URL(String(value)).h
 
 /** Tools whose first argument is a workspace file, so a call on one counts as touching that file. */
 const fileTools = new Set([
-  "files.read", "files.write", "files.edit", "files.validate", "files.verify",
+  "files.read", "files.read_lines", "files.write", "files.edit", "files.validate", "files.verify",
   "code.check", "document.open", "documents.add",
 ]);
 /**
@@ -178,6 +178,7 @@ export function describeToolCall(name: string, args: unknown, nameOf?: (id: stri
   if (helpers) return helpers;
   switch (name) {
     case "files.read": return `Reading ${short(a.path)}`;
+    case "files.read_lines": return `Reading part of ${short(a.path)}`;
     case "files.write": return `Writing ${short(a.path)}`;
     case "files.list": return `Looking through ${short(a.path ?? "the workspace")}`;
     case "files.move": return Array.isArray(a.moves) ? `Moving ${a.moves.length} files` : `Moving ${short(a.from)} to ${short(a.to)}`;
