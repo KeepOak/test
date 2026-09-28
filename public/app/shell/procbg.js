@@ -156,7 +156,9 @@ export function drawScenery(cv) {
   cv.dataset.k = key;
   const g = cv.getContext("2d");
   g.clearRect(0, 0, 146, 60);
-  g.fillStyle = ground; for (let x = 0; x < 146; x++) { const h = 8 + Math.round(3 * Math.sin(x / 14)); g.fillRect(x, 60 - h, 1, h); }
+  // The ground fades in from the left, where the scene starts part-way across the list.
+  g.fillStyle = ground; for (let x = 0; x < 146; x++) { const h = 8 + Math.round(3 * Math.sin(x / 14)); g.globalAlpha = Math.min(1, x / 36); g.fillRect(x, 60 - h, 1, h); }
+  g.globalAlpha = 1;
   g.fillStyle = trunk; g.fillRect(104, 30, 4, 24); g.fillRect(100, 40, 4, 2); g.fillRect(108, 36, 4, 2);
   g.fillStyle = leaf;
   const blobs = [[106, 24, 13], [95, 29, 8], [117, 28, 9], [106, 15, 8]];
