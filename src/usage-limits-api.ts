@@ -79,6 +79,7 @@ function accountsFor(app: LimitsApp, connection: string): LimitsAccount[] {
   return listed.map((account) => ({
     // Who the sign-in is (its email, where the service said it), else the name it was given.
     account: account.id, label: service.identities.get(`${found.pool}/${account.id}`) ?? account.label ?? account.id, inUse: account.id === next, signIn,
+    verified: service.identities.has(`${found.pool}/${account.id}`),
     limited: signIn && service.stateOf(found.pool, account.id).limitedUntil > service.now(), switches,
     remaining: null,
     ...(signIn && service.canReadPlan(found.pool) ? { readable: true, note: service.planNotes.get(`${found.pool}/${account.id}`) ?? null } : {}),

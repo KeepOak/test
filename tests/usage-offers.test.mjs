@@ -84,7 +84,7 @@ test("rows built by limitsView carry the offer, the pool's sentence flags, and g
   ];
   const accounts = {
     "chatgpt-gpt-5": [
-      { account: "primary", label: "first@example.test", inUse: false, signIn: true, remaining: null, windows: [plan(97)], switches: true, limited: true },
+      { account: "primary", label: "first@example.test", inUse: false, signIn: true, remaining: null, windows: [plan(97)], switches: true, limited: true, verified: true },
       { account: "a1b2c3d4", label: "second@example.test", inUse: true, signIn: true, remaining: null, windows: [plan(10)], switches: true },
     ],
     "cli-gemini-cli": [{ account: "primary", label: "Your sign-in", inUse: true, signIn: true, remaining: null, windows: [plan(98)] }],
@@ -96,6 +96,8 @@ test("rows built by limitsView carry the offer, the pool's sentence flags, and g
   assert.equal(first.limitNear, true);
   assert.equal(first.switches, true, "its list moves on to the next account");
   assert.equal(first.provider, "chatgpt");
+  assert.equal(first.verified, true, "its label is who the service said it is");
+  assert.equal(second.verified, undefined);
   assert.equal(second.offer, undefined, "the account with room left gets nothing");
   assert.equal(second.limitNear, undefined);
   assert.equal(gemini.offer, undefined);

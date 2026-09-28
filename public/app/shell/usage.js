@@ -95,7 +95,8 @@ function offerBlock(r) {
   const offer = r.offer?.url ? r.offer : null;
   if (!offer) return pool ? `<div class="lim-offer">${pool}</div>` : "";
   const key = `glance.offer.${offer.id}`, label = t(key) === key ? offer.option : t(key), site = siteOf(offer.url);
-  const note = r.accountLabel ? t("glance.offerNoteFor", { site, account: r.accountLabel }) : t("glance.offerNote", { site });
+  // The account is named only when its label is who the service said it is, never a name like "Your sign-in".
+  const note = r.verified && r.accountLabel ? t("glance.offerNoteFor", { site, account: r.accountLabel }) : t("glance.offerNote", { site });
   return `<div class="lim-offer"><button class="btn sm" type="button" data-act="limoffer" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "")}">${esc(label)}</button><small>${esc(note)}</small>${pool}</div>`;
 }
 /* The desktop window opens the page in the owner's browser (it accepts only the catalogue's pages); a browser tab opens a new tab. */
@@ -105,13 +106,15 @@ function openOutside(url) {
   window.open(url, "_blank", "noopener");
   return Promise.resolve();
 }
-/* When the owner comes back from the provider's page, that one row is read again, once, and the popover drawn anew. */
+/* When the owner comes back from the provider's page, that one row is read again, once, and shown in the popover: opened
+   again first if it was closed while the owner was away, so the new state is in front of them. */
 let returning = null;
 function leftForPage() { if (returning) returning.left = true; }
 async function cameBack() {
   if (!returning?.left || document.visibilityState !== "visible") return;
-  const row = returning.row;
+  const row = returning.row, at = document.querySelector('#statusbar [data-act="usagepop"]');
   returning = null;
+  if (at && glance && !document.querySelector(".pop .lims")) openPop(at, popHTML(glance), { right: true });
   if (row.readable) { checkRows([row]); return; }
   const look = looks;
   try { keep(await api("usage/glance")); } catch (error) { toast(error.message); return; }

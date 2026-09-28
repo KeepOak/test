@@ -18,11 +18,14 @@ const plan = (used) => ({ id: "five_hour", title: "This 5-hour window", kind: "p
   resetAt: new Date(Date.now() + 3 * 3600_000).toISOString(), measuredAt: new Date().toISOString(), state: "measured", from: "test" });
 const rows = (claudeUsed) => withOffers([
   { connection: "cli-claude-code", connectionName: "Claude plan", presets: ["cli-claude-code"], signIn: true, account: "primary",
-    accountLabel: "claude-owner@example.test", inUse: true, state: "measured", windows: [plan(claudeUsed)], note: "",
-    provider: "cli-claude-code", switches: true },
+    accountLabel: "claude-owner@example.test", verified: true, inUse: true, state: "measured", windows: [plan(claudeUsed)], note: "",
+    provider: "cli-claude-code", switches: true, readable: true },
   { connection: "cli-gemini-cli", connectionName: "Gemini CLI", presets: ["cli-gemini-cli"], signIn: true, account: "primary",
     accountLabel: "gemini-owner@example.test", inUse: true, state: "measured", windows: [plan(98)], note: "",
     provider: "cli-gemini-cli", switches: true },
+  // Only a name Branch gave it, never who the service said it is: the note does not name it.
+  { connection: "chatgpt", connectionName: "ChatGPT plan", presets: ["chatgpt"], signIn: true, account: "primary",
+    accountLabel: "Your sign-in", inUse: true, state: "measured", windows: [plan(96)], note: "", provider: "chatgpt" },
 ], Date.now());
 
 test("the offer shows only on the row whose service sells more, opens its page, and the row is read again on return", async (t) => {
@@ -57,11 +60,16 @@ test("the offer shows only on the row whose service sells more, opens its page, 
   const claude = page.locator(".lim-list .lim", { hasText: "Claude plan" }), gemini = page.locator(".lim-list .lim", { hasText: "Gemini CLI" });
   await claude.waitFor();
   const offer = claude.locator('[data-act="limoffer"]');
-  assert.equal(await page.locator('.lim-list [data-act="limoffer"]').count(), 1, "one action in the whole list");
+  const chatgpt = page.locator(".lim-list .lim", { hasText: "ChatGPT plan" });
+  assert.equal(await page.locator('.lim-list [data-act="limoffer"]').count(), 2, "Claude and ChatGPT sell more; Gemini CLI does not");
   assert.equal(await offer.innerText(), "Add usage credits", "Claude's own words");
   assert.equal(await offer.getAttribute("aria-disabled"), null, "live, not greyed");
   assert.equal(await gemini.locator('[data-act="limoffer"]').count(), 0, "Gemini CLI offers nothing to buy, so nothing is shown");
   assert.match(await claude.locator(".lim-offer small").first().innerText(), /claude\.ai.*claude-owner@example\.test.*Nothing is bought/);
+  assert.equal(await chatgpt.locator('[data-act="limoffer"]').innerText(), "Buy credits");
+  assert.equal(await chatgpt.locator(".lim-offer small").first().innerText(), "Opens chatgpt.com in your browser. Nothing is bought unless you choose it there.",
+    "an account known only by the name Branch gave it is not named");
+  assert.equal(await chatgpt.locator(".lim-pool").count(), 0, "a single sign-in has no pool to move along");
   for (const one of [claude, gemini])
     assert.equal(await one.locator(".lim-pool").innerText(), "Branch switches to your next account automatically.", "the pool's sentence at the limit");
   if (process.env.USAGE_OFFERS_SHOTS) { // USAGE_OFFERS_SHOTS=<folder> keeps a picture of the popover with its offer
@@ -77,11 +85,16 @@ test("the offer shows only on the row whose service sells more, opens its page, 
   served = { ...base, rows: rows(30) }; // what the service says once the owner has added usage credits there
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.waitForTimeout(400);
-  assert.equal(await page.locator('.lim-list [data-act="limoffer"]').count(), 1, "a focus with no trip away reads nothing again");
+  assert.equal(await claude.locator('[data-act="limoffer"]').count(), 1, "a focus with no trip away reads nothing again");
 
+  await page.keyboard.press("Escape"); // the popover closed while the owner was away
+  await page.waitForFunction(() => !document.querySelector(".pop .lims"));
+  const refreshed = page.waitForRequest((request) => request.url().endsWith("/api/usage/limits/refresh"));
   await page.evaluate(() => { window.dispatchEvent(new Event("blur")); window.dispatchEvent(new Event("focus")); });
-  await page.waitForFunction(() => document.querySelector(".pop .lim-list")?.textContent.includes("70% left"));
-  assert.equal(await page.locator('.lim-list [data-act="limoffer"]').count(), 0, "the new state: room left, no offer");
+  await refreshed; // a Claude plan is read from the service itself (row.readable): Check now's own read
+  await page.waitForFunction(() => document.querySelector(".pop .lim-list")?.textContent.includes("70% left")
+    && !document.querySelector(".pop .lim-list").textContent.includes("Checking…"));
+  assert.equal(await claude.locator('[data-act="limoffer"]').count(), 0, "the new state: room left, no offer");
   assert.equal(await claude.locator(".lim-pool").count(), 0, "nor the pool's sentence");
   assert.equal(await gemini.locator(".lim-pool").count(), 1, "Gemini CLI is still at its limit");
   assert.deepEqual(await page.evaluate(() => window.__opened), ["https://claude.ai/settings/usage"], "nothing else was opened");

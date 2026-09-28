@@ -68,6 +68,8 @@ export interface LimitRow {
   provider?: string;
   /** The sign-in said it reached its plan limit, and that limit has not refilled yet. */
   limited?: true;
+  /** accountLabel is the sign-in's verified email or name. */
+  verified?: true;
   /** The service refused this key's last request for want of credit (HTTP 402). */
   outOfCredit?: true;
   /** This account's list moves the work to its next account when one reaches its limit (src/accounts/pool-provider.ts). */
@@ -168,6 +170,8 @@ export interface LimitsAccount {
   limited?: boolean;
   /** Its list moves on to the next account at a limit. */
   switches?: boolean;
+  /** Its label is who the service said the sign-in is (its email or name), not a name Branch or the owner gave it. */
+  verified?: boolean;
 }
 export interface LimitsDeps {
   connections: LimitsConnection[];
@@ -253,6 +257,7 @@ export function limitsView(deps: LimitsDeps): LimitsView {
         ...(seat?.readable ? { readable: true as const } : {}),
         ...(connection.provider ? { provider: connection.provider } : {}),
         ...(seat?.limited ? { limited: true as const } : {}),
+        ...(seat?.verified ? { verified: true as const } : {}),
         ...(seat?.switches ? { switches: true as const } : {}),
         ...(!seat && connection.outOfCredit ? { outOfCredit: true as const } : {}),
       });
