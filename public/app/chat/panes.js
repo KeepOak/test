@@ -22,6 +22,7 @@ import { mediaRows } from "./media.js";
 import { openConversation, conversationWho } from "./chat.js";
 import { t } from "../../i18n.js";
 import { waitRoom, holdWait, LONG_WAITS } from "../core/inflight.js"; // each send waits until its task ends
+import { simplePart } from "../shell/simple.js";
 
 const MAIN = "@main";
 const LIVE = ["running", "queued", "waiting", "needs_input"];
@@ -289,6 +290,9 @@ function followMain() {
   }
   if (panesOn() && S.chat && L.main !== S.chat) keep({ ...L, main: S.chat });
 }
+
+/* RES-704: Simple shows the main conversation alone; Advanced puts every pane back where it was. */
+simplePart({ name: "panes19", take: () => S.panes19 ?? null, hide: () => { const L = layout(); if (L.ids.length > 1) S.panes19 = { ...L, ids: [MAIN], active: MAIN }; }, give: (value) => { S.panes19 = value; } });
 
 /* ---------- listening ---------- */
 let dwell = null;

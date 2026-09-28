@@ -892,7 +892,7 @@ export function init() {
   document.addEventListener("keydown", (e) => {
     if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
-    if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending) sendAway(); else send();
+    if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending && !paneTarget()) sendAway(); else send();
   });
   /* Page Up and Page Down with nothing focused move through the conversation, which scrolls inside its own box. */
   document.addEventListener("keydown", (e) => {
