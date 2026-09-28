@@ -143,3 +143,15 @@ test("a pane opened here in full swaps places with the main one, and the box kee
   assert.equal(await page.locator("#prompt").inputValue(), "Half a thought", "the words stayed in the box");
   assert.deepEqual(errors, []);
 });
+
+test("with too little room for every pane, each keeps a readable width and the row scrolls sideways", async (t) => {
+  const { page, errors, ids } = await fixture(t);
+  await threePanes(page, ids);
+  await page.setViewportSize({ width: 1180, height: 860 });
+  await page.locator(".panes19.tight19").waitFor();
+  for (const id of ["@main", ids.pears, ids.apples]) assert.ok((await pane(page, id).boundingBox()).width >= 299, `${id} keeps its width`);
+  assert.ok(await page.locator(".panes19").evaluate((el) => el.scrollWidth > el.clientWidth), "the row scrolls");
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.waitForFunction(() => !document.querySelector(".panes19.tight19"));
+  assert.deepEqual(errors, []);
+});

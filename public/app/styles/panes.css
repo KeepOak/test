@@ -31,3 +31,7 @@
 .main:has(.panes19) .composer{max-width:min(960px,100%)}
 /* Writing to another pane: the model and mode chips (and the cost so far) are the main conversation's, so they step aside. */
 .composer.away19 .chip-c,.composer.away19 .c-flags{display:none}
+/* Too many panes for the room: each keeps a readable width and the row scrolls sideways; the handles rest. */
+.panes19.tight19{overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity}
+.panes19.tight19>.pn19{scroll-snap-align:start}
+.panes19.tight19>.pz19{pointer-events:none}

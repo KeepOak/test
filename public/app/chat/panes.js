@@ -21,9 +21,9 @@ import { text, plain } from "./markdown.js";
 import { mediaRows } from "./media.js";
 import { openConversation, conversationWho } from "./chat.js";
 import { t } from "../../i18n.js";
+import { waitRoom, holdWait, LONG_WAITS } from "../core/inflight.js"; // each send waits until its task ends
 
 const MAIN = "@main";
-const MAX_SENDING = 3; // each send holds one of the browser's few connections to the engine until its task ends
 const LIVE = ["running", "queued", "waiting", "needs_input"];
 const NARROW = matchMedia("(max-width:999px)");
 const P = new Map(); // a pane's conversation: { messages, loaded, mark, sending, reading }
@@ -49,8 +49,17 @@ const sessionOf = (id) => E.sessions.find((s) => sid(s) === id);
 const nameOf = (id) => (id === MAIN ? conversationWho().title : ownName(id) || sessionOf(id)?.title || plain(sessionOf(id)?.opening ?? "") || t("comfort.field.newConversation"));
 /* The panes' widths, as grid columns with a 7px handle between two: laid on after every draw (the split is a part of the
    conversation drawn on its own, main.js drawParts, and is given its columns here rather than by data-css). */
-const columns = (L) => shown().map((id) => `minmax(0,${Math.max(0.2, Number(L.w[id]) || 1)}fr)`).join(" 7px ");
-function sizePanes() { const split = $(".panes19"); if (split) split.style.setProperty("--cols19", columns(layout())); }
+/* With the side panel, the Home panel and many panes open, a share could fall below a readable width: then each pane
+   keeps MIN_PANE and the row scrolls sideways (tight19) instead of squeezing every conversation. */
+const MIN_PANE = 300;
+const columns = (L, tight = false) => shown().map((id) => (tight ? `${MIN_PANE}px` : `minmax(0,${Math.max(0.2, Number(L.w[id]) || 1)}fr)`)).join(" 7px ");
+function sizePanes() {
+  const split = $(".panes19");
+  if (!split) return;
+  const tight = split.clientWidth / shown().length < MIN_PANE;
+  split.classList.toggle("tight19", tight);
+  split.style.setProperty("--cols19", columns(layout(), tight));
+}
 const faceOf = (id) => chatFace(id === MAIN ? S.chat : id);
 const working = (id) => { const s = id === MAIN ? S.chat : id; return !!s && ((E.state?.runs ?? []).some((r) => r.sessionId === s && LIVE.includes(r.status)) || !!P.get(id)?.sending); };
 /** Whether pane `id`'s conversation has a task working (a message to it then goes through the busy send). */
@@ -151,7 +160,12 @@ function drop(id) {
 }
 
 /* ---------- sending to a pane ---------- */
-const sendingNow = () => [...P.values()].filter((p) => p.sending).length;
+/** Whether a message may go to pane `id` now; says why not. Asked before the box's files are taken for it. */
+export function paneRoom(id) {
+  if (working(id) || waitRoom()) return true;
+  toast(t("window.panes.full", { count: LONG_WAITS }));
+  return false;
+}
 /** Sends `prompt` (with `fields`: files sent ahead) to pane `id`'s conversation; answers false when it was not sent. */
 export async function sendToPane(id, prompt, fields = {}) {
   const p = P.get(id) ?? { messages: [], loaded: false, mark: "", sending: false, reading: 0 };
@@ -165,19 +179,26 @@ export async function sendToPane(id, prompt, fields = {}) {
     await load(id, true);
     return true;
   }
-  if (sendingNow() >= MAX_SENDING) { toast(t("window.panes.full", { count: MAX_SENDING })); return false; }
+  if (!paneRoom(id)) return false;
+  const before = p.messages;
   p.messages = [...p.messages, { role: "user", content: prompt }];
   p.sending = true;
   renderNow();
-  const follow = setInterval(() => load(id, true), 1500);
-  try { await api("run", { prompt, sessionId: id, ...fields }); } catch (error) { toast(error.message); } finally {
+  const letGo = holdWait(), follow = setInterval(() => load(id, true), 1500);
+  let taken = true;
+  try { await api("run", { prompt, sessionId: id, ...fields }); } catch (error) {
+    toast(error.message);
+    /* Refused at once, or the engine was away: it never got the message, so the words and files stay in the box. */
+    if (error.offline || (error.status >= 400 && error.status < 500)) { taken = false; p.messages = before; }
+  } finally {
     clearInterval(follow);
+    letGo();
     p.sending = false;
     await refresh().catch((error) => toast(error.message));
     await load(id, true);
     render();
   }
-  return true;
+  return taken;
 }
 
 /* ---------- adding, closing, swapping, moving, widening ---------- */
@@ -248,7 +269,7 @@ function widen(handle, e) {
     const px = Math.min(total - 160, Math.max(160, from + ev.clientX - start));
     L.w[a] = +(sum * px / total).toFixed(3);
     L.w[b] = +(sum - L.w[a]).toFixed(3);
-    split.style.setProperty("--cols19", columns(L));
+    split.style.setProperty("--cols19", columns(L, split.classList.contains("tight19")));
   };
   const end = () => { removeEventListener("pointermove", step); removeEventListener("pointerup", end); keep(L); document.body.classList.remove("resizing9"); };
   document.body.classList.add("resizing9");
@@ -302,5 +323,6 @@ export function initPanes() {
   document.addEventListener("pointerdown", (e) => { const handle = e.target.closest?.(".pz19"); if (handle) widen(handle, e); });
   NARROW.addEventListener("change", () => render());
   onRender(followMain);
+  addEventListener("resize", sizePanes);
   afterDraw(sizePanes);
 }

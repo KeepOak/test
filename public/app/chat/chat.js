@@ -28,7 +28,7 @@ import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
-import { panesWrap, paneTo, paneWords, paneTarget, paneBusy, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
+import { panesWrap, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
@@ -554,13 +554,18 @@ async function sendOver(id, prompt) {
     try { done = await api("commands/run", { surface: "window", line: prompt, sessionId: id }); } catch (error) { toast(error.message); return; }
     if (done?.handled) { clearBox(true); renderNow(); toast(done.text ?? ""); return; }
   }
-  const fields = await takePending(false);
-  if (!(await sendToPane(id, prompt, fields))) return;
+  if (!paneRoom(id)) return; // before the files are taken: refused, they stay on their chips
+  /* The box is emptied as the message goes (its answer can take minutes, and the box is free for the next one meanwhile);
+     a message the engine refused at once puts its words back in the box, if it is still empty. */
+  const fields = await takePending(false), box = $("#prompt"), typed = box?.value ?? prompt;
   filesSent();
   practiceSent();
   clearBox(true);
-  $("#prompt")?.dispatchEvent(new Event("input", { bubbles: true }));
-  $("#prompt")?.focus();
+  box?.dispatchEvent(new Event("input", { bubbles: true }));
+  box?.focus();
+  if (await sendToPane(id, prompt, fields)) return;
+  const again = $("#prompt");
+  if (again && !again.value.trim()) { again.value = typed; again.dispatchEvent(new Event("input", { bubbles: true })); }
 }
 
 /* A choice card's answer (chat/furniture.js) is this conversation's next message, word for word: an option's title is
