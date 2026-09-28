@@ -280,6 +280,26 @@ export class GitTools {
   }
 
   /**
+   * selfdev: brings a repository onto this computer for the first time, into a new folder of the workspace, from its
+   * https:// address (no sign-in details in it) or from a repository folder on this computer. Hooks never run
+   * (git-run.ts pins core.hooksPath), submodules are not fetched, and Branch's own source is never cloned here: that
+   * is branch.prepare_source_change's protected checkout.
+   */
+  async clone(input: { url: string; folder: string; branch?: string | undefined }, signal: AbortSignal) {
+    const source = cloneSource(input.url);
+    const target = await this.files.checked(input.folder);
+    const inside = relative(this.files.root, target).replace(/\\/g, "/");
+    if (!inside || inside.startsWith("..")) throw new Error("Clone into a new folder inside your workspace.");
+    if (/(^|\/)branch-agent-source(\/|$)/i.test(inside)) throw new Error("Branch's own source is prepared with branch.prepare_source_change, never cloned here.");
+    if (await lstat(target).catch(() => null)) throw new Error(`${input.folder} already exists. Clone into a new folder.`);
+    const parent = dirname(target);
+    await mkdir(parent, { recursive: true });
+    await this.run(parent, ["clone", "--no-recurse-submodules", ...(input.branch ? ["--branch", input.branch] : []), "--", source, basename(target)], signal, { timeoutMs: 600000 });
+    const branch = (await this.run(target, ["rev-parse", "--abbrev-ref", "HEAD"], signal)).stdout.trim();
+    return { folder: input.folder, from: source, branch, cloned: true };
+  }
+
+  /**
    * Points a folder at a repository on a server and sends its work there for the first time. The
    * address is set as a plain remote with no sign-in details in it: the push uses whatever Git
    * sign-in this computer already has, so no token is ever written into the repository's settings.
@@ -462,6 +482,18 @@ export class GitTools {
 }
 
 const shortBranch = (ref: string): string => ref.replace(/^refs\/heads\//, "");
+/** selfdev: where a clone may come from: an https:// address with no sign-in details, or an absolute folder path. */
+function cloneSource(url: string): string {
+  const text = url.trim();
+  if (/^https:\/\//i.test(text)) {
+    const address = new URL(text);
+    if (address.username || address.password || address.search || address.hash) throw new Error("A repository address carries no sign-in details, query or fragment.");
+    return address.href;
+  }
+  if (!/^([A-Za-z]:[\\/]|\/)/.test(text) || text.includes("::") || text.includes("\0"))
+    throw new Error("Clone from an https:// address or from a repository folder on this computer, given as a full path.");
+  return resolve(text);
+}
 /**
  * Q104: the ref is sent to the same name on the server, written out (`ref:ref`), as the pull-request push does.
  * A bare ref lets Git pick where it lands: a branch that is an alias of main (a symbolic ref) lands on main, and

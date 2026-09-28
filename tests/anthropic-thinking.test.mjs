@@ -116,3 +116,18 @@ test("thinking is not asked for part way through a tool loop, where Anthropic wo
   ], tools: [], maxTokens: 2048, reasoning: "high" }, "claude-x");
   assert.deepEqual(later.thinking, { type: "enabled", budget_tokens: 1792 }, "a new turn thinks again");
 });
+
+test("selfdev: a tool call cut off at the reply ceiling is out of room, so the task asks again with more", async () => {
+  const { isOutOfRoomThinking } = await import("../dist/provider-stream.js");
+  const stream = new AnthropicStream(() => {}, () => {});
+  for (const event of [
+    { type: "message_start", message: { usage: { input_tokens: 5, output_tokens: 1 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "files_edit", input: {} } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"path\":\"docs/a.md\",\"replace\":\"a very long" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "max_tokens" }, usage: { output_tokens: 2048 } },
+    { type: "message_stop" },
+  ]) stream.consume(JSON.stringify(event));
+  assert.throws(() => stream.result(), (error) => isOutOfRoomThinking(error) && /cut off/.test(error.message));
+  assert.equal(isOutOfRoomThinking(new Error("Provider stream ended without a complete response")), false);
+});

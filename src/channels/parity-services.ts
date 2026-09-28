@@ -4,6 +4,7 @@ import type { ParityService } from "./parity-common.js";
 import { gotifyService } from "./gotify.js";
 import { ircService, twitchService } from "./irc.js";
 import { imessageService } from "./imessage.js";
+import { blueBubblesService } from "./bluebubbles.js"; // CHAT-153
 import { whatsappWebService } from "./whatsapp-web.js";
 import { teamsBotService } from "./teams-bot.js";
 import { webexService } from "./webex.js";
@@ -52,6 +53,8 @@ export const parityServices: ParityService[] = [
   vkService, qqBotService, guildedService, revoltService, mumbleService,
   // mac6/bucket-16: the rest of the chat apps.
   kookService, wechatOfficialService, wecomAppService,
+  // CHAT-153: iMessage from any computer, through the owner's own Mac.
+  blueBubblesService,
   // A personal WhatsApp number through the WAHA bridge the owner runs (src/channels/whatsapp-web.ts).
   whatsappWebService,
 ];

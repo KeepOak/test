@@ -73,7 +73,7 @@ test("the chat-app wizard: every app, ships off, the bot page and the code, and 
   const { page, errors, outside, call } = await signedIn(t);
   assert.equal((await call("/api/channel-setup")).mode, "off", "guided setup ships off");
   await openChannels(page);
-  assert.equal(await page.locator('[data-act="ch-open"]').count(), 56);
+  assert.equal(await page.locator('[data-act="ch-open"]').count(), 57);
   await openWizard(page, "telegram");
   const dlg = page.locator(".dlg");
   assert.equal(await dlg.locator(".dlg-h h2").textContent(), "Set up Telegram");
@@ -232,7 +232,7 @@ test("the phone shows the same panel as links: the store for this phone and the 
   await openApp("telegram");
   const card = page.locator("#connect-body");
   await card.locator("a").first().waitFor();
-  assert.equal(answers.list.channels.length, 56, "every chat app the window offers is offered here");
+  assert.equal(answers.list.channels.length, 57, "every chat app the window offers is offered here");
   assert.equal(await card.getByRole("link", { name: "Get the app" }).getAttribute("href"), "https://apps.apple.com/app/id686449807", "the iPhone store on an iPhone");
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://t.me/BotFather?text=%2Fnewbot");
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").getAttribute("type"), "password");
@@ -242,7 +242,7 @@ test("the phone shows the same panel as links: the store for this phone and the 
   assert.deepEqual(await page.evaluate(() => globalThis.posted.map((post) => post.path)), ["/api/channel-setup/telegram/check"]);
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").inputValue().then((value) => value.length), 45, "a refused token stays to be corrected");
   await page.locator('[data-act="back"]').first().click();
-  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 56, "the phone lists every chat app the window offers");
+  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 57, "the phone lists every chat app the window offers");
   await page.locator(`[data-act="ph-ch"][data-v="bluesky"]`).click();
   await page.locator("#connect-handle").waitFor();
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://bsky.app/settings/app-passwords");
@@ -273,7 +273,9 @@ test("the wizard connects without a restart and says when it could not; who answ
   await next(page);
   const who = dlg.locator('[data-act="chw-who"]');
   assert.deepEqual(await who.allTextContents(), trunks.trunks.map((tr) => (tr.id === trunks.defaultId ? `${tr.name} · default` : tr.name)));
-  assert.deepEqual([...(await who.allTextContents())].map((text) => text.split(" · ")[0]).sort(), ["Ivy", "Scout"], "every Trunk, and only Trunks");
+  // The owner's default Trunk (#594/#726, named "Branch Agent") is a Trunk like the others, so it is offered too; Branch itself never is.
+  assert.deepEqual([...(await who.allTextContents())].map((text) => text.split(" · ")[0]).sort(), trunks.trunks.map((tr) => tr.name).sort(), "every Trunk, and only Trunks");
+  assert.ok(trunks.trunks.some((tr) => tr.id === trunks.defaultId), "the default is one of the Trunks");
   const home = (trunks.trunks.find((tr) => tr.id === trunks.defaultId) ?? trunks.trunks[0]).name;
   assert.equal(await dlg.locator('[data-act="chw-who"][aria-pressed="true"]').textContent().then((text) => text.split(" · ")[0]), home, "the default Trunk is chosen");
   assert.equal(await dlg.getByRole("button", { name: "Branch", exact: true }).count(), 0, "no brand-voiced Branch conversation");

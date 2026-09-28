@@ -155,6 +155,13 @@ function registerPlanBranches(registry: ToolRegistry, git: GitTools): void {
 /** Sending and receiving work; registered only when the owner has switched remote access on. */
 export function registerGitRemote(registry: ToolRegistry, git: GitTools): void {
   registry.register({
+    name: "git.clone", permission: "git.remote",
+    description: "Clone a repository: bring it onto this computer for the first time, into a new workspace folder, from its https:// address or a repository folder path. Optionally pick the branch to check out.",
+    parameters: z.object({ url: z.string().trim().min(1).max(1000), folder: filePath, branch: branchName.optional() }).strict(),
+    target: (args) => `clone ${String(args.url)} into ${String(args.folder)}`,
+    execute: (input, context: ToolContext) => git.clone(input, context.signal),
+  });
+  registry.register({
     name: "git.push", permission: "git.remote",
     description: "Send saved versions from this computer to the shared server. Sending to the branch everyone shares (main or master) stops and asks you first.",
     parameters: z.object({ folder, remote: remoteName, branch: branchName.optional(), confirmed: z.boolean().default(false) }).strict(),
@@ -196,7 +203,15 @@ async function openPullRequest(
  * The token is the owner's personal access token, or an installation token from the owner's own
  * GitHub App when that is switched on (src/integrations/github-app.ts, bucket 18).
  */
+const githubConnections = new WeakMap<ToolRegistry, GitHubAccess>();
+/** The owner review screen uses the currently offered, authenticated connection, never a model tool. */
+export function ownerGitHubConnection(registry: ToolRegistry): GitHubAccess {
+  const github = githubConnections.get(registry);
+  if (!github || !registry.names().includes("github.checks")) throw new Error("Connect GitHub in Settings before reviewing a merge.");
+  return github;
+}
 export function registerGitHubProject(registry: ToolRegistry, github: GitHubAccess, git?: GitTools): void {
+  githubConnections.set(registry, github);
   registry.register({
     name: "github.issues", permission: "github.manage",
     description: "List the issues on a GitHub repository, newest first, saying which of them are really pull requests.",
@@ -208,6 +223,14 @@ export function registerGitHubProject(registry: ToolRegistry, github: GitHubAcce
     description: "Whether the automatic checks passed on a branch or a saved version, and which ones did not.",
     parameters: z.object({ repo: repositoryPath, ref: revisionRange }).strict(),
     execute: (input) => github.checks(input),
+  });
+  registry.register({
+    name: "github.wait_for_checks", permission: "github.manage",
+    description: "Wait for every check on a pull request's exact latest commit to finish, then say passed, failed or still pending. Queued, running or not-yet-reported checks never count as passed. Call again while it says pending; merge only after it says passed.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive(),
+      /** How long to wait in this call; keep it under the tool time limit (90 seconds unless the owner raised it). */
+      seconds: z.number().int().min(0).max(3600).default(75) }).strict(),
+    execute: (input, context: ToolContext) => github.waitForChecks(input, context.signal),
   });
   registry.register({
     name: "github.release", permission: "github.manage",
@@ -260,6 +283,13 @@ export function registerGitHub(registry: ToolRegistry, github: GitHubAccess, git
       draft: z.boolean().optional(),
     }).strict(),
     execute: (input) => openPullRequest(github, input),
+  });
+  registry.register({
+    name: "github.merge_pull_request", permission: "github.manage",
+    description: "Merge a pull request, only when every check on its exact latest commit has finished and passed (run github.wait_for_checks first). The merge is pinned to that commit. A change to Branch itself is finished with branch.finish_source_change instead.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive() }).strict(),
+    target: (args) => `merge pull request #${String(args.number)} on ${String(args.repo)} into its base`,
+    execute: (input) => github.mergeChecked(input.repo, input.number),
   });
   // Listing issues is `github.issues`, registered above: there is one tool for it, not two.
   registry.register({
