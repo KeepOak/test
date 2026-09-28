@@ -183,7 +183,11 @@ export function init() {
   on("bg-remove", () => removeDlg());
   on("bg-remove-yes", () => removeOwn());
   on("scene-set", async (el) => { await pickScene(el.dataset.v); renderNow(); });
-  on("season", (el) => { W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow(); });
+  on("season", (el) => {
+    const turned = W.season !== el.dataset.v;
+    W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow();
+    if (turned) noticed({ what: "flag", flag: "acorn-turned" }); // "Turn of the season": the old acorn's turn, re-mapped
+  });
   on("bg-peek", () => document.getElementById("app").classList.add("peek"));
   on("petset", async (el) => { await pickPet(el.dataset.v); renderNow(); });
   on("petwhere15", (el) => { W.petWhere = el.dataset.v; saveWindow(); renderNow(); });

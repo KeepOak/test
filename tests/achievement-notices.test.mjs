@@ -1,6 +1,7 @@
 /* UI-033 / UI-202: the window tells the engine what it saw that earns an achievement (shell/notices.js), and the engine's
    own achievements say so (GET /api/delight/achievements): the theme worn, the oak's season behind the glass, Keep things
-   still, a change of language, and every part Settings › Appearance can hide, hidden ("It's lonely over here").
+   still, a change of language, and every part Settings › Appearance can hide, hidden ("It's lonely over here"); and the
+   old window's three, re-mapped: the tree at the foot of the list, turning the season yourself, and choosing Technical.
    Mutation: in public/app/main.js drop initNotices() and every case goes red. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +22,14 @@ test("what the window sees earns its achievements", async (t) => {
   assert.ok(await until("noticed:theme:light:slate:1"), "Branch Slate by daylight: the theme worn");
   assert.ok(await until(`noticed:season:${SEASON}:1`), `the oak in ${SEASON}, behind the glass`);
 
+  assert.ok(await until("noticed:flag:acorn-shown:1"), "Keeper of the tree: the tree at the foot of the list");
   await openSettingsPage(page, "appearance");
+  const other = ["spring", "summer", "autumn", "winter"].find((v) => v !== SEASON);
+  assert.equal(await got("noticed:flag:acorn-turned:1"), false, "not before the season is turned");
+  await page.locator(`[data-act="season"][data-v="${other}"]`).first().click();
+  assert.ok(await until("noticed:flag:acorn-turned:1"), "Turn of the season");
+  await page.locator('[data-act="setlevel"][data-v="technical"]').click();
+  assert.ok(await until("noticed:flag:everything:1"), "Everything, everywhere: Technical chosen");
   await page.locator("#a-still").check();
   assert.ok(await until("noticed:flag:still:1"), "Still life");
 
