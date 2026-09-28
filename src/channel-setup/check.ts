@@ -113,3 +113,39 @@ export async function runCheck(recipe: Recipe, values: Values, fetcher: typeof f
     return { ok: false, reason: scrub(`Could not reach ${host}: ${error instanceof Error ? error.message : String(error)}`, values) };
   }
 }
+
+/**
+ * What the vendor's "who am I" cannot tell (CHAT-147), asked once it has answered: a Discord bot whose Message Content
+ * Intent is off reads every message as empty, a Slack app token that cannot open Socket Mode never hears a message, and
+ * a Matrix token for another account answers as somebody else. Null when all is well, or the reason in plain words.
+ */
+export async function followUpCheck(recipe: Recipe, values: Values, fetcher: typeof fetch, name: string | null): Promise<string | null> {
+  try {
+    if (recipe.id === "matrix" && name && values.userId && name !== values.userId)
+      return `That token belongs to ${name}, not ${values.userId}. Use the assistant account's own token, or type its id.`;
+    if (recipe.id === "discord") return await discordIntent(values.DISCORD_BOT_TOKEN ?? "", fetcher);
+    if (recipe.id === "slack") return await slackSocket(values.SLACK_APP_TOKEN ?? "", fetcher);
+    return null;
+  } catch (error) {
+    return scrub(`Could not finish checking ${recipe.name}: ${error instanceof Error ? error.message : String(error)}`, values);
+  }
+}
+/** Discord's application flags: GATEWAY_MESSAGE_CONTENT (1 << 18) or, for a bot in fewer than 100 servers, its _LIMITED (1 << 19). */
+async function discordIntent(token: string, fetcher: typeof fetch): Promise<string | null> {
+  const response = await fetcher("https://discord.com/api/v10/applications/@me", {
+    headers: { accept: "application/json", authorization: `Bot ${token}` }, redirect: "error", signal: AbortSignal.timeout(15_000) });
+  const answer = await response.json().catch(() => null) as { flags?: unknown } | null;
+  if (!response.ok || typeof answer?.flags !== "number") return `Discord would not say how the bot is set up (it answered ${response.status}).`;
+  const content = (1 << 18) | (1 << 19);
+  return answer.flags & content ? null
+    : "Message Content Intent is off, so the bot would read every message as empty. Switch it on under Bot, Privileged Gateway Intents in the Discord Developer Portal, then check again.";
+}
+/** Slack: the app-level token opens Socket Mode (apps.connections.open); nothing is connected by asking. */
+async function slackSocket(token: string, fetcher: typeof fetch): Promise<string | null> {
+  const response = await fetcher("https://slack.com/api/apps.connections.open", {
+    method: "POST", headers: { accept: "application/json", authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(15_000) });
+  const answer = await response.json().catch(() => null) as { ok?: unknown; error?: unknown } | null;
+  if (answer?.ok === true) return null;
+  const why = typeof answer?.error === "string" ? answer.error.slice(0, 60) : `status ${response.status}`;
+  return `Slack would not open Socket Mode with the app-level token (${why}). Switch Socket Mode on for the app and make the token with the connections:write scope.`;
+}

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { FeatureModeSchema } from "../feature-switches.js";
 import { SetupRefusal } from "./check.js";
-import { saveSetup, saveSetupMode, setupList, setupPanel, type SetupHost } from "./service.js";
+import { removeSetup, saveSetup, saveSetupMode, setupList, setupPanel, type SetupHost } from "./service.js";
 
 /**
  * The Set up panel's routes. All four are the owner's alone (a short-lived key is refused before it
@@ -10,7 +10,8 @@ import { saveSetup, saveSetupMode, setupList, setupPanel, type SetupHost } from 
  *   GET  /api/channel-setup              the switch and the list of apps
  *   POST /api/channel-setup              {"mode": "off" | "when-needed" | "on"}
  *   GET  /api/channel-setup/<id>         one app's panel: the command, the links, the square codes
- *   POST /api/channel-setup/<id>/check   {"values": {...}, "enable": "on"}: check, save, switch on if asked
+ *   POST /api/channel-setup/<id>/check   {"values": {...}, "enable": "on"}: check, save, switch on if asked, connect now
+ *   DELETE /api/channel-setup/<id>       disconnect an app set up here and forget its settings (its secrets stay)
  */
 export const handlesChannelSetupPath = (path: string): boolean => path === "/api/channel-setup" || path.startsWith("/api/channel-setup/");
 
@@ -45,5 +46,6 @@ export async function channelSetupApi(deps: ChannelSetupDeps, method: string, pa
   }
   const panel = /^\/api\/channel-setup\/([a-z][a-z0-9-]{0,29})$/.exec(path);
   if (panel && method === "GET") return setupPanel(deps.store, deps.owner, panel[1]!);
+  if (panel && method === "DELETE") return removeSetup(deps, panel[1]!);
   throw new SetupRefusal(404, "Not found");
 }
