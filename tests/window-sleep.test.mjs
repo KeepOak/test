@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -223,7 +224,7 @@ test("the first press wakes the window and still opens the conversation it press
   await page.mouse.down();
   assert.equal(await page.evaluate(() => window.sleepPressedTarget?.isConnected), true, "waking keeps the pressed row until its click");
   await page.mouse.up();
-  await page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id,
+  await waitInPage(page, async (id) => (await import("/app/core/state.js")).S.chat === id,
     trunks.Ledger.chatSessionId, { timeout: 5000 });
   assert.deepEqual(errors, []);
 });
