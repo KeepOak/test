@@ -16,6 +16,7 @@ import { newWindow } from "./new-window-places.mjs";
 import { createBranch } from "../dist/index.js";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
 import { savePolicy } from "../dist/policy.js";
+import { saveComfort } from "../dist/comfort/settings.js";
 
 assert.equal(typeof chromium.launch, "function");
 
@@ -186,6 +187,8 @@ test("a task that reaches a sign-in page Needs you: the card and view say so, th
   const w = await fixture(t, provider, { "/login": LOGIN });
   origin = w.origin;
   const { page, app, sid } = w;
+  // The card in the conversation is the path under test, so the browser does not open full size by itself here.
+  saveComfort(app.store, app.runtime.owner, "browser", { openFullSize: false });
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
   const pending = app.runtime.run({ prompt: "Sign in for me", sessionId: sid });
   await thinking.promise;
@@ -210,5 +213,30 @@ test("a task that reaches a sign-in page Needs you: the card and view say so, th
   assert.equal(finished.status, "completed", JSON.stringify(finished).slice(0, 300));
   assert.equal(await w.enginePage().textContent("#done"), "Signed in", "the task carried on after the owner signed in");
   assert.ok(seen.every((sent) => !sent.includes("FixtureOnlyPassword-9")), "the model never saw the password");
+  assert.deepEqual(w.errors, []);
+});
+
+test("a task that starts browsing opens its browser full size once, and a view the owner closes stays closed", async (t) => {
+  const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+  const thinking = deferred(), gate = deferred();
+  let rounds = 0, origin = "";
+  const provider = { name: "scripted", async complete() {
+    rounds++;
+    if (rounds === 1) return { content: "", toolCalls: [{ id: "open", name: "browser.navigate", arguments: JSON.stringify({ url: `${origin}/` }) }] };
+    if (rounds === 2) { thinking.resolve(); await gate.promise; }
+    return { content: "Done.", toolCalls: [] };
+  } };
+  t.after(() => gate.resolve()); // first, so a failed test never leaves its task waiting while the engine closes
+  const w = await fixture(t, provider);
+  origin = w.origin;
+  const pending = w.app.runtime.run({ prompt: "Look at the page", sessionId: w.sid });
+  await thinking.promise;
+  await w.page.locator("#stage7 .st7-title", { hasText: "browser" }).waitFor({ timeout: 30000 });
+  await w.page.locator('#stage7 [data-act="stage-close"]').click();
+  await w.page.locator("#stage7").waitFor({ state: "detached" });
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.equal(await w.page.locator("#stage7").count(), 0, "closed by the owner, it stays closed for this task");
+  gate.resolve();
+  assert.equal((await pending).status, "completed");
   assert.deepEqual(w.errors, []);
 });
