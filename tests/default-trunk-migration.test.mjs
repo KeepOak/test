@@ -13,9 +13,10 @@ import { join } from "node:path";
 import { createBranch } from "../dist/index.js";
 import { chatThread, chatThreadKey } from "../dist/channels/threads.js";
 import { saveOnboarding } from "../dist/onboarding.js";
+import { saveAssistantIdentity } from "../dist/identity.js";
 import { discardTemp } from "./temp-dir.mjs";
 import { brain } from "./trunks-helpers.mjs";
-import { fixture } from "./trunks-helpers.mjs";
+import { fixture, setupTrunk } from "./trunks-helpers.mjs";
 
 test("migration rolls every claim back when its audit cannot be recorded", async (t) => {
   const { app } = await fixture(t);
@@ -55,7 +56,7 @@ test("the migration puts every conversation with a Trunk, keeps everything else 
   app.trunks.setMode("trunks", { mode: "on" });
   const plainA = await app.runtime.run({ prompt: "plain one" });
   const plainB = await app.runtime.run({ prompt: "plain two" });
-  const ada = app.trunks.create({ name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
+  const ada = setupTrunk(app, { name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
   app.trunks.edit(ada.id, { reach: { channels: ["chat"], commands: false } });
   await app.trunks.introduced();
   const routine = await app.runtime.run({ prompt: "Bo's routine", trunkId: bo.id });
@@ -116,10 +117,67 @@ test("thousands of conversations are put with a Trunk in one step, and the Trunk
   const insert = app.store.sqlite.prepare("INSERT INTO sessions(id,owner,created_at,temporary) VALUES(?,?,?,0)");
   app.store.atomically(() => { for (let i = 0; i < 3000; i++) insert.run(crypto.randomUUID(), app.runtime.owner, new Date().toISOString()); });
   const started = Date.now();
-  const ada = app.trunks.create({ name: "Ada" });
+  const ada = setupTrunk(app, { name: "Ada" });
   const took = Date.now() - started;
   assert.equal(app.trunks.threads.of(ada.id).length, 3000);
   assert.equal(app.trunks.records.list().length, 1, "3000 threads never push the Trunk records out of the governance list");
   assert.ok(took < 10_000, `took ${took} ms`);
   await app.trunks.introduced();
+});
+
+test("an install whose Trunks were all made by hand gets a default of its own; its Trunks keep their reach, and a second start changes nothing", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-default-hand-"));
+  t.after(() => discardTemp(root));
+  const provider = brain();
+  // ---- a Branch from before threads: setup skipped, two Trunks the owner made by hand, stray conversations ----
+  const app = await open(root, "data", provider);
+  const owner = app.runtime.owner;
+  saveOnboarding(app.store, owner, { done: true, skipped: true });
+  saveAssistantIdentity(app.store, owner, { name: "TK", instructions: "", expectedRevision: 0 });
+  app.trunks.setMode("trunks", { mode: "on" });
+  const stray = [await app.runtime.run({ prompt: "hey" }), await app.runtime.run({ prompt: "please remember this" })];
+  const kite = app.trunks.create({ name: "Kite" }), fern = app.trunks.create({ name: "Fern" });
+  app.trunks.edit(fern.id, { instructions: "Only ever talk about ferns." });
+  await app.trunks.introduced();
+  const answered = await app.runtime.run({ prompt: "Kite's work", trunkId: kite.id });
+  app.store.sqlite.exec("DELETE FROM trunk_threads; DELETE FROM governance WHERE id='trunk-default' OR id GLOB 'trunk-files:*'");
+  const record = (a, id) => a.store.get("governance", owner, `trunk:${id}`).data;
+  const handMade = { [kite.id]: record(app, kite.id), [fern.id]: record(app, fern.id) };
+  const before = snapshot(app);
+  await app.close();
+
+  // ---- this build opens a copy ----
+  cpSync(join(root, "data"), join(root, "copy"), { recursive: true });
+  const copy = await open(root, "copy", provider);
+  const home = copy.trunks.ownerDefault();
+  assert.ok(home, "the install has a default after the update");
+  assert.ok(![kite.id, fern.id].includes(home.id), "no Trunk the owner made by hand is promoted to the owner's authority");
+  assert.equal(home.name, "TK", "named as the owner named their assistant");
+  assert.ok(copy.trunks.files.view(home.id).files.some((file) => file.name !== "SOUL.md" && file.text.trim()), "it ships its written personality files");
+  for (const id of [kite.id, fern.id]) {
+    assert.deepEqual(record(copy, id), handMade[id], "a hand-made Trunk's record is left exactly as it was");
+    assert.equal(copy.store.get("governance", owner, `trunk-files:${id}`), undefined, "and no files are written for it");
+    assert.equal(copy.trunks.shapeOf({ prompt: "x", trunkId: id }).owners, undefined, "and it gains no owner authority");
+    assert.match(copy.channels.trunkIdReach("telegram", id), /does not answer on telegram/);
+  }
+  const firstStart = threads(copy);
+  for (const run of stray) assert.equal(firstStart[run.sessionId], `${home.id}:migrated`, "a stray conversation goes to the new default");
+  assert.equal(firstStart[answered.sessionId], `${kite.id}:claimed`, "a conversation a Trunk answered in stays with it");
+  assert.equal(firstStart[kite.chatSessionId], undefined);
+  // The one new conversation is the new default's own chat, empty; every other one is exactly as it was.
+  const without = (snap) => ({ ...snap, sessions: snap.sessions.filter((s) => s.id !== home.chatSessionId),
+    unread: Object.fromEntries(Object.entries(snap.unread).filter(([id]) => id !== home.chatSessionId)) });
+  assert.equal(copy.store.messages(home.chatSessionId).length, 0, "made quietly, with no introduction");
+  assert.deepEqual(without(snapshot(copy)), before, "no conversation, message, time or read mark changed");
+  const trunks = copy.trunks.records.list().length, written = copy.store.audit.list(owner, { action: "trunk.default" }).length;
+  await copy.close();
+
+  // ---- a second start: the same default, no new Trunk, nothing written ----
+  const again = await open(root, "copy", provider);
+  assert.equal(again.trunks.ownerDefault().id, home.id);
+  assert.equal(again.trunks.records.list().length, trunks);
+  assert.deepEqual(threads(again), firstStart);
+  assert.deepEqual(without(snapshot(again)), before);
+  assert.equal(again.store.audit.list(owner, { action: "trunk.default" }).length, written);
+  await again.close();
 });
