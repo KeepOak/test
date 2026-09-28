@@ -22,7 +22,8 @@ function writer() {
   return { name: "writer", async complete(request) {
     const last = request.messages.at(-1);
     const named = /^write (\S+)/.exec(String(request.messages.findLast((m) => m.role === "user")?.content ?? ""));
-    const cutOff = last?.role === "tool" && /"status":"interrupted"/.test(String(last.content));
+    // A call that waited on the owner's question is kept as not run (src/transcript.ts); either way it is made again.
+    const cutOff = last?.role === "tool" && /"status":"interrupted"|"outcome":"not_run"/.test(String(last.content));
     if (named && ((last?.role === "user") || cutOff))
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path: named[1], content: "hello" }) }] };
     return { content: "Done.", toolCalls: [] };
