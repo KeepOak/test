@@ -2494,7 +2494,7 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (request.method === "GET" && !match[2]) return { ...record, hookPath: record.data.hookToken ? `/hooks/${record.id}` : null };
   if (request.method === "POST" && match[2] === "trigger") {
     z.object({}).strict().parse(await readBody(request));
-    return app.scheduler.trigger(owner, record.id, undefined, "local");
+    return app.scheduler.trigger(owner, record.id, undefined, "local", triggerSlot(request));
   }
   if (request.method === "POST" && match[2] === "remove") {
     z.object({}).strict().parse(await readBody(request));
@@ -2535,8 +2535,16 @@ async function hook(app: Branch, request: IncomingMessage, path: string): Promis
     timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
   if (!record || !same) throw new HttpError(401, "Hook token rejected");
   const payload = await readBody(request, 16 * 1024).catch(() => ({}));
-  const run = await app.scheduler.trigger(app.runtime.owner, record.id, payload, "webhook");
+  const run = await app.scheduler.trigger(app.runtime.owner, record.id, payload, "webhook", triggerSlot(request));
   return { runId: run.id, status: run.status };
+}
+/** The caller's Idempotency-Key, when it sent one: the same key starts a schedule once (src/scheduler.ts). */
+function triggerSlot(request: IncomingMessage): string | null {
+  const header = request.headers["idempotency-key"];
+  const value = String((Array.isArray(header) ? header[0] : header) ?? "").trim();
+  if (!value) return null;
+  if (!/^[!-~]{1,200}$/.test(value)) throw new HttpError(400, "Idempotency-Key must be 1 to 200 printable characters");
+  return value;
 }
 /**
  * WhatsApp sends messages to this address instead of holding a connection open, so the route has
