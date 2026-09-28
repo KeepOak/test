@@ -62,8 +62,14 @@ async function removeUnderPress(page, call, line, meanwhile) {
     renderNow();
   });
   const button = page.locator(`#main [data-act="hb-rm"]`).nth(1);
-  await button.waitFor({ state: "visible", timeout: 30000 });
-  const box = await button.boundingBox();
+  // A redraw between seeing the button and measuring it leaves no box for a moment (a null box on a busy CI runner):
+  // measure the button as it is once the page has drawn it again.
+  let box = null;
+  for (let i = 0; !box && i < 100; i++) {
+    await button.waitFor({ state: "visible", timeout: 30000 });
+    box = await button.boundingBox();
+  }
+  assert.ok(box, "the Remove button was measured");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await setChecklist(call, meanwhile);

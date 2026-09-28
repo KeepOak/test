@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
-import { startServer } from "../dist/server.js";
+import { restoreBackup, startServer } from "../dist/server.js";
 import { setLockdown } from "../dist/lockdown.js";
 import { runOrigin } from "../dist/key-context.js";
 import { asPerson } from "../dist/people/context.js";
@@ -424,4 +424,30 @@ test("the owner edits a card, renames and removes an empty board, edits only the
   const removed = await call(`orchard/boards/${board.id}/remove`, {});
   assert.equal(removed.body.removed, true, JSON.stringify(removed));
   assert.ok(!orchard.boards().some((b) => b.id === board.id));
+});
+
+test("a backup carries Orchard's boards, cards, links and comments; restored, no card is planted or pulled", async (t) => {
+  const { app, orchard, provider, owner } = await fixture(t);
+  provider.hold = true; // the first card's task waits on the model while the backup is taken
+  const board = orchard.addBoard({ name: "Garden" });
+  orchard.editBoard(board.id, { atOnce: 1 });
+  const first = orchard.add({ title: "Dig the bed", board: board.id }, owner);
+  await until(() => !!orchard.data.card(first.id).runId, "the first card's task started");
+  const after = orchard.add({ title: "Plant the roses", board: board.id, after: [first.id] }, owner);
+  orchard.comment(after.id, { text: "Red ones" }, owner);
+  assert.equal(orchard.data.card(after.id).planted, true);
+  const archive = app.store.backup(app.version);
+
+  const fresh = await fixture(t);
+  await restoreBackup(fresh.app, async () => archive, false);
+  const o = fresh.orchard;
+  o.grow();
+  assert.deepEqual(o.boards().map((b) => [b.name, b.atOnce]), [["Garden", 1]]);
+  const dug = o.data.card(first.id), roses = o.data.card(after.id);
+  assert.deepEqual([dug.lane, dug.runId, dug.planted], ["seed", null, false], "a card growing in the file comes back in seed, with no task");
+  assert.equal(roses.planted, false, "a restore never says yes for the owner");
+  assert.deepEqual(roses.after, [first.id], "what it waits for came back");
+  assert.deepEqual(o.data.comments(after.id).map((c) => c.text), ["Red ones"]);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepEqual([o.data.card(first.id).lane, o.data.card(first.id).runId], ["seed", null], "nothing was pulled");
 });

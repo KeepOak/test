@@ -9,6 +9,7 @@ import { safetyKey, safetyParts } from "./safety-extras/settings.js";
 import { neverTouched, settingsCatalogue } from "./settings-kit/catalogue.js";
 import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
+import { ensureOrchardTables, orchardTables } from "./orchard/store.js";
 import { settleForgotten } from "./conversation-residue.js";
 import { introPrompt, introSystem } from "./trunks/intro.js";
 import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
@@ -60,7 +61,8 @@ const conversationTables = ["session_left_out", "conversation_paths", "conversat
  */
 const trunkTables = ["governance"] as const;
 const trunkRow = (id: string): boolean => /^trunk:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables] as const;
+export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables,
+  ...orchardTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({
   ...Object.fromEntries(requiredTables.map((table) => [table, z.array(RowSchema)])) as Record<(typeof requiredTables)[number], z.ZodArray<typeof RowSchema>>,
@@ -69,6 +71,8 @@ const TablesSchema = z.object({
   // The wiki's pages and their history (src/wiki.ts). A backup from before the wiki has none.
   ...Object.fromEntries(wikiTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof wikiTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
   ...Object.fromEntries(conversationTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof conversationTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
+  // Orchard's boards, cards, links and comments (src/orchard/store.ts). A backup from before Orchard has none.
+  ...Object.fromEntries(orchardTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof orchardTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
   // A backup from before Trunks travelled has none.
   ...Object.fromEntries(trunkTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof trunkTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
 }).strict();
@@ -277,7 +281,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "diagnostic-log": "shapes a local, scrubbed log that sends nothing",
   "event-loop-watch": "local event-loop measurement",
   "flowboards-busy-mode": "what the owner's own typing does while a task works",
-  // Travels with the board tables it describes: kept here, a restored older backup's old-board cards would never move in.
+  // Travels with Orchard's own tables (orchardTables), which hold the cards it says were already moved in.
   "orchard-migrated": "only whether the old board's cards were already moved into Orchard; moving them never starts a card",
   "fly-core": "only reorders what a task already has",
   "knowledge-retention": "only creates archive suggestions",
@@ -350,6 +354,7 @@ const staysHere = (table: string, row: Record<string, unknown>): boolean =>
  */
 function disarmed<Row extends Record<string, unknown>>(table: string, row: Row): Row | null {
   if (table === "deliveries") return undelivered(row);
+  if (table === "orchard_cards") return unplanted(row);
   if (table !== "schedules") return row;
   if (typeof row.data !== "string") return null;
   let job: unknown;
@@ -360,6 +365,16 @@ function disarmed<Row extends Record<string, unknown>>(table: string, row: Row):
   // Only a job that has a webhook gets a new token; an empty one would otherwise switch a webhook on.
   if (typeof kept.hookToken === "string" && kept.hookToken) kept.hookToken = randomBytes(24).toString("hex");
   return { ...row, data: JSON.stringify(kept) } as Row;
+}
+
+/**
+ * An Orchard card comes back as a card the owner has not said yes to: a restore never starts work by itself, and a
+ * changed backup could otherwise plant a card the grower would pull as the owner's own task. One the file says was
+ * growing goes back to seed with no task (that task is not running here). The owner plants what they want again.
+ */
+function unplanted<Row extends Record<string, unknown>>(row: Row): Row {
+  const growing = row.lane === "growing";
+  return { ...row, planted: 0, ...(growing ? { lane: "seed", run_id: null, session_id: null } : {}) } as Row;
 }
 
 /**
@@ -536,6 +551,7 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
     prepareFlyRestore(db, archive);
     if (archive.tables.self_development_contracts?.length) ensureContractTable(db);
     if (wikiTables.some((table) => archive.tables[table]?.length)) ensureWikiTables(db);
+    if (orchardTables.some((table) => archive.tables[table]?.length)) ensureOrchardTables(db);
     for (const table of backupTables) {
       const list = archive.tables[table];
       if (!list?.length) continue;

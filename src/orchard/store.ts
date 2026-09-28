@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import type { Store } from "../store.js";
 import {
   maxBoards, maxCards, maxComments, maxHistory, oneLine,
@@ -10,24 +11,31 @@ import {
  * here decides who may do what: src/orchard/index.ts does, and the caller layer (src/caller-policy.ts) before it.
  */
 type Row = Record<string, unknown>;
+
+/** Orchard's tables, in the order a backup writes and restores them (src/backup.ts). */
+export const orchardTables = ["orchard_boards", "orchard_cards", "orchard_links", "orchard_comments"] as const;
+/** Makes Orchard's tables when they are not there yet: at start, and before a restore puts rows in them. */
+export function ensureOrchardTables(db: DatabaseSync): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS orchard_boards(id TEXT PRIMARY KEY, owner TEXT NOT NULL, project TEXT NOT NULL,
+    name TEXT NOT NULL, at_once INTEGER NOT NULL DEFAULT 2, stop_after INTEGER NOT NULL DEFAULT 3,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS orchard_cards(id TEXT PRIMARY KEY, owner TEXT NOT NULL, board TEXT NOT NULL,
+    title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', lane TEXT NOT NULL, assignee TEXT NOT NULL DEFAULT '',
+    planted INTEGER NOT NULL DEFAULT 0, posted_by TEXT NOT NULL, failures INTEGER NOT NULL DEFAULT 0,
+    stuck INTEGER NOT NULL DEFAULT 0, run_id TEXT, session_id TEXT, history TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS orchard_links(owner TEXT NOT NULL, parent TEXT NOT NULL, child TEXT NOT NULL,
+    PRIMARY KEY(owner, parent, child))`);
+  db.exec(`CREATE TABLE IF NOT EXISTS orchard_comments(id TEXT PRIMARY KEY, owner TEXT NOT NULL, card TEXT NOT NULL,
+    by TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL)`);
+  db.exec("CREATE INDEX IF NOT EXISTS orchard_cards_board ON orchard_cards(owner, board)");
+  db.exec("CREATE INDEX IF NOT EXISTS orchard_cards_run ON orchard_cards(run_id)");
+}
 const now = (): string => new Date().toISOString();
 
 export class OrchardStore {
   constructor(private readonly store: Store, private readonly owner: string) {
-    store.sqlite.exec(`CREATE TABLE IF NOT EXISTS orchard_boards(id TEXT PRIMARY KEY, owner TEXT NOT NULL, project TEXT NOT NULL,
-      name TEXT NOT NULL, at_once INTEGER NOT NULL DEFAULT 2, stop_after INTEGER NOT NULL DEFAULT 3,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
-    store.sqlite.exec(`CREATE TABLE IF NOT EXISTS orchard_cards(id TEXT PRIMARY KEY, owner TEXT NOT NULL, board TEXT NOT NULL,
-      title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', lane TEXT NOT NULL, assignee TEXT NOT NULL DEFAULT '',
-      planted INTEGER NOT NULL DEFAULT 0, posted_by TEXT NOT NULL, failures INTEGER NOT NULL DEFAULT 0,
-      stuck INTEGER NOT NULL DEFAULT 0, run_id TEXT, session_id TEXT, history TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
-    store.sqlite.exec(`CREATE TABLE IF NOT EXISTS orchard_links(owner TEXT NOT NULL, parent TEXT NOT NULL, child TEXT NOT NULL,
-      PRIMARY KEY(owner, parent, child))`);
-    store.sqlite.exec(`CREATE TABLE IF NOT EXISTS orchard_comments(id TEXT PRIMARY KEY, owner TEXT NOT NULL, card TEXT NOT NULL,
-      by TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL)`);
-    store.sqlite.exec("CREATE INDEX IF NOT EXISTS orchard_cards_board ON orchard_cards(owner, board)");
-    store.sqlite.exec("CREATE INDEX IF NOT EXISTS orchard_cards_run ON orchard_cards(run_id)");
+    ensureOrchardTables(store.sqlite);
   }
   private get db() { return this.store.sqlite; }
 
