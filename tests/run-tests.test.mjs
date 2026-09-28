@@ -74,7 +74,9 @@ test("--shard names one share of the whole, and anything else is refused", () =>
 test("--files-from selects an explicit discovered subset and rejects stale or duplicate entries", () => {
   const groups = { shared: [join("tests", "a.test.mjs")], browser: [join("tests", "b.test.mjs")], desktop: [] };
   const read = () => JSON.stringify(["tests/b.test.mjs"]);
-  assert.deepEqual(parseFilesFrom(["--files-from=selected.json"], groups, read), [join("tests", "b.test.mjs")]);
+  assert.deepEqual(parseFilesFrom(["--files-from=selected.json"], groups, read),
+    { shared: [], browser: [join("tests", "b.test.mjs")], desktop: [] });
+  assert.throws(() => parseFilesFrom(["--files-from=selected.json"], groups, () => "[]"), /empty run/);
   assert.throws(() => parseFilesFrom(["--files-from=selected.json"], groups,
     () => JSON.stringify(["tests/missing.test.mjs"])), /not discovered/);
   assert.throws(() => parseFilesFrom(["--files-from=selected.json"], groups,
@@ -139,7 +141,10 @@ test("the three lanes run every file between them, and Linux runs everything but
     assert.ok(macos.includes(file), `${file} runs on macOS`);
   assert.ok(windows.length < all.length / 5 && macos.length < all.length / 5, "the other systems run their own tests, not the suite again");
   assert.throws(() => laneGroups(["--lane=freebsd"], groups), /expected --lane=linux, windows or macos/);
-  assert.throws(() => parseFilesFrom(["--files-from=x.json", "--lane=linux"], groups, () => "[]"), /cannot be combined/);
+  // A selected subset is split by lane and share like the whole suite: the Linux lane of it, then one share of that.
+  const picked = parseFilesFrom(["--files-from=x.json", "--lane=linux"], byLane.linux,
+    () => JSON.stringify(["tests/desktop.test.mjs", "tests/leak-guard.test.mjs"]), groups);
+  assert.deepEqual(flat(picked).map((file) => file.replace(/\\/g, "/")), ["tests/leak-guard.test.mjs"], "the desktop file is Windows'");
 });
 
 test("the workflow runs every share of every lane, and each lane's shares cover it exactly once", () => {
