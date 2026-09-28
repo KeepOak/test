@@ -26,6 +26,8 @@ import type { Account, Pool } from "./settings.js";
 export interface PoolHooks {
   owner: string;
   pool: string;
+  /** The connection's name as the window shows it, for what a Trunk is told. */
+  name?: string;
   model: string;
   /** The pool as saved now, or null when this connection has no list of its own. */
   settings: () => Pool | null;
@@ -46,8 +48,9 @@ export interface PoolHooks {
 
 /** mac7/lockdown-fix: what a Trunk's call is told when no key may answer it (see trunk-guard.ts). */
 export { trunkSignInRefusal };
-export const trunkKeyRefusal = (pool: string): string =>
-  `This Trunk does not copy your keys and has no key picked for ${pool}. Pick one for it in Edit Trunk, under Keys.`;
+/* models-ui: named as the window names the connection, and pointing at the tab where the pick is made. */
+export const trunkKeyRefusal = (pool: string, name?: string): string =>
+  `This Trunk does not copy your accounts and has no account picked for ${name || pool}. Pick one for it in Edit Trunk › Accounts.`;
 
 /** Every account of a list is switched off: where the owner switches one on again. */
 export const allSwitchedOff = "Every account of this connection is switched off. Switch one on in Settings › Accounts.";
@@ -122,14 +125,14 @@ export class AccountPoolProvider {
    */
   private forTrunk(pool: Pool | null, call: AccountCall, request: CompletionRequest): Promise<Completion> {
     if (!pool) {
-      if (!call.trunk!.keys.copyFromOwner) throw new Error(trunkKeyRefusal(this.hooks.pool));
+      if (!call.trunk!.keys.copyFromOwner) throw new Error(trunkKeyRefusal(this.hooks.pool, this.hooks.name));
       return this.original.complete(request);
     }
     if (pool.kind !== "api-key" && call.trunk!.signIns !== true) throw new Error(trunkSignInRefusal);
     const picked = call.trunk!.keys.accounts[pool.pool];
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account)
       && (call.trunk!.keys.copyFromOwner || account.id === picked));
-    if (!usable.length) throw new Error(trunkKeyRefusal(pool.pool));
+    if (!usable.length) throw new Error(trunkKeyRefusal(pool.pool, this.hooks.name));
     return this.answer(pool, usable, request, call);
   }
   private why(account: Account): string | null {
