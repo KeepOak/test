@@ -7,9 +7,8 @@ import { newWindow, openSettings } from "./new-window-places.mjs";
 test("Practice is an explicit next-task choice, keeps a rejected draft, and the next ordinary task is real", async (t) => {
   const provider = { name: "scripted", async complete(request) {
     const last = request.messages.at(-1);
-    const retry = last?.role === "tool" && !String(last.content).includes('"ok":true')
-      && String(request.messages[0].content).includes("The call you asked about did not run");
-    if (last?.role === "user" || retry) return { content: "", toolCalls: [{ id: `w${Date.now()}`, name: "files.write",
+    // QA R1: after a yes the engine makes the approved call itself; the model never makes it again.
+    if (last?.role === "user") return { content: "", toolCalls: [{ id: `w${Date.now()}`, name: "files.write",
       arguments: JSON.stringify({ path: "chosen.txt", content: "real" }) }] };
     return { content: "Finished.", toolCalls: [] };
   } };
