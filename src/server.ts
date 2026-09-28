@@ -1286,7 +1286,8 @@ async function api(
   if (path.startsWith("/api/agents/"))
     return remoteAgentsApi(app.remoteAgents, request, path, () => readBody(request), {
       base: `http://${request.headers.host ?? "127.0.0.1:3210"}`,
-      token: /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "YOUR_SESSION_KEY",
+      // A pairing link carries a key of its own that reaches only the A2A door and runs out; never the caller's key.
+      pairingKey: () => app.sessionTokens.createPairingKey(app.runtime.owner),
     });
   // A phone-sized list of conversations. It goes through the same door and needs the same key as
   // everything else, so a paired phone can pick up what was started at the computer.
@@ -2494,7 +2495,7 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (request.method === "GET" && !match[2]) return { ...record, hookPath: record.data.hookToken ? `/hooks/${record.id}` : null };
   if (request.method === "POST" && match[2] === "trigger") {
     z.object({}).strict().parse(await readBody(request));
-    return app.scheduler.trigger(owner, record.id, undefined, "local");
+    return app.scheduler.trigger(owner, record.id, undefined, "local", triggerSlot(request));
   }
   if (request.method === "POST" && match[2] === "remove") {
     z.object({}).strict().parse(await readBody(request));
@@ -2535,8 +2536,16 @@ async function hook(app: Branch, request: IncomingMessage, path: string): Promis
     timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
   if (!record || !same) throw new HttpError(401, "Hook token rejected");
   const payload = await readBody(request, 16 * 1024).catch(() => ({}));
-  const run = await app.scheduler.trigger(app.runtime.owner, record.id, payload, "webhook");
+  const run = await app.scheduler.trigger(app.runtime.owner, record.id, payload, "webhook", triggerSlot(request));
   return { runId: run.id, status: run.status };
+}
+/** The caller's Idempotency-Key, when it sent one: the same key starts a schedule once (src/scheduler.ts). */
+function triggerSlot(request: IncomingMessage): string | null {
+  const header = request.headers["idempotency-key"];
+  const value = String((Array.isArray(header) ? header[0] : header) ?? "").trim();
+  if (!value) return null;
+  if (!/^[!-~]{1,200}$/.test(value)) throw new HttpError(400, "Idempotency-Key must be 1 to 200 printable characters");
+  return value;
 }
 /**
  * WhatsApp sends messages to this address instead of holding a connection open, so the route has
@@ -3848,7 +3857,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         }
         const scope = app.sessionTokens.scopeOf(app.runtime.owner, offered);
         if (scope === null) return app.sessionTokens.check(app.runtime.owner, offered, { method: request.method ?? "GET", executes: false, path });
-        who.key = scope;
+        // A pairing key is judged as a "run" key, and its own check (session-tokens.ts) keeps it to the A2A door.
+        who.key = scope === "a2a" ? "run" : scope;
         return null;
       }, (offered) => app.sessionTokens.scopeOf(app.runtime.owner, offered) !== null
         || app.people.keys.working(offered)); // bucket 19

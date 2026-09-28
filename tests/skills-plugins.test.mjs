@@ -270,3 +270,33 @@ test("suggestions come from the words in recent tasks and never switch anything 
   assert.ok(suggestions[0].matched.includes("invoices"));
   assert.equal(app.store.skills.view("local", invoices.id).activeVersion, null, "a suggestion never switches a skill on");
 });
+
+test("a skill package's hooks fire only while its skill is switched on", async (t) => {
+  const { app, api } = await fixture(t);
+  const heard = [];
+  app.skillPackages.replayRecipe = async (recipe, event) => { heard.push(`${recipe}:${event}`); };
+  const files = { "SKILL.md": document(), "hooks.json": JSON.stringify({ hooks: [{ event: "run.finished", recipe: "file the forecast" }] }) };
+  const file = packSkill({ files, author: "Ada", packageVersion: "1.0.0" }).toString("base64");
+  const installed = await api("skills/package/install", { file, approve: true });
+  assert.equal(installed.skill.activeVersion, null, "a package arrives switched off");
+  const run = app.store.createRun("local", "hooks");
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  app.store.event(run.id, "run.finished", { status: "completed" });
+  await settle();
+  assert.deepEqual(heard, [], "installed switched off: its hook does not fire");
+  const off = app.store.skills.view("local", installed.skill.id);
+  app.store.skills.activate("local", installed.skill.id, { version: off.headVersion, expectedRevision: off.revision });
+  app.store.event(run.id, "run.finished", { status: "completed" });
+  await settle();
+  assert.deepEqual(heard, ["file the forecast:run.finished"], "switched on: its hook fires");
+  const on = app.store.skills.view("local", installed.skill.id);
+  app.store.skills.disable("local", installed.skill.id, { expectedRevision: on.revision });
+  app.store.event(run.id, "run.finished", { status: "completed" });
+  await settle();
+  assert.equal(heard.length, 1, "switched off again: its hook does not fire");
+  const again = app.store.skills.view("local", installed.skill.id);
+  app.store.skills.activate("local", installed.skill.id, { version: again.headVersion, expectedRevision: again.revision });
+  app.store.event(run.id, "run.finished", { status: "completed" });
+  await settle();
+  assert.equal(heard.length, 2, "switched back on: its hook fires again");
+});

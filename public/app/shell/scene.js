@@ -15,6 +15,7 @@ import { media17 } from "../core/art17.js";
 import { PETS, petOf, petLabel, petKindName, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
 import { windowRest, onRest } from "../core/sleep.js";
+import { play17 } from "../core/held.js";
 import { say as inWords } from "../core/words.js";
 import { binding, spoken } from "./keys.js";
 
@@ -218,7 +219,7 @@ function applyMood() {
   if (!v) return;
   if (m === "sleep") { if (!v.paused) v.pause(); return; }
   v.playbackRate = m === "work" ? 1.6 : 1;
-  if (v.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
+  if (v.paused && !v.dataset.off13 && !document.hidden) play17(v).catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
 }
 
 /* What the pet says: a Trunk that needs a yes first, else a tip that is true of this window. */
