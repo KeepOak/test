@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
 import { defineService, type ParityDeps } from "./parity-common.js";
 import { connectWebSocket, reconnectDelay, type WebSocketConnect, type WebSocketConnection } from "./ws-client.js";
 
@@ -39,10 +39,16 @@ const eventSchema = z.object({
     from: z.string(), fromMe: z.boolean().optional(), body: z.string().nullish(),
     participant: z.string().nullish(), author: z.string().nullish(),
     replyTo: z.object({ id: z.string().optional(), participant: z.string().nullish() }).passthrough().nullish(),
+    /** A picture, video, file or voice note the bridge has downloaded, at an address of its own. */
+    hasMedia: z.boolean().optional(),
+    media: z.object({ url: z.string().max(2000).nullish(), mimetype: z.string().max(100).nullish(), filename: z.string().max(300).nullish() }).passthrough().nullish(),
     _data: z.object({ notifyName: z.string().optional(), pushName: z.string().optional() }).passthrough().nullish(),
   }).passthrough(),
 }).passthrough();
 const idOf = (id: unknown): string | undefined => (typeof id === "string" ? id : (id as { _serialized?: string } | undefined)?._serialized);
+/** The largest file fetched from the bridge for a task, as every other chat app holds it. */
+const inboundLimit = 20 * 1024 * 1024;
+const kindOf = (type: string): "picture" | "video" | "document" => (type.startsWith("image/") ? "picture" : type.startsWith("video/") ? "video" : "document");
 /** A WhatsApp id without its device suffix, for comparing the assistant's own number (1234:5@c.us is 1234@c.us). */
 const bare = (id: string): string => id.replace(/:\d+(?=@)/, "");
 
@@ -84,6 +90,21 @@ export class WahaBridge {
       return "STARTING";
     }
     return now.status;
+  }
+  /**
+   * A file the bridge downloaded, fetched only from the bridge itself (same address, with the key), without redirects,
+   * and never past `inboundLimit`.
+   */
+  async file(url: string): Promise<Uint8Array> {
+    const target = new URL(url, this.server);
+    if (target.origin !== new URL(this.server).origin) throw new Error("That file is not held by the WhatsApp bridge, so it was not fetched");
+    const response = await this.fetch(target.href, { headers: { "x-api-key": this.apiKey }, redirect: "error", signal: AbortSignal.timeout(60000) });
+    if (!response.ok) throw new Error(`The WhatsApp bridge would not hand over that file (${response.status})`);
+    const declared = Number(response.headers.get("content-length") ?? 0);
+    if (declared > inboundLimit) throw new Error("That file is larger than 20 MB, so it was not used");
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > inboundLimit) throw new Error("That file is larger than 20 MB, so it was not used");
+    return bytes;
   }
   /** The code WhatsApp's Linked devices screen scans, while the session waits for one. */
   async pairingCode(): Promise<{ value: string | null; image: string | null }> {
@@ -158,18 +179,50 @@ export class WhatsAppWebChannel implements ChannelAdapter {
     let parsed: z.infer<typeof eventSchema>;
     try { parsed = eventSchema.parse(JSON.parse(text)); } catch { return null; }
     const message = parsed.payload;
-    if (parsed.event !== "message" || message.fromMe || !message.body || message.from === "status@broadcast" || message.from.endsWith("@broadcast")) return null;
+    const media = message.hasMedia && message.media?.url ? message.media : null;
+    if (parsed.event !== "message" || message.fromMe || (!message.body && !media) || message.from === "status@broadcast" || message.from.endsWith("@broadcast")) return null;
+    const body = message.body ?? "";
     const group = message.from.endsWith("@g.us");
     const sender = (group ? message.participant ?? message.author : message.from) ?? message.from;
     const me = this.me?.id;
-    const mentioned = !!me && message.body.includes(`@${me.replace(/@.*$/, "")}`);
+    const mentioned = !!me && body.includes(`@${me.replace(/@.*$/, "")}`);
     const repliedTo = !!me && !!message.replyTo?.participant && bare(message.replyTo.participant) === me;
     const name = message._data?.notifyName ?? message._data?.pushName ?? sender.replace(/@.*$/, "");
     return {
       channel: this.id, chatId: message.from, chatKind: group ? "group" : "direct", ...(group ? { chatTitle: `group ${message.from.slice(0, 12)}` } : {}),
-      senderId: sender, senderName: name, text: message.body,
+      senderId: sender, senderName: name, text: body,
+      ...(media ? this.mediaOf(media, idOf(message.id) ?? sender) : {}),
       addressed: !group || mentioned || repliedTo, messageId: idOf(message.id) ?? `${Date.now()}`,
     };
+  }
+  /** A voice note to transcribe, or a picture, video or file as the task's material; fetched only once it is answered. */
+  private mediaOf(media: { url?: string | null | undefined; mimetype?: string | null | undefined; filename?: string | null | undefined }, id: string): Partial<InboundMessage> {
+    const type = (media.mimetype ?? "application/octet-stream").split(";")[0]!.toLowerCase();
+    const bytes = () => this.bridge.file(media.url!);
+    if (type.startsWith("audio/")) return { voice: { mediaType: type, seconds: undefined, bytes } };
+    return { attachments: [{ name: media.filename ?? `whatsapp-${id.slice(-8)}`, sourceId: id, mediaType: type, kind: kindOf(type), bytes }] };
+  }
+  /** Sent through the bridge as JSON with the bytes written out, so kept well under WhatsApp's own limits. */
+  readonly maxFileBytes = 16 * 1024 * 1024;
+  /** A picture as a picture (JPEG or PNG), anything else as a file, with its caption; through the bridge. */
+  async sendFile(chatId: string, file: OutgoingFile, replyToMessageId?: string): Promise<string | undefined> {
+    if (file.bytes.byteLength > this.maxFileBytes) throw new Error("That file is larger than the 16 MB the WhatsApp bridge takes from Branch");
+    const type = file.mediaType.split(";")[0]!.toLowerCase();
+    const path = ["image/jpeg", "image/png"].includes(type) ? "/api/sendImage" : "/api/sendFile";
+    return this.post(path, { chatId, file: { mimetype: file.mediaType, filename: file.name, data: Buffer.from(file.bytes).toString("base64") },
+      ...(file.caption ? { caption: file.caption.slice(0, 1024) } : {}) }, replyToMessageId);
+  }
+  /** A spoken reply as a voice note; the bridge turns it into WhatsApp's own voice format (`convert`). */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    if (audio.byteLength > this.maxFileBytes) throw new Error("That spoken reply is larger than the 16 MB the WhatsApp bridge takes from Branch");
+    return this.post("/api/sendVoice", { chatId, file: { mimetype: mediaType, data: Buffer.from(audio).toString("base64") }, convert: true }, replyToMessageId);
+  }
+  private async post(path: string, body: Record<string, unknown>, replyToMessageId?: string): Promise<string | undefined> {
+    const response = await this.bridge.call("POST", path, { session: this.options.session, ...body,
+      ...(replyToMessageId && replyToMessageId.includes("@") ? { reply_to: replyToMessageId } : {}) });
+    if (!response.ok) throw new Error(`The WhatsApp bridge refused the file (${response.status})`);
+    const sent = await response.json().catch(() => null) as { id?: unknown } | null;
+    return idOf(sent?.id);
   }
   async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
     const response = await this.bridge.call("POST", "/api/sendText", { session: this.options.session, chatId, text: text.slice(0, this.maxTextLength),

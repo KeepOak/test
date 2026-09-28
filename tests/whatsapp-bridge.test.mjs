@@ -30,7 +30,9 @@ async function fakeWaha(t) {
       return state.status ? json(200, { name: "default", status: state.status, me: state.status === "WORKING" ? state.me : null }) : json(404, {});
     if (request.method === "POST" && request.url === "/api/sessions") { state.status = "SCAN_QR_CODE"; return json(201, { name: "default", status: "STARTING" }); }
     if (request.method === "GET" && request.url === "/api/default/auth/qr?format=raw") return json(200, { value: "2@abc,def,ghi,jkl" });
-    if (request.method === "POST" && request.url === "/api/sendText") { state.sent.push(JSON.parse(raw)); return json(201, { id: "true_15551234567@c.us_ABC" }); }
+    if (request.method === "POST" && ["/api/sendText", "/api/sendImage", "/api/sendFile", "/api/sendVoice"].includes(request.url)) {
+      state.sent.push({ path: request.url, ...JSON.parse(raw) }); return json(201, { id: "true_15551234567@c.us_ABC" }); }
+    if (request.method === "GET" && request.url === "/api/files/default/photo.jpg") { response.writeHead(200, { "content-type": "image/jpeg" }); response.end(Buffer.alloc(9)); return; }
     return json(404, {});
   });
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
@@ -118,9 +120,42 @@ test("the channel: direct messages and group mentions or replies in, status and 
     ["m1", "direct", "15551234567@c.us", true], ["m4", "group", "15552223333@c.us", false], ["m5", "group", "15552223333@c.us", true], ["m6", "group", "15552223333@c.us", true]]);
   assert.equal(got[0].senderName, "Sam");
   assert.equal(await channel.send("15551234567@c.us", "hi there", "false_15551234567@c.us_M1"), "true_15551234567@c.us_ABC");
-  assert.deepEqual(waha.state.sent[0], { session: "default", chatId: "15551234567@c.us", text: "hi there", reply_to: "false_15551234567@c.us_M1" });
+  assert.deepEqual(waha.state.sent[0], { path: "/api/sendText", session: "default", chatId: "15551234567@c.us", text: "hi there", reply_to: "false_15551234567@c.us_M1" });
   await channel.stop();
 
   const wrongKey = new WhatsAppWebChannel({ id: "w2", server: waha.base, session: "default", apiKey: "nope", connect });
   await assert.rejects(wrongKey.start(async () => {}), /refused the API key/);
+});
+
+test("media through the bridge: pictures and voice notes in (fetched only from the bridge), pictures, files and voice out", async (t) => {
+  const waha = await fakeWaha(t);
+  waha.state.status = "WORKING";
+  let socket;
+  const connect = async (url, options) => { let done; const closed = new Promise((resolve) => { done = resolve; }); socket = { options, send() {}, close() { done(); }, closed }; return socket; };
+  const channel = new WhatsAppWebChannel({ id: "whatsapp-web", server: waha.base, session: "default", apiKey: KEY, connect });
+  const got = [];
+  await channel.start(async (message) => { got.push(message); });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const say = (payload) => socket.options.onMessage(JSON.stringify({ event: "message", session: "default", payload }));
+  say({ id: "p1", from: "15551234567@c.us", body: "", hasMedia: true, media: { url: `${waha.base}/api/files/default/photo.jpg`, mimetype: "image/jpeg", filename: "photo.jpg" } });
+  say({ id: "v1", from: "15551234567@c.us", body: "", hasMedia: true, media: { url: `${waha.base}/api/files/default/voice.oga`, mimetype: "audio/ogg; codecs=opus" } });
+  say({ id: "x1", from: "15551234567@c.us", body: "", hasMedia: true, media: { url: "http://evil.example/steal", mimetype: "image/png" } });
+  assert.equal(got.length, 3, "a message that is only a file is still a message");
+  assert.deepEqual(got[0].attachments.map((a) => [a.name, a.kind, a.mediaType]), [["photo.jpg", "picture", "image/jpeg"]]);
+  const before = waha.state.calls.length;
+  assert.equal((await got[0].attachments[0].bytes()).byteLength, 9);
+  assert.equal(waha.state.calls.at(-1).key, KEY, "fetched from the bridge with its key");
+  assert.equal(waha.state.calls.length, before + 1, "and only when asked");
+  assert.equal(got[1].voice.mediaType, "audio/ogg");
+  await assert.rejects(got[2].attachments[0].bytes(), /not held by the WhatsApp bridge/, "never another host");
+
+  await channel.sendFile("15551234567@c.us", { name: "chart.png", mediaType: "image/png", bytes: new Uint8Array([1, 2, 3]), caption: "your chart" });
+  await channel.sendFile("15551234567@c.us", { name: "notes.pdf", mediaType: "application/pdf", bytes: new Uint8Array([4]) });
+  await channel.sendVoice("15551234567@c.us", new Uint8Array([5, 6]), "audio/ogg");
+  const [image, file, voice] = waha.state.sent.slice(-3);
+  assert.deepEqual([image.path, image.caption, image.file.mimetype, image.file.filename, image.file.data], ["/api/sendImage", "your chart", "image/png", "chart.png", Buffer.from([1, 2, 3]).toString("base64")]);
+  assert.deepEqual([file.path, file.file.filename], ["/api/sendFile", "notes.pdf"]);
+  assert.deepEqual([voice.path, voice.convert, voice.file.data], ["/api/sendVoice", true, Buffer.from([5, 6]).toString("base64")]);
+  await assert.rejects(channel.sendFile("15551234567@c.us", { name: "big.bin", mediaType: "application/octet-stream", bytes: new Uint8Array(17 * 1024 * 1024) }), /16 MB/);
+  await channel.stop();
 });

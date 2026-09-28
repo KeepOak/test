@@ -6007,6 +6007,10 @@ program on this computer, so the network settings are not asked about that one a
 bridge's socket (`/ws?session=…&events=message`) and replies go out with `POST /api/sendText`; a direct chat is always
 answered, a group when the assistant's number is @mentioned or one of its messages is replied to, and its own
 messages and status updates are never read. Pairing codes and the allowlist apply as on every app.
+Pictures, videos, files and voice notes sent to the number come in too: the bridge downloads them, and Branch fetches
+each one from the bridge alone (same address, with its key, no redirects, at most 20 MB) only once the message has
+earned an answer; a voice note is transcribed as on the other apps. Files go out through the bridge's `sendImage`
+(JPEG and PNG) and `sendFile`, and a spoken reply through `sendVoice` as a voice note, at most 16 MB each.
 
 ### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
 
