@@ -45,7 +45,7 @@ import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
 // mac7/safe-rollback: what an update changes is written down before the hand-over moves anything.
-import { recordActivation } from "../install/headless-update.js";
+// It is loaded when an update is recorded: its store and backup code would otherwise sit in this process all day.
 // mac7/win-icon: the taskbar shows the mascot, not Electron's atom.
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
@@ -256,6 +256,9 @@ async function createWindow(
     show: false,
     icon: branchIcon(),
     autoHideMenuBar: true,
+    // Started in the tray, the page stays hidden until the window is first shown: otherwise it counts as visible and
+    // draws, decodes its loops and holds its tiles for a window nobody can see.
+    paintWhenInitiallyHidden: !startsMinimized(process.argv),
     webPreferences: {
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       nodeIntegration: false,
@@ -420,6 +423,7 @@ function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
   // A copy that cannot update itself never hands over, so there is nothing to write down.
   if (!installRoot) return {};
   return { record: async (stagedDir, toVersion) => {
+    const { recordActivation } = await import("../install/headless-update.js");
     const recorded = await recordActivation({ dataDir, installRoot, stagedDir, fromVersion: app.getVersion(),
       toVersion, executableName: appEntryName(process.platform) });
     recorded.close();
