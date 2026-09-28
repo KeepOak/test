@@ -607,6 +607,7 @@ test("review: a restart finishes a procedure that was cut off, and keeps one tha
   const root = await mkdtemp(join(tmpdir(), "branch-autonomy-restart-"));
   const options = () => ({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: scripted() });
   const first = await createBranch(options());
+  first.autonomy.setMode('procedures', { mode: 'on' });
   const auto = first.autonomy.procedures;
   const cut = auto.create({ name: "Cut", level: "auto", start: { kind: "manual" }, steps: [{ title: "One", prompt: "Do one." }] });
   const asking = auto.create({ name: "Asking", level: "ask-each-step", start: { kind: "manual" }, steps: [{ title: "One", prompt: "Do one." }] });
