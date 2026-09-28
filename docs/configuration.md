@@ -3294,7 +3294,7 @@ Every message sent through a channel (a reply, a scheduled result) is recorded b
 
 Branch is itself a Model Context Protocol (MCP) server, so another AI tool on the same computer can ask it to do things. **Settings → Sharing with other AI tools** has the switch, the list of tools you are willing to share, and ready-to-paste settings with a Copy button for Claude Desktop, Claude Code and Cursor.
 
-**What is shared, and when.** Nothing until you switch it on. Switching it on offers the tools that only read (their permission ends in `.read`) and leaves everything else unticked and marked *can change things*; you tick those yourself. `branch.ask` — asking Branch a question in plain words — is always available, because it goes through Branch's own permissions and budget like any other task. The saved choice lives in `settings/mcp-sharing` as `{ enabled, exposedTools }` and is read fresh on every call, so a change takes effect at once.
+**What is shared, and when.** Nothing until you switch it on. Switching it on offers the tools that only read (their permission ends in `.read`) and leaves everything else unticked and marked *can change things*; you tick those yourself. While it is off the door offers nothing at all: no tools (not even `branch.ask`), no resources and no prompts. While it is on, `branch.ask` — asking Branch a question in plain words — is offered too; its task may use only the permissions the tools you ticked need, and like every task from outside it asks before any change. The saved choice lives in `settings/mcp-sharing` as `{ enabled, exposedTools }` and is read fresh on every call, so a change takes effect at once.
 
 **Two ways to connect.** Over HTTP, at `/mcp` on the same port as the web interface: JSON-RPC 2.0 by `POST`, with your session key as `Authorization: Bearer …`. If you send no `Mcp-Session-Id`, the reply to your first message names one in an `Mcp-Session-Id` header; send it back on everything afterwards and your work is kept together. `DELETE` ends that conversation (204). A plain `GET` is refused (405), but a `GET` that asks for `text/event-stream` opens a stream Branch writes down when something changes on this side — see **Streaming** below. Responses carry `MCP-Protocol-Version`. Branch speaks `2025-06-18`, `2025-03-26` and `2024-11-05`; ask for anything else and you get a plain error saying which ones work. Or as a child program: `branch mcp-serve` speaks newline-delimited JSON-RPC on standard input and output, writes every message for a person to standard error, and stops cleanly when the other tool closes the connection.
 
@@ -3326,10 +3326,10 @@ Every resource is read-only, and each one is scoped by your approval settings. A
 
 | On offer | Not on offer |
 | --- | --- |
-| `branch.ask` — asking Branch for something in plain words | Any tool you have not ticked in the shared list |
+| `branch.ask` — asking Branch for something in plain words, while sharing is on, with only the ticked tools' permissions | Any tool you have not ticked in the shared list |
 | Every tool you tick, minus the ones your approval settings flatly refuse | Anything your approval settings refuse |
 | `mcp.dry_run` and `mcp.snapshot`, while sharing is on | Your saved passwords and keys, in any form |
-| Reading memory, the workspace listing, documents, tasks and conversations | Writing to any of those through a resource — resources are read-only |
+| Reading memory, the workspace listing, documents, tasks and conversations, while sharing is on | Writing to any of those through a resource — resources are read-only |
 | Your saved procedures as prompts, with their blanks | The owner-only parts of the app: projects, profiles, settings |
 | A plain note saying what was held back and why | Sampling: Branch never asks a connected tool to run a model for it |
 
