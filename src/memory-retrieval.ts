@@ -218,6 +218,11 @@ export class MemoryRetrieval {
     return new Map(this.db.prepare("SELECT memory_id, uses FROM memory_uses WHERE owner=?").all(owner)
       .map((row) => [String(row.memory_id), Number(row.uses)]));
   }
+  /** When each fact was last drawn on, for setting unused ones aside (src/memory-auto-archive.ts). */
+  lastUses(owner: string): Map<string, string> {
+    return new Map(this.db.prepare("SELECT memory_id, last_used_at FROM memory_uses WHERE owner=?").all(owner)
+      .map((row) => [String(row.memory_id), String(row.last_used_at)]));
+  }
   /** Records that a fact was drawn on, which makes it count as more useful next time. */
   noteUse(owner: string, ids: string[]): void {
     const now = new Date().toISOString();
