@@ -1082,6 +1082,11 @@ export const ROUTES = {
   // A chat's requests to change Branch itself: what people wrote, and who they are. Reading and
   // answering them is the owner's alone (src/self-development-requests.ts).
   "/api/self-development/requests": "secret-read",
+  "/api/self-development/merge": "secret-read",
+  "/api/self-development/merge/runner": "secret-read",
+  "/api/self-development/merge/review": "owner POST",
+  "/api/self-development/merge/approve": "owner POST",
+  "/api/self-development/merge/finish": "owner POST",
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
@@ -1309,6 +1314,8 @@ export const OUTBOUND = [
   /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
+  // selfdev: GitHub Enterprise's own /api/v3 and /api/graphql addresses, called outwards; not routes of ours.
+  /^src\/integrations\/github\.ts$/,
   // Only ones I list: OpenRouter's own documented /api/v1/providers, called outwards; not a route of ours.
   /^src\/model-savings\/openrouter\.ts$/,
 ];
