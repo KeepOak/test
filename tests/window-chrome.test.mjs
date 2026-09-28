@@ -1,6 +1,6 @@
 /* The desktop window's own minimise, maximise and close (src/desktop/window-chrome-ipc.ts): their glyphs read on the
    title row's colour at the WCAG AA ratio whatever that colour is, the overlay lets the row show through, and only
-   the window's own page may say what the row looks like, in nothing but light, dark or one #rrggbb colour.
+   the window's own page may set light, dark, #rrggbb, or request one bounded native pixel sample.
    The live window is checked in tests/desktop-window.test.mjs. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -43,4 +43,45 @@ test("only the window's own page may set the look, and only as light, dark or #r
   mainFrame.url = "http://127.0.0.1:9999/";
   assert.throws(() => look(own, true), /access denied/, "the window gone to another address");
   assert.equal(set.length, 2, "nothing refused reached the window");
+});
+
+test("the owned window samples its actual painted pixel and never returns it to the renderer", async () => {
+  const handlers = new Map(), set = [], samples = [];
+  const mainFrame = { url: "http://127.0.0.1:4567/app/" };
+  const webContents = { mainFrame, capturePage: async (rect) => {
+    samples.push(rect);
+    return { toBitmap: () => Buffer.from([0x18, 0x2b, 0x48, 0xff]) };
+  } };
+  registerWindowLookIpc({ handle: (channel, fn) => handlers.set(channel, fn), removeHandler: () => {} },
+    { webContents, on: () => {}, getContentBounds: () => ({ width: 900, height: 600 }), isDestroyed: () => false,
+      setTitleBarOverlay: (options) => set.push(options) }, "http://127.0.0.1:4567", "win32");
+  const look = handlers.get(windowLookChannel), own = { sender: webContents, senderFrame: mainFrame };
+  assert.equal(await look(own, { sample: { x: 850, y: 2 } }), true);
+  assert.equal(await look(own, { sample: { x: 850, y: 2 } }), true, "the moving wallpaper is sampled again");
+  assert.deepEqual(samples, [{ x: 850, y: 2, width: 1, height: 1 }, { x: 850, y: 2, width: 1, height: 1 }]);
+  assert.deepEqual(set.map((entry) => entry.color), ["#482b1800"]);
+  for (const sample of [{ x: -1, y: 2 }, { x: 900, y: 2 }, { x: 1, y: 44 }, { x: 1.5, y: 2 }, { x: 1, y: 2, extra: true }])
+    assert.throws(() => look(own, { sample }), /one colour|sample point/);
+  assert.equal(samples.length, 2, "invalid points never capture the page");
+});
+
+test("an older sample cannot replace a newer look or survive a navigation", async () => {
+  const handlers = new Map(), set = [];
+  const mainFrame = { url: "http://127.0.0.1:4567/app/" };
+  let finish;
+  const webContents = { mainFrame, capturePage: () => new Promise((resolve) => { finish = resolve; }) };
+  registerWindowLookIpc({ handle: (channel, fn) => handlers.set(channel, fn), removeHandler: () => {} },
+    { webContents, on: () => {}, getContentBounds: () => ({ width: 900, height: 600 }), isDestroyed: () => false,
+      setTitleBarOverlay: (options) => set.push(options) }, "http://127.0.0.1:4567", "win32");
+  const look = handlers.get(windowLookChannel), own = { sender: webContents, senderFrame: mainFrame };
+  const stale = look(own, { sample: { x: 850, y: 2 } });
+  assert.equal(look(own, "#203040"), true);
+  finish({ toBitmap: () => Buffer.from([0x18, 0x2b, 0x48, 0xff]) });
+  assert.equal(await stale, true);
+  assert.deepEqual(set.map((entry) => entry.color), ["#20304000"]);
+  const navigated = look(own, { sample: { x: 850, y: 2 } });
+  mainFrame.url = "http://127.0.0.1:9999/";
+  finish({ toBitmap: () => Buffer.from([0x18, 0x2b, 0x48, 0xff]) });
+  await assert.rejects(navigated, /access denied/);
+  assert.equal(set.length, 1);
 });
