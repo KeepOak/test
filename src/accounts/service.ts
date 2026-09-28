@@ -18,7 +18,7 @@ import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
 import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
 import { firstChoice, freshState, unavailable } from "./pool.js";
-import { pooled, unwrapProvider } from "./pool-provider.js";
+import { pooled, unwrapProvider, type TrunkMove } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
@@ -73,6 +73,8 @@ export class AccountsService {
   /** Extra ChatGPT accounts merged into another sign-in of the same account (src/accounts/dedupe.ts), so a window
    *  still waiting on one learns where it went. */
   readonly mergedInto = new Map<string, string>();
+  /** models-ui: the latest moves of a Trunk's work from one account to another, newest first, for the owner (GET /api/state). */
+  readonly trunkMoves: TrunkMove[] = [];
   readonly now: () => number;
 
   constructor(readonly deps: AccountsDeps) {
@@ -285,6 +287,7 @@ export class AccountsService {
     const store = this.deps.store, owner = this.deps.owner;
     return {
       owner, pool, name: preset.name, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
+      moved: (move: TrunkMove) => { this.trunkMoves.unshift(move); this.trunkMoves.splice(20); },
       settings: () => this.usablePool(pool),
       providerFor: (account: string) => this.providerFor(pool, kind, preset, account),
       refresh: (account: string) => this.refreshSignIn(kind, account),

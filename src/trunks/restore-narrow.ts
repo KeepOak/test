@@ -11,7 +11,8 @@ export const restoredTrunksKey = "restore-trunks-held";
 export const HadSchema = z.object({
   permissions: z.array(z.string().trim().min(1).max(100)).max(100),
   mcpServers: z.array(z.string().trim().min(1).max(64)).max(50),
-  keys: z.object({ copyFromOwner: z.boolean(), accounts: z.record(z.string().max(64), z.string().max(64)) }).strict(),
+  keys: z.object({ copyFromOwner: z.boolean(), accounts: z.record(z.string().max(64), z.string().max(64)),
+    next: z.record(z.string().max(64), z.array(z.string().max(64)).max(10)).optional() }).strict(),
   reach: z.object({ channels: z.array(z.string().trim().min(1).max(64)).max(20), commands: z.boolean() }).strict(),
   paused: z.boolean(),
 }).strict();

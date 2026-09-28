@@ -440,7 +440,7 @@ export interface ToolContext {
    * mac7/lockdown-fix: set on a Trunk's turn (and carried into its sub-tasks and side jobs): the keys
    * it may use. A sign-in account never answers for it (src/accounts/trunk-guard.ts).
    */
-  trunkKeys?: { copyFromOwner: boolean; accounts: Record<string, string> };
+  trunkKeys?: { copyFromOwner: boolean; accounts: Record<string, string>; next?: Record<string, string[]> | undefined };
 }
 export interface ToolDefinition<T = unknown> {
   name: string;

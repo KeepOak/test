@@ -127,10 +127,31 @@ function watchDone() {
   alertOwner(who, words);
 }
 
+/* models-ui: a Trunk's work moved to another account at a limit (GET /api/state trunkMoves): the owner is told which one,
+   and why, even when that conversation is on screen (it spends another account). Each move is told once; what had moved
+   before the window opened is not news. */
+let movesSeen = null;
+const moveKey = (m) => `${m.sessionId}|${m.at}|${m.to}`;
+function watchMoves() {
+  const list = Array.isArray(E.state?.trunkMoves) ? E.state.trunkMoves : null;
+  if (!list) return;
+  const keys = list.map(moveKey);
+  if (movesSeen === null) { movesSeen = new Set(keys); return; }
+  const fresh = list.filter((m) => !movesSeen.has(moveKey(m)));
+  for (const key of keys) movesSeen.add(key);
+  const m = fresh[0];
+  if (!m || quiet()) return;
+  const who = m.who || ownName(m.open || m.sessionId) || sessionTitle(m.sessionId);
+  const words = t("window.shell.notify.moved", { name: m.name, to: m.to, from: m.from }) + (m.why ? ` ${m.why}` : "");
+  show({ sessionId: m.sessionId, open: m.open, who, question: words });
+  alertOwner(who, words);
+}
+
 export function initNotify() {
   markLive(["notif-x"]);
   on("notif-x", () => { clearTimeout(timer); $(".notif")?.remove(); });
   document.addEventListener("click", (e) => { if (e.target.closest?.('.notif [data-act="chat"]')) $(".notif")?.remove(); });
   onRender(watch);
   onRender(watchDone);
+  onRender(watchMoves);
 }
