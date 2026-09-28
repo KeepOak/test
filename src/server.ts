@@ -3710,6 +3710,8 @@ export function listenOn(server: Server, port: number, address: string, anyPortI
 
 export { offLimitsToHousehold, offLimitsToShortLivedKeys };
 import { offLimitsToShortLivedKeys } from "./caller-policy.js";
+/** Settings › Chat apps: phone access through Tailscale for the Telegram Mini App (src/miniapp/phone-access.ts). */
+const phoneAccessPath = "/api/miniapp/phone-access";
 /** Tests only: see `policyProbe` below. */
 export const policyProbeHeader = "x-branch-policy-probe";
 export async function startServer(
@@ -4121,6 +4123,26 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const answer = await browserControls.handle(request.method ?? "GET", path, input, { authorize: authorizeBrowser, signal: stopped.signal })
             .catch((error: unknown) => { if (error instanceof z.ZodError) throw error; const refused = browserControls.error(error); throw new HttpError(refused.status, refused.message); });
           send(response, 200, answer); return;
+        }
+        // ---- The owner's phone through Tailscale (src/miniapp/phone-access.ts): what "Turn on phone access" and "Turn off"
+        // run, and running it once the owner has seen that exact command and said yes, in Branch's window on this computer. ----
+        if (path === phoneAccessPath) {
+          if (request.method === "GET") { send(response, 200, await phoneAccessView()); return; }
+          if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+          if (key !== "window" || throughDoor(request)) throw new HttpError(403, "Phone access is turned on and off in Branch's window on this computer.");
+          app.store.profiles.requireOwner("Phone access");
+          if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing phone access.");
+          if (lockdownActive(app.store, app.runtime.owner)) throw new HttpError(403, "Lockdown is on, so your phone can't be let in.");
+          const input = z.object({ turn: z.enum(["on", "off"]), command: z.array(z.string().max(300)).max(12) }).strict().parse(await readBody(request));
+          if (input.turn === "on" && !app.sessionLock.pinSet())
+            throw new HttpError(409, "Set an App lock PIN first. Your phone asks for it each time it takes a task's browser.");
+          const noted = (outcome: string) => audit(app.store, app.runtime.owner, { action: "phone.access", actor: "owner",
+            subject: "the Telegram Mini App through Tailscale", reason: input.command.join(" ").slice(0, 400), outcome });
+          try { await phoneAccess.turn(input.turn, input.command); }
+          catch (error) { noted("refused"); throw new HttpError(409, errorText(error)); }
+          noted(input.turn === "on" ? "turned on" : "turned off");
+          send(response, 200, await phoneAccessView());
+          return;
         }
         // ---- Wave mac3 (commands): the one slash-command table, for the window, the phone and the
         // dashboard (src/commands/api.ts). What the key may do is read the way the dashboard reads it,
@@ -4654,6 +4676,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const miniAppDoor = new MiniAppDoor(app.store, app.runtime.owner, miniAppAnswer);
   await miniAppDoor.open().catch((error: unknown) => console.error(`The Telegram Mini App's door did not open: ${errorText(error)}`));
   const phoneAccess = new PhoneAccess(() => miniAppDoor.port, options.tailscaleServe);
+  /** Where the phone reaches the Mini App now, and the exact commands the window shows before turning it on or off. */
+  const phoneAccessView = async () => ({ phoneAccess: { url: await phoneAccess.refresh(), pinSet: app.sessionLock.pinSet(),
+    on: phoneAccess.command("on"), off: phoneAccess.command("off") } });
   void phoneAccess.refresh(); // so a task's first picture already knows whether the phone can reach the Mini App
   app.channels.miniAppUrl = (runId) => {
     const base = app.sessionLock.pinSet() ? phoneAccess.address() : null;
