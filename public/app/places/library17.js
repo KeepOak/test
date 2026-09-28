@@ -32,6 +32,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
+import { startWith } from "../chat/chat.js";
 import { list17, when17 } from "./parts17.js";
 import { t, language } from "../../i18n.js";
 import { gsel } from "../core/gsel.js";
@@ -237,10 +238,12 @@ function registerManage() {
     const { collections } = await api("knowledge");
     demoDlg17("kbmanage", { title: t("window.places.library17.knowledge-bases"), lead: t("window.places.library17.your-knowledge-bases"), rows: list17(collections).map((c) => [c.name, t("window.places.library17.documents-documents-chunks-passages", { documents: c.documents, chunks: c.chunks }), c.note ? ["warn", c.note] : null]) });
   } });
+  /* Start the tour: the tour's steps are shown here; Start goes through them with Branch in a new conversation, which asks
+     the model as any conversation does (chat/chat.js startWith). */
   onDemo17("learnfolder", { open: async () => {
     const tour = await api("learn/tour", { subject: "code", of: "" });
     demoDlg17("learnfolder", { title: t("window.places.library17.understand-a-folder"), go: t("action.start-the-tour"), rows: (tour.steps ?? []).map((s) => [`${s.order} · ${s.title}`, s.words, null]) });
-  } });
+  }, go: async () => { closeDlg(); await startWith(t("window.places.library17.tour-ask")); } });
   const openSources = async () => {
     const { status } = await api("asks/sources");
     demoDlg17("sources", { title: t("window.places.library17.bring-things-in-from-other-services"), lead: t("window.places.library17.syncing"), go: t("window.places.library17.sync-now"), rows: list17(status).map((s) => [s.id, [s.kind, s.syncedAt ? when17(s.syncedAt) : "", s.error].filter(Boolean).join(" · "), s.error ? ["warn", s.error.slice(0, 30)] : null]) });
