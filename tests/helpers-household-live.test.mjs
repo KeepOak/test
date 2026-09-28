@@ -45,6 +45,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { readPolicy, savePolicy } from "../dist/policy.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
@@ -128,7 +129,7 @@ async function fixture(t) {
     reproduced here, is the page from before the switch restarting itself on its own address after the link was followed;
     this check waits for the real state, whatever moved it. */
 async function openAs(f, sid) {
-  const opened = () => f.page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
+  const opened = () => waitInPage(f.page, async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
   for (let tries = 0; ; tries++) {
     // A fresh address each time: a change of the hash alone would keep the page that was there.
     try {
