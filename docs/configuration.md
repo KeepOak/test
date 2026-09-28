@@ -5969,6 +5969,15 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
 
+### Files and voice in the other chat apps (CHAT-094, 104, 105)
+
+Pictures, videos and files sent to the assistant come in as the task's material on Telegram, Discord, Slack (a
+`file_share` message, fetched with the bot token), Matrix (`m.image`, `m.video`, `m.file`, fetched from the
+homeserver's authenticated media) and WhatsApp (image, video, document, with the caption as the words). Each file is
+fetched only once its message has earned an answer, only from that app's own file host over https, and never past
+20 MB. A Matrix audio message is a voice note to transcribe, as on the others. Spoken replies go out on Discord and
+Slack as an audio file, on Matrix as an audio message marked as voice, and on WhatsApp as an audio message.
+
 ### Answering an approval from a chat app
 When a task started from Telegram or Discord stops to ask whether it may go ahead, the question is
 put in that chat with buttons: Yes, Yes always (only for a task you started yourself, the same rule
@@ -9739,7 +9748,7 @@ through your network rules.
 
 | Part | Tools | What it does |
 | --- | --- | --- |
-| Sending files into your chats | `chat.send_file` | Sends a workspace file into a Telegram, Slack or Discord chat as that app's own attachment. Only to a chat that has already talked to the assistant; never from a chat-started task; within your size limit (20 MB unless you change it) and the app's own (Telegram 50 MB, Discord 10 MB, Slack 100 MB); refused if its words hold anything key-shaped or one of your saved secrets; the caption passes the same last look as every reply, so Lockdown stops it. Each send is written in the record of what the assistant was allowed to do. |
+| Sending files into your chats | `chat.send_file` | Sends a workspace file into a Telegram, Slack, Discord, Matrix or WhatsApp chat as that app's own attachment (a JPEG, PNG or WebP picture up to 10 MB goes to Telegram as a photo, anything else as a file; Matrix uploads to the homeserver first and sends a picture, video, audio or file; WhatsApp uploads first and sends a picture, video, audio or document, inside its 24-hour reply window). Only to a chat that has already talked to the assistant; never from a chat-started task; within your size limit (20 MB unless you change it) and the app's own (Telegram 50 MB, Discord 10 MB, Slack 100 MB, Matrix 50 MB, WhatsApp 5 MB for pictures, 16 MB for video and audio, 100 MB for documents); refused if its words hold anything key-shaped or one of your saved secrets; the caption passes the same last look as every reply, so Lockdown stops it. Each send is written in the record of what the assistant was allowed to do. |
 | Home Assistant | `home.states`, `home.call` | Looks at devices, and calls a service on one device — only for the kinds of device you list (lights, switches, scenes, scripts, media players, climate and fans to begin with; locks and alarms are not on it, and are always asked about if you add them). Uses a long-lived access token saved as `HOMEASSISTANT_TOKEN`. A Home Assistant on your home network needs private addresses allowed under Settings → Computer → Network reach. |
 | A spoken daily briefing | `brief.spoken`, `brief.send_voice` | Today's events and unread mail from Google and Outlook (whichever is on and signed in) and the morning brief, read with your voice settings. "Play my briefing" plays it in the window; `brief.send_voice` sends it to a linked chat as a voice note, only while *Sending files into your chats* is on and after the same checks as a file, and like every sending tool it is never given to a task a chat started. |
 | Saying yes aloud | — | Beside each waiting question, "Answer aloud" listens for four seconds, only when you press it. Your words are written out by your own speech settings and must be just a yes or a no (English or French). The answer is bound to that exact request, used once, and runs out after two minutes; a spoken yes is always "just this once", and a risky request also needs a press. |

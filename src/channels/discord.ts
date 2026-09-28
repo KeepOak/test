@@ -1,3 +1,4 @@
+import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
@@ -30,7 +31,7 @@ const createSchema = z.object({
   author: userSchema, mentions: z.array(userSchema).default([]),
   referenced_message: z.object({ author: userSchema.optional() }).passthrough().nullish(),
   attachments: z.array(z.object({
-    url: z.string().min(1).max(2000), content_type: z.string().max(100).optional(),
+    url: z.string().min(1).max(2000), content_type: z.string().max(100).optional(), filename: z.string().max(300).optional(),
     size: z.number().nonnegative().optional(), duration_secs: z.number().nonnegative().optional(),
   }).passthrough()).default([]),
 }).passthrough();
@@ -167,7 +168,9 @@ export class DiscordAdapter implements ChannelAdapter {
   }
   private inbound(message: z.infer<typeof createSchema>): InboundMessage | null {
     const spoken = message.attachments.find((file) => (file.content_type ?? "").startsWith("audio/"));
-    if ((!message.content && !spoken) || message.author.bot || message.author.id === this.user?.id) return null;
+    // CHAT-104: pictures, videos and files come in as the task's material, fetched only once the message is answered.
+    const files = message.attachments.filter((file) => file !== spoken).slice(0, 10);
+    if ((!message.content && !spoken && !files.length) || message.author.bot || message.author.id === this.user?.id) return null;
     const direct = !message.guild_id;
     const mentioned = message.mentions.some((mention) => mention.id === this.user?.id);
     const repliedTo = message.referenced_message?.author?.id === this.user?.id;
@@ -177,6 +180,12 @@ export class DiscordAdapter implements ChannelAdapter {
       ...(message.guild_id ? { chatTitle: `channel ${message.channel_id}` } : {}),
       senderId: message.author.id, senderName: message.author.username ?? message.author.id,
       text: text || message.content, addressed: direct || mentioned || repliedTo, messageId: message.id,
+      ...(files.length ? { attachments: files.map((file, index) => {
+        const mediaType = file.content_type?.split(";")[0] ?? "application/octet-stream";
+        return { name: file.filename ?? `attachment-${index + 1}`, sourceId: `${message.id}:${index}`, mediaType, kind: attachmentKind(mediaType),
+          ...(file.size !== undefined ? { size: file.size } : {}),
+          bytes: () => fetchCapped(this.fetch, file.url, {}, /(^|\.)(discordapp\.(com|net)|discord\.com)$/i, "file", file.size ?? 0) };
+      }) } : {}),
       ...(spoken ? { voice: {
         mediaType: spoken.content_type ?? "audio/ogg",
         seconds: spoken.duration_secs,
@@ -275,6 +284,10 @@ export class DiscordAdapter implements ChannelAdapter {
     return parsed.success ? parsed.data.id : undefined;
   }
   // ---- end R17-C ----
+  /** CHAT-094: a spoken reply, as an audio file Discord plays in the chat. */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio }, replyToMessageId);
+  }
   /** "typing…" for about ten seconds; the router asks again while the task works. */
   async sendTyping(chatId: string): Promise<void> {
     await this.rest("POST", `/channels/${encodeURIComponent(chatId)}/typing`);

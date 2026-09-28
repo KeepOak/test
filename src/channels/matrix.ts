@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
 import { matrixHtml } from "./progress-render.js";
 import { handle } from "./email.js";
 import { reconnectDelay } from "./ws-client.js";
@@ -33,7 +34,11 @@ export interface MatrixOptions {
 }
 const eventSchema = z.object({
   type: z.string(), event_id: z.string().optional(), sender: z.string().optional(),
-  content: z.object({ msgtype: z.string().optional(), body: z.string().optional() }).passthrough().optional(),
+  content: z.object({ msgtype: z.string().optional(), body: z.string().optional(),
+    /** A file's own address on the homeserver (mxc://server/id), and what it is. */
+    url: z.string().max(500).optional(),
+    info: z.object({ mimetype: z.string().max(100).optional(), size: z.number().optional(), duration: z.number().optional() }).passthrough().optional(),
+  }).passthrough().optional(),
 }).passthrough();
 const syncSchema = z.object({
   next_batch: z.string(),
@@ -129,6 +134,7 @@ export class MatrixAdapter implements ChannelAdapter {
     return messages;
   }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    if (event.type === "m.room.message" && ["m.image", "m.file", "m.video", "m.audio"].includes(event.content?.msgtype ?? "")) return this.fromFile(roomId, event);
     if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text") return null;
     const text = event.content.body ?? "", sender = event.sender ?? "";
     if (!text || !sender || sender === this.options.userId) return null;
@@ -141,6 +147,49 @@ export class MatrixAdapter implements ChannelAdapter {
       addressed: text.includes(this.options.userId) || text.includes(name),
       messageId: handle(event.event_id ?? randomUUID(), "msg"),
     };
+  }
+  /**
+   * CHAT-105: a picture, video or file sent to the room comes in as the task's material, and an audio message as a voice
+   * note to transcribe. Fetched only once the message is answered, from this homeserver's own authenticated media.
+   */
+  private fromFile(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const content = event.content!, sender = event.sender ?? "";
+    const mxc = /^mxc:\/\/([^/]+)\/([A-Za-z0-9_-]+)$/.exec(content.url ?? "");
+    if (!mxc || !sender || sender === this.options.userId) return null;
+    const chatId = handle(roomId, "room");
+    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const mediaType = content.info?.mimetype?.split(";")[0] ?? (content.msgtype === "m.image" ? "image/jpeg" : "application/octet-stream");
+    const host = new RegExp(`^${new URL(this.base).hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    const bytes = () => fetchCapped(this.fetch, `${this.base}/_matrix/client/v1/media/download/${encodeURIComponent(mxc[1]!)}/${encodeURIComponent(mxc[2]!)}`,
+      { headers: { authorization: `Bearer ${this.options.accessToken}` } }, host, content.msgtype === "m.audio" ? "voice note" : "file", content.info?.size ?? 0);
+    const base = { channel: this.id, chatId, chatKind: "group" as const, chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
+      text: "", addressed: false, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+    if (content.msgtype === "m.audio")
+      return { ...base, voice: { mediaType, seconds: content.info?.duration !== undefined ? content.info.duration / 1000 : undefined, bytes } };
+    return { ...base, attachments: [{ name: content.body || "file", sourceId: mxc[2]!, mediaType, kind: attachmentKind(mediaType),
+      ...(content.info?.size !== undefined ? { size: content.info.size } : {}), bytes }] };
+  }
+  /** Matrix homeservers take 50 MB by default; one set lower refuses the upload and says so. */
+  readonly maxFileBytes = 50 * 1024 * 1024;
+  /** CHAT-105: a file into the room, uploaded to this homeserver first, as a picture, video, audio or file. */
+  async sendFile(chatId: string, file: OutgoingFile): Promise<string | undefined> {
+    const upload = await this.fetch(`${this.base}/_matrix/media/v3/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: "POST", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": file.mediaType },
+      body: new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), redirect: "error", signal: AbortSignal.timeout(120000),
+    });
+    if (upload.status === 413) throw new Error("The Matrix homeserver said the file is too large");
+    if (!upload.ok) throw new Error(`The Matrix homeserver refused the file (${upload.status})`);
+    const { content_uri: uri } = z.object({ content_uri: z.string().regex(/^mxc:\/\//) }).passthrough().parse(await upload.json());
+    const kind = attachmentKind(file.mediaType);
+    const msgtype = file.mediaType.startsWith("audio/") ? "m.audio" : kind === "picture" ? "m.image" : kind === "video" ? "m.video" : "m.file";
+    const eventId = await this.put(chatId, { msgtype, body: file.name, url: uri, info: { mimetype: file.mediaType, size: file.bytes.byteLength },
+      ...(file.voice ? { "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": {} } : {}) });
+    if (file.caption) await this.send(chatId, file.caption);
+    return eventId ? handle(eventId, "msg") : undefined;
+  }
+  /** CHAT-094: a spoken reply, as an audio message clients show as a voice message. */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string): Promise<string | undefined> {
+    return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio, voice: true });
   }
   /** The events this adapter sent, by the short handle it gave them, so a message it sent can be edited (the newest 200). */
   private readonly sent = new Map<string, string>();

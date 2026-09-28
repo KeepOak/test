@@ -1,3 +1,4 @@
+import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
@@ -31,6 +32,9 @@ const eventSchema = z.object({
   type: z.string(), channel: z.string().optional(), user: z.string().optional(), text: z.string().optional(),
   ts: z.string().optional(), thread_ts: z.string().optional(), channel_type: z.string().optional(),
   subtype: z.string().optional(), bot_id: z.string().optional(),
+  /** Files shared with the message (subtype `file_share`). */
+  files: z.array(z.object({ id: z.string(), name: z.string().max(300).optional(), mimetype: z.string().max(100).optional(), size: z.number().optional(),
+    url_private_download: z.string().max(2000).optional(), url_private: z.string().max(2000).optional() }).passthrough()).optional(),
 }).passthrough();
 const envelopeSchema = z.object({
   type: z.string(), envelope_id: z.string().optional(),
@@ -139,17 +143,28 @@ export class SlackAdapter implements ChannelAdapter {
   }
   private inbound(event: z.infer<typeof eventSchema>): InboundMessage | null {
     if (!["message", "app_mention"].includes(event.type)) return null;
-    // Edits, joins and the assistant's own posts are not questions to answer.
-    if (event.subtype || event.bot_id || !event.text || !event.user || !event.channel) return null;
-    if (event.user === this.user?.id) return null;
-    if (this.options.channels?.length && !this.options.channels.includes(event.channel)) return null;
+    // Edits, joins and the assistant's own posts are not questions to answer. A shared file is a message too (subtype file_share); edits, joins and other subtypes are not.
+    const files = event.subtype === "file_share" ? (event.files ?? []).slice(0, 10) : [];
+    const user = event.user, channel = event.channel;
+    if ((event.subtype && event.subtype !== "file_share") || event.bot_id || (!event.text && !files.length) || !user || !channel) return null;
+    if (user === this.user?.id) return null;
+    if (this.options.channels?.length && !this.options.channels.includes(channel)) return null;
     const direct = event.channel_type === "im";
-    const mentioned = event.type === "app_mention" || (!!this.user && event.text.includes(`<@${this.user.id}>`));
-    const text = this.user ? event.text.replace(new RegExp(`<@${this.user.id}>`, "g"), "").trim() : event.text;
+    const said = event.text ?? "";
+    const mentioned = event.type === "app_mention" || (!!this.user && said.includes(`<@${this.user.id}>`));
+    const text = this.user ? said.replace(new RegExp(`<@${this.user.id}>`, "g"), "").trim() : said;
     return {
-      channel: this.id, chatId: event.channel, chatKind: direct ? "direct" : "group",
-      ...(direct ? {} : { chatTitle: `channel ${event.channel}` }),
-      senderId: event.user, senderName: event.user, text: text || event.text,
+      channel: this.id, chatId: channel, chatKind: direct ? "direct" : "group",
+      ...(direct ? {} : { chatTitle: `channel ${channel}` }),
+      senderId: user, senderName: user, text: text || said,
+      // CHAT-105: fetched with the bot token from Slack's own file host, only once the message is answered.
+      ...(files.length ? { attachments: files.flatMap((file) => {
+        const url = file.url_private_download ?? file.url_private;
+        if (!url) return [];
+        const mediaType = file.mimetype?.split(";")[0] ?? "application/octet-stream";
+        return [{ name: file.name ?? file.id, sourceId: file.id, mediaType, kind: attachmentKind(mediaType), ...(file.size !== undefined ? { size: file.size } : {}),
+          bytes: () => fetchCapped(this.fetch, url, { headers: { authorization: `Bearer ${this.options.token}` } }, /(^|\.)slack\.com$/i, "file", file.size ?? 0) }];
+      }) } : {}),
       addressed: direct || mentioned,
       // Replying to this id keeps the answer in the thread the question was asked in.
       messageId: event.thread_ts ?? event.ts ?? "",
@@ -200,6 +215,10 @@ export class SlackAdapter implements ChannelAdapter {
       ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
     });
     return slot.file_id;
+  }
+  /** CHAT-094: a spoken reply, as an audio file in the chat. */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio }, replyToMessageId);
   }
   // ---- end R17-C ----
   private async call(method: string, token: string, body: unknown): Promise<unknown> {
