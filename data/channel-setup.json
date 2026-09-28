@@ -278,7 +278,7 @@
    "steps": [
     "Turn on two-step sign-in with your mail service.",
     "Make an app password on its security page (Google: myaccount.google.com/apppasswords).",
-    "Paste the app password here. Add the IMAP and SMTP servers to the connections line."
+    "Type the address and your mail service's IMAP and SMTP server names here (Gmail: imap.gmail.com and smtp.gmail.com), then paste the app password."
    ],
    "paste": [
     {
@@ -286,26 +286,45 @@
      "what": "The app password (not your usual password)"
     }
    ],
-   "noCheck": "Mail is checked by signing in to the IMAP server when Branch starts, not by a web request.",
+   "noCheck": "Mail is checked by signing in to the IMAP server when it connects, not by a web request; a wrong password is said when it connects.",
    "entry": {
     "type": "email",
     "id": "email",
-    "address": "…",
+    "address": "{{address}}",
     "imap": {
-     "host": "…",
+     "host": "{{imapHost}}",
      "port": 993,
-     "user": "…"
+     "user": "{{address}}"
     },
     "smtp": {
-     "host": "…",
+     "host": "{{smtpHost}}",
      "port": 465,
-     "user": "…"
+     "user": "{{address}}"
     }
    },
    "sources": [
     "https://support.google.com/accounts/answer/185833"
    ],
-   "fields": []
+   "fields": [
+    {
+     "name": "address",
+     "what": "The email address Branch reads and answers from",
+     "kind": "text",
+     "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    },
+    {
+     "name": "imapHost",
+     "what": "The IMAP server name, for example imap.gmail.com",
+     "kind": "text",
+     "pattern": "^[A-Za-z0-9.-]{3,253}$"
+    },
+    {
+     "name": "smtpHost",
+     "what": "The SMTP server name, for example smtp.gmail.com",
+     "kind": "text",
+     "pattern": "^[A-Za-z0-9.-]{3,253}$"
+    }
+   ]
   },
   {
    "id": "messenger",
@@ -488,7 +507,7 @@
    "steps": [
     "Install signal-cli from its own releases page (github.com/AsamK/signal-cli).",
     "Link it to your phone's Signal as a new device, or register a second number with it.",
-    "Put the full path to signal-cli and the number in the connections line."
+    "Type the full path to signal-cli and the number here."
    ],
    "fields": [
     {
@@ -2141,7 +2160,7 @@
    "turnOn": "switch",
    "steps": [
     "Install Keybase and sign in with the assistant's account.",
-    "Put the full path to the keybase program in the connections line."
+    "Type the full path to the keybase program here."
    ],
    "fields": [
     {
@@ -2214,7 +2233,7 @@
    "turnOn": "switch",
    "steps": [
     "Install Delta Chat to talk to the assistant.",
-    "Install deltachat-rpc-server (Delta Chat's own releases) for the assistant and put its full path in the connections line; Branch does not install it."
+    "Install deltachat-rpc-server (Delta Chat's own releases) for the assistant and type its full path here; Branch does not install it."
    ],
    "fields": [
     {

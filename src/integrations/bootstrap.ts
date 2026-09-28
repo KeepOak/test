@@ -483,6 +483,15 @@ function guardedSocket(policy: NetworkPolicy | undefined): WebSocketConnect | un
   };
 }
 
+/**
+ * One entry of the connections file's `channels` list, checked with the file's own shapes and built the same way,
+ * for a chat app set up in the window (src/channel-setup/live.ts). Its channel is not attached here.
+ */
+export async function buildChannelEntry(entry: unknown, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
+  const parsed = ChannelConfigSchema.safeParse(entry);
+  if (!parsed.success) throw new Error(`The saved settings are not complete: ${parsed.error.issues.map((issue) => issue.message).join('; ').slice(0, 300)}`);
+  return buildChannel(parsed.data, env, host, policy);
+}
 /** Builds the adapter one configured channel asks for, with its secrets and network guards. */
 async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
   // Wave mac3 (channels-parity): IRC, XMPP, Mastodon and the rest are built in their own files.

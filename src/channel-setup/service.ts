@@ -3,8 +3,9 @@ import { encodeQr, maximumQrBytes } from "../remote/qr.js";
 import { saveParitySwitches } from "../channels/parity-switch.js";
 import { parityKinds } from "../channels/parity-config.js";
 import type { Store } from "../store.js";
-import { readValues, runCheck, scrub, SetupRefusal, type Values } from "./check.js";
+import { followUpCheck, readValues, runCheck, scrub, SetupRefusal, type Values } from "./check.js";
 import { createLink, recipeBook, recipeFor, recipes, type Recipe } from "./recipes.js";
+import { entryFor, rememberEntry, savedEntries, type LiveOutcome } from "./live.js";
 
 /**
  * "Set up a chat app": the switch, what the Set up panel shows, and checking and saving what the
@@ -65,7 +66,7 @@ export function setupPanel(store: Pick<Store, "get">, owner: string, id: string)
     codes: { ios: qrFor(recipe.stores?.ios), android: qrFor(recipe.stores?.android), create: qrFor(create) ?? qrFor(plainLink(recipe)) },
     fields: recipe.fields, paste: recipe.paste.map(({ secret, what, optional }) => ({ secret, what, optional: optional === true })),
     hasCheck: Boolean(recipe.check), noCheck: recipe.noCheck ?? null, pairing: recipe.pairing ?? null,
-    saved: done[recipe.id] ?? null, sources: recipe.sources,
+    saved: done[recipe.id] ?? null, setUpHere: savedEntries(store, owner)[recipe.id] !== undefined, sources: recipe.sources,
   };
 }
 
@@ -81,6 +82,14 @@ export interface SetupHost {
     connect?: (options?: { background?: boolean }) => Promise<string | null>;
     /** Test-only stand-in for https://api.telegram.org, set in code by createBranch and never from a request. */
     apiBase?: string | undefined;
+  };
+  /**
+   * Every other app: connecting a saved entry to the running Branch now (src/channel-setup/live.ts). Absent when
+   * Branch is not running (`branch connect` with no window open), and the app then connects when Branch next starts.
+   */
+  live?: {
+    connect: (recipe: Recipe, entry: Record<string, unknown>, values: Values) => Promise<LiveOutcome>;
+    disconnect: (id: string) => Promise<boolean>;
   };
 }
 const telegramApi = "https://api.telegram.org/";
@@ -100,7 +109,9 @@ export function entryLine(recipe: Recipe, values: Values): string | null {
     .replace(/\{\{([a-z][A-Za-z]*)\}\}/g, (_whole, name: string) => (values[name] ?? "…").replace(/["\\]/g, ""));
 }
 
-async function switchOn(host: SetupHost, recipe: Recipe, values: Values, enable: FeatureMode | undefined): Promise<string | null> {
+const notRunning = "Branch is not running: it connects the next time it starts.";
+async function switchOn(host: SetupHost, recipe: Recipe, values: Values, entry: Record<string, unknown> | null,
+  enable: FeatureMode | undefined): Promise<LiveOutcome | string | null> {
   if (recipe.turnOn === "guided") {
     await host.telegram?.save({ token: values.TELEGRAM_BOT_TOKEN, ...(enable ? { mode: enable } : {}) });
     // The check just asked Telegram about this token, so the save does not wait for the bot to connect as
@@ -108,7 +119,11 @@ async function switchOn(host: SetupHost, recipe: Recipe, values: Values, enable:
     return enable && enable !== "off" && host.telegram?.connect ? host.telegram.connect({ background: true }) : null;
   }
   if (recipe.turnOn === "switch" && enable) saveParitySwitches(host.store, host.owner, { [recipe.id]: enable }, parityKinds());
-  return null;
+  if (!entry) return null;
+  // Kept whether or not it connects now, so the next start connects it; "off" keeps it without connecting.
+  rememberEntry(host.store, host.owner, recipe.id, entry);
+  if (enable === "off") return null;
+  return host.live ? host.live.connect(recipe, entry, values) : notRunning;
 }
 
 /** Checks what was pasted, keeps it in the locker, and switches the channel on only when asked. */
@@ -119,23 +134,40 @@ export async function saveSetup(host: SetupHost, id: string, input: SaveInput): 
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
   if (recipe.turnOn === "guided" && !host.telegram) throw new SetupRefusal(503, "The Telegram card is not available in this launch.");
   const values = readValues(recipe, input.values);
+  const entry = entryFor(recipe, values); // refused before anything is asked or kept when the panel cannot finish it
   const checked = await runCheck(checkedAt(recipe, host), values, host.fetch);
   if (checked.ok === false) throw new SetupRefusal(422, checked.reason);
+  // Only after the vendor accepted it, and only where "who am I" cannot tell (a Telegram stand-in skips it).
+  const further = checked.ok === true && recipe.turnOn !== "guided" ? await followUpCheck(recipe, values, host.fetch, checked.name) : null;
+  if (further) throw new SetupRefusal(422, further);
   const secrets = Object.keys(values).filter((name) => /^[A-Z]/.test(name));
   for (const name of secrets)
     if (recipe.turnOn !== "guided") await host.store.secrets.put(host.owner, "default", name, values[name]!, { expiresInDays: 0 });
-  let connectNote: string | null;
+  let connected: LiveOutcome | string | null;
   // Whatever a save or connect throws is said without what was pasted (a Telegram address carries the token).
-  try { connectNote = await switchOn(host, recipe, values, input.enable); }
+  try { connected = await switchOn(host, recipe, values, entry, input.enable); }
   catch (error) { throw new SetupRefusal(500, scrub(`Saving or switching on failed: ${error instanceof Error ? error.message : String(error)}`, values)); }
+  const live = connected && typeof connected === "object" ? connected : null;
+  const connectNote = live ? live.note : typeof connected === "string" ? connected : null;
   const record = { savedAt: new Date().toISOString(), checked: checked.ok, switched: input.enable ?? null };
   host.store.save("settings", host.owner, doneKey, { ...(host.store.get("settings", host.owner, doneKey)?.data ?? {}), [recipe.id]: record });
   return {
-    id: recipe.id, saved: secrets, checked: checked.ok, botName: checked.ok ? checked.name : null,
+    id: recipe.id, saved: secrets, checked: checked.ok, botName: (checked.ok ? checked.name : null) ?? live?.botName ?? null,
     checkNote: checked.ok === null ? checked.reason : null, switched: input.enable ?? null,
+    connected: live ? live.connected : null, channel: live?.channel ?? null, address: live?.address ?? null,
     connectNote: connectNote ? scrub(connectNote, values) : null,
     entry: recipe.turnOn === "guided" ? null : entryLine(recipe, values), pairing: recipe.pairing ?? null,
   };
+}
+
+/** Disconnects an app set up here and forgets its settings; what was pasted stays in the locker (Settings › Secrets). */
+export async function removeSetup(host: SetupHost, id: string): Promise<Record<string, unknown>> {
+  const recipe = recipeFor(id);
+  if (!recipe || recipe.turnOn === "guided") throw new SetupRefusal(404, "There is no chat app set up here by that name.");
+  if (!savedEntries(host.store, host.owner)[recipe.id]) throw new SetupRefusal(404, `${recipe.name} was not set up here.`);
+  if (host.live) await host.live.disconnect(recipe.id);
+  else rememberEntry(host.store, host.owner, recipe.id, null);
+  return { id: recipe.id, removed: true };
 }
 
 /** Every recipe id, for the command's help. */
