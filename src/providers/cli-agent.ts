@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
 import { startCall } from "../windows-command.js";
+import { codexDefaultModel, codexVerified, codexModelsFor, type CodexModels, type CodexProbe, type CodexTry } from "../codex-models.js";
 
 /**
  * Batch 20 (wave 8): using a coding assistant already installed on this computer as a model.
@@ -103,16 +104,12 @@ export const cliAgentCatalog: CliAgentRow[] = [
 ];
 
 /**
- * QA 2026-09-28: Branch never leans on the owner's own Codex settings (~/.codex/config.toml, which it never edits). The
- * owner's said `model = "gpt-6-sol"`, which Codex refuses with a ChatGPT sign-in ("not supported when using Codex with a
- * ChatGPT account"), so every task through Codex failed. Each call now names its model (`-c model=...`): the one the
- * Codex connection has in Branch, one of the models Codex takes with a ChatGPT sign-in. These are the ones checked to
- * answer that way (chatgpt-provider.ts, 2026-09-17); GPT-6 Sol was refused on 2026-09-28 and the rest of the GPT-6
- * family is unproven, so they are left out until checked.
+ * QA 2026-09-28: Branch never leans on the owner's own Codex settings (~/.codex/config.toml, which it never reads or
+ * edits). The owner's said `model = "gpt-6-sol"`, which Codex refuses with a ChatGPT sign-in, so every task through
+ * Codex failed. Each call now names its model (`-c model=...`): the one chosen in Settings › Models for Codex, else the
+ * most capable one Codex takes (src/codex-models.ts).
  */
-export const codexModels = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5"] as const;
-export const codexDefaultModel: string = codexModels[0];
-const supportedWords = (): string => codexModels.join(", ");
+export { codexDefaultModel };
 /** Codex's arguments with the chosen model named, right after `exec` (Codex reads `-c key=value` as a one-call setting). */
 export function codexArgs(args: readonly string[], model: string): string[] {
   const at = args.indexOf("exec");
@@ -212,13 +209,14 @@ function failedResult(row: CliAgentRow, stdout: string): string | null {
 }
 
 /** Fixed explanations: arbitrary stderr may contain credentials or private file contents. */
-function programFailure(row: CliAgentRow, code: number, evidence: string, model: string | null = null): string {
+const modelRefusal = /\bmodel\b[^\n]{0,80}\b(?:is not supported|not supported|is not available|does not exist)|model_not_found|unsupported model/i;
+function programFailure(row: CliAgentRow, code: number, evidence: string, model: string | null = null, offered: readonly string[] = codexVerified): string {
   if (/not inside a trusted directory|untrusted (?:directory|folder)|directory.*not trusted/i.test(evidence))
     return `${row.name} refused the current folder because it is not trusted. Open that folder in ${row.command} and approve it there, then try again. Branch keeps the program's trust checks enabled.`;
   // QA retest 2026-09-28: Codex set (in its own settings) to a model its ChatGPT sign-in cannot use says so in its failed turn.
-  if (/\bmodel\b[^\n]{0,80}\b(?:is not supported|not supported|is not available|does not exist)|model_not_found|unsupported model/i.test(evidence))
+  if (modelRefusal.test(evidence))
     return model && row.id === "codex"
-      ? `${row.name} cannot use ${model} with this sign-in. Choose one it supports (${supportedWords()}) for the Codex connection in Branch, then retry the task.`
+      ? `${row.name} cannot use ${model} with this sign-in. Choose one it takes (${offered.filter((one) => one !== model).join(", ")}) in Settings › Models › Connections, then retry the task.`
       : `${row.name} is set to use a model this sign-in cannot use. Choose another model in ${row.command}'s own settings, then retry the task.`;
   if (/\b401\b|unauthori[sz]ed|authentication (?:required|failed)|not (?:logged|signed) in|(?:oauth|access|refresh) token.*(?:expired|invalid)|invalid.*(?:oauth|access|refresh) token/i.test(evidence))
     return `${row.name} could not use its saved sign-in. Open Settings → Accounts and sign in again to ${row.name}, then retry the task.`;
@@ -348,8 +346,10 @@ export class CliAgentProvider implements Provider {
   detectLimits = false;
   /** Handed everything the program printed, so the plan windows it reported can be kept (src/plan-windows.ts). */
   onOutput: ((stdout: string) => void) | null = null;
-  /** QA 2026-09-28: the model Branch chose for Codex, named on every call so the owner's own settings never decide it. */
+  /** QA 2026-09-28: a model fixed for this connection; without one, Codex's choice in Settings › Models is read on every call. */
   model?: string;
+  /** Codex's choice and which models it takes (src/codex-models.ts), shared by every account of the connection. */
+  codexModels: CodexModels | null = null;
   constructor(
     private readonly row: CliAgentRow,
     limits: CliAgentLimits = {},
@@ -363,6 +363,8 @@ export class CliAgentProvider implements Provider {
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
     const row = this.withModel(this.rowFor(request));
+    // A new Codex may take models the last one refused: checked in the background, never on the owner's time.
+    if (this.row.id === "codex" && this.codexModels && this.spawnAgent === runCliAgent) this.codexModels.refreshIfUpdated(this.probe());
     // Live steps: Claude Code's stream-json and Codex's exec --json say its thinking and each tool as it goes; the window
     // shows them live. A lean call (no tools of its own) also streams its words as they are written.
     const streams = row.args.includes("--include-partial-messages");
@@ -387,7 +389,7 @@ export class CliAgentProvider implements Provider {
     if ((outcome.code !== 0 || failed !== null) && (this.home || this.detectLimits) && limitWords.test(evidence))
       throw new ProgramLimitError(`${this.row.name} says this account has reached its plan limit.`);
     if (outcome.code !== 0 || failed !== null)
-      throw new Error(programFailure(this.row, outcome.code, evidence, this.row.id === "codex" ? this.codexModel() : null));
+      throw new Error(programFailure(this.row, outcome.code, evidence, this.row.id === "codex" ? this.codexModel() : null, this.codexOffered()));
     const content = answerFrom(this.row, outcome.stdout);
     if (!content) throw new Error(`${this.row.name} answered with nothing at all.`);
     if (!streamed) request.onTextDelta?.(content); // streamed words were the preview already; the answer is `content`
@@ -405,11 +407,32 @@ export class CliAgentProvider implements Provider {
     return { ...this.row, args: [...this.row.args, ...lean, "--tools", ""] };
   }
   /** Codex's chosen model, refused in plain words before the program starts when Codex cannot use it with a ChatGPT sign-in. */
+  private codexOffered(): readonly string[] { return this.codexModels?.offered() ?? codexVerified; }
   private codexModel(): string {
-    const model = this.model ?? codexDefaultModel;
-    if (!(codexModels as readonly string[]).includes(model))
-      throw new Error(`${this.row.name} cannot use ${model} with a ChatGPT sign-in. Choose one it supports: ${supportedWords()}.`);
+    const model = this.model ?? this.codexModels?.chosen() ?? codexDefaultModel;
+    if (!this.codexOffered().includes(model))
+      throw new Error(`${this.row.name} cannot use ${model} with a ChatGPT sign-in. Choose one it takes: ${this.codexOffered().join(", ")}.`);
     return model;
+  }
+  /** The model check (src/codex-models.ts): Codex's version, and one tiny call per model, read as accepted or refused. */
+  probe(): CodexProbe {
+    const at = this.row.args.indexOf("exec"), limits = { timeoutMs: 90_000, maxOutputChars: 20_000 };
+    const run = (row: CliAgentRow, prompt: string) => this.home
+      ? this.spawnAgent(row, prompt, AbortSignal.timeout(limits.timeoutMs), limits, this.home)
+      : this.spawnAgent(row, prompt, AbortSignal.timeout(limits.timeoutMs), limits);
+    return {
+      version: async () => {
+        const said = await run({ ...this.row, args: [...this.row.args.slice(0, Math.max(at, 0)), "--version"] }, "");
+        return said.code === 0 && !said.missing ? said.stdout.trim().slice(0, 200) || null : null;
+      },
+      tryModel: async (model: string): Promise<CodexTry> => {
+        const row = { ...this.row, args: codexArgs(this.row.args, model) };
+        const said = await run(row, "Reply with the word OK.");
+        const failed = failedResult(row, said.stdout);
+        if (said.code === 0 && failed === null && answerFrom(row, said.stdout)) return "accepted";
+        return modelRefusal.test(failed ?? said.stderr) ? "refused" : "unknown";
+      },
+    };
   }
   private withModel(row: CliAgentRow): CliAgentRow {
     return row.id === "codex" ? { ...row, args: codexArgs(row.args, this.codexModel()) } : row;
@@ -586,8 +609,8 @@ export function registerCliAgent(
   const row = rowFor(input);
   const id = `cli-${row.id}`;
   const provider = new CliAgentProvider(row, limits, spawnAgent);
-  // QA 2026-09-28: Codex answers with Branch's choice, never whatever the owner's own Codex settings name.
-  if (row.id === "codex") provider.model = codexDefaultModel;
-  models.register({ id, name: row.name, provider, model: provider.model ?? row.command });
+  // QA 2026-09-28: Codex answers with Branch's choice (Settings › Models), never whatever the owner's own Codex settings name.
+  if (row.id === "codex") provider.codexModels = codexModelsFor(models);
+  models.register({ id, name: row.name, provider, model: row.id === "codex" ? codexDefaultModel : row.command });
   return { id, name: row.name, note: row.note, terms: row.terms };
 }

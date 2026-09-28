@@ -11,7 +11,8 @@ import { pinnedFetch } from "../pinned-fetch.js";
 import { estimateCost, pricingSettings } from "../pricing.js";
 import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
-import { CliAgentProvider, codexDefaultModel, accountHomeVariables, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
+import { codexModelsFor } from "../codex-models.js";
+import { CliAgentProvider, accountHomeVariables, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import type { Store } from "../store.js";
 import { ChatGPTAccounts } from "./chatgpt-accounts.js";
 import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
@@ -362,7 +363,7 @@ export class AccountsService {
     if (cached) return cached;
     const made = kind === "api-key" ? await this.keyConnection(pool, preset, account)
       : kind === "chatgpt" ? this.chatgptConnection(pool, preset, account)
-      : this.programConnection(pool, account, preset.model);
+      : this.programConnection(pool, account);
     this.built.set(cacheKey, made);
     return made;
   }
@@ -401,12 +402,12 @@ export class AccountsService {
     };
     return new ChatGPTProvider(this.chatgptAccounts.auth(account), { model: preset.model, userAgent: this.deps.userAgent, fetch: observed });
   }
-  private programConnection(pool: string, account: string, model: string): Provider {
+  private programConnection(pool: string, account: string): Provider {
     const rowId = pool.slice(4), spawn = this.deps.spawnAgent ?? runCliAgent;
     const made = account === primaryAccount ? new CliAgentProvider(rowFor({ id: rowId }), {}, spawn)
       : new CliAgentProvider(rowFor({ id: rowId }), {}, spawn, { name: accountHomeVariables[rowId]!, path: this.homeOf(pool, account) });
     if (account === primaryAccount) made.detectLimits = true;
-    if (rowId === "codex") made.model = model === "codex" ? codexDefaultModel : model; // QA 2026-09-28: the connection's model, per call
+    if (rowId === "codex") made.codexModels = codexModelsFor(this.deps.models); // QA 2026-09-28: Codex's choice, read per call
     if (rowId === "claude-code") made.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
     return made;
   }

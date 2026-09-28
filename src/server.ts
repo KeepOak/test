@@ -31,6 +31,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
 import { PackageInstallSchema } from "./skill-packages.js";
@@ -1652,6 +1653,10 @@ async function api(
     }
     return result;
   }
+  // QA 2026-09-28: which model Codex answers with, and which ones it takes (src/codex-models.ts).
+  if (request.method === "GET" && path === "/api/codex-models") return codexModelsView(app.runtime.models);
+  if (request.method === "POST" && path === "/api/codex-models") return chooseCodexModel(app.runtime.models, await readBody(request));
+  if (request.method === "POST" && path === "/api/codex-models/check") return checkCodexModels(app.runtime.models);
   if (request.method === "GET" && path === "/api/second-opinion")
     return secondOpinionSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/second-opinion")

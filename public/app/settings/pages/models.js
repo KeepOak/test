@@ -22,10 +22,39 @@ import { decisions17d, initDecisions17d, loadDecisions17d } from "../decisions17
 const TABS = [["connections", "Connections"], ["defaults", "Defaults"], ["local", "On this computer"], ["second", "Second opinion"], ["media", "Media"]];
 let tab = "connections";
 
+/* QA 2026-09-28: the model Codex answers with (GET/POST /api/codex-models, src/codex-models.ts), named on every call so
+   the owner's own Codex settings never decide it. The list is the models Codex takes with this sign-in, most capable
+   first; "The best it takes" follows it as it changes. Check asks Codex now, one tiny request per model it takes;
+   a new Codex version is checked by itself. Saved at once. */
+let codex = null;
+async function loadCodex() {
+  if (!ownerHere()) { codex = null; renderNow(); return; }
+  try { codex = await api("codex-models"); } catch { codex = null; }
+  renderNow();
+}
+function codexRow() {
+  if (!codex) return "";
+  const title = t("window.settings.models.codex-model"), cur = codex.chosen ?? "";
+  const opts = codex.offered.map((m) => `<option value="${esc(m)}" ${m === cur ? "selected" : ""}>${esc(m)}</option>`).join("");
+  const best = `<option value="" ${cur ? "" : "selected"}>${esc(t("window.settings.models.codex-best", { model: codex.offered[0] ?? codex.inUse }))}</option>`;
+  const checked = codex.checkedAt ? t("window.settings.models.codex-checked", { when: new Date(codex.checkedAt).toLocaleString(), version: codex.version ?? "" }) : t("window.settings.models.codex-unchecked");
+  const select = ownerHere() ? `<select class="inp" id="m-codex" aria-label="${esc(title)}">${best}${opts}</select>` : "";
+  return `<div class="ctl codex-model"><b>${esc(title)}</b><span class="right">${select}<button class="btn sm ghost" type="button" data-act="m-codex-check" ${ownerOnly()}>${t("window.settings.models.codex-check")}</button></span><small>${esc(checked)}</small></div>`;
+}
+async function setCodexModel(el) {
+  try { codex = await api("codex-models", { chosen: el.value || null }); } catch (error) { toast(error.message); }
+  renderNow();
+}
+async function checkCodex(el) {
+  el.disabled = true;
+  try { codex = await api("codex-models/check", {}); if (codex.note) toast(codex.note); } catch (error) { toast(error.message); }
+  renderNow();
+}
+
 function group(p) {
   const n = p.accounts.length;
   const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, p.name ?? p.pool))}</small></span>${a.ready === true ? p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
-  return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}
+  return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}${p.pool === "cli-codex" ? codexRow() : ""}
     <button class="add-row" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${ownerOnly()}>${ic("plus", "s")}${n ? t("window.settings.models.add-another-value-account", { value: esc(p.name ?? p.pool) }) : t("window.settings.models.sign-in-to-value", { value: esc(p.name ?? p.pool) })}</button></div>`;
 }
 
@@ -164,10 +193,14 @@ export function init() {
   on("m-planning", (el) => setSavings("phases", { planModel: el.dataset.v || null }));
   on("m-openrouter", (el) => setSavings("openrouter", { mode: "on", sort: el.dataset.v }));
   on("m-def", (el) => setDefault(el));
+  on("m-codex-check", (el) => checkCodex(el));
+  document.addEventListener("change", (e) => { if (e.target.id === "m-codex") setCodexModel(e.target); });
+  markLive(["m-codex-check", "sw:m-codex"]);
+  loadCodex();
   markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
-export function load() { loadAccounts(); loadKnobs(); loadMore(); loadDecisions17d(); return freshPick(); }
+export function load() { loadAccounts(); loadKnobs(); loadMore(); loadCodex(); loadDecisions17d(); return freshPick(); }
 
 export const live = { mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
   "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:f15-slow-down-near-a-rate-limit": true };

@@ -232,7 +232,7 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "flowboards-kanban-settings", "flowboards-widget-ideas", "gemini-signin", "governance", "interop-modes-list",
   "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
   "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
-  "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits",
+  "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "codex-models",
   "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages"];
 /** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
 const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
