@@ -153,7 +153,9 @@ function registerScratch(registry: ToolRegistry, runtime: Runtime): void {
     parameters: z.object({ key: z.string().trim().min(1).max(100).optional() }).strict(),
     execute: async (a, c) => {
       const entries = runtime.orchestration.scratchRead(root(c));
-      if (a.key) return entries[a.key] ? { key: a.key, ...entries[a.key]! } : { key: a.key, value: null };
+      // A small model reaches for these notes to read a file; a key that looks like a file name says where files are read.
+      if (a.key) return entries[a.key] ? { key: a.key, ...entries[a.key]! } : { key: a.key, value: null,
+        ...(/\.[a-z0-9]{1,6}$/i.test(a.key) ? { note: `There is no shared note called ${a.key}. To read a file in the workspace, use files.read with that path.` } : {}) };
       return { notes: Object.entries(entries).map(([key, entry]) => ({ key, ...entry })).sort((x, y) => y.updatedAt.localeCompare(x.updatedAt)) };
     },
   });
