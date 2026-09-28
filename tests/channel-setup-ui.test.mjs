@@ -273,7 +273,9 @@ test("the wizard connects without a restart and says when it could not; who answ
   await next(page);
   const who = dlg.locator('[data-act="chw-who"]');
   assert.deepEqual(await who.allTextContents(), trunks.trunks.map((tr) => (tr.id === trunks.defaultId ? `${tr.name} · default` : tr.name)));
-  assert.deepEqual([...(await who.allTextContents())].map((text) => text.split(" · ")[0]).sort(), ["Ivy", "Scout"], "every Trunk, and only Trunks");
+  // The owner's default Trunk (#594/#726, named "Branch Agent") is a Trunk like the others, so it is offered too; Branch itself never is.
+  assert.deepEqual([...(await who.allTextContents())].map((text) => text.split(" · ")[0]).sort(), trunks.trunks.map((tr) => tr.name).sort(), "every Trunk, and only Trunks");
+  assert.ok(trunks.trunks.some((tr) => tr.id === trunks.defaultId), "the default is one of the Trunks");
   const home = (trunks.trunks.find((tr) => tr.id === trunks.defaultId) ?? trunks.trunks[0]).name;
   assert.equal(await dlg.locator('[data-act="chw-who"][aria-pressed="true"]').textContent().then((text) => text.split(" · ")[0]), home, "the default Trunk is chosen");
   assert.equal(await dlg.getByRole("button", { name: "Branch", exact: true }).count(), 0, "no brand-voiced Branch conversation");
