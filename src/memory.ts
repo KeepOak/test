@@ -92,7 +92,8 @@ export const PutMemorySchema = z.object({
   source: z.string().trim().min(1).max(500),
   entity: z.string().trim().min(1).max(120).optional(),
   attribute: z.string().trim().min(1).max(80).optional(),
-  validFrom: z.iso.datetime().optional(),
+  /** SELF-202: a day ("2026-09-28") is taken as well as a moment; qwen2.5:7b wrote days, and every save was refused. */
+  validFrom: z.union([z.iso.datetime(), z.iso.date()]).optional(),
   scope: z.enum(["private", "shared"]).optional(),
   /** What kind of thing this is. A task-scratch note is cleared when the job that made it ends. */
   kind: FactKindSchema.optional(),
@@ -507,6 +508,7 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       // SELF-202: what the fact and the owner's own words say fills in what the model left out (see withImpliedDetail).
       const asked = (context.source ?? "owner") === "owner" ? store.run(context.runId)?.prompt : undefined;
       value = canonicalDetail(withImpliedDetail(value, { ownerNames: ownerNames(), ...(asked ? { request: asked } : {}) }));
+      value = withSaidStart(value, store.run(context.runId)?.prompt);
       const owner = memoryScope(store, context);
       const sessionId = store.run(context.runId)?.sessionId;
       if (sessionId && store.memorySuppressed(owner, sessionId))
@@ -670,6 +672,18 @@ export function withImpliedDetail<T extends { text: string; entity?: string | un
   const entity = implied.entity ?? fromRequest.entity ?? (named ? "me" : undefined);
   const attribute = value.attribute ?? implied.attribute ?? fromRequest.attribute;
   return { ...value, ...(entity ? { entity } : {}), ...(attribute ? { attribute } : {}) };
+}
+/**
+ * SELF-202: when a fact started, kept only when the words the task was given name that year. A date the model made up
+ * ("2023-10-01" for "I moved to Denver", said today) kept the move from ending "I live in Atlanta", which was saved
+ * later than that; the fact is kept either way, from now. A day is written as its start.
+ */
+export function withSaidStart<T extends { validFrom?: string | undefined }>(value: T, request: string | undefined): T {
+  if (!value.validFrom) return value;
+  const { validFrom: said, ...rest } = value;
+  const year = /^(\d{4})-/.exec(said)?.[1];
+  if (!year || !request?.includes(year)) return rest as T;
+  return { ...rest, validFrom: /^\d{4}-\d{2}-\d{2}$/.test(said) ? `${said}T00:00:00.000Z` : said } as T;
 }
 /** The detail the owner's own request names, clause by clause ("Remember: I live in Atlanta."), when the fact shares a word with it. */
 function detailFromRequest(request: string | undefined, text: string): { entity?: string; attribute?: string } {

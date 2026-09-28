@@ -10,6 +10,7 @@
  * - src/memory.ts plainAttribute: drop the leading "current": "…current residence…".
  * - src/memory-review.ts sessionSnapshot, and src/index.ts orderFacts: drop isCurrentFact: "an ended fact is never shown…".
  * - src/memory.ts search: drop isCurrentFact: "an ended fact is never shown…" (memory.search).
+ * - src/memory.ts memory.put: drop withSaidStart: "a start date is kept only when…".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -105,4 +106,18 @@ test("an ended fact is never shown to the model as current: not in a new convers
   const search = (query) => app.registry.execute("memory.search", { query }, app.runtime.context());
   assert.equal((await search("Atlanta")).length, 0, "memory.search finds only what is still true");
   assert.equal((await search("Denver")).length, 1);
+});
+
+test("a start date is kept only when the owner's words name that year; a day is taken, not refused", async (t) => {
+  const { withSaidStart } = await import("../dist/memory.js");
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "2023-10-01" }, "Update where I live: I moved to Denver."), { text: "x" }, "a made-up date is dropped");
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01" }, "Remember: I lived in Paris from 2019."), { text: "x", validFrom: "2019-05-01T00:00:00.000Z" });
+  assert.deepEqual(withSaidStart({ text: "x", validFrom: "2019-05-01T10:00:00Z" }, "since May 2019"), { text: "x", validFrom: "2019-05-01T10:00:00Z" });
+  // qwen2.5:7b's own call: a day nobody said. It used to be refused ("validFrom is not in the right format") until the loop
+  // guard stopped it, and nothing was saved; now the move is saved and ends Atlanta.
+  const { app, current } = await branch(t, [{ entity: "owner", text: "I live in Atlanta.", source: "owner" },
+    { entity: "person", attribute: "location", text: "Now living in Denver", source: "owner update", validFrom: "2023-10-01" }]);
+  await app.runtime.run({ prompt: "Remember: I live in Atlanta." });
+  await app.runtime.run({ prompt: "Update where I live: I moved to Denver." });
+  assert.deepEqual(current().filter((text) => /Atlanta|Denver/.test(text)), ["Now living in Denver"]);
 });
