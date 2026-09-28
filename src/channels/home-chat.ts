@@ -2,6 +2,7 @@ import { z } from "zod";
 import { audit } from "../audit.js";
 import type { Store } from "../store.js";
 import { platformSettings } from "../reach/platform.js";
+import { ownerCommands } from "./owner-commands.js";
 import type { InboundMessage } from "./router.js";
 
 /**
@@ -45,11 +46,19 @@ export function resolveHome(store: Pick<Store, "get">, owner: string, channel: s
 }
 export const noHome = "No chat is set as home yet. Send /sethome from your own account in the chat that should get these.";
 
-/** True for a direct chat with one of the owner's own accounts, named exactly in the window (never a wildcard). */
+/**
+ * One of the owner's own chat accounts, named exactly (never a wildcard): the list `/platform` uses, or the paired
+ * accounts the owner marked as their own under Settings › Chat apps › Commands from your own chat. Being named there
+ * is who the account is; whether it may run programs is that card's own switch, which this does not read.
+ */
+export function ownerAccount(store: Pick<Store, "get">, owner: string, message: Pick<InboundMessage, "channel" | "senderId">): boolean {
+  const named = (account: { channel: string; sender: string }) => account.channel === message.channel && account.sender === message.senderId;
+  return platformSettings(store, owner).owners.some(named) || ownerCommands(store, owner).accounts.some(named);
+}
+/** True for a direct chat with one of the owner's own accounts, not fetched after a restart. */
 export function ownerAccountHere(store: Pick<Store, "get">, owner: string,
   message: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
-  if (message.chatKind !== "direct" || message.caughtUp) return false;
-  return platformSettings(store, owner).owners.some((account) => account.channel === message.channel && account.sender === message.senderId);
+  return message.chatKind === "direct" && !message.caughtUp && ownerAccount(store, owner, message);
 }
 
 const fromWindow = "Choose it from the Branch window instead: /sethome <chat app> [chat], for a chat that has talked to Branch.";
@@ -58,7 +67,7 @@ const fromWindow = "Choose it from the Branch window instead: /sethome <chat app
 export function setHomeFromChat(store: Store, owner: string, argument: string,
   message: Pick<InboundMessage, "channel" | "chatId" | "senderId" | "chatKind" | "caughtUp" | "chatTitle" | "senderName">): string {
   if (!ownerAccountHere(store, owner, message))
-    return `Only the owner chooses the home chat, and from a chat only in a direct chat with one of the owner's own named accounts. ${fromWindow}`;
+    return `Only the owner chooses the home chat, and from a chat only in a direct chat with one of the owner's own accounts (Settings › Chat apps › Commands from your own chat). ${fromWindow}`;
   const word = argument.trim().toLowerCase();
   if (word === "off") { setHomeChat(store, owner, null, `from a chat on ${message.channel}`); return "This chat is no longer home. Results sent home wait until a home is chosen."; }
   if (word && word !== "here") return "Send /sethome to make this chat home, or /sethome off.";
@@ -75,8 +84,7 @@ export function setHomeFromChat(store: Store, owner: string, argument: string,
 export function homeGate(store: Store, owner: string, message: InboundMessage): { reply: string | null } | null {
   const command = /^\/sethome(?:@[\w.-]+)?(?:\s+(off|here))?\s*$/i.exec(message.text.trim());
   if (!command || message.chatKind !== "direct") return null;
-  const mine = platformSettings(store, owner).owners.some((account) => account.channel === message.channel && account.sender === message.senderId);
-  if (!mine) return null;
+  if (!ownerAccount(store, owner, message)) return null;
   if (message.caughtUp) return { reply: null };
   return { reply: setHomeFromChat(store, owner, command[1] ?? "", message) };
 }

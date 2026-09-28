@@ -892,7 +892,8 @@ Three commands Hermes Agent and OpenClaw have, on the one command table:
   Choosing it is the owner's. At the window, phone or terminal, `/sethome` says where home is,
   `/sethome <chat app> [chat]` chooses a chat that has talked to Branch (the latest one on that app when no chat
   is named), and `/sethome off` forgets it. In a chat, `/sethome` (or `/sethome off`) is taken only in a direct
-  chat from one of your own chat accounts, the same exact list `/platform` uses, and before any other command
+  chat from one of your own chat accounts (the exact list `/platform` uses, or the paired accounts marked as yours
+  under Settings › Chat apps › Commands from your own chat, whether or not running commands is on), and before any other command
   is read; from anybody else, or in a group, it is an ordinary message, and one sent while Branch was closed is
   let go.
 - **`/agents`** (`/tasks`, `/subagents`; Hermes `/agents`, OpenClaw `/subagents` and `/tasks`): every task working

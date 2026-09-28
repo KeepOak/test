@@ -141,3 +141,12 @@ test("/commands lists every command a surface can use", async (t) => {
   assert.ok(chat.includes("/agents") && chat.includes("/title"), chat);
   assert.ok(!chat.includes("/lockdown"), "a chat is not offered what it cannot send");
 });
+
+test("/sethome also takes the paired accounts the owner marked as their own under Commands from your own chat", async (t) => {
+  const { app, owner } = await fixture(t);
+  const chat = await standIn(app);
+  app.store.save("settings", owner, "chat-owner-commands", { on: false, accounts: [{ channel: "telegram", sender: "owner-9" }] });
+  await chat.say("owner-9", "/sethome");
+  assert.match(chat.sent.at(-1).text, /This chat is home now/, "named as the owner's own, even with running commands off");
+  assert.deepEqual(resolveHome(app.store, owner, "home", "home"), { channel: "telegram", chatId: "dm-owner-9" });
+});
