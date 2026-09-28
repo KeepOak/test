@@ -1,6 +1,7 @@
 {
   "partialBases": [
-    "redesign/window"
+    "redesign/window",
+    "ci/probe-base"
   ],
   "partialCeiling": 0.75,
   "hubTests": 25,
