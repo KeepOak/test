@@ -158,6 +158,12 @@ export interface ChannelAdapter {
    */
   react?(chatId: string, messageId: string, emoji: string, previous?: string): Promise<void>;
   /**
+   * An app without buttons that reads reactions: from now on, a thumbs up (or check) or thumbs down (or cross) by
+   * `senderId` on the question message `messageId` in this chat comes back as the answer to that question
+   * (`y:<fingerprint>` or `n:<fingerprint>`), once (src/channels/reaction-answers.ts). Absent means answers are typed.
+   */
+  watchAnswers?(chatId: string, messageId: string, senderId: string, fingerprint: string): void;
+  /**
    * Replaces the words of a message this adapter sent, cut to the app's own limit. An app that
    * refuses an edit because the words did not change must treat that as success (see telegram.ts).
    * Absent means there is no progress message and replies are not streamed.
@@ -217,6 +223,8 @@ export function readApprovalAnswer(value: string): { decision: "allow" | "deny";
  * not refuse in words — it fell through and sent the assistant the letter "a".
  */
 export const approvalFallbackNote = "Reply y for yes, or n for no.";
+/** Added where the app reads reactions on the question (src/channels/reaction-answers.ts). */
+export const reactionNote = "Or react \u{1F44D} or \u{1F44E} to this message.";
 /** PR #289: a typed answer that cannot be matched to the question this chat was shown, while several wait. */
 export const severalWaitingInChat = "More than one request is waiting in this conversation. Answer them with their own buttons, or in the app.";
 /** PR #289: the question the chat was shown no longer waits, so a "y" cannot answer it. */
@@ -767,14 +775,19 @@ export class ChannelRouter {
     if (nonce) for (const button of buttons) button.value += `:${nonce}`;
     const text = mayApprove ? checked.text : `${checked.text}\n\n${approveInWindow(waiting.label || waiting.tool || "that")}`;
     const format = faithful && mayApprove ? { spans: [{ offset: asked.length, length: command!.length, kind: "block" as const, language: "shell" }] } : undefined;
+    // An app without buttons that reads reactions (src/channels/reaction-answers.ts) takes a thumbs up or down too.
+    const reacts = !adapter.sendButtons && !!adapter.watchAnswers && !!waiting.fingerprint;
+    const note = `${mayApprove ? approvalFallbackNote : "Reply n for no."}${reacts ? ` ${mayApprove ? reactionNote : "Or react \u{1F44E}."}` : ""}`;
+    let questionId: string | undefined;
     const sent = adapter.sendButtons
       ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId, format).then(() => true, () => false)
-      : await this.deliver(message.channel, message.chatId, `${text}\n\n${mayApprove ? approvalFallbackNote : "Reply n for no."}`,
-        key, message.messageId).then((done) => done.sent, () => false);
+      : await this.deliver(message.channel, message.chatId, `${text}\n\n${note}`, key, message.messageId)
+        .then((done) => { questionId = done.messageId; return done.sent; }, () => false);
     // Q259: a question answered elsewhere while it was being sent is not recorded as shown.
     const still = this.runtime.waitingApprovals(sessionId).some((one) => one.fingerprint === waiting.fingerprint && one.runId === waiting.runId);
     if (sent && still && waiting.fingerprint)
       this.shownInChat.set(`${message.channel}\u0000${message.chatId}`, { sessionId, fingerprint: waiting.fingerprint });
+    if (sent && still && reacts && questionId) adapter.watchAnswers!(message.chatId, questionId, message.senderId, waiting.fingerprint!);
     if (sent && still && faithful && waiting.fingerprint && nonce) {
       if (this.shownCommands.size >= 1000) this.shownCommands.delete(this.shownCommands.keys().next().value!);
       this.shownCommands.set(`${message.channel}\u0000${message.chatId}\u0000${waiting.fingerprint}`, nonce);
