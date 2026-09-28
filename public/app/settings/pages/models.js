@@ -12,7 +12,7 @@ import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
 import { ctl } from "../parts.js";
-import { A, loadAccounts, ownerOnly } from "../../flows/account.js";
+import { A, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { localPicker, freshPick, initLocalPick } from "../../flows/localpick.js";
 import { sections17, init17 } from "../p17-models.js";
 import { t } from "../../../i18n.js";
@@ -24,7 +24,7 @@ let tab = "connections";
 
 function group(p) {
   const n = p.accounts.length;
-  const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(p.name ?? p.pool)}</small></span>${p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>`}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
+  const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, p.name ?? p.pool))}</small></span>${a.ready === true ? p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
   return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}
     <button class="add-row" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${ownerOnly()}>${ic("plus", "s")}${n ? t("window.settings.models.add-another-value-account", { value: esc(p.name ?? p.pool) }) : t("window.settings.models.sign-in-to-value", { value: esc(p.name ?? p.pool) })}</button></div>`;
 }
@@ -324,3 +324,12 @@ const advanced = () => `<div class="sec x15-sec"><h2>${t("window.settings.models
 
 const TECHNICAL = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.retries-and-timeouts")}</h2>${row(t("window.settings.models.retries-when-a-service-fails"), num(t("window.settings.models.retries-when-a-service-fails"), "", "m-retries"))}${row(t("window.settings.models.wait-for-the-first-word"), num(t("window.settings.models.wait-for-the-first-word"), "s", "m-first"), t("window.settings.models.then-it-tries-the-next-account"))}${row(t("window.settings.models.model-rounds-per-step"), num(t("window.settings.models.model-rounds-per-step"), "", "m-rounds"))}${row(t("window.settings.models.tool-and-command-timeout"), num(t("window.settings.models.tool-and-command-timeout"), "s", "m-tooltime"))}${row(t("window.settings.models.largest-tool-answer-kept-whole"), num(t("window.settings.models.largest-tool-answer-kept-whole"), "KB", "m-toolkb"), t("window.settings.models.bigger-answers-are-saved-to-a"))}</div>`
   + `<div class="sec x15-sec"><h2>${t("window.settings.models.per-connection")}</h2>${row(t("window.settings.models.thinking-effort"), effortSeg(), t("window.settings.models.for-the-connection-in-use-others"))}${row(t("window.settings.models.service-tier"), knobSeg(t("window.settings.models.service-tier"), "m-tier", [["standard", t("window.settings.models.standard")], ["priority", t("window.settings.models.priority")], ["flex", t("window.settings.models.flex")]], knob("reasoning", "serviceTier")), t("window.settings.models.priority-costs-more-flex-is-cheaper"))}${sw("f15-slow-down-near-a-rate-limit", "Slow down near a rate limit", "Spreads requests out instead of hitting the wall.", SW["f15-slow-down-near-a-rate-limit"][0]())}${sw("f15-keep-claude-s-cache-warm", "Keep Claude’s cache warm", "A tiny request every 4 minutes during long tasks, so repeats cost less.", SW["f15-keep-claude-s-cache-warm"][0](), noneKeptWarm() ? "keep-warm-no-claude" : "")}${row(t("window.settings.models.openrouter-picks"), openRouterSeg(), t("window.settings.models.which-provider-serves-an-openrouter-model"))}${companiesRow()}${sw("f15-fewer-rounds", "Fewer rounds", "Groups tool calls that don’t depend on each other.", SW["f15-fewer-rounds"][0]())}</div>`;
+
+/* Settings search (settings/find.js) reads every tab's rows, and a found row opens its tab. */
+export const TAB_LIST = () => TABS.map(([id, l]) => ({ id, name: say(l) }));
+export function drawTab(id) {
+  const was = tab;
+  tab = id;
+  try { return draw(); } finally { tab = was; }
+}
+export function showTab(id) { if (TABS.some(([known]) => known === id)) tab = id; }

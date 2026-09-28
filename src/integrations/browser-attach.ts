@@ -1,4 +1,5 @@
-import { chromium, type Browser, type BrowserContext } from 'playwright';
+import type { Browser, BrowserContext } from 'playwright';
+import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
 import type { Store } from '../store.js';
 import { hostRefusalFor, refusalFor } from './desktop-config.js';
@@ -82,7 +83,7 @@ export interface AttachedBrowser {
  * used, because that is where their sign-ins live: a fresh one would know nobody.
  */
 export async function attach(port: number,
-  connect: (url: string) => Promise<Browser> = url => chromium.connectOverCDP(url, { timeout: 10000 })): Promise<AttachedBrowser> {
+  connect: (url: string) => Promise<Browser> = async url => (await chromium()).connectOverCDP(url, { timeout: 10000 })): Promise<AttachedBrowser> {
   let browser: Browser;
   try { browser = await connect(`http://127.0.0.1:${port}`); }
   catch (error) {

@@ -143,7 +143,7 @@ async function suggestions(browser, errors) {
     await open();
     check("the suggestion names the Trunk, shows its face and why", /Ledger suggests a change/.test(await page.locator(".dlg .fp17d").innerText()) && (await page.locator(".dlg .fp17d .av").count()) === 1);
     const disabled = await page.locator(".dlg #fk-0 option[disabled]").allInnerTexts();
-    check("kinds the engine does not run cannot be picked, and say why", disabled.join() === "When,If it says,Wait,Repeat,Split and gather,Run a flow" && /not step kinds the engine runs yet/.test(await page.locator(".dlg").innerText()), disabled.join(", "));
+    check("every kind of step can be picked: the engine runs them all", disabled.length === 0 && (await page.locator(".dlg #fk-0 option").count()) === 8, disabled.join(", "));
     await page.locator('.dlg [data-act="ppsee17d"]').click();
     await page.locator('.dlg [data-act="ppdeny17d"]').waitFor();
     check("ppsee17d: See the change shows the difference", (await page.locator(".dlg .df17d li.add").count()) === 1);
