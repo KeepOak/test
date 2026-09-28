@@ -58,7 +58,7 @@ test("every chat app's panel makes an entry the connections file itself accepts,
     assert.ok(!JSON.stringify(entry).includes("…") && !JSON.stringify(entry).includes("{{"), `${recipe.id}: nothing left to fill by hand`);
     const parsed = ChannelConfigSchema.safeParse(entry);
     assert.ok(parsed.success, `${recipe.id}: ${JSON.stringify(parsed.error?.issues ?? [])}`);
-    const service = await parityService(entry.type); // loaded on first use since the idle-memory work
+    const service = await parityService(entry.type); // loaded on first use since perf(channels) d762142a
     if (service) {
       const { id: _id, type: _type, ...settings } = entry;
       const own = service.settings.safeParse(settings);
