@@ -53,6 +53,7 @@ import { MorningBrief } from "../dist/brief.js";
 import { currentValue } from "../dist/settings-kit/changes.js";
 import { accountsSettings, saveAccountsSettings } from "../dist/accounts/settings.js";
 import { markChosen } from "../dist/ship-on.js";
+import { troubleshootSettings, saveTroubleshootSettings } from "../dist/troubleshoot.js";
 import { sdkKitMode, saveSdkKitSettings } from "../dist/sdk-kit.js";
 import { readKnobs, saveKnobs, resetKnobs } from "../dist/knobs/settings.js";
 
@@ -139,6 +140,8 @@ const flipped = [
     old: (s) => s.raw("accounts", { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] }) },
   { name: "quick answers from the web", read: (s) => askMode(s, owner, "answer-engine"), ships: "when-needed", off: (s) => saveAskMode(s, owner, "answer-engine", { mode: "off" }) },
   // Defaults audit (2026-09-28, DEFAULTS-AUDIT.md): none of (a)–(f).
+  { name: "fixing a failed command", read: (s) => troubleshootSettings(s, owner).mode, ships: "when-needed", off: (s) => saveTroubleshootSettings(s, owner, { mode: "off" }),
+    old: (s) => s.raw("troubleshoot", { mode: "off", maxTries: 3 }) },
   { name: "tools for building on Branch", read: (s) => sdkKitMode(s, owner), ships: "when-needed", off: (s) => saveSdkKitSettings(s, owner, { mode: "off" }) },
   { name: "the about-you note", read: (s) => (readKnobs(s, owner, "memory").aboutYouOn ? "on" : "off"), ships: "on", off: (s) => saveKnobs(s, owner, "memory", { aboutYouOn: false }),
     old: (s) => s.raw("knobs-memory", { snapshotFacts: 30, snapshotChars: 2000, aboutYouOn: false, aboutYou: "", aboutYouChars: 1500 }) },

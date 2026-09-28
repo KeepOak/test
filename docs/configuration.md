@@ -2851,8 +2851,8 @@ Around it: a task's own completion checks are retried a set number of times befo
 a small script is checked before it runs, and a program can be run under a real debugger you
 already have (Settings → debug adapters) to stop it on a line and look at what every name holds.
 
-**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, off by
-default, kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
+**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, "when needed" by
+default (the ship-on rule: every fix still goes through the approval rules), kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
 (`{ "mode": "off" | "when-needed" | "on", "maxTries": 1-5 }`, two tries by default; a short-lived key
 cannot change it). It looks at a `shell.execute` or `code.run` that came back with a non-zero exit
 code (or a script that timed out). The model is asked, with no tools, for JSON
