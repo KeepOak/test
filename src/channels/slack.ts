@@ -36,6 +36,16 @@ const envelopeSchema = z.object({
   type: z.string(), envelope_id: z.string().optional(),
   payload: z.object({ event: eventSchema.optional(), event_id: z.string().optional() }).passthrough().optional(),
 }).passthrough();
+/** A button pressed on one of Branch's own questions (Block Kit `block_actions`, over the Socket Mode connection). */
+const pressSchema = z.object({
+  type: z.literal("block_actions"),
+  trigger_id: z.string().min(1).max(200),
+  user: z.object({ id: z.string().min(1).max(64), name: z.string().max(120).optional(), username: z.string().max(120).optional() }).passthrough(),
+  channel: z.object({ id: z.string().min(1).max(64) }).passthrough(),
+  container: z.object({ message_ts: z.string().max(40).optional(), thread_ts: z.string().max(40).optional() }).passthrough().optional(),
+  message: z.object({ ts: z.string().max(40).optional(), thread_ts: z.string().max(40).optional(), bot_id: z.string().optional() }).passthrough().optional(),
+  actions: z.array(z.object({ action_id: z.string().regex(/^branch-answer-\d$/), value: z.string().regex(/^[yan]:[a-f0-9]{1,32}(?::[a-f0-9]{12})?$/) }).passthrough()).length(1),
+}).passthrough();
 
 /** Turns the markdown the assistant writes into the shape Slack renders. */
 export function toMrkdwn(text: string): string {
@@ -130,12 +140,35 @@ export class SlackAdapter implements ChannelAdapter {
     const { envelope_id: id, payload, type } = envelope.data;
     if (id) this.socket?.send(JSON.stringify({ envelope_id: id }));
     if (type === "disconnect") { this.socket?.close(); return; }
+    if (type === "interactive") { this.press(payload, onMessage); return; }
     const eventId = payload?.event_id;
     if (!payload?.event || (eventId && this.seen.has(eventId))) return;
     if (eventId) { this.seen.add(eventId); if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!); }
     try { this.options.onEvent?.(payload.event, this.user?.id ?? null); } catch { /* an automation never stops a reply */ } // mac6/bucket-16
     const inbound = this.inbound(payload.event);
     if (inbound) void onMessage(inbound).catch(() => undefined);
+  }
+  /**
+   * A press on an approval button: Slack signs nothing here, but the payload arrives on this app's own Socket Mode
+   * connection, opened with its app token, and names the person who pressed. Only Branch's own answer buttons count
+   * (their action id and value shape); each press is taken once. An IM conversation (id "D…") is a direct chat.
+   */
+  private press(payload: unknown, onMessage: (message: InboundMessage) => Promise<void>): void {
+    const parsed = pressSchema.safeParse(payload);
+    if (!parsed.success) return;
+    const press = parsed.data, action = press.actions[0]!;
+    if (this.seen.has(`press:${press.trigger_id}`) || press.user.id === this.user?.id) return;
+    this.seen.add(`press:${press.trigger_id}`);
+    if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!);
+    if (this.options.channels?.length && !this.options.channels.includes(press.channel.id) && !press.channel.id.startsWith("D")) return;
+    const direct = press.channel.id.startsWith("D");
+    const thread = press.container?.thread_ts ?? press.message?.thread_ts;
+    void onMessage({
+      channel: this.id, chatId: press.channel.id, chatKind: direct ? "direct" : "group",
+      ...(direct ? {} : { chatTitle: `channel ${press.channel.id}` }),
+      senderId: press.user.id, senderName: press.user.username ?? press.user.name ?? press.user.id, text: action.value,
+      addressed: true, messageId: thread ?? press.container?.message_ts ?? press.message?.ts ?? `press:${press.trigger_id}`,
+    }).catch(() => undefined);
   }
   private inbound(event: z.infer<typeof eventSchema>): InboundMessage | null {
     if (!["message", "app_mention"].includes(event.type)) return null;
@@ -159,6 +192,26 @@ export class SlackAdapter implements ChannelAdapter {
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {
       channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+    });
+    const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
+    return parsed.success ? parsed.data.ts : undefined;
+  }
+  /**
+   * A question with Block Kit buttons (Yes / No). The words go in a section (and as the notification text); each
+   * button's value is the router's answer for that exact question, read back by `press`.
+   */
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string,
+    format?: MessageFormat): Promise<string | undefined> {
+    const words = slackText(text, format).slice(0, 3000);
+    const result = await this.call("chat.postMessage", this.options.token, {
+      channel: chatId, text: words,
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: words } },
+        { type: "actions", elements: buttons.slice(0, 5).map((button, index) => ({ type: "button", action_id: `branch-answer-${index}`,
+          text: { type: "plain_text", text: button.label.slice(0, 75), emoji: false }, value: button.value,
+          ...(button.value.startsWith("y") ? { style: "primary" } : button.value.startsWith("n") ? { style: "danger" } : {}) })) },
+      ],
+      ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
     });
     const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
     return parsed.success ? parsed.data.ts : undefined;

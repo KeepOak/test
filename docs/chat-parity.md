@@ -123,7 +123,7 @@ proved against stand-in adapters and providers; real account connections remain 
 |---|---|---|---|
 | TG | ◐ exec approvals by typed yes/no; clarify questions by buttons | ✅ inline buttons | ✅ buttons carry the request's fingerprint |
 | DC | ✅ buttons | ? | ✅ |
-| SL | ✅ Block Kit | ✅ | — typed y / n |
+| SL | ✅ Block Kit | ✅ | ✅ Block Kit Yes / No buttons carrying the fingerprint (and the per-occurrence nonce for owner DM commands); a press arrives on the Socket Mode connection and is taken once. A command Slack would draw differently (`<`, `>`, `&`, backtick) gets only No |
 | WA | — typed (never polls) | ✅ 👍/👎 reactions | — typed |
 | SG | — | ✅ approval reactions | — typed |
 | IM | ? | ? | — typed |

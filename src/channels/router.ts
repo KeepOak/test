@@ -724,7 +724,9 @@ export class ChannelRouter {
     const faithful = command !== null && checked.text === asked + command
       && checked.text.length + 16 <= (adapter.maxTextLength ?? 3500)
       && this.commandYesHere(message.channel, message.chatId, waiting.runId, waiting.fingerprint ?? "", message)
-      && !(adapter.kind === "discord" && command.includes("`"));
+      && !(adapter.kind === "discord" && command.includes("`"))
+      // Slack reads <…> as links and mentions and & as an escape even in code, and a backtick breaks the fence.
+      && !(adapter.kind === "slack" && /[<>&`]/.test(command));
     // In a group anybody paired may press the button, so a standing yes is only offered one to one.
     // mac7/chat-approvals (integration review): a chat is never offered "Yes always", because a chat
     // may never give one — offering it is offering a button whose only answer is a refusal.

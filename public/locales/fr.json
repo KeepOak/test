@@ -9,7 +9,7 @@
   "window.chat-command.on": "Vos comptes associés sélectionnés peuvent demander des commandes. Chaque commande exacte demande votre accord.",
   "window.chat-command.off": "Désactivé. Les commandes attendent votre accord dans la fenêtre de Branch.",
   "window.chat-command.warning": "Sélectionnez uniquement vos propres comptes associés. Toute personne contrôlant ces comptes peut autoriser des programmes sur cet ordinateur. Chaque commande affiche tous ses arguments et demande votre accord. Les groupes et les verrouillages sont refusés.",
-  "window.chat-command.pair": "Associez d'abord votre compte Telegram ou Discord. Les autres applications nécessitent des boutons liés à la commande exacte.",
+  "window.chat-command.pair": "Associez d'abord votre compte Telegram, Discord ou Slack. Les autres applications nécessitent des boutons liés à la commande exacte.",
   "window.chat-command.pin": "Confirmez avec le code de verrouillage",
   "seasons.branch-arrived": "La modification approuvée est installée — terminer ma tâche",
   "seasons.connector-approve": "Approuver ce connecteur",
