@@ -7032,6 +7032,7 @@
   "window.flows.acct.finish-there": "Vous terminerez la connexion sur leur site, dans votre navigateur.",
   "window.flows.acct.first": "En premier",
   "window.flows.acct.get-key": "Obtenir une clé sur {site}",
+  "window.flows.acct.installed-plan": "Sur cet ordinateur · votre abonnement",
   "window.flows.acct.last": "En dernier",
   "window.flows.acct.local-small": "Sur cet ordinateur · rien à coller",
   "window.flows.acct.more-later": "Vous pourrez y ajouter d’autres comptes ici plus tard.",

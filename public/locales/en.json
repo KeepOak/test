@@ -7031,6 +7031,7 @@
   "window.flows.acct.finish-there": "You’ll finish signing in on their site, in your browser.",
   "window.flows.acct.first": "First",
   "window.flows.acct.get-key": "Get a key from {site}",
+  "window.flows.acct.installed-plan": "On this computer · your plan",
   "window.flows.acct.last": "Last",
   "window.flows.acct.local-small": "On this computer · nothing to paste",
   "window.flows.acct.more-later": "You can add more accounts to it here later.",
