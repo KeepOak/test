@@ -121,9 +121,15 @@ export class LocalRuntimes {
     return { hardware, models: recommendModels(hardware), suggested: bestRecommendation(hardware).model };
   }
 
-  /** The health report's local-runtime section: running, models, last error. */
-  async health(): Promise<{ ok: boolean; summary: string; fix: string }> {
+  /**
+   * The health report's local-runtime section: running, models, last error. `needed` says a connection the owner set up
+   * answers from this computer: then nothing running here is a problem, not an option.
+   */
+  async health(needed = false): Promise<{ ok: boolean; summary: string; fix: string }> {
     const inventory = await this.inventory().catch((error) => { this.note(error); return null; });
+    const running = !!inventory && (inventory.ollama.installed || inventory.lmStudio.running);
+    if (needed && !running) return { ok: false, summary: "A connection you set up answers from this computer, but no model is running here, so its tasks will fail",
+      fix: `Start Ollama or LM Studio, or install Ollama from ${ollamaDownloadPage}.` };
     if (!inventory) return { ok: true, summary: "No model is running on this computer (optional)", fix: `Install Ollama from ${ollamaDownloadPage}.` };
     const parts: string[] = [];
     parts.push(inventory.ollama.installed
