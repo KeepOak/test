@@ -172,6 +172,9 @@ test("Two more things: Accounts saves your own Google app, signs in on Google's 
   const secret = page.locator("#more18-google-secret");
   assert.equal(await secret.getAttribute("type"), "password");
   await secret.fill("gocspx-typed-in-the-window");
+  // A redraw before Save (an engine event arriving) keeps what was typed; seen losing it on Linux CI.
+  await page.evaluate(async () => (await import("/app/core/dom.js")).renderNow());
+  assert.equal(await secret.inputValue(), "gocspx-typed-in-the-window", "a redraw never takes the typed secret");
   await page.locator('[data-act="more18-save"][data-v="google"]').click();
   await until(async () => (await call("/api/personal/signin/google")).settings.clientSecretName === "GOOGLE_SIGNIN_CLIENT_SECRET", "the secret went into the locker (POST /api/personal/signin/google/secret)");
   assert.equal((await call("/api/personal/signin/google")).settings.clientId, "1234-abc.apps.googleusercontent.com", "saved through POST /api/personal/signin/google");
