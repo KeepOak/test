@@ -52,8 +52,12 @@ function show(el) {
   chosen?.scrollIntoView({ block: "nearest" });
 }
 
+/* A redraw while the list is open may have replaced the button: the one drawn in its place takes the choice. */
+const inPlace = (el) => (!el || el.isConnected ? el : el.id ? document.getElementById(el.id)
+  : [...document.querySelectorAll(".gsel")].find((x) => ["sw", "k", "j", "id"].every((k) => x.dataset[k] === el.dataset[k])) ?? null);
+
 function pick(i) {
-  const el = open, found = choices(el)[i];
+  const el = inPlace(open), found = choices(el)[i];
   if (!el || !found || found[2]) return; // a choice that cannot be taken stays where it is
   closePop({ refocus: true });
   open = null;
