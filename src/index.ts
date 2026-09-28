@@ -248,6 +248,8 @@ import { recoverOnStart } from "./never-break/resume.js";
 import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
 import { commandHost } from "./commands/host.js"; // CHAT-185
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
+import { liveChannels } from "./channel-setup/live.js"; // CHAT-147: every chat app set up in the window connects there and then
+import { buildChannelEntry, type ChannelHost } from "./integrations/bootstrap.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
 import { Devices, type DeviceNetwork } from "./devices/index.js"; // mac7/nodes: the owner's other devices
@@ -1496,6 +1498,8 @@ export async function createBranch(options: {
   let closing: Promise<void> | undefined;
   /** Wave mac2 (guards): the sections of the integrations file this start left out, which the launch-file card names. */
   const launchFile = { leftOut: [] as readonly string[] };
+  /** The chat apps' host, filled in once `branch` exists, for apps the Set up panel connects (src/channel-setup/live.ts). */
+  const channelHostRef: { current?: ChannelHost } = {};
   const branch = {
     store,
     registry,
@@ -1551,6 +1555,12 @@ export async function createBranch(options: {
         apiBase: options.telegramApiBase,
       },
     },
+    /** CHAT-147: the Set up panel's apps, connected without a restart and again at every start. */
+    channelSetup: liveChannels(() => ({ store, owner: runtime.owner, router: channels,
+      build: (entry: Record<string, unknown>) => {
+        if (!channelHostRef.current) throw new Error("Chat apps cannot be connected in this launch.");
+        return buildChannelEntry(entry, process.env, channelHostRef.current, web.policy);
+      } })),
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */
     security,
     /** eng-connectors: the owner's own MCP servers, allowed command-line tools, and flagged replies. */
@@ -1858,6 +1868,7 @@ export async function createBranch(options: {
   // on, once everything above has started as the owner: the launch carry-on of interrupted flows
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
+  channelHostRef.current = branch.channelHost;
   channels.ownerDmHost = () => commandHost(runtime, branch); // CHAT-185: the owner's commands from their own chat
   return branch;
 }
