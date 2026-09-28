@@ -128,11 +128,13 @@ test("only Telegram's signed launch data for the task's own person, with the PIN
 });
 
 test("Lockdown ends the phone's session at once, and nothing opens while it is on", async (t) => {
-  const { app, run, call } = await fixture(t);
+  const { app, run, call, release, task } = await fixture(t);
   const opened = await call("/api/miniapp/telegram/session", { body: { initData: launch(42), runId: run.id, pin: "2468" } });
   assert.equal(opened.status, 200);
   setLockdown(app.store, app.runtime.owner, { on: true });
   assert.equal((await call("/api/miniapp/telegram/browser", { token: opened.body.token })).status, 401, "ended the moment Lockdown came on");
   assert.equal((await call("/api/miniapp/telegram/session", { body: { initData: launch(42), runId: run.id, pin: "2468" } })).status, 403);
   setLockdown(app.store, app.runtime.owner, { on: false });
+  release();
+  await task; // the task ends before the engine closes
 });
