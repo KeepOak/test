@@ -45,6 +45,8 @@ const webhookSchema = z.object({
 
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly kind = "whatsapp";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   readonly id: string;
   /** WhatsApp text messages stop at 4096 characters. */
   readonly maxTextLength = 4000;

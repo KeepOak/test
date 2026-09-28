@@ -10000,5 +10000,14 @@
   "window.places.library17.import-spreadsheet": "Tabelle importieren",
   "window.places.library17.import-spreadsheet-hint": "Wähle eine CSV-, TSV-, JSON- oder Excel-Datei. Branch behält sie in der Bibliothek und füllt eine SELECT-Frage aus, die du ausführen kannst.",
   "window.places.library17.import-spreadsheet-limit": "Wähle eine Tabelle, die kleiner als 8 MB ist.",
-  "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal."
+  "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal.",
+  "window.chat-reply.title": "Antworten in jeder App",
+  "window.chat-reply.quote-in": "Deine Nachricht in {name} zitieren",
+  "window.chat-reply.quote-hint": "Auto zitiert im Einzelchat nur, wenn vorher eine neuere Nachricht von dir kam, und in Gruppen immer. Erste zitiert die erste Nachricht jeder Antwort; Jede zitiert alle.",
+  "window.chat-reply.auto": "Auto",
+  "window.chat-reply.first": "Erste",
+  "window.chat-reply.all": "Jede",
+  "window.chat-reply.never": "Nie",
+  "window.chat-reply.react-in": "Auf deine Nachricht in {name} reagieren",
+  "window.chat-reply.react-hint": "Eine Reaktion auf deine Nachricht zeigt, dass Branch sie gesehen hat und wie die Arbeit läuft."
 }

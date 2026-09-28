@@ -1330,6 +1330,10 @@ export async function createBranch(options: {
   try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
   setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
+  channels.trunkName = (sessionId) => {
+    const owned = trunks.trunkForConversation(sessionId);
+    return (owned ? trunks.records.find(owned.trunkId)?.name : undefined) ?? null;
+  };
   channels.trunkReach = (channel, sessionId) => {
     const owned = trunks.trunkForConversation(sessionId);
     const trunk = owned ? trunks.records.find(owned.trunkId) : undefined;
