@@ -129,9 +129,11 @@ export interface ChannelAdapter {
   /**
    * The app's own command picker (Discord's slash commands; Telegram's "/" menu in #590), filled from the same catalog
    * every surface reads. An empty list clears it. Absent means the app keeps its commands elsewhere (Slack's are in the
-   * app's settings) or has none.
+   * app's settings) or has none. `groupCommands` (the same when left out) is for group chats, and `own` for the owner's
+   * own direct chats, on apps whose menus tell them apart (Telegram's scopes).
    */
-  setCommands?(commands: { command: string; description: string }[]): Promise<void>;
+  setCommands?(commands: { command: string; description: string }[], groupCommands?: { command: string; description: string }[],
+    own?: { chatIds: string[]; commands: { command: string; description: string }[] | null }): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -627,16 +629,27 @@ export class ChannelRouter {
   private menuChain: Promise<void> = Promise.resolve();
   /**
    * CHAT-161: every connected app's own command picker, from the one command table: the commands a chat can send with
-   * the owner's switches as they are now, and none while chat commands are off, so a picker never offers a command
-   * that would be read as an ordinary message. One refresh at a time; a failure is written down, never thrown.
+   * the owner's switches as they are now. /new and /trunk always work, so they are always listed. With chat commands
+   * off as shipped, the owner's own paired direct chat still reads them (chat-live-settings.ts commandsInPairedDm), so
+   * the direct-chat menu lists them while a group's follows the switch; a picker never offers a command that would be
+   * read there as an ordinary message. One refresh at a time; a failure is written down, never thrown.
    */
   refreshCommandMenus(): Promise<void> {
     return this.menuChain = this.menuChain.then(async () => {
-      const commands = this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
-        .map((one) => ({ command: one.name, description: one.description }));
-      const unique = [...new Map(commands.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
-      await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
-        try { await adapter.setCommands?.(unique); }
+      const always = [{ command: "new", description: "Start a fresh thread and keep earlier conversations" },
+        { command: "trunk", description: "Which Trunk answers here" }];
+      const listed = chatCommandsFor(commandMode(this.store, this.runtime.owner)).map((one) => ({ command: one.name, description: one.description }));
+      const menu = (rows: { command: string; description: string }[]) =>
+        [...new Map(rows.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const on = this.switches().commands !== "off";
+      const everyone = menu([...always, ...(on ? listed : [])]);
+      // The owner's own accounts (#706) read commands as shipped: their own chats' menus list them where the app has
+      // per-chat menus (Telegram), so nobody else's picker offers a command that would not work for them.
+      const own = !on && commandsInPairedDm(this.store, this.runtime.owner) ? menu([...always, ...listed]) : null;
+      await Promise.all([...this.adapters.entries()].map(async ([id, { adapter }]) => {
+        // With no own menu (the owner set the switch), their chats' menus are cleared back to everyone's.
+        const chats = this.ownChats(id);
+        try { await adapter.setCommands?.(everyone, everyone, chats.length ? { chatIds: chats, commands: own } : undefined); }
         catch (error) { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}: ${error instanceof Error ? error.message : String(error)}`); }
       }));
     });
@@ -744,11 +757,11 @@ export class ChannelRouter {
    */
   private async voiceReply(message: InboundMessage, text: string): Promise<void> {
     const adapter = this.adapters.get(message.channel)?.adapter;
-    if (!adapter?.sendVoice) return;
-    const checked = await this.outboundGuard(text);
+    if (!adapter?.sendVoice || !this.liveOn() || !this.senderAllowed(message.channel, message.senderId)) return;
+    const checked = await this.outboundGuard(this.hideLeaks(text));
     if (checked.blocked) return;
     const spoken = await this.speakReply(checked.text);
-    if (!spoken) return;
+    if (!spoken || !this.liveOn() || !this.senderAllowed(message.channel, message.senderId)) return;
     await adapter.sendVoice(message.chatId, spoken.bytes, spoken.mediaType, message.messageId);
   }
   /** The conversation this chat is carrying on, when there is one. */
@@ -960,6 +973,12 @@ export class ChannelRouter {
   /** The owner's on / off / when-needed switches for the chat extras (chat-live-settings.ts). */
   switches(): ChatLiveSwitches {
     return chatLiveSwitches(this.store, this.runtime.owner);
+  }
+  /** The direct chats of the owner's own approved accounts on one app (a person's direct chat id is their own id). */
+  private ownChats(channel: string): string[] {
+    const named = [...ownerCommands(this.store, this.runtime.owner).accounts, ...platformSettings(this.store, this.runtime.owner).owners];
+    return [...new Set(named.filter((account) => account.channel === channel && this.pair(channel, account.sender)?.status === "approved")
+      .map((account) => account.sender))];
   }
   /** One of the accounts the owner named as their own: in "Commands from your own chat" or as a /platform owner. */
   private ownAccount(channel: string, senderId: string): boolean {
