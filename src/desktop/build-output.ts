@@ -116,6 +116,20 @@ async function readCapped(response: Response): Promise<Buffer> {
   return Buffer.from(await response.arrayBuffer());
 }
 
+/** Where GitHub's build of `commit` stands: its beta-output run for that push, as GitHub's public list of runs says. */
+export async function outputRun(fetchImpl: typeof fetch, repo: string, commit: string, agent: string): Promise<"building" | "queued" | "failed" | "done" | "none" | "unknown"> {
+  try {
+    const response = await fetchImpl(`https://api.github.com/repos/${repo}/actions/runs?head_sha=${commit}&event=push&per_page=20`,
+      { headers: { accept: "application/vnd.github+json", "user-agent": agent }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) return "unknown";
+    const runs = ((await response.json()) as { workflow_runs?: { path?: string; status?: string; conclusion?: string | null }[] }).workflow_runs ?? [];
+    const run = runs.find((one) => one.path === ".github/workflows/beta-output.yml");
+    if (!run) return "none";
+    if (run.status === "completed") return run.conclusion === "success" ? "done" : "failed";
+    return run.status === "in_progress" ? "building" : "queued";
+  } catch { return "unknown"; }
+}
+
 /**
  * Takes GitHub's build output for `commit` into `source`, once it is there and checks out in full. Answers why not when
  * it did not (then the caller compiles the change itself); never throws for a missing or refused output.
@@ -125,7 +139,7 @@ export async function useBuiltOutput(input: FetchOutputInput): Promise<{ used: t
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
   const started = now(), deadline = started + (input.waitMs ?? 6 * 60_000), agent = "BranchAgent-beta-update";
   if (!/^[0-9a-f]{40}$/.test(input.commit)) return { used: false, why: "the change has no id" };
-  let body: Buffer | null = null;
+  let body: Buffer | null = null, lastLook = Number.NEGATIVE_INFINITY;
   for (;;) {
     try {
       const response = await fetchImpl(outputUrl(input.repo, input.commit), { headers: { "user-agent": agent }, signal: AbortSignal.timeout(120_000) });
@@ -133,7 +147,16 @@ export async function useBuiltOutput(input: FetchOutputInput): Promise<{ used: t
       if (response.status !== 404) return { used: false, why: `GitHub answered ${response.status} for the build output` };
     } catch (error) { return { used: false, why: `the build output could not be downloaded (${(error as Error).message})` }; }
     if (now() + (input.pollMs ?? 15_000) > deadline) return { used: false, why: "GitHub's build of this change did not arrive in time" };
-    input.log?.("GitHub's build of this change is not there yet; waiting for it");
+    // Waiting is only worth it while GitHub is building it: one that has not started (GitHub's queue is long) or has
+    // failed is not waited for. Asked at most once a minute (GitHub allows 60 such questions an hour without sign-in).
+    if (now() - lastLook >= 60_000) {
+      lastLook = now();
+      const run = await outputRun(fetchImpl, input.repo, input.commit, agent);
+      input.log?.(`GitHub's build of this change: ${run}`);
+      if (run === "queued") return { used: false, why: "GitHub's build of this change has not started yet (its queue is busy)" };
+      if (run === "failed") return { used: false, why: "GitHub's build of this change did not finish" };
+      if (run === "none" && now() - started > 90_000) return { used: false, why: "GitHub is not building this change" };
+    }
     await sleep(input.pollMs ?? 15_000);
   }
   const digest = createHash("sha256").update(body).digest("hex");

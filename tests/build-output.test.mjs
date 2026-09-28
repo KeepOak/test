@@ -126,11 +126,13 @@ test("a record signed through the certificate authority for Branch's workflow, t
 });
 
 /** GitHub as the update sees it: the output's address, and the attestation look-up by its digest. */
-function github({ body, bundle, missingFor = 0 }) {
+function github({ body, bundle, missingFor = 0, run }) {
   let asked = 0;
   const calls = [];
   const fetch = async (url) => {
     calls.push(String(url));
+    if (String(url).includes("/actions/runs?head_sha=") && run)
+      return Response.json({ workflow_runs: [{ path: ".github/workflows/checks.yml", status: "in_progress" }, { path: ".github/workflows/beta-output.yml", ...run }] });
     if (String(url) === outputUrl(REPO, COMMIT)) return asked++ < missingFor || !body ? new Response("", { status: 404 }) : new Response(body);
     if (String(url).includes("/attestations/sha256:")) return bundle ? Response.json({ attestations: [{ bundle }] }) : new Response("", { status: 404 });
     return new Response("", { status: 500 });
@@ -181,4 +183,20 @@ test("without a usable GitHub build the change is compiled here, exactly as befo
   const plain = [];
   await compileChange(async (fileName, args) => { plain.push([fileName, ...args].join(" ")); return ""; }, { buildDir: source, commit: COMMIT }, source);
   assert.deepEqual(plain, ["npm run build"], "a plan that names no GitHub build never looks for one");
+});
+
+test("GitHub's build is waited for only while GitHub is building it: queued or failed, the change is compiled here at once", async (t) => {
+  const source = await temp(t);
+  let clock = 0;
+  const now = () => clock, sleep = async (ms) => { clock += ms; };
+  const queued = await useBuiltOutput({ repo: REPO, commit: COMMIT, source, ...github({ run: { status: "queued" } }), now, sleep, pollMs: 100 });
+  assert.deepEqual(queued, { used: false, why: "GitHub's build of this change has not started yet (its queue is busy)" });
+  assert.equal(clock, 0, "nothing was waited for");
+  const failed = await useBuiltOutput({ repo: REPO, commit: COMMIT, source, ...github({ run: { status: "completed", conclusion: "failure" } }), now, sleep, pollMs: 100 });
+  assert.match(failed.why, /did not finish/);
+  clock = 0;
+  const building = github({ run: { status: "in_progress" } });
+  const waited = await useBuiltOutput({ repo: REPO, commit: COMMIT, source, ...building, now, sleep, pollMs: 10_000, waitMs: 150_000 });
+  assert.match(waited.why, /did not arrive in time/);
+  assert.equal(building.calls.filter((url) => url.includes("/actions/runs")).length, 3, "asked about the run once a minute, no more");
 });
