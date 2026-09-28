@@ -72,6 +72,7 @@ const ADD = { mcp: ["tool-add", "Add a server"], skills: ["tool-add", "Add a ski
 
 function trunksTab() {
   const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}</b><small>${esc(tr.title ?? "")}</small>${liveLine18(tr)}</span>
+    <button class="btn sm" type="button" data-act="trunk-default" data-id="${esc(tr.id)}" aria-pressed="${tr.id === E.defaultTrunkId}">${t("look.badge.default")}</button>
     <button class="btn sm" type="button" data-act="edit" data-id="${esc(tr.id)}">${t("prompts.action.edit")}</button>
     <button class="btn ghost sm" type="button" data-act="pausetrunk" data-id="${esc(tr.id)}">${tr.paused ? t("autonomy.resume") : t("autonomy.pause")}</button></div>`).join("");
   /* The jobs in the language in force (flows/trunk.js TEMPLATE_WORDS, the same jobs in the same order); the face keeps the job's own name. */
