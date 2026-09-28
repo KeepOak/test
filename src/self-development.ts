@@ -116,7 +116,7 @@ function projectInstructions(name: string, base: string): string {
     `When the owner asks for a pull request, use github.pull_request_from_changes with name ${name}, targetRepository ${branchRepository}, and base ${base}.`,
     "The pull-request summary must include a Why merge this section in plain words, and the test evidence: each command run and its pass and fail counts.",
     "Open it as a draft, and never send to a shared line or change a repository's settings or branch protection.",
-    "To finish it, wait with github.wait_for_checks until every check on the exact commit has passed (pending is never passed), then call branch.finish_source_change with this worktree, the repository and the pull request number: in the owner's selected Full Access it gets an independent read-only review and merges the checked commit; otherwise the owner reviews and merges it in Inbox. Include branch.finish_source_change in the contract's permissions for that. Beta builds a merged change and tries it on a copy of the owner's data before it swaps in.",
+    "To finish it, wait with github.wait_for_checks until every check on the exact commit has passed (pending is never passed; when one fails, read why with github.check_logs, fix it and push again, or run a flaky one again with github.rerun_failed_checks), then call branch.finish_source_change with this worktree, the repository and the pull request number: in the owner's selected Full Access it gets an independent read-only review and merges the checked commit; otherwise the owner reviews and merges it in Inbox. Include branch.finish_source_change in the contract's permissions for that. Beta builds a merged change and tries it on a copy of the owner's data before it swaps in.",
   ].join(" ");
 }
 
