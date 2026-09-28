@@ -327,8 +327,6 @@ switch ($Action) {
       } else {
         if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
         Assert-CaptureInput $handle
-        $box = $node.Current.BoundingRectangle
-        $at = @([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2))
         [BranchDesktop]::Click([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2))
         $result = @{ how = 'point'; name = $node.Current.Name; at = $at }
       }
@@ -887,16 +885,17 @@ export class LiveScreenProcess {
     let answer: Record<string, unknown>;
     try { answer = JSON.parse(line) as Record<string, unknown>; } catch { throw new Error('Windows did not answer that in a way Branch could read.'); }
     if (typeof answer.error === 'string') throw new Error(answer.error.slice(0, 300));
-    const screen = screenBox(answer.screen);
     if (this.target) {
       const actual = NativeCaptureTargetSchema.parse(answer.target);
       if (JSON.stringify(actual) !== JSON.stringify(this.target) || answer.method !== this.target.kind ||
         JSON.stringify(answer.screen) !== JSON.stringify(this.target.bounds))
         throw new Error('The captured target changed. Open a fresh view before using it.');
     }
+    // The screen the frame is of: the pinned target's bounds, or the box the script reported (for the Trunk's cursor).
+    const screen = this.target ? this.target.bounds : screenBox(answer.screen);
     return { width: Number(answer.width) || 0, height: Number(answer.height) || 0, data: String(answer.data ?? ''),
       windows: answer.windows, after: answer.after,
-      ...(this.target ? { target: this.target, method: this.target.kind, screen: this.target.bounds } : screen ? { screen } : {}) };
+      ...(this.target ? { target: this.target, method: this.target.kind } : {}), ...(screen ? { screen } : {}) };
   }
   /** Lets the program go; nothing runs after this. */
   close(): void {

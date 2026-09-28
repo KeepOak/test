@@ -24,11 +24,16 @@ const oldest = (trunks: readonly Trunk[]): Trunk | undefined =>
  * A Trunk that came from a file, or that a restore brought back and still holds for the owner's yes, is never the
  * default by being oldest: the default is the owner's own assistant, and only the owner's own pick makes such a Trunk
  * that. With only those here, the engine makes a default of its own (Trunks.ensureDefault).
+ *
+ * The owner's call (2026-09-27): the default ships with the app to take the stray conversations. Unless the owner is
+ * handing the part on (`handOn`: they removed the default), only a Trunk setup's own "Your first Trunk" step made
+ * (`fromSetup`) may become it by being oldest. A Trunk the owner made by hand keeps the reach they gave it, and the
+ * engine makes a default of its own instead.
  */
-function eligible(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[]): Trunk[] {
+function eligible(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[], handOn: boolean): Trunk[] {
   const held = HeldListSchema.safeParse(store.get("settings", scope, restoredTrunksKey)?.data ?? {});
   const holding = new Set(held.success ? held.data.trunks.map((trunk) => trunk.id) : []);
-  return trunks.filter((trunk) => !trunk.fromFile && !holding.has(trunk.id));
+  return trunks.filter((trunk) => !trunk.fromFile && !holding.has(trunk.id) && (handOn || trunk.fromSetup === true));
 }
 
 /** Setup finished or skipped (src/onboarding.ts). */
@@ -37,15 +42,20 @@ export function setupOver(store: Pick<Store, "get">, scope: string): boolean {
   return setup.done || setup.skipped;
 }
 
-/** The Trunk that is the default when the owner picked none: the oldest that may be. */
-export function defaultAmong(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[]): Trunk | undefined {
-  return oldest(eligible(store, scope, trunks));
+/** The Trunk that is the default when the owner picked none: the oldest that may be (see eligible for `handOn`). */
+export function defaultAmong(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[], handOn = false): Trunk | undefined {
+  return oldest(eligible(store, scope, trunks, handOn));
 }
 
 /** The default Trunk among these, read and never written. */
 export function pickDefault(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[]): Trunk | undefined {
+  return designatedDefault(store, scope, trunks) ?? (setupOver(store, scope) ? defaultAmong(store, scope, trunks) : undefined);
+}
+
+/** Only a saved default designation grants the owner's authority; fallback routing alone never does. */
+export function designatedDefault(store: Pick<Store, "get">, scope: string, trunks: readonly Trunk[]): Trunk | undefined {
   const picked = store.get("governance", scope, defaultPointer)?.data as { trunkId?: unknown } | undefined;
-  return trunks.find((trunk) => trunk.id === picked?.trunkId) ?? (setupOver(store, scope) ? defaultAmong(store, scope, trunks) : undefined);
+  return trunks.find((trunk) => trunk.id === picked?.trunkId);
 }
 
 /** For the chat apps (lane chatparity's routes fall back to it): the default Trunk's id, or null while there is none. */

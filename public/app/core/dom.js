@@ -15,10 +15,31 @@ export function applyCss(root = document) {
   }
 }
 
+/* Opt-in disclosure state survives a redraw of the same content. */
+function detailState(from) {
+  const openDetails = new Map();
+  for (const details of from.querySelectorAll("details[data-persist]")) {
+    const key = details.dataset.persist;
+    const states = openDetails.get(key) ?? [];
+    states.push(details.open);
+    openDetails.set(key, states);
+  }
+  return openDetails;
+}
+function restoreDetails(openDetails, to) {
+  for (const details of to.querySelectorAll("details[data-persist]")) {
+    const states = openDetails.get(details.dataset.persist);
+    if (states?.length) details.open = states.shift();
+  }
+}
+export function keepDetails(from, to) { restoreDetails(detailState(from), to); }
+
 /* Draws html into a region and applies its styles. Returns the region. */
 export function paint(region, html) {
   if (!region) return region;
+  const previous = detailState(region);
   region.innerHTML = html;
+  restoreDetails(previous, region);
   applyCss(region);
   return region;
 }
@@ -28,7 +49,15 @@ export function paint(region, html) {
    the press ends (after its click has been handled). A press whose end never comes (a drag, a context menu, the window
    losing focus) lets go after a second at most, so nothing stays undrawn. */
 let pressed = null, heldBack = false, letGo = null;
-const released = () => { clearTimeout(letGo); pressed = null; if (heldBack) { heldBack = false; render(); } };
+const afterPress = [];
+const released = () => {
+  clearTimeout(letGo); pressed = null;
+  if (heldBack) { heldBack = false; render(); }
+  // Released at the click's capture: a held-back draw of its own waits until that click has reached its handler.
+  if (afterPress.length) { const due = afterPress.splice(0); setTimeout(() => { for (const draw of due) draw(); }); }
+};
+/** A draw that is not render()'s (a popover drawn again) held back by pressIn(), run once the press has ended. */
+export function whenReleased(draw) { afterPress.push(draw); }
 document.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   pressed = e.target instanceof Element ? e.target : null;

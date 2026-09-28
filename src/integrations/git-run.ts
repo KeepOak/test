@@ -166,6 +166,8 @@ export function explainGit(result: Pick<GitOutcome, "status" | "stderr" | "stdou
   if (result.status === "output_limit") return "Git produced more output than fits here; ask for a smaller range.";
   const text = `${result.stderr}\n${result.stdout}`;
   for (const [pattern, message] of PLAIN) if (pattern.test(text)) return message;
-  const line = result.stderr.split("\n").map((value) => value.replace(/^(fatal|error):\s*/i, "").trim()).find(Boolean);
+  // Git's own "fatal:" or "error:" line says what went wrong; progress lines such as "Preparing worktree" come first.
+  const lines = result.stderr.split("\n").map((value) => value.trim()).filter(Boolean);
+  const line = (lines.find((value) => /^(fatal|error):/i.test(value)) ?? lines[0])?.replace(/^(fatal|error):\s*/i, "");
   return line ? `Git could not do that: ${line.slice(0, 300)}` : "Git could not do that.";
 }

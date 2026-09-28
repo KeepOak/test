@@ -25,7 +25,7 @@ import { t } from "../../i18n.js";
 /* The tabs, in order, with the words each is named by. */
 const TABS = [["tools", "dashboard.filter.tools"], ["skills", "nav.skills"], ["apps", "dashboard.links.chats"], ["prompts", "window.what.prompts"]];
 const ICON = { tool: "puzzle", skill: "spark", prompt: "chat", flow: "bolt" };
-const W = { tab: "tools", lists: null, opening: 0 };
+const W = { tab: "tools", lists: null, opening: 0, using: null, fields: [] };
 
 /* An engine description as one line: its first line, up to the end of its first sentence. */
 export function oneLine(text) {
@@ -52,12 +52,14 @@ async function readLists() {
   for (const r of reads) if (r.status === "rejected") toast(r.reason?.message ?? String(r.reason));
   const [tools, apps, prompts, flows] = reads.map((r) => (r.status === "fulfilled" ? r.value : null));
   const saved = prompts?.prompts ?? [], commands = new Set(saved.map((p) => p.command));
+  const promptEntry = (p) => ({ ...entry("prompt", p.title, p.description, p.body),
+    config: p.command === "notes-example" ? prompts?.exampleServer : null });
   return {
     tools: byName((tools?.tools ?? []).map((x) => asked("window.what.ask-tool", entry("tool", x.name, x.description)))).filter(described),
     skills: byName(skills.map((x) => asked("window.what.ask-skill", entry("skill", x.name, x.description)))).filter(described),
     apps: (apps?.channels ?? []).map((x) => ({ ...asked("window.what.ask-app", entry("app", x.name, x.what)), id: String(x.id ?? "") })).filter(described),
-    prompts: byName([...saved.map((p) => entry("prompt", p.title, p.description, p.body)),
-      ...(prompts?.examples ?? []).filter((p) => !commands.has(p.command)).map((p) => entry("prompt", p.title, p.description, p.body)),
+    prompts: byName([...saved.map(promptEntry),
+      ...(prompts?.examples ?? []).filter((p) => !commands.has(p.command)).map(promptEntry),
       ...(flows?.flows ?? []).map((f) => asked("window.what.ask-flow", entry("flow", f.name, f.description)))]).filter(described),
   };
 }
@@ -71,7 +73,8 @@ function toolGroups(tools) {
 }
 
 const mark = (e) => (e.kind === "app" ? logo(e.id, e.name, 34) : `<span class="ico-tile">${ic(ICON[e.kind], "s")}</span>`);
-const card = (e) => `<div class="wc-card" data-k="${esc(e.kind)}">${mark(e)}<span class="grow"><b>${esc(e.name)}</b><small title="${esc(e.line)}">${esc(e.line)}</small></span><button class="btn ghost sm" type="button" data-act="whatcan-try" data-k="${esc(e.kind)}" data-v="${esc(e.name)}">${t("window.what.try")}</button></div>`;
+const snippet = (e) => e.config ? `<details><summary>${t("window.what.server-config")}</summary><p class="hint">${t("window.what.server-config-hint")}</p><pre><code>${esc(JSON.stringify(e.config, null, 2))}</code></pre></details>` : "";
+const card = (e) => `<div class="wc-card" data-k="${esc(e.kind)}">${mark(e)}<span class="grow"><b>${esc(e.name)}</b><small title="${esc(e.line)}">${esc(e.line)}</small>${snippet(e)}</span><button class="btn ghost sm" type="button" data-act="whatcan-try" data-k="${esc(e.kind)}" data-v="${esc(e.name)}">${t("window.what.try")}</button></div>`;
 const grid = (list) => `<div class="wc-grid">${list.map(card).join("")}</div>`;
 const tabBody = () => (W.tab === "tools" ? toolGroups(W.lists.tools).map((g) => `${g.label ? `<h3 class="wc-h">${esc(g.label)}</h3>` : ""}${grid(g.list)}`).join("") : grid(W.lists[W.tab]));
 
@@ -99,14 +102,49 @@ function tryIt(el) {
   const list = W.lists ? Object.values(W.lists).flat() : [];
   const e = list.find((x) => x.kind === el.dataset.k && x.name === el.dataset.v);
   if (!e) return;
+  withBlanksFilled(e.name, e.ask, openDraft);
+}
+
+/**
+ * A prompt's blanks ({{input}}, {{address}}…) asked for in labelled boxes, then `then` is handed the filled text; with no
+ * blank it is handed at once. {{today}} is filled by itself. QA retest 2026-09-28 (m16): shared by What can Branch do's
+ * Try it and a saved prompt's Use (chat/messages.js), which used to put the raw {{input}} in the box.
+ */
+export function withBlanksFilled(title, body, then) {
+  const fields = [...new Set([...body.matchAll(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g)].map((match) => match[1]))].filter((name) => name !== "today");
+  if (fields.length) {
+    W.using = { body, then }; W.fields = fields;
+    markLive(fields.map((name) => `sw:wc-field-${name}`));
+    openDlg({ title, body: `<p class="hint">${t("window.what.fill-blanks")}</p>${fields.map((name) => `<label class="fld"><span>${esc(name === "input" ? t("window.what.your-text") : name)}</span><textarea class="inp" id="wc-field-${name}" maxlength="4000" rows="3" required></textarea></label>`).join("")}`,
+      foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="whatcan-prepare">${t("window.what.prepare-draft")}</button>` });
+    return;
+  }
+  then(body.replace(/\{\{\s*today\s*\}\}/g, new Date().toLocaleDateString("en-CA")));
+}
+
+function openDraft(text) {
   closeDlg();
-  S.drafts.new = e.ask;
+  S.drafts.new = text;
   startConversation();
 }
 
+function prepareDraft() {
+  if (!W.using) return;
+  const values = Object.fromEntries(W.fields.map((name) => [name, document.getElementById(`wc-field-${name}`)?.value ?? ""]));
+  const missing = W.fields.find((name) => !values[name].trim());
+  if (missing) { document.getElementById(`wc-field-${missing}`)?.focus(); toast(t("window.what.fill-required")); return; }
+  values.today = new Date().toLocaleDateString("en-CA");
+  const text = W.using.body.replace(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g, (whole, name) => values[name] ?? whole);
+  const then = W.using.then;
+  W.using = null;
+  closeDlg();
+  then(text);
+}
+
 export function initWhatCan() {
-  markLive(["whatcan", "whatcan-tab", "whatcan-try"]);
+  markLive(["whatcan", "whatcan-tab", "whatcan-try", "whatcan-prepare"]);
   on("whatcan", () => open());
   on("whatcan-tab", (el) => { if (!W.lists || !TABS.some(([k]) => k === el.dataset.v)) return; W.tab = el.dataset.v; draw(); });
   on("whatcan-try", (el) => tryIt(el));
+  on("whatcan-prepare", () => prepareDraft());
 }

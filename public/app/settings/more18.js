@@ -3,13 +3,14 @@
    - Email and calendar: the owner's own Google and Microsoft sign-ins (src/personal/signin.ts). The client id of the
      owner's own app is saved with POST /api/personal/signin/<service>; its client secret, when typed, goes only one way,
      into the engine's secrets locker with POST /api/personal/signin/<service>/secret (the owner's alone). The field is
-     never filled from the engine and never kept by the window, so a saved secret is never shown back; Sign in is POST
+     never filled from the engine or stored in window state; unsaved input stays only in its password control until
+     sent or the page is closed, so a saved secret is never shown back. Sign in is POST
      /api/personal/signin/<service>/start, whose address is opened only when it is https on that service's own sign-in
      host. Whether it is signed in is GET /api/personal/signin/<service> status.signedIn.
    - Bring back your Branch: a backup file (GET /api/backup's own format) sent to POST /api/restore. The engine brings
      it back only into a Branch with no conversations yet and says so otherwise; nothing here replaces what is there
      (the route's replace=1 is never used). What it holds back for the owner's yes waits in Data & usage. */
-import { esc, renderNow } from "../core/dom.js";
+import { esc, renderNow, afterDraw } from "../core/dom.js";
 import { api, apiBytes } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -21,6 +22,16 @@ const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["m
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
 const M = { signin: {}, busy: false, typed: {} };
 const typed = (id, saved) => esc(M.typed[id] ?? saved ?? "");
+/* Reuse the password controls during a draw of Accounts: a late read must not discard input. No secret goes into
+   markup or draft state, and these transient node references are released at the end of that same draw. */
+let passwordControls = [];
+afterDraw(() => {
+  for (const control of passwordControls) {
+    const fresh = document.getElementById(control.id);
+    if (fresh && fresh !== control && ownerHere()) fresh.replaceWith(control);
+  }
+  passwordControls = [];
+});
 
 /* The saved settings and whether each service is signed in; a refusal says why and leaves that service out. */
 export async function loadMore() {
@@ -45,6 +56,7 @@ function service([id, name]) {
 /* The two sections, drawn at the foot of Settings › Accounts; the owner's alone. */
 export function moreSections() {
   if (!ownerHere()) return "";
+  passwordControls = SERVICES.map(([id]) => document.getElementById(`more18-${id}-secret`)).filter(Boolean);
   return `<div class="sec more18"><h2>${t("window.flows.setup.email")}</h2><p class="hint">${t("window.flows.setup.email-hint")}</p>${SERVICES.map(service).join("")}</div>`
     + `<div class="sec more18"><h2>${t("first-run-steps.restore-title")}</h2><p class="hint">${t("first-run-steps.restore-purpose")}</p>`
     + `<div class="acts"><button class="btn" type="button" data-act="more18-restore" ${M.busy ? "disabled" : ""}>${ic("folder", "s")}${M.busy ? t("first-run-steps.restore-working") : t("window.flows.setup.backup")}</button></div>`
@@ -56,10 +68,10 @@ export function moreSections() {
 async function save(id) {
   const client = document.getElementById(`more18-${id}-client`), secret = document.getElementById(`more18-${id}-secret`);
   if (!client || !secret) return false;
+  const value = secret.value.trim();
   try {
     await api(`personal/signin/${id}`, { clientId: client.value.trim() });
     delete M.typed[client.id];
-    const value = secret.value.trim();
     if (value) await api(`personal/signin/${id}/secret`, { value });
     secret.value = "";
     return true;

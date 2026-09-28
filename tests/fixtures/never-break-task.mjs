@@ -10,12 +10,14 @@
  *
  * CHAOS_KILL_AT kills the process at an exact point instead of at a random moment: "saved:<call id>"
  * just after the model's request for that call is saved to the conversation, "result:<call id>"
- * just before that call's result is saved.
+ * just before that call's result is saved, or "partial:<call id>" after files.write truncates its file.
  *
  * CHAOS_PLAN is a JSON list of { id, tool, args }. Tools: chaos.look (only looks), chaos.send
  * (reaches "outside": appends to outbox.log), and the real files.write.
  */
 import { appendFileSync, realpathSync } from "node:fs";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -33,11 +35,21 @@ const log = (file, line) => appendFileSync(join(root, file), `${line}\n`);
 
 /** The next step is the first one the conversation holds no settled result for. */
 function nextCall(messages) {
-  const settled = new Set(messages.filter((m) => m.role === "tool" && !/"status":"not-done"/.test(m.content)).map((m) => m.toolCallId));
+  const results = new Map(messages.filter((m) => m.role === "tool").map((m) => [m.toolCallId, JSON.parse(m.content)]));
+  const settled = new Set([...results].filter(([, result]) => result.ok !== false && result.status !== "not-done").map(([id]) => id));
   const asked = messages.filter((m) => m.role === "assistant").flatMap((m) => m.toolCalls ?? []).map((c) => c.id);
   for (const step of plan) {
     const ids = asked.filter((id) => id === step.id || id.startsWith(`${step.id}~`));
     if (ids.some((id) => settled.has(id))) continue;
+    const failed = results.get(ids.at(-1));
+    if (failed?.ok === false && failed.status !== "not-done") {
+      if (step.tool !== "files.write" || !/read .* with files.read first|Read it again with files.read/.test(failed.error ?? ""))
+        throw new Error(`scripted step failed: ${JSON.stringify(failed)}`);
+      // A cut-off write can leave a partial file. The real guard still requires a fresh read before
+      // replacing it, so this model reads and retries instead of treating the refusal as success.
+      const readId = `read-${step.id}~${ids.length}`;
+      if (!settled.has(readId)) return { id: readId, name: "files.read", arguments: JSON.stringify({ path: step.args.path }) };
+    }
     const id = ids.length ? `${step.id}~${ids.length}` : step.id;
     return { id, name: step.tool, arguments: JSON.stringify(step.args ?? {}) };
   }
@@ -62,6 +74,21 @@ function killAtExactPoint() {
   if (!point || !callId) return;
   const save = app.store.message.bind(app.store);
   const kill = () => { log("calls.log", `killed at ${point}:${callId}`); process.kill(process.pid, "SIGKILL"); };
+  if (point === "partial") {
+    const step = plan.find((one) => one.id === callId && one.tool === "files.write");
+    if (!step) throw new Error("partial kill needs a files.write step");
+    const target = resolve(root, "workspace", step.args.path);
+    const open = fsPromises.open;
+    fsPromises.open = async (path, ...args) => {
+      const handle = await open(path, ...args);
+      if (resolve(String(path)) === target) {
+        const truncate = handle.truncate.bind(handle);
+        handle.truncate = async (...values) => { await truncate(...values); kill(); };
+      }
+      return handle;
+    };
+    syncBuiltinESMExports();
+  }
   app.store.message = (sessionId, message, ...rest) => {
     if (point === "result" && message.role === "tool" && message.toolCallId === callId) kill();
     save(sessionId, message, ...rest);
@@ -78,7 +105,7 @@ function fillDiskLater() {
 }
 const summary = (report) => ({
   report: report.map(({ resumed, ...rest }) => rest),
-  runs: app.store.runs("local").map((r) => ({ id: r.id, status: r.status, output: r.output })),
+  runs: app.store.runs("local").filter(r => r.prompt === "work through the plan").map((r) => ({ id: r.id, status: r.status, output: r.output })),
   steps: Object.fromEntries(app.store.runs("local").map((r) => [r.id, app.neverBreak.journal.steps(r.id)])),
 });
 const work = () => app.runtime.run({ prompt: "work through the plan", onTextDelta: () => undefined, onStarted: (r) => log("calls.log", `run ${r.id}`) });

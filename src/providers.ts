@@ -239,7 +239,7 @@ export function supportsImages(provider: Provider): boolean {
   return said.acceptsImages === true;
 }
 /** Address and key for a provider's other OpenAI-shaped routes, such as `/embeddings`. */
-export interface EmbeddingEndpoint { endpoint: string; apiKey: string }
+export interface EmbeddingEndpoint { endpoint: string; apiKey: string; fetchImpl?: typeof fetch }
 /** The embeddings route of a provider that offers one; every other provider gives nothing. */
 export function providerEmbeddings(provider: Provider): EmbeddingEndpoint | null {
   const accessor = (provider as { embeddings?: () => EmbeddingEndpoint | null }).embeddings;
@@ -528,6 +528,12 @@ function anthropicMessages(messages: Message[]): Record<string, unknown>[] {
     if (previous?.role === role) previous.content.push(...content);
     else result.push({ role, content });
   }
+  // selfdev/prompt-cache: the history up to the model's last answer is exactly what the next round sends again, so it
+  // is marked too (tools, instructions and this: three of Claude's four marks). Each round then reads the one before
+  // from the cache and pays in full only for what is new since.
+  const answered = result.findLastIndex((message, at) => message.role === "assistant" && at < result.length - 1);
+  const last = answered < 0 ? undefined : result[answered]!.content.at(-1);
+  if (last) Object.assign(last, cacheMarker);
   return result;
 }
 export class AnthropicProvider implements Provider {

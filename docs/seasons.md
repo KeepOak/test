@@ -34,7 +34,7 @@ the three gates. The defaults below are Branch's own choice.
 | Provenance | Promoted entries must carry source references | Every candidate keeps each quote with its task, conversation, time and night; the saved fact's source says the night and the counts |
 | Taint gate | Candidates with `untrusted` or `system` provenance are excluded | Only the person's own typed requests are evidence. Never a chat app's message (a chat cannot prove who is typing), a short-lived key, another program, a schedule or trigger, a helper task, a learning pass, a temporary conversation or one in Recently Deleted. A fact or quote that reads like an order is refused |
 | Diary | `DREAMS.md`, a narrative written by a model after each phase | The Rings journal: one entry per person per night with what was read, kept, left waiting, refused and why. Structured, no extra model call; the window writes the sentence in the owner's language |
-| Undo | Prior `MEMORY.md` kept before rewrites; append-only fallback | Undo a whole night, veto one fact, or keep it again. Undo and veto set the fact aside in the memory archive (never a delete), and a vetoed thought is never kept again however often it comes back |
+| Undo | Prior `MEMORY.md` kept before rewrites; append-only fallback | Undo a whole night, veto one fact, or keep it again. Local facts move to the archive. Outside facts retain a private restorable copy and are removed from their original service after verification; Keep verifies restoration. A vetoed thought stays vetoed beyond the recent list |
 | Review first | Not documented | With "ask me before changing memory" on, or an outside memory service chosen, a night only leaves suggestions in the review queue |
 | Morning | Not documented | "What I learned last night": the newest finished night's kept facts, until the person has seen them |
 | Household | Not documented | Each household person has their own night: their own requests only, their own candidates, facts, cursor and journal. Nothing is read or written across people. A person's night never uses the owner's sign-in |
@@ -53,12 +53,89 @@ the three gates. The defaults below are Branch's own choice.
 | Guard | Code |
 |---|---|
 | Never a billed connection unless allowed; never the owner's sign-in for a household person | `overnightModel` in `src/seasons/overnight.ts` |
-| Night window, nothing running, owner away; pause mid-night | `quietNow` in `src/seasons/overnight.ts`, `Rings.night` |
+| Fresh switches, night window, nothing running, owner away; pause mid-night | `quietNow` in `src/seasons/overnight.ts`, `Rings.night`; settings checked before each phase and promotion |
 | The three gates | `missedGates` in `src/seasons/rings-store.ts` |
 | Grounding and the injection check | `Rings.keepGrounded` |
 | Only the person's own typed words | `Rings.requests` |
 | Household separation | `Rings.requests` (person match), `RingsBook` (every query names the scope) |
-| Never delete: undo, veto and keep | `src/seasons/journal.ts` |
+| Restorable archive and verified original-backend Undo/Keep | `src/seasons/journal.ts`, `MemoryProvider.setAsideAt/restoreAt` |
 
 The `seasons` settings record is held for the owner's yes on a restore (`src/backup.ts`), so a backup file cannot
 switch on paid models or loosen the gates. Rings' own tables are not carried by a backup.
+
+Accepted facts have private destination receipts scoped to the person. Outside Undo preserves a restorable copy,
+uses that receipt's exact fact ID, and checks authenticated deletion and absence from the original service.
+Keep refuses an ID occupied by different content and verifies restored content before updating the journal.
+Changing the selected service or credential prevents either action from reaching another service; select the
+original service again to retry. These receipt/archive tables do not travel with backups. Older outside facts
+without a trustworthy destination receipt fail visibly instead of being falsely reported undone.
+
+## Gardener (compared with Hermes Agent's curator)
+
+| | Hermes curator | Branch Gardener |
+|---|---|---|
+| On by default | `curator.enabled: true`; LLM consolidation `consolidate: false` | Yes (`gardener: "on"`). It drafts and proves only on the night's free model, inside the quiet night |
+| When | Every `interval_hours` (168) once the agent has been idle `min_idle_hours` (2); skips while a turn is active | Each night, after Rings, under the same quiet gate; stops between steps once the owner is back |
+| Where skills come from | The agent creates skills in the foreground, including after complex tasks | Only from the owner's four triggers: the same kind of request at least 3 times; a failed task fixed by real work; the owner saying "remember how to do this"; a capability Budding built. A task that merely used several tools makes none (the old "draft after a 3-tool task" was removed) |
+| Before adoption | No verification | **Proved.** The seed's own tasks are replayed as practice runs without the draft and with it, on the same model, and each answer is graded 0–10 by that model. Adopted only when the gain is at least `minGain` (0.1); otherwise discarded with the reason. A replay where a side produced nothing is refused, never counted as a loss |
+| Size | Not capped | Short (`maxSkillChars` 2400) and loaded only when needed (its one-line index entry, #471). The cap is on context cost: every adopted skill's index line together stays under `indexBudget` (400 tokens) |
+| Usage | `use_count`, `view_count`, `last_used_at`, … in `.usage.json` | Which tasks drew on each skill, from the governance record every task keeps (`src/learning-more/curator.ts`) |
+| Lifecycle | active → stale (14 days) → archived (30 days) | The same states and defaults for skills the Gardener adopted (`staleAfterDays`, `archiveAfterDays`). Archived means switched off, never removed |
+| Merging | Optional LLM pass proposes umbrella skills | **Grafting:** two adopted skills that overlap get one merged version, proved against the two it replaces on both skills' tasks, and switched on only when it does no worse |
+| After adoption | Not re-checked | Each night one adopted skill is re-proved; one now worse than no skill, or worse than when it was adopted, is **rolled back by itself** |
+| Pinning | `curator pin` keeps a skill from transitions | Pinning keeps a skill from pruning, grafting and rollback. A re-rooted skill, or one whose rollback the owner undid, is pinned |
+| Undo | Snapshots (`curator rollback`) and single-mutation ledger rollback | Every change is a ledger entry with each skill's version before and after; undo puts that back. Undoing a discard puts the draft back from its seed, switched off, to be proved again |
+| Never deletes | Worst case is archival | Same. A discarded draft's switched-off install, which nothing ever used, leaves the skills list, but its whole file stays in its seed |
+| Whose skills | Agent-created only | Only skills the Gardener adopted are pruned, grafted or rolled back. The Gardener reads only the owner's own requests; a household person's never seed the owner's skills |
+
+### Code-level problems
+
+A tool that keeps failing with an error only a bug in Branch makes (a `TypeError`, a value read from nothing) in at
+least 3 of the owner's tasks across 2 conversations becomes one request to change Branch itself (#456/#557), filed
+once. Filing starts nothing: the owner answers it in the app, and only a yes there prepares a change, which the owner
+reviews as a pull request.
+
+### Gardener guards and where they are tested
+
+`tests/seasons-gardener.test.mjs`:
+
+| Guard | Code |
+|---|---|
+| Four triggers only; no seed without one | `src/seasons/triggers.ts`, `Gardener.plantFromTriggers` |
+| Eval-gated adoption, refusal of an unreadable replay | `Gardener.grow`, `src/seasons/proof.ts` |
+| Context-cost cap, short skills | `Gardener.grow` (`maxSkillChars`, `indexBudget`) |
+| Automatic rollback on regression | `Gardener.recheck` |
+| Graft, prune, re-root and undo, never a delete | `Gardener.graft`, `prune`, `reroot`, `undo` |
+| Owner's garden only | `src/seasons/api.ts`, `typedBy(…, null)` |
+
+## Budding
+
+`seasons.bud` preserves an owner's original request and tries the cheapest rung first:
+
+1. Compose existing tools under the task's current permissions. Success finishes the original request and plants a
+   waiting Gardener seed; it does not adopt a skill.
+2. If composition fails, offer matching MCP connectors with their prerequisites. Each installation needs the owner's
+   approval in **Library → Seasons**. Command servers also retain the existing exact program-launch approval.
+   A connected approved server hot reloads its tools and takes up the preserved task once, adding only that server's
+   tool permissions. Credentials are configured through the existing tool-server flow.
+3. After an unsuitable connector is declined, `seasons.build_tool` tests a held JavaScript tool against explicit
+   input/expected fixtures before registration. It inherits no extra file, network or credential permissions; nested
+   scripts and held capabilities are refused. A passing tool is registered as a deferred plugin tool and the original
+   request continues. The ordinary wall and approval gates still apply to every execution.
+4. When the held rung cannot work, the owner can file a Branch change for review. The existing source-change contract
+   and PR review workflow remain responsible for preparing and publishing the change. An approved request is taken up
+   after an installed version change and the owner's per-item acknowledgement that this reviewed change was installed;
+   an unrelated version change alone cannot resume it. `seasons.finish_bud` then uses current normal permissions.
+
+Windows currently has no trustworthy file/network wall for JavaScript tool scripts. Budding preserves the reason,
+runs no held code there, and offers the Branch review rung. A missing connector address is an external configuration
+prerequisite shown with the instruction to configure it in Customize → Tool servers.
+
+Capability requests and tested source live in private tables excluded from backup import. Restarts restore tested
+tools only where a held wall is supported. The scheduler reads only waiting requests, not completed source history.
+Lockdown and household profiles cannot build or approve capabilities. Learning stays cheap: successful capabilities
+become drafts that the overnight Gardener evaluates; the foreground does not run extra adoption reasoning.
+
+`tests/seasons-budding.test.mjs` exercises the ladder with a stand-in held executor, including failed fixtures,
+permission boundaries, connector hot reload, once-only continuation, Windows refusal and owner decisions.
+`tests/safety-extras-scripts.test.mjs` exercises the underlying script wall and mediated tool calls.
