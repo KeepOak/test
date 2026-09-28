@@ -137,7 +137,7 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // Bucket 17 hook.
   { reason: "watching and saving videos is switched on", tools: videoProgramTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "media-programs", "mode", mediaProgramsShipsAs, true) },
   // w911 (A0374) hook: fixing a failed command (src/troubleshoot.ts; the name is written here to avoid an import loop).
-  { reason: "fixing failed commands is switched on", tools: ["troubleshoot.run"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "troubleshoot") },
+  { reason: "fixing failed commands is switched on", tools: ["troubleshoot.run"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "troubleshoot", "mode", "when-needed", true) }, // ships on: src/troubleshoot.ts troubleshootShipsAs
   // Optional JEV judgments send the bounded state to the provider the owner configured in JEV.
   { reason: "JEV decision support is switched on", tools: ["decisions.judge"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "jev-decisions") },
   // w911 (A2144) hook: page notes.
@@ -172,7 +172,7 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // rather than imported, because that module reads this one for the three-way switch.
   { reason: "filling a saved sign-in is switched on", tools: signInFillTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "vault-autofill") },
   // Bucket 21 hook: tools for people building on Branch (src/sdk-kit.ts).
-  { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit") },
+  { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit", "mode", "when-needed") }, // ships on: src/sdk-kit-switch.ts sdkKitShipsAs
   // ── bucket-15: add-ons other people wrote (src/add-ons/settings.ts keeps these lists). ──
   ...(Object.entries(addOnTools) as [AddOnPart, readonly string[]][]).map(([part, tools]) => ({
     reason: `${addOnLabels[part]} is switched on`, tools, hideWhenOff: true, mode: (s: Reader, o: string) => addOnMode(s, o, part) })),
