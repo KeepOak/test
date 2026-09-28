@@ -89,10 +89,10 @@ export function askForHandoffs(runtime: Runtime, now = Date.now()): void {
     let usage: ConnectionUsage | null;
     try { usage = connectionUsage(runtime, run.sessionId, now); } catch { continue; }
     if (!usage?.everyAccountNear) continue;
-    const key = `handoff-asked:${run.sessionId}`;
     const window = `${usage.connection}|${usage.resetAt ?? new Date(now).toISOString().slice(0, 13)}`;
-    if ((runtime.store.get("settings", runtime.owner, key)?.data as { window?: string } | undefined)?.window === window) continue;
-    runtime.store.save("settings", runtime.owner, key, { window, at: new Date(now).toISOString() });
+    const asked = runtime.store.get("settings", runtime.owner, `handoff-asked:${run.sessionId}`)?.data as { window?: string } | undefined;
+    if (asked?.window === window) continue;
+    runtime.store.save("settings", runtime.owner, `handoff-asked:${run.sessionId}`, { window, at: new Date(now).toISOString() });
     runtime.store.event(run.id, "usage.handoff_asked", { connection: usage.connection, accounts: usage.accounts.length, resetAt: usage.resetAt });
     try { runtime.steer(run.id, handoffNote(usage)); } catch { /* it finished meanwhile */ }
   }
@@ -101,7 +101,7 @@ export function askForHandoffs(runtime: Runtime, now = Date.now()): void {
 export function registerLeadUsage(registry: ToolRegistry, runtime: Runtime): void {
   registry.register({
     name: "accounts.usage", permission: "settings.read", group: "settings",
-    description: `What each account of the connection this conversation uses has left of its plan (the same numbers as the usage ring), which one is in use, and whether every one is near its limit (${nearLimitPercentUsed}% used, or resting). At a limit the work moves to the next account by itself; write a handoff only when every account is near its limit.`,
+    description: `What each account of the connection this conversation uses has left of its plan (the same numbers as the usage ring) and which one is in use; also whether every one is near its limit (${nearLimitPercentUsed}% used, or resting). At a limit the work moves to the next account by itself; write a handoff only when every account is near its limit.`,
     parameters: z.object({}).strict(),
     execute: async (_input, context: ToolContext) => {
       if (!ownersOwn(context)) throw new Error("Only the owner's own conversations can see what their accounts have left.");
