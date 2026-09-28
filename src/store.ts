@@ -1039,6 +1039,23 @@ export class Store {
       .get(now, owner, id, now);
     return result ? this.toRecord(result) : undefined;
   }
+  /**
+   * A turn asked for by hand or by a webhook takes the schedule in one conditional write, as `claimSchedule` does for
+   * a due turn, so two callers (or a caller and the clock) can never both start it. The status it had is kept in
+   * `statusBeforeTrigger` so the turn can put it back. A `slot` that already started a turn of this schedule is never
+   * claimed again: the same webhook delivery sent twice starts one turn.
+   */
+  claimScheduleTrigger(owner: string, id: string, now: string, slot: string | null): SavedRecord | undefined {
+    const result = this.db
+      .prepare(
+        `UPDATE schedules SET data=json_set(data,'$.statusBeforeTrigger',json_extract(data,'$.status'),'$.status','running'),updated_at=?
+         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed')
+         AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(data,'$.triggerSlots') WHERE json_extract(value,'$.slot')=?))
+         RETURNING *`,
+      )
+      .get(now, owner, id, slot, slot);
+    return result ? this.toRecord(result) : undefined;
+  }
   dueSchedules(owner: string, now: string): SavedRecord[] {
     return this.db
       .prepare(

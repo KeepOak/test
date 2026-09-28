@@ -13,6 +13,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, syncChatGPTPresets } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { readRateLimit } from "../dist/rate-limit-headers.js";
+import { accountsServiceFor } from "../dist/accounts/service.js";
 
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const token = `${b64({ alg: "none" })}.${b64({ "https://api.openai.com/auth": { chatgpt_account_id: "acct_1" } })}.sig`;
@@ -38,6 +39,9 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
   let ids;
   try { ids = syncChatGPTPresets(app.runtime.models, { accessToken: async () => token }, true, "BranchTest"); }
   finally { globalThis.fetch = real; }
+  const service = accountsServiceFor(app.runtime.models);
+  service.deps.chatgpt = { accessToken: async () => token, status: async () => ({ signedIn: true }) };
+  await service.readIdentities();
   app.runtime.models.configure(app.runtime.owner, { activePreset: ids[0] });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
@@ -46,6 +50,19 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => r.json());
   await call("/api/onboarding", { done: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block", timezoneId: "America/New_York" });
+  /* The long list of plans below is the window's answer from the moment it is set (crowded), whenever the read was asked:
+     a read already on its way when the list is set answers with the list too, so a slow real answer never lands on it. */
+  let crowded = null, checks = 0, holdLook = null;
+  await page.route("**/api/usage/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (!["/api/usage/glance", "/api/usage/limits/look", "/api/usage/limits/refresh"].includes(path)) return route.continue();
+    if (crowded && path.endsWith("/refresh")) checks++;
+    if (crowded && path.endsWith("/look")) await holdLook?.promise;
+    try {
+      const real = crowded ? null : await route.fetch();
+      await route.fulfill(crowded ? { json: crowded } : { response: real });
+    } catch { await route.abort().catch(() => undefined); } // the page or the engine closed while it was asked
+  });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
@@ -136,16 +153,9 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
   assert.equal(await page.locator(".lims .lim-w small").innerText(), "Reset time unavailable", "the missing reset is not fabricated from the current time");
   await page.keyboard.press("Escape");
 
-  const crowded = await call("/api/usage/glance");
-  crowded.rows = Array.from({ length: 12 }, (_, i) => ({ ...crowded.rows[0], account: `test-${i}`, accountLabel: `owner-${i}@example.test`, readable: true }));
-  let checks = 0, holdLook = null;
-  await page.route("**/api/usage/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (!["/api/usage/glance", "/api/usage/limits/look", "/api/usage/limits/refresh"].includes(path)) return route.continue();
-    if (path.endsWith("/refresh")) checks++;
-    if (path.endsWith("/look")) await holdLook?.promise;
-    await route.fulfill({ json: crowded });
-  });
+  const listed = await call("/api/usage/glance");
+  listed.rows = Array.from({ length: 12 }, (_, i) => ({ ...listed.rows[0], account: `test-${i}`, accountLabel: `owner-${i}@example.test`, readable: true }));
+  crowded = listed;
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 400 });
     holdLook = Promise.withResolvers(); // the popover's own look answers only while Check now is being pressed, below
@@ -183,7 +193,7 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
     await page.getByRole("button", { name: "Open Usage", exact: true }).click();
     await page.waitForFunction(() => !document.querySelector(".pop .lims"));
   }
-  await page.unroute("**/api/usage/**");
+  crowded = null;
   await page.setViewportSize({ width: 1280, height: 800 });
 
   await call("/api/usage/glance/settings", { ring: "hidden" });
