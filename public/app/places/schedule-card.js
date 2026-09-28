@@ -18,8 +18,6 @@ import { t, language } from "../../i18n.js";
 const DAYN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const zone = () => E.profiles?.owner?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone; // your-profile: the owner's chosen time zone
-let draft = "";
-export const scheduleDraft = () => draft;
 const localDateTime = (iso) => { const date = new Date(iso); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 let P = null; // { proposal, what, days, day, time, trunk (the Trunk who does it, or null for the owner) }
 
@@ -91,7 +89,6 @@ const keepWhat = () => { const w = document.getElementById("pp-what17d"); if (P 
 /* The box's words, read by the engine; its refusal is shown in its own words. */
 export async function proposeWords() {
   const text = $("#nl-in")?.value.trim();
-  draft = $("#nl-in")?.value ?? draft;
   if (!text) { $("#nl-in")?.focus(); return; } // B002: nothing to read yet; the box is where the words go
   try { P = fromProposal((await api("schedules/propose", { text, timezone: zone() })).proposal); } catch (error) { toast(error.message); return; }
   renderNow();
@@ -135,9 +132,8 @@ async function confirm() {
     else await api("schedules", fresh.schedule);
   } catch (error) { toast(error.message); return; } finally { sending = false; }
   P = null;
-  draft = "";
   const box = $("#nl-in");
-  if (box) box.value = "";
+  if (box) { box.value = ""; box.dispatchEvent(new Event("input", { bubbles: true })); } // the page keeps the box's words (automations.js)
   await refresh().catch((error) => toast(error.message));
   renderNow();
   toast(t("window.places.schedule-card.scheduled-first-run-firstrunat", { firstRunAt: firstRun(p.proposal.firstRunAt) }));
@@ -145,7 +141,6 @@ async function confirm() {
 
 export function initScheduleCard() {
   markLive(["nl-add", "sw:nl-in", "ppset17d", "ppno17d", "ppok17d", "sw:pp-what17d", "sw:pp-time17d", "sw:pp-once17d"]);
-  document.addEventListener("input", (e) => { if (e.target.id === "nl-in") draft = e.target.value; });
   on("nl-add", () => proposeWords());
   on("ppset17d", (el) => {
     if (!P) return;
