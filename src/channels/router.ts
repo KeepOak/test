@@ -28,7 +28,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
-import { platformGate } from "../reach/platform.js"; // r17-i
+import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
@@ -873,12 +873,19 @@ export class ChannelRouter {
   switches(): ChatLiveSwitches {
     return chatLiveSwitches(this.store, this.runtime.owner);
   }
+  /** One of the accounts the owner named as their own: in "Commands from your own chat" or as a /platform owner. */
+  private ownAccount(channel: string, senderId: string): boolean {
+    const same = (account: { channel: string; sender: string }) => account.channel === channel && account.sender === senderId;
+    return ownerCommands(this.store, this.runtime.owner).accounts.some(same) || platformSettings(this.store, this.runtime.owner).owners.some(same);
+  }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
     const setting = this.switches().commands;
-    // As shipped, the owner's paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    // As shipped, the owner's own paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    // Only an account the owner named as their own (Commands from your own chat, or /platform's owners) counts:
+    // a paired friend or household member keeps the switch as it is.
     const pairedDm = setting === "off" && message.chatKind === "direct" && this.pair(message.channel, message.senderId)?.status === "approved"
-      && commandsInPairedDm(this.store, this.runtime.owner);
+      && this.ownAccount(message.channel, message.senderId) && commandsInPairedDm(this.store, this.runtime.owner);
     if ((setting === "off" && !pairedDm) || message.voice) return null;
     // Wave mac3 (commands): which of the shared table's commands a chat may read follows the owner's switch.
     const command = parseChatCommand(message.text, commandMode(this.store, this.runtime.owner));
