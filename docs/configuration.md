@@ -2227,6 +2227,10 @@ The design, the threat list and the test for each threat are in [never-break.md]
 
 **The gateway.** `gateway.json` in the data folder, `GatewayConfigSchema` in `src/never-break/gateway-config.ts`: `mode` (`off`, the default; `when-needed`; `on`), `startSeconds` (90), `holdSeconds` (20), `maxQuickCrashes` (4), `gapSeconds` (300), `watchSeconds` (300) and `workerEnv` (only `BRANCH_*` names, never the data folder). With the mode not off, `branch start` runs the gateway on `BRANCH_PORT`, which runs the engine on a private loopback port and passes requests (and connection upgrades) through, checking the address exactly as the engine does. `GET /gateway/health` is answered by the gateway itself. An engine that stops is started again after 0.5, 1, 2 … 30 seconds; crashes chained less than `gapSeconds` apart, `maxQuickCrashes` times, slow it to once every five minutes and stop interrupted work carrying on by itself. Settings are promoted to `gateway.good.json` after a worker has stayed up; a broken `gateway.json`, or settings the engine fails to start with twice, are replaced by the good copy. `GET|POST /api/never-break { mode }` reads and sets the switch (the window offers one on/off switch that saves `on` or `off`; a file saved as `when-needed` still loads and reads as on there); `POST /api/never-break/proposal/accept|discard` answers a change the assistant suggested with the `gateway.propose` tool (offered only when the switch was on at launch), which is always tried on a throwaway gateway first. A short-lived key can do none of this.
 
+**Window-close preference.** Settings › General “Keep working when the window closes”, Settings › Gateway’s gateway switch and the footer popover save the same `gateway.json.mode`. They call `POST /api/never-break`, not `/api/deployment/daemon`; they do not create or remove a Windows scheduled task. The switch shows the saved choice, while the status and footer use `underGateway` to say whether this engine actually runs behind the gateway. A saved On with `underGateway: false` is shown as waiting for the next Branch launch. Saving Off while the retained gateway is running starts its shutdown after the API response; until that finishes, the status still reports it as running. Start with Windows and the separately managed CLI daemon remain distinct controls. If saving fails, the original choice and failure message remain visible.
+
+**Desktop awake choice.** `gateway.json.keepAwake` defaults to `false`. The owner can change it under Settings › Gateway or with `POST /api/never-break { "keepAwake": true | false }`. This choice is excluded from the assistant's timing proposals and their rollback. `GET /api/never-break` shows the saved choice in `config.keepAwake`; `keepAwakeRuntime` is a separate trusted desktop broker report (`requested`, `active`, `suspended`, `error`) or `null` when unavailable. A saved `true` is not proof that a desktop blocker is active. The running desktop gateway applies the choice without an engine restart; it may let the screen turn off. Lid closure, battery limits and OS policy may still suspend the computer; normal gateway reconnect handles resume.
+
 **Work that survives a restart.** Every model turn and tool call is written to `journal.sqlite` in the data folder (`src/never-break/journal.ts`, `synchronous=FULL`) before it runs, with an idempotency key, a side-effect class (`none` for tools with a reading permission; `idempotent` for `files.write`, `files.restore`, `files.mkdir`, `memory.forget`, `todos.done`, `git.branch`; `external` for everything else, MCP and plugin tools included) and, for file and git tools, what the file or the repository looked like just before. A step that cannot be written down is not run: the task stops with a sentence saying the disk may be full. This is not switchable. A task cut off because Branch closed is now marked `interrupted` rather than `cancelled`. On a real start (the app window, the background engine, or an engine under the gateway) with the switch not off, `recoverOnStart` (`src/never-break/resume.ts`) settles every task interrupted in the last day: an in-flight step with no side effects, or an idempotent one, is done again (only if the approval rules allow it without asking); a file or git step is checked (`verified` or done now); anything else is put to the owner as a question and the task waits (`needs_input`, event `attention.needed` with `afterRestart`). Then the task carries on by itself (**on**, event `run.auto_resumed`) or is offered (**when needed**, `run.can_continue`). After a crash loop (`BRANCH_RESUME=ask`, set by the gateway) nothing carries on by itself. A task a chat message started (`channel.inbound`) is left for the chat app (`run.left_for_channel`): Telegram's read position is kept in settings (`channel-position:<id>`) and saved only after a message is handled, so a message a crash cut off is fetched and answered again, and one already answered is not. The position is saved with the bot's id and never used for another bot: Telegram numbers each bot's updates on their own, and asking with a higher offset confirms the lower updates, so a new bot (or a position saved before bots were named) starts from Telegram's earliest unconfirmed update. Telegram numbers a bot's next update afresh after a week without any, possibly below the saved position, so once nothing has arrived for a day (and nothing is being handled) the bot asks from its earliest unconfirmed update and reads on in the new numbering; Telegram keeps an update for 24 hours at most, so nothing already answered comes back. A repeating timed job cut off by a restart goes back to `pending` for its next turn (`lastInterruption`); a turn missed while Branch was down runs once, with `late` in its history and a `schedule.caught_up` event. Other chat apps keep their own delivery rules (webhook services resend by themselves; Discord, Slack and Matrix do not replay missed messages yet).
 
 **Data formats.** The database carries a format stamp (`PRAGMA user_version` and a `branch_format` row with the oldest format that can still read it; `src/never-break/migrations.ts`). A version that finds data it cannot read stops with a sentence and changes nothing. Format changes are listed in `storeMigrations`, run in one transaction after a `VACUUM INTO` copy in `update-backups/`, and each has a way back (`migrateDown`); a change that only adds a column keeps `readableBy` at the old number, so the previous release still opens the data.
@@ -6065,6 +6069,15 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
 
+### Files and voice in the other chat apps (CHAT-094, 104, 105)
+
+Pictures, videos and files sent to the assistant come in as the task's material on Telegram, Discord, Slack (a
+`file_share` message, fetched with the bot token), Matrix (`m.image`, `m.video`, `m.file`, fetched from the
+homeserver's authenticated media) and WhatsApp (image, video, document, with the caption as the words). Each file is
+fetched only once its message has earned an answer, only from that app's own file host over https, and never past
+20 MB. A Matrix audio message is a voice note to transcribe, as on the others. Spoken replies go out on Discord and
+Slack as an audio file, on Matrix as an audio message marked as voice, and on WhatsApp as an audio message.
+
 ### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
 
 The commands a chat can send are listed in the app's own command picker, from the same table every surface reads,
@@ -9870,7 +9883,7 @@ through your network rules.
 
 | Part | Tools | What it does |
 | --- | --- | --- |
-| Sending files into your chats | `chat.send_file` | Sends a workspace file into a Telegram, Slack or Discord chat as that app's own attachment. Only to a chat that has already talked to the assistant; never from a chat-started task; within your size limit (20 MB unless you change it) and the app's own (Telegram 50 MB, Discord 10 MB, Slack 100 MB); refused if its words hold anything key-shaped or one of your saved secrets; the caption passes the same last look as every reply, so Lockdown stops it. Each send is written in the record of what the assistant was allowed to do. |
+| Sending files into your chats | `chat.send_file` | Sends a workspace file into a Telegram, Slack, Discord, Matrix or WhatsApp chat as that app's own attachment (a JPEG, PNG or WebP picture up to 10 MB goes to Telegram as a photo, anything else as a file; Matrix uploads to the homeserver first and sends a picture, video, audio or file; WhatsApp uploads first and sends a picture, video, audio or document, inside its 24-hour reply window). Only to a chat that has already talked to the assistant; never from a chat-started task; within your size limit (20 MB unless you change it) and the app's own (Telegram 50 MB, Discord 10 MB, Slack 100 MB, Matrix 50 MB, WhatsApp 5 MB for pictures, 16 MB for video and audio, 100 MB for documents); refused if its words hold anything key-shaped or one of your saved secrets; the caption passes the same last look as every reply, so Lockdown stops it. Each send is written in the record of what the assistant was allowed to do. |
 | Home Assistant | `home.states`, `home.call` | Looks at devices, and calls a service on one device — only for the kinds of device you list (lights, switches, scenes, scripts, media players, climate and fans to begin with; locks and alarms are not on it, and are always asked about if you add them). Uses a long-lived access token saved as `HOMEASSISTANT_TOKEN`. A Home Assistant on your home network needs private addresses allowed under Settings → Computer → Network reach. |
 | A spoken daily briefing | `brief.spoken`, `brief.send_voice` | Today's events and unread mail from Google and Outlook (whichever is on and signed in) and the morning brief, read with your voice settings. "Play my briefing" plays it in the window; `brief.send_voice` sends it to a linked chat as a voice note, only while *Sending files into your chats* is on and after the same checks as a file, and like every sending tool it is never given to a task a chat started. |
 | Saying yes aloud | — | Beside each waiting question, "Answer aloud" listens for four seconds, only when you press it. Your words are written out by your own speech settings and must be just a yes or a no (English or French). The answer is bound to that exact request, used once, and runs out after two minutes; a spoken yes is always "just this once", and a risky request also needs a press. |
@@ -10429,24 +10442,35 @@ Settings fields (`learn`): `mode` (off, when-needed, on -- when-needed at first)
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
 
-## The desktop app's engine process
+## Desktop engine startup contract
 
-The desktop app runs the engine in a process of its own and hands it what it needs when it starts (`EngineConfigSchema`, src/desktop/engine-link.ts). None of these is set by hand; they are listed so every declared field is written down.
+These internal fields in `EngineConfigSchema` (`src/desktop/engine-link.ts`) are sent by
+the desktop host over its private process channel. They are not editable user preferences.
 
-- `dataDir`, `workspace`: the data folder and workspace, the same ones the app would use itself.
-- `providerEnv`: the saved model connection as provider variables, or none.
-- `version`: the app's version.
-- `executable`, `installRoot`, `packaged`: the installed program file and folder (none when run from source), and whether this is a packaged app.
-- `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
-- `appPid`: the window's main process, so the engine knows when the app is gone.
-- `testHooks`: test builds only, never in a packaged app.
+| Field | Meaning |
+| --- | --- |
+| `dataDir`, `workspace` | Saved-work and workspace directories chosen by the desktop. |
+| `providerEnv` | Saved model connection variables, or null; keys travel through the private channel. |
+| `version` | Desktop version reported by the engine. |
+| `executable`, `installRoot` | Installed executable and program folder, or null when running from source. |
+| `packaged` | Whether this desktop is a packaged installation. |
+| `loginItem` | macOS login-item enabled/approval state, or null elsewhere. |
+| `appPid` | Desktop host process named in the running-engine record. |
+| `testHooks` | Unpackaged test-launch hooks; never enabled in a packaged app. |
+| `gateway` | Trusted desktop startup flag: a detached gateway owns the public address and running record, while the worker listens internally. |
+| `port` | Optional exact port retained during an engine handover. |
+| `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
+| `appRoot` | Program folder containing checked live builds. |
+| `liveWindow` | Checked live window build: commit, digest, version and adoption time. |
 
-## Long work: carrying on after a restart or a limit
+## Carrying long tasks on
 
-Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+These booleans are saved under `settings/long_work` (`src/long-work.ts`) and both default to true.
 
-- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
-- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+| Field | Meaning |
+| --- | --- |
+| `resumeAfterRestart` | Carries interrupted work on from its last recorded step even without the gateway. Existing approvals still apply; uncertain external effects follow the journal's recovery rules. A gateway configured to resume work has its own resume mode. |
+| `waitForLimits` | When no next account or fallback model can continue after a plan or rate limit, waits for the service's retry/reset time and carries on instead of ending the task. |
 
 ## Seasons: overnight learning
 
