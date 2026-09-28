@@ -89,6 +89,16 @@ function platformName(platform: NodeJS.Platform): string {
   return platform === "darwin" ? "a Mac" : platform === "win32" ? "Windows" : platform === "linux" ? "Linux" : platform;
 }
 
+/**
+ * QA retest 2026-09-28: why a service cannot be set up on this computer, or null when it can. The Set up panel shows it
+ * and holds Continue, so the iMessage wizard no longer runs on Windows to a switch that then refuses.
+ */
+export function parityPlatformRefusal(kind: string, platform: NodeJS.Platform = process.platform): string | null {
+  const service = parityService(kind);
+  if (!service?.platforms || service.platforms.includes(platform)) return null;
+  return `${service.name} works only on ${service.platforms.map(platformName).join(" or ")}, so it cannot be set up on this computer.`;
+}
+
 /** What the setup card lists: every service, its switch, and what to write to connect it. */
 export function paritySummary(store: Store, owner: string, platform: NodeJS.Platform = process.platform) {
   return parityServices.map((service) => ({

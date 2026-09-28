@@ -1,7 +1,7 @@
 import { FeatureModeSchema, type FeatureMode } from "../feature-switches.js";
 import { encodeQr, maximumQrBytes } from "../remote/qr.js";
 import { saveParitySwitches } from "../channels/parity-switch.js";
-import { parityKinds } from "../channels/parity-config.js";
+import { parityKinds, parityPlatformRefusal } from "../channels/parity-config.js";
 import type { Store } from "../store.js";
 import { readValues, runCheck, scrub, SetupRefusal, type Values } from "./check.js";
 import { createLink, recipeBook, recipeFor, recipes, type Recipe } from "./recipes.js";
@@ -51,7 +51,7 @@ export function setupList(store: Pick<Store, "get">, owner: string): Record<stri
 }
 
 /** Everything the Set up panel shows for one app. Nothing here is secret. */
-export function setupPanel(store: Pick<Store, "get">, owner: string, id: string): Record<string, unknown> {
+export function setupPanel(store: Pick<Store, "get">, owner: string, id: string, platform: NodeJS.Platform = process.platform): Record<string, unknown> {
   const recipe = recipeFor(id);
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
   const create = createLink(recipe);
@@ -66,6 +66,7 @@ export function setupPanel(store: Pick<Store, "get">, owner: string, id: string)
     fields: recipe.fields, paste: recipe.paste.map(({ secret, what, optional }) => ({ secret, what, optional: optional === true })),
     hasCheck: Boolean(recipe.check), noCheck: recipe.noCheck ?? null, pairing: recipe.pairing ?? null,
     saved: done[recipe.id] ?? null, sources: recipe.sources,
+    unavailable: typeof recipe.entry?.type === "string" ? parityPlatformRefusal(recipe.entry.type, platform) : null,
   };
 }
 
