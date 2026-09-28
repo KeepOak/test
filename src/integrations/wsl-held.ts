@@ -33,7 +33,18 @@ export interface WslHeldPlan {
   secrets: string[];
   /** `npm ci`: the npm registry, and nothing else, is reachable. */
   registry: boolean;
+  /** selfdev: the owner's selected Full Access: any site is reachable (writes stay held to the worktree). */
+  open?: boolean;
   timeoutMs: number;
+}
+
+/**
+ * selfdev: Windows has no native npm program, so its npm alias is node.exe with npm's own `npm-cli.js` (or
+ * `npx-cli.js`) as the first argument (src/integrations/shell-config.ts). That pair is npm (or npx) by name.
+ */
+export function npmScript(argument: string | undefined): 'npm' | 'npx' | null {
+  const found = /[\\/]node_modules[\\/]npm[\\/]bin[\\/](npm|npx)-cli\.js$/i.exec(argument ?? '');
+  return found ? found[1]!.toLowerCase() as 'npm' | 'npx' : null;
 }
 
 /** The Linux program an alias stands for, by its file name; anything else is refused. */
@@ -49,17 +60,20 @@ const droppedNames = new Set(['PATH', 'HOME', 'TMP', 'TEMP', 'TMPDIR', 'WSL_INTE
 
 export function wslHeldPlan(input: {
   executable: { path: string; args: readonly string[] }; args: readonly string[]; cwd: string; workspace: string;
-  env: NodeJS.ProcessEnv; secrets: readonly string[]; registry: boolean; timeoutMs: number;
+  env: NodeJS.ProcessEnv; secrets: readonly string[]; registry: boolean; open?: boolean; timeoutMs: number;
 }): WslHeldPlan {
-  const program = wslProgram(input.executable.path);
+  const named = wslProgram(input.executable.path), all = [...input.executable.args, ...input.args];
+  // Windows' npm alias (node.exe npm-cli.js) is Linux's npm: the Windows script path never goes into WSL.
+  const script = named === 'node' ? npmScript(all[0]) : null;
+  const program: WslHeldProgram = script ?? named, args = script ? all.slice(1) : all;
   const workspace = wslPath(input.workspace), cwd = wslPath(input.cwd);
   if (!workspace.startsWith('/mnt/') || !cwd.startsWith('/mnt/'))
     throw new Error('On Windows a command held to its folder runs inside WSL, which cannot reach this folder, so it did not run.');
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(input.env))
     if (typeof value === 'string' && !droppedNames.has(name.toUpperCase()) && !input.secrets.includes(name)) env[name] = value;
-  return { program, args: [...input.executable.args, ...input.args], cwd, workspace, env, secrets: [...input.secrets],
-    registry: input.registry, timeoutMs: input.timeoutMs };
+  return { program, args, cwd, workspace, env, secrets: [...input.secrets],
+    registry: input.registry, ...(input.open ? { open: true } : {}), timeoutMs: input.timeoutMs };
 }
 
 /**
@@ -133,7 +147,10 @@ export async function heldCover(input: { home: string; programs: readonly string
   const git = await gitCommonDir(input.workspace);
   const hidden = git && view.covered.some((folder) => git === folder || git.startsWith(`${folder}/`));
   const covered = view.covered.filter((path) => existsSync(path));
-  const restored = [...new Set([...view.restored, ...(hidden ? [git] : [])])].filter((path) => existsSync(path));
+  // selfdev: the browsers Playwright installed for this Linux user are programs too; they are shown read-only so a
+  // held test run (scripts/review.mjs's window gates) can start one. Nothing else under the home is shown.
+  const browsers = posix.join(input.home, '.cache', 'ms-playwright');
+  const restored = [...new Set([...view.restored, ...(hidden ? [git] : []), browsers])].filter((path) => existsSync(path));
   const program = own[0] ? await realpath(own[0]).catch(() => own[0]!) : null;
   return { covered, restored, refusal: await heldRefusal({ home: input.home, program, args: input.args ?? [], workspace: input.workspace, covered, restored }) };
 }

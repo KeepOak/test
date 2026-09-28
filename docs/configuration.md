@@ -1239,7 +1239,7 @@ lists them with Off, When needed and On (`GET /api/channels/parity`, `POST /api/
 - **On** connects when Branch starts and stays connected, as the older channels do.
 
 A change applies at once to a channel that is already connected; adding a channel to the connections
-file still needs a restart. The health line says "Switched off" for a service that is off.
+file still needs a restart, and adding one from the window's wizard does not. The health line says "Switched off" for a service that is off.
 
 The services that are posted to (Microsoft Teams bots, Webex, Synology Chat, Zalo, Flock, Pumble)
 use the same address as the other chat services, `/webhooks/chat/<channel id>/<the word on your
@@ -1658,12 +1658,20 @@ When Branch is running, the command goes through the same door as the window (th
 key), so a Telegram bot connects at once. Otherwise it opens the saved work itself, and the bot connects
 the next time Branch starts.
 
-**One command or two.** Every app is one command. Telegram and the wave mac3 services are switched on by
-it. The nine older connections (Discord, Slack, WhatsApp, email, Messenger, Instagram, Matrix, Signal
-and the ten team-chat services) are switched on by a line in the connections file, which Branch does not
-rewrite for you (it may sit in a folder you have not trusted, and holds at most eight channels), so the
-command prints that line with your settings filled in, and you add it and restart. That is the second
-step, and the only one.
+**One step, no restart (CHAT-147).** Every app is one command, or one pass through the window's wizard, and
+it connects there and then. The save keeps the app's entry, written from `data/channel-setup.json` with your
+plain settings put in (the same shape a connections-file line has, and nothing a request adds), in your
+settings; builds the channel exactly as a connections-file line is built; and attaches it to the running
+Branch. Branch connects every saved one again when it starts. Nothing is written to the connections file,
+and a channel with the same name there always wins, so one bot is never read twice. The answer says what
+really happened: connected, listening (an app that posts to Branch still needs its address pasted into the
+service, and this computer reachable from the internet), or saved but not connected, with the reason. The
+wave mac3 services still follow their switch. `DELETE /api/channel-setup/<app>` (the wizard's
+**Disconnect**) takes an app set up this way out and forgets its settings; what was pasted stays in the
+locker. Before anything is kept, the check goes past "who am I" where that cannot tell: Discord's Message
+Content Intent must be on, Slack's app-level token must open Socket Mode, and a Matrix token must belong
+to the account typed. With Branch closed, `branch connect` keeps the settings and the app connects the next
+time Branch starts.
 
 **The switch.** *Setting up from here and from the terminal* ships **off**. Off, the panel still shows
 the command, the links and the codes; it only refuses to save a token or switch anything on. The first
@@ -1742,7 +1750,7 @@ says so.
 | Discord (`discord`) | yes; then one line in the connections file | Windows: winget `Discord.Discord`; Mac: cask `discord`; Linux: Flathub `com.discordapp.Discord` | `https://discord.com/developers/applications?new_application=true` | `DISCORD_BOT_TOKEN` | GET `https://discord.com/api/v10/users/@me` |
 | Slack (`slack`) | yes; then one line in the connections file | Windows: winget `SlackTechnologies.Slack`; Mac: cask `slack`; Linux: Snap `slack` | `https://api.slack.com/apps?new_app=1&manifest_json=…` (pre-filled) | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | POST `https://slack.com/api/auth.test` |
 | WhatsApp Business (`whatsapp`) | yes; then one line in the connections file | Windows: download page; Mac: cask `whatsapp`; Linux: download page | `https://developers.facebook.com/docs/whatsapp/cloud-api/get-started` | `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`; plus phoneNumberId | none |
-| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD` | none |
+| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD`; plus address, imapHost, smtpHost | none |
 | Facebook Messenger (`messenger`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/messenger-platform/getting-started/quick-start` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Instagram (`instagram`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Matrix (Element) (`matrix`) | yes; then one line in the connections file | Windows: winget `Element.Element`; Mac: cask `element`; Linux: download page | `https://app.element.io/#/register` | `MATRIX_ACCESS_TOKEN`; plus server, userId | GET `<server>/_matrix/client/v3/account/whoami` |
@@ -1761,6 +1769,7 @@ says so.
 | Twitch chat (`twitch`) | yes; switched on from it | nothing to install | `https://dev.twitch.tv/console/apps/create` | `TWITCH_CHAT_TOKEN`; plus login, channel | GET `https://id.twitch.tv/oauth2/validate` |
 | Gotify (`gotify`) | yes; switched on from it | nothing to install | `<server>/#/applications` | `GOTIFY_APP_TOKEN`; plus server | none |
 | iMessage (`imessage`) | yes; switched on from it | nothing to install | none (plain steps) | nothing | none |
+| iMessage through BlueBubbles (`bluebubbles`) | yes; switched on from it | nothing to install | none (plain steps) | `BLUEBUBBLES_PASSWORD`; plus server | none |
 | Microsoft Teams (bot) (`msteams-bot`) | yes; switched on from it | Windows: winget `Microsoft.Teams`; Mac: cask `microsoft-teams`; Linux: download page | `https://dev.teams.microsoft.com/bots` | `MSTEAMS_APP_PASSWORD`; plus appId | POST `https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token` |
 | Webex (`webex`) | yes; switched on from it | Windows: winget `Cisco.Webex`; Mac: cask `webex`; Linux: download page | `https://developer.webex.com/docs/bots` | `WEBEX_BOT_TOKEN`, `WEBEX_WEBHOOK_SECRET` | GET `https://webexapis.com/v1/people/me` |
 | Synology Chat (`synology-chat`) | yes; switched on from it | Windows: winget `Synology.ChatClient`; Mac: download page; Linux: download page | `https://kb.synology.com/en-global/DSM/help/Chat/chat_integration` | `SYNOLOGY_CHAT_INCOMING_URL`, `SYNOLOGY_CHAT_TOKEN`; plus server | none |
@@ -1998,7 +2007,7 @@ Use actual absolute executable paths on your device. Windows `.cmd` and `.bat` l
 
 This runs trusted programs on your computer. The checked working directory is not an OS sandbox: programs can access other files, use the network, and launch more programs. Only selected environment keys are passed; model and vault variables are excluded. `PATH` is empty unless explicitly selected as above. Runtime code supplied to an interpreter still has that interpreter's host access.
 
-Only one foreground command runs at a time. Results include stdout, stderr, exit status, elapsed time, target and cleanup status. The default timeout is 30 seconds; configuration can allow up to 120 seconds, and individual calls can lower it. Captured output is capped at 8 KiB or the lower configured limit. Cancellation requests process-tree termination on Windows or process-group termination on POSIX. Escaped descendants can survive; the result records incomplete cleanup when observed. Interactive terminals, persistent background jobs and remote execution are separate pending capabilities.
+Only one foreground command runs at a time. Results include stdout, stderr, exit status, elapsed time, target and cleanup status. The default timeout is 30 seconds; configuration can allow up to 30 minutes (a build and its tests), and individual calls can lower it. Captured output is capped at 8 KiB or the lower configured limit. Cancellation requests process-tree termination on Windows or process-group termination on POSIX. Escaped descendants can survive; the result records incomplete cleanup when observed. Interactive terminals, persistent background jobs and remote execution are separate pending capabilities.
 
 ### Keeping a command in its lane
 
@@ -2852,8 +2861,8 @@ Around it: a task's own completion checks are retried a set number of times befo
 a small script is checked before it runs, and a program can be run under a real debugger you
 already have (Settings → debug adapters) to stop it on a line and look at what every name holds.
 
-**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, off by
-default, kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
+**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, "when needed" by
+default (the ship-on rule: every fix still goes through the approval rules), kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
 (`{ "mode": "off" | "when-needed" | "on", "maxTries": 1-5 }`, two tries by default; a short-lived key
 cannot change it). It looks at a `shell.execute` or `code.run` that came back with a non-zero exit
 code (or a script that timed out). The model is asked, with no tools, for JSON
@@ -3199,7 +3208,7 @@ background command finishes is not done yet.
 
 ## Backup, restore and health
 
-`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix.
+`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix. The ordinary check changes nothing: it only looks at the workspace folder (there, a folder, writable by you). Only `--probe` (and `?probe=1`) writes one small test file into the workspace and removes it at once, besides sending each connection one real request.
 
 ## Moving in from another assistant
 
@@ -3741,7 +3750,7 @@ These tools come in three groups so you can allow them separately.
 
 - `git.read` — `git.status` (what changed, which line of work, ahead or behind), `git.diff` (the changed lines, capped, either in the working folder or between two points such as `main..mine`), `git.log` (recent saved versions, bounded).
 - `git.write` — `git.branch` (list, start or switch a line of work), `git.commit` (save a version; a message is required, it saves everything that changed unless you name paths, it refuses when nothing has changed, and it never rewrites a version you already saved), `git.worktree_add` and `git.worktree_remove` (a parallel copy for an experiment, only ever inside `.branch-worktrees` in the repository, so experiments cannot spread elsewhere; `git.worktree_list` reads them and needs only `git.read`). Both groups are available as soon as Branch starts.
-- `git.remote` — `git.push` and `git.pull`. **These are off until you turn them on.** Add a `git` block to the integrations file:
+- `git.remote` — `git.clone`, `git.push` and `git.pull`. **These are off until you turn them on.** `git.clone` brings a repository onto this computer for the first time, into a new workspace folder, from its `https://` address (no sign-in details in it) or a repository folder given as a full path; hooks never run, submodules are not fetched, and Branch's own source is never cloned this way (that is `branch.prepare_source_change`). Add a `git` block to the integrations file:
 
 ```json
 { "git": { "remote": true } }
@@ -3755,7 +3764,7 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
 **GitLab** can be read in the same way, with its own token saved as `GITLAB_TOKEN`:
 
@@ -3871,6 +3880,46 @@ A chat's reply, a pressed button and `/improve approve` never answer a request. 
 household persons are refused at all three routes, and nothing inside a task (a Trunk's turn, another
 program's tool call) can read, file or answer a request. Asserted in
 `tests/self-development-requests.test.mjs`.
+
+#### Owner review and normal merge
+
+Inbox lists contracted source worktrees separately from chat requests. Before owner review, commit
+the scoped changes and run `node scripts/review.mjs --jobs 1` followed by the contract's exact
+`expectedTests` list through Branch's confined `shell.execute`, with `cwd` equal to the worktree.
+Only successful, untruncated output with no skipped expected tests on clean matching commits before
+and after the command creates test evidence. Changes to the review/build entry scripts or package scripts require independent review on GitHub
+and cannot certify themselves through this automatic path. Contract tests still need the owner's
+assessment of their assertions and coverage in the diff. Evidence and review grants stay in this
+engine session; they are not restored from a backup. Finish or stop the task in this exact worktree before reviewing
+the merge. Unrelated chats and other worktrees can keep working.
+
+- `GET /api/self-development/merge` lists the owner's contracted changes and recorded test evidence.
+- `GET /api/self-development/merge/runner` checks the existing Windows WSL Node/bubblewrap runner.
+  `tested: false` means project dependencies and actual tests still need verification. It installs nothing.
+- `POST /api/self-development/merge/review` takes `worktree`, `repo` and positive PR `number`, and
+  shows the complete bounded diff, contract, test command, exact head/base and required checks.
+- `POST /api/self-development/merge/approve` takes the returned `id`: the owner says they reviewed
+  this exact change. It does not merge. Approval is separate from the earlier permission to prepare edits.
+- `POST /api/self-development/merge/finish` takes that approved `id`, repeats verification and makes
+  one normal GitHub merge request with the expected head SHA. One attempt consumes the grant; grants
+  expire after ten minutes. A changed contract, diff, test evidence, head, base, rule or check requires review again.
+
+These are only for the owner in this computer's app window. Tasks, chats, short-lived keys, household
+profiles, other doors, Lockdown and App lock cannot use them. Owner state is checked again after
+asynchronous preflight and token/network-policy lookup immediately before sending the merge.
+
+The path supports a ready same-repository `branch/...` PR into the Beta line, or into a `selfdev-proof/...`
+scratch line that Beta never builds (for proving the loop without touching the Beta line). Branch verifies
+the checks itself on the exact head commit rather than relying on GitHub enforcing rules for administrators:
+every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
+accepted only for checks the base does not require), every check the base requires through classic
+protection or an active ruleset must have passed from its configured app, and the head must contain the exact
+base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
+Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
+GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
+GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
+`branch.finish_source_change` then gets an independent read-only review and merges without asking.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -6112,14 +6161,18 @@ The spreadsheet at `GET /api/usage/export.csv` carries `estimatedCostUsd`, `cost
 had no price leaves the money cells empty rather than writing a zero.
 
 ### Keeping a usage spreadsheet on a schedule (metering)
-Branch can keep a spreadsheet of this month's usage in a folder of your own workspace and write it
-again at an interval you choose. It is off until you ask for it, and it is written on this computer
-only — nothing is sent anywhere.
+Usage is always counted in Branch's own data (the Usage page reads it); nothing here switches that. A spreadsheet is
+written into your workspace only when you ask: Settings › Usage › Open the report › **Save as a spreadsheet** writes the
+report's 7, 30 or 90 days (in the desktop app into the `usage` folder, and it says where; a browser downloads it).
+Branch can also keep a spreadsheet of this month's usage there and write it again at an interval you choose. That
+schedule is off until you switch it on (a file written into every project by itself is clutter, not a feature), and it
+is written on this computer only — nothing is sent anywhere.
 
 - `GET /api/usage/metering` / `POST /api/usage/metering` — `{ enabled, folder, every }`, where
   `every` is `hourly`, `daily` or `weekly` and `folder` is a plain name inside the workspace. A
   folder that would climb out of the workspace is refused when you save it, not later.
-- `POST /api/usage/metering/now` — writes it straight away and says where it went.
+- `POST /api/usage/metering/now` — writes it straight away and says where it went. With `{ "range": "7d" | "30d" |
+  "90d" }` it writes those days instead, as `usage-report-<range>-<date>.csv` (the report's Save as a spreadsheet).
 
 The file is named after the month (`usage-2026-09.csv`) and holds the same money columns as the
 export above. The scheduler's existing beat writes it; a folder it cannot write to is passed over
@@ -8899,13 +8952,14 @@ short-lived key can read them but never change them.
 | | `contextWindowTokens` | `null` (20,000) | Room in one request, used both for folding and for the "too long" stop. |
 | How far one task may go (Settings, Permissions) | `maxSteps` | `60` | Model rounds in one task of the owner's (and in a background sub-task). Each question to the model and each tool call is one step. A task that uses them all ends as one out of rounds does: its best answer, then what it spent them on and where this setting is, never the bare words "Step budget exhausted". Event: `rounds.exhausted` (`by`: `steps`) |
 | | `spendCapDollars` | `null` | The task stops before its next model round once it has cost about this much, sub-tasks included. A model with no price on file cannot be checked; the task notes that once (`limits.spend_unpriced`). |
+| | `maxTaskTokens` | `null` (200,000) | Tokens one task may use in all, counting every request it sends to the model, 20,000 to 20,000,000. Long coding work, such as Branch changing its own source and waiting for its checks, needs more than the built-in figure. Branch's own settings tools find it as "Tokens per task" (`task-tokens.maxTaskTokens`, where `auto` means left empty) and change it only after you say yes. |
 | | `messagesPerConversationHour` | `60` | Maximum messages starting tasks in one conversation over a rolling hour; 1–1,000. A refused message stays in the window's draft. |
 | Trying the model service again (Settings, Advanced) | `apiRetries` | `null` (launch setting, 2) | Tries after a busy or failed request, 0 to 5. |
 | | `localFirstReplySeconds` | `null` (launch `localFirstReplyMs`, 300) | Longest a model on this computer may take to start each reply (it may be loading into memory), 5 to 1800. Hosted models are not affected. |
-| | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 60. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
+| | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 500. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
 | How much a tool may say (Settings, Advanced) | `toolAnswerChars` | `null` (launch `toolResultChars`) | Longest tool answer the model reads. |
-| | `toolTimeoutSeconds` | `null` (launch `toolTimeoutMs`) | Longest one tool call runs. |
-| How commands run (Settings, Computer) | `commandTimeoutSeconds` | `null` (the file's `shell.timeoutMs`) | Longest one command runs, for `shell.*` and nothing else. |
+| | `toolTimeoutSeconds` | `null` (launch `toolTimeoutMs`) | Longest one tool call runs, 5 to 1,800 seconds. |
+| How commands run (Settings, Computer) | `commandTimeoutSeconds` | `null` (the file's `shell.timeoutMs`) | Longest one command runs, for `shell.*` and nothing else, 1 to 1,800 seconds (a build and its tests can take minutes). |
 | | `keptOpenShell` | `true` | Off refuses to open a kept-open command line. |
 | | `passEnvironment` | `[]` | Extra variable names handed to commands and kept-open command lines. Owner only. |
 | Sub-tasks and side jobs (Settings, Models, Defaults) | `subtaskModel` | `null` | Connection for delegated work; `null` is the conversation's own. |
@@ -10386,6 +10440,61 @@ The desktop app runs the engine in a process of its own and hands it what it nee
 - `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
 - `appPid`: the window's main process, so the engine knows when the app is gone.
 - `testHooks`: test builds only, never in a packaged app.
+
+## Long work: carrying on after a restart or a limit
+
+Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+
+- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
+- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+
+## Seasons: overnight learning
+
+Saved in the owner's `settings/seasons` record, declared by `SeasonsSettingsSchema` in
+`src/seasons/settings.ts`. Household learning uses these switches while keeping each person's work
+and memory separate. A partial settings update preserves omitted fields. See [Seasons](seasons.md).
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `rings` | `on` | `off` or `on`: consolidate memory overnight with an undoable journal. |
+| `nightFrom` | `1` | Local start hour, 0–23, inclusive. |
+| `nightTo` | `6` | Local end hour, 0–23, exclusive. |
+| `idleMinutes` | `30` | 5–720 minutes without task activity before overnight work begins. |
+| `paidModels` | `false` | Permit models billed per call for overnight work; otherwise only local or subscription connections qualify. |
+| `minScore` | `0.6` | 0–1: minimum score before a fact is promoted. |
+| `minRecallCount` | `3` | 1–20: minimum recall count before promotion. |
+| `minUniqueQueries` | `2` | 1–20: minimum distinct queries before promotion. |
+
+The Gardener extends this record with the following settings when its feature is installed:
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `gardener` | `on` | `off` or `on`: draft and evaluate skills from the four supported triggers. |
+| `minGain` | `0.1` | 0.01–1: minimum measured improvement needed to adopt a skill. |
+| `staleAfterDays` | `14` | 1–365: unused adopted skills are marked stale after this many days. |
+| `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
+| `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
+| `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+## Desktop engine startup contract
+
+These internal fields in `EngineConfigSchema` (`src/desktop/engine-link.ts`) are sent by
+the desktop host over its private process channel. They are not editable user preferences.
+
+| Field | Meaning |
+| --- | --- |
+| `dataDir`, `workspace` | Saved-work and workspace directories chosen by the desktop. |
+| `providerEnv` | Saved model connection variables, or null; keys travel through the private channel. |
+| `version` | Desktop version reported by the engine. |
+| `executable`, `installRoot` | Installed executable and program folder, or null when running from source. |
+| `packaged` | Whether this desktop is a packaged installation. |
+| `loginItem` | macOS login-item enabled/approval state, or null elsewhere. |
+| `appPid` | Desktop host process named in the running-engine record. |
+| `testHooks` | Unpackaged test-launch hooks; never enabled in a packaged app. |
+| `port` | Optional exact port retained during an engine handover. |
+| `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
+| `appRoot` | Program folder containing checked live builds. |
+| `liveWindow` | Checked live window build: commit, digest, version and adoption time. |
 
 ## Long work: carrying on after a restart or a limit
 

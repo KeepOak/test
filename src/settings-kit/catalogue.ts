@@ -513,12 +513,25 @@ const comfort: SettingSpec[] = [
   {
     key: "round-limit", name: "Round limit", t: "settings-kit.name.round-limit", home: "settings:advanced",
     fields: [{ field: "maxModelRounds", label: "Model rounds (steps) per task", t: "settings-kit.field.round-limit", guard: "plain",
-      initial: roundsUnset, kind: { type: "number", min: 2, max: 60, unset: roundsUnset },
+      initial: roundsUnset, kind: { type: "number", min: 2, max: 500, unset: roundsUnset },
       note: `${roundsUnset}: 12 rounds, or ${codingModelRounds} when the task works on the project's files. A task working to a plan gets more on top.` }],
     // The knob's empty value (null) is "auto", so putting it back, or undoing a change, leaves no figure at all.
     read: (store, owner) => ({ maxModelRounds: readKnobs(store, owner, "limits").maxModelRounds ?? roundsUnset }),
     write: (store, owner, patch) => {
       saveKnobs(store, owner, "limits", { maxModelRounds: patch.maxModelRounds === roundsUnset ? null : patch.maxModelRounds });
+    },
+  },
+  // selfdev: the token allowance of one task, the owner's own knob (limits.maxTaskTokens). More tokens spend only on
+  // the connected model, so it is plain, like the round limit; "auto" means the built-in figure.
+  {
+    key: "task-tokens", name: "Tokens per task", t: "settings-kit.name.task-tokens", home: "settings:advanced",
+    // The kit's own name for the field: a name with "token" in it reads as a secret (secretShaped) and is never changed here.
+    fields: [{ field: "taskAllowance", label: "Tokens one task may use", t: "settings-kit.field.task-tokens", guard: "plain",
+      initial: roundsUnset, kind: { type: "number", min: 20_000, max: 20_000_000, unset: roundsUnset },
+      note: `${roundsUnset}: the built-in 200,000. Otherwise 20,000 to 20,000,000, counting every request the task sends to the model.` }],
+    read: (store, owner) => ({ taskAllowance: readKnobs(store, owner, "limits").maxTaskTokens ?? roundsUnset }),
+    write: (store, owner, patch) => {
+      saveKnobs(store, owner, "limits", { maxTaskTokens: patch.taskAllowance === roundsUnset ? null : patch.taskAllowance });
     },
   },
 ];
