@@ -73,6 +73,9 @@ export const ScheduleSchema = z
 export type DeliveryHandler = (channel: string, chatId: string, text: string, key: string) => Promise<{ messageId?: string | undefined; queued?: number }>;
 export interface HistoryEntry { runId: string | null; status: string; startedAt: string; finishedAt?: string; trigger: string }
 const historyLimit = 50;
+/** How many trigger slots (webhook deliveries, keyed requests) a schedule remembers, so a repeat starts nothing. */
+const triggerSlotLimit = 50;
+interface TriggerSlot { slot: string; runId: string | null; at: string }
 /** How many turns in a row a repeating job may miss before it is paused and the owner told why. */
 export const failuresBeforePausing = 3;
 /** Whether a schedule comes round again, rather than happening once. */
@@ -337,14 +340,36 @@ export class Scheduler {
     return true;
   }
   /** Runs a saved schedule now (webhook or local script) without moving its next due time. */
-  async trigger(owner: string, id: string, payload: unknown, trigger: "webhook" | "local"): Promise<Run> {
-    const record = this.store.get("schedules", owner, id);
-    if (!record) throw new Error("Schedule not found");
-    if (!["pending", "paused", "completed", "failed"].includes(String(record.data.status)))
-      throw new Error("This schedule is running right now");
+  async trigger(owner: string, id: string, payload: unknown, trigger: "webhook" | "local", slot: string | null = null): Promise<Run> {
+    if (!this.store.get("schedules", owner, id)) throw new Error("Schedule not found");
+    // One conditional write takes the schedule, so a second trigger (or the clock) arriving meanwhile is refused.
+    const claimed = this.store.claimScheduleTrigger(owner, id, new Date().toISOString(), slot);
+    if (!claimed) return this.refusedTrigger(owner, id, slot);
+    const { statusBeforeTrigger, ...data } = claimed.data;
+    const slots = (Array.isArray(data.triggerSlots) ? data.triggerSlots as TriggerSlot[] : []).slice(-(triggerSlotLimit - 1));
+    const record = { ...claimed, data: { ...data, status: String(statusBeforeTrigger),
+      ...(slot ? { triggerSlots: [...slots, { slot, runId: null, at: new Date().toISOString() }] } : {}) } };
     const run = await this.execute(record, new Date(), trigger, payload, false);
+    if (slot && run) this.noteSlotRun(owner, id, slot, run.id);
     if (!run) throw new Error("The schedule did not produce a run");
     return run;
+  }
+  /** Why a trigger did not start a turn: the same slot already did (its run is handed back), or one is running now. */
+  private refusedTrigger(owner: string, id: string, slot: string | null): Run {
+    const record = this.store.get("schedules", owner, id);
+    if (!record) throw new Error("Schedule not found");
+    const earlier = slot && Array.isArray(record.data.triggerSlots)
+      ? (record.data.triggerSlots as TriggerSlot[]).find((entry) => entry.slot === slot) : undefined;
+    const run = earlier?.runId ? this.store.run(earlier.runId) : undefined;
+    if (run) return run;
+    if (earlier) throw new Error("This delivery already started this schedule");
+    throw new Error("This schedule is running right now");
+  }
+  private noteSlotRun(owner: string, id: string, slot: string, runId: string): void {
+    const record = this.store.get("schedules", owner, id);
+    if (!record || !Array.isArray(record.data.triggerSlots)) return;
+    const triggerSlots = (record.data.triggerSlots as TriggerSlot[]).map((entry) => entry.slot === slot ? { ...entry, runId } : entry);
+    this.store.save("schedules", owner, id, { ...record.data, triggerSlots });
   }
   /**
    * dogfood-ux-3: one turn, inside the project the schedule was made in. A schedule saved before projects were kept with
