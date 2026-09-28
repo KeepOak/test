@@ -32,7 +32,7 @@ export interface ProtectedAreas {
 export const guardedDataFiles = [
   "branch.sqlite", "branch.sqlite-wal", "branch.sqlite-shm", "branch.sqlite-journal",
   "journal.sqlite", "journal.sqlite-wal", "journal.sqlite-shm", "journal.sqlite-journal",
-  "locker.key", "session-token", "chatgpt-auth.json", "question-fingerprint.key",
+  "locker.key", "session-token", "chatgpt-auth.json", "question-fingerprint.key", "desktop-control",
 ] as const;
 /** Files and folders in the data folder the gateway and the updater own. */
 export const gatewayDataFiles = [

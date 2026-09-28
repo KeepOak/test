@@ -45,6 +45,15 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   talkLiveMic: () => ipcRenderer.invoke("branch:talk-live-mic"),
   // attach-anything: files copied in Explorer or Finder, sent by the app itself; the page names no path.
   clipboardFiles: () => ipcRenderer.invoke("branch:clipboard-files"),
+  // hot-update: a live update reached the window (src/desktop/live-window-ipc.ts): stylesheets to swap in place, or a
+  // reload that keeps what is open; `engine` while the engine is handed over, so the window reconnects quietly.
+  onWindowUpdated: (callback: unknown) => {
+    if (typeof callback !== "function") return;
+    ipcRenderer.on("branch:window-updated", (_event, update: unknown) => (callback as (update: unknown) => void)(update));
+  },
+  reloadLive: (commit: unknown) => ipcRenderer.invoke("branch:reload-live", commit),
+  windowRestored: (commit: unknown) => ipcRenderer.invoke("branch:window-restored", commit),
+  windowUpdateResult: (result: unknown) => ipcRenderer.invoke("branch:window-update-result", result),
   // dogfood-ux-3: shows a file Branch kept in Explorer or Finder; the app reveals only a path the engine lists.
   showInFolder: (path: unknown) => ipcRenderer.invoke("branch:show-in-folder", path),
 }));

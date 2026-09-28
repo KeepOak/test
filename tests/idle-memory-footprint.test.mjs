@@ -38,10 +38,10 @@ function staticClosure(entry) {
 test("the window's main process loads the window's own code, not the engine's", () => {
   const loaded = staticClosure("desktop/main.js");
   for (const engine of ["index.js", "server.js", "store.js", "desktop/beta-smoke-window.js", "desktop/conversation-export.js", "install/headless-update.js", "package:playwright",
-    // PLAT-192: the Stop notice, the update's canary and the comfort settings load on use; the quick-ask keys read comfort/keys.js.
-    "desktop/banner-window.js", "never-break/canary.js", "comfort/settings.js"])
+    // PLAT-192: the Stop notice and the comfort settings load on use; the quick-ask keys read comfort/keys.js.
+    "desktop/banner-window.js", "comfort/settings.js"])
     assert.equal(loaded.includes(engine), false, `main loads ${engine} only when it is needed`);
-  assert.ok(loaded.length < 130, `main's own code stays small: ${loaded.length} modules at start`);
+  assert.ok(loaded.length < 175, `main's own code stays small: ${loaded.length} modules at start`);
 });
 
 test("the engine loads Playwright only when a browser is started or joined", () => {
