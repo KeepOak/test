@@ -176,6 +176,7 @@ const projectName = z.string().regex(/^[A-Za-z0-9._-]{1,100}$/, "Project names u
 function registerGitLabReads(registry: ToolRegistry, gitlab: (owner: string) => GitLabAccess): void {
   registry.register({
     name: "gitlab.issues", permission: "gitlab.read", group: "git",
+    target: (args) => String(args.project),
     description: "List the issues on a GitLab project, newest first.",
     parameters: z.object({
       project: projectPath, state: z.enum(["opened", "closed", "all"]).default("opened"),
@@ -185,12 +186,14 @@ function registerGitLabReads(registry: ToolRegistry, gitlab: (owner: string) => 
   });
   registry.register({
     name: "gitlab.issue", permission: "gitlab.read", group: "git",
+    target: (args) => String(args.project),
     description: "One GitLab issue in full, with what people wrote under it.",
     parameters: z.object({ project: projectPath, number }).strict(),
     execute: (input, context) => gitlab(context.owner).getIssue(input),
   });
   registry.register({
     name: "gitlab.merge_requests", permission: "gitlab.read", group: "git",
+    target: (args) => String(args.project),
     description: "List the merge requests on a GitLab project, newest first, with the branch each would bring in.",
     parameters: z.object({
       project: projectPath, state: z.enum(["opened", "closed", "merged", "all"]).default("opened"),
@@ -200,18 +203,21 @@ function registerGitLabReads(registry: ToolRegistry, gitlab: (owner: string) => 
   });
   registry.register({
     name: "gitlab.merge_request", permission: "gitlab.read", group: "git",
+    target: (args) => String(args.project),
     description: "One GitLab merge request in full: its description, what people wrote under it and how its pipeline went.",
     parameters: z.object({ project: projectPath, number }).strict(),
     execute: (input, context) => gitlab(context.owner).mergeRequest(input),
   });
   registry.register({
     name: "gitlab.releases", permission: "gitlab.read", group: "git",
+    target: (args) => String(args.project),
     description: "The published releases of a GitLab project, newest first.",
     parameters: z.object({ project: projectPath, limit: z.number().int().min(1).max(30).default(10) }).strict(),
     execute: (input, context) => gitlab(context.owner).releases(input),
   });
   registry.register({
     name: "gitlab.pipelines", permission: "gitlab.read", group: "git",
+    target: (args) => String(args.project),
     description: "How the automatic checks went on a GitLab project, for a branch or for all of it.",
     parameters: z.object({
       project: projectPath, ref: z.string().min(1).max(200).optional(),
@@ -225,24 +231,28 @@ function registerGitLabReads(registry: ToolRegistry, gitlab: (owner: string) => 
 function registerGitLabWrites(registry: ToolRegistry, gitlab: (owner: string) => GitLabAccess): void {
   registry.register({
     name: "gitlab.create_issue", permission: "gitlab.manage", group: "git",
+    target: (args) => String(args.project),
     description: "Raise an issue on a GitLab project.",
     parameters: z.object({ project: projectPath, title, body: z.string().max(8000).optional() }).strict(),
     execute: (input, context) => gitlab(context.owner).createIssue(input),
   });
   registry.register({
     name: "gitlab.comment", permission: "gitlab.manage", group: "git",
+    target: (args) => String(args.project),
     description: "Write a comment under a GitLab issue or merge request.",
     parameters: z.object({ project: projectPath, on: z.enum(["issue", "merge_request"]), number, body: z.string().trim().min(1).max(8000) }).strict(),
     execute: (input, context) => gitlab(context.owner).comment(input),
   });
   registry.register({
     name: "gitlab.open_merge_request", permission: "gitlab.manage", group: "git",
+    target: (args) => String(args.project),
     description: "Open a merge request on GitLab so someone can review one branch of work before it joins another. Set draft when it isn't ready to merge.",
     parameters: z.object({ project: projectPath, title, body: z.string().max(8000).optional(), from: branch, into: branch, draft: z.boolean().optional() }).strict(),
     execute: (input, context) => gitlab(context.owner).openMergeRequest(input),
   });
   registry.register({
     name: "gitlab.create_project", permission: "gitlab.manage", group: "git",
+    target: (args) => String(args.name),
     description: "Make a project on GitLab under the owner's account. It is private unless you say otherwise.",
     parameters: z.object({ name: projectName, description: z.string().max(350).optional(), private: z.boolean().default(true) }).strict(),
     execute: (input, context) => gitlab(context.owner).createProject(input),
