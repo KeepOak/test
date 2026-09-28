@@ -103,6 +103,10 @@ let liveWindowNow: InUse | null = null;
 let tellWindow: (update: WindowUpdate) => Promise<void> = () => Promise.reject(new UpdateDeferredError("The window is not open yet."));
 let recoverWindow: () => Promise<void> = () => Promise.resolve();
 let closeCapture: () => void = () => undefined;
+/** Tells the engine whether the window is shown, so a chat's answer can say where Branch is (src/environment.ts). */
+function tellWindowShown(): void {
+  if (window && !window.isDestroyed()) engine?.tell("window", { shown: window.isVisible() && !window.isMinimized() });
+}
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -286,6 +290,10 @@ async function createWindow(
   window.on("resize", soon);
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
+  // The engine tells the model whether Branch's window is open or hidden in the tray (src/environment.ts).
+  for (const change of ["show", "hide", "minimize", "restore"] as const) window.on(change as "show", tellWindowShown);
+  window.on("closed", () => engine?.tell("window", { shown: false }));
+  tellWindowShown();
   const mic = new TalkLiveMic(url, window.webContents.id);
   protectWindow(window, url, key, mic, access, client);
   // A page that went away while the engine was not there (its load was held too long) is opened again once it is back.
@@ -566,6 +574,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     onBack: (url) => {
       // The engine's own stop is written into its record of failures, as a window's or helper's is.
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
+      tellWindowShown(); // an engine started again knows nothing of the window yet
       // Back at another address (its port was taken meanwhile): the window's page belongs to the old one, so the
       // whole app starts again, which opens the window at the new address.
       if (url !== host.url) { relaunchApp(); return; }

@@ -130,7 +130,7 @@ async function confirm() {
   } catch (error) { toast(error.message); return; } finally { sending = false; }
   P = null;
   const box = $("#nl-in");
-  if (box) box.value = "";
+  if (box) { box.value = ""; box.dispatchEvent(new Event("input", { bubbles: true })); } // the page keeps the box's words (automations.js)
   await refresh().catch((error) => toast(error.message));
   renderNow();
   toast(t("window.places.schedule-card.scheduled-first-run-firstrunat", { firstRunAt: firstRun(p.proposal.firstRunAt) }));

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { lookup } from "../commands/catalog.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
@@ -24,6 +25,8 @@ export interface SlackOptions {
   fetch?: typeof fetch;
   connect?: WebSocketConnect;
   reconnectBaseMs?: number;
+  /** How often the socket is pinged to show it is still there (20 s; tests shorten it). */
+  keepaliveMs?: number;
   /** mac6/bucket-16: every event Slack sends, for Slack-started automations (src/channels/slack-automations.ts). */
   onEvent?: (event: unknown, botUserId: string | null) => void;
 }
@@ -36,6 +39,18 @@ const envelopeSchema = z.object({
   type: z.string(), envelope_id: z.string().optional(),
   payload: z.object({ event: eventSchema.optional(), event_id: z.string().optional() }).passthrough().optional(),
 }).passthrough();
+/** A button pressed on a question (Socket Mode `interactive`, Block Kit `block_actions`). */
+const actionSchema = z.object({
+  type: z.literal("block_actions"),
+  user: z.object({ id: z.string(), username: z.string().optional(), name: z.string().optional() }).passthrough(),
+  channel: z.object({ id: z.string() }).passthrough(),
+  message: z.object({ ts: z.string(), thread_ts: z.string().optional(), text: z.string().optional() }).passthrough(),
+  actions: z.array(z.object({ action_id: z.string(), value: z.string().optional(), action_ts: z.string().optional() }).passthrough()).min(1),
+}).passthrough();
+/** The action ids Branch's own buttons carry, so a press on some other app's button is never read as an answer. */
+const answerAction = /^branch_answer_\d{1,2}$/;
+/** The Slack thread a reply goes to: the timestamp before any "#" a button press added; anything else is no thread. */
+const threadOf = (id: string | undefined): string | undefined => { const ts = id?.split("#")[0]; return ts && /^\d+\.\d+$/.test(ts) ? ts : undefined; };
 
 /** Turns the markdown the assistant writes into the shape Slack renders. */
 export function toMrkdwn(text: string): string {
@@ -65,6 +80,8 @@ const slackPlain = (text: string, format?: MessageFormat): Record<string, unknow
   ? { link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   /** Slack accepts more, but long posts are unreadable; the ledger splits at this length. */
   readonly maxTextLength = 3000;
@@ -85,6 +102,16 @@ export class SlackAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.user?.name ?? null; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when Slack last answered at all (any envelope, or a pong to our own ping). */
+  private contactAt = Date.now();
+  private keepalive: ReturnType<typeof setInterval> | undefined;
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled connection again, resuming the session where it can. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     const me = await this.call("auth.test", this.options.token, {}).catch(() => undefined);
     const parsed = z.object({ user_id: z.string(), user: z.string().optional() }).passthrough().safeParse(me);
@@ -95,6 +122,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   async stop(): Promise<void> {
     this.stopping = true;
+    if (this.keepalive) clearInterval(this.keepalive);
     this.socket?.close();
     await this.loop?.catch(() => undefined);
   }
@@ -104,6 +132,11 @@ export class SlackAdapter implements ChannelAdapter {
         const address = this.options.socketUrl ?? await this.open();
         const socket = await this.connect(address, { onMessage: (text) => this.receive(text, onMessage) });
         this.socket = socket;
+        this.contactAt = Date.now();
+        // A socket that went quiet after a sleep never says it closed; a ping every 20 s shows whether anyone is there.
+        if (this.keepalive) clearInterval(this.keepalive);
+        this.keepalive = setInterval(() => socket.ping?.(() => { this.contactAt = Date.now(); }), this.options.keepaliveMs ?? 20_000);
+        this.keepalive.unref?.();
         // mac7/linux-fixes: a stop that arrived while this was still being opened found nothing to
         // close, and the loop then waited for a close nobody would ask for. Let it go straight away.
         if (this.stopping) socket.close();
@@ -125,11 +158,14 @@ export class SlackAdapter implements ChannelAdapter {
   }
   /** Acknowledges the envelope first, then decides whether the event is one to answer. */
   private receive(text: string, onMessage: (message: InboundMessage) => Promise<void>): void {
+    this.contactAt = Date.now();
     const envelope = envelopeSchema.safeParse(JSON.parse(text));
     if (!envelope.success) return;
     const { envelope_id: id, payload, type } = envelope.data;
     if (id) this.socket?.send(JSON.stringify({ envelope_id: id }));
     if (type === "disconnect") { this.socket?.close(); return; }
+    if (type === "interactive") { const pressed = this.fromButton(payload); if (pressed) void onMessage(pressed).catch(() => undefined); return; }
+    if (type === "slash_commands") { const typed = this.fromSlash(payload); if (typed) void onMessage(typed).catch(() => undefined); return; }
     const eventId = payload?.event_id;
     if (!payload?.event || (eventId && this.seen.has(eventId))) return;
     if (eventId) { this.seen.add(eventId); if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!); }
@@ -156,9 +192,77 @@ export class SlackAdapter implements ChannelAdapter {
       ...(event.thread_ts && event.ts ? { reactTo: event.ts } : {}),
     };
   }
+  /**
+   * CHAT-062: a question with Block Kit buttons. Each button's value is the answer and the fingerprint of the exact
+   * request, as on Telegram; the words stay in `text` too, for notifications and for apps that cannot show blocks.
+   */
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const words = slackText(text).slice(0, 2900);
+    const result = await this.call("chat.postMessage", this.options.token, {
+      channel: chatId, text: words, ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: words } },
+        // A question's Yes and No, or a /model menu (Slack takes up to 25 buttons in one actions block).
+        { type: "actions", elements: buttons.slice(0, 25).map((button, index) => ({
+          type: "button", action_id: `branch_answer_${index}`, value: button.value.slice(0, 2000),
+          text: { type: "plain_text", text: button.label.slice(0, 75) },
+          ...(button.value.startsWith("y") ? { style: "primary" } : button.value.startsWith("n") ? { style: "danger" } : {}),
+        })) },
+      ],
+    });
+    const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
+    return parsed.success ? parsed.data.ts : undefined;
+  }
+  /**
+   * A pressed button, as an ordinary addressed message carrying the button's own value; the router reads it as an answer
+   * to what this chat is waiting on, with every rule a typed y or n meets. Only Branch's own buttons count. The buttons
+   * stay as they are, as on Telegram: a press the router refuses (a stranger, a yes that belongs in the window) must not
+   * take them away from the person who may answer, and a second press on an answered question is told so.
+   */
+  private fromButton(payload: unknown): InboundMessage | null {
+    const parsed = actionSchema.safeParse(payload);
+    if (!parsed.success) return null;
+    const { user, channel, message, actions } = parsed.data;
+    const action = actions[0]!;
+    if (!answerAction.test(action.action_id) || !action.value || user.id === this.user?.id) return null;
+    if (this.options.channels?.length && !this.options.channels.includes(channel.id)) return null;
+    const direct = channel.id.startsWith("D");
+    return {
+      channel: this.id, chatId: channel.id, chatKind: direct ? "direct" : "group",
+      ...(direct ? {} : { chatTitle: `channel ${channel.id}` }),
+      senderId: user.id, senderName: user.username ?? user.name ?? user.id,
+      text: action.value, addressed: true,
+      // The reply goes to the thread the question was asked in; the press's own time after "#" keeps two presses in one
+      // thread apart, so each gets its own answer (the delivery keys are made from this).
+      messageId: `${message.thread_ts ?? message.ts}#${action.action_ts ?? Date.now()}`,
+    };
+  }
+  /**
+   * CHAT-164: `/branch <command> [words]` from Slack's own picker (Slack keeps an app's slash commands in its settings,
+   * and many plain names such as /status are Slack's own, so Branch has one). It reaches the router as `/<command>
+   * words` from the person who typed it, with every rule a typed command meets; `/branch` alone is `/help`, and words
+   * that are not a command are an ordinary message.
+   */
+  private fromSlash(payload: unknown): InboundMessage | null {
+    const parsed = z.object({ command: z.string(), text: z.string().default(""), user_id: z.string(), user_name: z.string().optional(),
+      channel_id: z.string(), trigger_id: z.string().optional() }).passthrough().safeParse(payload);
+    if (!parsed.success || parsed.data.command !== "/branch" || parsed.data.user_id === this.user?.id) return null;
+    const { text, user_id: user, channel_id: channel } = parsed.data;
+    if (this.options.channels?.length && !this.options.channels.includes(channel)) return null;
+    const words = text.trim().slice(0, 4000);
+    const direct = channel.startsWith("D");
+    return {
+      channel: this.id, chatId: channel, chatKind: direct ? "direct" : "group", ...(direct ? {} : { chatTitle: `channel ${channel}` }),
+      senderId: user, senderName: parsed.data.user_name ?? user,
+      // Only a word that is one of the chat's commands becomes one; anything else is the person's own words.
+      text: !words ? "/help" : lookup(words.split(/\s/)[0]!)?.surfaces.includes("chat") ? `/${words}` : words, addressed: true,
+      messageId: `slash:${parsed.data.trigger_id ?? Date.now()}`,
+    };
+  }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("chat.postMessage", this.options.token, {
-      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      // A thread is Slack's own timestamp: a button press's "#time" is taken off, and a slash command's id is no thread.
+      channel: chatId, text: slackText(text, format), ...slackPlain(text, format), ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
     });
     const parsed = z.object({ ts: z.string() }).passthrough().safeParse(result);
     return parsed.success ? parsed.data.ts : undefined;
@@ -175,8 +279,19 @@ export class SlackAdapter implements ChannelAdapter {
       await this.call("reactions.remove", this.options.token, { channel: chatId, timestamp: messageId, name: old }).catch(() => undefined);
     await this.call("reactions.add", this.options.token, { channel: chatId, timestamp: messageId, name });
   }
+  /**
+   * Slack's assistant status under the person's message ("Branch is thinking…"), as Hermes Agent and OpenClaw show it.
+   * It needs the app's Agents & AI Apps setting and the assistant:write scope; without them Slack refuses and the live
+   * status stops asking. "" clears it (posting the reply clears it too).
+   */
+  async setStatus(chatId: string, threadId: string, words: string): Promise<void> {
+    await this.call("assistant.threads.setStatus", this.options.token, { channel_id: chatId, thread_ts: threadId, status: words.slice(0, 100) });
+  }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
+  }
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    await this.call("chat.delete", this.options.token, { channel: chatId, ts: messageId });
   }
   // ---- R17-C (R17-022): a file through Slack's external upload (the older files.upload is retired).
   // 1. files.getUploadURLExternal hands out an address and a file id; 2. the bytes go to that
@@ -197,7 +312,7 @@ export class SlackAdapter implements ChannelAdapter {
     if (!upload.ok) throw new Error(`Slack would not take the file (${upload.status})`);
     await this.call("files.completeUploadExternal", this.options.token, {
       files: [{ id: slot.file_id, title: file.name }], channel_id: chatId,
-      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
+      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
     });
     return slot.file_id;
   }

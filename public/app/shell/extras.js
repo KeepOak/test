@@ -33,6 +33,12 @@ function gatewayPop() {
 
 /* The status bar reports the actual worker, not the next-start preference. */
 export const gatewayOn = () => (gw ? gw.underGateway === true : null);
+/** Settings › Gateway hands over what it just read, so the status bar says the same at once. */
+export function noteGateway(read) {
+  const was = gatewayOn();
+  gw = read;
+  if (gatewayOn() !== was) renderNow();
+}
 let gwFor = null, gwReading = false;
 export async function readGateway() {
   if (!E.state || E.state === gwFor || gwReading || !ownerHere()) return;
@@ -156,7 +162,7 @@ export function initExtras() {
   initMachines();
   initFileView();
   on("gwpop", (el) => openGateway(el));
-  document.addEventListener("change", (e) => { if (e.target.id === "gwpop-sw") setGateway(e.target.checked ? "on" : "off"); });
+  document.addEventListener("change", (e) => { if (e.target.id === "gwpop-sw") setGateway(e.target.checked ? "when-needed" : "off"); });
   on("shortcuts", () => showShortcuts());
   on("key15", (el) => { listening = el.dataset.v; showShortcuts(); });
   on("keyreset15", (el) => putBack(el.dataset.v));

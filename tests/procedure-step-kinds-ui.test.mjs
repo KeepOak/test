@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { pickGsel, gselChoices } from "./gsel.mjs";
 
 test("a person builds Repeat, If it says and Wait steps, approves them, and says yes to what it would repeat", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-step-kinds-ui-"));
@@ -43,12 +44,12 @@ test("a person builds Repeat, If it says and Wait steps, approves them, and says
   await page.locator(`[data-act="flow"][data-id="${procedure.id}"]`).click();
   const dlg = page.locator(".dlg");
   await dlg.locator("#fk-0").waitFor();
-  assert.deepEqual(await dlg.locator("#fk-0 option[disabled]").allInnerTexts(), [], "every kind can be picked");
+  assert.deepEqual((await gselChoices(dlg.locator("#fk-0"))).filter((c) => c.off), [], "every kind can be picked");
 
   const add = async (kind, text) => {
     const j = await dlg.locator("[id^='fk-']").count();
     await dlg.locator('[data-act="flow-add"]').click();
-    await dlg.locator(`#fk-${j}`).selectOption(kind);
+    await pickGsel(dlg.locator(`#fk-${j}`), kind);
     await dlg.locator(`#ft-${j}`).fill(text);
     return j;
   };

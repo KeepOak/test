@@ -172,7 +172,7 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // rather than imported, because that module reads this one for the three-way switch.
   { reason: "filling a saved sign-in is switched on", tools: signInFillTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "vault-autofill") },
   // Bucket 21 hook: tools for people building on Branch (src/sdk-kit.ts).
-  { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit") },
+  { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit", "mode", "when-needed") }, // ships on: src/sdk-kit-switch.ts sdkKitShipsAs
   // ── bucket-15: add-ons other people wrote (src/add-ons/settings.ts keeps these lists). ──
   ...(Object.entries(addOnTools) as [AddOnPart, readonly string[]][]).map(([part, tools]) => ({
     reason: `${addOnLabels[part]} is switched on`, tools, hideWhenOff: true, mode: (s: Reader, o: string) => addOnMode(s, o, part) })),
