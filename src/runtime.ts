@@ -498,6 +498,22 @@ export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset,
   const line = `\n\n${who} If asked which model you are, say so.`;
   return [{ ...first, content: first.content + line }, ...messages.slice(1)];
 }
+/**
+ * selfdev/prompt-cache: a model service serves a request's front from its prompt cache only while it is byte for byte
+ * what the round before sent. Branch adds some notes partway through a conversation (the task's checklist and the
+ * project's rules, fresh every round; the @ material), and most connections gather every instruction into one block
+ * at the very start, so a note that changed each round changed the front of every request and nothing after it could
+ * be read from the cache. A note partway through is sent where it stands instead, as Branch's own note in the
+ * conversation, so the standing instructions at the start stay the same for the whole task.
+ */
+export function notesInPlace(messages: Message[]): Message[] {
+  const start = messages.findIndex((message) => message.role !== "system");
+  if (start < 0 || !messages.some((message, at) => at > start && message.role === "system")) return messages;
+  return messages.map((message, at): Message => at > start && message.role === "system"
+    ? { role: "user", from: "branch", content: `<system-reminder>
+${message.content}
+</system-reminder>` } : message);
+}
 const summaryMessage = (summary: string): Message => ({ role: "system", content: `Earlier in this conversation (compacted summary):\n${summary}` });
 const compactionInstructions = "Summarize the conversation below for a handoff to yourself. Reply with JSON only: {\"goals\":[\"what we are trying to do\"],\"decisions\":[\"what was settled, with the turn it was settled in\"],\"instructions\":[\"what the person told you to always or never do, in their own words\"],\"todos\":[\"what is still to be done, in order\"],\"openQuestions\":[\"what is still unanswered\"],\"filesTouched\":[\"paths that were read or changed\"]}. Be concrete, keep identifiers and paths exactly, and use at most eight short entries per list. Keep every decision and instruction from an earlier summary.";
 /** Range of stored, non-system messages to summarise, leaving at least `compactionKeep` recent ones and never splitting a tool exchange. */
@@ -708,6 +724,8 @@ export class Runtime {
   artifacts: RunArtifacts | null = null;
   /** Where a person's attached files are kept; without it, nothing can be attached. */
   attachments: Attachments | null = null;
+  /** Files from lasting owner conversations also belong in Library; temporary and household files stay separate. */
+  attachmentsFiled: ((session: string, owner: string, refs: AttachmentRef[]) => Promise<void>) | null = null;
   /** Hears a sound or watches a video attached to a message (this computer's ffmpeg and speech settings); null when nothing can. */
   understandAttached: ((owner: string) => Understander) | null = null;
   /** Pictures that came with this turn's files, waiting for the model to be chosen so it can be said truly whether they were shown. */
@@ -1578,6 +1596,13 @@ ${run.output.slice(0, 6000)}`;
         ...(options.system ? { system: options.system } : {}),
       });
       if (read) this.store.saveRead(run.sessionId, userMessageId, read);
+      // Only the owner's own lasting conversation files into Library: never a trigger, schedule, chat app, another program
+      // or a borrowed key, since Library passages are put in front of the owner's later tasks.
+      const ownersOwn = (options.source ?? "owner") === "owner" && !options.originFrom && !startedWithShortLivedKey();
+      if (!temporary && ownersOwn && attached.length && this.attachmentsFiled) {
+        try { await this.attachmentsFiled(run.sessionId, context.owner, attached); }
+        catch (error) { this.store.event(run.id, "documents.import_failed", { reason: errorText(error) }); }
+      }
       options.onUserMessageId?.(userMessageId);
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });
@@ -3443,7 +3468,7 @@ ${run.output.slice(0, 6000)}`;
       this.models.requests.record(preset.id);
       // mac2/leak-guard: the copy that is sent has key-shaped values hidden; `messages` stays as it was.
       // mac7/r17-g: the sent copy is also tidied (orphaned results, missing ones, repeats) when the owner asks.
-      const request = { messages: this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages)), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
+      const request = { messages: notesInPlace(this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages))), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
         ...knobs.serviceTierFor(this.store, this.owner), // R17-S12
         ...savings.requestExtras(this.store, this.owner, preset, !context.permissions.size), // R17-045 / R17-046
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };

@@ -11,6 +11,7 @@ import { cwdOf } from "./never-break/protected.js";
 import { isReadOnlyPermission } from "./policy.js";
 import { isCommandTool } from "./policy-resources.js";
 import { wallReport } from "./sandbox-backends.js";
+import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { lockdownActive } from "./lockdown.js";
 import { betaLine } from "./desktop/dev-build.js";
 import { githubRepositoryOf } from "./github-address.js";
@@ -273,6 +274,25 @@ export function workspacePath(workspace: string, scope: string, path: string, pl
 }
 const insideSource = (path: string): boolean => path === sourceFolder || path.startsWith(`${sourceFolder}/`);
 /** The self-development worktree a workspace path is in, or "" for the protected checkout itself. */
+/**
+ * selfdev: the worktree this very task (or the task that started it) prepared or widened, or "". A task keeps working
+ * in its conversation's project after branch.prepare_source_change (src/project-scope.ts), so its commands, and the
+ * finish of its own change, may name that worktree by cwd: only the worktree whose contract this task chain wrote.
+ */
+export function preparedByTask(store: Pick<Store, "events">, book: ContractBook, owner: string, worktree: string, runId: string): boolean {
+  const contract = worktree ? book.current(owner, worktree) : null;
+  if (!contract || !runId) return false;
+  const writers = new Set(book.history(owner, worktree).map((one) => one.taskRunId).filter(Boolean));
+  const seen = new Set<string>();
+  for (let id: string | undefined = runId; id && !seen.has(id) && seen.size < 20;) {
+    if (writers.has(id)) return true;
+    seen.add(id);
+    const parent: unknown = store.events(id).find((event) => event.kind === "run.started")?.data.parentRunId;
+    id = typeof parent === "string" ? parent : undefined;
+  }
+  return false;
+}
+
 export function worktreeOf(path: string): string {
   const match = /^branch-agent-source\/\.branch-worktrees\/[^/]+/.exec(path);
   return match && worktreePattern.test(match[0]) ? match[0] : "";
@@ -484,7 +504,13 @@ export function sourceCheckedOut(workspace: string): boolean {
   try { return readdirSync(workspace).some((entry) => sourceSpelling(entry) === sourceFolder); } catch { return false; }
 }
 
-const canConfineWrites = async (): Promise<boolean> => (await wallReport()).available;
+/**
+ * Whether this computer can hold a command's writes to one folder. On Windows a held command runs inside WSL behind
+ * bubblewrap (src/integrations/shell.ts, wsl-held.ts), so it can when WSL has Node.js and bubblewrap; the native wall
+ * is macOS's and Linux's alone.
+ */
+const canConfineWrites = async (): Promise<boolean> =>
+  process.platform === "win32" ? (await wslReadiness(wslProbe)) === null : (await wallReport()).available;
 
 /**
  * A command's text is never read: globs and variables can always name Branch's source some other
@@ -495,7 +521,10 @@ const canConfineWrites = async (): Promise<boolean> => (await wallReport()).avai
  */
 async function confineCommand(deps: ContractGuardDeps, name: string, args: unknown, context: ToolContext): Promise<Pick<ToolContext, "writesConfinedTo">> {
   const scope = workspacePath(deps.workspace, "", deps.registry.pathScope() || ".") ?? "";
-  const worktree = worktreeOf(scope);
+  const cwdFolder = workspacePath(deps.workspace, "", commandFolder(context.workspace || deps.workspace, cwdOf(args).cwd));
+  // The active project's worktree, or the one this task prepared itself (it stays in its conversation's project).
+  const own = cwdFolder !== null ? worktreeOf(cwdFolder) : "";
+  const worktree = worktreeOf(scope) || (own && preparedByTask(deps.store, deps.book, deps.owner, own, context.runId) ? own : "");
   if (name !== confinableCommand)
     refuse(deps, context, name, worktree, `${whileCheckedOut}${name} is refused: Branch cannot hold the program it starts to one folder. Only shell.execute runs then, from the active self-development worktree, behind the OS sandbox.`);
   const folder = workspacePath(deps.workspace, "", commandFolder(context.workspace || deps.workspace, cwdOf(args).cwd));

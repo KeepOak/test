@@ -134,6 +134,18 @@ test("eval-gated adoption: a draft whose replay shows a gain is adopted, and the
   assert.equal(again.night.data.garden.planted, 0, "the same tasks never seed twice");
 });
 
+test("a skill adopted tonight is not re-proved the same night, however far the night's clock is from the computer's", async (t) => {
+  const { app, seen, preset } = await fixture(t);
+  await invoices(app);
+  const now = new Date(Date.now() + 2 * 86_400_000); // a night clock well past the computer's (CI runs on UTC after midnight)
+  const report = await app.gardener.night({ preset, now, stillQuiet: () => true });
+  assert.equal(report.adopted, 1);
+  const [seed] = app.gardener.book.seeds();
+  assert.equal(seed.proofs.length, 1, "proved once, when it was adopted");
+  assert.equal(seed.decidedAt, now.toISOString(), "the decision is dated on the night's own clock");
+  assert.equal(seen.replay, 6, "each task replayed without and with the draft, once");
+});
+
 test("no measurable gain, or a replay that cannot be read, discards the draft with the reason and keeps its file", async (t) => {
   const { app, preset } = await fixture(t, { withScore: 5, withoutScore: 5 });
   await invoices(app);
