@@ -15,6 +15,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { setupPanel } from "../dist/channel-setup/service.js";
 import { recipes } from "../dist/channel-setup/recipes.js";
+import { readFile } from "node:fs/promises";
 
 const store = { get: () => undefined };
 
@@ -23,9 +24,21 @@ test("the Set up panel says a Mac-only app cannot be set up elsewhere, and nothi
     const panel = setupPanel(store, "local", "imessage", platform);
     assert.match(String(panel.unavailable), /^iMessage works only on a Mac, so it cannot be set up on this computer\.$/, platform);
   }
+  assert.deepEqual(setupPanel(store, "local", "imessage", "win32").onlyOn, ["darwin"], "the window words it from the systems");
   assert.equal(setupPanel(store, "local", "imessage", "darwin").unavailable, null, "on a Mac it can");
+  assert.equal(setupPanel(store, "local", "imessage", "darwin").onlyOn, null);
   const held = recipes().filter((recipe) => setupPanel(store, "local", recipe.id, "win32").unavailable !== null).map((recipe) => recipe.id);
   assert.deepEqual(held, ["imessage"], "on Windows only iMessage is held");
+});
+
+test("the window's sentence has its words in every language the window speaks", async () => {
+  const keys = ["window.flows.chw.only-on", "window.flows.chw.system-mac", "window.flows.chw.system-windows", "window.flows.chw.system-linux"];
+  const en = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
+  for (const lang of ["fr", "de", "es"]) {
+    const other = JSON.parse(await readFile(new URL(`../public/locales/${lang}.json`, import.meta.url), "utf8"));
+    for (const key of keys) assert.ok(other[key], `${lang} ${key}`);
+    assert.notEqual(other[keys[0]], en[keys[0]], `${lang} is not the English`);
+  }
 });
 
 test("off a Mac the iMessage wizard shows why and its Continue stays off", { skip: process.platform === "darwin" && "this computer is a Mac" }, async (t) => {

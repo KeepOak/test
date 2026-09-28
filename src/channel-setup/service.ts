@@ -1,7 +1,7 @@
 import { FeatureModeSchema, type FeatureMode } from "../feature-switches.js";
 import { encodeQr, maximumQrBytes } from "../remote/qr.js";
 import { saveParitySwitches } from "../channels/parity-switch.js";
-import { parityKinds, parityPlatformRefusal } from "../channels/parity-config.js";
+import { parityKinds, parityOnlyOn, parityPlatformRefusal } from "../channels/parity-config.js";
 import type { Store } from "../store.js";
 import { readValues, runCheck, scrub, SetupRefusal, type Values } from "./check.js";
 import { createLink, recipeBook, recipeFor, recipes, type Recipe } from "./recipes.js";
@@ -67,6 +67,8 @@ export function setupPanel(store: Pick<Store, "get">, owner: string, id: string,
     hasCheck: Boolean(recipe.check), noCheck: recipe.noCheck ?? null, pairing: recipe.pairing ?? null,
     saved: done[recipe.id] ?? null, sources: recipe.sources,
     unavailable: typeof recipe.entry?.type === "string" ? parityPlatformRefusal(recipe.entry.type, platform) : null,
+    /** The systems it runs on when this computer is not one of them, so the window can say it in the owner's language. */
+    onlyOn: typeof recipe.entry?.type === "string" ? parityOnlyOn(recipe.entry.type, platform) : null,
   };
 }
 

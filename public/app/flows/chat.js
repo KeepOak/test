@@ -65,6 +65,11 @@ function save(c, w) {
 
 const BODIES = { Create: create, Paste: paste, Check: check, Pair: pair, Save: save };
 
+/* The engine's reason, in the window's language when it names systems this window has words for. */
+const SYSTEM = { darwin: "window.flows.chw.system-mac", win32: "window.flows.chw.system-windows", linux: "window.flows.chw.system-linux" };
+const onlyOnWords = (c) => (c.onlyOn?.length && c.onlyOn.every((p) => SYSTEM[p])
+  ? t("window.flows.chw.only-on", { name: c.name, systems: c.onlyOn.map((p) => t(SYSTEM[p])).join(" / ") }) : c.unavailable);
+
 function draw() {
   const w = S.chw, c = w?.recipe;
   if (!c) return;
@@ -75,7 +80,7 @@ function draw() {
   const back = w.step ? `<button class="btn ghost" type="button" data-act="chw-back">${t("action.back")}</button>` : `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`;
   const next = cur === "Save" ? `<button class="btn pri" type="button" data-act="chw-save">${t("action.save")}</button>` : `<button class="btn pri" type="button" data-act="chw-next" ${canNext ? "" : "disabled"}>${cur === "Pair" ? t("action.approve") : t("window.flows.chw.continue")}</button>`;
   const head = `<div class="chw-head12">${logo(c.id, c.name, 40)}<span><b>${esc(c.name)}</b><small>${t(FAMILY[c.family] ?? "window.flows.chw.more-apps")}${c.app?.name ? " · " + esc(c.app.name) : ""}</small></span></div>`;
-  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${c.unavailable ? `<p class="hint" role="status" data-chw-unavailable>${esc(c.unavailable)}</p>` : ""}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
+  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${c.unavailable ? `<p class="hint" role="status" data-chw-unavailable>${esc(onlyOnWords(c))}</p>` : ""}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
   if (cur === "Pair") setTimeout(() => $('.code12 input[value=""]')?.focus(), 30);
 }
 

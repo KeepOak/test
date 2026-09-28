@@ -93,6 +93,11 @@ function platformName(platform: NodeJS.Platform): string {
  * QA retest 2026-09-28: why a service cannot be set up on this computer, or null when it can. The Set up panel shows it
  * and holds Continue, so the iMessage wizard no longer runs on Windows to a switch that then refuses.
  */
+/** The systems a service runs on, when it is bound to some, and this computer is not one of them; else null. */
+export function parityOnlyOn(kind: string, platform: NodeJS.Platform = process.platform): NodeJS.Platform[] | null {
+  const service = parityService(kind);
+  return service?.platforms && !service.platforms.includes(platform) ? [...service.platforms] : null;
+}
 export function parityPlatformRefusal(kind: string, platform: NodeJS.Platform = process.platform): string | null {
   const service = parityService(kind);
   if (!service?.platforms || service.platforms.includes(platform)) return null;
