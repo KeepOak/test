@@ -93,7 +93,9 @@ for (const [name, answer] of [["a typed y", () => "y"], ["/approve", () => "/app
     assert.equal(await app.channels.handle(inbound(answer(buttons))), "replied");
     ranOnceByTheEngine(app, asked.id, ran);
     assert.equal(app.store.runs(app.runtime.owner).length, runs, "no second task");
-    assert.match(sent.at(-1), /^Done: /, "the chat got the task's own reply, not \"send your next message\"");
+    // A slow task's reply may be headed with its steps line (the router's own), so only the reply itself is matched.
+    assert.match(sent.at(-1), /(^|\n)Done: /, "the chat got the task's own reply");
+    assert.doesNotMatch(sent.at(-1), /Send your next message/, "not \"send your next message\"");
     assert.equal(app.store.events(asked.id).find((e) => e.kind === "run.continued") !== undefined, true);
     assert.equal(app.store.messages(asked.sessionId).filter((m) => m.role === "user").length, 1, "nothing was said in the chat's name");
   });
