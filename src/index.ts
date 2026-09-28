@@ -58,6 +58,8 @@ import { registerSessions } from "./sessions.js";
 import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
+import { heldOnly, outsideCaller, outsideProgramRefusal } from "./outside-commands.js";
+import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
 import { startMcpServer } from "./mcp-server.js";
@@ -852,7 +854,13 @@ export async function createBranch(options: {
     const held = await priorToolGuard?.(name, args, context);
     if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
       && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
-    return held;
+    // RES-253 (src/outside-commands.ts): a program started for someone other than the owner is held to the workspace
+    // behind the system's own wall, with no network, or refused where no wall can run.
+    const who = walledTools.includes(name) && context.runId ? outsideCaller(runOrigin(store, context.runId)) : null;
+    if (!who) return held;
+    if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
+    store.event(context.runId, "sandbox.outside_caller", { tool: name, who });
+    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
