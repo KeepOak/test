@@ -12,6 +12,7 @@ import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { settleForgotten } from "./conversation-residue.js";
 import { introPrompt, introSystem } from "./trunks/intro.js";
 import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
+import { MemoryFileSchema, memoryFileName } from "./trunks/files.js"; // workbench (SELF-311)
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -67,7 +68,7 @@ const restoredFiles = (data: string): string | null => {
     "AGENTS.md": z.string().max(8000).optional(), "USER.md": z.string().max(8000).optional(),
     "MEMORY.md": z.string().max(8000).optional(), "TOOLS.md": z.string().max(8000).optional(),
     "HEARTBEAT.md": z.string().max(8000).optional(),
-  }).strict() }).strict();
+  }).strict(), memories: z.record(memoryFileName, MemoryFileSchema).optional() }).strict(); // workbench (SELF-311)
   try { return JSON.stringify(schema.parse(JSON.parse(data))); } catch { return null; }
 };
 export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables] as const;
@@ -286,6 +287,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "reflection-cursor:": "how far a look back has read; nothing runs from it",
   "reflection-note:": "what accepting a queued note would do; it still needs the owner's yes",
   "skill-install-log": "install history for display only",
+  "stays-here:": "only keeps a conversation that held personal details on this computer; it can never send anything elsewhere",
   "tool-context-modes": "only how much of an already-permitted tool's or skill's description a request carries",
   "ask-first": "askFirst and maxQuestions only decide whether clarifying questions are asked",
   "calendar": "country, days off, working days, timezone and quiet hours only skip or hold existing work",

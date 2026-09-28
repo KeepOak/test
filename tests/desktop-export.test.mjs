@@ -8,7 +8,7 @@ import { _electron } from 'playwright';
 import { saveConversationExport, saveMemoryExport, saveMemoryLinesExport } from '../dist/desktop/conversation-export.js';
 import { exportedMemoryLines } from '../dist/memory-export.js';
 import { createBranch } from '../dist/index.js';
-import { connected, desktopOptions, offScreen, onboarded, send, taskDone } from './fixtures/desktop-options.mjs';
+import { connected, desktopOptions, offScreen, onboarded, send, taskDone, STARTUP_MS } from './fixtures/desktop-options.mjs';
 
 const archive = { format: 'branch-agent-conversation', version: 1, exportedAt: '2026-09-15T00:00:00.000Z',
   messages: [{ role: 'user', content: 'Export fixture' }, { role: 'assistant', content: 'Saved response' }] };
@@ -106,7 +106,7 @@ async function launchWithDialog(name) {
   const { home, options } = await desktopOptions({ hidden: true }), path = join(home, name);
   const electron = await _electron.launch(options);
   // Each click waits for the window to take it; a loaded build machine has spent over ten seconds on one click.
-  const page = await electron.firstWindow(); page.setDefaultTimeout(60000);
+  const page = await electron.firstWindow({ timeout: STARTUP_MS }); page.setDefaultTimeout(60000);
   await onboarded(page);
   await offScreen(electron, "opened");
   await electron.evaluate(({ dialog }, path) => {

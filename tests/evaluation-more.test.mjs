@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createHmac } from "node:crypto";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
@@ -328,4 +328,24 @@ test("the command line compares one suite across two model choices", async (t) =
   const asJson = JSON.parse((await run(process.execPath, [cli, "eval", "--suite", "cost", "--compare", "a,b", "--json"], { env })).stdout);
   assert.equal(asJson.readOnly, true);
   assert.deepEqual(asJson.rows.map((row) => [row.preset, row.model]), [["a", "gpt-4o-mini"], ["b", "gpt-4o"]]);
+});
+
+test("an evaluation proves nothing with a file that was already there, and takes away the files it made", async (t) => {
+  const { app, root } = await fixture(t, [["eval-ready.txt", [say("done")]], ...passingRoutes()]);
+  // A file left from an earlier run: a task that writes nothing must not pass on it.
+  await mkdir(join(root, "workspace"), { recursive: true });
+  await writeFile(join(root, "workspace", "eval-ready.txt"), "ready");
+  const stale = await app.evaluationSuites.run({ suite: "everyday" });
+  const ready = stale.tasks.find((task) => task.problem?.includes("eval-ready.txt"));
+  assert.ok(ready && !ready.passed, JSON.stringify(stale.tasks.map((task) => [task.id, task.passed, task.problem])));
+  assert.match(ready.problem, /already in the workspace/);
+  assert.equal(await readFile(join(root, "workspace", "eval-ready.txt"), "utf8"), "ready", "the owner's own file is left alone");
+});
+
+test("files an evaluation's tasks wrote are gone again once it is graded", async (t) => {
+  const { app, root } = await fixture(t);
+  const result = await app.evaluationSuites.run({ suite: "everyday" });
+  assert.equal(result.summary.accuracy, 1);
+  const left = (await readdir(join(root, "workspace")).catch(() => [])).filter((name) => name.startsWith("eval-"));
+  assert.deepEqual(left, [], "the workspace is as it was");
 });

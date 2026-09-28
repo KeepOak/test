@@ -27,13 +27,12 @@ run outside Branch's simulation. Choose a model connection that uses Branch's to
 Features ship on (the owner's rule, 2026-09-26; `src/ship-on.ts`). A feature stays off until you switch it on only when
 it would (a) spend money, (b) send something out to other people or publish on its own, (c) delete something, (d) use the
 microphone or camera, (e) run heavy CPU constantly in the background, or (f) loosen approvals or safety. A few others stay off
-because switching them on would break or change ordinary use (history repair, and stricter settings such as trusted
-folders), or by the owner's own decision (several accounts per connection). For a three-way switch, "when needed"
+because switching them on would change ordinary use (stricter settings such as trusted folders), or by the owner's own decision (several accounts per connection). For a three-way switch, "when needed"
 is the ship-on position: the feature works, and its tools load when the work calls for them.
 
 These ship on as well, whatever an older section below still says: the flows-and-boards parts, install
 requests included; learning parts, finding conversations by meaning included, but not outside memory services; *Understanding something*;
-the safety extras but asking whether a long task is getting anywhere and history repair; add-ons but installing packages; sub-goals,
+the safety extras but asking whether a long task is getting anywhere (history repair included, since it keeps a local model's reused call ids apart); add-ons but installing packages; sub-goals,
 background tasks and hand-off commands; source sync, other agents answering (`/model`) and forecasts; sharing
 assistants; skill bundles, sharing through git and the model arena; worktrees; a Trunk in any conversation; saved
 prompts (on); recordings; *Whether Branch is keeping up*; the usage report; the memory history; installing skills;
@@ -178,7 +177,7 @@ by hand; edit the data file and run that command.
 
 <!-- providers:start -->
 
-Branch knows 44 model services. Every one of them has been tested against a fake of the
+Branch knows 44 model services (36 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
 service, not against the real one, so treat this as "Branch speaks the right language", not as
 "this was tried on a live account". Addresses and prices were last checked on 2026-09-16.
 
@@ -450,7 +449,7 @@ One button takes a computer with nothing on it to a model that answers: install 
 
 **macOS and Linux.** On a Mac the graphics are read once from `system_profiler SPDisplaysDataType -json`. A Mac with Apple silicon has no separate video memory: its graphics share the computer's own memory, and the summary says so ("Apple M4 graphics, which share that memory"). Branch cannot ask Metal for its default graphics limit without native code, so unless `iogpu.wired_limit_mb` is set it plans with free memory. MLX is offered only on Apple silicon. On Linux `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits` is asked first; without it, `lspci` gives the card's name, and for an AMD card `rocm-smi --showmeminfo vram --json` or the driver's `/sys/class/drm/card*/device/mem_info_vram_total` gives the memory. Anything unexpected simply means "no card reported".
 
-**Routing rules** (`settings/routing`, off by default): `enabled`, `localForPrivate` (a task mentioning personal details stays here), `cloudForHard` (long or tool-heavy tasks go to the cloud model), `costCeilingDollars` (a simple task that would cost more than this in the cloud uses the free local model instead), and optional `localPreset` / `cloudPreset`. What you explicitly choose for a run or a conversation always wins; when routing does pick, the run records a `model.routed` event with the reason. The rule itself also has a "local server is not answering, use the cloud one" branch, but nothing probes the local server before a run yet: a task sent to a local model that does not answer falls back the ordinary way, through the connection's configured fallbacks and the provider cooldown. `POST /api/local-models/routing/preview` is the one caller that can set `localUp` today.
+**Routing rules** (`settings/routing`, off by default): `enabled`, `localForPrivate` (a task mentioning personal details stays here), `cloudForHard` (long or tool-heavy tasks go to the cloud model), `costCeilingDollars` (a simple task that would cost more than this in the cloud uses the free local model instead), and optional `localPreset` / `cloudPreset`. What you explicitly choose for a run or a conversation always wins; when routing does pick, the run records a `model.routed` event with the reason. A task kept here because of personal details is kept here for good: it is planned only on connections on this computer (never the configured fallbacks elsewhere), its side jobs (the advisor, summaries, learning) and sub-tasks and the tools it uses are answered here too, and the later turns of the same conversation stay here, since they carry its words. If the model here does not answer, the task fails with that model's own error; with no model on this computer it is refused. Only a task kept here to save money may still fall back to the cloud when the model here is not answering. `POST /api/local-models/routing/preview` is the one caller that can set `localUp` today.
 
 **Reading passages by meaning.** When the connected model is Ollama on this computer, document and memory search use Ollama's own `/api/embeddings` instead of the OpenAI-shaped route, one passage per request, and `text-embedding-3-small` is swapped for `nomic-embed-text`, which is what exists here.
 
@@ -907,7 +906,7 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 ### What every channel shares
 
-`activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
+Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
 ### Who a chat message's task counts as (mac7/chat-source)
 
@@ -1240,7 +1239,7 @@ lists them with Off, When needed and On (`GET /api/channels/parity`, `POST /api/
 - **On** connects when Branch starts and stays connected, as the older channels do.
 
 A change applies at once to a channel that is already connected; adding a channel to the connections
-file still needs a restart. The health line says "Switched off" for a service that is off.
+file still needs a restart, and adding one from the window's wizard does not. The health line says "Switched off" for a service that is off.
 
 The services that are posted to (Microsoft Teams bots, Webex, Synology Chat, Zalo, Flock, Pumble)
 use the same address as the other chat services, `/webhooks/chat/<channel id>/<the word on your
@@ -1659,12 +1658,20 @@ When Branch is running, the command goes through the same door as the window (th
 key), so a Telegram bot connects at once. Otherwise it opens the saved work itself, and the bot connects
 the next time Branch starts.
 
-**One command or two.** Every app is one command. Telegram and the wave mac3 services are switched on by
-it. The nine older connections (Discord, Slack, WhatsApp, email, Messenger, Instagram, Matrix, Signal
-and the ten team-chat services) are switched on by a line in the connections file, which Branch does not
-rewrite for you (it may sit in a folder you have not trusted, and holds at most eight channels), so the
-command prints that line with your settings filled in, and you add it and restart. That is the second
-step, and the only one.
+**One step, no restart (CHAT-147).** Every app is one command, or one pass through the window's wizard, and
+it connects there and then. The save keeps the app's entry, written from `data/channel-setup.json` with your
+plain settings put in (the same shape a connections-file line has, and nothing a request adds), in your
+settings; builds the channel exactly as a connections-file line is built; and attaches it to the running
+Branch. Branch connects every saved one again when it starts. Nothing is written to the connections file,
+and a channel with the same name there always wins, so one bot is never read twice. The answer says what
+really happened: connected, listening (an app that posts to Branch still needs its address pasted into the
+service, and this computer reachable from the internet), or saved but not connected, with the reason. The
+wave mac3 services still follow their switch. `DELETE /api/channel-setup/<app>` (the wizard's
+**Disconnect**) takes an app set up this way out and forgets its settings; what was pasted stays in the
+locker. Before anything is kept, the check goes past "who am I" where that cannot tell: Discord's Message
+Content Intent must be on, Slack's app-level token must open Socket Mode, and a Matrix token must belong
+to the account typed. With Branch closed, `branch connect` keeps the settings and the app connects the next
+time Branch starts.
 
 **The switch.** *Setting up from here and from the terminal* ships **off**. Off, the panel still shows
 the command, the links and the codes; it only refuses to save a token or switch anything on. The first
@@ -1743,7 +1750,7 @@ says so.
 | Discord (`discord`) | yes; then one line in the connections file | Windows: winget `Discord.Discord`; Mac: cask `discord`; Linux: Flathub `com.discordapp.Discord` | `https://discord.com/developers/applications?new_application=true` | `DISCORD_BOT_TOKEN` | GET `https://discord.com/api/v10/users/@me` |
 | Slack (`slack`) | yes; then one line in the connections file | Windows: winget `SlackTechnologies.Slack`; Mac: cask `slack`; Linux: Snap `slack` | `https://api.slack.com/apps?new_app=1&manifest_json=…` (pre-filled) | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | POST `https://slack.com/api/auth.test` |
 | WhatsApp Business (`whatsapp`) | yes; then one line in the connections file | Windows: download page; Mac: cask `whatsapp`; Linux: download page | `https://developers.facebook.com/docs/whatsapp/cloud-api/get-started` | `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`; plus phoneNumberId | none |
-| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD` | none |
+| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD`; plus address, imapHost, smtpHost | none |
 | Facebook Messenger (`messenger`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/messenger-platform/getting-started/quick-start` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Instagram (`instagram`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Matrix (Element) (`matrix`) | yes; then one line in the connections file | Windows: winget `Element.Element`; Mac: cask `element`; Linux: download page | `https://app.element.io/#/register` | `MATRIX_ACCESS_TOKEN`; plus server, userId | GET `<server>/_matrix/client/v3/account/whoami` |
@@ -1762,6 +1769,7 @@ says so.
 | Twitch chat (`twitch`) | yes; switched on from it | nothing to install | `https://dev.twitch.tv/console/apps/create` | `TWITCH_CHAT_TOKEN`; plus login, channel | GET `https://id.twitch.tv/oauth2/validate` |
 | Gotify (`gotify`) | yes; switched on from it | nothing to install | `<server>/#/applications` | `GOTIFY_APP_TOKEN`; plus server | none |
 | iMessage (`imessage`) | yes; switched on from it | nothing to install | none (plain steps) | nothing | none |
+| iMessage through BlueBubbles (`bluebubbles`) | yes; switched on from it | nothing to install | none (plain steps) | `BLUEBUBBLES_PASSWORD`; plus server | none |
 | Microsoft Teams (bot) (`msteams-bot`) | yes; switched on from it | Windows: winget `Microsoft.Teams`; Mac: cask `microsoft-teams`; Linux: download page | `https://dev.teams.microsoft.com/bots` | `MSTEAMS_APP_PASSWORD`; plus appId | POST `https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token` |
 | Webex (`webex`) | yes; switched on from it | Windows: winget `Cisco.Webex`; Mac: cask `webex`; Linux: download page | `https://developer.webex.com/docs/bots` | `WEBEX_BOT_TOKEN`, `WEBEX_WEBHOOK_SECRET` | GET `https://webexapis.com/v1/people/me` |
 | Synology Chat (`synology-chat`) | yes; switched on from it | Windows: winget `Synology.ChatClient`; Mac: download page; Linux: download page | `https://kb.synology.com/en-global/DSM/help/Chat/chat_integration` | `SYNOLOGY_CHAT_INCOMING_URL`, `SYNOLOGY_CHAT_TOKEN`; plus server | none |
@@ -1918,6 +1926,8 @@ Every value that has ever been looked up is remembered by **one scrubber** for a
 The scrubber above only knows the secrets Branch took out of the locker itself. A second check looks for anything **shaped** like a key, wherever it came from: a key a command printed, one sitting in a file, one pasted into a message. It knows the shapes of OpenAI, Anthropic, OpenRouter, AWS, GitHub, Slack, Google and Stripe keys, sign-in tokens, private key blocks, the value after `password:` or `Authorization:`, and a password written into an address (`postgres://me:…@host`). Every tool's answer is checked before the model reads it, and every request is checked before it goes to a model service; a match is replaced with a note such as `[hidden key-like value: OpenAI key]`, and the task's record gets one plain line saying a key-like value was hidden, never the value. Ordinary text is left alone: hashes, commit ids, ids, version numbers and code such as `password: z.string()` pass untouched.
 
 A web address that carries a key or password itself (`?api_key=`, `?token=`, `?password=` and similar names however they are written, `user:pass@` or a bare `token@`) is not fetched until you say yes, even where your rules would allow the website. This holds for the assistant's own calls, saved recipes and workflows, voice, and other AI tools connected to Branch. The yes is for that exact address in that conversation only.
+
+**What an address carries out** (`src/egress-guard.ts`). The network rules judge where a request goes, not what its address says, so a task that may only open pages could still move data out in addresses. So an address a task asks for that carries a value the locker has unlocked this launch (whole, a piece of eight characters or more, percent, base64 or hex encoded) or a card, bank account or national id number is put to you as a question every time, under every mode including Full Access, and the question and the task’s record name what it carries, never the value. A page the browser is *sent* to (a form sent by address, a link, a redirect) whose address carries one is not opened at all. Many different addresses on one site within a minute are written into the task’s record (`egress.flagged`), and past 30 no more are opened there until the minute has passed; making short links (bit.ly, tinyurl.com and the like) is noted too, and past three a task is refused. Following a short link somebody sent is ordinary and is not counted.
 
 The file tools also refuse more places keys live, as they already refused `.env` and `.ssh`: `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, the `.docker`, `.kube`, `.gnupg`, `.azure` and `.gcloud` folders, the GitHub command line's `gh/hosts.yml`, `.vault-token`, and shell history files (`.bash_history`, `.zsh_history`, `fish_history`, PowerShell's `ConsoleHost_history.txt`). File search skips them too.
 
@@ -2851,8 +2861,8 @@ Around it: a task's own completion checks are retried a set number of times befo
 a small script is checked before it runs, and a program can be run under a real debugger you
 already have (Settings → debug adapters) to stop it on a line and look at what every name holds.
 
-**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, off by
-default, kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
+**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, "when needed" by
+default (the ship-on rule: every fix still goes through the approval rules), kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
 (`{ "mode": "off" | "when-needed" | "on", "maxTries": 1-5 }`, two tries by default; a short-lived key
 cannot change it). It looks at a `shell.execute` or `code.run` that came back with a non-zero exit
 code (or a script that timed out). The model is asked, with no tools, for JSON
@@ -2935,7 +2945,7 @@ Shell: `maxMemoryMb` (default 1024) and `maxCpuSeconds` (default 60) stop a comm
 
 ### Security self-check
 
-Settings → Permissions has a **Security check** card, and the command line has `branch security audit [--fix] [--json]` (it exits with 1 while anything urgent is left). It runs 85 named checks, each in plain words, over files and folders (who else can read or change Branch's private folder, the database, the key to saved passwords, the ChatGPT sign-in, the app's own key, the launch settings file, plugins, saved website sign-ins, logs and backups; links; the private folder or workspace inside iCloud, Dropbox, OneDrive or Google Drive or a shared place), secrets, the phone door, short-lived keys, approval rules, the programs the assistant may run, the web and the browser, add-ons, models and chat services. The full list is `securityChecks` in `src/security-audit/audit.ts`. Running it changes nothing. **Fix what Branch can** (`--fix`, `POST /api/security-check/fix { ids? }`) only ever takes other people's access away from Branch's own files: `chmod` to 700 or 600 on macOS and Linux, and on Windows `icacls <path> /inheritance:r /grant:r <you>:(F) *S-1-5-18:(F)` followed by `icacls <path> /remove:g *S-1-1-0 *S-1-5-11 *S-1-5-32-545`. A path that turned into a link is left alone; everything else is described with what to do. `branch doctor --fix` adds one line with the counts. Routes: `GET /api/security-check` (switches, last report, malware check status), `POST /api/security-check/run`, `/fix` and `/settings`; a short-lived key may run the check but not fix or change switches, and neither may a household profile (both stay with the owner).
+Settings → Permissions has a **Security check** card, and the command line has `branch security audit [--fix] [--json]` (it exits with 1 while anything urgent is left). It runs 89 named checks, each in plain words, over files and folders (who else can read or change Branch's private folder, the database, the key to saved passwords, the ChatGPT sign-in, the app's own key, the launch settings file, plugins, saved website sign-ins, logs and backups; links; the private folder or workspace inside iCloud, Dropbox, OneDrive or Google Drive or a shared place), secrets, the phone door, short-lived keys, approval rules, the programs the assistant may run, the web and the browser, add-ons, models and chat services. The full list is `securityChecks` in `src/security-audit/audit.ts`. Running it changes nothing. **Fix what Branch can** (`--fix`, `POST /api/security-check/fix { ids? }`) only ever takes other people's access away from Branch's own files: `chmod` to 700 or 600 on macOS and Linux, and on Windows `icacls <path> /inheritance:r /grant:r <you>:(F) *S-1-5-18:(F)` followed by `icacls <path> /remove:g *S-1-1-0 *S-1-5-11 *S-1-5-32-545`. A path that turned into a link is left alone; everything else is described with what to do. `branch doctor --fix` adds one line with the counts. Routes: `GET /api/security-check` (switches, last report, malware check status), `POST /api/security-check/run`, `/fix` and `/settings`; a short-lived key may run the check but not fix or change switches, and neither may a household profile (both stay with the owner).
 
 Two three-way switches, saved in `settings/security-check` and both **when needed** on a fresh install. `audit`: off runs the check only when asked; `when-needed` also gives the assistant one read-only tool, `settings.security_check` (permission `history.read`); `on` also runs it each time Branch starts. `malware`: before an outside server started with `npx`, `bunx`, `pnpm dlx`, `npm exec`, `uvx`, `uv tool run` or `pipx run` starts, also when wrapped in `cmd /c`, (from the launch settings or from "Try a server"), the package is looked up in OSV (`https://api.osv.dev/v1/query`, through the network policy; `BRANCH_OSV_ENDPOINT` points it elsewhere) and one with a `MAL-` advisory is refused with a plain sentence and a `connection.changed` line in the record. `when-needed` keeps each answer for a week, `on` for an hour. If OSV cannot be reached, answers badly, or the network policy refuses the address, the server starts as it did before and the reason shows on the card. An answer longer than 10 pages is not read to the end: unless malware was already named in what was read, the package counts as **not checked** (never as clean), which the card says, and an install request for it waits for "approve without the check".
 
@@ -3198,7 +3208,7 @@ background command finishes is not done yet.
 
 ## Backup, restore and health
 
-`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix.
+`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix. The ordinary check changes nothing: it only looks at the workspace folder (there, a folder, writable by you). Only `--probe` (and `?probe=1`) writes one small test file into the workspace and removes it at once, besides sending each connection one real request.
 
 ## Moving in from another assistant
 
@@ -3278,7 +3288,7 @@ Two switches, both saved in `settings/reflection` (`src/reflection/`). Looking b
 
 **Receipts.** Each successful tool result is hashed and signed with a key derived from the locker key. `GET /api/runs/:id/receipts` classifies every tool event (success, modified, forged, unsigned, failed, blocked, stalled). `POST /api/receipts/verify` with `{ runId, data }` (the event's data) says whether a result is still the one the runtime observed.
 
-**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `warn` (keep the text, add warnings), `redact` (replace flagged lines with a notice) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event.
+**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `redact` by default (replace flagged lines with a notice), or `warn` (keep the text, add warnings) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event. What the browser reads off a page (`browser.snapshot`, `browser.extract`, `browser.shape`) always has such lines taken out, with a `note` saying how many, and a file read with `files.read` does the same.
 
 **Exit criteria for delegated tasks.** `specialists.delegate` and fan-out tasks accept `checks` (same shape as a run's checks); a miss fails the child with the reason and the parent sees it as unresolved with that evidence.
 
@@ -3292,7 +3302,7 @@ Every message sent through a channel (a reply, a scheduled result) is recorded b
 
 Branch is itself a Model Context Protocol (MCP) server, so another AI tool on the same computer can ask it to do things. **Settings → Sharing with other AI tools** has the switch, the list of tools you are willing to share, and ready-to-paste settings with a Copy button for Claude Desktop, Claude Code and Cursor.
 
-**What is shared, and when.** Nothing until you switch it on. Switching it on offers the tools that only read (their permission ends in `.read`) and leaves everything else unticked and marked *can change things*; you tick those yourself. `branch.ask` — asking Branch a question in plain words — is always available, because it goes through Branch's own permissions and budget like any other task. The saved choice lives in `settings/mcp-sharing` as `{ enabled, exposedTools }` and is read fresh on every call, so a change takes effect at once.
+**What is shared, and when.** Nothing until you switch it on. Switching it on offers the tools that only read (their permission ends in `.read`) and leaves everything else unticked and marked *can change things*; you tick those yourself. While it is off the door offers nothing at all: no tools (not even `branch.ask`), no resources and no prompts. While it is on, `branch.ask` — asking Branch a question in plain words — is offered too; its task may use only the permissions the tools you ticked need, and like every task from outside it asks before any change. The saved choice lives in `settings/mcp-sharing` as `{ enabled, exposedTools }` and is read fresh on every call, so a change takes effect at once.
 
 **Two ways to connect.** Over HTTP, at `/mcp` on the same port as the web interface: JSON-RPC 2.0 by `POST`, with your session key as `Authorization: Bearer …`. If you send no `Mcp-Session-Id`, the reply to your first message names one in an `Mcp-Session-Id` header; send it back on everything afterwards and your work is kept together. `DELETE` ends that conversation (204). A plain `GET` is refused (405), but a `GET` that asks for `text/event-stream` opens a stream Branch writes down when something changes on this side — see **Streaming** below. Responses carry `MCP-Protocol-Version`. Branch speaks `2025-06-18`, `2025-03-26` and `2024-11-05`; ask for anything else and you get a plain error saying which ones work. Or as a child program: `branch mcp-serve` speaks newline-delimited JSON-RPC on standard input and output, writes every message for a person to standard error, and stops cleanly when the other tool closes the connection.
 
@@ -3324,10 +3334,10 @@ Every resource is read-only, and each one is scoped by your approval settings. A
 
 | On offer | Not on offer |
 | --- | --- |
-| `branch.ask` — asking Branch for something in plain words | Any tool you have not ticked in the shared list |
+| `branch.ask` — asking Branch for something in plain words, while sharing is on, with only the ticked tools' permissions | Any tool you have not ticked in the shared list |
 | Every tool you tick, minus the ones your approval settings flatly refuse | Anything your approval settings refuse |
 | `mcp.dry_run` and `mcp.snapshot`, while sharing is on | Your saved passwords and keys, in any form |
-| Reading memory, the workspace listing, documents, tasks and conversations | Writing to any of those through a resource — resources are read-only |
+| Reading memory, the workspace listing, documents, tasks and conversations, while sharing is on | Writing to any of those through a resource — resources are read-only |
 | Your saved procedures as prompts, with their blanks | The owner-only parts of the app: projects, profiles, settings |
 | A plain note saying what was held back and why | Sampling: Branch never asks a connected tool to run a model for it |
 
@@ -6151,14 +6161,18 @@ The spreadsheet at `GET /api/usage/export.csv` carries `estimatedCostUsd`, `cost
 had no price leaves the money cells empty rather than writing a zero.
 
 ### Keeping a usage spreadsheet on a schedule (metering)
-Branch can keep a spreadsheet of this month's usage in a folder of your own workspace and write it
-again at an interval you choose. It is off until you ask for it, and it is written on this computer
-only — nothing is sent anywhere.
+Usage is always counted in Branch's own data (the Usage page reads it); nothing here switches that. A spreadsheet is
+written into your workspace only when you ask: Settings › Usage › Open the report › **Save as a spreadsheet** writes the
+report's 7, 30 or 90 days (in the desktop app into the `usage` folder, and it says where; a browser downloads it).
+Branch can also keep a spreadsheet of this month's usage there and write it again at an interval you choose. That
+schedule is off until you switch it on (a file written into every project by itself is clutter, not a feature), and it
+is written on this computer only — nothing is sent anywhere.
 
 - `GET /api/usage/metering` / `POST /api/usage/metering` — `{ enabled, folder, every }`, where
   `every` is `hourly`, `daily` or `weekly` and `folder` is a plain name inside the workspace. A
   folder that would climb out of the workspace is refused when you save it, not later.
-- `POST /api/usage/metering/now` — writes it straight away and says where it went.
+- `POST /api/usage/metering/now` — writes it straight away and says where it went. With `{ "range": "7d" | "30d" |
+  "90d" }` it writes those days instead, as `usage-report-<range>-<date>.csv` (the report's Save as a spreadsheet).
 
 The file is named after the month (`usage-2026-09.csv`) and holds the same money columns as the
 export above. The scheduler's existing beat writes it; a folder it cannot write to is passed over

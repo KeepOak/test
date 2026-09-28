@@ -320,6 +320,8 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       browser.tracer = channels?.tracer as never;
       // w911 (A2019) hook: the browser sandbox; its settings are read when a task first opens a page.
       if (channels?.store) { const kept = channels.store as Store; browser.sandbox = new BrowserSandbox(kept, () => kept.secrets); }
+      // What a page address carries out (src/egress-guard.ts): the values the locker has unlocked this launch.
+      if (channels?.store) { const kept = channels.store as Store; browser.egressSecrets = () => kept.secrets.scrubber.values(); }
       // The quirks of particular websites live in the skills the owner installed, not in the
       // browser tool, so they are read fresh each time: installing a skill needs no restart.
       const skillStore = channels?.store as SiteSkillSource | undefined;
@@ -484,6 +486,15 @@ function guardedSocket(policy: NetworkPolicy | undefined): WebSocketConnect | un
   };
 }
 
+/**
+ * One entry of the connections file's `channels` list, checked with the file's own shapes and built the same way,
+ * for a chat app set up in the window (src/channel-setup/live.ts). Its channel is not attached here.
+ */
+export async function buildChannelEntry(entry: unknown, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
+  const parsed = ChannelConfigSchema.safeParse(entry);
+  if (!parsed.success) throw new Error(`The saved settings are not complete: ${parsed.error.issues.map((issue) => issue.message).join('; ').slice(0, 300)}`);
+  return buildChannel(parsed.data, env, host, policy);
+}
 /** Builds the adapter one configured channel asks for, with its secrets and network guards. */
 async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
   // Wave mac3 (channels-parity): IRC, XMPP, Mastodon and the rest are built in their own files.
