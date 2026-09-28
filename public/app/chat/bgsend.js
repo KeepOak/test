@@ -4,8 +4,8 @@
    the box empties, the page stays, and the dock's background chip counts it while it works (chat/bg.js). When its first
    task has finished, the in-window notification card (shell/notify.js) names it, with Open. The engine carries a task
    on when the window that asked goes away (src/server.ts /api/run), so a reload loses only the card, never the work;
-   the conversation is in the list and the Inbox's Finished. At most three are kept waiting at once: each holds one of
-   the few connections a browser keeps open to the engine. */
+   the conversation is in the list and the Inbox's Finished. Each waits in one of the window's few long waits
+   (core/inflight.js), shared with the panes. */
 
 import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
@@ -13,11 +13,9 @@ import { render } from "../core/dom.js";
 import { toast } from "../core/ui.js";
 import { plain } from "./markdown.js";
 import { announce } from "../shell/notify.js";
+import { waitRoom, holdWait, LONG_WAITS } from "../core/inflight.js";
 import { t } from "../../i18n.js";
 
-const MAX = 3;
-const going = new Set();
-export const backgroundCount = () => going.size;
 
 const LINES = { completed: null, needs_input: "window.chat.bgsend.waiting", failed: "window.chat.bgsend.failed", cancelled: "panels.state.stopped", interrupted: "panels.state.stopped", budget_exceeded: "window.chat.bgsend.failed" };
 /* The card's words: the reply's opening words once it finished, else how it ended. */
@@ -28,14 +26,20 @@ function lineOf(run) {
   return words.length > 140 ? `${words.slice(0, 139)}…` : words || t("window.chat.bgsend.done");
 }
 
+/** Whether one more may start now; says why not. Asked before the message's files and choices are taken for it. */
+export function roomAway() {
+  if (waitRoom()) return true;
+  toast(t("window.chat.bgsend.full", { count: LONG_WAITS }));
+  return false;
+}
+
 /**
  * Starts a new conversation with `prompt` in the background. `fields` is what Enter would send with it (files,
  * Temporary, mode, project). Answers false, with the reason said, when it was not started; the caller keeps the words.
  */
 export function sendInBackground(prompt, fields = {}) {
-  if (going.size >= MAX) { toast(t("window.chat.bgsend.full", { count: MAX })); return false; }
-  const key = Symbol(prompt);
-  going.add(key);
+  if (!waitRoom()) { toast(t("window.chat.bgsend.full", { count: LONG_WAITS })); return false; }
+  const letGo = holdWait();
   toast(t("window.chat.bgsend.started"));
   api("run", { prompt, ...fields })
     .then(async (run) => {
@@ -48,6 +52,6 @@ export function sendInBackground(prompt, fields = {}) {
       const refused = error.offline || (error.status >= 400 && error.status < 500);
       if (refused && !String(S.drafts.new ?? "").trim()) { S.drafts.new = prompt; if (!S.chat) render(); }
     })
-    .finally(() => { going.delete(key); render(); });
+    .finally(() => { letGo(); render(); });
   return true;
 }

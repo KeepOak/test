@@ -87,3 +87,26 @@ test("Enter in the same box still sends in the foreground and opens the conversa
   assert.equal(await page.locator(".empty-chat").count(), 0);
   assert.deepEqual(errors, []);
 });
+
+test("at most three background conversations wait at once; a fourth is refused with its words kept, and the window still reads", async (t) => {
+  const { app, page, errors, release } = await fixture(t);
+  for (let i = 1; i <= 3; i++) {
+    await page.locator("#prompt").fill(`${i}: the weekly numbers`);
+    await page.locator("#prompt").press("Control+Enter");
+    await page.waitForFunction(() => document.getElementById("prompt")?.value === "");
+  }
+  await until(() => app.store.runs(app.runtime.owner).length === 3);
+  await page.locator("#prompt").fill("4: the weekly numbers");
+  await page.locator("#prompt").press("Control+Enter");
+  await page.locator(".toast").filter({ hasText: "already working in the background" }).waitFor();
+  assert.equal(await page.locator("#prompt").inputValue(), "4: the weekly numbers", "the refused words stay in the box");
+  const read = await page.evaluate(async () => {
+    const started = performance.now();
+    const answer = await fetch("/api/state", { headers: { authorization: `Bearer ${sessionStorage.getItem("branch-token") ?? ""}` } }).catch(() => null);
+    return { ms: performance.now() - started, got: !!answer };
+  });
+  assert.ok(read.got && read.ms < 5000, `a read still goes through while three wait (${Math.round(read.ms)} ms)`);
+  assert.equal(app.store.runs(app.runtime.owner).length, 3, "no fourth task started");
+  release();
+  assert.deepEqual(errors, []);
+});

@@ -26,7 +26,7 @@ import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } 
 import { initTalkLive } from "./talklive.js";
 import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
-import { sendInBackground } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
+import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
@@ -634,12 +634,15 @@ let away = false;
 async function sendAway() {
   const box = $("#prompt"), prompt = (box?.value ?? "").trim();
   if (!prompt || viewingHelper() || away) return;
-  if (prompt.startsWith("/") || asksFirst() || trunkModelRefused() || whoHere()?.kind === "room") { await send(); return; }
+  const routed = !!routeFor(prompt, null, whoHere(), HOOKS); // words that call a Trunk by its @name go its way
+  if (prompt.startsWith("/") || asksFirst() || trunkModelRefused() || whoHere()?.kind === "room" || routed) { await send(); return; }
+  if (!roomAway()) return; // before the files, Temporary and the mode pick are taken for it: refused, they all stay
   away = true; // a second press while files finish arriving starts nothing more
   let started = false;
   try { started = sendInBackground(prompt, { ...(await takePending(true)), ...(await startMode()), ...newProject() }); } finally { away = false; }
   if (!started) return;
   filesSent();
+  practiceSent(); // a practice task was carried (takePending dryRun); the flag is used once, as Enter uses it
   clearBox(true);
   box?.dispatchEvent(new Event("input", { bubbles: true }));
   renderNow();
