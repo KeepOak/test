@@ -66,7 +66,8 @@ test("a chat's task is told where Branch runs and which app the message came in 
   assert.match(line, /^Where you are running: the owner's own computer/, "the last of the system text, after what stays the same");
   assert.ok(line.includes(hostname()));
   assert.match(line, /came in on Telegram/);
-  assert.ok(requests[0].tools.some((tool) => tool.name === "environment.about"), "offered to a chat's task");
+  // In the settings toolbox (one line while closed), and a chat's task may call it: skills.read is on every chat's list.
+  assert.equal(app.registry.groupOf("environment.about"), "settings");
   const result = requests[1].messages.find((m) => m.role === "tool");
   const about = JSON.parse(result.content).result;
   assert.equal(about.device, hostname());

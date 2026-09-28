@@ -74,8 +74,9 @@ export function environmentLine(facts: EnvironmentFacts): string {
 export function environmentTool(channelOf: (runId: string) => string | null): ToolDefinition<Record<string, never>> {
   return {
     // skills.read: on the short list every chat has (src/channels/chat-permissions.ts), and like it only reads.
-    // Always open (core): one short line in every catalog, so "which device are you on?" never needs a lookup first.
-    name: "environment.about", permission: "skills.read", reach: "local", group: "core",
+    // Not always open: the line in the system text already answers "which device are you on?", and every always-open
+    // tool takes a place a task's own toolboxes need. It sits with how Branch is set up (the settings toolbox).
+    name: "environment.about", permission: "skills.read", reach: "local", group: "settings",
     description: "This computer and how Branch runs on it: name, operating system, processor, memory, desktop app or background gateway, the chat app a message came in on, local time and time zone.",
     parameters: z.object({}).strict(),
     execute: async (_input, context) => {
