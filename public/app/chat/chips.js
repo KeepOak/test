@@ -17,7 +17,7 @@ import { initLocalPick } from "../flows/localpick.js";
 import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 
 const PMODES = [["auto", "look.season.auto", "window.chat.mode.auto-hint", "spark"], ["ask", "mode.ask", "window.chat.mode.ask-hint", "shield"], ["plan", "mode.plan", "window.chat.mode.plan-hint", "plan"], ["full", "window.chat.mode.full", "window.chat.mode.full-hint", "unlock"]];
-const M = { sid: undefined, model: null, mode: null, at: 0, pending: null, account: null, runKey: "", limits: [] };
+const M = { sid: undefined, model: null, mode: null, at: 0, pending: null, pendingModel: null, account: null, runKey: "", limits: [] };
 
 const presets = () => E.state?.models?.presets ?? [];
 /* The model's own name where the engine has one (GET /api/state models.presets[].modelName, "GPT-6 Sol"), else its id; and
@@ -25,13 +25,16 @@ const presets = () => E.state?.models?.presets ?? [];
    connection's own, then the workspace's Thinking, then the model's). */
 function current() {
   const eff = M.model?.effective ?? E.state?.activeModel ?? {};
-  const id = M.model?.preset ?? eff.presetId;
+  // QA retest 2026-09-28 (m10): before a first message, what was picked for this conversation (M.pendingModel).
+  const own = S.chat ? null : M.pendingModel;
+  const id = own?.preset ?? M.model?.preset ?? eff.presetId;
   const preset = presets().find((p) => p.id === id);
-  const reasoning = M.model?.reasoning ?? preset?.startsAt ?? E.state?.models?.reasoning;
+  const picked = own?.preset && preset ? { provider: preset.provider, presetName: preset.name } : null;
+  const reasoning = own?.reasoning ?? M.model?.reasoning ?? preset?.startsAt ?? E.state?.models?.reasoning;
   // The account this conversation now answers through, once it is not the list's first choice (GET /api/accounts/session
   // chosenHere: picked here, or moved to after a plan limit), in the engine's own words.
   const account = M.account?.chosenHere && M.account?.label ? M.account.label : "";
-  return { id, name: preset?.modelName || eff.model || eff.presetName || "", provider: eff.provider ?? "", reasoning, account };
+  return { id, name: preset?.modelName || (picked ? preset?.model : eff.model) || (picked ?? eff).presetName || "", provider: (picked ?? eff).provider ?? "", reasoning, account };
 }
 /* What the engine will really do here: Lockdown; for a new conversation, the mode picked for it or what new ones start
    on; for a conversation started from outside, Ask first whatever was picked; else its own pick, or the owner's policy. */
@@ -60,9 +63,10 @@ export async function newConversationMode(picked = null) {
 /* The composer's first message in a new conversation: its chip's pick, used once. */
 export async function startMode() {
   if (S.chat) return {};
-  const picked = M.pending;
+  const picked = M.pending, model = M.pendingModel;
   M.pending = null;
-  return newConversationMode(picked);
+  M.pendingModel = null;
+  return { ...(await newConversationMode(picked)), ...(model?.preset ? { preset: model.preset } : {}), ...(model?.reasoning ? { reasoning: model.reasoning } : {}) };
 }
 
 export function chips() {
@@ -172,8 +176,10 @@ function reopen(act, menu, row) {
 
 async function saveModel(change) {
   try {
-    if (S.chat) await api(`sessions/${encodeURIComponent(S.chat)}/model`, change);
-    else await api("models", "preset" in change ? { activePreset: change.preset } : { reasoning: change.reasoning });
+    /* QA retest 2026-09-28 (m10): before its first message, a new conversation's pick is its own and goes with that message
+       (POST /api/run preset, reasoning); it used to become the default for every new conversation. The default is Settings › Models. */
+    if (!S.chat) { M.pendingModel = { ...M.pendingModel, ...change }; redrawChips(); reopen("modelmenu2", modelMenu, "pick-model"); return; }
+    await api(`sessions/${encodeURIComponent(S.chat)}/model`, change);
     await refresh();
     M.sid = undefined;
     await loadChips();
