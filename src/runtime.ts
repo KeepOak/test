@@ -146,6 +146,7 @@ import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
 import { loadWords, type Words } from "./terminal-words.js"; // the workspace's language, for a stopped task's sentences
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
+import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -650,6 +651,8 @@ export class Runtime {
   private readonly spendMembers = new Map<string, Set<string>>();
   /** Results of background specialists that finished after their parent, newest first. */
   readonly backgroundResults: BackgroundResult[] = [];
+  /** selfdev (SELF-303): told when a background helper finishes, so its lead hears without checking (src/helper-messages.ts). */
+  onBackgroundFinished: ((result: BackgroundResult) => void) | null = null;
   /** Per session: write tool calls whose outcome is unknown after an interruption, until a read has checked the state. */
   private readonly unreconciled = new Map<string, { name: string; arguments: string }[]>();
   /** Dogfood B7: set once a real model has answered and the first-run card is done with. */
@@ -972,7 +975,8 @@ export class Runtime {
     if (permissions.some((p) => !parent.permissions.has(p))) throw new Error("Delegation permission escalation denied");
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
     const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
@@ -986,6 +990,7 @@ export class Runtime {
       const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
+      try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
     }, () => undefined);
     for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
     if (!started) throw new Error("The background specialist did not start");
@@ -1893,7 +1898,13 @@ ${run.output.slice(0, 6000)}`;
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
+      // selfdev (SELF-303): a helper's note that arrived as its lead finished is not lost: it goes to the lead's
+      // conversation as a new message, labelled as the helper's words. The owner's own late note is dropped as before.
+      const late = (this.steers.get(run.id) ?? []).filter((one) => one.from !== undefined && /^helper /.test(one.from));
       this.steers.delete(run.id);
+      if (late.length) queueMicrotask(() => {
+        for (const one of late) try { this.followUp(run.sessionId, fromHelper(one.from!, one.note), null, { originFrom: run.id }); } catch { /* the conversation is gone */ }
+      });
       this.recordToolWork(run, context, status);
       // What this conversation is carrying is written down at the end of every task, so closing the
       // app between one task and the next changes nothing about what the next one starts with. Only

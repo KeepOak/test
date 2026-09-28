@@ -143,6 +143,7 @@ import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
 import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
+import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.js"; // selfdev (SELF-303)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
 import { registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
@@ -992,6 +993,15 @@ export async function createBranch(options: {
     sessionLimiter.check({ scope: "sender", id: `${channel}:${senderId}` }, "stranger");
   const scheduler = new Scheduler(store, runtime, (channel, chatId, text, key) => channels.deliver(channel, chatId, text, key));
   registerSchedules(registry, scheduler);
+  // selfdev (SELF-303): helpers the lead starts talk to it while they work, and tell it when they finish.
+  registerHelperMessages(registry, runtime);
+  runtime.onBackgroundFinished = (result) => {
+    if (!result.parentRunId) return;
+    const said = `finished (${result.status}). Its report:
+${result.output || "(it said nothing)"}`;
+    try { tellTask(runtime, result.parentRunId, `helper ${result.childRunId.slice(0, 8)}`, said, fromHelper); }
+    catch (error) { store.event(result.parentRunId, "delegation.tell_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
   // selfdev (SELF-305): wake-ups set inside a conversation arrive in it as follow-ups; the scheduler's tick finds them.
   const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId }); });
   registerWakeups(registry, store, wakeups);
