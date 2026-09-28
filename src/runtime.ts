@@ -152,6 +152,7 @@ import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
 import { loadWords, type Words } from "./terminal-words.js"; // the workspace's language, for a stopped task's sentences
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
+import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -223,7 +224,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -254,7 +255,9 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
 export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
-export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string }
+export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
+  /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
+  tellsLead?: boolean }
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
@@ -685,6 +688,10 @@ export class Runtime {
   private readonly spendMembers = new Map<string, Set<string>>();
   /** Results of background specialists that finished after their parent, newest first. */
   readonly backgroundResults: BackgroundResult[] = [];
+  /** selfdev (SELF-303): told when a background helper finishes, so its lead hears without checking (src/helper-messages.ts). */
+  onBackgroundFinished: ((result: BackgroundResult) => void) | null = null;
+  /** workbench (SELF-307): what a conversation still has going, sent with every round and never stored (src/open-work.ts). */
+  openWork: ((sessionId: string) => string | null) | null = null;
   /** Per session: write tool calls whose outcome is unknown after an interruption, until a read has checked the state. */
   private readonly unreconciled = new Map<string, { name: string; arguments: string }[]>();
   /** Dogfood B7: set once a real model has answered and the first-run card is done with. */
@@ -1047,7 +1054,8 @@ export class Runtime {
     if (permissions.some((p) => !parent.permissions.has(p))) throw new Error("Delegation permission escalation denied");
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
     const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
@@ -1058,9 +1066,11 @@ export class Runtime {
     void startedAt;
     const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     void child.then((run) => {
-      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
+      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
+        ...(options.tellsLead ? { tellsLead: true } : {}) };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
+      try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
     }, () => undefined);
     for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
     if (!started) throw new Error("The background specialist did not start");
@@ -2013,7 +2023,13 @@ ${run.output.slice(0, 6000)}`;
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
+      // selfdev (SELF-303): a helper's note that arrived as its lead finished is not lost: it goes to the lead's
+      // conversation as a new message, labelled as the helper's words. The owner's own late note is dropped as before.
+      const late = (this.steers.get(run.id) ?? []).filter((one) => one.from !== undefined && /^helper /.test(one.from));
       this.steers.delete(run.id);
+      if (late.length) queueMicrotask(() => {
+        for (const one of late) try { this.followUp(run.sessionId, fromHelper(one.from!, one.note), null, { originFrom: run.id }); } catch { /* the conversation is gone */ }
+      });
       this.recordToolWork(run, context, status);
       // What this conversation is carrying is written down at the end of every task, so closing the
       // app between one task and the next changes nothing about what the next one starts with. Only
@@ -2320,6 +2336,10 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
+      // workbench (SELF-307): the conversation's open work rides with the checklist, so folding never loses its numbers.
+      let open: string | null = null;
+      if (context.depth === 0) try { open = this.openWork?.(run.sessionId) ?? null; } catch { /* never breaks a round */ }
+      if (open) notes.every = { role: "system", content: [notes.every?.content, open].filter(Boolean).join("\n\n") };
       // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
