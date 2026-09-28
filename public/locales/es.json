@@ -1,4 +1,10 @@
 {
+  "window.what.server-config": "Configuración del servidor de herramientas",
+  "window.what.server-config-hint": "Conecta este ejemplo en Personalizar → Herramientas → Conectores antes de probar la petición. Esta configuración usa el servidor de ejemplo incluido en esta copia de Branch.",
+  "window.what.fill-blanks": "Primero completa la petición. Branch la pondrá en una conversación nueva para que la revises antes de enviarla.",
+  "window.what.your-text": "Tu texto",
+  "window.what.prepare-draft": "Preparar borrador",
+  "window.what.fill-required": "Completa cada campo antes de preparar el borrador.",
   "window.chat-command.title": "Comandos desde tu chat",
   "window.chat-command.on": "Tus cuentas vinculadas seleccionadas pueden pedir comandos. Cada comando exacto pide aprobación.",
   "window.chat-command.off": "Desactivado. Los comandos esperan aprobación en la ventana de Branch.",

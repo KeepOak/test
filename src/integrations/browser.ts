@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { chromium, type Browser, type Download, type Locator, type Page } from 'playwright';
+import type { Browser, Download, Locator, Page } from 'playwright';
+import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
@@ -242,7 +243,7 @@ export class BranchBrowser {
   private async launch(): Promise<Browser> {
     const env = Object.fromEntries(['PATH', 'SystemRoot', 'LOCALAPPDATA', 'TEMP', 'TMP', 'HOME']
       .flatMap(key => process.env[key] ? [[key, process.env[key]!]] : []));
-    const browser = await chromium.launch({ headless: true, env,
+    const browser = await (await chromium()).launch({ headless: true, env,
       ...(this.config.channel ? { channel: this.config.channel } : {}) }).catch((error: unknown) => {
       // Said the way `branch doctor` says it (src/doctor-fix.ts), not as Playwright's own instructions.
       if (!this.config.channel && /Executable doesn't exist/i.test(error instanceof Error ? error.message : String(error)))
@@ -1012,7 +1013,7 @@ export class BranchBrowser {
     await this.policy?.assertAllowed(new URL(url), 'browser address');
     // parity-b2: this window is on the screen for as long as the owner signs in, so the live view of it takes no frame.
     return whileSignInShows(async () => {
-      const browser = await chromium.launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
+      const browser = await (await chromium()).launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
       try {
         const context = await browser.newContext(), page = await context.newPage();
         await page.goto(url, { waitUntil: 'domcontentloaded' });
