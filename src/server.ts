@@ -1286,7 +1286,8 @@ async function api(
   if (path.startsWith("/api/agents/"))
     return remoteAgentsApi(app.remoteAgents, request, path, () => readBody(request), {
       base: `http://${request.headers.host ?? "127.0.0.1:3210"}`,
-      token: /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "YOUR_SESSION_KEY",
+      // A pairing link carries a key of its own that reaches only the A2A door and runs out; never the caller's key.
+      pairingKey: () => app.sessionTokens.createPairingKey(app.runtime.owner),
     });
   // A phone-sized list of conversations. It goes through the same door and needs the same key as
   // everything else, so a paired phone can pick up what was started at the computer.
@@ -3854,7 +3855,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         }
         const scope = app.sessionTokens.scopeOf(app.runtime.owner, offered);
         if (scope === null) return app.sessionTokens.check(app.runtime.owner, offered, { method: request.method ?? "GET", executes: false, path });
-        who.key = scope;
+        // A pairing key is judged as a "run" key, and its own check (session-tokens.ts) keeps it to the A2A door.
+        who.key = scope === "a2a" ? "run" : scope;
         return null;
       }, (offered) => app.sessionTokens.scopeOf(app.runtime.owner, offered) !== null
         || app.people.keys.working(offered)); // bucket 19

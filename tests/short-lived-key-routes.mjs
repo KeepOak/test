@@ -69,7 +69,7 @@ export const ROUTES = {
   "/api/agents/": "prefix",
   "/api/agents/discover": "look",
   "/api/agents/pair": "owner POST",
-  "/api/agents/pairing": "look",
+  "/api/agents/pairing": "owner POST", // makes a pairing key, so it is a change
   "/api/agents/remote": "owner POST",
   "/api/agents/remote/remove": "owner POST",
   "/api/approval-reviewer": "owner POST",
