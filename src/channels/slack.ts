@@ -25,6 +25,8 @@ export interface SlackOptions {
   fetch?: typeof fetch;
   connect?: WebSocketConnect;
   reconnectBaseMs?: number;
+  /** How often the socket is pinged to show it is still there (20 s; tests shorten it). */
+  keepaliveMs?: number;
   /** mac6/bucket-16: every event Slack sends, for Slack-started automations (src/channels/slack-automations.ts). */
   onEvent?: (event: unknown, botUserId: string | null) => void;
 }
@@ -46,7 +48,7 @@ const actionSchema = z.object({
   actions: z.array(z.object({ action_id: z.string(), value: z.string().optional(), action_ts: z.string().optional() }).passthrough()).min(1),
 }).passthrough();
 /** The action ids Branch's own buttons carry, so a press on some other app's button is never read as an answer. */
-const answerAction = /^branch_answer_\d$/;
+const answerAction = /^branch_answer_\d{1,2}$/;
 /** The Slack thread a reply goes to: the timestamp before any "#" a button press added; anything else is no thread. */
 const threadOf = (id: string | undefined): string | undefined => { const ts = id?.split("#")[0]; return ts && /^\d+\.\d+$/.test(ts) ? ts : undefined; };
 
@@ -78,6 +80,8 @@ const slackPlain = (text: string, format?: MessageFormat): Record<string, unknow
   ? { link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   /** Slack accepts more, but long posts are unreadable; the ledger splits at this length. */
   readonly maxTextLength = 3000;
@@ -98,6 +102,16 @@ export class SlackAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.user?.name ?? null; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when Slack last answered at all (any envelope, or a pong to our own ping). */
+  private contactAt = Date.now();
+  private keepalive: ReturnType<typeof setInterval> | undefined;
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled connection again, resuming the session where it can. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     const me = await this.call("auth.test", this.options.token, {}).catch(() => undefined);
     const parsed = z.object({ user_id: z.string(), user: z.string().optional() }).passthrough().safeParse(me);
@@ -108,6 +122,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   async stop(): Promise<void> {
     this.stopping = true;
+    if (this.keepalive) clearInterval(this.keepalive);
     this.socket?.close();
     await this.loop?.catch(() => undefined);
   }
@@ -117,6 +132,11 @@ export class SlackAdapter implements ChannelAdapter {
         const address = this.options.socketUrl ?? await this.open();
         const socket = await this.connect(address, { onMessage: (text) => this.receive(text, onMessage) });
         this.socket = socket;
+        this.contactAt = Date.now();
+        // A socket that went quiet after a sleep never says it closed; a ping every 20 s shows whether anyone is there.
+        if (this.keepalive) clearInterval(this.keepalive);
+        this.keepalive = setInterval(() => socket.ping?.(() => { this.contactAt = Date.now(); }), this.options.keepaliveMs ?? 20_000);
+        this.keepalive.unref?.();
         // mac7/linux-fixes: a stop that arrived while this was still being opened found nothing to
         // close, and the loop then waited for a close nobody would ask for. Let it go straight away.
         if (this.stopping) socket.close();
@@ -138,6 +158,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   /** Acknowledges the envelope first, then decides whether the event is one to answer. */
   private receive(text: string, onMessage: (message: InboundMessage) => Promise<void>): void {
+    this.contactAt = Date.now();
     const envelope = envelopeSchema.safeParse(JSON.parse(text));
     if (!envelope.success) return;
     const { envelope_id: id, payload, type } = envelope.data;
@@ -181,7 +202,8 @@ export class SlackAdapter implements ChannelAdapter {
       channel: chatId, text: words, ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
       blocks: [
         { type: "section", text: { type: "mrkdwn", text: words } },
-        { type: "actions", elements: buttons.slice(0, 5).map((button, index) => ({
+        // A question's Yes and No, or a /model menu (Slack takes up to 25 buttons in one actions block).
+        { type: "actions", elements: buttons.slice(0, 25).map((button, index) => ({
           type: "button", action_id: `branch_answer_${index}`, value: button.value.slice(0, 2000),
           text: { type: "plain_text", text: button.label.slice(0, 75) },
           ...(button.value.startsWith("y") ? { style: "primary" } : button.value.startsWith("n") ? { style: "danger" } : {}),
@@ -267,6 +289,9 @@ export class SlackAdapter implements ChannelAdapter {
   }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
+  }
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    await this.call("chat.delete", this.options.token, { channel: chatId, ts: messageId });
   }
   // ---- R17-C (R17-022): a file through Slack's external upload (the older files.upload is retired).
   // 1. files.getUploadURLExternal hands out an address and a file id; 2. the bytes go to that

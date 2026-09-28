@@ -55,7 +55,7 @@ const readers: { kind: BlockerKind; read: (said: string) => Blocker | null }[] =
     /Could not reach that address|Cannot reach the [a-z ]+service|Cannot reach (?:audio transcription|speech) endpoint|ENOTFOUND|ECONNREFUSED|fetch failed|getaddrinfo/i.test(said)
       ? blocker("network", "a working connection to the internet", said) : null },
   { kind: "key", read: (said) => {
-    if (!/needs a key before it can be used|has no key yet|key is required|provider with a key|no key picked/i.test(said)) return null;
+    if (!/needs a key before it can be used|has no key yet|key is required|provider with a key|no key picked|no account picked/i.test(said)) return null;
     const named = /^([A-Za-z0-9 .+-]{2,40}?) (?:needs a key|has no key yet)/.exec(said.trim())
       ?? /^A ([A-Za-z0-9 ]{2,30}) key is required/.exec(said.trim());
     return blocker("key", named?.[1]?.trim() ?? "a model service", said);
