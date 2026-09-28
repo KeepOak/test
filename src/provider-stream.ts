@@ -251,6 +251,8 @@ export class AnthropicStream {
     const thought = this.thinking();
     const said = [...this.blocks.values()].some((block) => !("thought" in block));
     if (this.done && this.finish === "max_tokens" && !said && thought) throw new Error(outOfRoomThinking(thought));
+    // selfdev: an answer or a tool call cut off at the reply ceiling is out of room too, so the task asks again with more.
+    if (this.done && this.finish === "max_tokens") throw new Error(outOfRoomAnswer);
     if (!this.done || this.open.size || !["end_turn", "tool_use", "stop_sequence"].includes(this.finish))
       throw new Error("Provider stream ended without a complete response");
     const blocks = [...this.blocks].sort(([a], [b]) => a - b).map(([, block]) => block);
@@ -281,9 +283,11 @@ function outOfRoomThinking(chars: number): string {
   return `The model used its whole reply allowance thinking (${chars.toLocaleString()} characters) `
     + "and was cut off before it answered. Try a larger model, or ask for one step at a time.";
 }
-/** Whether a failure is a reply cut off while still thinking (the reply ceiling, not the provider). */
+/** selfdev: a reply (text or a tool call such as a long edit) cut off at the reply ceiling before it was finished. */
+export const outOfRoomAnswer = "The model used its whole reply allowance before finishing its answer, so the answer was cut off.";
+/** Whether a failure is a reply cut off at the reply ceiling (while thinking or while answering), not the provider's fault. */
 export function isOutOfRoomThinking(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith("The model used its whole reply allowance thinking");
+  return error instanceof Error && error.message.startsWith("The model used its whole reply allowance");
 }
 /** integrate/empty-completion: the first of the thinking fields that is text; anything else is ignored. */
 export function thinkingText(...fields: unknown[]): string {
