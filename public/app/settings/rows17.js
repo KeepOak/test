@@ -10,7 +10,7 @@ export const WORDS = {
   backup: ["Backups", "A copy of your conversations, memory and settings, on a schedule you choose.", "See backups"],
   retention: ["Saved before it’s deleted", "Conversations older than your limit are exported to a file first, then removed.", "See the next one"],
   held: ["Things held for your yes", "After a restore, anything that didn’t match waits here instead of being overwritten.", "See"],
-  localroute: ["Private things stay here", "", "See what stays"],
+  localroute: ["Private things stay here", "What the personal-details check catches, such as a card number, and whether it stays with a model on this computer.", "See what stays"],
   jev: ["Sure-or-not checks", "Small yes-or-no checks inside a task come with a confidence; a low one asks a better model.", "Show one"],
   debate: ["Stress-test the answer", "A second model argues against the first answer before you see it.", "Show an example"],
   provplug: ["Model services from plugins", "A plugin can bring a way to reach a model service Branch doesn’t know yet.", "See installed"],
@@ -64,7 +64,7 @@ export const WORDS = {
   signed: ["Signed household records", "Changes people make are signed, so it’s clear who did what; code changes come as patches.", "See the last"],
   voiceapprove: ["Answer approvals by voice", "Say yes or no to an approval, or hold the phone key to talk turn by turn.", "Try one"],
   frame: ["Window frame", "Branch’s own title bar or the system one.", "Choose"],
-  talksettings: ["Change settings by talking", "", "Show an example"],
+  talksettings: ["Change settings by talking", "Ask in a conversation to change a setting; the changes made that way are listed here.", "Show an example"],
   learncore: ["Suggestions made on this computer", "Small suggestions from what you do, worked out here without asking a model.", "See"],
 };
 

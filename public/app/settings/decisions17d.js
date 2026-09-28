@@ -31,7 +31,7 @@ const chosen = () => D.data?.models.find((m) => m.id === (D.data.settings.model 
 function modelRow() {
   const s = D.data.settings, local = chosen()?.local;
   const opts = [...D.data.models.map((m) => [m.id, m.local ? t("window.p17d.model-here", { name: m.name }) : m.name]), ["", t("window.p17d.same-as-task")]];
-  return `<div class="ctl"><b>${esc(t("window.p17d.model-for-decisions"))}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.model-for-decisions"))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${s.model === v}" data-act="dmmodel17d" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${local ? esc(t("window.p17d.free-here")) : ""}</small></div>`;
+  return `<div class="ctl"><b>${esc(t("window.p17d.model-for-decisions"))}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.model-for-decisions"))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${s.model === v}" data-act="dmmodel17d" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${esc(t("window.settings.explain.decisions"))}${local ? ` ${esc(t("window.p17d.free-here"))}` : ""}</small></div>`;
 }
 function lastDay() {
   const d = D.data.lastDay;
