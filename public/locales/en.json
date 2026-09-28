@@ -6559,6 +6559,7 @@
   "window.chat.dia.sealed": "Shown as an artifact: a sealed frame with no scripts and no internet.",
   "window.chat.dict.label": "Dictate into the box",
   "window.chat.dict.listening": "Listening… speak naturally",
+  "window.chat.dict.mic-refused": "The microphone was not allowed. Allow it for Branch, then press Dictate again.",
   "window.chat.done-in": "Done in {time}",
   "window.chat.empty.ask": "Ask {name}",
   "window.chat.empty.downloads": "Tidy my Downloads folder",

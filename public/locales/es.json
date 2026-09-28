@@ -6559,6 +6559,7 @@
   "window.chat.dia.sealed": "Se muestra como artefacto: un marco sellado sin scripts y sin internet.",
   "window.chat.dict.label": "Dictar en el cuadro",
   "window.chat.dict.listening": "Escuchando… habla con naturalidad",
+  "window.chat.dict.mic-refused": "No se permitió el micrófono. Permítelo para Branch y vuelve a pulsar Dictar.",
   "window.chat.done-in": "Hecho en {time}",
   "window.chat.empty.ask": "Pregunta a {name}",
   "window.chat.empty.downloads": "Ordena mi carpeta de Descargas",

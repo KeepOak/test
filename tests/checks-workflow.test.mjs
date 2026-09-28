@@ -17,7 +17,10 @@ test("the whole suite runs on every pull request and keeps every integration-tru
 });
 
 test("the suite ends in one required job, and nothing in it can hold a run past fifteen minutes", () => {
-  assert.deepEqual(workflow.jobs.verify.needs, ["test"]);
+  assert.deepEqual(workflow.jobs.verify.needs, ["test", "local-voice"]);
+  // RES-709: the real, offline speech proof is part of what green means, inside the same ceiling.
+  assert.ok(workflow.jobs["local-voice"]["timeout-minutes"] <= 15);
+  assert.match(JSON.stringify(workflow.jobs["local-voice"].steps), /BRANCH_REQUIRE_WHISPER/);
   assert.equal(workflow.jobs.verify.name, "verify-suite");
   assert.equal(workflow.jobs.verify.if, "always()");
   assert.ok(workflow.jobs.test["timeout-minutes"] <= 15);
