@@ -77,9 +77,11 @@ export interface LiveTarget {
    * chat whose owner has pictures on and whose app can send a file; absent, no picture is ever sent.
    */
   picture?: (() => Promise<{ bytes: Uint8Array; caption: string } | null>) | undefined;
+  /** The buttons under a picture kept in place (Take over, or Hand back): values the router reads back as a press. */
+  pictureButtons?: (() => { label: string; value: string }[]) | undefined;
 }
 /** Pictures of the browser: the first after the first browser step, then at most one every so often, and a cap per task. */
-export const pictureTiming = { everyMs: 20_000, most: 6 };
+export const pictureTiming = { everyMs: 20_000, most: 6, inPlaceEveryMs: 4_000, inPlaceMost: 150 };
 interface Step { label: string; name: string; state: "working" | "done" | "failed" }
 /** A part that failed this many times in a row is left alone for the rest of the task. */
 const giveUpAfter = 2;
@@ -136,6 +138,10 @@ export class LiveStatus {
   private pictureAt = 0;
   private pictureDue: ReturnType<typeof setTimeout> | null = null;
   private pictureCaption = "";
+  /** The one picture message kept up to date in place, where the app can replace a picture (Telegram, Discord). */
+  private pictureId: string | null = null;
+  private lastPicture: { name: string; mediaType: string; bytes: Uint8Array; caption: string } | null = null;
+  private get inPlace(): boolean { return !!this.target.adapter.sendPicture && !!this.target.adapter.editPicture; }
   private typingTimer: ReturnType<typeof setInterval> | undefined;
   private editTimer: ReturnType<typeof setTimeout> | null = null;
   private reactTimer: ReturnType<typeof setTimeout> | null = null;
@@ -216,17 +222,24 @@ export class LiveStatus {
    * over (the newest step's words as its caption), and never more than `pictureTiming.most` for one task.
    */
   private browserStep(label: string): void {
-    if (!this.target.picture || !this.target.adapter.sendFile || this.target.kindsOnly || this.pictures >= pictureTiming.most) return;
+    if (!this.target.picture || (!this.target.adapter.sendFile && !this.inPlace) || this.target.kindsOnly || this.pictures >= this.mostPictures) return;
     this.pictureCaption = label;
     if (this.pictureDue) return;
-    const wait = Math.max(0, this.pictureAt + pictureTiming.everyMs - Date.now());
+    const wait = Math.max(0, this.pictureAt + (this.inPlace ? pictureTiming.inPlaceEveryMs : pictureTiming.everyMs) - Date.now());
     // The page is pictured the moment it is due (a quick task's window closes when it ends); it is sent in turn.
     const take = () => { this.pictureDue = null; this.pictureWork = this.takePicture(); };
     if (!this.pictureAt || wait === 0) take(); else this.pictureDue = this.later(take, wait);
   }
+  private get mostPictures(): number { return this.inPlace ? pictureTiming.inPlaceMost : pictureTiming.most; }
+  /** The page changed hands (Take over, Hand back): the picture and its buttons are brought up to date at once. */
+  refreshPicture(): void {
+    if (this.closed || !this.target.picture || this.target.kindsOnly) return;
+    if (this.pictureDue) { clearTimeout(this.pictureDue); this.timers.delete(this.pictureDue); this.pictureDue = null; }
+    this.pictureWork = this.takePicture();
+  }
   private pictureWork: Promise<void> | null = null;
   private async takePicture(): Promise<void> {
-    if (this.closed || !this.permitted() || this.pictures >= pictureTiming.most || Date.now() < this.pausedUntil) return;
+    if (this.closed || !this.permitted() || this.pictures >= this.mostPictures || Date.now() < this.pausedUntil) return;
     this.pictures++;
     this.pictureAt = Date.now();
     let shot: { bytes: Uint8Array; caption: string } | null = null;
@@ -241,8 +254,14 @@ export class LiveStatus {
     const caption = (shot!.caption ? await this.checked(shot!.caption) : null) ?? await this.checked(statusOf(this.pictureCaption));
     if (caption === null) return;
     if (this.target.adapter.maxFileBytes && bytes.length > this.target.adapter.maxFileBytes) return;
+    const file = { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes, caption };
+    this.lastPicture = file;
     try {
-      await this.target.adapter.sendFile!(this.target.chatId, { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes, caption }, this.target.messageId);
+      if (this.inPlace) {
+        const buttons = this.closed ? [] : this.target.pictureButtons?.() ?? [];
+        if (this.pictureId) await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, buttons);
+        else this.pictureId = await this.target.adapter.sendPicture!(this.target.chatId, file, buttons, this.target.messageId) ?? null;
+      } else await this.target.adapter.sendFile!(this.target.chatId, file, this.target.messageId);
     } catch (error) {
       const wait = retryAfterMs(error);
       if (wait) this.pausedUntil = Date.now() + wait;
@@ -265,6 +284,12 @@ export class LiveStatus {
     // A picture already taken goes out before the reply, never after it (bounded, so a slow app never holds the reply).
     if (this.pictureDue) { clearTimeout(this.pictureDue); this.timers.delete(this.pictureDue); this.pictureDue = null; }
     if (this.pictureWork) await Promise.race([this.pictureWork, new Promise((done) => { setTimeout(done, 5000).unref?.(); })]);
+    this.pictureWork = null;
+    // The task is over: its last picture stays, without buttons that could no longer do anything.
+    if (this.pictureId && this.lastPicture && this.inPlace && this.permitted()) {
+      const { pictureId, lastPicture } = this;
+      await this.enqueue(() => this.target.adapter.editPicture!(this.target.chatId, pictureId, lastPicture, [])).catch(() => undefined);
+    }
     this.closed = true;
     this.stopTimers();
     this.clearStatus();

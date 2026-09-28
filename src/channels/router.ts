@@ -199,6 +199,12 @@ export interface ChannelAdapter {
   /** Sends one file with an optional caption, and returns the id of the message it made. */
   sendFile?(chatId: string, file: OutgoingFile, replyToMessageId?: string): Promise<string | undefined>;
   // ---- end R17-C ----
+  // ---- A picture kept up to date in place (the live browser in a chat, SCREEN-103/104) -------------
+  // Both or neither. A failure must throw. `buttons` go under the picture and come back as a press, like sendButtons'.
+  /** Sends a picture (shown inline, not as a document) with its caption and buttons; returns its message id. */
+  sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
+  /** Replaces the picture, caption and buttons of a message `sendPicture` made. */
+  editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[]): Promise<void>;
   stop(): Promise<void>;
 }
 /**
@@ -416,6 +422,12 @@ export class ChannelRouter {
   liveAllowed: () => boolean = () => true;
   /** A masked picture of this task's own Branch browser window now, or null (none open, or a borrowed browser). */
   browserPicture: (runId: string) => Promise<{ frame: Uint8Array; url: string; title: string } | null> = async () => null;
+  /**
+   * Take over or Hand back a chat task's browser from the chat (src/index.ts wires it to the browser controls): "take"
+   * pauses the task at its next browser step for the owner; "give" lets it carry on. Resolves with who holds it now, or
+   * throws the plain reason it cannot. `held` says who holds it without changing anything.
+   */
+  browserHold: ((runId: string, op: "take" | "give" | "held") => Promise<"owner" | "task" | "none">) | undefined;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
   /**
@@ -896,6 +908,9 @@ export class ChannelRouter {
     if (saved) message = { ...message, text: saved.text };
     // ---- end of the bucket 12 hook ----
     // A press on /model's menu is /model with that connection, by the same rules as typing it.
+    // The live browser's own buttons in a chat: Take over, and Hand back.
+    const hold = /^br:([tg]):([0-9a-f-]{36})$/.exec(message.text.trim());
+    if (hold) return this.pressHold(message, hold[1] === "t" ? "take" : "give", hold[2]!);
     const picked = this.modelPicker.read(chatKey(message), this.sessionFor(message.channel, message.chatId), message.text);
     if (picked) return this.pickModel(message, picked);
     const command = this.commandIn(message);
@@ -1380,6 +1395,38 @@ export class ChannelRouter {
       this.slotWaiters.shift()?.();
     }
   }
+  /** Who holds each chat task's browser, as its picture's buttons last showed it. */
+  private readonly holders = new Map<string, "owner" | "task" | "none">();
+  private holdButtons(runId: string | null): { label: string; value: string }[] {
+    if (!runId) return [];
+    void this.browserHold?.(runId, "held").then((who) => { this.holders.set(runId, who); }, () => undefined);
+    return this.holders.get(runId) === "owner"
+      ? [{ label: "▶️ Hand back", value: `br:g:${runId}` }] : [{ label: "✋ Take over", value: `br:t:${runId}` }];
+  }
+  /**
+   * A press on the live browser's Take over or Hand back. Only in the direct chat the task came from, by the person who
+   * started it, who is still allowed to talk to Branch (paired or on the list); never under Lockdown or a locked Branch. Taking over
+   * only ever stops the task at its next browser step; handing back lets it carry on as it would have.
+   */
+  private async pressHold(message: InboundMessage, op: "take" | "give", runId: string): Promise<Outcome> {
+    const say = (text: string) => this.deliver(message.channel, message.chatId, text, `browser-hold:${message.messageId}`, message.messageId)
+      .then(() => "replied" as const, () => "replied" as const);
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    const mine = came?.channel === message.channel && came?.chatId === message.chatId && came?.senderId === message.senderId;
+    if (!this.browserHold || message.chatKind !== "direct" || !mine || !this.senderAllowed(message.channel, message.senderId) || !this.liveOn())
+      return say("Only the person who started this task, in this chat, can take over its browser.");
+    try {
+      const who = await this.browserHold(runId, op);
+      this.holders.set(runId, who);
+      const turn = this.turns.get(chatKey(message));
+      if (turn?.runId === runId) turn.live?.refreshPicture();
+      return say(who === "owner"
+        ? "You have the browser. The task waits at its next browser step. Drive it from Branch's window or app, then press Hand back."
+        : "Handed back. The task carries on in the browser.");
+    } catch (error) {
+      return say(error instanceof Error ? error.message : String(error));
+    }
+  }
   /** Whether a chat may be shown typing, reactions and progress right now. */
   private liveOn(): boolean {
     return !this.appLocked() && this.liveAllowed() && !this.deliveries.holdUntil(new Date());
@@ -1401,6 +1448,7 @@ export class ChannelRouter {
     const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
     // Pictures of Branch's browser while the task works in it: a direct chat only, where the owner has them on.
     const pictures = message.chatKind === "direct" && switches.steps !== "off" && display.pictures !== "off" && !!adapter.sendFile && !adapter.paidPerMessage;
+    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf()) : undefined;
     const picture = pictures ? async () => {
       const runId = runOf(), seen = runId ? await this.browserPicture(runId) : null;
       if (!seen) return null;
@@ -1410,7 +1458,7 @@ export class ChannelRouter {
       return { bytes: seen.frame, caption: words ? `🌐 ${words}` : "" };
     } : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
-      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, picture }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
+      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, picture, pictureButtons }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
   }
   private replyFor(message: InboundMessage): ReplyStream | null {
     const adapter = this.adapters.get(message.channel)?.adapter;

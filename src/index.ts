@@ -1930,6 +1930,33 @@ export async function createBranch(options: {
     }
     return null;
   };
+  // Take over and Hand back from a chat (the live browser's buttons): the task's own window becomes the conversation's
+  // kept browser with the chat's owner holding it, exactly as the window's Take over does; Hand back lets the task on.
+  channels.browserHold = async (runId, op) => {
+    const browser = branch.browser, run = store.run(runId);
+    if (!browser || !run?.sessionId) throw new Error("That task has no browser open.");
+    const clientId = `chat:${runId}`;
+    let control = browser.controls.forConversation(runtime.owner, run.sessionId);
+    const who = (): "owner" | "task" | "none" => {
+      const view = control?.view();
+      return !view || view.state === "stopped" ? "none" : view.writer?.kind === "owner" || view.paused ? "owner" : "task";
+    };
+    if (op === "held") return who();
+    if (lockedDown(store, runtime.owner) || sessionLock.locked()) throw new Error("Branch is locked, so its browser can't change hands now.");
+    if (op === "take") {
+      if (!runtime.activeRunSignal(runId)) throw new Error("That task has finished.");
+      control ??= await browser.adoptRun(runtime.owner, run.sessionId, runId, clientId);
+      const view = control.view();
+      if (view.writer?.kind !== "owner") await control.takeOver(view.epoch, clientId);
+      return who();
+    }
+    if (!control) return "none";
+    const view = control.view(), task = view.paused ?? view.waiting ?? runId;
+    if (view.writer?.kind === "owner" && view.writer.id !== clientId)
+      throw new Error("You're driving the browser in Branch's window; hand it back there.");
+    await control.handBack(view.epoch, clientId, task);
+    return who();
+  };
   return branch;
 }
 /** Runs one of the owner's own verified recipes by name, for a skill package's event hook. */

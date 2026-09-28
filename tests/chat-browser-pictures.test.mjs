@@ -108,3 +108,59 @@ test("no pictures in a group, when the owner turns them off, or when steps in ch
   await delay(500);
   assert.equal(f.chat.files().length, 0, "steps in chats off");
 });
+
+/* An app that can replace a picture (Telegram, Discord) keeps one picture up to date in place, with Take over and Hand
+   back under it; a press pauses the task at its next browser step and a second lets it carry on. */
+test("one picture kept up to date in place, with Take over and Hand back that really pause and resume the task", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-chat-browser-hold-"));
+  const site = createServer((request, response) => response.writeHead(200, { "content-type": "text/html" }).end(`<!doctype html><title>Page ${request.url}</title><h1>${request.url}</h1>`));
+  site.listen(0, "127.0.0.1"); await once(site, "listening");
+  const origin = `http://127.0.0.1:${site.address().port}`;
+  let release, rounds = 0;
+  const held = new Promise((done) => { release = done; });
+  const provider = { name: "scripted", async complete() {
+    rounds++;
+    if (rounds === 1) return { content: "", toolCalls: [{ id: "a", name: "browser.navigate", arguments: JSON.stringify({ url: `${origin}/one` }) }] };
+    if (rounds === 2) { await held; return { content: "", toolCalls: [{ id: "b", name: "browser.navigate", arguments: JSON.stringify({ url: `${origin}/two` }) }] }; }
+    return { content: "Both pages seen.", toolCalls: [] };
+  } };
+  t.after(() => release()); // first, so a failed test never leaves its task waiting while the engine closes
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  const browser = new BranchBrowser({ allowedOrigins: [origin] });
+  browser.store = app.store; app.browser = browser;
+  registerBrowser(app.registry, browser);
+  savePolicy(app.store, app.runtime.owner, { preset: "off" });
+  t.after(async () => { await browser.close(); await app.close(); site.close(); await discardTemp(root); });
+  app.channels.mergeWindowMs = 0; app.channels.liveTiming = fast;
+  app.channels.setSwitches({ liveStatus: "on", commands: "on", steering: "on", splitting: "on", steps: "on" });
+  const calls = [];
+  let next = 500;
+  const adapter = { id: "chat", kind: "telegram", botName: () => "Branch", maxFileBytes: 10_000_000, async start() {}, async stop() {},
+    async send(chatId, text) { calls.push({ op: "send", text }); return String(next++); },
+    async edit() {}, async sendTyping() {}, async sendFile() { calls.push({ op: "file" }); return String(next++); },
+    async sendPicture(chatId, file, buttons, replyTo) { const id = String(next++); calls.push({ op: "picture", id, file, buttons, replyTo }); return id; },
+    async editPicture(chatId, messageId, file, buttons) { calls.push({ op: "repicture", messageId, file, buttons }); } };
+  await app.channels.attach(adapter, { activation: "always", pairing: true, allowlist: ["owner"] });
+  app.channels.setPermissionSettings({ extras: true, rules: [{ channel: "chat", sender: "owner", allow: ["browser.read"], note: "Me" }] });
+  const say = (text, messageId) => app.channels.handle({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner", senderName: "Sam", text, addressed: true, messageId });
+  const task = say("look at both", "m1");
+  const first = await until(() => calls.find((c) => c.op === "picture"), "the picture");
+  assert.equal(first.buttons.length, 1);
+  assert.match(first.buttons[0].label, /Take over/);
+  assert.match(first.buttons[0].value, /^br:t:/);
+  // Someone else pressing it, or the owner in another chat, changes nothing.
+  await app.channels.handle({ channel: "chat", chatId: "c2", chatKind: "direct", senderId: "owner", senderName: "Sam", text: first.buttons[0].value, addressed: true, messageId: "x1" });
+  assert.equal(calls.filter((c) => c.op === "send").some((c) => /You have the browser/.test(c.text)), false);
+  await say(first.buttons[0].value, "p1");
+  await until(() => calls.some((c) => c.op === "send" && /You have the browser/.test(c.text)), "taken over");
+  const handBack = await until(() => calls.filter((c) => c.op === "repicture").find((c) => c.buttons[0]?.value?.startsWith("br:g:")), "Hand back under the picture");
+  assert.equal(handBack.messageId, first.id, "the same picture, replaced in place");
+  release(); // the task's next step, while the owner holds the browser
+  await delay(1500);
+  assert.equal(app.store.runs(app.runtime.owner).some((run) => run.status === "completed"), false, "the task waits for Hand back");
+  await say(handBack.buttons[0].value, "p2");
+  assert.equal(await task, "replied");
+  assert.ok(calls.some((c) => c.op === "send" && /Both pages seen/.test(c.text)), "the task carried on and finished");
+  assert.equal(calls.filter((c) => c.op === "picture").length, 1, "one picture message, kept in place");
+  assert.deepEqual(calls.filter((c) => c.op === "repicture").at(-1).buttons, [], "no buttons once the task is over");
+});
