@@ -24,10 +24,9 @@ import { execFile, execFileSync } from "node:child_process";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { seedScratchRepo, scratchTestFile, startEngine } from "../tests/fixtures/selfdev-harness.mjs";
+import { defaultTrunkConversation, roomToWork, seedScratchRepo, scratchTestFile, startEngine } from "../tests/fixtures/selfdev-harness.mjs";
 import { startFakeGitHub } from "../tests/fixtures/fake-github.mjs";
 import { addProgram } from "../dist/accounts/saved-sign-ins.js";
-import { saveKnobs } from "../dist/knobs/settings.js";
 
 const run = promisify(execFile);
 const args = process.argv.slice(2);
@@ -58,23 +57,6 @@ function connection() {
   const name = /^ollama:(.+)$/.exec(model)?.[1];
   if (!name) throw new Error("--model is claude, chatgpt:<model> or ollama:<name>");
   return { ready: (app) => app.runtime.models.configure(app.runtime.owner, { provider: "ollama", model: name }) };
-}
-
-/** Room for a long piece of work, set as the owner would in Settings: more rounds and a longer tool wait for checks. */
-function roomToWork(app) {
-  saveKnobs(app.store, app.runtime.owner, "limits", { maxSteps: 400, maxModelRounds: 300, maxTaskTokens: 20_000_000 });
-  saveKnobs(app.store, app.runtime.owner, "commands", { toolTimeoutSeconds: 1800, commandTimeoutSeconds: 1800 });
-}
-
-async function defaultTrunkConversation(engine) {
-  const { trunks } = engine.app;
-  trunks.setMode("trunks", { mode: "on" });
-  const ada = trunks.create({ name: "Ada" });
-  trunks.setDefault(ada.id);
-  await trunks.introduced();
-  const mode = await engine.api("conversation-mode", { sessionId: ada.chatSessionId, mode: "full" });
-  if (mode.status !== 200) throw new Error(`Full Access was not selected: ${JSON.stringify(mode.body)}`);
-  return ada.chatSessionId;
 }
 
 function evidence(engine, runId) {
