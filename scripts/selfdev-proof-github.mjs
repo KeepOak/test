@@ -14,9 +14,9 @@ const gh = (...args) => execFileSync("gh", args, { encoding: "utf8", windowsHide
 const request = (knob, base, name) => [
   `Branch has no setting for ${knob.what}. Add it to Branch itself as a Settings knob: ${knob.how}`,
   `Work only through branch.prepare_source_change with name "${name}", repository https://github.com/${repo}.git and base "${base}" (a scratch line; never redesign/window).`,
-  `Give its contract allowedPaths covering exactly the files you change (at least ${knob.paths.join(", ")}), permissions ["files.write", "files.edit", "shell.execute", "git.commit", "github.pull_request_from_changes", "branch.finish_source_change"], expectedTests ["${knob.test}"], a one-sentence definitionOfDone, sideEffects ["a pull request into ${base}"] and rollbackPlan "close the pull request".`,
+  `Give its contract allowedPaths ["**"] (commands run at the worktree root, and it changes at least ${knob.paths.join(", ")}), permissions ["files.write", "files.edit", "shell.execute", "git.commit", "github.pull_request_from_changes", "branch.finish_source_change"], expectedTests ["${knob.test}"], a one-sentence definitionOfDone, sideEffects ["a pull request into ${base}"] and rollbackPlan "close the pull request".`,
   "Read each file before you change it. In the worktree, run `npm ci` once, then `node scripts/review.mjs --jobs 1 " + knob.test + "` (never npm test, never node --test without a file) until every step passes, and `node scripts/check-docs.mjs` so the new setting is documented.",
-  "Commit with a Conventional Commits message, then open the draft pull request with github.pull_request_from_changes (its summary says why to merge it and lists each command you ran with its pass and fail counts).",
+  `Commit with a Conventional Commits message, then open the draft pull request with github.pull_request_from_changes with base "${base}" (its summary says why to merge it and lists each command you ran with its pass and fail counts).`,
   "Then wait with github.wait_for_checks (seconds 570) and call it again while it says pending. When it says passed, call branch.finish_source_change with the worktree, the repository and the pull request number. If a check fails, say which and stop: do not merge.",
   "Finish with the pull request number, its address and whether it merged.",
 ].join("\n\n");

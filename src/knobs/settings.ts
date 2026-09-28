@@ -66,9 +66,9 @@ export const KnobCommandSettingsSchema = z.object({
   /** Longest tool answer the model reads, in characters; null keeps the launch setting. */
   toolAnswerChars: z.number().int().min(1000).max(60000).nullable().default(null),
   /** Longest one tool call may run, in seconds; null keeps the launch setting. */
-  toolTimeoutSeconds: z.number().int().min(5).max(600).nullable().default(null),
+  toolTimeoutSeconds: z.number().int().min(5).max(1800).nullable().default(null),
   /** Longest one command may run, in seconds; null keeps the launch settings file's figure. */
-  commandTimeoutSeconds: z.number().int().min(1).max(120).nullable().default(null),
+  commandTimeoutSeconds: z.number().int().min(1).max(1800).nullable().default(null),
   /** Whether a task may keep a command line open between commands. */
   keptOpenShell: z.boolean().default(true),
   /** Extra environment variable names handed to commands, beyond the built-in safe list. */

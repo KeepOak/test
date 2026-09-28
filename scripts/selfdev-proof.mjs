@@ -53,7 +53,7 @@ function connection() {
 /** Room for a long piece of work, set as the owner would in Settings: more rounds and a longer tool wait for checks. */
 function roomToWork(app) {
   saveKnobs(app.store, app.runtime.owner, "limits", { maxSteps: 400, maxModelRounds: 300, maxTaskTokens: 6_000_000 });
-  saveKnobs(app.store, app.runtime.owner, "commands", { toolTimeoutSeconds: 600 });
+  saveKnobs(app.store, app.runtime.owner, "commands", { toolTimeoutSeconds: 1800, commandTimeoutSeconds: 1800 });
 }
 
 async function defaultTrunkConversation(engine) {

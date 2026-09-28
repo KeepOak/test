@@ -147,7 +147,10 @@ export async function heldCover(input: { home: string; programs: readonly string
   const git = await gitCommonDir(input.workspace);
   const hidden = git && view.covered.some((folder) => git === folder || git.startsWith(`${folder}/`));
   const covered = view.covered.filter((path) => existsSync(path));
-  const restored = [...new Set([...view.restored, ...(hidden ? [git] : [])])].filter((path) => existsSync(path));
+  // selfdev: the browsers Playwright installed for this Linux user are programs too; they are shown read-only so a
+  // held test run (scripts/review.mjs's window gates) can start one. Nothing else under the home is shown.
+  const browsers = posix.join(input.home, '.cache', 'ms-playwright');
+  const restored = [...new Set([...view.restored, ...(hidden ? [git] : []), browsers])].filter((path) => existsSync(path));
   const program = own[0] ? await realpath(own[0]).catch(() => own[0]!) : null;
   return { covered, restored, refusal: await heldRefusal({ home: input.home, program, args: input.args ?? [], workspace: input.workspace, covered, restored }) };
 }

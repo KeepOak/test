@@ -88,7 +88,7 @@ export async function startEngine(root, options) {
       : { path: await executablePath("npm"), args: [] } } : {}),
   };
   const integrations = {
-    shell: { executables, timeoutMs: 120000, maxCpuSeconds: 600, maxOutputBytes: 8192, useJobObject: false,
+    shell: { executables, timeoutMs: 1_800_000, maxCpuSeconds: 7200, maxOutputBytes: 8192, useJobObject: false,
       inheritEnv: ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATH", "PATHEXT", "HOME"] },
     git: { remote: true, github: { ...(options.githubApiBase ? { apiBase: options.githubApiBase } : {}), ...(options.githubPollSeconds ? { checksPollSeconds: options.githubPollSeconds } : {}) } },
     ...(options.privateAddresses ? { web: { allowPrivateAddresses: true } } : {}),
