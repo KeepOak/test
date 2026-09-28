@@ -15,7 +15,7 @@ import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, load
 import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
-import { binding } from "../shell/keys.js";
+import { binding, spoken } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
 import { selfCard, loadSelfChange, initSelfChange } from "./selfchange.js";
 import { mkCard, initMkTrunk } from "./mktrunk.js";
@@ -26,6 +26,7 @@ import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } 
 import { initTalkLive } from "./talklive.js";
 import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
+import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
 import { panesWrap, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
@@ -319,7 +320,7 @@ function composer() {
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
-      : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
+      : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}"${C.sessionId ? "" : ` data-tip="${esc(t("window.chat.bgsend.tip", { keys: spoken("Ctrl+Enter") }))}"`}>${ic("up")}</button>`}</form></div>`;
 }
 
 /* ---------- hook points for other batches (PARITY.md, batch B1's hook tasks) ---------- */
@@ -663,6 +664,28 @@ async function sendPlain(prompt) {
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
 }
 
+/* RES-702: the new conversation's message, started in the background (chat/bgsend.js) with everything Enter would send
+   with it, while the person stays here. A command, a room, Ask me questions first and a refused model go the usual way,
+   which says why; files still arriving wait, as they do for Enter. */
+let away = false;
+async function sendAway() {
+  const box = $("#prompt"), prompt = (box?.value ?? "").trim();
+  if (!prompt || viewingHelper() || away) return;
+  const routed = !!routeFor(prompt, null, whoHere(), HOOKS); // words that call a Trunk by its @name go its way
+  if (prompt.startsWith("/") || asksFirst() || trunkModelRefused() || whoHere()?.kind === "room" || routed) { await send(); return; }
+  if (!roomAway()) return; // before the files, Temporary and the mode pick are taken for it: refused, they all stay
+  away = true; // a second press while files finish arriving starts nothing more
+  let started = false;
+  try { started = sendInBackground(prompt, { ...(await takePending(true)), ...(await startMode()), ...newProject() }); } finally { away = false; }
+  if (!started) return;
+  filesSent();
+  practiceSent(); // a practice task was carried (takePending dryRun); the flag is used once, as Enter uses it
+  clearBox(true);
+  box?.dispatchEvent(new Event("input", { bubbles: true }));
+  renderNow();
+  $("#prompt")?.focus();
+}
+
 /* Q063: a message the engine never got (Branch was not running) goes back in the box, and is sent once the engine
    answers again, unless the person changed it or went elsewhere meanwhile. */
 function keepForLater(prompt) {
@@ -857,7 +880,12 @@ export function init() {
   on("ask-always", (el) => answer(el, "allow", { remember: "always" }));
   on("side", () => document.getElementById("app").classList.toggle("side-open"));
   document.addEventListener("submit", (e) => { if (e.target.id === "composer") { e.preventDefault(); send(); } });
-  document.addEventListener("keydown", (e) => { if (e.target.id === "prompt" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+  /* Enter sends; in a new conversation Ctrl+Enter (Cmd+Enter on a Mac) sends it to work in the background (RES-702). */
+  document.addEventListener("keydown", (e) => {
+    if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending) sendAway(); else send();
+  });
   /* Page Up and Page Down with nothing focused move through the conversation, which scrolls inside its own box. */
   document.addEventListener("keydown", (e) => {
     if (S.view !== "chat" || (e.key !== "PageUp" && e.key !== "PageDown") || e.target !== document.body) return;
