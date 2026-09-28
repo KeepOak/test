@@ -196,6 +196,7 @@ test("a program commands may run can be left running and wakes its conversation,
   const context = app.runtime.context({ runId: started.id });
   const noCommands = { ...context, permissions: new Set([...context.permissions].filter((one) => one !== "shell.execute")) };
   await assert.rejects(app.registry.execute("process.start", { program: "node", args: ["-e", "1"] }, noCommands), /not one of the programs/);
+  await assert.rejects(app.registry.execute("process.start", { program: "node", args: ["-e", "1"] }, { ...context, writesConfinedTo: app.runtime.workspace }), /not one of the programs/, "a task held to one folder never leaves a command running");
   await assert.rejects(app.registry.execute("process.start", { program: "node", args: ["-e", "1"], wakeOnExit: true }, { ...context, depth: 1 }), /helper cannot be woken/);
   await assert.rejects(app.registry.execute("schedules.wake_later", { message: "x", inMinutes: 5 }, { ...context, depth: 1 }), /helper cannot set wake-ups/);
   // What a wake-up starts carries the tools of the task that asked for it, no more.
