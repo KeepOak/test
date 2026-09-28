@@ -40,6 +40,10 @@ test("the suite ends in one required job, and nothing in it can hold a run past 
   assert.ok(workflow.jobs.plan["timeout-minutes"] <= 5);
   const run = workflow.jobs.test.steps.find((step) => /run-tests\.mjs/.test(step.run ?? ""));
   assert.ok(Number(run.env.BRANCH_TEST_FILE_TIMEOUT) > 0, "a file that never exits is ended and named");
+  // Compiled code is shared by every process of a share, and no share installs the browser's system packages.
+  assert.equal(run.env.NODE_COMPILE_CACHE, "${{ runner.temp }}/node-compile-cache");
+  const install = workflow.jobs.test.steps.find((step) => /playwright install/.test(step.run ?? ""));
+  assert.doesNotMatch(install.run, /--with-deps/);
 });
 
 test("the downloads and the phone apps are built for a release tag or by hand, never for a pull request or a landing", async () => {
