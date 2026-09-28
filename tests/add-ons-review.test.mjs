@@ -306,10 +306,31 @@ test("review: on Windows add-on code is refused unless the owner chose to run it
   const overview = await call("plugin-catalog/add-ons");
   assert.equal(overview.settings.windowsWithoutWall, false);
   assert.equal(overview.windows, process.platform === "win32");
-  assert.equal((await call("plugin-catalog/add-ons/settings", { windowsWithoutWall: true })).windowsWithoutWall, true);
+  // RES-251: turning it on is less careful, so it waits for the owner's yes.
+  await assert.rejects(call("plugin-catalog/add-ons/settings", { windowsWithoutWall: true }), /less careful/);
+  assert.equal((await call("plugin-catalog/add-ons/settings", { windowsWithoutWall: true, confirmLoosening: true })).windowsWithoutWall, true);
 });
 
-test("review: hand-placed plugins stay in Branch unless the owner ticks the wall; a package's plugin is walled whatever the tick says", async (t) => {
+/* RES-251: a plugin the owner placed runs as its own program. On Windows the wall is only a job object, and a
+   hand-placed plugin used to run inside Branch, so there it runs as its own program with limits rather than being
+   refused; code somebody else wrote still is. Mutation: drop `!handPlaced &&` in WalledPlugins.ask and the hand-placed
+   run is refused. */
+test("RES-251 on Windows a plugin the owner placed runs as its own program; others' code is still refused", async (t) => {
+  const started = [];
+  const walled = new WalledPlugins({ policy: (id) => ({ walled: true, hosts: [], handPlaced: id === "mine" }), unreadable: () => [],
+    weakWallAllowed: () => false, wallDeps: { platform: "win32" },
+    spawn: async (start, limits, signal) => { started.push(limits); return answering(described)(start, limits, signal); } });
+  const root = await temp(t);
+  await writeFile(join(root, "mine.mjs"), "export default {};\n");
+  await walled.load("mine", join(root, "mine.mjs"));
+  assert.equal(started.length, 1, "run as its own program");
+  assert.equal(started[0].job, true, "with the job object's limits");
+  await writeFile(join(root, "theirs.mjs"), "export default {};\n");
+  await assert.rejects(walled.load("theirs", join(root, "theirs.mjs")), (error) => error.message === weakWallRefusal);
+  assert.equal(started.length, 1);
+});
+
+test("review: hand-placed plugins run walled unless the owner says otherwise (and yes to it); a package's plugin is walled whatever the tick says", async (t) => {
   const { app, call, root } = await fixture(t);
   await call("plugin-catalog/add-ons/settings", { modes: { packages: "on" } });
   app.security.malware.vet = async () => undefined;
@@ -317,13 +338,20 @@ test("review: hand-placed plugins stay in Branch unless the owner ticks the wall
     "branch-addon.json": JSON.stringify({ format: "branch-addon", id: "pkg", name: "Pkg", plugin: "pkg.mjs" }) });
   const look = await call("plugin-catalog/add-ons/look", { source: folder });
   await call("plugin-catalog/add-ons/install", { source: folder, sha256: look.offer.sha256 });
-  assert.equal(app.addOns.settings().wallEveryPlugin, false, "the tick ships off");
+  // RES-251: the wall ships on for hand-placed plugins too; taking it away needs the owner's yes, never under Lockdown.
+  assert.equal(app.addOns.settings().wallEveryPlugin, true, "the wall ships on");
   assert.equal(app.addOns.walled.holds("pkg"), true);
-  assert.equal(app.addOns.walled.holds("mine"), false, "a plugin file the owner placed keeps running as before");
-  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: true });
-  assert.equal(app.addOns.walled.holds("mine"), true);
-  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false });
+  assert.equal(app.addOns.walled.holds("mine"), true, "a plugin file the owner placed runs as its own program too");
+  await assert.rejects(call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false }), /less careful: plugins you placed yourself would run inside Branch/);
+  assert.equal(app.addOns.walled.holds("mine"), true, "nothing changes without the yes");
+  await call("lockdown", { on: true });
+  await assert.rejects(call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true }), /Lockdown is on/);
+  await call("lockdown", { on: false });
+  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true });
+  assert.equal(app.addOns.walled.holds("mine"), false, "the owner's own choice, once said");
   assert.equal(app.addOns.walled.holds("pkg"), true);
+  await call("plugin-catalog/add-ons/settings", { modes: { lists: "on" } });
+  assert.equal(app.addOns.settings().wallEveryPlugin, false, "a later save keeps the owner's choice");
 });
 
 test("macOS for real: an address the package named is reached through Branch's door", mac, async (t) => {

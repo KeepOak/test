@@ -12,7 +12,10 @@ import { AddOnLists } from "./lists.js";
 import { AddOnShelf } from "./package-shelf.js";
 import { PipelinesReader } from "./pipelines.js";
 import { registerSearchTool, searchToolName } from "./search.js";
-import { addOnMode, addOnSettings, addOnTools, saveAddOnSettings, type AddOnPart, type AddOnSettings } from "./settings.js";
+import { addOnLooser, addOnMode, addOnSettings, addOnTools, saveAddOnSettings, type AddOnPart, type AddOnSettings } from "./settings.js";
+import { AddOnsApiError } from "./api.js";
+import { lockdownActive } from "../lockdown.js";
+import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 import { WalledPlugins, type WalledPolicy } from "./walled-plugin.js";
 
 /**
@@ -76,14 +79,19 @@ export class AddOns {
     if (installed) return { walled: true, hosts: installed.hosts, sha256: installed.sha256, permissions: installed.permissions };
     if (!addOnSettings(this.deps.store, this.deps.runtime.owner).wallEveryPlugin) return null;
     const catalog = this.deps.store.get("settings", this.deps.runtime.owner, `plugin-catalog:${id}`)?.data as { sha256?: string } | undefined;
-    return { walled: true, hosts: [], sha256: catalog?.sha256 };
+    return { walled: true, hosts: [], sha256: catalog?.sha256, handPlaced: true };
   }
 
   get storeReader(): Pick<Store, "get"> { return this.deps.store; }
   get owner(): string { return this.deps.runtime.owner; }
   settings(): AddOnSettings { return addOnSettings(this.deps.store, this.deps.runtime.owner); }
   save(input: unknown): AddOnSettings {
-    const saved = saveAddOnSettings(this.deps.store, this.deps.runtime.owner, input);
+    // RES-251: running plugins inside Branch, or add-on code on Windows without a wall, is less careful: it needs the
+    // owner's yes and is refused under Lockdown (src/policy-change-guard.ts).
+    const { confirmLoosening, input: change } = withoutConfirm(input);
+    const refusal = looseningRefusal(addOnLooser(this.settings(), change), confirmLoosening, lockdownActive(this.deps.store, this.deps.runtime.owner));
+    if (refusal) throw new AddOnsApiError(409, refusal);
+    const saved = saveAddOnSettings(this.deps.store, this.deps.runtime.owner, change);
     this.sync();
     return saved;
   }

@@ -19,7 +19,8 @@ import { checkApiVersion } from "./add-ons/sdk.js";
  * A plugin may add tools and may react to events; it may not add screens to the app. Nothing a
  * plugin brings is loaded until the owner switches it on, and every tool it adds still needs the
  * permission the plugin declared, checked the same way every built-in tool is checked. That
- * permission check is the only thing keeping a plugin in bounds: a plugin runs as part of the
+ * permission check keeps a plugin in bounds; RES-251: a plugin runs as its own walled program (src/add-ons/walled-plugin.ts)
+ * unless the owner chose to run hand-placed plugins inside Branch, where it runs as part of the
  * assistant, with the same reach over this computer, so only install files you trust.
  */
 export const pluginId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
@@ -179,7 +180,11 @@ export class Plugins {
   private async read(id: string): Promise<BranchPlugin> {
     const { file, info } = await this.file(id);
     // bucket-15: a plugin held elsewhere is never imported into this process.
-    if (this.isolation?.holds(id)) return this.isolation.load(id, file);
+    if (this.isolation?.holds(id)) {
+      const walled = await this.isolation.load(id, file);
+      checkApiVersion(walled.apiVersion, `The plugin ${id}`); // RES-251: a walled plugin is held to the same interface
+      return walled;
+    }
     const module = await import(`${pathToFileURL(file).href}?loaded=${info.mtimeMs}`) as { default?: BranchPlugin };
     if (!module.default || typeof module.default !== "object") throw new Error(`${id}.mjs does not export a plugin as its default export`);
     checkApiVersion(module.default.apiVersion, `The plugin ${id}`); // bucket-15
