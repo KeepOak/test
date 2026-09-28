@@ -8923,6 +8923,15 @@ Setting names: `planModel` and `sideTier` (planning model and flex for side ques
 `classifierModel` (choose by difficulty), `maxPings` (keep-alive), `allowFallbacks` and `dataCollection` (OpenRouter),
 and `mixtures` (mixtures of models).
 
+`difficulty.mixHard` defaults to false. When enabled with two different easy and hard connections,
+hard tasks use both as a mixture and the hard connection writes the combined answer. Easy tasks continue
+to use the easy connection. Clearing the switch or choosing the same connection twice removes the mixture.
+
+OpenRouter's **Only ones I list** reads `POST /api/model-savings/companies` on demand and keeps the company's
+plain slugs for one day. The request sends no key and goes only to OpenRouter's own provider-list address.
+It requires a configured OpenRouter connection and refuses while Lockdown is on. The chosen `only` list
+is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
+
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
 
