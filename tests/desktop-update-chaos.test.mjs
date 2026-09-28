@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { connected, exe, files, inPage, inspector, listen, progress, sha256, stockDist, until, versionFolder, wait } from "./fixtures/versioned-install.mjs";
-import { pointerFiles, readPointer, writePointer } from "../dist/desktop/app-folders.js";
+import { pointerFiles, pruneAppFolders, readPointer, writePointer } from "../dist/desktop/app-folders.js";
 import { shellUpMarker, windowsSwitchScript, failureName } from "../dist/desktop/shell-switch.js";
 import { hiddenLauncher } from "../dist/desktop/hand-over.js";
 import { proveOnce, sessionKey } from "../dist/engine-proof.js";
@@ -222,7 +222,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
         const { BrowserWindow, powerMonitor, app } = require("electron");
         const hook = require(require("node:path").join(process.resourcesPath, "app", "dist", "desktop", "shell-window.js")).handOverHook;
         const window = BrowserWindow.getAllWindows().find((one) => one.webContents.getURL().includes("desktop=1"));
-        return hook({ window, userData: app.getPath("userData"), power: powerMonitor })({ version: ${JSON.stringify(to)}, stillWanted: () => true });
+        return hook({ window: () => window, userData: app.getPath("userData"), power: powerMonitor })({ version: ${JSON.stringify(to)}, stillWanted: () => true });
       })()`);
       progress(`handed over ${from} -> ${to}`);
       // What the updater writes (updater.ts writeSwitchScript), and the hidden start the hand-over falls back to.
@@ -262,6 +262,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
 
     // ---- three updates, back to back ----
     const gaps = [], listeners = new Map();
+    let pendingChecks = 0;
     for (let at = 1; at <= 3; at++) {
       progress(`update ${at}`);
       const { draft, asking: from } = await switchTo(versions[at - 1], versions[at], base + at);
@@ -275,6 +276,14 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       const kept = await until("the draft", () => inPage(shell, `return document.getElementById("prompt")?.value || null;`));
       assert.equal(kept, draft, "the words the owner was typing are there");
       assert.equal((await readPointer(root))?.folder, `app-${versions[at]}`);
+      // The new version tidies old folders once its window is up (settleLayout): a version waiting to be switched to is
+      // never among them. Asked of the same tidy-up, dry (nothing is moved), so every folder stays for the checks below.
+      const wouldGo = [];
+      await pruneAppFolders(root, await readPointer(root), { rename: async (from) => { wouldGo.push(from); throw new Error("dry run"); } });
+      for (const later of versions.slice(at + 1)) {
+        assert.ok(!wouldGo.some((path) => path.endsWith(`app-${later}`)), `version ${later}, still to come, is kept: ${wouldGo.join(", ")}`);
+        pendingChecks++;
+      }
       const now = await health();
       assert.deepEqual([now.gateway.pid, now.worker.pid], [gateway, worker], "the same gateway and the same engine: nothing restarted");
       assert.equal(model.asked.filter((one) => one.tag !== "other").length, 5, `no work was asked of the model again: ${JSON.stringify(model.asked)}`);
@@ -328,7 +337,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
     const stock = await stat(join(dist, "electron.exe"));
     const linked = (await Promise.all(programs.map((name) => stat(join(root, name))))).every((one) => one.ino === stock.ino);
     const summary = JSON.stringify({ updates: 3, rollback: true, programs: programs.length, sameFileAsStock: linked, gatewayPid: gateway, enginePid: worker,
-      gatewayRequests: asked, gatewayFailures: failed, windowBackMs: gaps, streamedWords: model.streamed.words });
+      gatewayRequests: asked, gatewayFailures: failed, windowBackMs: gaps, pendingVersionsKept: pendingChecks, pendingVersionsLost: 0, streamedWords: model.streamed.words });
     progress(`PASSED ${summary}`);
     console.log("chaos proof", summary);
   }
