@@ -23,7 +23,7 @@ export const ART17 = {
 /* Characters: the engine's catalogue (GET /api/trunks characters, read from public/art/agents/manifest-*.json and Branch's
    own art, src/trunks/characters.ts), in the prototype's LOOKS order. Each has a still and a loop per state it acts out;
    a state it has no loop for falls back to idle. The engine keeps which one a Trunk wears (src/trunks/record.ts character). */
-export const looks17 = () => (Array.isArray(E.characters) ? E.characters : []);
+export const looks17 = () => (Array.isArray(E.characters) ? E.characters.filter((look) => look.id !== "branch") : []);
 export const look17 = (id) => (id ? looks17().find((l) => l.id === id) : undefined);
 /* The prototype marks only pass 17's own characters New (markNew17: the ids of its LOOKS17). */
 export const NEW17 = new Set(["sorrel", "skein", "nib"]);
@@ -77,6 +77,24 @@ function kept(key, make) {
   if (!node) { node = make(); list.push(node); pool.set(key, list); }
   return node;
 }
+/* A redraw reuses its current nodes first. Old views then release their decoders and leave the pool,
+   so visiting different characters and galleries does not keep every video alive for the whole session. */
+function retireMedia() {
+  for (const [key, nodes] of pool) {
+    const live = nodes.filter((node) => node.isConnected);
+    for (const node of nodes) {
+      if (node.isConnected) continue;
+      const videos = node.tagName === "VIDEO" ? [node] : node.querySelectorAll("video");
+      for (const video of videos) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
+    }
+    if (live.length) pool.set(key, live);
+    else pool.delete(key);
+  }
+}
 function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
@@ -108,6 +126,7 @@ function fillArt(slot) {
 export function fill17(root = document) {
   root.querySelectorAll("[data-m17]").forEach(fillMedia);
   root.querySelectorAll("[data-art17]").forEach(fillArt);
+  retireMedia();
 }
 
 /* Hovering a still in a gallery plays its loop, as the prototype's pickers do. */
