@@ -33,6 +33,7 @@ import { MatrixAdapter } from '../channels/matrix.js';
 import { SignalAdapter } from '../channels/signal-cli.js';
 import { connectWebSocket, type WebSocketConnect } from '../channels/ws-client.js';
 import { WebConfigSchema, type WebAccess } from './web.js';
+import { LaunchMcp, followLaunchFile } from './launch-mcp.js';
 import { HookSchema, type Hooks, type HookRunner, type HookConfig } from '../hooks.js';
 import type { ToolContext } from '../contracts.js';
 import type { NetworkPolicy } from '../network-policy.js';
@@ -285,6 +286,9 @@ async function readConfig(path: string | undefined, env: NodeJS.ProcessEnv, chan
 
 export async function loadIntegrations(registry: ToolRegistry, path?: string, env = process.env, secrets?: SecretResolver, channels?: ChannelHost) {
   const closers: (() => Promise<void>)[] = [];
+  // The launch file's MCP servers and the watch on the file close with the rest, but only a running server is counted.
+  const following: (() => Promise<void>)[] = [];
+  let mcpRunning = 0;
   /** The live browser, when one is configured, so Settings can offer the sign-in-once window. */
   const hosted: {
     browser?: BranchBrowser; issues?: IssueAccess;
@@ -295,7 +299,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
   const before = new Set(registry.names());
   const close = async () => {
     for (const name of registry.names()) if (!before.has(name)) registry.unregister(name);
-    const results = await Promise.allSettled(closers.map(stop => stop()));
+    const results = await Promise.allSettled([...closers, ...following].map(stop => stop()));
     const errors = results.filter(result => result.status === 'rejected');
     if (errors.length) throw new Error(`Failed to close ${errors.length} integration(s)`);
   };
@@ -310,9 +314,22 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
   if (new Set(config.mcp.map(server => server.id)).size !== config.mcp.length)
     throw new Error('MCP server IDs must be unique');
   try {
-    for (const server of config.mcp) {
+    // The file's MCP servers follow the file while Branch runs (launch-mcp.ts): added, removed or changed ones take
+    // effect by the next turn, with nothing else restarted. Only this section is followed; the others are read once.
+    const launch = new LaunchMcp(async (server) => {
       const stop = await startMcp(registry, server, env, policy, channels?.mcp);
-      if (stop) closers.push(stop);
+      // Stopping a server takes its tools out too (its tools are named mcp.<id>.<tool>), not only its program.
+      const prefix = `mcp.${McpConfigSchema.parse(server).id}.`;
+      return async () => {
+        await stop?.();
+        for (const name of registry.names()) if (name.startsWith(prefix)) registry.unregister(name);
+      };
+    });
+    following.push(() => launch.close());
+    mcpRunning = (await launch.apply(config.mcp, true)).started.length;
+    if (path) {
+      const stopFollowing = followLaunchFile(path, async () => (await readConfig(path, env, channels))?.mcp ?? [], launch);
+      following.push(async () => stopFollowing());
     }
     if (config.browser) {
       const browser = new BranchBrowser(config.browser);
@@ -390,7 +407,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       await channels!.router.attach(adapter, { activation: channel.activation, pairing: channel.pairing, allowlist: channel.allowlist });
       closers.push(() => adapter.stop());
     }
-    return { close, count: closers.length, hosted };
+    return { close, count: closers.length + mcpRunning, hosted };
   } catch (error) { await close().catch(() => undefined); throw error; }
 }
 
