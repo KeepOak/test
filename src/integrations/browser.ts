@@ -272,6 +272,7 @@ export class BranchBrowser {
       request => this.guardRequest(request, created), redirectHops);
     session.options.saveDownload = download => this.saveDownload(download);
     session.options.dialogAnswer = () => this.care(context.owner).dialogs; // R17-S19
+    session.options.intercept = (url, referer) => this.intercepted(context.owner, url, referer); // RES-706
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
     created = { session, origins: new Set(), actions: 0, host: '', profile: null,
@@ -1099,6 +1100,29 @@ export class BranchBrowser {
      before, because the assistant supplies the value there; this way in is the owner's own, it
      supplies the value itself (src/vault-autofill.ts), and it hands nothing back. */
 
+  /* ──────────────── RES-706: a sign-in's return address, answered by the engine ────────────────
+     A program signing in (src/accounts/trunk-sign-in.ts) waits for the code its maker's page sends back to an address
+     it names. When the owner finishes that page in Branch's browser, the load of that address is never sent: the code
+     is taken from it and handed to the program, and the tab is answered with a page that holds no code. */
+  private readonly signInRelays = new Set<SignInRelay>();
+  /** Waits for one owner's sign-in return address; the answer removes it. Nothing here is kept after it is used. */
+  relaySignIn(relay: SignInRelay): () => void {
+    this.signInRelays.add(relay);
+    return () => { this.signInRelays.delete(relay); };
+  }
+  private intercepted(owner: string, address: string, referer: string): string | null {
+    let url: URL, from: URL | null;
+    try { url = new URL(address); } catch { return null; }
+    try { from = new URL(referer); } catch { from = null; }
+    for (const relay of this.signInRelays) {
+      if (relay.owner !== owner || !relay.match(url, from)) continue;
+      this.signInRelays.delete(relay);
+      relay.take(url);
+      return signedInPage(relay.program);
+    }
+    return null;
+  }
+
   /**
    * RES-710: whether this task has a page open now, for the owner's own Fill. It never opens one: the owner fills
    * only the page they are looking at.
@@ -1215,6 +1239,16 @@ export class BranchBrowser {
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Browser cleanup failed');
   }
+}
+
+/** RES-706: one sign-in's return address, waited for. `take` is handed the address with the code in it, once. */
+export interface SignInRelay { owner: string; program: string; match: (url: URL, from: URL | null) => boolean; take: (url: URL) => void }
+/** What the tab shows instead of the maker's return page: no code, and an address that holds none either. */
+function signedInPage(program: string): string {
+  const name = program.replace(/[<>&"]/g, '');
+  return `<!doctype html><meta charset="utf-8"><title>Signed in</title><body style="font:16px system-ui;padding:40px">`
+    + `<h1 id="signed-in">Branch handed this sign-in to ${name}.</h1><p>You can hand the browser back.</p>`
+    + `<script>history.replaceState(null, '', '/')</script></body>`;
 }
 
 /**

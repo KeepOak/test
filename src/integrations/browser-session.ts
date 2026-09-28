@@ -16,7 +16,7 @@ export interface BrowserRequest {
 }
 interface PausedRequest {
   requestId: string;
-  request: { url: string };
+  request: { url: string; headers?: Record<string, string> };
   resourceType: string;
   networkId?: string | undefined;
 }
@@ -94,6 +94,18 @@ export interface SessionOptions {
   guardUrl?: ((url: string) => string | null) | undefined;
   /** R17-S19: what a website's message box is answered with; unset dismisses it, as always. */
   dialogAnswer?: (() => 'dismiss' | 'accept') | undefined;
+  /**
+   * RES-706: a page load the engine answers itself instead of sending it, or null to send it as usual. A sign-in's
+   * return address carries a one-time code; Branch takes the code from the address, hands it to the program waiting
+   * for it, and answers the tab with a page that holds no code, so nothing the task reads later can show it.
+   */
+  intercept?: ((url: string, referer: string) => string | null) | undefined;
+}
+
+/** One request header, whatever its capitals (CDP keeps the page's own). */
+function headerOf(headers: Record<string, string> | undefined, name: string): string {
+  for (const [key, value] of Object.entries(headers ?? {})) if (key.toLowerCase() === name) return value;
+  return '';
 }
 
 export class BrowserSession {
@@ -427,6 +439,8 @@ export class BrowserSession {
       }
       const refused = this.options.guardUrl?.(request.url());
       if (refused) throw new Error(refused);
+      const answered = request.resourceType() === 'document' ? this.options.intercept?.(request.url(), request.headers()['referer'] ?? '') : null;
+      if (answered) { await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: answered }); return; }
       await this.guardRequest({ url: request.url(), resourceType: request.resourceType() });
       // The pause below is on the page's own process. A frame from another website runs in a process
       // of its own, where Chromium follows redirects without pausing, so a frame's request is sent here
@@ -472,6 +486,13 @@ export class BrowserSession {
     try {
       const refused = this.options.guardUrl?.(event.request.url);
       if (refused) throw new Error(refused);
+      // RES-706: a sign-in's return address reached by a redirect is answered here, before it is sent.
+      const answered = event.resourceType === 'Document' ? this.options.intercept?.(event.request.url, headerOf(event.request.headers, 'referer')) : null;
+      if (answered) {
+        await session.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: 200,
+          responseHeaders: [{ name: 'content-type', value: 'text/html; charset=utf-8' }], body: Buffer.from(answered).toString('base64') });
+        return;
+      }
       if (event.resourceType === 'Document' && event.networkId) {
         const count = (redirectCounts.get(event.networkId) ?? 0) + 1;
         redirectCounts.set(event.networkId, count);

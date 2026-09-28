@@ -66,6 +66,8 @@ const GUARDS = [
   { file: "src/wiki.ts", tool: "wiki.search", args: { query: "roof" } },
   { file: "src/wiki.ts", tool: "wiki.history", args: { title: "Roof" } },
   { file: "src/wiki.ts", tool: "wiki.write", args: { title: "Roof", body: "Fixed on Tuesday." } },
+  // RES-706: adding a sign-in to the owner's accounts is theirs alone; the household person is refused before anything starts.
+  { file: "src/accounts/trunk-sign-in.ts", tool: "accounts.add_signin", args: { program: "claude-code" } },
   { file: "src/vault-autofill.ts", tool: "signin.fill", args: { login: "bank" }, setup: (app) => registerVaultAutofill(app.registry,
     new VaultAutofill({ store: app.store, owner: app.runtime.owner, page: { async fill() { return { filled: false }; } },
       read: async () => { throw new Error("nothing saved"); }, requireOwner: (what) => app.store.profiles.requireOwner(what) })) },

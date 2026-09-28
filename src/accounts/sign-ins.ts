@@ -278,6 +278,15 @@ export async function startProgramSignIn(host: SignInsHost, input: unknown, run:
   return checkProgram(host, { id, ...(account ? { account } : {}) }, run);
 }
 
+/**
+ * RES-706: where a sign-in Branch started stands, read from Branch's own note of it: nothing is started to find out.
+ * `url` is the maker's page for finishing a code sign-in, once the program printed it.
+ */
+export function signInWaiting(host: SignInsHost, id: string, account: string | undefined): { running: boolean; failed: string | null; url: string | null } | null {
+  const login = logins(host).get(loginKey(id, account));
+  return login ? { running: login.running, failed: login.failed, url: login.url } : null;
+}
+
 /** The window's Back or close: the sign-in program Branch started for this program and account is stopped. */
 export function stopProgramSignIn(host: SignInsHost, input: unknown) {
   const { id, account } = CheckSchema.parse(input);

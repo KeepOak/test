@@ -76,6 +76,7 @@ import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
 import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
+import { registerTrunkSignIn, type TrunkSignInDeps } from "./accounts/trunk-sign-in.js"; // RES-706
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
 import { SessionLock } from "./session-lock.js";
@@ -339,6 +340,8 @@ export async function createBranch(options: {
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
    */
   dictation?: { speech?: SpeechStreamRunner; sound?: SoundStreamRunner; present?: ProgramPresent; platform?: string };
+  /** RES-706 test seams: whether a program is on the path, the installer, and the sign-in and status runners. */
+  trunkSignIn?: Pick<TrunkSignInDeps, "present" | "install" | "run" | "launch" | "pollMs">;
   /** RES-710 test seam: the password manager's command line. Left out, the real `bw`, `op` or Windows one is run. */
   credentialRunner?: CliRunner;
   /** Test-only: clock function for deterministic rate limiting. Normal production uses Date.now. */
@@ -1111,6 +1114,9 @@ export async function createBranch(options: {
     store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir, userAgent,
     ...(chatgpt ? { chatgpt } : {}),
   });
+  // RES-706: "add my Claude / Codex account", done by the assistant or a Trunk with the owner there.
+  registerTrunkSignIn(registry, { service: accounts, approvals: runtime.approvals, sessionOf: (context) => runtime.approvalSessionOf(context),
+    browser: () => branch.browser, ...options.trunkSignIn });
   // ---- end mac6/accounts ----
   // Nothing is shared with other AI tools until the owner turns it on in Settings.
   const mcpServer = await startMcpServer(registry, store, runtime, knowledge, files);
