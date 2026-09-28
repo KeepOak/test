@@ -16,7 +16,8 @@ const alwaysSkipped = new Set(["node_modules", ".git", ".branch", "dist", "relea
 export const searchLimits = {
   entries: 4000,
   depth: 12,
-  fileBytes: 1024 * 1024,
+  // selfdev: Branch's own handbook is a megabyte; a file up to 8 MiB may be searched when asked.
+  fileBytes: 8 * 1024 * 1024,
   answerBytes: 48 * 1024,
 };
 export interface WalkEntry { path: string; bytes: number; mtimeMs: number }
@@ -97,7 +98,7 @@ export class WorkspaceSearch {
 
   /** Lines matching a word or a regular expression, with the lines around each match. */
   async grep(input: GrepInput): Promise<GrepResult> {
-    const walk = await this.walk(input.path);
+    const walk = await this.walkOrFile(input.path);
     const expression = buildExpression(input);
     const matches: GrepMatch[] = [];
     const used = { bytes: 0 };
@@ -114,6 +115,18 @@ export class WorkspaceSearch {
     return withNote({ matches, filesSearched, filesSkipped, moreAvailable }, walk);
   }
 
+  /**
+   * selfdev: a search may name one file as well as a folder, as a coding assistant's search does. The file is
+   * looked for in its folder's walk, so the same rules (hidden, ignored, refused) decide whether it is searched.
+   */
+  private async walkOrFile(path: string): Promise<Walk> {
+    const target = await this.files.checked(path, true);
+    if (!(await stat(target)).isFile()) return this.walk(path);
+    const clean = path.replace(/\\/g, "/").replace(/^(\.\/)+/, "");
+    const slash = clean.lastIndexOf("/");
+    const folder = await this.walk(slash > 0 ? clean.slice(0, slash) : ".");
+    return { ...folder, entries: folder.entries.filter((entry) => entry.path === clean), truncated: false };
+  }
   /** Files whose path looks like what was typed, best first. */
   async find(query: string, limit = 20): Promise<{ files: { path: string; score: number }[]; leftOut?: string }> {
     const walk = await this.walk(".");
@@ -261,7 +274,7 @@ export function registerCodeSearch(registry: ToolRegistry, search: WorkspaceSear
       glob: z.array(z.string().min(1).max(200)).max(20).optional(),
       context: z.number().int().min(0).max(5).default(0),
       maxResults: z.number().int().min(1).max(200).default(60),
-      maxFileBytes: z.number().int().min(1024).max(searchLimits.fileBytes).default(262144),
+      maxFileBytes: z.number().int().min(1024).max(searchLimits.fileBytes).default(2 * 1024 * 1024),
     }).strict(),
     execute: async (a) => search.grep(a),
   });
