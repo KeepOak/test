@@ -30,6 +30,7 @@ export const ROUTES = {
   "/v1/models": "look",
 
   // mac6/accounts: reading the lists is looking; every change is the owner's.
+  "/api/": "prefix",
   "/api/accounts": "look",
   "/api/accounts/": "prefix",
   "/api/accounts/add": "owner POST",
@@ -73,6 +74,7 @@ export const ROUTES = {
   "/api/agents/remote": "owner POST",
   "/api/agents/remote/remove": "owner POST",
   "/api/approval-reviewer": "owner POST",
+  "/api/engine-proof": "pre-auth GET",
   "/api/jev": "secret-read",
   // P17-D §4: decision models. Reading names the connections (as /api/models does); changing them and deciding,
   // which asks a model, are the owner's.

@@ -35,7 +35,7 @@ import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
-import { memoryScope, registerMemory } from "./memory.js";
+import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
@@ -655,7 +655,8 @@ export async function createBranch(options: {
   // is happening now, then the job in hand, then everything the assistant knows for good.
   // mac2/fly-core-2: with the learning core "on", the facts that helped in similar tasks go first.
   store.review.orderFacts = (factOwner, agent, sessionId) =>
-    chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)), knobSnapshotLimits(store, runtime.owner)).records;
+    chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)
+      .filter((record) => isCurrentFact(record))), knobSnapshotLimits(store, runtime.owner)).records; // SELF-202: only facts still true
   // ── R17-S-B: the owner's memory budget and the leak guard's sensitivity, read fresh each time. ──
   store.review.snapshotLimits = () => knobSnapshotLimits(store, runtime.owner);
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);

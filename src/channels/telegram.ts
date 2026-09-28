@@ -206,14 +206,16 @@ export class TelegramAdapter implements ChannelAdapter {
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
-    form.append("document", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    // CHAT-102: a picture Telegram can show (JPEG, PNG or WebP, up to 10 MB) goes as a photo, everything else as a file.
+    const method = telegramPhoto(file) ? "sendPhoto" : "sendDocument";
+    form.append(method === "sendPhoto" ? "photo" : "document", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
     if (file.caption) form.append("caption", file.caption.slice(0, 1024));
     if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/sendDocument`, { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
+    const response = await this.fetch(`${this.base}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw new Error(`Telegram sendDocument failed: ${parsed.description ?? response.status}`);
+    if (!parsed.ok) throw new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
-    if (!message.success) throw new Error("Telegram sendDocument failed: response missing message_id");
+    if (!message.success) throw new Error(`Telegram ${method} failed: response missing message_id`);
     return String(message.data.message_id);
   }
   // ---- end R17-C ----
@@ -459,4 +461,10 @@ export class TelegramAdapter implements ChannelAdapter {
       { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
     return parsed.result;
   }
+}
+
+/** What Telegram shows as a photo: JPEG, PNG or WebP, up to its 10 MB photo limit. */
+export function telegramPhoto(file: Pick<OutgoingFile, "mediaType" | "bytes">): boolean {
+  const type = file.mediaType.split(";")[0]!.toLowerCase();
+  return ["image/jpeg", "image/png", "image/webp"].includes(type) && file.bytes.byteLength <= 10 * 1024 * 1024;
 }
