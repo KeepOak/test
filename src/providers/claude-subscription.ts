@@ -8,6 +8,7 @@ import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js
 import { strippedEnvironment, ProgramLimitError, type AccountHome } from "./cli-agent.js";
 import { NativeAdmission, type NativeConnector } from "./claude-subscription-admission.js";
 import { ProviderHttpError } from "../provider-retry.js";
+import { isOutOfRoomThinking } from "../provider-stream.js";
 import { NativeProcess, type NativeInvocation, type NativeSpawn, type NativeEvent } from "./claude-subscription-process.js";
 import { boundedNativeJson, nativeGeneration, nativeHistory, nativeInventory, type NativeFrame } from "./claude-subscription-history.js";
 
@@ -72,6 +73,8 @@ function completed(relay: NativeAdmission, result: { event: NativeEvent; code: n
   if (relay.status === 401 || relay.status === 403 || result.authenticationFailed) throw new Error("Claude subscription could not use its saved sign-in; open Settings → Accounts and sign in again");
   // selfdev: a busy or failing service (5xx, 529 overloaded) is tried again like any other provider's; the status is named.
   if (relay.status !== null && relay.status >= 500) throw new ProviderHttpError(relay.status);
+  // A reply cut off at its ceiling (a long edit, say) is asked again with more room by the runtime.
+  if (isOutOfRoomThinking(relay.error)) throw relay.error;
   if (relay.status !== 200 || !relay.completion || relay.failure)
     throw new Error(`Claude subscription did not receive a complete response from its official service${relay.status !== null && relay.status !== 200 ? ` (HTTP ${relay.status})` : ""}`);
   const boundary = result.code === 1 && result.event.subtype === "error_max_turns" && relay.completion.toolCalls.length > 0;

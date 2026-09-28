@@ -494,7 +494,8 @@ test("the ceiling: a long task still gets its answer, not silence", async (t) =>
   // The round ceiling is what this is about. Work on files gets 40 rounds by default, and at 60 steps the
   // step limit would come first; a task out of steps is not asked the last question.
   const { saveKnobs } = await import("../dist/index.js");
-  saveKnobs(app.store, "local", "limits", { maxModelRounds: 12 });
+  // selfdev: a 40 KB file is now read (its first part) every round, so the tokens are raised to keep the rounds the limit.
+  saveKnobs(app.store, "local", "limits", { maxModelRounds: 12, maxTaskTokens: 2_000_000 });
   await writeFile(join(workspace, "src", "sum.js"), huge);
   const run = await app.runtime.run({ prompt: "read it and tell me what is in it" });
   assert.match(run.output, /found nothing conclusive/, `no answer came back: ${run.output.slice(0, 200)}`);

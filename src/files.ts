@@ -329,8 +329,16 @@ export interface WriteObserver {
   before(path: string, context: ToolContext): Promise<unknown>;
   after(path: string, context: ToolContext, token: unknown): Promise<void>;
 }
-/** selfdev: the largest file read in parts (files.read with fromLine) or changed in place (files.edit, files.patch). */
+/** selfdev: the largest file read in parts (files.read_lines) or changed in place (files.edit, files.patch). */
 export const largeFileBytes = 8 * 1024 * 1024;
+
+/** selfdev: part of a large file; seen as it is now, so a change to it (files.edit) is judged against the whole file. */
+async function readPart(files: WorkspaceFiles, context: ToolContext, path: string, from: number, count: number) {
+  const { whole, ...part } = await files.readLines(path, from, count);
+  files.readFirst?.noteRead(context.runId, files.addressOf(path), whole);
+  return { ...part, note: part.more ? `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}. Read on with files.read_lines from line ${part.toLine + 1}.`
+    : `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}.` };
+}
 
 export function registerFiles(
   registry: ToolRegistry,
@@ -341,25 +349,26 @@ export function registerFiles(
     name: "files.read",
     description: "Read a UTF-8 workspace file, maximum 32 KiB at once.",
     permission: "files.read",
-    // Plain numbers keep the core tool list short (an integer schema carries its safe-integer bounds with it).
-    parameters: z.object({ path: pathSchema, fromLine: z.number().min(1).optional(), lines: z.number().min(1).max(2000).optional() }).strict(),
+    parameters: z.object({ path: pathSchema }).strict(),
     execute: async (a, c: ToolContext) => {
-      if (a.fromLine === undefined) {
-        const file = await files.read(a.path).catch(async (error: unknown) => {
-          // A file too large to read whole is read from its start, and says how to read the rest.
-          if (!(error instanceof Error) || !error.message.includes("32 KiB")) throw error;
-          return null;
-        });
-        if (file) {
-          files.readFirst?.noteRead(c.runId, files.addressOf(a.path), file.content); // mac7/coding-next
-          return file;
-        }
+      const file = await files.read(a.path).catch((error: unknown) => {
+        // selfdev: a file too large to read whole is read from its start, and says how to read the rest.
+        if (!(error instanceof Error) || !error.message.includes("32 KiB")) throw error;
+        return null;
+      });
+      if (file) {
+        files.readFirst?.noteRead(c.runId, files.addressOf(a.path), file.content); // mac7/coding-next
+        return file;
       }
-      const { whole, ...part } = await files.readLines(a.path, Math.floor(a.fromLine ?? 1), Math.floor(a.lines ?? 400));
-      // Seen as it is now: a change to it (files.edit) is judged against the whole file this part came from.
-      files.readFirst?.noteRead(c.runId, files.addressOf(a.path), whole);
-      return { ...part, note: part.more ? `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}. Read on with fromLine ${part.toLine + 1}.` : `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}.` };
+      return readPart(files, c, a.path, 1, 400);
     },
+  });
+  registry.register({
+    name: "files.read_lines",
+    description: "Read part of a large workspace file (up to 8 MiB) by line numbers: fromLine, and how many lines (up to 2000). Find the lines with files.grep first.",
+    permission: "files.read",
+    parameters: z.object({ path: pathSchema, fromLine: z.number().int().min(1), lines: z.number().int().min(1).max(2000).default(400) }).strict(),
+    execute: async (a, c: ToolContext) => readPart(files, c, a.path, a.fromLine, a.lines),
   });
   registry.register({
     name: "files.list",

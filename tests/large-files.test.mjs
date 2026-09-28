@@ -25,15 +25,15 @@ test("a file too large to read whole is read by lines, and a part read lets it b
   const start = await app.registry.execute("files.read", { path: "big.md" }, context);
   assert.equal(start.fromLine, 1);
   assert.equal(start.totalLines, 3000);
-  assert.ok(start.more && /Read on with fromLine/.test(start.note), "the whole file is not sent, and it says how to read on");
-  const part = await app.registry.execute("files.read", { path: "big.md", fromLine: 2500, lines: 3 }, context);
+  assert.ok(start.more && /Read on with files.read_lines from line/.test(start.note), "the whole file is not sent, and it says how to read on");
+  const part = await app.registry.execute("files.read_lines", { path: "big.md", fromLine: 2500, lines: 3 }, context);
   assert.equal(part.content, `${lines.slice(2499, 2502).join("\n")}\n`);
   assert.deepEqual([part.fromLine, part.toLine, part.more], [2500, 2502, true]);
   await app.registry.execute("files.edit", { path: "big.md", find: "line 2501: ", replace: "line 2501 (changed): " }, context);
   const after = await readFile(join(workspace, "big.md"), "utf8");
   assert.match(after, /line 2501 \(changed\): /);
   assert.equal(after.split("\n").length, 3001, "everything else is kept");
-  const cap = await app.registry.execute("files.read", { path: "big.md", fromLine: 1, lines: 2000 }, context);
+  const cap = await app.registry.execute("files.read_lines", { path: "big.md", fromLine: 1, lines: 2000 }, context);
   assert.ok(Buffer.byteLength(cap.content) <= 32768 && cap.more, "a slice is held to 32 KiB of text");
 });
 
@@ -45,6 +45,6 @@ test("files.grep searches one named file, a large one included, and gives line n
   await writeFile(join(workspace, "docs", "other.md"), "maxSteps elsewhere\n");
   const found = await app.registry.execute("files.grep", { query: "maxSteps", path: "docs/configuration.md" }, { ...context, permissions: new Set(["files.read"]) });
   assert.deepEqual(found.matches.map((match) => [match.path, match.line]), [["docs/configuration.md", 20001]]);
-  const part = await app.registry.execute("files.read", { path: "docs/configuration.md", fromLine: 20001, lines: 1 }, context);
+  const part = await app.registry.execute("files.read_lines", { path: "docs/configuration.md", fromLine: 20001, lines: 1 }, context);
   assert.equal(part.content, "| `maxSteps` | the limit |\n");
 });
