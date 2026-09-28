@@ -210,6 +210,8 @@ async function loadKeys(id) {
   } catch (error) { toast(error.message); }
 }
 const accountName = (pool, a) => poolById(pool)?.accounts?.find((x) => x.id === a.id)?.label || a.label || a.id;
+/* Whether this connection is the Trunk's own model: a pool is named after its connection (a ChatGPT pool holds its models). */
+const usesPool = (tr, pool) => !!tr.model && (tr.model === pool.id || (pool.id === "chatgpt" && tr.model.startsWith("chatgpt")));
 function poolRow(tr, pool, keys) {
   const picked = keys.accounts[pool.id] ?? "", known = pool.accounts.some((a) => a.id === picked);
   const none = keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-none");
@@ -218,16 +220,20 @@ function poolRow(tr, pool, keys) {
   const options = [["", none], ...pool.accounts.map((a) => [a.id, ready(a) ? accountName(pool.id, a) : t("window.flows.trunk.acc-not-ready", { name: accountName(pool.id, a) }), !ready(a) && a.id !== picked])];
   const label = t("window.flows.trunk.acc-pick-for", { name: pool.label });
   const pick = gsel({ sw: "tk-pool", label, options, value: known ? picked : "", attrs: `data-tk-pool="${esc(pool.id)}" data-id="${esc(tr.id)}"` });
-  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)}</b><span class="right">${pick}</span><small></small></div>`;
+  const using = usesPool(tr, pool) ? `<span class="pill ok tk-uses">${t("window.flows.trunk.acc-answers-with")}</span>` : "";
+  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)} ${using}</b><span class="right">${pick}</span><small></small></div>`;
 }
 function accountsTab(tr) {
   const view = ed.keys;
   if (!view) return `<p class="hint">${t("window.flows.trunk.acc-reading")}</p>`;
   const keys = view.keys ?? { copyFromOwner: true, accounts: {} };
   const copy = `<div class="ctl"><b>${t("window.flows.trunk.acc-copy")}</b><input class="sw" type="checkbox" id="tk-copy" data-id="${esc(tr.id)}" ${keys.copyFromOwner ? "checked" : ""} aria-label="${esc(t("window.flows.trunk.acc-copy"))}"><small>${t("window.flows.trunk.acc-copy-hint")}</small></div>`;
-  const rows = (view.pools ?? []).map((pool) => poolRow(tr, pool, keys)).join("") || `<p class="hint">${t("window.flows.trunk.acc-empty")}</p>`;
   const notes = [view.note, ...(view.plan?.notes ?? [])].filter(Boolean).map((n) => `<li>${esc(n)}</li>`).join("");
-  return `<div class="tk-accounts"><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.acc-lede")}</p>${copy}${rows}${notes ? `<ul class="hint tk-notes">${notes}</ul>` : ""}</div>`;
+  /* The model and its account in one place: which connection it answers with, then each connection's account (the one it
+     answers with first and marked). The same "Which model" as What it may do, saved the same way. */
+  const pools = [...(view.pools ?? [])].sort((a, b) => Number(usesPool(tr, b)) - Number(usesPool(tr, a)));
+  const rows = pools.map((pool) => poolRow(tr, pool, keys)).join("") || `<p class="hint">${t("window.flows.trunk.acc-empty")}</p>`;
+  return `<div class="tk-accounts"><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.acc-lede")}</p>${modelSeg(tr)}${copy}${rows}${notes ? `<ul class="hint tk-notes">${notes}</ul>` : ""}</div>`;
 }
 /* One save at a time: each reads the Trunk afresh, so two quick picks never write over each other. */
 let keysSaving = Promise.resolve();

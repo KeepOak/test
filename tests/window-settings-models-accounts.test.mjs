@@ -87,8 +87,15 @@ test("Edit Trunk › Accounts: an account picked for a connection is saved, reac
   assert.match((await gselChoices(select))[0].words, /Your accounts/);
   assert.ok(await page.locator(".dlg #tk-copy").isChecked(), "Use my accounts too ships on");
   assert.match(await page.locator(".dlg .tk-pool b").first().textContent(), /OpenAI test/, "the connection is named, not its id");
+  assert.equal(await page.locator(".dlg .tk-uses").count(), 0, "no model picked yet: no connection is marked");
 
-  await pickGsel(select, second);
+  /* The model and its account in one place: picking the connection here marks it as the one the Trunk answers with. */
+  await pickGsel(page.locator(".dlg #tm-model-sel"), POOL);
+  await waitFor(async () => (await call(`/api/trunks/${trunk.id}`)).trunk.model === POOL);
+  await page.waitForSelector(`.dlg .tk-uses`);
+  assert.match(await page.locator(".dlg .tk-pool").first().textContent(), /OpenAI test.*Answers with this/s);
+
+  await pickGsel(page.locator(`.dlg [data-tk-pool="${POOL}"]`), second);
   await waitFor(async () => (await call(`/api/trunks/${trunk.id}`)).trunk.keys.accounts[POOL] === second);
   const { trunk: saved } = await call(`/api/trunks/${trunk.id}`);
   assert.deepEqual(saved.keys, { copyFromOwner: true, accounts: { [POOL]: second } }, "the rest of keys is carried over");

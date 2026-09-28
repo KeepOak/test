@@ -7477,6 +7477,7 @@
   "window.flows.trunk.acc-pick-for": "Cuenta para {name}",
   "window.flows.trunk.acc-reading": "Leyendo sus cuentas…",
   "window.flows.trunk.acc-empty": "Aún ninguna conexión tiene cuentas para elegir. Añade una en Ajustes › Cuentas.",
+  "window.flows.trunk.acc-answers-with": "Responde con esta",
   "window.flows.trunk.acc-not-ready": "{name} (no puede responder ahora)",
   "window.flows.whatsnew.better": "Mejor",
   "window.flows.whatsnew.fixed": "Corregido",

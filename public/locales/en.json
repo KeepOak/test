@@ -7477,6 +7477,7 @@
   "window.flows.trunk.acc-pick-for": "Account for {name}",
   "window.flows.trunk.acc-reading": "Reading its accounts…",
   "window.flows.trunk.acc-empty": "No connection has accounts to pick from yet. Add one in Settings › Accounts.",
+  "window.flows.trunk.acc-answers-with": "Answers with this",
   "window.flows.trunk.acc-not-ready": "{name} (can't answer now)",
   "window.flows.whatsnew.better": "Better",
   "window.flows.whatsnew.fixed": "Fixed",
