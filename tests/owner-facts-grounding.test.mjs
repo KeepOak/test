@@ -57,7 +57,9 @@ async function branch(t) {
   const remember = (text) => app.registry.execute("memory.put", { text, source: "owner" }, app.runtime.context());
   return { app, seen, remember };
 }
-const blockIn = (messages) => messages.findIndex((m) => m.role === "system" && /^What you know about the owner/.test(String(m.content)));
+/** The block: a system message at the start of a conversation, or Branch's own note partway through (notesInPlace). */
+const blockIn = (messages) => messages.findIndex((m) => (m.role === "system" || (m.role === "user" && m.from === "branch"))
+  && /^(<system-reminder>\n)?What you know about the owner/.test(String(m.content)));
 
 test("a personal question: the saved fact sits in the labelled block right before the question", async (t) => {
   const { app, seen, remember } = await branch(t);
