@@ -46,11 +46,14 @@ const slashSchema = z.object({ id: z.string().min(1).max(64), token: z.string().
 const interactionSchema = z.object({ id: z.string().min(1).max(64), token: z.string().min(1).max(300), type: z.literal(3),
   channel_id: z.string().min(1).max(64), guild_id: z.string().optional(), context: z.number().optional(),
   user: userSchema.optional(), member: z.object({ user: userSchema }).passthrough().optional(),
-  data: z.object({ custom_id: z.string().regex(/^[yan]:[a-f0-9]{32}(?::[a-f0-9]{12})?$/), component_type: z.literal(2) }).passthrough(),
+  // An approval's answer, or a /model menu's choice (src/channels/model-picker.ts).
+  data: z.object({ custom_id: z.string().regex(/^(?:[yan]:[a-f0-9]{32}(?::[a-f0-9]{12})?|m:[a-f0-9]{12}:(?:\d{1,2}|d))$/), component_type: z.literal(2) }).passthrough(),
 }).passthrough();
 
 export class DiscordAdapter implements ChannelAdapter {
   readonly kind = "discord";
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   /** Discord refuses a message longer than two thousand characters. */
   private textMode: () => "native" | "plain" = () => "native";
@@ -278,16 +281,17 @@ export class DiscordAdapter implements ChannelAdapter {
    * styled as the danger button (4) and the yeses as the ordinary one (1), so the refusal reads as
    * the refusal at a glance.
    */
+  /** Up to five rows of five buttons, as Discord allows; a question's Yes and No stay one row. */
   static components(buttons: { label: string; value: string }[]): unknown[] {
-    return [{
-      type: 1,
-      components: buttons.slice(0, 5).map((button) => ({
+    const rows: unknown[] = [];
+    for (let at = 0; at < Math.min(buttons.length, 25); at += 5)
+      rows.push({ type: 1, components: buttons.slice(at, at + 5).map((button) => ({
         type: 2,
-        style: button.value.startsWith("n") ? 4 : 1,
+        style: button.value.startsWith("n") ? 4 : button.value.startsWith("m") ? 2 : 1,
         label: button.label.slice(0, 80),
         custom_id: button.value.slice(0, 100),
-      })),
-    }];
+      })) });
+    return rows;
   }
   async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const wait = this.readyAt - Date.now();
