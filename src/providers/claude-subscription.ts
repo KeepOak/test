@@ -79,7 +79,14 @@ async function removePrivateRequest(root: string): Promise<void> {
   const target = resolve(root), parent = resolve(tmpdir(), "Codex-session-files");
   if (dirname(target) !== parent || !basename(target).startsWith("branch-claude-subscription-"))
     throw new Error("Claude subscription refused to remove a directory outside its private request folder");
-  await rm(target, { recursive: true, force: true });
+  // On Windows the native process can hold its folder open for a moment after it exits (EBUSY). A finished reply
+  // is not failed for that: removal is tried again a few times now, then again in the background until it goes.
+  try { await rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+  catch { removeLater(target, 1); }
+}
+function removeLater(target: string, attempt: number): void {
+  setTimeout(() => void rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    .catch(() => { if (attempt < 30) removeLater(target, attempt + 1); }), 2000).unref();
 }
 /** Claude is an inert model transport; Branch retains every tool, approval, outcome and agent loop. */
 export class ClaudeSubscriptionProvider implements Provider {
