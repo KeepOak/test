@@ -168,6 +168,7 @@ import { troubleshootInTask } from "./troubleshoot.js"; // w911 (A0374) hook: th
 import { RequestCache, type CacheKeyParts } from "./request-cache.js";
 import { traceSettings, writeRunTrace } from "./trace.js";
 import { LeakGuard } from "./leak-guard.js";
+import { wipeAttempt, wipeQuestion } from "./wipe-guard.js";
 // mac2/fly-core: the mushroom-body learning core.
 import { watchTask } from "./fly-core/hook.js";
 // Bucket 13 (A1589): the bound on pictures a task keeps in view.
@@ -426,7 +427,9 @@ const alwaysOpenGroups = ["core", "files"] as const;
 const fileTaskWords = /\b(files?|folders?|downloads|desktop|documents|tidy|organi[sz]e|sort)\b/i;
 const memoryWords = /\b(remember|memory|memories|forget|recall|notes?)\b/i;
 /** Nightly evals: "Remember that X" was not offered the tool that saves a fact. Asking to remember, forget or recall brings these. */
-const memoryAskWords = /\b(remember|forget|recall|memory|memories)\b/i;
+// A fact about the person changing ("update where I live", "I moved to Denver") is memory work too: without the memory
+// tools offered, a small model had nothing to update the remembered fact with.
+const memoryAskWords = /\b(remember|forget|recall|memory|memories|update (?:where|what|my|that)|i(?:'ve| have)? moved|no longer|changed my)\b/i;
 const coreMemoryTools = ["memory.put", "memory.search", "memory.delete"] as const;
 /**
  * QA (first task): one line, only when the request names one of the person's own folders and the task may move files,
@@ -4016,6 +4019,13 @@ ${run.output.slice(0, 6000)}`;
     if (this.refusedAsks.get(context.scratchRoot ?? context.runId) === fingerprint) {
       this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args), target: "", reason: refusedAgain });
       return { refusal: { ok: false, error: refusedAgain }, sandbox: null, backend: null, paths: null };
+    }
+    // A task never wipes the workspace (src/wipe-guard.ts): refused under every mode and rule, and the task stops
+    // saying so in the engine's own words, so the answer does not depend on the model relaying it.
+    const wipe = wipeAttempt(call.name, args, context.workspace);
+    if (wipe) {
+      this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args), target: "", reason: `Refused: ${wipe}.`, wipe: true });
+      throw new NeedsInputError(wipeQuestion);
     }
     // Dogfood D4: the screen is refused outright in a task the owner did not start for it: nothing asked, nothing run.
     if (this.screenWithheld(call.name, args, context)) {
