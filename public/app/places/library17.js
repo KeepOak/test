@@ -32,8 +32,10 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
+import { startWith } from "../chat/chat.js";
 import { list17, when17 } from "./parts17.js";
 import { t, language } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const L = { labels: { catalog: [], labels: [] }, label: null, graph: null, names: [], kg: null, links: [], problem: "", picture: { topics: [], docs: [], edges: [] } };
 const askable = (d) => Boolean(d.filePath || d.uploaded) && /\.(csv|tsv|json|xlsx)$/i.test(d.filePath ?? d.name);
@@ -149,7 +151,7 @@ function saveReport() {
 
 /* ---------- Compare or edit exactly ---------- */
 const DC = { mode: "compare", docs: [], a: null, b: null, result: null };
-const docSelect = (id, value) => `<select class="inp" id="${id}" data-sw="${id}" aria-label="${id === "doc-a-b17" ? t("window.places.library17.first-document") : t("window.places.library17.second-document")}">${DC.docs.map((d) => `<option value="${esc(d.id)}"${d.id === value ? " selected" : ""}>${esc(d.name)}</option>`).join("")}</select>`;
+const docSelect = (id, value) => gsel({ id, sw: id, label: id === "doc-a-b17" ? t("window.places.library17.first-document") : t("window.places.library17.second-document"), options: DC.docs.map((d) => [d.id, d.name]), value });
 function compareBody() {
   const r = DC.result;
   const diffs = r ? `<p class="lead-b17">${esc(r.summary)}</p><div class="diffs-b17">${r.changes.map((c) => `<div class="dif-b17"><small>${esc(c.section)}</small>${c.before ? `<del>${esc(c.before)}</del>` : ""}${c.after ? `<ins>${esc(c.after)}</ins>` : ""}</div>`).join("")}</div><p class="hint" data-css="margin:0">${t("window.places.library17.the-other-unchanged-paragraphs-are-identical", { unchanged: esc(r.unchanged) })}</p>` : "";
@@ -236,10 +238,12 @@ function registerManage() {
     const { collections } = await api("knowledge");
     demoDlg17("kbmanage", { title: t("window.places.library17.knowledge-bases"), lead: t("window.places.library17.your-knowledge-bases"), rows: list17(collections).map((c) => [c.name, t("window.places.library17.documents-documents-chunks-passages", { documents: c.documents, chunks: c.chunks }), c.note ? ["warn", c.note] : null]) });
   } });
+  /* Start the tour: the tour's steps are shown here; Start goes through them with Branch in a new conversation, which asks
+     the model as any conversation does (chat/chat.js startWith). */
   onDemo17("learnfolder", { open: async () => {
     const tour = await api("learn/tour", { subject: "code", of: "" });
     demoDlg17("learnfolder", { title: t("window.places.library17.understand-a-folder"), go: t("action.start-the-tour"), rows: (tour.steps ?? []).map((s) => [`${s.order} · ${s.title}`, s.words, null]) });
-  } });
+  }, go: async () => { closeDlg(); await startWith(t("window.places.library17.tour-ask")); } });
   const openSources = async () => {
     const { status } = await api("asks/sources");
     demoDlg17("sources", { title: t("window.places.library17.bring-things-in-from-other-services"), lead: t("window.places.library17.syncing"), go: t("window.places.library17.sync-now"), rows: list17(status).map((s) => [s.id, [s.kind, s.syncedAt ? when17(s.syncedAt) : "", s.error].filter(Boolean).join(" · "), s.error ? ["warn", s.error.slice(0, 30)] : null]) });
