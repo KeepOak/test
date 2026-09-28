@@ -18,6 +18,7 @@ import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress 
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
 import { loadAccounts, poolById } from "./account.js"; // models-ui: account names as Settings › Accounts shows them
 import { logo } from "../core/logos.js";
+import { gsel } from "../core/gsel.js";
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
 /* The prototype's Bob is the engine's sway (the engine has no bob). */
@@ -179,8 +180,8 @@ const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span
    way to add one it can use underneath (places/switch-on.js); so is the row with none a Trunk can use. */
 function modelSeg(tr) {
   const models = E.state?.models, presets = models?.presets ?? [];
-  const opts = presets.map((p) => `<option value="${esc(p.id)}" ${tr.model === p.id ? "selected" : ""} ${trunkCanUse(p) ? "" : "disabled"}>${esc(p.name)}</option>`).join("");
-  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><select class="inp" id="tm-model-sel" data-id="${esc(tr.id)}" aria-label="${t("window.flows.trunk.which-model")}"><option value="" ${tr.model ? "" : "selected"}>${t("voice.default")}</option>${opts}</select></span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
+  const opts = [["", t("voice.default")], ...presets.map((p) => [p.id, p.name, !trunkCanUse(p)])];
+  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right">${gsel({ id: "tm-model-sel", label: t("window.flows.trunk.which-model"), options: opts, value: tr.model ?? "", attrs: `data-id="${esc(tr.id)}"` })}</span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
 }
 async function setModel(el) {
   const tr = trunkById(el.dataset.id);
@@ -212,9 +213,10 @@ const accountName = (pool, a) => poolById(pool)?.accounts?.find((x) => x.id === 
 function poolRow(tr, pool, keys) {
   const picked = keys.accounts[pool.id] ?? "", known = pool.accounts.some((a) => a.id === picked);
   const none = keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-none");
-  const opts = pool.accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === picked ? "selected" : ""}>${esc(accountName(pool.id, a))}</option>`).join("");
+  const options = [["", none], ...pool.accounts.map((a) => [a.id, accountName(pool.id, a)])];
   const label = t("window.flows.trunk.acc-pick-for", { name: pool.label });
-  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)}</b><span class="right"><select class="inp" data-sw="tk-pool" data-tk-pool="${esc(pool.id)}" data-id="${esc(tr.id)}" aria-label="${esc(label)}"><option value="" ${known ? "" : "selected"}>${esc(none)}</option>${opts}</select></span><small></small></div>`;
+  const pick = gsel({ sw: "tk-pool", label, options, value: known ? picked : "", attrs: `data-tk-pool="${esc(pool.id)}" data-id="${esc(tr.id)}"` });
+  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)}</b><span class="right">${pick}</span><small></small></div>`;
 }
 function accountsTab(tr) {
   const view = ed.keys;

@@ -16,6 +16,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { brain } from "./trunks-helpers.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { pickGsel } from "./gsel.mjs";
 
 const PROTOTYPE = new URL("../design/redesign/prototype.html", import.meta.url);
 
@@ -95,7 +96,7 @@ test("every word on the Trunks screens is the prototype's, in English and then i
      with it (BRANCH-DESIGN-INTENT.md, stand-in notes: "translate every screen"). */
   await (await sidebar(f.page, '#side [data-act="view"][data-v="settings"]')).click();
   await f.page.locator('.set-nav [data-act="setpage"][data-v="appearance"]').click();
-  await f.page.locator("#lang").selectOption("fr");
+  await pickGsel(f.page.locator("#lang"), "fr");
   await f.page.waitForFunction(() => document.documentElement.lang === "fr");
   assert.equal((await f.call("/api/look")).language, "fr", "the engine keeps the choice");
   await f.page.locator(".set-back").click();

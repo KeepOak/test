@@ -71,7 +71,7 @@ export function msgActs(m) {
 }
 /* The prototype's "Sent at" at the end of the row, from when the engine wrote the message (On hover, the engine's own
    default; Always draws it on the message instead, chat/comfort.js). */
-const sentTime = (m) => { const at = CF.times ? "" : sentAt(m); return at ? `<span class="ts15" aria-label="${esc(t("window.chat.msg.sent-at", { time: at }))}">${esc(at)}</span>` : ""; };
+const sentTime = (m) => { const at = CF.times || CF.hideTimes ? "" : sentAt(m); return at ? `<span class="ts15" aria-label="${esc(t("window.chat.msg.sent-at", { time: at }))}">${esc(at)}</span>` : ""; };
 /* Try again: the words that asked for this reply, sent again after going back to just before them. Only a reply that
    answers words of the owner's has any to send. */
 const askedBy = (m) => { const list = X.state().messages ?? []; return list.slice(0, list.indexOf(m)).reverse().find((x) => x.role === "user" && x.messageId); };

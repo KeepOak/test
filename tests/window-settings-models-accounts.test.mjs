@@ -17,6 +17,7 @@ import { startServer } from "../dist/server.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
 import { addAccount, setMode } from "../dist/accounts/manage.js";
 import { sessionChoice } from "../dist/accounts/settings.js";
+import { gselChoices, pickGsel } from "./gsel.mjs";
 
 const quiet = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
 const POOL = "openai-test";
@@ -64,7 +65,7 @@ async function openAccounts(page, id) {
   await page.locator(`.prow [data-act="edit"][data-id="${id}"]`).click();
   await page.waitForSelector(".dlg .editor");
   await page.locator('.dlg [data-act="st-tab"][data-v="accounts"]').click();
-  await page.waitForSelector(`.dlg select[data-tk-pool="${POOL}"]:not([disabled])`);
+  await page.waitForSelector(`.dlg [data-tk-pool="${POOL}"]:not(.soon)`);
 }
 async function reload(page) {
   await page.reload();
@@ -81,13 +82,13 @@ async function openModels(page, tab) {
 test("Edit Trunk › Accounts: an account picked for a connection is saved, reaches its chat and is still picked after a reload", async (t) => {
   const { app, owner, page, errors, call, trunk, second } = await fixture(t);
   await openAccounts(page, trunk.id);
-  const select = page.locator(`.dlg select[data-tk-pool="${POOL}"]`);
-  assert.equal(await select.inputValue(), "", "nothing is picked at first: it uses the owner's accounts");
-  assert.match(await select.locator('option[value=""]').textContent(), /Your accounts/);
+  const select = page.locator(`.dlg [data-tk-pool="${POOL}"]`);
+  assert.equal(await select.getAttribute("value"), "", "nothing is picked at first: it uses the owner's accounts");
+  assert.match((await gselChoices(select))[0].words, /Your accounts/);
   assert.ok(await page.locator(".dlg #tk-copy").isChecked(), "Use my accounts too ships on");
   assert.match(await page.locator(".dlg .tk-pool b").first().textContent(), /OpenAI test/, "the connection is named, not its id");
 
-  await select.selectOption(second);
+  await pickGsel(select, second);
   await waitFor(async () => (await call(`/api/trunks/${trunk.id}`)).trunk.keys.accounts[POOL] === second);
   const { trunk: saved } = await call(`/api/trunks/${trunk.id}`);
   assert.deepEqual(saved.keys, { copyFromOwner: true, accounts: { [POOL]: second } }, "the rest of keys is carried over");
@@ -95,10 +96,10 @@ test("Edit Trunk › Accounts: an account picked for a connection is saved, reac
 
   await reload(page);
   await openAccounts(page, trunk.id);
-  assert.equal(await page.locator(`.dlg select[data-tk-pool="${POOL}"]`).inputValue(), second);
+  assert.equal(await page.locator(`.dlg [data-tk-pool="${POOL}"]`).getAttribute("value"), second);
 
   /* Back to no pick: the key goes, and the chat goes back to the owner's default. */
-  await page.locator(`.dlg select[data-tk-pool="${POOL}"]`).selectOption("");
+  await pickGsel(page.locator(`.dlg [data-tk-pool="${POOL}"]`), "");
   await waitFor(async () => !(POOL in (await call(`/api/trunks/${trunk.id}`)).trunk.keys.accounts));
   assert.equal(sessionChoice(app.store, owner, saved.chatSessionId)[POOL], undefined);
   assert.deepEqual(errors, []);
@@ -111,7 +112,7 @@ test("Edit Trunk › Accounts: Use my accounts too round-trips, and with it off 
   await waitFor(async () => (await call(`/api/trunks/${trunk.id}`)).trunk.keys.copyFromOwner === false);
   await page.waitForSelector(".dlg .tk-notes li");
   assert.match(await page.locator(".dlg .tk-notes").textContent(), /OpenAI test: your accounts are not copied, so pick one for this Trunk/);
-  assert.match(await page.locator(`.dlg select[data-tk-pool="${POOL}"] option[value=""]`).textContent(), /None, so it doesn't answer/);
+  assert.match((await gselChoices(page.locator(`.dlg [data-tk-pool="${POOL}"]`)))[0].words, /None, so it doesn't answer/);
 
   await reload(page);
   await openAccounts(page, trunk.id);
