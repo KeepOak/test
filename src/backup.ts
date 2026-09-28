@@ -255,6 +255,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
   "skill-origin:", "skill-package:",
+  // A registry signing key the owner trusted: a file must never make a key trusted by itself.
+  "registry-key:",
   // Q230, keys worked out in code: each coding, interop, learning-more, Trunks and model-savings part (they run
   // programs, reach other assistants or outside services, or choose where the words go), a conversation's mode, goal,
   // checklist, pinned skill and autonomy, a procedure's recipe checks, and a specialist's handoff list.

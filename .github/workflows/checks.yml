@@ -22,11 +22,14 @@ on:
     - cron: '17 3 * * *'
 permissions:
   contents: read
-# One run per branch or pull request. A newer run replaces an older one, except on the two integration trunks,
-# where every commit may be released and therefore needs its own result.
+# A pull request keeps one run: a new push, or a base merge into it, cancels the older run for the same PR.
+# Every other run (pushes to redesign/window, mac/cross-platform, main and release branches, the nightly run, runs
+# by hand) gets a group of its own and is never cancelled or replaced. A shared group per branch let each merge into
+# redesign/window cancel the run before it, so no base run finished and promote never moved mac/cross-platform; and
+# GitHub keeps at most one pending run per group, so even without cancel-in-progress a shared group drops pushes.
 concurrency:
-  group: checks-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/mac/cross-platform' }}
+  group: ${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || format('checks-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     name: test (${{ matrix.lane }}, ${{ matrix.shard }}/${{ matrix.total }})

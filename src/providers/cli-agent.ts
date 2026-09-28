@@ -206,6 +206,9 @@ function failedResult(row: CliAgentRow, stdout: string): string | null {
 function programFailure(row: CliAgentRow, code: number, evidence: string): string {
   if (/not inside a trusted directory|untrusted (?:directory|folder)|directory.*not trusted/i.test(evidence))
     return `${row.name} refused the current folder because it is not trusted. Open that folder in ${row.command} and approve it there, then try again. Branch keeps the program's trust checks enabled.`;
+  // QA retest 2026-09-28: Codex set (in its own settings) to a model its ChatGPT sign-in cannot use says so in its failed turn.
+  if (/\bmodel\b[^\n]{0,80}\b(?:is not supported|not supported|is not available|does not exist)|model_not_found|unsupported model/i.test(evidence))
+    return `${row.name} is set to use a model this sign-in cannot use. Choose another model in ${row.command}'s own settings, then retry the task.`;
   if (/\b401\b|unauthori[sz]ed|authentication (?:required|failed)|not (?:logged|signed) in|(?:oauth|access|refresh) token.*(?:expired|invalid)|invalid.*(?:oauth|access|refresh) token/i.test(evidence))
     return `${row.name} could not use its saved sign-in. Open Settings → Accounts and sign in again to ${row.name}, then retry the task.`;
   if (limitWords.test(evidence))
@@ -214,39 +217,111 @@ function programFailure(row: CliAgentRow, code: number, evidence: string): strin
 }
 // ---- end mac6/accounts ----
 
+/* ---- speed: a chat's answer through Claude Code (measured 2026-09-27, owner's PC) ----
+   Almost all of a short answer's time was Claude Code starting, not the model: the owner's SessionStart hooks, 13 MCP
+   servers, 10 plugins and 239 tools were loaded for a call that may use none of them, and the program took seconds to
+   exit after printing its result. A call with no tools of its own therefore also skips the owner's hooks, MCP servers,
+   skills and saved sessions; its prompt goes in as one stream-json message so a copy of the program can be started
+   ahead of time and wait, ready, for the next question; its words stream as they are written; and the answer is taken
+   from the result line without waiting for the program to exit. */
+/** Claude Code with none of its own tools needs none of the owner's hooks, MCP servers, skills or saved sessions. */
+export const leanClaudeArgs = ["--input-format", "stream-json", "--include-partial-messages", "--strict-mcp-config",
+  "--disable-slash-commands", "--no-session-persistence", "--settings", "{\"disableAllHooks\":true}"];
+/** The program reads its question as one stream-json message (and so can be started before the question exists). */
+const readsStreamJson = (args: readonly string[]): boolean => args.some((arg, i) => arg === "--input-format" && args[i + 1] === "stream-json");
+const printsStreamJson = (args: readonly string[]): boolean => args.some((arg, i) => arg === "--output-format" && args[i + 1] === "stream-json");
+/** A question as the one user message a stream-json reader takes. */
+export function streamJsonQuestion(prompt: string): string {
+  return `${JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: prompt }] } })}\n`;
+}
+type Child = ReturnType<typeof spawn>;
+/** Whether a program (its process and its pipes) keeps Branch's own process running, as a task waiting on it must. */
+function holdOpen(child: Child, hold: boolean): void {
+  for (const handle of [child, child.stdin, child.stdout, child.stderr] as unknown as ({ ref?: () => void; unref?: () => void } | null)[])
+    if (hold) handle?.ref?.(); else handle?.unref?.();
+}
+/**
+ * One copy of a program started ahead of time, per command, arguments and account folder, waiting on its standard
+ * input. Only for programs that read stream-json (so nothing is asked until the question is written). It goes away
+ * after `spareIdleMs` unused, when Branch closes, and by itself if Branch stops (its standard input closes).
+ */
+const spares = new Map<string, { child: Child; exited: boolean; timer: ReturnType<typeof setTimeout> }>();
+export const spareIdleMs = 30 * 60_000;
+function startProgram(row: CliAgentRow, env: NodeJS.ProcessEnv): Child {
+  // An npm-installed program is a .cmd launcher on Windows, which cannot be started without a shell (src/windows-command.ts).
+  const start = startCall(row.command, row.args, env);
+  return spawn(start.command, start.args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false, env });
+}
+function spareFor(key: string): Child | null {
+  const spare = spares.get(key);
+  if (!spare) return null;
+  spares.delete(key);
+  clearTimeout(spare.timer);
+  if (spare.exited) return null;
+  holdOpen(spare.child, true);
+  return spare.child;
+}
+function prepareSpare(key: string, row: CliAgentRow, env: NodeJS.ProcessEnv): void {
+  if (spares.has(key)) return;
+  let child: Child;
+  try { child = startProgram(row, env); } catch { return; }
+  const spare = { child, exited: false, timer: setTimeout(() => { if (spares.get(key) === spare) spares.delete(key); child.kill(); }, spareIdleMs) };
+  spare.timer.unref?.();
+  child.on("error", () => { spare.exited = true; });
+  child.on("exit", () => { spare.exited = true; if (spares.get(key) === spare) spares.delete(key); });
+  child.stdin?.on("error", () => undefined);
+  holdOpen(child, false); // a copy waiting for a question never keeps Branch running
+  spares.set(key, spare);
+}
+/** Stops every program started ahead of time (Branch closing). */
+export function closeSpareAgents(): void {
+  for (const [key, spare] of spares) { clearTimeout(spare.timer); spare.child.kill(); spares.delete(key); }
+}
+
 export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLine) =>
   new Promise((resolve) => {
     const env = home ? { ...strippedEnvironment(), [home.name]: home.path } : strippedEnvironment();
-    // An npm-installed program is a .cmd launcher on Windows, which cannot be started without a shell (src/windows-command.ts).
-    const start = startCall(row.command, row.args, env);
-    const child = spawn(start.command, start.args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false, env });
+    const warm = readsStreamJson(row.args), key = JSON.stringify([row.command, row.args, home?.name ?? "", home?.path ?? ""]);
+    const child = (warm ? spareFor(key) : null) ?? startProgram(row, env);
     let stdout = "", stderr = "", settled = false;
     const finish = (code: number | null, missing?: boolean): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal.removeEventListener("abort", stop);
+      // The next question finds a copy already started, as long as this one worked.
+      if (warm && code === 0) prepareSpare(key, row, env);
       resolve({ code, stdout, stderr, ...(missing ? { missing: true } : {}) });
     };
     const stop = (): void => { child.kill(); finish(null); };
     const timer = setTimeout(stop, limits.timeoutMs);
     timer.unref?.();
     signal.addEventListener("abort", stop, { once: true });
+    // stream-json ends with its result line; the program may take seconds more to exit, which nobody needs to wait for.
+    const settlesOnResult = printsStreamJson(row.args);
     let partial = "";
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       if (stdout.length < limits.maxOutputChars) stdout += text;
-      if (!onLine) return;
+      if (!onLine && !settlesOnResult) return;
       const lines = (partial + text).split("\n");
       partial = lines.pop() ?? "";
       if (partial.length > 1_000_000) partial = ""; // one line that never ends is not an event
-      for (const line of lines) { try { onLine(line); } catch { /* a step not shown never stops the program */ } }
+      for (const line of lines) {
+        if (onLine) { try { onLine(line); } catch { /* a step not shown never stops the program */ } }
+        if (settlesOnResult && line.startsWith("{\"type\":\"result\"")) {
+          finish(0);
+          // Left to exit by itself, without keeping Branch running; one that hangs on is stopped a little later.
+          holdOpen(child, false);
+          setTimeout(() => { if (child.exitCode === null) child.kill(); }, 15_000).unref?.();
+        }
+      }
     });
-    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4000) stderr += chunk.toString("utf8"); });
+    child.stderr!.on("data", (chunk: Buffer) => { if (stderr.length < 4000) stderr += chunk.toString("utf8"); });
     child.on("error", (error: NodeJS.ErrnoException) => finish(1, error.code === "ENOENT"));
     child.on("close", (code) => finish(code));
-    child.stdin.on("error", () => undefined);
-    child.stdin.end(prompt);
+    child.stdin!.on("error", () => undefined);
+    child.stdin!.end(warm ? streamJsonQuestion(prompt) : prompt);
   });
 
 /**
@@ -274,12 +349,16 @@ export class CliAgentProvider implements Provider {
   }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
-    const row = this.rowFor();
+    const row = this.rowFor(request);
     // Live steps: Claude Code's stream-json and Codex's exec --json say its thinking and each tool as it goes; the window
-    // shows them live.
-    const wanted = Boolean(request.onReasoningDelta || request.onToolActivity);
-    const onLine = !wanted ? undefined : row.args.includes("stream-json") ? (line: string) => streamJsonStep(line, request)
-      : printsCodexEvents(row) ? codexJsonSteps(request) : undefined;
+    // shows them live. A lean call (no tools of its own) also streams its words as they are written.
+    const streams = row.args.includes("--include-partial-messages");
+    let streamed = false;
+    const words = streams && request.onTextDelta ? (text: string) => { streamed = true; request.onTextDelta!(text); } : undefined;
+    const wanted = Boolean(request.onReasoningDelta || request.onToolActivity || words);
+    const onLine = !wanted ? undefined
+      : row.args.includes("stream-json") ? (line: string) => { streamJsonStep(line, request); if (words) streamJsonWords(line, words, request.onReasoningDelta); }
+        : printsCodexEvents(row) ? codexJsonSteps(request) : undefined;
     const outcome = this.home || onLine
       ? await this.spawnAgent(row, agentPromptFrom(request), request.signal, this.limits, this.home, onLine)
       : await this.spawnAgent(row, agentPromptFrom(request), request.signal, this.limits);
@@ -289,23 +368,28 @@ export class CliAgentProvider implements Provider {
     if (outcome.code === null)
       throw new Error(`${this.row.name} took too long and was stopped. Ask again, or pick another model.`);
     const failed = failedResult(this.row, outcome.stdout);
-    const evidence = `${outcome.stderr}\n${failed ?? (outcome.code !== 0 ? outcome.stdout : "")}`;
+    // What the program itself said failed decides: its error output also carries warnings about other things (one of
+    // Codex's own MCP servers failing to refresh its OAuth token) that must never read as this sign-in failing.
+    const evidence = failed ?? `${outcome.stderr}\n${outcome.code !== 0 ? outcome.stdout : ""}`;
     if ((outcome.code !== 0 || failed !== null) && (this.home || this.detectLimits) && limitWords.test(evidence))
       throw new ProgramLimitError(`${this.row.name} says this account has reached its plan limit.`);
     if (outcome.code !== 0 || failed !== null)
       throw new Error(programFailure(this.row, outcome.code, evidence));
     const content = answerFrom(this.row, outcome.stdout);
     if (!content) throw new Error(`${this.row.name} answered with nothing at all.`);
-    request.onTextDelta?.(content);
+    if (!streamed) request.onTextDelta?.(content); // streamed words were the preview already; the answer is `content`
     return { content, toolCalls: [] };
   }
   /**
    * trunks-use-subscriptions: Claude Code answering a Trunk runs with none of its own tools (`--tools ""`), so it
    * only writes words and cannot read past the Trunk's permissions; Branch's tools do the work under them.
    */
-  private rowFor(): CliAgentRow {
-    if (this.row.id !== "claude-code" || !currentAccountCall()?.trunk) return this.row;
-    return { ...this.row, args: [...this.row.args, "--tools", ""] };
+  private rowFor(request: Pick<CompletionRequest, "programTools">): CliAgentRow {
+    // Not the owner's own work (a chat app's, another program's): no tools of its own either (CompletionRequest.programTools).
+    if (this.row.id !== "claude-code" || (!currentAccountCall()?.trunk && request.programTools !== false)) return this.row;
+    // With no tools the owner's hooks, MCP servers and skills have nothing to do, so they are not loaded (leanClaudeArgs).
+    const lean = this.row.args.includes("stream-json") ? leanClaudeArgs : [];
+    return { ...this.row, args: [...this.row.args, ...lean, "--tools", ""] };
   }
   /** It publishes no list of models of its own: the tool decides what it is using. */
   modelsList(): null { return null; }
@@ -343,6 +427,16 @@ function programLabel(name: string, input: Record<string, unknown>): string {
     case "TodoWrite": return "Updating its checklist";
     default: return `Using ${name}`;
   }
+}
+/** --include-partial-messages: the answer's words and its thinking as they are written, one stream_event a line. */
+export function streamJsonWords(line: string, onText: (text: string) => void, onThinking?: (text: string) => void): void {
+  if (!line.startsWith("{\"type\":\"stream_event\"")) return;
+  let event: { event?: { type?: unknown; delta?: { type?: unknown; text?: unknown; thinking?: unknown } }; parent_tool_use_id?: unknown };
+  try { event = JSON.parse(line) as typeof event; } catch { return; }
+  if (event.parent_tool_use_id || event.event?.type !== "content_block_delta") return; // a helper's words are not the answer
+  const delta = event.event.delta;
+  if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text) onText(delta.text);
+  else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string" && delta.thinking) onThinking?.(delta.thinking);
 }
 export function streamJsonStep(line: string, request: Pick<CompletionRequest, "onReasoningDelta" | "onToolActivity">): void {
   let event: { type?: unknown; message?: { content?: unknown } };

@@ -94,6 +94,8 @@ export class Trunks {
   /** phase2/rooms: a room member's conversation → the room's own conversation (whose mode it follows). */
   private followsRoom = new Map<string, string>();
   private readonly introductions = new Set<Promise<unknown>>();
+  /** QA retest 2026-09-28 (T1): Trunks made while no model was set up, introduced once one is. */
+  private readonly waitingIntros = new Set<string>();
   /** Q44: how a turn would be handed to another computer. Nothing in this build sets it; tests do. */
   startElsewhere: StartElsewhere | null = null;
 
@@ -101,6 +103,7 @@ export class Trunks {
     const { runtime, scheduler } = deps;
     const store = runtime.store, owner = runtime.owner;
     this.accounts = deps.accounts ?? noAccounts;
+    runtime.models.onFirstModel(() => this.introduceWaiting());
     this.records = new TrunkRecords(store, owner);
     this.files = new TrunkFiles(store, owner, this.records);
     this.rooms = new TrunkRooms({ store, owner, records: this.records, runtime, changed: () => this.refresh(),
@@ -431,6 +434,9 @@ export class Trunks {
     return trunk;
   }
   private introduce(trunk: Trunk): void {
+    // QA retest 2026-09-28 (T1): with no model set up yet, the introduction waits for one instead of failing for good with
+    // "No model yet" as the Trunk's first words (a Trunk made at the end of setup could start before its model arrived).
+    if (!this.deps.runtime.models.configured) { this.waitingIntros.add(trunk.id); return; }
     // qa-fixes-3 (Q062): an introduction is words only, so it is asked with no tools. With tools on offer a small local
     // model answered it with a tool call, which Ollama (0.34) dropped whole: 50-odd tokens written, nothing passed on.
     const work = this.deps.runtime.run({ prompt: introPrompt, system: introSystem, sessionId: trunk.chatSessionId, permissions: [], onTextDelta: () => undefined })
@@ -439,6 +445,14 @@ export class Trunks {
           this.store.message(trunk.chatSessionId, { role: "assistant", content: `Hello, I am ${trunk.name}${trunk.title ? `, ${trunk.title}` : ""}.` });
       }).catch(() => undefined).finally(() => this.introductions.delete(work));
     this.introductions.add(work);
+  }
+  /** Introduces the Trunks that were waiting for a model, each only if its conversation is still empty. */
+  private introduceWaiting(): void {
+    for (const id of [...this.waitingIntros]) {
+      this.waitingIntros.delete(id);
+      const trunk = this.records.find(id);
+      if (trunk && !this.store.messages(trunk.chatSessionId).some((m) => m.role === "assistant")) this.introduce(trunk);
+    }
   }
   /** Waits for the introductions still being written (tests and shutdown). */
   async introduced(): Promise<void> {
