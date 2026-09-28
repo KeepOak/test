@@ -103,9 +103,9 @@ const readyToSend = (page) => page.waitForFunction(() => !document.querySelector
 const lastReply = (page) => page.locator("#conversation .b").last();
 /** The conversation open in the side list. */
 const openChat = (page) => page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
-/* A Trunk's face beside a reply, not Branch's own: Branch's is its mark (.brand) or, since every face became a moving
-   character (public/app/core/figures.js), the "branch" character, whose art is /art/branch-*. */
-const TRUNK_FACE = '.gut .av:not(.brand):not(:has([data-m17^="/art/branch-"]))';
+/* A Trunk's face beside a reply: not the neutral tile of a conversation with no Trunk (.none18c), nor older marks
+   of Branch (.brand, or the "branch" character whose art is /art/branch-*). */
+const TRUNK_FACE = '.gut .av:not(.brand):not(.none18c):not(:has([data-m17^="/art/branch-"]))';
 /* A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. Its words stream in before its
    author is read (GET /api/trunks/conversations/<id>), so the face is waited for. */
 const signedSoon = (reply) => reply.locator(TRUNK_FACE).first().waitFor({ state: "attached", timeout: 15000 }).then(() => true, () => false);

@@ -291,6 +291,6 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(app.trunks.rooms.list()[0].needsYou, true, "the engine says the room needs you");
   const roomRow = await sidebar(page, `#side .row[data-id="${room.sessionId}"]`);
   const seen = { roomMarked: await roomRow.locator("p.attn").count(), editorTabs };
-  assert.deepEqual(seen, { roomMarked: 1, editorTabs: ["Look", "What it may do", "Its computers", "Files"] },
-    "a waiting room stays marked, and the editor includes the persistent personality Files alongside its existing tabs");
+  assert.deepEqual(seen, { roomMarked: 1, editorTabs: ["Look", "What it may do", "Its computers", "Files", "Accounts"] },
+    "a waiting room stays marked; the editor has Its computers, the persistent personality Files and Accounts (its own account per connection)");
 });

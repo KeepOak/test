@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -13,12 +13,14 @@ import { householdRefusal } from "../dist/household-routes.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
-async function fixture(t) {
+/** Sharing is switched on (with no tools) unless `share` is false: while it is off the MCP door offers nothing at all. */
+async function fixture(t, { share = true } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-mcp-"));
   const app = await createBranch({
     workspace: join(root, "workspace"),
     dataDir: join(root, "data"),
   });
+  if (share) app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: [], a2a: false });
   const server = await startServer(app, {
     dataDir: join(root, "data"),
     port: 0,
@@ -369,8 +371,8 @@ test("MCP branch.ask tool works", async (t) => {
   assert.ok(response.result);
 });
 
-async function initialized(t) {
-  const started = await fixture(t);
+async function initialized(t, options) {
+  const started = await fixture(t, options);
   const sessionId = "test-session-" + Math.random();
   await mcpRequest(started.url, started.token, {
     jsonrpc: "2.0",
@@ -400,7 +402,7 @@ const get = (url, token, path) =>
   fetch(`${url}${path}`, { headers: { authorization: `Bearer ${token}`, origin: url } }).then((r) => r.json());
 
 test("MCP shares nothing until the owner turns it on", async (t) => {
-  const { url, token, sessionId } = await initialized(t);
+  const { url, token, sessionId } = await initialized(t, { share: false });
   const before = await settings(url, token);
   assert.equal(before.enabled, false);
   assert.deepEqual(before.exposedTools, []);
@@ -411,14 +413,23 @@ test("MCP shares nothing until the owner turns it on", async (t) => {
     const response = await mcpRequest(url, token, { jsonrpc: "2.0", id: 9, method: "tools/list", params: {} }, sessionId);
     return response.result.tools.map((tool) => tool.name);
   };
-  assert.deepEqual(await listed(), ["branch.ask"]);
+  assert.deepEqual(await listed(), [], "not even branch.ask while nothing is shared");
+  const ask = await mcpRequest(url, token, { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "branch.ask", arguments: { prompt: "What do you remember about me?" } } }, sessionId);
+  assert.equal(ask.result.isError, true);
+  assert.match(ask.result.content[0].text, /not sharing anything/);
+  const resources = await mcpRequest(url, token, { jsonrpc: "2.0", id: 11, method: "resources/list", params: {} }, sessionId);
+  assert.deepEqual(resources.result.resources, []);
+  const facts = await mcpRequest(url, token, { jsonrpc: "2.0", id: 12, method: "resources/read", params: { uri: "memory://facts" } }, sessionId);
+  assert.ok(facts.error, "a resource cannot be read while nothing is shared");
+  const prompts = await mcpRequest(url, token, { jsonrpc: "2.0", id: 13, method: "prompts/list", params: {} }, sessionId);
+  assert.deepEqual(prompts.result.prompts, []);
 
   const after = await settings(url, token, { enabled: true, exposedTools: ["files.read", "made.up"] });
   assert.deepEqual(after.exposedTools, ["files.read"]);
   assert.ok((await listed()).includes("files.read"));
 
   await settings(url, token, { enabled: false, exposedTools: ["files.read"] });
-  assert.deepEqual(await listed(), ["branch.ask"]);
+  assert.deepEqual(await listed(), []);
 });
 
 test("MCP refuses a tool the owner has not shared", async (t) => {
@@ -507,6 +518,9 @@ test("MCP offers recent conversations and reads one as plain text", async (t) =>
 test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-mcp-stdio-"));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+  const setup = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  setup.store.save("settings", setup.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: ["files.read", "files.write"], a2a: false });
+  await setup.close();
   const child = spawn(process.execPath, ["dist/cli.js", "mcp-serve"], {
     cwd: projectRoot,
     env: {
@@ -537,11 +551,11 @@ test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) 
   const exit = await new Promise((resolve) => child.once("exit", resolve));
 
   assert.equal(answers[0].result.serverInfo.name, "branch", stderr);
-  assert.deepEqual(answers[1].result.tools.map((tool) => tool.name), ["branch.ask"]);
+  assert.ok(answers[1].result.tools.some((tool) => tool.name === "branch.ask"));
   // 0.18.1 (deliberate update): this used to expect isError false, because "No approvals" let an MCP
   // caller's task write the demo file unasked. It is now held to "Ask before changes", so the caller
   // is told the task is waiting for the owner's yes.
-  assert.equal(answers[2].result.isError, true);
+  assert.equal(answers[2].result.isError, true, JSON.stringify(answers[2]));
   assert.match(answers[2].result.content[0].text, /Before I go ahead: Writing branch-demo\.txt/);
   assert.equal(stdout.trim().split("\n").length, 3, "a notification must not get a reply");
   assert.equal(exit, 0);
@@ -585,3 +599,16 @@ function collect(child, count) {
     child.once("exit", () => { clearTimeout(timer); reject(new Error("The server stopped early")); });
   });
 }
+
+test("branch.ask may use only what the owner shares", async (t) => {
+  const { app, url, token, sessionId } = await initialized(t);
+  await settings(url, token, { enabled: true, exposedTools: ["files.read"] });
+  const asked = await mcpRequest(url, token, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "branch.ask", arguments: { prompt: "Say hello" } } }, sessionId);
+  assert.ok(asked.result);
+  const run = app.store.runs(app.runtime.owner).find((one) => one.prompt === "Say hello");
+  assert.ok(run, "the task ran");
+  const tried = app.store.events(run.id).filter((event) => event.kind === "tool.started" || event.kind === "policy.ask").map((event) => event.data.name);
+  assert.ok(!tried.includes("files.write") || app.store.events(run.id).some((event) => event.kind === "tool.failed" && /Permission denied: files\.write/.test(event.data.error)),
+    `a tool that was not shared was not used: ${JSON.stringify(tried)}`);
+  await assert.rejects(access(join(app.runtime.workspace, "branch-demo.txt")), "nothing was written");
+});
