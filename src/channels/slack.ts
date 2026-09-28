@@ -46,7 +46,7 @@ const actionSchema = z.object({
   actions: z.array(z.object({ action_id: z.string(), value: z.string().optional(), action_ts: z.string().optional() }).passthrough()).min(1),
 }).passthrough();
 /** The action ids Branch's own buttons carry, so a press on some other app's button is never read as an answer. */
-const answerAction = /^branch_answer_\d$/;
+const answerAction = /^branch_answer_\d{1,2}$/;
 /** The Slack thread a reply goes to: the timestamp before any "#" a button press added; anything else is no thread. */
 const threadOf = (id: string | undefined): string | undefined => { const ts = id?.split("#")[0]; return ts && /^\d+\.\d+$/.test(ts) ? ts : undefined; };
 
@@ -78,6 +78,8 @@ const slackPlain = (text: string, format?: MessageFormat): Record<string, unknow
   ? { link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   /** Slack accepts more, but long posts are unreadable; the ledger splits at this length. */
   readonly maxTextLength = 3000;
@@ -181,7 +183,8 @@ export class SlackAdapter implements ChannelAdapter {
       channel: chatId, text: words, ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
       blocks: [
         { type: "section", text: { type: "mrkdwn", text: words } },
-        { type: "actions", elements: buttons.slice(0, 5).map((button, index) => ({
+        // A question's Yes and No, or a /model menu (Slack takes up to 25 buttons in one actions block).
+        { type: "actions", elements: buttons.slice(0, 25).map((button, index) => ({
           type: "button", action_id: `branch_answer_${index}`, value: button.value.slice(0, 2000),
           text: { type: "plain_text", text: button.label.slice(0, 75) },
           ...(button.value.startsWith("y") ? { style: "primary" } : button.value.startsWith("n") ? { style: "danger" } : {}),

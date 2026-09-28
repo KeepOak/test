@@ -32,6 +32,8 @@ import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
+import { ModelPicker, staleModelMenu } from "./model-picker.js";
+import { listModels } from "../model-switch.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -134,6 +136,11 @@ export interface ChannelAdapter {
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
    */
   sendButtons?(chatId: string, text: string, buttons: ApprovalButton[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /**
+   * True where `sendButtons` shows a list of up to 25 choices and a press comes back carrying the button's own value
+   * (Telegram, Discord, Slack), so a choice like `/model`'s can be a menu. Absent: buttons are for yes and no only.
+   */
+  readonly listButtons?: boolean;
   // ---- Optional live-status methods (wave mac2, chat-live; used by live-status.ts) -------------
   // Any adapter may add any of these three; leave one out and the chat simply goes without it.
   // Rules every adapter follows (Telegram, Slack, Discord and Matrix are the worked examples):
@@ -840,6 +847,9 @@ export class ChannelRouter {
     }
     if (saved) message = { ...message, text: saved.text };
     // ---- end of the bucket 12 hook ----
+    // A press on /model's menu is /model with that connection, by the same rules as typing it.
+    const picked = this.modelPicker.read(chatKey(message), this.sessionFor(message.channel, message.chatId), message.text);
+    if (picked) return this.pickModel(message, picked);
     const command = this.commandIn(message);
     if (command) return this.command(message, command);
     // A bare "y", "a" or "n" answers whatever this chat's conversation is waiting on, rather than
@@ -973,6 +983,7 @@ export class ChannelRouter {
   /** Carries out a chat command and sends its answer back. */
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
+    if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
@@ -992,6 +1003,34 @@ export class ChannelRouter {
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
     return "replied";
+  }
+  /** `/model` menus sent to chats, so a press can be read back (src/channels/model-picker.ts). */
+  private readonly modelPicker = new ModelPicker();
+  /**
+   * CHAT-079: `/model` on its own, where the app's buttons carry a list: the connections as buttons, this chat's own
+   * marked. False when the chat has no conversation yet or the app has no such buttons; the list then goes as words.
+   */
+  private async offerModels(message: InboundMessage): Promise<boolean> {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const sessionId = this.sessionFor(message.channel, message.chatId);
+    if (!adapter?.sendButtons || !adapter.listButtons || !sessionId) return false;
+    const { active, choices } = listModels(this.runtime.models, this.runtime.owner, sessionId);
+    if (!choices.length) return false;
+    const now = choices.find((choice) => choice.id === active);
+    const checked = await this.outboundGuard(`Which model answers in this chat?${now ? ` Now: ${now.name}.` : ""} Pick one, or type /model and a name.`);
+    if (checked.blocked) return false;
+    const buttons = this.modelPicker.offer(chatKey(message), sessionId, choices, active);
+    return adapter.sendButtons(message.chatId, checked.text, buttons, message.messageId).then(() => true, () => false);
+  }
+  /** A press on a `/model` menu: typed `/model <that one>` in effect, if this person may still use `/model` here. */
+  private async pickModel(message: InboundMessage, picked: { preset: string } | { stale: true }): Promise<Outcome> {
+    const command = "stale" in picked ? null : this.commandIn({ ...message, text: `/model ${picked.preset}` });
+    if (!command) {
+      await this.deliver(message.channel, message.chatId, staleModelMenu, `model-stale:${message.channel}:${message.messageId}`, message.messageId)
+        .catch(() => undefined);
+      return "replied";
+    }
+    return this.command(message, command);
   }
   /** Keeps the chat in the list of chats, but pointed at no conversation. */
   private forgetSession(channel: string, chatId: string): void {
