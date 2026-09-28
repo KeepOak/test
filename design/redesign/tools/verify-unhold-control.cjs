@@ -6,12 +6,13 @@
    Controls: Take over / Hand back (stage), Open a terminal for me + a command (Terminal tab), Playground (Settings ›
    Developer), and Settings › Computer's "See the screen and use the mouse", "Ask before opening an app it hasn't used",
    "Where scripts run" and "Work in apps in the background". */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
 const { mkdtemp, rm, stat } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { createServer } = require("node:net");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const ROOT = resolve(__dirname, "../../..");
 const dist = (file) => import(pathToFileURL(join(ROOT, "dist", file)).href);
@@ -127,12 +128,12 @@ async function openPlayground(page) {
   await page.locator('[data-act="setlevel"][data-v="technical"]').click();
   await page.locator('[data-act="setpage"][data-v="developer"]').click();
   await page.locator("#main").getByRole("button", { name: "Open", exact: true }).first().click({ timeout: 10000 });
-  await page.waitForFunction(() => document.getElementById("play-tool")?.options.length > 1);
+  await page.waitForFunction(() => JSON.parse(document.getElementById("play-tool")?.dataset.opts ?? "[]").length > 1);
 }
 
 async function playground(page, api, workspace) {
   await openPlayground(page);
-  await page.locator("#play-tool").selectOption("files.write");
+  await pickGsel(page.locator("#play-tool"), "files.write");
   await page.locator("#play-field-path").fill("played.txt");
   await page.locator("#play-field-content").fill("written by hand");
   await page.getByRole("button", { name: "Run files.write", exact: true }).click();
@@ -145,20 +146,20 @@ async function playground(page, api, workspace) {
   await page.locator("#play-result .code-block").waitFor();
   const read = await api("tools/try", { name: "files.read", arguments: { path: "played.txt" } });
   check("Allow once wrote the file (read back with files.read)", JSON.stringify(read.result ?? "").includes("changed after the question"), JSON.stringify(read).slice(0, 200));
-  await page.locator("#play-tool").selectOption("files.read");
+  await pickGsel(page.locator("#play-tool"), "files.read");
   await page.locator("#play-field-path").fill("played.txt");
   await page.getByRole("button", { name: "Run files.read", exact: true }).click();
   check("a read-only tool runs and shows what came back", !!(await until(async () => /changed after the question/.test(await page.locator("#play-result .code-body").innerText()))));
   const before = (await api("policy")).policy;
-  await api("policy", { rules: [{ tool: "files.write", decision: "deny" }] });
-  await page.locator("#play-tool").selectOption("files.write");
+  await api("policy", { preset: (await api("policy")).policy.preset, rules: [{ tool: "files.write", decision: "deny" }], confirmLoosening: true }); // a throwaway engine: its preset kept, one rule added
+  await pickGsel(page.locator("#play-tool"), "files.write");
   await page.locator("#play-field-path").fill("denied.txt");
   await page.locator("#play-field-content").fill("never");
   await page.getByRole("button", { name: "Run files.write", exact: true }).click();
   await until(async () => (await page.locator("#play-result p").count()) > 0);
   check("a tool the owner's policy denies is refused, with no yes offered", (await page.locator("#play-confirm").count()) === 0 && !(await exists(join(workspace, "denied.txt"))),
     await page.locator("#play-result").innerText());
-  await api("policy", { preset: before.preset, rules: before.rules });
+  await api("policy", { preset: before.preset, rules: before.rules, confirmLoosening: true }); // putting it back loosens the deny rule: the owner's yes
   await page.locator('.dlg [data-act="dlg-close"]').first().click();
 }
 
@@ -226,10 +227,12 @@ async function computerPage(page, api) {
     check("a conversation to work in", !!run);
     await page.locator(`[data-act="chat"][data-id="${run.sessionId}"]`).first().click();
     await page.keyboard.press("Control+Shift+K");
-    await takeOver(page, api, app);
-    await terminal(page, api, workspace);
-    await playground(page, api, workspace);
-    await computerPage(page, api);
+    // ONLY=takeover,terminal,playground,computer runs just those parts (all by default).
+    const only = (process.env.ONLY || "takeover,terminal,playground,computer").split(",");
+    if (only.includes("takeover")) await takeOver(page, api, app);
+    if (only.includes("terminal")) await terminal(page, api, workspace);
+    if (only.includes("playground")) await playground(page, api, workspace);
+    if (only.includes("computer")) await computerPage(page, api);
     check("the viewer password never reached the window (no /api answer carried it)", !bodies.some((b) => b.includes(VIEWER_PASSWORD)) && !(await page.content()).includes(VIEWER_PASSWORD));
     check("no page errors", errors.length === 0, errors.join(" | "));
   } catch (error) {
