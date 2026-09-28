@@ -17,7 +17,7 @@ import { Ledger } from "../dist/autonomy/ledger.js";
 import { maxUnattendedTurns, parseWait, parseWhen, fanItems } from "../dist/autonomy/step-kinds.js";
 
 /** A real store, a real ledger, a stand-in Trunk and a clock the test moves. */
-async function world(t, answer = () => "Done.") {
+async function world(t, answer = () => "Done.", held = ["files.read"]) {
   const root = await mkdtemp(join(tmpdir(), "branch-step-kinds-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } } });
@@ -29,7 +29,7 @@ async function world(t, answer = () => "Done.") {
     return { ran: true, run: { id: `run-${asked.length}`, status: "completed", output: answer(request.prompt, asked.length), sessionId: "00000000-0000-4000-8000-000000000001" } };
   } };
   const ledger = new Ledger(app.store, "local", () => clock.now);
-  const procedures = new SelfStarting({ store: app.store, owner: "local", runner, ledger, held: () => ["files.read"], now: () => clock.now, timezone: () => "UTC" });
+  const procedures = new SelfStarting({ store: app.store, owner: "local", runner, ledger, held: () => held, now: () => clock.now, timezone: () => "UTC" });
   const unattended = () => ledger.list("pending").filter((e) => e.kind === "unattended");
   /** The owner's yes in Inbox, as /api/autonomy/decide gives it: made first, then settled. */
   const yes = (entry) => { procedures.allowUnattended(entry.payload); ledger.settle(entry.id, true); };
@@ -270,4 +270,17 @@ test("the yes is the owner's alone: a short-lived key cannot answer it, and the 
   assert.equal(said.status, 200);
   assert.equal(said.body.made.unattended.fingerprint, waiting.fingerprint);
   assert.equal((await call(`/api/autonomy/procedures/${made.body.procedure.id}/run`, {})).body.started, true);
+});
+
+test("a flow run from another never gets more permissions than either flow was given", async (t) => {
+  const { asked, procedures, unattended, yes } = await world(t, () => "ok", ["files.read", "files.write", "web.fetch"]);
+  const inner = procedures.create(auto("Read only", [{ title: "Look", prompt: "Look at the folder." }], { permissions: ["files.read"] }));
+  const outer = procedures.create(auto("Writer", [{ title: "Write", prompt: "Write the notes." }, { kind: "sub", title: "Look", flowId: inner.id }],
+    { permissions: ["files.read", "files.write"] }));
+  yes(unattended().find((e) => e.payload.procedureId === outer.id));
+  assert.equal(procedures.trigger(outer.id, "a test").started, true);
+  await procedures.idle();
+  assert.deepEqual(asked.map((r) => [r.prompt.split("\n").at(-1), [...r.permissions].sort()]),
+    [["Write the notes.", ["files.read", "files.write"]], ["Look at the folder.", ["files.read"]]],
+    "the inner flow's request keeps its own narrower permissions");
 });

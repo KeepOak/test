@@ -224,6 +224,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **MiniMax** — International keys use api.minimax.io (the usual choice); keys from the Chinese platform use api.minimax.cn. Branch keeps no price on file for it.
 - **ModelScope** — Alibaba's model hub in its OpenAI-compatible mode. Branch keeps no price on file for it.
 - **Moonshot (Kimi)** — Kimi models. International keys use api.moonshot.ai (the usual choice); keys from the Chinese platform use api.moonshot.cn. Branch keeps no price on file for it.
+- **Ollama** — Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed. An Ollama on another machine at home works too: give its address.
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.
 - **Qwen (Alibaba DashScope)** — Alibaba Model Studio in its OpenAI-compatible mode. International (Singapore) is the usual choice; the US and mainland China addresses are offered too. A workspace address works through "Something else". Branch keeps no price on file.
@@ -2357,6 +2358,14 @@ owner-only. `model` is the connection that decides, by preset id (empty means th
 `minConfidence` (0.5 to 0.99, default 0.75) the task's own model decides instead; `maxList` (10 to 2000, default 400)
 is the longest list filtered at once, and a longer list is split. Every answer is checked, never trusted: a pick must
 be one of the choices offered, a filter may keep only lines it was given, and a score must be 1 to 10.
+
+The additional `route` and `inbox` switches both default to false because each decision uses a model call.
+`route` picks a room member by their written job only when the message names nobody and the room uses
+Everyone answers or Only who I tag. A checked, sufficiently confident pick is written on the message so replay
+does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
+`inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
+1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+Switching it off refuses scoring with 409 and restores the inbox's original order.
 
 ## Teams, linked chats, registries and evaluation
 
@@ -5971,6 +5980,22 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
 
+### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
+
+The commands a chat can send are listed in the app's own command picker, from the same table every surface reads,
+and only while chat commands are on (with them off the picker is emptied, so it never offers a command that would be
+read as an ordinary message); a change to either switch updates it.
+
+- **Discord**: registered as global application commands (one overwrite, so a command taken out of the list leaves
+  Discord's picker too), each with one optional text option for what follows it. Invite the bot with the `bot` and
+  `applications.commands` scopes. Choosing one is answered at once to that person alone ("Running /status") and then
+  read as the typed command from them, so pairing, the allowlist and each command's own level still decide.
+- **Slack** keeps an app's slash commands in the app's settings, and many plain names (/status, /remind) are Slack's
+  own, so the wizard's Slack app has one, `/branch` (with the `commands` scope): `/branch status` is `/status`,
+  `/branch` alone is `/help`, and words that are not a command are an ordinary message. An app made from the older
+  manifest needs `/branch` added under Slash Commands.
+- Telegram's "/" menu is filled the same way by the Telegram menu work (#590).
+
 ### Answering an approval from a chat app
 When a task started from Telegram or Discord stops to ask whether it may go ahead, the question is
 put in that chat with buttons: Yes, Yes always (only for a task you started yourself, the same rule
@@ -8910,6 +8935,15 @@ rounds are read from `/api/model-savings/rounds?session=<id>`.
 Setting names: `planModel` and `sideTier` (planning model and flex for side questions), `easyModel`, `hardModel` and
 `classifierModel` (choose by difficulty), `maxPings` (keep-alive), `allowFallbacks` and `dataCollection` (OpenRouter),
 and `mixtures` (mixtures of models).
+
+`difficulty.mixHard` defaults to false. When enabled with two different easy and hard connections,
+hard tasks use both as a mixture and the hard connection writes the combined answer. Easy tasks continue
+to use the easy connection. Clearing the switch or choosing the same connection twice removes the mixture.
+
+OpenRouter's **Only ones I list** reads `POST /api/model-savings/companies` on demand and keeps the company's
+plain slugs for one day. The request sends no key and goes only to OpenRouter's own provider-list address.
+It requires a configured OpenRouter connection and refuses while Lockdown is on. The chosen `only` list
+is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
 
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
