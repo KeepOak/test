@@ -4311,8 +4311,12 @@ A tool is `{ name: "plugin.<id>.<name>", description, permission, input, run(arg
 where `input` is the same `{ name: { type, required, description } }` shape a recipe uses, and the
 permission must be one the plugin declared. A hook is `{ event, run(payload) }`. Plugins may add
 tools and react to events; they may not add screens to the app. `GET /api/plugins` lists the files
-without loading any of them; `POST /api/plugins/:id/inspect` loads one file to show what it would
-add (which runs the code at the top of that file); `POST /api/plugins/:id/enable` and
+without loading any of them; `POST /api/plugins/:id/inspect` shows what one would add from its
+manifest only and never runs the file. The manifest is the plugin catalog’s record when it was installed from a
+folder, zip or add-on, or a `<id>.plugin.json` beside a hand-placed file (`{ id, name, description, permissions,
+tools?, hooks? }`); a file with neither is shown as having no manifest. Switching a plugin on is what runs it, and
+then a permission its code asks for that the manifest did not list is never granted, and code changed since it was
+installed is not switched on. `POST /api/plugins/:id/enable` and
 `POST /api/plugins/:id/disable` switch it on and off, and the choice is remembered. On the command
 line: `branch plugin list | enable <id> | disable <id>`. **Be plain about the limits:** a plugin is
 not sandboxed. It runs inside Branch with the same reach over this computer that Branch has. The
