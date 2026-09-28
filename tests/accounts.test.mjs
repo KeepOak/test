@@ -29,6 +29,7 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false });
   let clock = Date.parse("2026-09-17T10:00:00Z");
   service.deps.now = () => clock;
   Object.defineProperty(service, "now", { value: () => clock });
