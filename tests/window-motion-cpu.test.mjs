@@ -42,7 +42,8 @@ async function fixture(t) {
      seen: the Trunks' own faces on this screen are the 3D pebbles. */
   await page.evaluate(() => {
     const face = Object.assign(document.createElement("span"), { className: "av probe-cpu", innerHTML: '<span class="peb"></span><span class="eye l"></span><span class="eye r"></span>' });
-    document.querySelector("#main").append(face);
+    // Keep the CSS probe outside regions redrawn by live state refreshes.
+    document.body.append(face);
   });
   await page.locator("#main .av.pbl.pbl-live").first().waitFor({ state: "attached", timeout: 30000 });
   await page.locator("#side .keeper .petbox").waitFor({ state: "attached" });

@@ -3,8 +3,8 @@ import { fileURLToPath } from "node:url";
 
 /**
  * The painted characters a Trunk can wear (the window's Look tab), read from the art Branch ships instead of listed by
- * hand, in the prototype's order (design/redesign/prototype.html LOOKS, then pass 17's LOOKS17): Branch's own spirit,
- * then every entry of public/art/agents/manifest-*.json by file name. The manifests name their files as the prototype
+ * hand, in the prototype's order (design/redesign/prototype.html LOOKS, then pass 17's LOOKS17):
+ * every entry of public/art/agents/manifest-*.json by file name. Branch remains the logo only. The manifests name their files as the prototype
  * does ("assets/..."); the window serves the same files under /art/. A file that is not on disk is left out, so a
  * character with no loop for a state falls back to its idle loop, and one with no still is not offered at all.
  */
@@ -56,23 +56,16 @@ function readJson(file: string): unknown {
   try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; }
 }
 
-/** Branch's spirit: the prototype's BRANCH_ANIM (its idle, work, yay, sleep and walk loops) with extra-manifest.json's branchStates. */
-function branch(): unknown {
-  const extra = readJson(`${art}extra-manifest.json`) as { branchStates?: Record<string, string> } | null;
-  const own = Object.fromEntries(["idle", "work", "yay", "sleep", "walk"].map((state) => [state, `assets/anim-${state}.webm`]));
-  return { id: "branch", name: "Branch", description: "The leafy spirit with five glowing orbs.", still: "assets/branch-wave.webp", states: { ...own, ...extra?.branchStates } };
-}
-
 function read(): Character[] {
   const manifests = existsSync(`${art}agents`) ? readdirSync(`${art}agents`).filter((name) => /^manifest-[A-Za-z0-9]+\.json$/.test(name)).sort() : [];
-  const entries = [branch(), ...manifests.flatMap((name) => {
+  const entries = manifests.flatMap((name) => {
     const list = readJson(`${art}agents/${name}`);
     return Array.isArray(list) ? list : [];
-  })];
+  });
   const found = new Map<string, Character>();
   for (const entry of entries as Record<string, unknown>[]) {
     const id = String(entry?.id ?? ""), still = served(entry?.still), loops = states(entry?.states);
-    if (!ID.test(id) || found.has(id) || !still || !loops.idle) continue;
+    if (!ID.test(id) || id === "branch" || found.has(id) || !still || !loops.idle) continue;
     const name = typeof entry.name === "string" ? entry.name.trim().slice(0, 40) : "";
     const description = typeof entry.description === "string" ? entry.description.trim().slice(0, 200) : "";
     found.set(id, { id, name: name || id, description, still, states: loops, sizes: sizes(loops) });
