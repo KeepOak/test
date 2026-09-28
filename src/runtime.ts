@@ -843,6 +843,11 @@ export class Runtime {
       ...(mark?.keys ? { trunkKeys: mark.keys } : {}),
     };
   }
+  /** A real live task's cancellation signal; stored running rows alone never authorize browser handback. */
+  activeRunSignal(id: string): AbortSignal | null {
+    const controller = this.controllers.get(id);
+    return controller && !controller.signal.aborted && !this.pausing.get(id)?.signal.aborted ? controller.signal : null;
+  }
   cancel(id: string): boolean {
     const controller = this.controllers.get(id);
     controller?.abort(new Error("Cancelled by user"));

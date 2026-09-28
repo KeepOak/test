@@ -2078,12 +2078,12 @@ video.pose11{background:transparent}
 .live-fig12{width:56px;height:56px;flex:none}.live-fig12 .fig12{width:56px;height:56px}
 /* look picker */
 .looks12,.pets12{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
-.look-c12,.pet-c12{display:grid;justify-items:center;gap:4px;padding:10px 6px 8px;border-radius:14px;border:1px solid var(--line);background:var(--raise);transition:border-color .15s,transform .15s}
+.look-c12,.pet-c12{display:grid;min-width:0;justify-items:center;gap:4px;padding:10px 6px 8px;border-radius:14px;border:1px solid var(--line);background:var(--raise);transition:border-color .15s,transform .15s}
 .look-c12:hover,.pet-c12:hover{transform:translateY(-2px);border-color:var(--line-2)}
 .look-c12[aria-pressed="true"],.pet-c12[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
 .look-c12 img,.look-c12 video{width:72px;height:72px;object-fit:contain}
 .pet-c12 img,.pet-c12 video{width:56px;height:56px;object-fit:contain}
-.look-c12 b,.pet-c12 b{font-size:12px;font-weight:600;text-align:center;line-height:1.2}
+.look-c12 b,.pet-c12 b{font-size:12px;font-weight:600;text-align:center;line-height:1.2;max-width:100%;hyphens:auto;overflow-wrap:anywhere}
 .peb-demo12{height:72px;display:grid;place-items:center}
 .pet-px12{width:56px;height:56px;display:grid;place-items:center;border-radius:12px;background:var(--fill);color:var(--ink-3);font-size:18px}
 .petbox .pet12{width:44px;height:44px;margin-top:-8px}
@@ -3849,6 +3849,8 @@ p.ic-t,div.ic-t{display:flex}
 .pip7-screen:has(.st7-empty){background:var(--fill)}
 .st7-empty.mini7{position:absolute;inset:0;max-width:none;min-width:0;align-content:center;padding:10px;border:0;border-radius:0;background:transparent;box-shadow:none;gap:4px}
 .st7-empty.mini7>.i{width:22px;height:22px}.st7-empty.mini7 b{font-size:13px}
+.browser-status7{display:grid;gap:8px;padding:20px;color:var(--ink);background:var(--raise);text-align:center}
+.browser-status7 small{font-size:13px;line-height:1.45;color:var(--ink-3)}
 /* Branch's browser, live: the frame fills the page area; around it the screen's own dark, never a white slab. */
 .desk7.brfull7.live7{background:#0e1419}
 .live7 .dk-win>.shot7{background:#0e1419}
@@ -3984,10 +3986,6 @@ p.ic-t,div.ic-t{display:flex}
 .st7-screen.grid7:has(.st7-empty){background:var(--fill)}
 /* A file a task made, as it wrote it (the prototype's preview in the file dialog). */
 .made-b2{margin:0;font:12px/1.6 var(--mono);background:var(--fill);border-radius:10px;padding:12px;overflow:auto;white-space:pre-wrap}
-/* The owner's address field in the browser view's top bar. */
-.st7-addr{display:flex;align-items:center;gap:4px;flex:1 1 220px;min-width:160px;max-width:420px;margin-left:8px}
-.st7-addr .inp{height:30px;min-width:0;flex:1 1 auto;font-size:13px}
-.st7-addr .inp:disabled,.st7-addr .icon-btn:disabled{opacity:.55;cursor:not-allowed}
 
 /* area: remove-branch */
 .danger8 .rm-choice{display:grid;gap:3px;margin-top:12px;padding:14px 16px;background:var(--raise);border:1px solid var(--hair17);border-radius:var(--r3-17);min-width:0}
@@ -4400,3 +4398,41 @@ audio.docread18m{width:100%}
 .in18c.dim18{opacity:.55;filter:saturate(.6)}
 .hb18c .b18c{position:absolute;right:-2px;bottom:-2px;width:calc(var(--s) * .42);height:calc(var(--s) * .42);min-width:12px;min-height:12px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--ink-2);box-shadow:0 0 0 1.5px var(--raise)}
 .hb18c .b18c svg.i{width:70%;height:70%}
+/* The owner's own Branch browser (chat/stage-browser-control.js): the stage's browser look, drawn at 1280 × 800 and
+   scaled with the screen, with tabs, Back/Forward/Reload and an address bar that work, and the page to click and type in. */
+.owner-browser7 .dk-win{background:#0e1419}
+.ob7-tabs{gap:4px;padding:0 8px}
+.ob7-tabs>span{display:flex;align-items:center;gap:2px;max-width:260px;min-width:0;padding:0 6px 0 0!important}
+.ob7-tab{display:flex;align-items:center;gap:8px;min-width:0;height:38px;padding:0 10px;border:0;background:none;color:inherit;font:inherit;cursor:pointer}
+.ob7-tab em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ob7-tab:disabled,.ob7-x:disabled,.ob7-new:disabled,.ob7-nav:disabled,.ob7-go:disabled{cursor:default;opacity:.5}
+.ob7-ico{flex:none;width:18px;height:18px;border-radius:4px;object-fit:contain}
+.ob7-letter{display:grid;place-items:center;background:#c9d2da;color:#3b4650;font-size:12px;font-weight:600}
+.ob7-x,.ob7-new,.ob7-nav,.ob7-go{display:grid;place-items:center;flex:none;width:30px;height:30px;border:0;border-radius:8px;background:none;color:#3b4650;cursor:pointer}
+.ob7-x:hover:not(:disabled),.ob7-new:hover:not(:disabled),.ob7-nav:hover:not(:disabled),.ob7-go:hover:not(:disabled){background:#dfe4e9}
+.ob7-new{align-self:center;margin-left:2px}
+.ob7-bar{gap:6px;padding:0 10px}
+.ob7-addr{display:flex;align-items:center;gap:8px;flex:1;min-width:0;height:34px;padding:0 6px 0 12px;border-radius:17px;background:#eef1f4;color:#566}
+.ob7-addr:focus-within{box-shadow:0 0 0 2px var(--accent)}
+.ob7-inp{flex:1;min-width:0;height:30px;border:0;outline:0;background:transparent;color:#1b1f23;font:inherit}
+.ob7-inp:disabled{color:#566}
+.ob7-status{padding:10px 16px;text-align:left;border-bottom:1px solid #e6e9ec;background:#fff7e6;color:#3b2a00}
+.ob7-status small{color:#5b4a1c}
+.owner-browser7-page{position:relative;flex:1;min-height:0;outline:0;background:#0e1419}
+.owner-browser7-page.ob7-live:focus-within{box-shadow:inset 0 0 0 3px var(--accent)}
+.ob7-keys{position:absolute;left:0;top:0;width:1px;height:1px;padding:0;border:0;opacity:0;resize:none;overflow:hidden;z-index:-1}
+.owner-browser7-page>.owner-browser7-img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:top center;display:block;background:#fff}
+.ob7-live>.owner-browser7-img{cursor:default}
+.owner-browser7-empty{position:absolute;inset:0;align-content:center;background:#f6f8fa;color:#3b4650;font-size:18px}
+.owner-browser7-empty small{font-size:18px}
+
+/* area: settings search (UI-091: every row is found, settings/find.js) */
+.set-found{display:grid;gap:2px;margin:0;padding:0;list-style:none}
+.set-hit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;width:100%;padding:10px 12px;border:0;border-radius:10px;background:none;color:var(--ink);text-align:left;cursor:pointer}
+.set-hit:hover,.set-hit:focus-visible{background:var(--wash17,var(--fill))}
+.set-hit b{font-weight:500;min-width:0;overflow-wrap:anywhere}
+.set-hit small{grid-column:1;color:var(--ink-3);font-size:12.5px;min-width:0;overflow-wrap:anywhere}
+.set-hit .pill{grid-column:2;grid-row:1 / span 2}
+.ctl.found18,.prow.found18{border-radius:10px;box-shadow:0 0 0 2px var(--accent)}
+.found18.in18{animation:found18 1.6s ease-out 1}
+@keyframes found18{0%,40%{background-color:var(--accent-tint)}100%{background-color:transparent}}
