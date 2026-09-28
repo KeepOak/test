@@ -10,7 +10,7 @@
    wake what they concern at once; what wakes plays a short wake (app.css area: sleep) instead of jumping. A hidden
    window pauses everything as before (core/art17.js, core/figures.js, core/pebble.js, core/pets.js). */
 
-import { E, S } from "./state.js";
+import { E, S, defaultTrunk, threadTrunk } from "./state.js";
 import { render, renderNow, afterDraw } from "./dom.js";
 import { hold17, play17 } from "./held.js";
 
@@ -25,14 +25,16 @@ const bornAt = Date.now();
 let lastInput = bornAt;
 const focusAt = new Map();                 // face key ("t:<trunk id>" or "branch") → when it was last in focus
 
-/* The faces of the conversation that is open: its Trunk, a room's members, or Branch for any other conversation. */
+/* The faces shown in the open conversation: its own or assigned Trunk, the room's members, or the default Trunk. */
 function openKeys() {
   if (S.view !== "chat") return [];
   const id = S.chat;
   const own = id ? E.trunks.find((t) => t.chatSessionId === id || (t.retiredChats ?? []).includes(id)) : null;
   if (own) return [`t:${own.id}`];
   const room = id ? (E.rooms ?? []).find((r) => r.sessionId === id) : null;
-  return room ? (room.members ?? []).map((m) => `t:${m}`) : ["branch"];
+  if (room) return (room.members ?? []).map((m) => `t:${m}`);
+  const assigned = threadTrunk(id) ?? defaultTrunk();
+  return assigned ? [`t:${assigned.id}`] : [];
 }
 
 const stageAt = (since, now) => (now - since >= STILL_MS ? "still" : now - since >= DOZE_MS ? "doze" : "awake");
