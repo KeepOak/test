@@ -1,6 +1,6 @@
 {
   "name": "branch-agent",
-  "version": "0.19.3",
+  "version": "0.19.4",
   "private": true,
   "description": "A local, inspectable personal assistant runtime",
   "type": "module",
