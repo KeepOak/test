@@ -47,7 +47,15 @@
       "src/**/*win32*",
       "src/**/*uninstall*",
       "src/**/*console*",
-      "public/app/shell/controls.js"
+      "public/app/shell/controls.js",
+      ".github/workflows/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "scripts/run-tests.mjs",
+      "scripts/build-ts.mjs",
+      "scripts/select-affected-tests.mjs",
+      "scripts/test-graph.mjs"
     ],
     "macos": [
       "src/desktop/**",
@@ -56,7 +64,15 @@
       "**/*.plist",
       "**/*.entitlements",
       "src/**/*macos*",
-      "src/**/*darwin*"
+      "src/**/*darwin*",
+      ".github/workflows/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "scripts/run-tests.mjs",
+      "scripts/build-ts.mjs",
+      "scripts/select-affected-tests.mjs",
+      "scripts/test-graph.mjs"
     ]
   },
   "mappings": [
