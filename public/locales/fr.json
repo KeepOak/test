@@ -10126,5 +10126,13 @@
   "window.places.library17.import-spreadsheet-hint": "Choisissez un fichier CSV, TSV, JSON ou Excel. Branch le garde dans la Bibliothèque et prépare une question SELECT que vous pouvez lancer.",
   "window.places.library17.import-spreadsheet-limit": "Choisissez une feuille de calcul de moins de 8 Mo.",
   "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau.",
-  "window.core.gsel.narrow": "Tapez pour filtrer"
+  "window.core.gsel.narrow": "Tapez pour filtrer",
+  "channel-setup.r.bluebubbles.field-server": "L’adresse du serveur BlueBubbles",
+  "channel-setup.r.bluebubbles.paste-BLUEBUBBLES_PASSWORD": "Le mot de passe du serveur BlueBubbles",
+  "channel-setup.r.bluebubbles.noCreate": "Aucun compte à créer : BlueBubbles tourne sur votre propre Mac et répond avec votre compte Apple. C’est une app open source à part, qui n’est pas faite par Apple ; Branch ne l’installe jamais.",
+  "channel-setup.r.bluebubbles.noCheck": "Le serveur BlueBubbles ne prend son mot de passe que dans l’adresse, donc la page de configuration ne l’envoie nulle part pour le tester ; il est essayé quand l’interrupteur est activé, et un mauvais mot de passe est signalé sur la carte.",
+  "channel-setup.r.bluebubbles.noApp": "Rien à installer sur cet ordinateur : le serveur BlueBubbles tourne sur le Mac, et vous continuez d’utiliser Messages sur votre téléphone.",
+  "channel-setup.r.bluebubbles.step-1": "Sur un Mac qui reste allumé et connecté à Messages, installez l’app serveur BlueBubbles depuis bluebubbles.app et terminez sa propre configuration.",
+  "channel-setup.r.bluebubbles.step-2": "Dans le serveur BlueBubbles, copiez l’adresse du serveur (un lien https, ou l’adresse du Mac sur votre propre réseau) et le mot de passe du serveur.",
+  "channel-setup.r.bluebubbles.step-3": "Collez-les ici. Branch demande les nouveaux messages au serveur toutes les quelques secondes et envoie par lui avec AppleScript, donc le Mac n’a pas besoin de l’API privée de BlueBubbles."
 }

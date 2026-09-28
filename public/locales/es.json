@@ -10125,5 +10125,13 @@
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
   "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
-  "window.core.gsel.narrow": "Escribe para filtrar"
+  "window.core.gsel.narrow": "Escribe para filtrar",
+  "channel-setup.r.bluebubbles.field-server": "La dirección del servidor de BlueBubbles",
+  "channel-setup.r.bluebubbles.paste-BLUEBUBBLES_PASSWORD": "La contraseña del servidor de BlueBubbles",
+  "channel-setup.r.bluebubbles.noCreate": "No hay cuenta que crear: BlueBubbles funciona en tu propio Mac y responde con tu cuenta de Apple. Es una app de código abierto aparte, no hecha por Apple; Branch nunca la instala.",
+  "channel-setup.r.bluebubbles.noCheck": "El servidor de BlueBubbles solo acepta su contraseña en la dirección, así que la página de configuración no la envía a ningún sitio para probarla; se prueba al activar el interruptor, y una contraseña incorrecta se indica en la tarjeta.",
+  "channel-setup.r.bluebubbles.noApp": "Nada que instalar en este ordenador: el servidor de BlueBubbles funciona en el Mac, y sigues usando Mensajes en tu teléfono.",
+  "channel-setup.r.bluebubbles.step-1": "En un Mac que se quede encendido y con sesión iniciada en Mensajes, instala la app de servidor BlueBubbles desde bluebubbles.app y termina su propia configuración.",
+  "channel-setup.r.bluebubbles.step-2": "En el servidor de BlueBubbles, copia la dirección del servidor (un enlace https, o la dirección del Mac en tu propia red) y la contraseña del servidor.",
+  "channel-setup.r.bluebubbles.step-3": "Pégalos aquí. Branch pide los mensajes nuevos al servidor cada pocos segundos y envía a través de él con AppleScript, así que el Mac no necesita la API privada de BlueBubbles."
 }

@@ -10125,5 +10125,13 @@
   "window.places.library17.import-spreadsheet-hint": "Wähle eine CSV-, TSV-, JSON- oder Excel-Datei. Branch behält sie in der Bibliothek und füllt eine SELECT-Frage aus, die du ausführen kannst.",
   "window.places.library17.import-spreadsheet-limit": "Wähle eine Tabelle, die kleiner als 8 MB ist.",
   "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal.",
-  "window.core.gsel.narrow": "Tippen zum Eingrenzen"
+  "window.core.gsel.narrow": "Tippen zum Eingrenzen",
+  "channel-setup.r.bluebubbles.field-server": "Die Adresse des BlueBubbles-Servers",
+  "channel-setup.r.bluebubbles.paste-BLUEBUBBLES_PASSWORD": "Das Passwort des BlueBubbles-Servers",
+  "channel-setup.r.bluebubbles.noCreate": "Es gibt kein Konto anzulegen: BlueBubbles läuft auf deinem eigenen Mac und antwortet mit deinem Apple Account. Es ist eine eigene Open-Source-App, nicht von Apple; Branch installiert sie nie.",
+  "channel-setup.r.bluebubbles.noCheck": "Der BlueBubbles-Server nimmt sein Passwort nur in der Adresse an, deshalb schickt die Einrichtungsseite es nirgendwohin zum Testen; es wird beim Einschalten ausprobiert, und ein falsches Passwort wird auf der Karte genannt.",
+  "channel-setup.r.bluebubbles.noApp": "Auf diesem Computer ist nichts zu installieren: Der BlueBubbles-Server läuft auf dem Mac, und du nutzt weiter Nachrichten auf deinem Telefon.",
+  "channel-setup.r.bluebubbles.step-1": "Installiere auf einem Mac, der eingeschaltet bleibt und in Nachrichten angemeldet ist, die BlueBubbles-Server-App von bluebubbles.app und schließe ihre eigene Einrichtung ab.",
+  "channel-setup.r.bluebubbles.step-2": "Kopiere im BlueBubbles-Server die Serveradresse (einen https-Link oder die Adresse des Macs in deinem eigenen Netzwerk) und das Serverpasswort.",
+  "channel-setup.r.bluebubbles.step-3": "Füge sie hier ein. Branch fragt den Server alle paar Sekunden nach neuen Nachrichten und sendet über ihn mit AppleScript, daher braucht der Mac die Private API von BlueBubbles nicht."
 }
