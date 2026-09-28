@@ -32,7 +32,7 @@ const MARKS = {
   "qq-bot": C + "qq", guilded: C + "guilded", revolt: C + "revoltdotchat", mumble: C + "mumble", "wechat-mp": C + "wechat", drive: C + "googledrive",
 };
 /* Not a brand (Email), or a maker that allows no use of its marks at all (Microsoft, Apple): the window's own glyph. */
-const GLYPHS = { email: "mail", outlook: "mail", imessage: "chat", msteams: "chat", "msteams-bot": "chat", "azure-openai": "globe", "azure-openai-v1": "globe" };
+const GLYPHS = { email: "mail", outlook: "mail", imessage: "chat", bluebubbles: "chat", msteams: "chat", "msteams-bot": "chat", "azure-openai": "globe", "azure-openai-v1": "globe" };
 const PALETTE = ["#2E6A8A", "#6B4A8A", "#8A4F2A", "#3A5A99", "#2F7A4A", "#8A2F4F", "#4F6B2A", "#2A6B6B"];
 /* A connection or model id often starts or contains its service's id ("openai-work", "cli-agent:claude-code").
    Only model services are matched this way; a chat app is matched by its exact id ("line" is in "pipeline"). */

@@ -42,6 +42,7 @@ export const auditActions = [
   // Somebody in a chat asked for a change to Branch itself, or the owner answered that request
   // (src/self-development-requests.ts). Only the owner's yes writes a contract.
   "self_development.request",
+  "self_development.merge",
   // eng-trunk-controls: a Trunk, or all of them, was paused or resumed (src/trunks/pause.ts).
   "trunk.paused",
   // App lock: the PIN that opens a locked Branch was set, changed or removed (src/session-lock.ts).
@@ -49,6 +50,9 @@ export const auditActions = [
   "lock.changed",
   // P17-D: the computers a Trunk may use, or how many tasks it may run at once, were changed (src/trunks/computers.ts).
   "trunk.computers",
+  // defaulttrunk: the owner picked another default Trunk, or conversations with no Trunk were put with one (src/trunks/defaults.ts).
+  "trunk.default",
+  "trunk.files",
   // models-ui: the most a Trunk may spend in a month was set, changed or cleared (src/trunks/spend-cap.ts).
   "trunk.spend_cap",
 ] as const;
@@ -126,9 +130,12 @@ const actionLabels: Record<AuditAction, string> = {
   "data.imported": "Chats, memory or settings were brought in from another assistant",
   "self_development.contract": "Branch changing its own source was held to its contract, or the contract was widened",
   "self_development.request": "Somebody in a chat asked for a change to Branch itself, or you answered that request",
+  "self_development.merge": "You reviewed and approved an exact tested change to Branch, or merged that reviewed commit",
   "trunk.paused": "A Trunk was paused or resumed",
   "lock.changed": "The App lock PIN was set, changed or removed",
   "trunk.computers": "The computers a Trunk may use were changed",
+  "trunk.default": "The default Trunk, or which Trunk a conversation is with, was changed",
+  "trunk.files": "A Trunk personality file was changed",
   "trunk.spend_cap": "A Trunk's monthly spending limit was changed",
 };
 export const auditLabel = (action: AuditAction): string => actionLabels[action];

@@ -15,6 +15,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, registerCliAgent } from "../dist/index.js";
 import { closeSpareAgents, leanClaudeArgs, runCliAgent, streamJsonQuestion, streamJsonWords } from "../dist/providers/cli-agent.js";
+import { accountsServiceFor } from "../dist/accounts/service.js";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 
 async function until(check, label, ms = 10_000) {
   const end = Date.now() + ms;
@@ -27,25 +29,38 @@ async function engine(t, spawn) {
   t.after(async () => { await app.close(); await discardTemp(root); });
   registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
   app.runtime.models.configure(app.runtime.owner, { activePreset: "cli-claude-code" });
-  return { app, root };
+  // Claude Code answers through its native subscription transport (src/providers/claude-subscription.ts), which the
+  // stand-in plays through the shared adapter; each launch's arguments are kept.
+  const service = accountsServiceFor(app.runtime.models), launched = [];
+  service.deps.spawnAgent = spawn;
+  await fakeClaudeAccounts(t, service);
+  const native = service.deps.claudeSubscription, start = native.spawn, program = { ms: 0 };
+  native.spawn = (command, args, invocation) => {
+    launched.push(args);
+    const child = start(command, args, invocation), at = performance.now();
+    child.once("exit", () => { program.ms += performance.now() - at; }); // the stand-in program's own start and run
+    return child;
+  };
+  return { app, root, service, launched, program };
 }
 const answered = (text) => ({ code: 0, stderr: "",
   stdout: `${JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text })}\n` });
 
-test("a chat's call to Claude Code runs lean and with no tools of its own; the owner's own call keeps its arguments", async (t) => {
-  const calls = [];
-  const { app } = await engine(t, async (row, prompt) => { calls.push(row.args); return answered("Hi!"); });
+test("a chat's call to Claude Code runs lean and with no tools of its own, and so does the owner's", async (t) => {
+  const { app, launched } = await engine(t, async () => answered("Hi!"));
   const chat = { id: "telegram", kind: "telegram", botName: () => "TK", async start() {}, async stop() {}, async send() { return "1"; } };
   app.channels.mergeWindowMs = 0;
   await app.channels.attach(chat, { activation: "always", pairing: true, allowlist: ["owner"] });
   assert.equal(await app.channels.handle({ channel: "telegram", chatId: "c", chatKind: "direct", senderId: "owner", senderName: "Sam",
     text: "Hi", addressed: true, messageId: "1" }), "replied");
-  const chatArgs = calls.at(-1);
-  for (const flag of leanClaudeArgs) assert.ok(chatArgs.includes(flag), `${flag} is passed for a chat's call`);
-  assert.deepEqual(chatArgs.slice(-2), ["--tools", ""], "a chat app's task gets none of Claude Code's own tools");
+  const chatArgs = launched.at(-1);
+  // The native transport starts the program lean: no hooks (its own settings file), MCP only Branch's, no slash commands.
+  for (const flag of leanClaudeArgs.filter((one) => !one.startsWith("{"))) assert.ok(chatArgs.includes(flag), `${flag} is passed for a chat's call`);
+  assert.equal(chatArgs[chatArgs.indexOf("--tools") + 1], "", "a chat app's task gets none of Claude Code's own tools");
   const own = await app.runtime.run({ prompt: "hello" });
   assert.equal(own.output, "Hi!");
-  assert.ok(!calls.at(-1).includes("--tools") && !calls.at(-1).includes("--strict-mcp-config"), "the owner's own call is unchanged");
+  // Since the native transport, Branch runs every tool for the owner too (as tests/accounts-trunks.test.mjs holds).
+  assert.equal(launched.at(-1)[launched.at(-1).indexOf("--tools") + 1], "", "the owner's call delegates every tool to Branch");
 });
 
 test("streamed words reach the reply as written, and the answer is still the result", async (t) => {
@@ -60,10 +75,19 @@ test("streamed words reach the reply as written, and the answer is still the res
   for (const line of [...lines, "not json", JSON.stringify({ type: "assistant" })]) streamJsonWords(line, (text) => deltas.push(text), (text) => thought.push(text));
   assert.deepEqual(deltas, ["Hi! ", "How can I help?"], "a helper's words are not the answer");
   assert.deepEqual(thought, ["hmm"]);
-  const { app } = await engine(t, async (row, prompt, signal, limits, home, onLine) => {
-    for (const line of lines) onLine?.(line);
-    return answered("Hi! How can I help?");
-  });
+  const { app, service } = await engine(t, async () => answered("Hi! How can I help?"));
+  // Through the native transport the words arrive as the service's own text deltas.
+  const event = (value) => `data: ${JSON.stringify(value)}
+
+`;
+  const asked = service.deps.claudeSubscription.connect; // it also writes what the stand-in process reads back
+  service.deps.claudeSubscription.connect = async (...call) => { await asked(...call); return new Response([
+    { type: "message_start", message: { role: "assistant", content: [], usage: { input_tokens: 2, output_tokens: 0 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi! " } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "How can I help?" } },
+    { type: "content_block_stop", index: 0 }, { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } },
+    { type: "message_stop" }].map(event).join(""), { headers: { "content-type": "text/event-stream" } }); };
   const seen = [];
   const run = await app.runtime.run({ prompt: "hi", source: "channel", permissions: ["files.read"], onTextDelta: (text) => seen.push(text) });
   assert.equal(run.output, "Hi! How can I help?");
@@ -111,17 +135,18 @@ test("the answer is taken from the result line, and the next question finds a co
 });
 
 test("latency budget: the engine's own part of a trivial chat turn stays small", async (t) => {
-  const { app } = await engine(t, async () => answered("Hi!"));
+  const { app, program } = await engine(t, async () => answered("Hi!"));
   let sentAt = 0;
   const chat = { id: "telegram", kind: "telegram", botName: () => "TK", async start() {}, async stop() {},
     async send() { sentAt = performance.now(); return "1"; } };
   app.channels.mergeWindowMs = 0;
   await app.channels.attach(chat, { activation: "always", pairing: true, allowlist: ["owner"] });
   const turn = async (id) => {
-    const began = performance.now();
+    const began = performance.now(), before = program.ms;
     assert.equal(await app.channels.handle({ channel: "telegram", chatId: "c", chatKind: "direct", senderId: "owner", senderName: "Sam",
       text: "Hi", addressed: true, messageId: id }), "replied");
-    return sentAt - began;
+    // The transport waits for its program to exit, so the stand-in's whole life is inside the turn and is not the engine's.
+    return sentAt - began - (program.ms - before);
   };
   await turn("warm-up"); // the first turn of a new engine loads its modules
   const times = [await turn("a"), await turn("b"), await turn("c")].sort((x, y) => x - y);
