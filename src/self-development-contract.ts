@@ -11,6 +11,7 @@ import { cwdOf } from "./never-break/protected.js";
 import { isReadOnlyPermission } from "./policy.js";
 import { isCommandTool } from "./policy-resources.js";
 import { wallReport } from "./sandbox-backends.js";
+import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { lockdownActive } from "./lockdown.js";
 import { betaLine } from "./desktop/dev-build.js";
 import { githubRepositoryOf } from "./github-address.js";
@@ -34,6 +35,14 @@ export const widenToolName = "branch.widen_source_contract";
 export const widenReason = "Branch asks you every time before it widens what it may change in its own source";
 /** The one line a change to Branch itself starts from and is proposed back to: the line Beta builds after a merge. */
 export const selfDevelopmentLine = betaLine;
+/**
+ * selfdev: a scratch line for proving the loop end to end (`selfdev-proof/...`). Beta never builds it, so a change
+ * proposed to it and merged there never reaches the running app. It must already exist; Branch only proposes to it.
+ */
+export const selfDevelopmentProofLine = /^selfdev-proof\/[A-Za-z0-9._-]{1,60}$/;
+/** Where a change to Branch itself may start from and be proposed back to: the Beta line, or a scratch proof line. */
+export const selfDevelopmentBase = (base: unknown): boolean => base === selfDevelopmentLine || (typeof base === "string" && selfDevelopmentProofLine.test(base));
+export const selfDevelopmentBaseWords = `${selfDevelopmentLine}, the line Beta builds (or a selfdev-proof/ scratch line that Beta never builds)`;
 export const selfDevelopmentLockdownRefusal = "Lockdown is on, so Branch does not work on its own source: nothing is prepared, changed, widened or sent. Turn Lockdown off in Settings to allow this again.";
 /** The only line of work a change to Branch itself is sent on: a fresh `branch/…` line, never a shared one. */
 const sentLine = /^refs\/heads\/branch\/[A-Za-z0-9._-]{1,60}$/;
@@ -265,6 +274,25 @@ export function workspacePath(workspace: string, scope: string, path: string, pl
 }
 const insideSource = (path: string): boolean => path === sourceFolder || path.startsWith(`${sourceFolder}/`);
 /** The self-development worktree a workspace path is in, or "" for the protected checkout itself. */
+/**
+ * selfdev: the worktree this very task (or the task that started it) prepared or widened, or "". A task keeps working
+ * in its conversation's project after branch.prepare_source_change (src/project-scope.ts), so its commands, and the
+ * finish of its own change, may name that worktree by cwd: only the worktree whose contract this task chain wrote.
+ */
+export function preparedByTask(store: Pick<Store, "events">, book: ContractBook, owner: string, worktree: string, runId: string): boolean {
+  const contract = worktree ? book.current(owner, worktree) : null;
+  if (!contract || !runId) return false;
+  const writers = new Set(book.history(owner, worktree).map((one) => one.taskRunId).filter(Boolean));
+  const seen = new Set<string>();
+  for (let id: string | undefined = runId; id && !seen.has(id) && seen.size < 20;) {
+    if (writers.has(id)) return true;
+    seen.add(id);
+    const parent: unknown = store.events(id).find((event) => event.kind === "run.started")?.data.parentRunId;
+    id = typeof parent === "string" ? parent : undefined;
+  }
+  return false;
+}
+
 export function worktreeOf(path: string): string {
   const match = /^branch-agent-source\/\.branch-worktrees\/[^/]+/.exec(path);
   return match && worktreePattern.test(match[0]) ? match[0] : "";
@@ -380,7 +408,7 @@ export async function worktreesOwnRepository(deps: Pick<ContractGuardDeps, "work
   return found.status === "completed" && !!top && onDisk(resolve(top)) === onDisk(cwd) && onDisk(resolve(cwd, common)) === onDisk(resolve(deps.workspace, sourceFolder, ".git"));
 }
 
-async function remoteBroken(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal, commit: string, ref = commit): Promise<string | null> {
+export async function remoteBroken(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal, commit: string, ref = commit): Promise<string | null> {
   const cwd = resolve(deps.workspace, contract.worktreePath);
   const git = (args: string[]) => deps.git({ cwd, args, timeoutMs: 60_000, maxOutputBytes: 4_194_304 }, signal);
   if (!(await worktreesOwnRepository(deps, contract, signal)))
@@ -476,7 +504,13 @@ export function sourceCheckedOut(workspace: string): boolean {
   try { return readdirSync(workspace).some((entry) => sourceSpelling(entry) === sourceFolder); } catch { return false; }
 }
 
-const canConfineWrites = async (): Promise<boolean> => (await wallReport()).available;
+/**
+ * Whether this computer can hold a command's writes to one folder. On Windows a held command runs inside WSL behind
+ * bubblewrap (src/integrations/shell.ts, wsl-held.ts), so it can when WSL has Node.js and bubblewrap; the native wall
+ * is macOS's and Linux's alone.
+ */
+const canConfineWrites = async (): Promise<boolean> =>
+  process.platform === "win32" ? (await wslReadiness(wslProbe)) === null : (await wallReport()).available;
 
 /**
  * A command's text is never read: globs and variables can always name Branch's source some other
@@ -487,7 +521,10 @@ const canConfineWrites = async (): Promise<boolean> => (await wallReport()).avai
  */
 async function confineCommand(deps: ContractGuardDeps, name: string, args: unknown, context: ToolContext): Promise<Pick<ToolContext, "writesConfinedTo">> {
   const scope = workspacePath(deps.workspace, "", deps.registry.pathScope() || ".") ?? "";
-  const worktree = worktreeOf(scope);
+  const cwdFolder = workspacePath(deps.workspace, "", commandFolder(context.workspace || deps.workspace, cwdOf(args).cwd));
+  // The active project's worktree, or the one this task prepared itself (it stays in its conversation's project).
+  const own = cwdFolder !== null ? worktreeOf(cwdFolder) : "";
+  const worktree = worktreeOf(scope) || (own && preparedByTask(deps.store, deps.book, deps.owner, own, context.runId) ? own : "");
   if (name !== confinableCommand)
     refuse(deps, context, name, worktree, `${whileCheckedOut}${name} is refused: Branch cannot hold the program it starts to one folder. Only shell.execute runs then, from the active self-development worktree, behind the OS sandbox.`);
   const folder = workspacePath(deps.workspace, "", commandFolder(context.workspace || deps.workspace, cwdOf(args).cwd));
@@ -553,7 +590,7 @@ function sendPinned(name: string, args: unknown, repositories: readonly string[]
   const repo = String(input.repo ?? "").toLowerCase();
   if (!repositories.includes(repo))
     return `A change to Branch itself is proposed only to ${repositories.join(" or ")}, where this worktree was made from, so no pull request is opened in ${String(input.repo ?? "") || "that repository"}.`;
-  if (input.base !== selfDevelopmentLine) return `A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds.`;
+  if (!selfDevelopmentBase(input.base)) return `A change to Branch itself is proposed only to ${selfDevelopmentBaseWords}.`;
   if (input.draft !== true) return "A change to Branch itself is opened only as a draft pull request, for the owner to review.";
   const head = String(input.head ?? "").replace(/^[A-Za-z0-9-]{1,39}:/, "");
   return sentLine.test(`refs/heads/${head}`) ? null : `${head || "That line"} is not a branch/… line of work, so no pull request is opened from it.`;

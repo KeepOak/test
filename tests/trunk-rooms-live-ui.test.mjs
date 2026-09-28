@@ -91,7 +91,8 @@ test("from the keyboard: the menu key on a Trunk's row lists the others, each a 
   await page.keyboard.press("Shift+F10");
   const items = page.locator('.pop [data-act="room-both"]');
   await items.first().waitFor({ state: "visible" });
-  assert.deepEqual(await items.locator(".mi-t").allInnerTexts(), ["Open a room with Lee", "Open a room with Max"]);
+  const eligible = (await call("/api/trunks")).trunks.filter(trunk => trunk.id !== kim.id && !trunk.hidden);
+  assert.deepEqual((await items.locator(".mi-t").allInnerTexts()).sort(), eligible.map(trunk => `Open a room with ${trunk.name}`).sort(), "every other eligible Trunk, including the default, is offered exactly once");
   await page.locator(`.pop [data-act="room-both"][data-b="${max.id}"]`).focus();
   await page.keyboard.press("Enter");
   let list = [];
