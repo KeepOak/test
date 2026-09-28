@@ -868,6 +868,8 @@ export interface PosixDesktopOptions {
   env?: NodeJS.ProcessEnv;
   exec?: PosixExec;
   locate?: (name: string) => string | null;
+  /** How long one Windows action may take (default 25 s); a busy CI runner compiling the script's C# needs longer. */
+  timeoutMs?: number;
 }
 
 export class DesktopScriptRunner {
@@ -912,7 +914,7 @@ export class DesktopScriptRunner {
       executable: this.executable,
       args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Action', action, '-Payload', body],
       cwd: tmpdir(), env: scriptEnvironment(),
-      signal, timeoutMs, maxOutputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
+      signal, timeoutMs: Math.min(120000, Math.max(1000, this.posix.timeoutMs ?? timeoutMs)), maxOutputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
     });
     const outcome = await child.run();
     if (outcome.status !== 'completed' || outcome.exitCode !== 0)

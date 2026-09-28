@@ -84,19 +84,29 @@ async function testWindow(t, exclude) {
   });
   return { handle: line[1], processId: Number(line[2]), affinity: Number(line[3]) };
 }
-const runner = new DesktopScriptRunner();
-const signal = () => AbortSignal.timeout(90000);
+// A hosted runner shares its CPU with the rest of the lane, and each action compiles the script's C# afresh: its
+// actions get two minutes, and each says how long it took.
+const real = new DesktopScriptRunner(undefined, { timeoutMs: 120000 });
+const runner = {
+  async run(action, payload, signal) {
+    const started = Date.now();
+    try { return await real.run(action, payload, signal); } finally { console.log(`# ${action}: ${Date.now() - started} ms`); }
+  },
+  liveProcess: (target, exclusion) => real.liveProcess(target, exclusion),
+};
+const signal = () => AbortSignal.timeout(150000);
 async function listed(handle) {
   const { windows } = await runner.run("windows", {}, signal());
   return (Array.isArray(windows) ? windows : [windows]).find((w) => String(w.handle) === handle);
 }
 async function titled(handle, pattern) {
-  for (let i = 0; i < 60; i++) {
-    const found = await listed(handle);
-    if (found && pattern.test(found.title)) return found.title;
-    await new Promise((done) => setTimeout(done, 250));
+  let title;
+  for (let i = 0; i < 6; i++) {
+    title = (await listed(handle))?.title;
+    if (title && pattern.test(title)) return title;
+    await new Promise((done) => setTimeout(done, 1000));
   }
-  return (await listed(handle))?.title;
+  return title;
 }
 function pixel(path, x, y) {
   const read = spawnSync(powerShellPath, ["-NoProfile", "-NonInteractive", "-Command",
@@ -105,7 +115,7 @@ function pixel(path, x, y) {
   return read.stdout.trim();
 }
 
-test("the real script reads parts with refs, presses a named button without the pointer, and refuses a covered spot", { timeout: 240000 }, async (t) => {
+test("the real script reads parts with refs, presses a named button without the pointer, and refuses a covered spot", { timeout: 600000 }, async (t) => {
   const proof = await testWindow(t, false);
   let started = Date.now();
   assert.ok(await listed(proof.handle), "the test window is listed");
@@ -136,7 +146,7 @@ test("the real script reads parts with refs, presses a named button without the 
     /moved or changed size/);
 });
 
-test("the real close-up and the live reader take the window from the window itself", { timeout: 240000 }, async (t) => {
+test("the real close-up and the live reader take the window from the window itself", { timeout: 600000 }, async (t) => {
   const proof = await testWindow(t, false);
   const out = join(folder, "zoom.png");
   const zoom = await runner.run("zoom", { handle: proof.handle, region: { x: 300, y: 200, width: 40, height: 40 }, scale: 2, outPath: out }, signal());
@@ -154,7 +164,7 @@ test("the real close-up and the live reader take the window from the window itse
   assert.ok(Buffer.from(frame.data, "base64").subarray(0, 2).equals(Buffer.from([0xff, 0xd8])), "a JPEG of that window");
 });
 
-test("a display is framed only while every window the view must leave out is excluded from capture", { timeout: 240000 }, async (t) => {
+test("a display is framed only while every window the view must leave out is excluded from capture", { timeout: 600000 }, async (t) => {
   const hidden = await testWindow(t, true), shown = await testWindow(t, false);
   assert.equal(hidden.affinity, 0x11, "WDA_EXCLUDEFROMCAPTURE took on this Windows");
   assert.equal(shown.affinity, 0);
