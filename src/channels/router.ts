@@ -13,7 +13,9 @@ import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifact
 import { decide, readSenderAllowlist } from "./allowlist.js";
 import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
-import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
+import { compactSummary, pageChatSteps, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
+import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
+import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
@@ -26,7 +28,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
-import { platformGate } from "../reach/platform.js"; // r17-i
+import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
@@ -170,6 +172,11 @@ export interface ChannelAdapter {
    * Absent means there is no progress message and replies are not streamed.
    */
   edit?(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void>;
+  /**
+   * Removes a message this adapter sent (the owner's "remove the steps message after a good answer",
+   * src/channels/steps-display.ts `cleanup`). Absent means this app cannot, and the message stays.
+   */
+  deleteMessage?(chatId: string, messageId: string): Promise<void>;
   // ---- R17-C (R17-022): a file delivered into the chat as the app's own attachment -------------
   // Absent means "this app cannot". A failure must throw. Only `chat.send_file`
   // (src/personal/chat-files.ts) calls it, after the owner, recipient, size and leak checks.
@@ -540,7 +547,20 @@ export class ChannelRouter {
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
+      // Settings › Chat apps › Show steps in chats: the knobs, for every app and for each (src/channels/steps-display.ts).
+      steps: this.stepsView(),
     };
+  }
+  /** The steps knobs with what each connected app can do and what it will show, for the Chat apps card. */
+  stepsView() {
+    return { settings: this.stepsSettings(), apps: [...this.adapters.values()].map(({ adapter }) => {
+      const caps = stepsCapsOf(adapter.kind), display = this.stepsDisplay(adapter.id);
+      const name = caps ? (adapter.id === adapter.kind ? caps.name : `${caps.name} (${adapter.id})`) : adapter.id;
+      return { id: adapter.id, kind: adapter.kind, name, edit: !!adapter.edit, display,
+        shows: caps ? stepsBehaviour(caps, display) : stepsBehaviour({ kind: adapter.kind, name: adapter.kind, edit: !!adapter.edit,
+          code: "plain", maxText: adapter.maxTextLength ?? 3500, reactions: !!adapter.react, typing: !!adapter.sendTyping, replies: false,
+          ...(adapter.paidPerMessage ? { paid: true } : {}) }, display) };
+    }) };
   }
   /** Changes the chat extras' switches (chat-live-settings.ts); the ones not named stay as they are. */
   setSwitches(input: unknown): ChatLiveSwitches {
@@ -873,15 +893,22 @@ export class ChannelRouter {
   switches(): ChatLiveSwitches {
     return chatLiveSwitches(this.store, this.runtime.owner);
   }
+  /** One of the accounts the owner named as their own: in "Commands from your own chat" or as a /platform owner. */
+  private ownAccount(channel: string, senderId: string): boolean {
+    const same = (account: { channel: string; sender: string }) => account.channel === channel && account.sender === senderId;
+    return ownerCommands(this.store, this.runtime.owner).accounts.some(same) || platformSettings(this.store, this.runtime.owner).owners.some(same);
+  }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
     const setting = this.switches().commands;
-    // As shipped, the owner's paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    // As shipped, the owner's own paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    // Only an account the owner named as their own (Commands from your own chat, or /platform's owners) counts:
+    // a paired friend or household member keeps the switch as it is.
     const pairedDm = setting === "off" && message.chatKind === "direct" && this.pair(message.channel, message.senderId)?.status === "approved"
-      && commandsInPairedDm(this.store, this.runtime.owner);
+      && this.ownAccount(message.channel, message.senderId) && commandsInPairedDm(this.store, this.runtime.owner);
     if ((setting === "off" && !pairedDm) || message.voice) return null;
     // Wave mac3 (commands): which of the shared table's commands a chat may read follows the owner's switch.
     const command = parseChatCommand(message.text, commandMode(this.store, this.runtime.owner));
@@ -1230,7 +1257,9 @@ export class ChannelRouter {
     const steps = this.stepsLine(message, run, ok);
     const text = (steps ? `${steps}\n\n` : "") + quoted + said + (footer ? `\n\n${footer}` : "");
     await live?.finish(ok ? "done" : "error");
-    await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null);
+    const delivered = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null);
+    // The owner's "remove the steps message after a good answer"; a failed task keeps it as the record.
+    if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
     if (message.voice) await this.voiceReply(message, said).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
@@ -1239,7 +1268,7 @@ export class ChannelRouter {
    * same trace even though the task itself has already settled. When the progress message already
    * became the reply, it is only written down.
    */
-  private async sendReply(message: InboundMessage, runId: string, text: string, placed: PlacedReply | null): Promise<void> {
+  private async sendReply(message: InboundMessage, runId: string, text: string, placed: PlacedReply | null): Promise<boolean> {
     const span = this.runtime.tracer.startAfter(runId, "delivery", `branch.delivery ${message.channel}`, {
       "branch.channel": message.channel, "branch.delivery.characters": text.length,
     });
@@ -1248,11 +1277,11 @@ export class ChannelRouter {
       for (const [index, part] of (placed.rest ?? []).entries())
         await this.deliver(message.channel, message.chatId, part, `reply:${runId}:rest:${index}`, message.messageId);
       span?.end("ok", "", { "branch.delivery.queued": 0 });
-      return;
+      return true;
     }
-    await this.deliver(message.channel, message.chatId, text, `reply:${runId}`, message.messageId)
-      .then((sent) => span?.end("ok", "", { "branch.delivery.queued": sent.queued }))
-      .catch((error) => span?.end("error", error instanceof Error ? error.message : String(error)));
+    return this.deliver(message.channel, message.chatId, text, `reply:${runId}`, message.messageId)
+      .then((sent) => { span?.end("ok", "", { "branch.delivery.queued": sent.queued }); return sent.sent; })
+      .catch((error) => { span?.end("error", error instanceof Error ? error.message : String(error)); return false; });
   }
   /**
    * At most `maxChatTasks` chats have a task working at once. No adapter waits for one message
@@ -1275,13 +1304,21 @@ export class ChannelRouter {
   }
   private liveFor(message: InboundMessage, runOf: () => string | null = () => null): LiveStatus | null {
     const adapter = this.adapters.get(message.channel)?.adapter, switches = this.switches(), setting = switches.liveStatus;
-    if (!adapter || setting === "off" || !this.liveOn() || (!adapter.sendTyping && !adapter.react && !adapter.edit)) return null;
+    // An app with none of typing, reactions or edits still gets a message per step when the owner chose that for it.
+    const eachStep = !!adapter && !adapter.edit && !adapter.paidPerMessage && message.chatKind === "direct" && switches.steps !== "off"
+      && this.stepsDisplay(message.channel).noEdit === "each" && this.stepsDisplay(message.channel).detail !== "off";
+    if (!adapter || setting === "off" || !this.liveOn() || (!adapter.sendTyping && !adapter.react && !adapter.edit && !eachStep)) return null;
     // A group shares one bot with other people: Telegram lets a bot post about 20 messages a minute there, edits included.
     const timing = message.chatKind === "group" ? { ...this.liveTiming, editEveryMs: Math.max(this.liveTiming.editEveryMs, this.groupEditEveryMs) } : this.liveTiming;
     // The steps name files and commands, so only a direct chat is shown them: this message already passed the sender check.
-    const steps = switches.steps !== "off" && message.chatKind === "direct" ? this.stepsOf(runOf) : undefined;
+    const display = this.stepsDisplay(message.channel);
+    const steps = switches.steps !== "off" && message.chatKind === "direct" && display.detail !== "off"
+      && (adapter.edit || eachStep) ? this.stepsOf(runOf, display, !adapter.edit) : undefined;
+    // A group gets counts of kinds of step, or (the owner's "no steps in groups") no progress message at all.
+    // An app whose steps the owner turned off gets no progress message either: typing and the reaction still show.
+    const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
-      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group" }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
+      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress }, (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
   }
   private replyFor(message: InboundMessage): ReplyStream | null {
     const adapter = this.adapters.get(message.channel)?.adapter;
@@ -1298,7 +1335,9 @@ export class ChannelRouter {
    */
   private stepsLine(message: InboundMessage, run: Run, ok: boolean): string | null {
     const adapter = this.adapters.get(message.channel)?.adapter;
-    if (!adapter || adapter.edit || adapter.paidPerMessage || message.chatKind !== "direct" || this.switches().steps === "off") return null;
+    const display = this.stepsDisplay(message.channel);
+    if (!adapter || adapter.edit || adapter.paidPerMessage || message.chatKind !== "direct" || this.switches().steps === "off"
+      || display.detail === "off" || display.noEdit !== "summary") return null;
     if (Date.parse(run.updatedAt) - Date.parse(run.createdAt) < this.liveTiming.progressAfterMs) return null;
     const view = this.stepsOf(() => run.id).view();
     return this.hideLeaks(compactSummary(view, ok ? "done" : "error") ?? "") || null;
@@ -1308,7 +1347,8 @@ export class ChannelRouter {
    * progress message is next edited, scrubbed as GET /api/runs/:id/live scrubs them, and each piece through the chat's
    * leak guard before it is placed (src/channels/progress-render.ts).
    */
-  private stepsOf(runOf: () => string | null): StepsSource & { view(): ChatStepsView } {
+  private stepsOf(runOf: () => string | null, display: StepsDisplay = stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: "", kind: "" }),
+    cannotEdit = false): StepsSource & { view(): ChatStepsView } {
     const owner = this.runtime.owner;
     const deps = {
       thoughtsOf: () => [], // a chat is not shown the model's thoughts
@@ -1317,15 +1357,29 @@ export class ChannelRouter {
         ?? specialistName(this.store, owner, agent) ?? (recorded?.trim() || "A helper"),
       scrub: (text: string) => this.runtime.hideSecrets(text),
     };
+    const each = display.grouping === "each" || cannotEdit;
+    const knobs = { scrub: (text: string) => this.hideLeaks(text), lineChars: display.lineChars, commands: display.commands,
+      ...(display.detail === "off" ? {} : { detail: display.detail }) };
     const view = (): ChatStepsView => {
       const runId = runOf();
       return runId && this.store.run(runId) ? this.runtime.hideSecrets(liveSteps(this.store, runId, deps)) : { steps: [], seconds: null };
     };
     return {
       view,
-      render: (limit, final) => renderChatSteps(view(), { limit, scrub: (text) => this.hideLeaks(text), ...(final ? { final } : {}) }),
+      render: (limit, final) => renderChatSteps(view(), { ...knobs, limit, ...(final ? { final } : {}) }),
+      // Hermes Agent's overflow (a new message) unless the owner keeps only the newest lines; `each` is a message a step.
+      ...(display.overflow === "roll" || each ? { pages: (limit: number, final?: "done" | "error") =>
+        pageChatSteps(view(), { ...knobs, limit, each, ...(final ? { final } : {}) }) } : {}),
+      each,
     };
   }
+  /** The steps knobs for one connected app (Settings › Chat apps, src/channels/steps-display.ts). */
+  stepsDisplay(channel: string): StepsDisplay {
+    const adapter = this.adapters.get(channel)?.adapter;
+    return stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: channel, kind: adapter?.kind ?? channel });
+  }
+  stepsSettings(): StepsSettings { return stepsSettings(this.store, this.runtime.owner); }
+  setStepsSettings(input: unknown): StepsSettings { return saveStepsSettings(this.store, this.runtime.owner, input); }
   /** mac6/bucket-16 integration: whether a sender may use a connected chat app, without offering a code. */
   senderAllowed(channel: string, senderId: string): boolean {
     const entry = this.adapters.get(channel);
