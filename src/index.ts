@@ -1,3 +1,4 @@
+import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
@@ -64,7 +65,7 @@ import { startMcpServer } from "./mcp-server.js";
 import { McpConnections, readLifecycleSettings } from "./mcp-lifecycle.js";
 import { integrationsFileTrusted, recordWorktreeCopy } from "./folder-trust.js";
 import type { CachedMcpTool } from "./integrations/mcp.js";
-import type { WatchedWindow } from "./integrations/browser.js"; // live-stage
+import type { BranchBrowser } from "./integrations/browser.js";
 import { registerMcpTools } from "./mcp-tools.js";
 import { A2aServer } from "./a2a.js";
 import { RemoteAgents, registerRemoteAgents } from "./a2a-client.js";
@@ -1646,9 +1647,7 @@ export async function createBranch(options: {
      * The live browser, once the launcher has loaded the integration settings, so Settings can
      * offer the sign-in-once window. It stays null when no browser is configured.
      */
-    browser: null as null | { signIn(owner: string, name: string, url: string, timeoutMs?: number): Promise<{ name: string; cookies: number; sites: number }>;
-      /** live-stage: what a run's own window shows now (src/live-stage.ts). */
-      watch?(owner: string, runId: string): Promise<WatchedWindow | null> },
+    browser: null as BranchBrowser | null,
     /**
      * Batch 26 (wave 8): what the firewall card needs that only the launch knows — the sites the
      * browser may open at all, and whether commands on this computer are pointed at a dead address.
@@ -1797,6 +1796,7 @@ export async function createBranch(options: {
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
+      closeSpareAgents(); // copies of Claude Code started ahead of time for the next question (src/providers/cli-agent.ts)
       await rings.idle(); // Seasons: a night under way finishes its step before the database closes
       await budding.close(); // Stop a resumed task before closing the connectors and private database.
       // Wave 8: a connection that stays open must not outlive the app either.

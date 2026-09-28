@@ -58,19 +58,14 @@ function photoOf(t) {
   return photos.get(data);
 }
 
-/* The prototype's Branch has no colour of its own (its chat's `c.color || '#2F6F5E'`). */
-const BRANCH_TINT = "#2F6F5E";
-
 /* A Trunk's face, in the prototype's order: its photo, else its character if it has a look (moving, core/figures.js),
-   its emoji on a pebble, else the pebble with eyes. The pebble takes its eyes and how it moves. Branch is its own
-   character, acting out the conversation sessionId (a Trunk acts out its own conversation). */
+   its emoji on a pebble, else the pebble with eyes. The pebble takes its eyes and how it moves.
+   Branch uses the logo; each Trunk's character acts out its own conversation. */
 /* The prototype's list marks (app.css .av.working, .av.waiting): a moving copper ring while a task of its conversation
    works, a copper dot while one waits for you (core/doing.js agentState, from GET /api/state runs and attention). */
 const RING = { work: " working", wait: " waiting" };
 export function av(trunk, size = 40, sessionId) {
   if (!trunk) return "";
-  const branch = (trunk.kind === "main" || trunk.isBranch) && look17("branch");
-  if (branch) { const st = agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }); return figureFace(branch, st, `--s:${size}px;--c:${BRANCH_TINT}`, st === "work" ? RING.work : "", size, "branch"); }
   if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
