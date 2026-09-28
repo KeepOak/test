@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
 import { matrixHtml } from "./progress-render.js";
 import { handle } from "./email.js";
+import { ReactionAnswers } from "./reaction-answers.js";
 import { reconnectDelay } from "./ws-client.js";
 import { catchUpBatch, MarkKeeper, type ChannelMark } from "./catch-up.js"; // mac6/bucket-16
 
@@ -74,6 +75,15 @@ export class MatrixAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.options.userId; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when the home server last answered a sync (an empty one counts; it answers every 30 s). */
+  private contactAt = Date.now();
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled sync again from where it had got to. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     this.loop = this.run(onMessage);
     await Promise.race([this.loop, new Promise((resolve) => setTimeout(resolve, 50))]);
@@ -93,6 +103,7 @@ export class MatrixAdapter implements ChannelAdapter {
     for (let attempt = 0; !this.stopping; attempt++) {
       try {
         const synced = await this.sync();
+        this.contactAt = Date.now();
         const batch = resumed ? catchUpBatch(synced) : synced;
         resumed = false;
         this.state = { state: "connected", ...(this.encryptedSeen ? { reason: `${this.encryptedSeen} message(s) arrived in an encrypted room, which this assistant cannot read` } : {}) };
@@ -130,11 +141,30 @@ export class MatrixAdapter implements ChannelAdapter {
     for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
       for (const event of room.timeline?.events ?? []) {
         if (event.type === "m.room.encrypted") { this.encryptedSeen++; continue; }
-        const inbound = this.inbound(roomId, event);
+        const inbound = event.type === "m.reaction" ? this.answer(roomId, event) : this.inbound(roomId, event);
         // The first answer carries whatever was already there; answering it would reply to history.
         if (inbound && !first) messages.push(inbound);
       }
     return messages;
+  }
+  /** Questions a 👍 / 👎 annotation may answer, by the question's own event id (src/channels/reaction-answers.ts). */
+  private readonly answers = new ReactionAnswers();
+  watchAnswers(chatId: string, messageId: string, senderId: string, fingerprint: string): void {
+    const eventId = this.sent.get(messageId);
+    if (eventId) this.answers.watch(eventId, chatId, senderId, fingerprint);
+  }
+  /** An annotation on one of Branch's own questions, by the person it asked, in that room, is that question's answer. */
+  private answer(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const relates = z.object({ rel_type: z.literal("m.annotation"), event_id: z.string().max(300), key: z.string().max(40) }).passthrough()
+      .safeParse((event.content as Record<string, unknown> | undefined)?.["m.relates_to"]);
+    const sender = event.sender ?? "";
+    if (!relates.success || !sender || sender === this.options.userId) return null;
+    const chatId = handle(roomId, "room"), senderId = handle(sender, "who");
+    const said = this.answers.read(relates.data.event_id, chatId, senderId, relates.data.key);
+    if (!said) return null;
+    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
+      messageId: handle(event.event_id ?? randomUUID(), "msg") };
   }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
     if (event.type === "m.room.message" && ["m.image", "m.file", "m.video", "m.audio"].includes(event.content?.msgtype ?? "")) return this.fromFile(roomId, event);

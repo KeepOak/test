@@ -129,6 +129,23 @@ test("history repair: orphans, repeats and missing results; the kept list is not
   assert.deepEqual(repairHistory(clean, "full"), { messages: clean, fixes: [] });
 });
 
+test("history repair: a local model's call ids, reused in every answer, keep their real results", () => {
+  // Ollama and LM Studio number calls afresh each answer. Before, the second "call_0" result was dropped as a repeat,
+  // so an approved call looked as if it never happened.
+  const history = [
+    { role: "user", content: "read both" },
+    { role: "assistant", content: "", toolCalls: [call("call_0")] }, result("call_0", "first file"),
+    { role: "assistant", content: "", toolCalls: [call("call_0")] }, result("call_0", "second file"),
+    { role: "assistant", content: "Both read." },
+  ];
+  const { messages, fixes } = repairHistory(history, "needed");
+  assert.deepEqual(fixes, []);
+  assert.deepEqual(messages.filter((m) => m.role === "tool").map((m) => m.content), ["first file", "second file"]);
+  // A repeat inside one answer is still a repeat.
+  const twice = repairHistory([{ role: "assistant", content: "", toolCalls: [call("call_0")] }, result("call_0"), result("call_0", "again")], "needed");
+  assert.deepEqual(twice.fixes, ["dropped a second result for one call"]);
+});
+
 test("history repair when on also joins messages in a row and drops empty answers", () => {
   const { messages, fixes } = repairHistory([
     { role: "user", content: "one" }, { role: "user", content: "two", images: [{ mime: "image/png", data: "x" }] },
@@ -150,10 +167,14 @@ test("inside the app the sent copy is repaired and the task says so", async (t) 
   // A broken history, as an interrupted import might leave it: a result with no call.
   app.store.message(first.sessionId, { role: "tool", toolCallId: "lost", content: "{}" });
   await api("/api/run", { prompt: "again", sessionId: first.sessionId });
-  assert.ok(seen[1].some((m) => m.toolCallId === "lost"), "off: sent as it was");
+  assert.equal(seen[1].some((m) => m.toolCallId === "lost"), false, "ships when needed: the orphan is not sent");
+  await api("/api/safety-extras/switch", { part: "history-repair", mode: "off" });
+  const offRun = await api("/api/run", { prompt: "off now", sessionId: first.sessionId });
+  assert.ok(seen[2].some((m) => m.toolCallId === "lost"), "the owner's off: sent as it was");
+  void offRun;
   await api("/api/safety-extras/switch", { part: "history-repair", mode: "when-needed" });
   const third = await api("/api/run", { prompt: "and again", sessionId: first.sessionId });
-  assert.equal(seen[2].some((m) => m.toolCallId === "lost"), false);
+  assert.equal(seen[3].some((m) => m.toolCallId === "lost"), false);
   assert.ok(app.store.messages(first.sessionId).some((m) => m.toolCallId === "lost"), "the kept conversation is unchanged");
   assert.ok(app.store.events(third.id).some((event) => event.kind === "history.repaired"));
 });
