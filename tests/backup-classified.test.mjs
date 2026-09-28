@@ -168,6 +168,7 @@ test("every place that works out a settings key in code has been read", () => {
 // NAS eba8bd8: a conversation's waiting line never travels, so a file cannot queue words to run as the owner's next task.
 test("a conversation's waiting line, a plan and a chat's link are never put in place from a file", () => {
   assert.equal(staysOnThisComputer("followups:any"), true);
+  assert.equal(staysOnThisComputer("wakeup:any"), true, "a wake-up's words never arrive from a file either");
   for (const id of ["plan:any", "channel-session:telegram:1", "project:any", "session-model:any", "slack-automations", "models"])
     assert.equal(heldForTheOwner(id) && !staysOnThisComputer(id), true, `${id} waits for the owner`);
 });
