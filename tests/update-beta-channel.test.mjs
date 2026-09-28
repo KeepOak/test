@@ -259,7 +259,12 @@ test("under Lockdown the channel follows the existing update rules exactly, and 
   assert.deepEqual(readComfort(app.store, owner, "notify"), before, "turning Lockdown on leaves the card");
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.channel, "beta");
   const planDuring = (await call("POST", "/api/comfort/update-plan", { updaterPhase: "available" })).body;
-  assert.deepEqual([planDuring.step, planDuring.reason], [planBefore.step, planBefore.reason], "what the updater is told to do is unchanged");
+  assert.equal(planBefore.step, "install", "before Lockdown, the ready version installs by itself");
+  // PLAT-148: under Lockdown nothing installs by itself, on the beta channel exactly as on stable (src/comfort/auto-update.ts).
+  assert.deepEqual([planDuring.step, planDuring.until], ["nothing", "Lockdown is off"], "held by Lockdown as every channel is");
+  await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: "stable" } });
+  const stableDuring = (await call("POST", "/api/comfort/update-plan", { updaterPhase: "available" })).body;
+  assert.deepEqual([stableDuring.step, stableDuring.reason], [planDuring.step, planDuring.reason], "the channel changes nothing about it");
   const byItself = await call("POST", "/api/comfort", { card: "notify", values: { autoUpdate: "check" } });
   const channel = await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: "stable" } });
   assert.equal(channel.status, byItself.status, "the channel is refused or kept exactly as update by itself is");
