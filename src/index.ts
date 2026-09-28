@@ -872,6 +872,8 @@ export async function createBranch(options: {
   channels.liveAllowed = () => !lockedDown(store, runtime.owner);
   // ...and nothing key-shaped or secret shows in a step label or streamed text (mac2/leak-guard).
   channels.hideLeaks = (text) => redactLeaksIn(store.secrets.scrubber.deep(text)).value;
+  // Data carried out in an address a task opens (src/egress-guard.ts): the values the locker has unlocked.
+  runtime.egress.secrets = () => store.secrets.scrubber.values();
   runtime.hideSecrets = (value) => {
     // mac2/leak-guard: key-shaped values nobody looked up are hidden in logs and question cards too.
     const scrubbed = redactLeaksIn(store.secrets.scrubber.deep(value)).value;

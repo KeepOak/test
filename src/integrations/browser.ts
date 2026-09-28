@@ -3,6 +3,7 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { chromium, type Browser, type Download, type Locator, type Page } from 'playwright';
 import { z } from 'zod';
+import { carriedData } from '../egress-guard.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
 import type { RunArtifacts } from '../artifacts.js';
@@ -86,6 +87,8 @@ interface RunEntry {
   profile: string | null;
   /** The numbers handed out to the things on the pages this task has looked at. */
   marks: MarkRegistry;
+  /** The address the task itself asked `navigate` for, already judged (and asked about) as that tool call. */
+  asked?: string;
   /** The owner's own browser, while this task is borrowing it. */
   borrowed: AttachedBrowser | null;
   // w911 (A1726) hook: a benchmark window (see benchmarkWindow) — its one extra origin, and whether
@@ -178,6 +181,11 @@ export class BranchBrowser {
    */
   siteSkills: ((owner: string) => SiteSkills) | undefined;
 
+  /**
+   * The secret values this launch has unlocked (src/egress-guard.ts). A page the browser is sent to whose address
+   * carries one, or a card or account number (a form sent by address, a link, a redirect), is not opened.
+   */
+  egressSecrets: (() => readonly string[]) | undefined;
   /** R17-S19: the owner's browser care (Settings › Computer & browser); defaults without a store. */
   private care(owner: string): BrowserCare {
     return this.store ? browserCare(this.store, owner) : browserCareDefaults;
@@ -199,6 +207,8 @@ export class BranchBrowser {
     if (this.anyWebsite && entry?.granted !== target.origin) await this.networkRules().assertAllowed(target, 'browser address');
     // Playwright says 'document' and Chromium's pause says 'Document'; both are the same navigation.
     if (request.resourceType.toLowerCase() !== 'document') return;
+    const carried = this.egressSecrets && request.url !== entry?.asked ? carriedData(request.url, this.egressSecrets()) : null;
+    if (carried) throw new Error(`That page's address would carry ${carried} out of Branch, so it was not opened`);
     if (entry?.granted !== target.origin && !this.anyWebsite)
       await this.policy?.assertAllowed(target, 'browser address');
     // How many different websites a task may visit is charged here, where every real navigation
@@ -332,6 +342,7 @@ export class BranchBrowser {
     if (refused) throw new Error(refused);
     if (!entry.origins.has(origin) && entry.origins.size >= this.config.maxOriginsPerRun)
       throw new Error(originStop(this.config.maxOriginsPerRun));
+    entry.asked = new URL(url).href;
     return this.operation(context, async page => {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
       // Counted only once the page really opened, so a refused address costs the task nothing.

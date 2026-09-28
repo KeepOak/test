@@ -164,6 +164,7 @@ import { troubleshootInTask } from "./troubleshoot.js"; // w911 (A0374) hook: th
 import { RequestCache, type CacheKeyParts } from "./request-cache.js";
 import { traceSettings, writeRunTrace } from "./trace.js";
 import { LeakGuard } from "./leak-guard.js";
+import { EgressGuard } from "./egress-guard.js";
 // mac2/fly-core: the mushroom-body learning core.
 import { watchTask } from "./fly-core/hook.js";
 // Bucket 13 (A1589): the bound on pictures a task keeps in view.
@@ -723,6 +724,8 @@ export class Runtime {
   // key or password to the owner first. Used at three marked places below: checkPolicy, complete
   // and callTool.
   readonly leakGuard = new LeakGuard((runId, kind, detail) => this.store.event(runId, kind, detail));
+  /** What an address a task opens carries out (src/egress-guard.ts): asked about, noted and, past a limit, refused. */
+  readonly egress = new EgressGuard((runId, kind, detail) => this.store.event(runId, kind, detail));
   // --- end mac2/leak-guard ---
   /** Questions the approval policy is waiting on, and the answers kept for each conversation. */
   readonly approvals = new ApprovalGate();
@@ -1979,6 +1982,7 @@ ${run.output.slice(0, 6000)}`;
   }
   private finish(run: Run, status: Run["status"], output: string): Run {
     const finished = this.store.finish(run.id, status, output);
+    this.egress.forget(run.id);
     this.store.event(run.id, "run.finished", { status, output });
     // Live steps: a finished task's thoughts go a minute later (the window has folded its steps by then).
     if (this.thoughtsNow.has(run.id)) setTimeout(() => this.thoughtsNow.delete(run.id), 60_000).unref?.();
@@ -3722,9 +3726,15 @@ ${run.output.slice(0, 6000)}`;
     const learning = this.learningOf(context.runId);
     if (learning && !learning.tools.has(tool))
       return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: learningToolRefusal };
-    // mac2/leak-guard: an address carrying a key or password is asked about even where rules allow it.
+    // Data carried out in an address: many addresses on one site, or short links, past a limit are refused for now.
+    const address = (args as { url?: unknown } | null)?.url;
+    const egress = typeof address === "string" ? this.egress.check(context.runId, address) : null;
+    if (egress?.refuse) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: egress.refuse };
+    // mac2/leak-guard: an address carrying a key or password is asked about even where rules allow it, and so is one
+    // carrying a value from the locker or a card or account number (src/egress-guard.ts), under every mode.
     const policy = this.policy(source, context.runId);
-    const whole = this.leakGuard.tighten(evaluatePolicy(policy, { tool, target, readOnly, resource, trunk: context.trunk }), args);
+    const leaked = this.leakGuard.tighten(evaluatePolicy(policy, { tool, target, readOnly, resource, trunk: context.trunk }), args);
+    const whole = egress?.ask && leaked.decision !== "deny" ? { ...leaked, decision: "ask" as const, rule: null, leak: leaked.leak ?? egress.ask } : leaked;
     // mac7/multi-target: and each of them weighed by the rules; the strictest answer wins, and a refusal names it.
     const spread = every && judgeTargets(policy,
       { tool, permission, callTarget: target, args, resourceOf: (text) => this.registry.resourceOf(tool, text, args), trunk: context.trunk }, every);
