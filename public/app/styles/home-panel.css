@@ -32,3 +32,5 @@
 .hm19-chip .hm19-pick{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
 .hm19-chip .icon-btn{width:24px;height:24px;flex:none}
 .hm19-sent{margin:0;padding:8px 10px;border-radius:var(--r1-17,8px);background:var(--fill);font:12px/1.45 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-2)}
+#home19-attached:empty{display:none}
+#home19-attached .att-row{margin:0}

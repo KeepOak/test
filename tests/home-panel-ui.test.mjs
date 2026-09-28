@@ -16,14 +16,14 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { saveConversationModeSettings } from "../dist/conversation-mode.js";
+import { saveConversationModeSettings, readConversationMode } from "../dist/conversation-mode.js";
 
-async function fixture(t) {
+async function fixture(t, newConversation = "follow") {
   const root = await mkdtemp(join(tmpdir(), "branch-home-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return { content: "Noted.", toolCalls: [] }; } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
-  saveConversationModeSettings(app.store, app.runtime.owner, { newConversation: "follow" });
+  saveConversationModeSettings(app.store, app.runtime.owner, { newConversation });
   await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
@@ -110,5 +110,37 @@ test("the full-page button opens the panel's conversation as the page, with the 
   assert.deepEqual(sessions(app), [first], "it carried on in the panel's own conversation");
   assert.equal(sent(app)[1], `Working on: Settings › ${name}\n\nCarry this draft`);
   await page.waitForFunction(() => !document.querySelector(".hm19-carried"));
+  assert.deepEqual(errors, []);
+});
+
+test("the panel's new conversation starts under the owner's new-conversation mode, never looser", async (t) => {
+  const { app, page, errors } = await fixture(t, "ask");
+  await page.locator('.titlebar [data-act="home19"]').click();
+  await page.locator("#home19-prompt").fill("Hello from the panel");
+  await page.locator("#home19-prompt").press("Enter");
+  await panel(page).locator(".b .txt").filter({ hasText: "Noted." }).waitFor({ timeout: 60000 });
+  const [sid] = sessions(app);
+  assert.equal(readConversationMode(app.store, app.runtime.owner, sid)?.mode, "ask", "the owner's Ask first holds for it");
+  assert.deepEqual(errors, []);
+});
+
+test("a file attached in the panel stays in the panel's box, and goes with the draft to the full page and then with its message", async (t) => {
+  const { app, page, errors } = await fixture(t);
+  await page.locator('.titlebar [data-act="home19"]').click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.locator('[data-act="home19-attach"]').click();
+  await (await chooser).setFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("the notes") });
+  await page.locator('#home19-attached .att.ready[data-kind="text"]').waitFor({ timeout: 30000 });
+  assert.equal(await page.locator("#attached .att").count(), 0, "the conversation's own box does not show it");
+  await page.locator("#home19-prompt").fill("Read this");
+  await page.locator('#home19 [data-act="home19-full"]').first().click();
+  await page.waitForFunction(() => document.getElementById("home19").hidden);
+  assert.equal(await page.locator("#prompt").inputValue(), "Read this");
+  await page.locator("#attached .att.ready").waitFor();
+  await page.locator("#send").click();
+  const sid = await until(() => sessions(app)[0]);
+  const sent = await until(() => app.store.messages(sid).find((m) => m.role === "user"));
+  assert.match(sent.content, /Read this/);
+  assert.equal(sent.attachments?.[0]?.name, "notes.txt", "the file went with the message");
   assert.deepEqual(errors, []);
 });

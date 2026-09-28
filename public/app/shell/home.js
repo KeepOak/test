@@ -8,13 +8,15 @@
    snapshot still attached, as a chip by the box that the next message carries (chat/chat.js addSendPrefix). */
 
 import { $, esc, afterDraw, paintChanged, applyCss, render, renderNow } from "../core/dom.js";
-import { S, E, save, refresh, ownName } from "../core/state.js";
+import { S, E, save, refresh, ownName, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { ic, av, toast } from "../core/ui.js";
 import { text, plain } from "../chat/markdown.js";
 import { openConversation, startConversation, addDockItem, addSendPrefix } from "../chat/chat.js";
+import { attachedChips, pickFiles, readyUploads, filesSent, hasFiles, moveFiles } from "../chat/attach.js";
+import { newConversationMode } from "../chat/chips.js";
 import { t } from "../../i18n.js";
 
 const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: false, left: null, picked: null, carried: null };
@@ -86,7 +88,7 @@ function panel() {
       <button class="icon-btn" type="button" data-act="home19-full" aria-label="${t("window.home.full")}" data-tip="${t("window.home.full")}">${ic("panel", "s")}</button>
       <button class="icon-btn" type="button" data-act="home19" aria-label="${t("window.home.close")}">${ic("x", "s")}</button></header>
     <div class="hm19-scroll" id="home19-scroll"><div class="thread">${thread()}</div></div>
-    <div class="hm19-dock">${snapRow()}<form class="composer hm19-box" id="home19-form"><textarea id="home19-prompt" rows="1" placeholder="${words}" aria-label="${words}">${esc(draft)}</textarea>
+    <div class="hm19-dock">${snapRow()}<div id="home19-attached">${attachedChips("home19")}</div><form class="composer hm19-box" id="home19-form"><button class="c-btn" type="button" data-act="home19-attach" aria-label="${t("window.home.attach")}" data-tip="${t("window.home.attach")}">${ic("clip")}</button><textarea id="home19-prompt" rows="1" placeholder="${words}" aria-label="${words}">${esc(draft)}</textarea>
       <button class="c-btn send${draft.trim() ? " ready" : ""}" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button></form></div></section>`;
 }
 
@@ -121,9 +123,14 @@ async function loadThread(force = false) {
 }
 
 /* ---------- sending ---------- */
+/* A new conversation starts as the owner's new conversations do: their chosen mode (Ask first, Plan, …), never looser,
+   and filed under the default project, as the main box's first message is (chat/chat.js startMode, newProject). */
+async function startFields() {
+  return { ...(await newConversationMode()), ...(ownerHere() ? { project: "default" } : {}) };
+}
 async function send() {
   const box = $("#home19-prompt"), said = (box?.value ?? "").trim();
-  if (!said || H.sending) return;
+  if ((!said && !hasFiles("home19")) || H.sending) return;
   const lead = snapshotText(snapshot()), prompt = lead ? `${lead}\n\n${said}` : said, sid = homeSid();
   S.drafts.home19 = "";
   if (box) box.value = "";
@@ -132,10 +139,13 @@ async function send() {
   renderNow();
   try {
     if (sid && busy()) {
+      /* While a task works the words join its waiting line; files wait on their chips for the next message. */
       const queued = await api("flows-boards/busy/send", { sessionId: sid, prompt });
       if (queued?.message) toast(queued.message);
     } else {
-      const run = await api("run", { prompt, ...(sid ? { sessionId: sid } : {}) });
+      const uploads = await readyUploads("home19");
+      const run = await api("run", { prompt, ...(sid ? { sessionId: sid } : await startFields()), ...(uploads.length ? { uploads } : {}) });
+      filesSent("home19");
       if (!homeTrunk()) keep({ sid: run.sessionId });
     }
   } catch (error) {
@@ -157,6 +167,7 @@ async function fullPage() {
   keep({ open: false });
   S.drafts.home19 = "";
   S.drafts[sid ?? "new"] = draft;
+  moveFiles("home19", "main"); // the files wait by the page's box, sent with its next message
   if (sid) await openConversation(sid); else startConversation();
   $("#prompt")?.focus();
 }
@@ -187,9 +198,10 @@ function toggle() {
 }
 
 export function initHome() {
-  markLive(["home19", "home19-new", "home19-full", "home19-see", "home19-drop", "home19-uncarry", "sw:home19-prompt"]);
+  markLive(["home19-attach", "home19", "home19-new", "home19-full", "home19-see", "home19-drop", "home19-uncarry", "sw:home19-prompt"]);
   on("home19", () => toggle());
   on("home19-full", () => fullPage());
+  on("home19-attach", () => pickFiles(false, "home19"));
   on("home19-new", () => { if (homeTrunk()) return; keep({ sid: null }); H.messages = []; H.mark = ""; renderNow(); $("#home19-prompt")?.focus(); });
   on("home19-see", () => { H.seeing = !H.seeing; renderNow(); });
   on("home19-drop", () => { H.left = pageNow(); H.seeing = false; renderNow(); });

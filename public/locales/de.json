@@ -10136,5 +10136,6 @@
   "window.home.snap.remove": "Weglassen",
   "window.home.snap.sent": "Wird vor deiner Nachricht gesendet",
   "window.home.snap.page": "Arbeitet an: {page}",
-  "window.home.snap.picked": "Ausgewählt: „{words}“"
+  "window.home.snap.picked": "Ausgewählt: „{words}“",
+  "window.home.attach": "Dateien anhängen"
 }

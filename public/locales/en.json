@@ -10136,5 +10136,6 @@
   "window.home.snap.remove": "Leave it out",
   "window.home.snap.sent": "Sent in front of your message",
   "window.home.snap.page": "Working on: {page}",
-  "window.home.snap.picked": "Selected: “{words}”"
+  "window.home.snap.picked": "Selected: “{words}”",
+  "window.home.attach": "Attach files"
 }

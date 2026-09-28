@@ -10137,5 +10137,6 @@
   "window.home.snap.remove": "Ne pas l’inclure",
   "window.home.snap.sent": "Envoyé avant votre message",
   "window.home.snap.page": "En cours : {page}",
-  "window.home.snap.picked": "Sélection : « {words} »"
+  "window.home.snap.picked": "Sélection : « {words} »",
+  "window.home.attach": "Joindre des fichiers"
 }
