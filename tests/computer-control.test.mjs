@@ -244,3 +244,13 @@ test("off Windows the new verbs say they are Windows-only instead of trying", as
   await assert.rejects(runner.run("pointer", { handle: "1", kind: "click" }, AbortSignal.timeout(1000)), /Windows for now/);
   await assert.rejects(runner.run("zoom", { handle: "1" }, AbortSignal.timeout(1000)), /Windows for now/);
 });
+
+test("reading a window takes each part in one round trip and keeps to a time budget", () => {
+  const read = /function Read-Tree\(\$root, \$limit\) \{([\s\S]*?)\n\}\n/.exec(desktopScript)?.[1] ?? "";
+  assert.match(desktopScript, /New-Object System\.Windows\.Automation\.CacheRequest/, "a cache request gathers each part's properties at once");
+  assert.match(read, /\$clock\.ElapsedMilliseconds -gt 8000/, "the walk stops at its budget and says there is more");
+  assert.match(read, /FindAll\(\[System\.Windows\.Automation\.TreeScope\]::Children/, "children come in one call, not one per sibling");
+  assert.doesNotMatch(read, /GetNextSibling/, "no walk sibling by sibling");
+  const node = /function Read-Node\(\$node\) \{([\s\S]*?)\n\}\n/.exec(desktopScript)?.[1] ?? "";
+  assert.doesNotMatch(node, /\.Current\.|TryGetCurrentPattern/, "a part's properties come from the cache, never one call each");
+});

@@ -246,50 +246,66 @@ function Save-Window($handle, $path) {
   return @{ width = $width; height = $height; method = $method }
 }
 
+# computer-control: reading a window asks the program for everything about a part in one round trip (a UI Automation
+# cache request) and for all of a part's children in one more, instead of one round trip per property and per sibling:
+# a list of a few hundred rows once cost thousands of cross-process calls and could outlast the script's time limit.
+# The walk also stops at its limit and at a time budget (a slow or hung program answers "more", not nothing); the
+# script's own 25-second limit is the hard stop for a single call a program never answers.
+function New-ReadCache {
+  $cache = New-Object System.Windows.Automation.CacheRequest
+  foreach ($property in @($auto::NameProperty, $auto::ControlTypeProperty, $auto::AutomationIdProperty, $auto::IsEnabledProperty,
+    $auto::BoundingRectangleProperty, $auto::RuntimeIdProperty, $auto::IsValuePatternAvailableProperty,
+    [System.Windows.Automation.ValuePattern]::ValueProperty)) { $cache.Add($property) }
+  $cache.TreeFilter = [System.Windows.Automation.Automation]::ControlViewCondition
+  return $cache
+}
+
 function Read-Node($node) {
   $value = ''
-  $pattern = $null
-  try { if ($node.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) { $value = [string]$pattern.Current.Value } } catch { $value = '' }
-  $role = $node.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
-  # computer-control: a handle on this exact part (UI Automation's runtime id) and where it sits in the window, so a
-  # tool can act on it by ref even when several parts share a name. The box is in window pixels, like a picture's.
+  try { if ($node.GetCachedPropertyValue($auto::IsValuePatternAvailableProperty)) { $value = [string]$node.GetCachedPropertyValue([System.Windows.Automation.ValuePattern]::ValueProperty) } } catch { $value = '' }
+  $role = $node.Cached.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+  # A handle on this exact part (UI Automation's runtime id) and where it sits in the window, so a tool can act on it by
+  # ref even when several parts share a name. The box is in window pixels, like a picture's.
   $ref = ''
-  try { $ref = (@($node.GetRuntimeId()) -join '.') } catch { $ref = '' }
+  try { $ref = (@($node.GetCachedPropertyValue($auto::RuntimeIdProperty)) -join '.') } catch { $ref = '' }
   $box = $null
-  $area = $node.Current.BoundingRectangle
+  $area = $node.Cached.BoundingRectangle
   if ($script:origin -and -not $area.IsEmpty -and $area.Width -gt 0 -and $area.Height -gt 0) {
     $box = @([int]($area.X - $script:origin.Left), [int]($area.Y - $script:origin.Top), [int]$area.Width, [int]$area.Height)
   }
   return [pscustomobject]@{
     role = $role
-    name = $node.Current.Name
+    name = $node.Cached.Name
     value = $value
-    id = $node.Current.AutomationId
-    enabled = $node.Current.IsEnabled
+    id = $node.Cached.AutomationId
+    enabled = $node.Cached.IsEnabled
     ref = $ref
     box = $box
   }
 }
 
 function Read-Tree($root, $limit) {
-  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $clock = [System.Diagnostics.Stopwatch]::StartNew()
   $nodes = New-Object System.Collections.ArrayList
   $queue = New-Object System.Collections.Queue
-  $queue.Enqueue($root)
-  $seen = 0
-  while ($queue.Count -gt 0 -and $nodes.Count -lt $limit) {
-    $node = $queue.Dequeue()
-    $seen = $seen + 1
-    try { [void]$nodes.Add((Read-Node $node)) } catch { continue }
-    try {
-      $child = $walker.GetFirstChild($node)
-      while ($child -ne $null) {
-        $queue.Enqueue($child)
-        $child = $walker.GetNextSibling($child)
-      }
-    } catch { }
-  }
-  return @{ nodes = $nodes; more = ($queue.Count -gt 0) }
+  $cut = $false
+  $active = (New-ReadCache).Activate()
+  try {
+    $queue.Enqueue($root.GetUpdatedCache((New-ReadCache)))
+    while ($queue.Count -gt 0 -and $nodes.Count -lt $limit) {
+      if ($clock.ElapsedMilliseconds -gt 8000) { $cut = $true; break }
+      $node = $queue.Dequeue()
+      try { [void]$nodes.Add((Read-Node $node)) } catch { continue }
+      # Children are asked for only while the reading still has room for them.
+      if ($nodes.Count + $queue.Count -ge $limit) { if ($queue.Count -eq 0) { $cut = $true }; continue }
+      try {
+        foreach ($child in $node.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Automation]::ControlViewCondition)) {
+          $queue.Enqueue($child)
+        }
+      } catch { }
+    }
+  } finally { $active.Dispose() }
+  return @{ nodes = $nodes; more = ($queue.Count -gt 0 -or $cut); ms = $clock.ElapsedMilliseconds }
 }
 
 function Find-Named($root, $name) {
@@ -300,7 +316,8 @@ function Find-Named($root, $name) {
   $queue = New-Object System.Collections.Queue
   $queue.Enqueue($root)
   $checked = 0
-  while ($queue.Count -gt 0 -and $checked -lt 400) {
+  $clock = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($queue.Count -gt 0 -and $checked -lt 400 -and $clock.ElapsedMilliseconds -lt 8000) {
     $node = $queue.Dequeue()
     $checked = $checked + 1
     try { if ($node.Current.Name -like ('*' + $name + '*')) { return $node } } catch { continue }
@@ -428,7 +445,7 @@ switch ($Action) {
     $script:origin = Window-Rect $handle
     $tree = Read-Tree ($auto::FromHandle($handle)) ([int]$request.limit)
     $o = $script:origin
-    $result = @{ nodes = @($tree.nodes); more = $tree.more; title = [BranchDesktop]::Title($handle)
+    $result = @{ nodes = @($tree.nodes); more = $tree.more; readMs = $tree.ms; title = [BranchDesktop]::Title($handle)
       bounds = @{ x = $o.Left; y = $o.Top; w = $o.Right - $o.Left; h = $o.Bottom - $o.Top } }
   }
   'click' {

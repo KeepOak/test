@@ -48,7 +48,7 @@ $button = New-Object System.Windows.Forms.Button
 $button.Text = 'Proof button'; $button.Location = New-Object System.Drawing.Point(10, 10); $button.Size = New-Object System.Drawing.Size(140, 30)
 $list = New-Object System.Windows.Forms.ListBox
 $list.AccessibleName = 'Proof list'; $list.Location = New-Object System.Drawing.Point(10, 50); $list.Size = New-Object System.Drawing.Size(200, 120)
-foreach ($i in 1..40) { [void]$list.Items.Add('Row ' + $i) }
+foreach ($i in 1..500) { [void]$list.Items.Add('Row ' + $i) }
 $form.Controls.Add($button); $form.Controls.Add($list)
 $script:clicks = 0
 $button.Add_Click({ $script:clicks++ })
@@ -112,7 +112,8 @@ test("the real script reads parts with refs, presses a named button without the 
   t.diagnostic(`windows: ${Date.now() - started} ms`);
   started = Date.now();
   const reading = await runner.run("read", { handle: proof.handle, limit: 30 }, signal());
-  t.diagnostic(`read: ${Date.now() - started} ms`);
+  t.diagnostic(`read: ${Date.now() - started} ms, of which the tree walk ${reading.readMs} ms`);
+  assert.ok(reading.readMs < 8500, "the walk keeps to its time budget");
   const nodes = Array.isArray(reading.nodes) ? reading.nodes : [reading.nodes];
   const button = nodes.find((n) => n.name === "Proof button");
   assert.ok(button, `the button is listed: ${JSON.stringify(nodes.map((n) => n.name))}`);
