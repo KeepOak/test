@@ -31,6 +31,8 @@ test("General and Gateway share saved preference, while footer reports running s
   await saved.click();
   await page.waitForFunction(() => document.querySelector("#main #g-tray")?.checked === true);
   const current = () => fetch(server.url + "/api/never-break", { headers: auth }).then((r) => r.json());
+  // A native switch shows its new state at once; the engine's saved answer is what counts.
+  for (let at = 0; at < 100 && (await current()).mode !== "on"; at++) await page.waitForTimeout(100);
   assert.equal((await current()).mode, "on");
   assert.equal((await current()).underGateway, false, "saved On is not proof of a running gateway");
   assert.equal(scheduled, 0, "window-close preference never attempts schtasks setup");

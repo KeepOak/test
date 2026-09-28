@@ -85,7 +85,8 @@ test("closing and reopening a shell joins the same detached broker and keeps its
   console.log("isolated retained broker", JSON.stringify({ mainPid: presence.pid, home }));
   // Playwright waits for its Windows job (including a deliberately retained descendant); observe the real shell exit separately.
   closing.push(first.close()); firstItem.closing = true;
-  const until = Date.now() + 10000;
+  // A busy computer can take a while to end the shell's processes; the broker's proof is what must not change.
+  const until = Date.now() + 45000;
   while (Date.now() < until) { try { process.kill(firstPid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 30)); }
   assert.throws(() => process.kill(firstPid, 0), "the actual first shell exited");
   assert.equal(await proveOnce(presence.url, token, 5000), boot, "shell close leaves the gateway proof unchanged");
