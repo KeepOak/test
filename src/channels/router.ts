@@ -17,7 +17,7 @@ import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } fr
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
-import { chatLiveSwitches, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
+import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
 import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAllowed, chatExtraPermissions,
   chatApprovablePermissions, standingYesInWindow,
@@ -123,8 +123,8 @@ export interface ChannelAdapter {
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
-  /** The service's command menu, using the same names and descriptions as the shared catalog. */
-  setCommands?(commands: { command: string; description: string }[]): Promise<void>;
+  /** Syncs the app's command menu: `commands` for direct chats, `groupCommands` (the same when left out) for groups. */
+  setCommands?(commands: { command: string; description: string }[], groupCommands?: { command: string; description: string }[]): Promise<void>;
   /**
    * Sends a question with buttons to press, on the channels that have them. Absent means this
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
@@ -548,14 +548,18 @@ export class ChannelRouter {
   private menuChain: Promise<void> = Promise.resolve();
   refreshCommandMenus(): Promise<void> {
     return this.menuChain = this.menuChain.then(async () => {
-      const commands = [{ command: "new", description: "Start a fresh thread and keep earlier conversations" },
-        { command: "trunk", description: "Which Trunk answers here" },
-        ...(this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
-          .map(one => ({ command: one.name, description: one.description })))];
-      const unique = [...new Map(commands.filter(one => /^[a-z0-9_]{1,32}$/.test(one.command))
+      const base = [{ command: "new", description: "Start a fresh thread and keep earlier conversations" },
+        { command: "trunk", description: "Which Trunk answers here" }];
+      const listed = chatCommandsFor(commandMode(this.store, this.runtime.owner)).map(one => ({ command: one.name, description: one.description }));
+      const menu = (rows: { command: string; description: string }[]) => [...new Map(rows.filter(one => /^[a-z0-9_]{1,32}$/.test(one.command))
         .map(one => [one.command, one])).values()].slice(0, 100);
+      const on = this.switches().commands !== "off";
+      // As shipped, the owner's paired direct chat reads commands with the switch off, so its menu lists them too;
+      // a group's menu follows the switch (chat-live-settings.ts commandsInPairedDm).
+      const direct = menu([...base, ...(on || commandsInPairedDm(this.store, this.runtime.owner) ? listed : [])]);
+      const group = menu([...base, ...(on ? listed : [])]);
       await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
-        try { await adapter.setCommands?.(unique); }
+        try { await adapter.setCommands?.(direct, group); }
         catch { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}.`); }
       }));
     });
@@ -875,10 +879,13 @@ export class ChannelRouter {
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
     const setting = this.switches().commands;
-    if (setting === "off" || message.voice) return null;
+    // As shipped, the owner's paired direct chat reads commands even with the switch off (chat-live-settings.ts).
+    const pairedDm = setting === "off" && message.chatKind === "direct" && this.pair(message.channel, message.senderId)?.status === "approved"
+      && commandsInPairedDm(this.store, this.runtime.owner);
+    if ((setting === "off" && !pairedDm) || message.voice) return null;
     // Wave mac3 (commands): which of the shared table's commands a chat may read follows the owner's switch.
     const command = parseChatCommand(message.text, commandMode(this.store, this.runtime.owner));
-    if (!command || setting === "on") return command;
+    if (!command || setting === "on" || pairedDm) return command;
     // "When needed": only the commands for a task that is working, and only while one is; and, at any time, "/new"
     // (or "/reset"), which starts a fresh thread in this chat and keeps the one before (defaulttrunk, src/channels/threads.ts).
     const busy = this.turns.has(chatKey(message));

@@ -33,6 +33,13 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), chatgpt: new ChatGPTAuth(vault()) });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' });
+  const bin = join(root, "bin");
+  await mkdir(bin, { recursive: true });
+  for (const name of ["claude", "claude.cmd"]) await writeFile(join(bin, name), "", { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}${delimiter}${oldPath}`;
+  t.after(() => { process.env.PATH = oldPath; });
   let clock = Date.parse("2026-09-27T10:00:00Z");
   Object.defineProperty(service, "now", { value: () => clock });
   const calls = [];

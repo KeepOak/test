@@ -147,11 +147,11 @@ export class TelegramAdapter implements ChannelAdapter {
     this.stopping.abort();
     await this.loop?.catch(() => undefined);
   }
-  async setCommands(commands: { command: string; description: string }[]): Promise<void> {
-    const rows = commands.slice(0, 100).map(one => ({ command: one.command, description: one.description.slice(0, 256) }));
+  async setCommands(commands: { command: string; description: string }[], groupCommands = commands): Promise<void> {
+    const rows = (list: typeof commands) => list.slice(0, 100).map(one => ({ command: one.command, description: one.description.slice(0, 256) }));
     // Separate scopes avoid replacing command menus configured for particular chats by the owner.
-    for (const type of ["all_private_chats", "all_group_chats"])
-      await this.call("setMyCommands", { commands: rows, scope: { type } }, false, true);
+    await this.call("setMyCommands", { commands: rows(commands), scope: { type: "all_private_chats" } }, false, true);
+    await this.call("setMyCommands", { commands: rows(groupCommands), scope: { type: "all_group_chats" } }, false, true);
   }
   /** Staying connected: when Telegram last answered a poll (or when this bot started). */
   private contactAt = Date.now();
