@@ -208,7 +208,9 @@ export interface ChannelAdapter {
  */
 export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined; plain?: boolean | undefined }
 /** R17-C (R17-022): one file on its way into a chat. */
-export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Array; caption?: string }
+export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Array; caption?: string;
+  /** A spoken reply, for the apps that mark a voice message apart from an audio file (Matrix). */
+  voice?: boolean }
 
 /** One answer on an approval question, as a button. `value` is what comes back when it is pressed. */
 export interface ApprovalButton {

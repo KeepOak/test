@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { newWindow, openSettings } from "./new-window-places.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 
 test("Practice is an explicit next-task choice, keeps a rejected draft, and the next ordinary task is real", async (t) => {
   const provider = { name: "scripted", async complete(request) {
@@ -27,7 +28,7 @@ test("Practice is an explicit next-task choice, keeps a rejected draft, and the 
   await assert.rejects(readFile(join(root, "workspace", "chosen.txt")), /ENOENT/);
   await call("/api/practice-runs", { enabled: true });
   await page.locator("#prompt").press("Enter");
-  await page.waitForFunction(async () => { const { S } = await import("/app/core/state.js"); return !!S.chat && !document.querySelector(".c-flags")?.textContent.includes("Practice this task"); });
+  await waitInPage(page, async () => { const { S } = await import("/app/core/state.js"); return !!S.chat && !document.querySelector(".c-flags")?.textContent.includes("Practice this task"); });
   await page.waitForFunction(() => document.querySelector("#send")?.type === "submit");
   await assert.rejects(readFile(join(root, "workspace", "chosen.txt")), /ENOENT/);
   await page.locator("#prompt").fill("now write it");
@@ -41,6 +42,6 @@ test("Practice is an explicit next-task choice, keeps a rejected draft, and the 
   await openSettings(page, "permissions");
   await page.locator('[data-act="setlevel"][data-v="advanced"]').click();
   await page.locator("#f15-practice-runs").uncheck();
-  await page.waitForFunction(async () => { const { api } = await import("/app/core/api.js"); return (await api("practice-runs")).enabled === false; });
+  await waitInPage(page, async () => { const { api } = await import("/app/core/api.js"); return (await api("practice-runs")).enabled === false; });
   assert.deepEqual(errors, []);
 });
