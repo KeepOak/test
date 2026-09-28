@@ -11,7 +11,8 @@ import type { Store } from "./store.js";
  *
  * Its own file so src/feature-switches.ts and src/vault-autofill.ts can both read it without importing each other.
  */
-export const vaultAutofillKey = "vault-autofill";
+/** The record's name; src/vault-autofill.ts owns it (the same "vault-autofill"), and src/backup.ts classifies it. */
+const vaultAutofillKey = "vault-autofill";
 
 type Reader = Pick<Store, "get">;
 

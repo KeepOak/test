@@ -7,7 +7,7 @@ import { runOrigin, startedFromChat, startedWithShortLivedKey } from "./key-cont
 import { lockdownActive } from "./lockdown.js";
 import { whileSignInShows } from "./sign-in-showing.js";
 import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
-import { vaultAutofillKey, vaultAutofillOnBecause, vaultAutofillShipsAs } from "./vault-autofill-mode.js";
+import { vaultAutofillOnBecause, vaultAutofillShipsAs } from "./vault-autofill-mode.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -81,7 +81,7 @@ export const VaultAutofillSettingsSchema = z.object({
 }).strict();
 export type VaultAutofillSettings = z.infer<typeof VaultAutofillSettingsSchema>;
 
-export { vaultAutofillKey } from "./vault-autofill-mode.js";
+export const vaultAutofillKey = "vault-autofill";
 /** For src/feature-switches.ts: the tool this feature owns, and why it would be loaded. */
 export const vaultAutofillTools = ["signin.fill"] as const;
 export const vaultAutofillToolFeatures: readonly (readonly [string, string, readonly string[]])[] =
