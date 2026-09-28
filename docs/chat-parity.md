@@ -58,6 +58,86 @@ Researched 2026-09-27. Sources:
 - **One source for the lines.** They come from `liveSteps()` (src/live-steps.ts), the same lines and the same
   emoji table (`STEP_ICONS`) as the window, so a step looks the same everywhere. Nothing is invented per channel.
 
+### The steps knobs (Settings › Chat apps › Steps in chats, src/channels/steps-display.ts)
+Every knob is set for every app and can be set again for one app (by its connection id or its kind). All ship on.
+
+| Knob | Values (default first) | Taken from |
+|---|---|---|
+| detail | all, new, verbose, off | Hermes `display.tool_progress` (off/new/all/verbose), per platform |
+| grouping | one (edit one message), each (a message per step) | Hermes `tool_progress_grouping` (accumulate/separate) |
+| lineChars | 120 (40 to 400) | OpenClaw `progress.maxLineChars` (120); Hermes `tool_preview_length` (40) is too short for paths. A sentence is cut at a word, a path in the middle so its file name stays (OpenClaw), a command at its end (Hermes) |
+| commands | show, hide | OpenClaw `commandText` (raw/status); Branch shows commands as Hermes does |
+| overflow | roll (a new message), trim ("(N earlier)") | Hermes rolls to a new bubble; OpenClaw keeps the newest lines |
+| cleanup | off, on | Hermes `cleanup_progress`; OpenClaw deletes the Discord draft after the answer. A failed task keeps the message |
+| noEdit | summary, each, off | Hermes skips apps without edits; OpenClaw sends only the answer. Branch adds one summary line above the reply |
+| groups | kinds, off | Branch: a group sees counts of kinds, never a file or command |
+
+The in-app window folds repeated finished lines with "(×N)" the same way (public/app/chat/livesteps.js).
+
+### Every chat app: what the steps look like there
+Generated from src/channels/steps-caps.ts; tests/chat-steps-channels.test.mjs builds all 55 adapters and checks each row
+against its adapter, then renders one fixed task for every app.
+
+<!-- steps-caps:start -->
+| App | Edits | Code | Longest | Reactions | Replies | Hermes Agent | OpenClaw | Branch (as shipped) |
+|---|---|---|---|---|---|---|---|---|
+| Telegram (`telegram`) | yes | code blocks with a label and copy button | 3500 | yes | yes | off by default; all when on, one bubble edited every 1.5 s | progress draft edited in place (default) | One message, edited in place, a new one when it is full |
+| Discord (`discord`) | yes | Markdown fences with the language | 2000 | yes | yes | all, one bubble edited | off by default; progress draft when chosen, deleted after the answer | One message, edited in place, a new one when it is full |
+| Slack (`slack`) | yes | fences without a language | 3000 | yes | yes | off (Bolt posts are permanent) | native progress card in threads; typing reaction outside them | One message, edited in place, a new one when it is full |
+| Matrix (`matrix`) | yes | HTML code blocks | 3500 | yes | — | new (only when the tool changes) | draft preview edited in place | One message, edited in place, a new one when it is full |
+| WhatsApp (`whatsapp`) | — | plain words | 4000 | — | yes | new through the Baileys bridge; off on the Cloud API | final answer only | One summary line above the reply (plain words) |
+| Signal (`signal`) | — | plain words | 2000 | — | — | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
+| Email (`email`) | — | plain words | 3500 | — | yes | off (batch delivery) | final answer only | One summary line above the reply (plain words) |
+| Facebook Messenger (`messenger`) | — | plain words | 1900 | — | — | — | — | One summary line above the reply (plain words) |
+| Instagram (`instagram`) | — | plain words | 1900 | — | — | — | — | One summary line above the reply (plain words) |
+| SMS (Twilio) (`sms`) | — | plain words | 1600 | — | — | off (batch delivery) | — | Nothing added: each message costs money |
+| iMessage (`imessage`) | — | plain words | 3000 | — | — | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
+| Microsoft Teams (bot) (`msteams-bot`) | — | plain words | 3500 | — | yes | — | native progress stream in personal chats | One summary line above the reply (plain words) |
+| IRC (`irc`) | — | plain words | 2000 | — | — | — | — | One summary line above the reply (plain words) |
+| Twitch chat (`twitch`) | — | plain words | 2000 | — | — | — | — | One summary line above the reply (plain words) |
+| Gotify (`gotify`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Webex (`webex`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| Synology Chat (`synology-chat`) | — | plain words | 2000 | — | — | — | — | One summary line above the reply (plain words) |
+| Zalo (`zalo`) | — | plain words | 2000 | — | — | — | — | One summary line above the reply (plain words) |
+| Flock (`flock`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Pumble (`pumble`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| Mastodon (`mastodon`) | — | plain words | 420 | — | yes | — | — | One summary line above the reply (plain words) |
+| Bluesky (`bluesky`) | — | plain words | 1000 | — | — | — | — | One summary line above the reply (plain words) |
+| Reddit (`reddit`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| Discourse (`discourse`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| X direct messages (`x-dm`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Twist (`twist`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Nextcloud Talk (`nextcloud-talk`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| ntfy (`ntfy`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Pushover (`pushover`) | — | plain words | 1024 | — | — | — | — | One summary line above the reply (plain words) |
+| Threema (`threema`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Home Assistant (`homeassistant`) | — | plain words | 3500 | — | — | off (batch delivery) | — | One summary line above the reply (plain words) |
+| XMPP (`xmpp`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| MQTT (`mqtt`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Keybase (`keybase`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| SimpleX (`simplex`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Delta Chat (`deltachat`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| Nostr (`nostr`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| VK (`vk`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| QQ bot (`qq-bot`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| Guilded (`guilded`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
+| Revolt (`revolt`) | — | plain words | 2000 | — | yes | — | — | One summary line above the reply (plain words) |
+| Mumble (`mumble`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
+| KOOK (`kook`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| WeChat Official Account (`wechat-mp`) | — | plain words | 600 | — | — | off: no edits, so no progress | — | One summary line above the reply (plain words) |
+| WeCom app (`wecom-app`) | — | plain words | 600 | — | — | off; native stream message type instead | — | One summary line above the reply (plain words) |
+| Mattermost (`mattermost`) | — | plain words | 4000 | — | yes | new (edits in place) | partial draft preview | One summary line above the reply (plain words) |
+| Rocket.Chat (`rocketchat`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| Google Chat (`googlechat`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| Microsoft Teams (webhook) (`msteams`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| Zulip (`zulip`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| Feishu / Lark (`feishu`) | — | plain words | 4000 | — | yes | new (edits in place) | — | One summary line above the reply (plain words) |
+| DingTalk (`dingtalk`) | — | plain words | 2000 | — | yes | off: no edits, so no progress | — | One summary line above the reply (plain words) |
+| WeCom (webhook) (`wecom`) | — | plain words | 2000 | — | yes | — | — | One summary line above the reply (plain words) |
+| LINE (`line`) | — | plain words | 4900 | — | yes | — | — | One summary line above the reply (plain words) |
+| Viber (`viber`) | — | plain words | 7000 | — | yes | — | — | One summary line above the reply (plain words) |
+<!-- steps-caps:end -->
+
 ## The matrix
 
 Platforms: Telegram (TG), Discord (DC), Slack (SL), WhatsApp (WA), Signal (SG), iMessage/BlueBubbles (IM), Matrix (MX),
@@ -66,7 +146,7 @@ email (EM), SMS.
 ### Live progress message (edit in place, rate limits, fallback)
 | | H | O | B today | Next for Branch |
 |---|---|---|---|---|
-| TG | ✅ 1.5 s edits, ×N, code blocks | ✅ progress draft (default) | ✅ (#565) Hermes lines from `liveSteps`, `pre`/`code` entities, ×N, summary line, sent quietly, `retry_after` waited out, 3 s in groups | left: roll to a new message on overflow (today "(N earlier)") |
+| TG | ✅ 1.5 s edits, ×N, code blocks | ✅ progress draft (default) | ✅ (#565) Hermes lines from `liveSteps`, `pre`/`code` entities, ×N, summary line, sent quietly, `retry_after` waited out, 3 s in groups; overflow rolls to a new message; per-app knobs | |
 | DC | ✅ | ✅ (opt-in) | ✅ (piece 3) the same lines, fences with the language, sent quietly (flag 4096), its 429 waited out | |
 | SL | ✅ edits or native task cards | ✅ native agent card | ✅ (piece 3) the same lines, fences without a language | left: Slack's native agent card |
 | WA | ✅ (Baileys bridge) | ? | ✅ (piece 3) the Cloud API cannot edit: one line above the reply ("📖×2 🔍 · ✅ Done · 3 steps · 12 s"), naming nothing | left: milestone lines for very long tasks |

@@ -363,6 +363,11 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!/message is not modified/i.test(error instanceof Error ? error.message : "")) throw error;
     }
   }
+  /** Removes a message the bot sent (Telegram allows it for 48 hours; an older one stays). */
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    if (!/^\d+$/.test(messageId)) throw new Error("Telegram: that is not a message this bot sent");
+    await this.call("deleteMessage", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId) });
+  }
   private inbound(message: z.infer<typeof messageSchema>): InboundMessage | null {
     const spoken = message.voice ?? message.audio;
     const media = message.document ?? message.video ?? message.photo?.at(-1);
