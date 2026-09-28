@@ -741,11 +741,20 @@ export async function createBranch(options: {
     return { runId: answer.run.id, passed: value?.passed === true && Array.isArray(value.findings)
       && value.findings.length === 0, findings: Array.isArray(value?.findings) ? value.findings.filter((item): item is string => typeof item === "string") : ["Review result was incomplete."] };
   }, (context) => (runtime as typeof runtime & { ownerFullAccessFor?: (value: typeof context, direct: boolean) => string | null }).ownerFullAccessFor?.(context, true) ?? null);
-  registry.register({ name: "branch.finish_source_change", permission: "git.remote", group: "code",
+  // Offered, like the setup tools, only while sending Git work to a remote is switched on (src/self-development.ts).
+  const finishTool = "branch.finish_source_change";
+  const registerFinish = (): void => registry.register({ name: finishTool, permission: "git.remote", group: "code",
     description: "Finish this task's exact tested Branch source draft only in the owner's selected Full Access conversation: independent read-only review, every check verified finished and passed on the exact commit (run github.wait_for_checks first), then a normal GitHub merge pinned to that commit. Refuses if any evidence changes.",
     parameters: z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
       repo: repositoryPath, number: z.number().int().positive() }).strict(),
     target: (input) => String(input.worktree), execute: (input, context) => sourceMerges.autoFinish(input, context) });
+  const offerFinish = (): void => {
+    const remote = registry.names().includes("git.push"), offered = registry.names().includes(finishTool);
+    if (remote && !offered) registerFinish();
+    if (!remote && offered) registry.unregister(finishTool);
+  };
+  offerFinish();
+  registry.onToolsChanged(offerFinish);
   offerSourceRequests(runtime, sourceRequests);
   const contractChecks = { store, owner: options.owner ?? "local", workspace, registry, book: selfContracts,
     git: (input: GitRunOptions, signal: AbortSignal) => gitRunner.run(input, signal) };

@@ -93,7 +93,8 @@ const NOT_TOOL_GUARDS = {
   "src/index.ts": "hands store.profiles.requireOwner to the guards listed above",
   "src/integrations/bootstrap.ts": "hands store.profiles.requireOwner to signin.fill (listed above)",
   "src/owner-browse.ts": "its isOwner check refuses the owner's address field (POST /api/panels/browse) to anybody else; it defines no tool, and the page it opens goes through browser.navigate's own hand-pressed gate",
-  "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
+  "src/self-development-merge.ts": "its requireOwner (ownerHere) guards the owner's review-and-merge routes in Inbox; the branch.finish_source_change tool is gated by autoOwner instead: runtime.ownerFullAccessFor(context, true), which refuses any task that is not the owner's own direct Full Access task with the owner's profile active, and no person, household caller, paired door or short-lived key",
+  "src/coding/project-tests.ts":"the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
 };
 
 async function fixture(t) {

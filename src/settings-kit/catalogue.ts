@@ -523,12 +523,13 @@ const comfort: SettingSpec[] = [
   // the connected model, so it is plain, like the round limit; "auto" means the built-in figure.
   {
     key: "task-tokens", name: "Tokens per task", t: "settings-kit.name.task-tokens", home: "settings:advanced",
-    fields: [{ field: "maxTaskTokens", label: "Tokens one task may use", t: "settings-kit.field.task-tokens", guard: "plain",
+    // The kit's own name for the field: a name with "token" in it reads as a secret (secretShaped) and is never changed here.
+    fields: [{ field: "taskAllowance", label: "Tokens one task may use", t: "settings-kit.field.task-tokens", guard: "plain",
       initial: roundsUnset, kind: { type: "number", min: 20_000, max: 20_000_000, unset: roundsUnset },
       note: `${roundsUnset}: the built-in 200,000. Otherwise 20,000 to 20,000,000, counting every request the task sends to the model.` }],
-    read: (store, owner) => ({ maxTaskTokens: readKnobs(store, owner, "limits").maxTaskTokens ?? roundsUnset }),
+    read: (store, owner) => ({ taskAllowance: readKnobs(store, owner, "limits").maxTaskTokens ?? roundsUnset }),
     write: (store, owner, patch) => {
-      saveKnobs(store, owner, "limits", { maxTaskTokens: patch.maxTaskTokens === roundsUnset ? null : patch.maxTaskTokens });
+      saveKnobs(store, owner, "limits", { maxTaskTokens: patch.taskAllowance === roundsUnset ? null : patch.taskAllowance });
     },
   },
 ];
