@@ -1,17 +1,38 @@
 # Configuration
 
+## Practice runs in the window
+
+The Permissions page's **Practice runs** switch controls availability and defaults on. In the
+composer's + menu, choose **Practice this task** for the next ordinary task in an idle conversation.
+The composer shows the choice until that task is accepted. A rejected request keeps the words and
+the Practice choice. Commands, room turns, direct Trunk mentions and the waiting line currently
+refuse Practice because those routes do not carry its task flag.
+
+Ordinary tasks remain real. A practice task may really read through read-only tools and use the
+model; model use still counts. Tools that would change something are simulated, including sends
+and spending actions, and recorded in `dryrun.report`. Existing tool reach, household scope and
+refusals still apply. Enabling Practice grants no permission to send, spend or change something.
+Turning availability off refuses new practice tasks before a model call; an existing practice task
+stays simulated when it continues, answers a question or resumes after an interruption.
+
+`GET /api/practice-runs` returns `{ "enabled": true }` by default. A household person may read only
+that availability boolean; `POST /api/practice-runs { "enabled": false }` changes it for the owner.
+The saved `practice-runs` settings record contains `enabled` (boolean, default `true`).
+`POST /api/run` keeps its existing per-task `dryRun: true` input, including for scripts and the CLI.
+An installed coding assistant used as the model connection is refused for Practice: its own tools
+run outside Branch's simulation. Choose a model connection that uses Branch's tools instead.
+
 ## What ships on
 
 Features ship on (the owner's rule, 2026-09-26; `src/ship-on.ts`). A feature stays off until you switch it on only when
 it would (a) spend money, (b) send something out to other people or publish on its own, (c) delete something, (d) use the
 microphone or camera, (e) run heavy CPU constantly in the background, or (f) loosen approvals or safety. A few others stay off
-because switching them on would break or change ordinary use (history repair, and stricter settings such as trusted
-folders), or by the owner's own decision (several accounts per connection). For a three-way switch, "when needed"
+because switching them on would change ordinary use (stricter settings such as trusted folders), or by the owner's own decision (several accounts per connection). For a three-way switch, "when needed"
 is the ship-on position: the feature works, and its tools load when the work calls for them.
 
 These ship on as well, whatever an older section below still says: the flows-and-boards parts, install
 requests included; learning parts, finding conversations by meaning included, but not outside memory services; *Understanding something*;
-the safety extras but asking whether a long task is getting anywhere and history repair; add-ons but installing packages; sub-goals,
+the safety extras but asking whether a long task is getting anywhere (history repair included, since it keeps a local model's reused call ids apart); add-ons but installing packages; sub-goals,
 background tasks and hand-off commands; source sync, other agents answering (`/model`) and forecasts; sharing
 assistants; skill bundles, sharing through git and the model arena; worktrees; a Trunk in any conversation; saved
 prompts (on); recordings; *Whether Branch is keeping up*; the usage report; the memory history; installing skills;
@@ -78,6 +99,8 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 `node dist/cli.js login` (or **Settings → ChatGPT account** in the app) starts OpenAI's device-code sign-in: open the shown page, enter the code, and Branch receives tokens that are stored in `chatgpt-auth.json` inside the data directory, protected with the device key in the desktop app. Signing in registers `ChatGPT (unofficial) · GPT-5.6 Sol (light)`, `GPT-5.6 Terra`, `GPT-5.6 Luna` and `GPT-5.5` presets (models `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`; plain `gpt-5.6` and `gpt-5.4` are refused for a ChatGPT account) and makes ChatGPT the default, with Sol first and the others as fallbacks, when no other model was chosen yet. Requests carry the `originator: branch-agent` header and a `BranchAgent/<version>` user agent. Access through a ChatGPT plan is provided by OpenAI for its own tools and may change without notice. **This route is unofficial**; see [ChatGPT plan sign-in and OpenAI's terms](#chatgpt-plan-sign-in-and-openais-terms).
 
 ### Several accounts per connection (mac6)
+
+**Verified identity and status.** Accounts, Models, account menus and usage rows use the verified sign-in email or name first; a custom label stays secondary and remains editable. ChatGPT identity comes from its sign-in status. Claude identity comes from the documented `claude auth status` JSON, with each extra account's exact `CLAUDE_CONFIG_DIR`. Only email/name, organization identity and a normalized authentication kind are retained in memory; raw output and credential fields never reach a screen or backup. Status readings are shared for one minute, while an explicit sign-in check updates them immediately. A saved program choice is not evidence of sign-in. Signed-out and unknown entries do not claim readiness; entries for the same email and organization are counted once. Claude subscription readiness requires verified `claude.ai` authentication; API or unknown authentication is identified separately. These checks establish authentication, not a successful task; the connection's actual task still has to succeed.
 
 **Settings › Accounts** (its own page since redesign phase 2; and `/account` in the message box, the terminal, the phone and the dashboard) lets one connection hold several accounts, each with a name. It follows the three-way switch and ships **on** ("when needed"; owner decision 2026-09-27): it spends nothing by itself and uses only accounts you add. Off means one key or sign-in per connection (the connection is registered untouched). With it on:
 
@@ -154,7 +177,7 @@ by hand; edit the data file and run that command.
 
 <!-- providers:start -->
 
-Branch knows 44 model services. Every one of them has been tested against a fake of the
+Branch knows 44 model services (36 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
 service, not against the real one, so treat this as "Branch speaks the right language", not as
 "this was tried on a live account". Addresses and prices were last checked on 2026-09-16.
 
@@ -222,6 +245,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **MiniMax** — International keys use api.minimax.io (the usual choice); keys from the Chinese platform use api.minimax.cn. Branch keeps no price on file for it.
 - **ModelScope** — Alibaba's model hub in its OpenAI-compatible mode. Branch keeps no price on file for it.
 - **Moonshot (Kimi)** — Kimi models. International keys use api.moonshot.ai (the usual choice); keys from the Chinese platform use api.moonshot.cn. Branch keeps no price on file for it.
+- **Ollama** — Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed. An Ollama on another machine at home works too: give its address.
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.
 - **Qwen (Alibaba DashScope)** — Alibaba Model Studio in its OpenAI-compatible mode. International (Singapore) is the usual choice; the US and mainland China addresses are offered too. A workspace address works through "Something else". Branch keeps no price on file.
@@ -425,7 +449,7 @@ One button takes a computer with nothing on it to a model that answers: install 
 
 **macOS and Linux.** On a Mac the graphics are read once from `system_profiler SPDisplaysDataType -json`. A Mac with Apple silicon has no separate video memory: its graphics share the computer's own memory, and the summary says so ("Apple M4 graphics, which share that memory"). Branch cannot ask Metal for its default graphics limit without native code, so unless `iogpu.wired_limit_mb` is set it plans with free memory. MLX is offered only on Apple silicon. On Linux `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits` is asked first; without it, `lspci` gives the card's name, and for an AMD card `rocm-smi --showmeminfo vram --json` or the driver's `/sys/class/drm/card*/device/mem_info_vram_total` gives the memory. Anything unexpected simply means "no card reported".
 
-**Routing rules** (`settings/routing`, off by default): `enabled`, `localForPrivate` (a task mentioning personal details stays here), `cloudForHard` (long or tool-heavy tasks go to the cloud model), `costCeilingDollars` (a simple task that would cost more than this in the cloud uses the free local model instead), and optional `localPreset` / `cloudPreset`. What you explicitly choose for a run or a conversation always wins; when routing does pick, the run records a `model.routed` event with the reason. The rule itself also has a "local server is not answering, use the cloud one" branch, but nothing probes the local server before a run yet: a task sent to a local model that does not answer falls back the ordinary way, through the connection's configured fallbacks and the provider cooldown. `POST /api/local-models/routing/preview` is the one caller that can set `localUp` today.
+**Routing rules** (`settings/routing`, off by default): `enabled`, `localForPrivate` (a task mentioning personal details stays here), `cloudForHard` (long or tool-heavy tasks go to the cloud model), `costCeilingDollars` (a simple task that would cost more than this in the cloud uses the free local model instead), and optional `localPreset` / `cloudPreset`. What you explicitly choose for a run or a conversation always wins; when routing does pick, the run records a `model.routed` event with the reason. A task kept here because of personal details is kept here for good: it is planned only on connections on this computer (never the configured fallbacks elsewhere), its side jobs (the advisor, summaries, learning) and sub-tasks and the tools it uses are answered here too, and the later turns of the same conversation stay here, since they carry its words. If the model here does not answer, the task fails with that model's own error; with no model on this computer it is refused. Only a task kept here to save money may still fall back to the cloud when the model here is not answering. `POST /api/local-models/routing/preview` is the one caller that can set `localUp` today.
 
 **Reading passages by meaning.** When the connected model is Ollama on this computer, document and memory search use Ollama's own `/api/embeddings` instead of the OpenAI-shaped route, one passage per request, and `text-embedding-3-small` is swapped for `nomic-embed-text`, which is what exists here.
 
@@ -494,7 +518,11 @@ Install the browser once:
 npx playwright install chromium --only-shell
 ```
 
-Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
+Branch's browser is on with no configuration file: it may open any website the network rules allow (`"anyWebsite": true`), and every picture, script and request a page makes is held to those rules too, so a page cannot reach this computer or your home network unless the network rules allow private addresses. The owner's approval rules and the per-task caps below still apply.
+
+In this mode Chromium never looks a site's name up itself: it connects through a local door that dials only the addresses the network rules judged for that name, so a site cannot pass the check with one answer and then be reached at a private one (DNS rebinding). The checks of one page share one lookup per site for about 15 seconds, so a page with many pictures and scripts does not wait on the network rules for each. This holding does not reach a browser running in the sandbox (Docker or a remote Playwright server) or your own borrowed browser; those keep the per-request check only.
+
+To hold it to a list of websites instead, create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
 
 ```json
 {
@@ -503,6 +531,8 @@ Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
   }
 }
 ```
+
+The browser section takes either `allowedOrigins` or `"anyWebsite": true`, never both. A configuration file without a browser section leaves the browser off.
 
 Origins must match exactly, including port. Browser requests to other origins, HTTP redirects, WebSockets and service workers are blocked. Redirecting sites may therefore fail even when the final destination is otherwise allowed. Browser fill supports non-password fields; credentials go through a saved sign-in instead (below). Unless a saved sign-in is chosen, each task gets a fresh profile, not your existing signed-in browser.
 
@@ -843,6 +873,29 @@ Routes: `GET/POST /api/workspace-editor/settings`, `GET /api/workspace-editor/li
 
 ## Channels (Telegram)
 
+### Message intake and reconnecting
+
+`GET /api/channels/formatting` returns `formats`; owner-only `POST /api/channels/formatting { channel, mode }`
+saves one supported app's `native` (default) or `plain` choice. Changes apply to the connected adapter's next send
+or edit, including live steps and queued delivery retries, and survive a restart. Plain mode removes presentation
+markers while retaining code contents and link destinations. Slack uses plain_text blocks, Matrix omits HTML, Telegram
+omits entities, and Discord escapes remaining literal symbols. Discord reserves half its text budget before
+splitting to keep escape characters inside the service's message limit.
+
+Settings › Chat apps reads `intake` from `GET /api/channels`; `POST /api/channels/intake` saves only the named
+fields and is owner-only. `edited` and `albums` default to true: edited messages replace a version still being
+gathered, and a photo album joins one turn. An edit after that turn has started is its own message.
+`splitWaitMs` is 0, 1000 (default), or 3000; messages from the same live chat arriving during that wait join a turn.
+Fetched messages after a restart stay separate. Albums still wait at least one second when split waiting is off.
+
+`watchdog` defaults to true. A watched connection with no service contact for `stalledAfterSeconds` (30–3600,
+default 90) becomes stalled. After a further `reconnectMinutes` (1, 3, or 10; default 3), it restarts at most once
+per that interval. Empty successful polls count as contact; a quiet chat does not cause a restart. A failed or
+ineffective restart produces a reason on the app's card until contact returns.
+
+`presence` defaults to false because it changes the public bot profile. Telegram can publish Online while running
+and Offline, back soon when stopped; switching it off clears the description. Lockdown prevents those writes.
+
 Create a bot with @BotFather, then either save its token as the secret `TELEGRAM_BOT_TOKEN` in the default project or export it as an environment variable, and add to the integrations file:
 
 ```json
@@ -853,7 +906,7 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 ### What every channel shares
 
-`activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
+Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
 ### Who a chat message's task counts as (mac7/chat-source)
 
@@ -1186,7 +1239,7 @@ lists them with Off, When needed and On (`GET /api/channels/parity`, `POST /api/
 - **On** connects when Branch starts and stays connected, as the older channels do.
 
 A change applies at once to a channel that is already connected; adding a channel to the connections
-file still needs a restart. The health line says "Switched off" for a service that is off.
+file still needs a restart, and adding one from the window's wizard does not. The health line says "Switched off" for a service that is off.
 
 The services that are posted to (Microsoft Teams bots, Webex, Synology Chat, Zalo, Flock, Pumble)
 use the same address as the other chat services, `/webhooks/chat/<channel id>/<the word on your
@@ -1605,12 +1658,20 @@ When Branch is running, the command goes through the same door as the window (th
 key), so a Telegram bot connects at once. Otherwise it opens the saved work itself, and the bot connects
 the next time Branch starts.
 
-**One command or two.** Every app is one command. Telegram and the wave mac3 services are switched on by
-it. The nine older connections (Discord, Slack, WhatsApp, email, Messenger, Instagram, Matrix, Signal
-and the ten team-chat services) are switched on by a line in the connections file, which Branch does not
-rewrite for you (it may sit in a folder you have not trusted, and holds at most eight channels), so the
-command prints that line with your settings filled in, and you add it and restart. That is the second
-step, and the only one.
+**One step, no restart (CHAT-147).** Every app is one command, or one pass through the window's wizard, and
+it connects there and then. The save keeps the app's entry, written from `data/channel-setup.json` with your
+plain settings put in (the same shape a connections-file line has, and nothing a request adds), in your
+settings; builds the channel exactly as a connections-file line is built; and attaches it to the running
+Branch. Branch connects every saved one again when it starts. Nothing is written to the connections file,
+and a channel with the same name there always wins, so one bot is never read twice. The answer says what
+really happened: connected, listening (an app that posts to Branch still needs its address pasted into the
+service, and this computer reachable from the internet), or saved but not connected, with the reason. The
+wave mac3 services still follow their switch. `DELETE /api/channel-setup/<app>` (the wizard's
+**Disconnect**) takes an app set up this way out and forgets its settings; what was pasted stays in the
+locker. Before anything is kept, the check goes past "who am I" where that cannot tell: Discord's Message
+Content Intent must be on, Slack's app-level token must open Socket Mode, and a Matrix token must belong
+to the account typed. With Branch closed, `branch connect` keeps the settings and the app connects the next
+time Branch starts.
 
 **The switch.** *Setting up from here and from the terminal* ships **off**. Off, the panel still shows
 the command, the links and the codes; it only refuses to save a token or switch anything on. The first
@@ -1689,7 +1750,7 @@ says so.
 | Discord (`discord`) | yes; then one line in the connections file | Windows: winget `Discord.Discord`; Mac: cask `discord`; Linux: Flathub `com.discordapp.Discord` | `https://discord.com/developers/applications?new_application=true` | `DISCORD_BOT_TOKEN` | GET `https://discord.com/api/v10/users/@me` |
 | Slack (`slack`) | yes; then one line in the connections file | Windows: winget `SlackTechnologies.Slack`; Mac: cask `slack`; Linux: Snap `slack` | `https://api.slack.com/apps?new_app=1&manifest_json=…` (pre-filled) | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | POST `https://slack.com/api/auth.test` |
 | WhatsApp Business (`whatsapp`) | yes; then one line in the connections file | Windows: download page; Mac: cask `whatsapp`; Linux: download page | `https://developers.facebook.com/docs/whatsapp/cloud-api/get-started` | `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`; plus phoneNumberId | none |
-| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD` | none |
+| Email (`email`) | yes; then one line in the connections file | nothing to install | none (plain steps) | `EMAIL_PASSWORD`; plus address, imapHost, smtpHost | none |
 | Facebook Messenger (`messenger`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/messenger-platform/getting-started/quick-start` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Instagram (`instagram`) | yes; then one line in the connections file | nothing to install | `https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api` | `META_PAGE_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN`; plus pageId | none |
 | Matrix (Element) (`matrix`) | yes; then one line in the connections file | Windows: winget `Element.Element`; Mac: cask `element`; Linux: download page | `https://app.element.io/#/register` | `MATRIX_ACCESS_TOKEN`; plus server, userId | GET `<server>/_matrix/client/v3/account/whoami` |
@@ -1865,6 +1926,8 @@ The scrubber above only knows the secrets Branch took out of the locker itself. 
 
 A web address that carries a key or password itself (`?api_key=`, `?token=`, `?password=` and similar names however they are written, `user:pass@` or a bare `token@`) is not fetched until you say yes, even where your rules would allow the website. This holds for the assistant's own calls, saved recipes and workflows, voice, and other AI tools connected to Branch. The yes is for that exact address in that conversation only.
 
+**What an address carries out** (`src/egress-guard.ts`). The network rules judge where a request goes, not what its address says, so a task that may only open pages could still move data out in addresses. So an address a task asks for that carries a value the locker has unlocked this launch (whole, a piece of eight characters or more, percent, base64 or hex encoded) or a card, bank account or national id number is put to you as a question every time, under every mode including Full Access, and the question and the task’s record name what it carries, never the value. A page the browser is *sent* to (a form sent by address, a link, a redirect) whose address carries one is not opened at all. Many different addresses on one site within a minute are written into the task’s record (`egress.flagged`), and past 30 no more are opened there until the minute has passed; making short links (bit.ly, tinyurl.com and the like) is noted too, and past three a task is refused. Following a short link somebody sent is ordinary and is not counted.
+
 The file tools also refuse more places keys live, as they already refused `.env` and `.ssh`: `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, the `.docker`, `.kube`, `.gnupg`, `.azure` and `.gcloud` folders, the GitHub command line's `gh/hosts.yml`, `.vault-token`, and shell history files (`.bash_history`, `.zsh_history`, `fish_history`, PowerShell's `ConsoleHost_history.txt`). File search skips them too.
 
 **macOS and Linux.** The check is the same on every computer. The refused names cover what those systems keep in your home folder — the `.zsh_history` a Mac's Terminal writes, `.bash_history` on Linux, `~/.config/gh/hosts.yml` — so a workspace that is, or contains, a home folder never hands them to the assistant.
@@ -1943,7 +2006,7 @@ Use actual absolute executable paths on your device. Windows `.cmd` and `.bat` l
 
 This runs trusted programs on your computer. The checked working directory is not an OS sandbox: programs can access other files, use the network, and launch more programs. Only selected environment keys are passed; model and vault variables are excluded. `PATH` is empty unless explicitly selected as above. Runtime code supplied to an interpreter still has that interpreter's host access.
 
-Only one foreground command runs at a time. Results include stdout, stderr, exit status, elapsed time, target and cleanup status. The default timeout is 30 seconds; configuration can allow up to 120 seconds, and individual calls can lower it. Captured output is capped at 8 KiB or the lower configured limit. Cancellation requests process-tree termination on Windows or process-group termination on POSIX. Escaped descendants can survive; the result records incomplete cleanup when observed. Interactive terminals, persistent background jobs and remote execution are separate pending capabilities.
+Only one foreground command runs at a time. Results include stdout, stderr, exit status, elapsed time, target and cleanup status. The default timeout is 30 seconds; configuration can allow up to 30 minutes (a build and its tests), and individual calls can lower it. Captured output is capped at 8 KiB or the lower configured limit. Cancellation requests process-tree termination on Windows or process-group termination on POSIX. Escaped descendants can survive; the result records incomplete cleanup when observed. Interactive terminals, persistent background jobs and remote execution are separate pending capabilities.
 
 ### Keeping a command in its lane
 
@@ -2328,6 +2391,14 @@ owner-only. `model` is the connection that decides, by preset id (empty means th
 `minConfidence` (0.5 to 0.99, default 0.75) the task's own model decides instead; `maxList` (10 to 2000, default 400)
 is the longest list filtered at once, and a longer list is split. Every answer is checked, never trusted: a pick must
 be one of the choices offered, a filter may keep only lines it was given, and a score must be 1 to 10.
+
+The additional `route` and `inbox` switches both default to false because each decision uses a model call.
+`route` picks a room member by their written job only when the message names nobody and the room uses
+Everyone answers or Only who I tag. A checked, sufficiently confident pick is written on the message so replay
+does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
+`inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
+1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+Switching it off refuses scoring with 409 and restores the inbox's original order.
 
 ## Teams, linked chats, registries and evaluation
 
@@ -2789,8 +2860,8 @@ Around it: a task's own completion checks are retried a set number of times befo
 a small script is checked before it runs, and a program can be run under a real debugger you
 already have (Settings → debug adapters) to stop it on a line and look at what every name holds.
 
-**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, off by
-default, kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
+**Fixing a failed command** (w911, A0374; `src/troubleshoot.ts`). A three-way switch, "when needed" by
+default (the ship-on rule: every fix still goes through the approval rules), kept under the settings key `troubleshoot` and changed with `GET`/`POST /api/troubleshoot`
 (`{ "mode": "off" | "when-needed" | "on", "maxTries": 1-5 }`, two tries by default; a short-lived key
 cannot change it). It looks at a `shell.execute` or `code.run` that came back with a non-zero exit
 code (or a script that timed out). The model is asked, with no tools, for JSON
@@ -2873,7 +2944,7 @@ Shell: `maxMemoryMb` (default 1024) and `maxCpuSeconds` (default 60) stop a comm
 
 ### Security self-check
 
-Settings → Permissions has a **Security check** card, and the command line has `branch security audit [--fix] [--json]` (it exits with 1 while anything urgent is left). It runs 85 named checks, each in plain words, over files and folders (who else can read or change Branch's private folder, the database, the key to saved passwords, the ChatGPT sign-in, the app's own key, the launch settings file, plugins, saved website sign-ins, logs and backups; links; the private folder or workspace inside iCloud, Dropbox, OneDrive or Google Drive or a shared place), secrets, the phone door, short-lived keys, approval rules, the programs the assistant may run, the web and the browser, add-ons, models and chat services. The full list is `securityChecks` in `src/security-audit/audit.ts`. Running it changes nothing. **Fix what Branch can** (`--fix`, `POST /api/security-check/fix { ids? }`) only ever takes other people's access away from Branch's own files: `chmod` to 700 or 600 on macOS and Linux, and on Windows `icacls <path> /inheritance:r /grant:r <you>:(F) *S-1-5-18:(F)` followed by `icacls <path> /remove:g *S-1-1-0 *S-1-5-11 *S-1-5-32-545`. A path that turned into a link is left alone; everything else is described with what to do. `branch doctor --fix` adds one line with the counts. Routes: `GET /api/security-check` (switches, last report, malware check status), `POST /api/security-check/run`, `/fix` and `/settings`; a short-lived key may run the check but not fix or change switches, and neither may a household profile (both stay with the owner).
+Settings → Permissions has a **Security check** card, and the command line has `branch security audit [--fix] [--json]` (it exits with 1 while anything urgent is left). It runs 89 named checks, each in plain words, over files and folders (who else can read or change Branch's private folder, the database, the key to saved passwords, the ChatGPT sign-in, the app's own key, the launch settings file, plugins, saved website sign-ins, logs and backups; links; the private folder or workspace inside iCloud, Dropbox, OneDrive or Google Drive or a shared place), secrets, the phone door, short-lived keys, approval rules, the programs the assistant may run, the web and the browser, add-ons, models and chat services. The full list is `securityChecks` in `src/security-audit/audit.ts`. Running it changes nothing. **Fix what Branch can** (`--fix`, `POST /api/security-check/fix { ids? }`) only ever takes other people's access away from Branch's own files: `chmod` to 700 or 600 on macOS and Linux, and on Windows `icacls <path> /inheritance:r /grant:r <you>:(F) *S-1-5-18:(F)` followed by `icacls <path> /remove:g *S-1-1-0 *S-1-5-11 *S-1-5-32-545`. A path that turned into a link is left alone; everything else is described with what to do. `branch doctor --fix` adds one line with the counts. Routes: `GET /api/security-check` (switches, last report, malware check status), `POST /api/security-check/run`, `/fix` and `/settings`; a short-lived key may run the check but not fix or change switches, and neither may a household profile (both stay with the owner).
 
 Two three-way switches, saved in `settings/security-check` and both **when needed** on a fresh install. `audit`: off runs the check only when asked; `when-needed` also gives the assistant one read-only tool, `settings.security_check` (permission `history.read`); `on` also runs it each time Branch starts. `malware`: before an outside server started with `npx`, `bunx`, `pnpm dlx`, `npm exec`, `uvx`, `uv tool run` or `pipx run` starts, also when wrapped in `cmd /c`, (from the launch settings or from "Try a server"), the package is looked up in OSV (`https://api.osv.dev/v1/query`, through the network policy; `BRANCH_OSV_ENDPOINT` points it elsewhere) and one with a `MAL-` advisory is refused with a plain sentence and a `connection.changed` line in the record. `when-needed` keeps each answer for a week, `on` for an hour. If OSV cannot be reached, answers badly, or the network policy refuses the address, the server starts as it did before and the reason shows on the card. An answer longer than 10 pages is not read to the end: unless malware was already named in what was read, the package counts as **not checked** (never as clean), which the card says, and an install request for it waits for "approve without the check".
 
@@ -3136,7 +3207,7 @@ background command finishes is not done yet.
 
 ## Backup, restore and health
 
-`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix.
+`GET /api/backup` (Settings → Backup, `branch backup <file>`) exports every state table as plain rows; secrets are left out because their key never leaves the device. `POST /api/restore` or `branch restore <file>` loads a backup into a fresh install and refuses when the install already has state. `GET /api/health?probe=1` (Settings → Health check, `branch doctor --probe`) reports each dependency with a plain fix. The ordinary check changes nothing: it only looks at the workspace folder (there, a folder, writable by you). Only `--probe` (and `?probe=1`) writes one small test file into the workspace and removes it at once, besides sending each connection one real request.
 
 ## Moving in from another assistant
 
@@ -3230,7 +3301,7 @@ Every message sent through a channel (a reply, a scheduled result) is recorded b
 
 Branch is itself a Model Context Protocol (MCP) server, so another AI tool on the same computer can ask it to do things. **Settings → Sharing with other AI tools** has the switch, the list of tools you are willing to share, and ready-to-paste settings with a Copy button for Claude Desktop, Claude Code and Cursor.
 
-**What is shared, and when.** Nothing until you switch it on. Switching it on offers the tools that only read (their permission ends in `.read`) and leaves everything else unticked and marked *can change things*; you tick those yourself. `branch.ask` — asking Branch a question in plain words — is always available, because it goes through Branch's own permissions and budget like any other task. The saved choice lives in `settings/mcp-sharing` as `{ enabled, exposedTools }` and is read fresh on every call, so a change takes effect at once.
+**What is shared, and when.** Nothing until you switch it on. Switching it on offers the tools that only read (their permission ends in `.read`) and leaves everything else unticked and marked *can change things*; you tick those yourself. While it is off the door offers nothing at all: no tools (not even `branch.ask`), no resources and no prompts. While it is on, `branch.ask` — asking Branch a question in plain words — is offered too; its task may use only the permissions the tools you ticked need, and like every task from outside it asks before any change. The saved choice lives in `settings/mcp-sharing` as `{ enabled, exposedTools }` and is read fresh on every call, so a change takes effect at once.
 
 **Two ways to connect.** Over HTTP, at `/mcp` on the same port as the web interface: JSON-RPC 2.0 by `POST`, with your session key as `Authorization: Bearer …`. If you send no `Mcp-Session-Id`, the reply to your first message names one in an `Mcp-Session-Id` header; send it back on everything afterwards and your work is kept together. `DELETE` ends that conversation (204). A plain `GET` is refused (405), but a `GET` that asks for `text/event-stream` opens a stream Branch writes down when something changes on this side — see **Streaming** below. Responses carry `MCP-Protocol-Version`. Branch speaks `2025-06-18`, `2025-03-26` and `2024-11-05`; ask for anything else and you get a plain error saying which ones work. Or as a child program: `branch mcp-serve` speaks newline-delimited JSON-RPC on standard input and output, writes every message for a person to standard error, and stops cleanly when the other tool closes the connection.
 
@@ -3262,10 +3333,10 @@ Every resource is read-only, and each one is scoped by your approval settings. A
 
 | On offer | Not on offer |
 | --- | --- |
-| `branch.ask` — asking Branch for something in plain words | Any tool you have not ticked in the shared list |
+| `branch.ask` — asking Branch for something in plain words, while sharing is on, with only the ticked tools' permissions | Any tool you have not ticked in the shared list |
 | Every tool you tick, minus the ones your approval settings flatly refuse | Anything your approval settings refuse |
 | `mcp.dry_run` and `mcp.snapshot`, while sharing is on | Your saved passwords and keys, in any form |
-| Reading memory, the workspace listing, documents, tasks and conversations | Writing to any of those through a resource — resources are read-only |
+| Reading memory, the workspace listing, documents, tasks and conversations, while sharing is on | Writing to any of those through a resource — resources are read-only |
 | Your saved procedures as prompts, with their blanks | The owner-only parts of the app: projects, profiles, settings |
 | A plain note saying what was held back and why | Sampling: Branch never asks a connected tool to run a model for it |
 
@@ -3313,7 +3384,7 @@ A task is a plain Branch task: it shows in Activity with the same signed receipt
 
 `agents.ask { agent, task, timeoutMs }` sends one piece of work and waits. The request body contains the words of the task and nothing else — no files, no secrets, nothing the assistant has read. The wait is 60 seconds by default and 120 at most, one assistant can be asked 10 times a minute, and the answer is charged against the task's own token allowance. The call is an ordinary tool call, so it carries a receipt and shows in Activity as "Asking *name*, an assistant elsewhere".
 
-**Routes.** `GET /api/agents/remote` lists them and `POST` the same path adds one (`{ cardUrl, key? }`); `POST /api/agents/remote/remove` takes `{ agent }` (an id or a name). `GET /api/agents/discover?targets=127.0.0.1:3211,example.local:3210` asks each address you type in — and only those; nothing is scanned or broadcast — for its card, and answers `{ found, refused }` with a plain reason for each one it could not reach. `GET /api/agents/pairing` returns `{ code, cardUrl, shareUrl }`; the share link is `branch://add-agent?card=…&key=…&code=…` and **carries this install's session key — the one key to everything Branch serves, not a pairing code of its own. Whoever holds it can do anything you can do here, so share it only with an install you would trust with your own account, and only over something private.** The other install adds you with `POST /api/agents/pair { link }`.
+**Routes.** `GET /api/agents/remote` lists them and `POST` the same path adds one (`{ cardUrl, key? }`); `POST /api/agents/remote/remove` takes `{ agent }` (an id or a name). `GET /api/agents/discover?targets=127.0.0.1:3211,example.local:3210` asks each address you type in — and only those; nothing is scanned or broadcast — for its card, and answers `{ found, refused }` with a plain reason for each one it could not reach. `POST /api/agents/pairing {}` makes a link and answers `{ code, cardUrl, shareUrl, expiresAt, keyId }`; the share link is `branch://add-agent?card=…&key=…&code=…`. **The key in it is a pairing key of its own, never this install’s session key: it reaches only the assistant-to-assistant door (`POST /a2a` and the card), stops working after 30 days, and is listed and taken back with the other short-lived keys (`branch token list`, `branch token revoke <keyId>`). It is still a secret, so share the link only over something private.** Making a link is the owner’s: a key that may only look cannot make one. The other install adds you with `POST /api/agents/pair { link }`.
 
 ### Working inside a code editor (ACP)
 
@@ -3678,7 +3749,7 @@ These tools come in three groups so you can allow them separately.
 
 - `git.read` — `git.status` (what changed, which line of work, ahead or behind), `git.diff` (the changed lines, capped, either in the working folder or between two points such as `main..mine`), `git.log` (recent saved versions, bounded).
 - `git.write` — `git.branch` (list, start or switch a line of work), `git.commit` (save a version; a message is required, it saves everything that changed unless you name paths, it refuses when nothing has changed, and it never rewrites a version you already saved), `git.worktree_add` and `git.worktree_remove` (a parallel copy for an experiment, only ever inside `.branch-worktrees` in the repository, so experiments cannot spread elsewhere; `git.worktree_list` reads them and needs only `git.read`). Both groups are available as soon as Branch starts.
-- `git.remote` — `git.push` and `git.pull`. **These are off until you turn them on.** Add a `git` block to the integrations file:
+- `git.remote` — `git.clone`, `git.push` and `git.pull`. **These are off until you turn them on.** `git.clone` brings a repository onto this computer for the first time, into a new workspace folder, from its `https://` address (no sign-in details in it) or a repository folder given as a full path; hooks never run, submodules are not fetched, and Branch's own source is never cloned this way (that is `branch.prepare_source_change`). Add a `git` block to the integrations file:
 
 ```json
 { "git": { "remote": true } }
@@ -3692,7 +3763,7 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
 **GitLab** can be read in the same way, with its own token saved as `GITLAB_TOKEN`:
 
@@ -3808,6 +3879,46 @@ A chat's reply, a pressed button and `/improve approve` never answer a request. 
 household persons are refused at all three routes, and nothing inside a task (a Trunk's turn, another
 program's tool call) can read, file or answer a request. Asserted in
 `tests/self-development-requests.test.mjs`.
+
+#### Owner review and normal merge
+
+Inbox lists contracted source worktrees separately from chat requests. Before owner review, commit
+the scoped changes and run `node scripts/review.mjs --jobs 1` followed by the contract's exact
+`expectedTests` list through Branch's confined `shell.execute`, with `cwd` equal to the worktree.
+Only successful, untruncated output with no skipped expected tests on clean matching commits before
+and after the command creates test evidence. Changes to the review/build entry scripts or package scripts require independent review on GitHub
+and cannot certify themselves through this automatic path. Contract tests still need the owner's
+assessment of their assertions and coverage in the diff. Evidence and review grants stay in this
+engine session; they are not restored from a backup. Finish or stop the task in this exact worktree before reviewing
+the merge. Unrelated chats and other worktrees can keep working.
+
+- `GET /api/self-development/merge` lists the owner's contracted changes and recorded test evidence.
+- `GET /api/self-development/merge/runner` checks the existing Windows WSL Node/bubblewrap runner.
+  `tested: false` means project dependencies and actual tests still need verification. It installs nothing.
+- `POST /api/self-development/merge/review` takes `worktree`, `repo` and positive PR `number`, and
+  shows the complete bounded diff, contract, test command, exact head/base and required checks.
+- `POST /api/self-development/merge/approve` takes the returned `id`: the owner says they reviewed
+  this exact change. It does not merge. Approval is separate from the earlier permission to prepare edits.
+- `POST /api/self-development/merge/finish` takes that approved `id`, repeats verification and makes
+  one normal GitHub merge request with the expected head SHA. One attempt consumes the grant; grants
+  expire after ten minutes. A changed contract, diff, test evidence, head, base, rule or check requires review again.
+
+These are only for the owner in this computer's app window. Tasks, chats, short-lived keys, household
+profiles, other doors, Lockdown and App lock cannot use them. Owner state is checked again after
+asynchronous preflight and token/network-policy lookup immediately before sending the merge.
+
+The path supports a ready same-repository `branch/...` PR into the Beta line, or into a `selfdev-proof/...`
+scratch line that Beta never builds (for proving the loop without touching the Beta line). Branch verifies
+the checks itself on the exact head commit rather than relying on GitHub enforcing rules for administrators:
+every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
+accepted only for checks the base does not require), every check the base requires through classic
+protection or an active ruleset must have passed from its configured app, and the head must contain the exact
+base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
+Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
+GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
+GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
+`branch.finish_source_change` then gets an independent read-only review and merges without asking.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -4264,8 +4375,14 @@ have. On the command line: `branch skill pack <folder> [out.branchskill] --autho
 **Registries, version 2.** A registry index may now say `"version": 2` and publish a `publicKey`
 (base64 ed25519). Each listed skill may carry a `version`, a `changelog` and a `signature`, made
 over the exact lines `branch-skill-registry`, the registry name, the skill id, the version and the
-fingerprint. Branch labels every entry `checked`, `unsigned` or `invalid`; an `invalid` signature
-stops the install, an unsigned entry is installed but plainly labelled as unsigned. Version 1
+fingerprint. The key a registry publishes about itself is not trusted by itself: it counts only once it is pinned
+on this computer, either shipped with Branch or approved by you. `POST /api/registry/browse` answers a `key`
+`{ published, pinned, status }` (status `pinned`, `not-pinned`, `changed` or `none`), and `POST /api/registry/trust
+{ url, fingerprint }` pins the key the registry publishes right now when it is the fingerprint you were shown. Branch
+labels every entry `checked` (signed with a pinned key), `untrusted` (signed, but the key is not pinned), `unsigned`
+or `invalid`. An `invalid` entry is not installed or updated; once a key is pinned, a registry that publishes another
+key, drops its key or lists an unsigned entry is `invalid` until you approve the new key. An unsigned or untrusted
+entry is installed but plainly labelled. Version 1
 indexes still work exactly as before. `GET /api/registry/updates` asks the registries you installed
 from whether a newer version exists and returns the changelog; `POST /api/registry/update
 { skillId }` saves the new version and switches to it, keeping the one you had;
@@ -4284,8 +4401,12 @@ A tool is `{ name: "plugin.<id>.<name>", description, permission, input, run(arg
 where `input` is the same `{ name: { type, required, description } }` shape a recipe uses, and the
 permission must be one the plugin declared. A hook is `{ event, run(payload) }`. Plugins may add
 tools and react to events; they may not add screens to the app. `GET /api/plugins` lists the files
-without loading any of them; `POST /api/plugins/:id/inspect` loads one file to show what it would
-add (which runs the code at the top of that file); `POST /api/plugins/:id/enable` and
+without loading any of them; `POST /api/plugins/:id/inspect` shows what one would add from its
+manifest only and never runs the file. The manifest is the plugin catalog’s record when it was installed from a
+folder, zip or add-on, or a `<id>.plugin.json` beside a hand-placed file (`{ id, name, description, permissions,
+tools?, hooks? }`); a file with neither is shown as having no manifest. Switching a plugin on is what runs it, and
+then a permission its code asks for that the manifest did not list is never granted, and code changed since it was
+installed is not switched on. `POST /api/plugins/:id/enable` and
 `POST /api/plugins/:id/disable` switch it on and off, and the choice is remembered. On the command
 line: `branch plugin list | enable <id> | disable <id>`. **Be plain about the limits:** a plugin is
 not sandboxed. It runs inside Branch with the same reach over this computer that Branch has. The
@@ -5064,7 +5185,8 @@ Everything a program of your own needs to use Branch, in one place (bucket 21):
   each README says how to use it from a copy of the source. Branch refuses any web page on another
   address, so the React hooks run in a desktop app, React Native, a server-rendered page, or behind
   a development proxy.
-- **The switch.** Settings → Advanced → **Building on Branch**: off (the default), when needed, or on.
+- **The switch.** Settings → Advanced → **Building on Branch**: off, when needed (the default, under the ship-on rule:
+  the tools only read), or on.
   `GET`/`POST /api/sdk-kit` with `{"mode": "off" | "when-needed" | "on"}` does the same; only the owner
   may change it, and a short-lived key may not.
 - **Tools for an AI coding tool.** With the switch not off, `sdk.routes` lists the web routes (by group
@@ -5942,18 +6064,39 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
 
+### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
+
+The commands a chat can send are listed in the app's own command picker, from the same table every surface reads,
+and only while chat commands are on (with them off the picker is emptied, so it never offers a command that would be
+read as an ordinary message); a change to either switch updates it.
+
+- **Discord**: registered as global application commands (one overwrite, so a command taken out of the list leaves
+  Discord's picker too), each with one optional text option for what follows it. Invite the bot with the `bot` and
+  `applications.commands` scopes. Choosing one is answered at once to that person alone ("Running /status") and then
+  read as the typed command from them, so pairing, the allowlist and each command's own level still decide.
+- **Slack** keeps an app's slash commands in the app's settings, and many plain names (/status, /remind) are Slack's
+  own, so the wizard's Slack app has one, `/branch` (with the `commands` scope): `/branch status` is `/status`,
+  `/branch` alone is `/help`, and words that are not a command are an ordinary message. An app made from the older
+  manifest needs `/branch` added under Slash Commands.
+- Telegram's "/" menu is filled the same way by the Telegram menu work (#590).
+
 ### Answering an approval from a chat app
 When a task started from Telegram or Discord stops to ask whether it may go ahead, the question is
 put in that chat with buttons: Yes, Yes always (only for a task you started yourself, the same rule
 the app's own card follows; a task a chat message started never counts as that, so a chat gets only
 Yes and No) and No. Telegram uses an inline keyboard, Discord an action row of
-message components. Each button carries its answer and the fingerprint of the exact request, so a
+message components, and Slack Block Kit buttons (the wizard's Slack app has interactivity on; a press
+arrives over Socket Mode as `block_actions`, only Branch's own `branch_answer_*` buttons count, and the
+buttons stay as on Telegram, so a press the router refuses never takes them from the person who may answer). Matrix has no buttons, so the question names
+👍 and 👎 and the assistant puts both reactions on it to tap; a reaction by anybody but the assistant on
+that question is read as that answer, and any other reaction is not. Each button carries its answer and the fingerprint of the exact request, so a
 yes cannot be replayed against a different one, and the conversation it belongs to is worked out
 from the chat rather than carried in the button — Telegram allows only 64 bytes there.
 
-A channel with no buttons — WhatsApp, email — gets the same question with "Reply y for yes, a for
-yes always, or n for no." A bare `y`, `a` or `n` from a chat whose conversation has a question
-waiting answers it; anything longer is an ordinary message, whatever it happens to say. The answer
+A channel with no buttons — WhatsApp, Signal, email and the rest — gets the same question with "Reply
+y for yes, or n for no (or send /approve or /deny)." A bare `y`, `a` or `n`, or `/approve` (`/yes`) and
+`/deny` (`/no`), from a chat whose conversation has a question waiting answers it (with nothing
+waiting, `/approve` and `/deny` say so rather than starting a task); anything longer is an ordinary message, whatever it happens to say. The answer
 goes through the same approval path as the app's own card, and the record of what the assistant was
 allowed to do says which chat app it was answered on.
 
@@ -8804,12 +8947,14 @@ short-lived key can read them but never change them.
 | | `contextWindowTokens` | `null` (20,000) | Room in one request, used both for folding and for the "too long" stop. |
 | How far one task may go (Settings, Permissions) | `maxSteps` | `60` | Model rounds in one task of the owner's (and in a background sub-task). Each question to the model and each tool call is one step. A task that uses them all ends as one out of rounds does: its best answer, then what it spent them on and where this setting is, never the bare words "Step budget exhausted". Event: `rounds.exhausted` (`by`: `steps`) |
 | | `spendCapDollars` | `null` | The task stops before its next model round once it has cost about this much, sub-tasks included. A model with no price on file cannot be checked; the task notes that once (`limits.spend_unpriced`). |
+| | `maxTaskTokens` | `null` (200,000) | Tokens one task may use in all, counting every request it sends to the model, 20,000 to 20,000,000. Long coding work, such as Branch changing its own source and waiting for its checks, needs more than the built-in figure. Branch's own settings tools find it as "Tokens per task" (`task-tokens.maxTaskTokens`, where `auto` means left empty) and change it only after you say yes. |
+| | `messagesPerConversationHour` | `60` | Maximum messages starting tasks in one conversation over a rolling hour; 1–1,000. A refused message stays in the window's draft. |
 | Trying the model service again (Settings, Advanced) | `apiRetries` | `null` (launch setting, 2) | Tries after a busy or failed request, 0 to 5. |
 | | `localFirstReplySeconds` | `null` (launch `localFirstReplyMs`, 300) | Longest a model on this computer may take to start each reply (it may be loading into memory), 5 to 1800. Hosted models are not affected. |
-| | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 60. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
+| | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 500. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
 | How much a tool may say (Settings, Advanced) | `toolAnswerChars` | `null` (launch `toolResultChars`) | Longest tool answer the model reads. |
-| | `toolTimeoutSeconds` | `null` (launch `toolTimeoutMs`) | Longest one tool call runs. |
-| How commands run (Settings, Computer) | `commandTimeoutSeconds` | `null` (the file's `shell.timeoutMs`) | Longest one command runs, for `shell.*` and nothing else. |
+| | `toolTimeoutSeconds` | `null` (launch `toolTimeoutMs`) | Longest one tool call runs, 5 to 1,800 seconds. |
+| How commands run (Settings, Computer) | `commandTimeoutSeconds` | `null` (the file's `shell.timeoutMs`) | Longest one command runs, for `shell.*` and nothing else, 1 to 1,800 seconds (a build and its tests can take minutes). |
 | | `keptOpenShell` | `true` | Off refuses to open a kept-open command line. |
 | | `passEnvironment` | `[]` | Extra variable names handed to commands and kept-open command lines. Owner only. |
 | Sub-tasks and side jobs (Settings, Models, Defaults) | `subtaskModel` | `null` | Connection for delegated work; `null` is the conversation's own. |
@@ -8820,7 +8965,7 @@ short-lived key can read them but never change them.
 | | `serviceTier` | `standard` | `priority` sends `service_tier: "priority"` to OpenAI-style services and `service_tier: "auto"` to Claude; `flex` sends `flex` to OpenAI-style services only. `standard` sends nothing. |
 | Showing a model's thinking (Settings, Appearance) | `showReasoning` | `true` | Off removes `<think>`, `<thinking>` and `<reasoning>` blocks from answers and from the live text. |
 | How much it remembers at the start (Library, Memory) | `snapshotFacts`, `snapshotChars` | `20`, `2000` | The memory snapshot a new conversation starts with. |
-| | `aboutYouOn`, `aboutYou`, `aboutYouChars` | `false`, `""`, `1500` | The owner's own note, put in front of the owner's conversations as background (never a household person's). |
+| | `aboutYouOn`, `aboutYou`, `aboutYouChars` | `true`, `""`, `1500` | The owner's own note, put in front of the owner's conversations as background (never a household person's). On as shipped: nothing is added until the note is written. |
 | | memory provider | Branch's own | "Branch's own plus Hindsight" is the same switch as the Hindsight card (`asks-hindsight`); the address stays there. |
 | Hiding key-like values (Settings, Permissions) | `sensitivity` | `standard` | `strict` also hides long random-looking strings with digits and both cases. |
 | | `exceptions` | `[]` | Kinds of value not hidden. A private key is never let through. Owner only. |
@@ -8875,6 +9020,15 @@ rounds are read from `/api/model-savings/rounds?session=<id>`.
 Setting names: `planModel` and `sideTier` (planning model and flex for side questions), `easyModel`, `hardModel` and
 `classifierModel` (choose by difficulty), `maxPings` (keep-alive), `allowFallbacks` and `dataCollection` (OpenRouter),
 and `mixtures` (mixtures of models).
+
+`difficulty.mixHard` defaults to false. When enabled with two different easy and hard connections,
+hard tasks use both as a mixture and the hard connection writes the combined answer. Easy tasks continue
+to use the easy connection. Clearing the switch or choosing the same connection twice removes the mixture.
+
+OpenRouter's **Only ones I list** reads `POST /api/model-savings/companies` on demand and keeps the company's
+plain slugs for one day. The request sends no key and goes only to OpenRouter's own provider-list address.
+It requires a configured OpenRouter connection and refuses while Lockdown is on. The chosen `only` list
+is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
 
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
@@ -10269,3 +10423,105 @@ Nothing ever rebuilds a map on its own. A stale map is a row saying so; you pres
 Settings fields (`learn`): `mode` (off, when-needed, on -- when-needed at first) and `steps`, how many stops
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
+
+## The desktop app's engine process
+
+The desktop app runs the engine in a process of its own and hands it what it needs when it starts (`EngineConfigSchema`, src/desktop/engine-link.ts). None of these is set by hand; they are listed so every declared field is written down.
+
+- `dataDir`, `workspace`: the data folder and workspace, the same ones the app would use itself.
+- `providerEnv`: the saved model connection as provider variables, or none.
+- `version`: the app's version.
+- `executable`, `installRoot`, `packaged`: the installed program file and folder (none when run from source), and whether this is a packaged app.
+- `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
+- `appPid`: the window's main process, so the engine knows when the app is gone.
+- `testHooks`: test builds only, never in a packaged app.
+
+## Long work: carrying on after a restart or a limit
+
+Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+
+- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
+- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+
+## Seasons: overnight learning
+
+Saved in the owner's `settings/seasons` record, declared by `SeasonsSettingsSchema` in
+`src/seasons/settings.ts`. Household learning uses these switches while keeping each person's work
+and memory separate. A partial settings update preserves omitted fields. See [Seasons](seasons.md).
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `rings` | `on` | `off` or `on`: consolidate memory overnight with an undoable journal. |
+| `nightFrom` | `1` | Local start hour, 0–23, inclusive. |
+| `nightTo` | `6` | Local end hour, 0–23, exclusive. |
+| `idleMinutes` | `30` | 5–720 minutes without task activity before overnight work begins. |
+| `paidModels` | `false` | Permit models billed per call for overnight work; otherwise only local or subscription connections qualify. |
+| `minScore` | `0.6` | 0–1: minimum score before a fact is promoted. |
+| `minRecallCount` | `3` | 1–20: minimum recall count before promotion. |
+| `minUniqueQueries` | `2` | 1–20: minimum distinct queries before promotion. |
+
+The Gardener extends this record with the following settings when its feature is installed:
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `gardener` | `on` | `off` or `on`: draft and evaluate skills from the four supported triggers. |
+| `minGain` | `0.1` | 0.01–1: minimum measured improvement needed to adopt a skill. |
+| `staleAfterDays` | `14` | 1–365: unused adopted skills are marked stale after this many days. |
+| `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
+| `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
+| `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+## Desktop engine startup contract
+
+These internal fields in `EngineConfigSchema` (`src/desktop/engine-link.ts`) are sent by
+the desktop host over its private process channel. They are not editable user preferences.
+
+| Field | Meaning |
+| --- | --- |
+| `dataDir`, `workspace` | Saved-work and workspace directories chosen by the desktop. |
+| `providerEnv` | Saved model connection variables, or null; keys travel through the private channel. |
+| `version` | Desktop version reported by the engine. |
+| `executable`, `installRoot` | Installed executable and program folder, or null when running from source. |
+| `packaged` | Whether this desktop is a packaged installation. |
+| `loginItem` | macOS login-item enabled/approval state, or null elsewhere. |
+| `appPid` | Desktop host process named in the running-engine record. |
+| `testHooks` | Unpackaged test-launch hooks; never enabled in a packaged app. |
+| `port` | Optional exact port retained during an engine handover. |
+| `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
+| `appRoot` | Program folder containing checked live builds. |
+| `liveWindow` | Checked live window build: commit, digest, version and adoption time. |
+
+## Long work: carrying on after a restart or a limit
+
+Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+
+- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
+- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+
+## Seasons: overnight learning
+
+Saved in the owner's `settings/seasons` record, declared by `SeasonsSettingsSchema` in
+`src/seasons/settings.ts`. Household learning uses these switches while keeping each person's work
+and memory separate. A partial settings update preserves omitted fields. See [Seasons](seasons.md).
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `rings` | `on` | `off` or `on`: consolidate memory overnight with an undoable journal. |
+| `nightFrom` | `1` | Local start hour, 0–23, inclusive. |
+| `nightTo` | `6` | Local end hour, 0–23, exclusive. |
+| `idleMinutes` | `30` | 5–720 minutes without task activity before overnight work begins. |
+| `paidModels` | `false` | Permit models billed per call for overnight work; otherwise only local or subscription connections qualify. |
+| `minScore` | `0.6` | 0–1: minimum score before a fact is promoted. |
+| `minRecallCount` | `3` | 1–20: minimum recall count before promotion. |
+| `minUniqueQueries` | `2` | 1–20: minimum distinct queries before promotion. |
+
+The Gardener extends this record with the following settings when its feature is installed:
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `gardener` | `on` | `off` or `on`: draft and evaluate skills from the four supported triggers. |
+| `minGain` | `0.1` | 0.01–1: minimum measured improvement needed to adopt a skill. |
+| `staleAfterDays` | `14` | 1–365: unused adopted skills are marked stale after this many days. |
+| `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
+| `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
+| `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |

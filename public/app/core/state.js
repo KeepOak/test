@@ -60,7 +60,7 @@ export async function refresh() {
   E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
   E.trunksRead = !!trunks; // pass 18: an empty Trunks list is a welcome only when the engine answered
   E.trunkModes = trunks?.modes ?? {};
-  E.defaultTrunkId = trunks?.defaultId ?? null;
+  E.defaultTrunkId = trunks?.defaultId ?? null; // the default Trunk answers every chat nobody routed elsewhere
   E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
   if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   E.sessions = sessions?.sessions ?? [];

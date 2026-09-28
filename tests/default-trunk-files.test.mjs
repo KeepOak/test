@@ -38,7 +38,7 @@ test("the default files are written, other Trunks blank with hints, and edits ap
   const { app, provider } = await fixture(t);
   const home = app.trunks.ensureDefault(true);
   assert.notEqual(home.character, "branch", "a generated default has its own character");
-  app.trunks.records.edit(home.id, { character: "branch" });
+  app.store.save("governance", app.runtime.owner, `trunk:${home.id}`, { ...app.trunks.records.get(home.id), character: "branch" }); // legacy stored record, never a valid new edit
   assert.notEqual(app.trunks.ensureDefault(true).character, "branch", "a legacy mascot default gets its own character");
   const other = app.trunks.create({ name: "Blank" });
   await app.trunks.introduced();

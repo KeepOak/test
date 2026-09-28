@@ -14,6 +14,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { pickGsel, gselChoices } from "./gsel.mjs";
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-procedure-suggestion-"));
@@ -91,10 +92,10 @@ test("the flow editor shows the Trunk's suggestion; Keep it as it is answers no,
   const note = page.locator(".dlg .fp17d");
   assert.match(await note.innerText(), /Ledger suggests a change[\s\S]*Last month two receipts were missing/);
   assert.equal(await note.locator(".av").count(), 1, "the Trunk's own face");
-  /* Kinds the engine does not run are drawn but cannot be picked, and the reason is under the steps. */
-  const disabled = await page.locator(".dlg #fk-0 option[disabled]").allInnerTexts();
-  assert.deepEqual(disabled, ["When", "If it says", "Wait", "Repeat", "Split and gather", "Run a flow"]);
-  assert.match(await page.locator(".dlg").innerText(), /are not step kinds the engine runs yet/);
+  /* Every kind of step is one the engine runs (src/autonomy/step-kinds.ts), so every one can be picked. */
+  assert.deepEqual((await gselChoices(page.locator(".dlg #fk-0"))).filter((c) => c.off), []);
+  assert.deepEqual((await gselChoices(page.locator(".dlg #fk-0"))).map((c) => c.words), ["When", "Ask a Trunk", "If it says", "Ask me", "Wait", "Repeat", "Split and gather", "Run a flow"]);
+  assert.doesNotMatch(await page.locator(".dlg").innerText(), /not step kinds the engine runs yet/);
 
   await page.locator('.dlg [data-act="ppsee17d"]').click();
   await page.locator('.dlg [data-act="ppdeny17d"]').waitFor();

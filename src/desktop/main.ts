@@ -43,12 +43,13 @@ import { appMenuTemplate, helpChannel, type HelpItem } from "./app-menu.js";
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
-import { updateCanary } from "../never-break/canary.js";
+import { stagedEngine, updateCanary } from "../never-break/canary.js";
+import { runStagedSmoke, smokeReportPath } from "./beta-smoke.js";
 import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
 // mac7/safe-rollback: what an update changes is written down before the hand-over moves anything.
-import { recordActivation } from "../install/headless-update.js";
+// It is loaded when an update is recorded: its store and backup code would otherwise sit in this process all day.
 // mac7/win-icon: the taskbar shows the mascot, not Electron's atom.
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
@@ -82,6 +83,10 @@ let quitReason: QuitReason = "person";
 let runningNow: () => Promise<number> = async () => 0;
 /** The engine's own process, when this window started one (not when it joined a background engine). */
 let engine: EngineHost | undefined;
+/** Tells the engine whether the window is shown, so a chat's answer can say where Branch is (src/environment.ts). */
+function tellWindow(): void {
+  if (window && !window.isDestroyed()) engine?.tell("window", { shown: window.isVisible() && !window.isMinimized() });
+}
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -182,6 +187,9 @@ async function createWindow(
     show: false,
     icon: branchIcon(),
     autoHideMenuBar: true,
+    // Started in the tray, the page stays hidden until the window is first shown: otherwise it counts as visible and
+    // draws, decodes its loops and holds its tiles for a window nobody can see.
+    paintWhenInitiallyHidden: !startsMinimized(process.argv),
     webPreferences: {
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       nodeIntegration: false,
@@ -209,6 +217,10 @@ async function createWindow(
   window.on("resize", soon);
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
+  // The engine tells the model whether Branch's window is open or hidden in the tray (src/environment.ts).
+  for (const change of ["show", "hide", "minimize", "restore"] as const) window.on(change as "show", tellWindow);
+  window.on("closed", () => engine?.tell("window", { shown: false }));
+  tellWindow();
   const mic = new TalkLiveMic(url, window.webContents.id);
   protectWindow(window, url, key, mic, reachable);
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
@@ -335,6 +347,7 @@ function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
   // A copy that cannot update itself never hands over, so there is nothing to write down.
   if (!installRoot) return {};
   return { record: async (stagedDir, toVersion) => {
+    const { recordActivation } = await import("../install/headless-update.js");
     const recorded = await recordActivation({ dataDir, installRoot, stagedDir, fromVersion: app.getVersion(),
       toVersion, executableName: appEntryName(process.platform) });
     recorded.close();
@@ -379,6 +392,7 @@ async function start(): Promise<void> {
         return report.pid;
       },
       canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
+      tryOut: betaTryOut,
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
       currentCommit: commit,
@@ -396,6 +410,7 @@ async function start(): Promise<void> {
     backup: async () => requestUpdateBackup(url, key()),
     // mac3/never-break: the new version is tried on a copy of this data before it is used.
     canary: desktopCanary(dataDir, async () => engineSnapshot(url, key())),
+    tryOut: betaTryOut,
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: commit,
@@ -461,6 +476,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
       // Back at another address (its port was taken meanwhile): the window's page belongs to the old one, so the
       // whole app starts again, which opens the window at the new address.
+      tellWindow(); // an engine started again knows nothing of the window yet
       if (url !== host.url) { app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) }); quitReason = "restart"; app.quit(); return; }
       // A page that went away meanwhile (its reload was held back while the engine was down) is opened again.
       if (window && !window.isDestroyed() && new URL(window.webContents.getURL() || "about:blank").origin !== url)
@@ -549,6 +565,14 @@ function desktopCanary(dataDir: string, snapshot: () => Promise<string>) {
   return updateCanary({ dataDir, platform: process.platform, executableName: appEntryName(process.platform),
     fromVersion: app.getVersion(), target: installedAppRoot(app.isPackaged, process.platform, process.execPath), snapshot });
 }
+/**
+ * Beta: the staged new version started for real, hidden, on a folder of its own in this computer's temporary folder
+ * (src/desktop/beta-smoke.ts); never the owner's data. Answers the owner's sentence when it failed, or null.
+ */
+function betaTryOut(stagedDir: string): Promise<string | null> {
+  const { executable } = stagedEngine(stagedDir, process.platform, appEntryName(process.platform));
+  return runStagedSmoke({ executable, args: [] }, join(app.getPath("temp"), "branch-agent-try-out"), process.env);
+}
 /** mac3/never-break: asks the background engine, which holds the database, for a copy of it. */
 async function engineSnapshot(url: string, token: string): Promise<string> {
   const response = await fetch(`${url}/api/never-break/snapshot`, { method: "POST",
@@ -584,6 +608,14 @@ if (process.env.BRANCH_DESKTOP_HOME)
 if (process.argv.includes(refreshShortcutsFlag)) {
   // The installer's one-off request: put the shortcuts right and quit, touching nothing else.
   void app.whenReady().then(refreshWindowsShortcuts).finally(() => app.exit(0));
+} else if (smokeReportPath(process.argv)) {
+  // A Beta try-out of this version (src/desktop/beta-smoke.ts): its own engine, folder and hidden window, then quit.
+  // It never takes the single-instance lock, so the version that started it keeps running.
+  const report = smokeReportPath(process.argv)!;
+  app.on("window-all-closed", () => undefined);
+  // Loaded only here: the try-out starts an engine of its own, and its code would otherwise sit in every window's process.
+  void app.whenReady().then(() => import("./beta-smoke-window.js")).then(({ smokeMode }) => smokeMode(report, app.getVersion()))
+    .then((code) => app.exit(code), () => app.exit(1));
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {

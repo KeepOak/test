@@ -1,5 +1,6 @@
+import { presetRunsLocally } from "./models.js";
 import { randomBytes } from "node:crypto";
-import { writeFile, unlink } from "node:fs/promises";
+import { access, constants, stat, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { createBranch } from "./index.js";
 import { localRuntimes } from "./local-runtimes.js";
@@ -26,7 +27,19 @@ async function checkDatabase(app: Branch): Promise<HealthItem> {
     return item("Saved data", true, `Database opens; ${runs} recent tasks on record`);
   } catch (error) { return item("Saved data", false, `Database problem: ${failure(error)}`, "Close the app, make a copy of the data folder, then reopen. If it persists, restore from a backup."); }
 }
-async function checkWorkspace(app: Branch): Promise<HealthItem> {
+/**
+ * Audit #36: checking must not change anything, so by default the workspace is only looked at (it exists, is a folder,
+ * and this user may write to it). Only with `probe` (`branch doctor --probe`, which also sends real requests) is a
+ * small file written and removed again, the one test that also holds on Windows, where write permission can mislead.
+ */
+async function checkWorkspace(app: Branch, probeWrite: boolean): Promise<HealthItem> {
+  if (!probeWrite) {
+    try {
+      if (!(await stat(app.runtime.workspace)).isDirectory()) throw new Error("it is not a folder");
+      await access(app.runtime.workspace, constants.W_OK);
+      return item("Workspace folder", true, `${app.runtime.workspace} is there and may be written to`);
+    } catch (error) { return item("Workspace folder", false, `Cannot use the workspace: ${failure(error)}`, "Check that the folder exists and that you have permission to write to it."); }
+  }
   const probe = join(app.runtime.workspace, `health-${randomBytes(4).toString("hex")}.tmp`);
   try { await writeFile(probe, "ok", { mode: 0o600 }); await unlink(probe); return item("Workspace folder", true, `Can write to ${app.runtime.workspace}`); }
   catch (error) { return item("Workspace folder", false, `Cannot write to the workspace: ${failure(error)}`, "Check that the folder exists and that you have permission to write to it."); }
@@ -71,9 +84,9 @@ function checkAttention(app: Branch): HealthItem {
 }
 
 /** Ollama and LM Studio on this computer: whether they run, what they hold, what last went wrong. */
-async function checkLocalRuntimes(): Promise<HealthItem> {
+async function checkLocalRuntimes(app: Branch): Promise<HealthItem> {
   try {
-    const report = await localRuntimes().health();
+    const report = await localRuntimes().health([...app.runtime.models.presets.values()].some(presetRunsLocally));
     return item("Models on this computer", report.ok, report.summary, report.fix);
   } catch (error) {
     return item("Models on this computer", true, `Could not ask: ${failure(error)}`);
@@ -82,8 +95,8 @@ async function checkLocalRuntimes(): Promise<HealthItem> {
 
 export async function healthReport(app: Branch, options: { probeProvider?: boolean } = {}): Promise<HealthReport> {
   const items = (await Promise.all([
-    checkDatabase(app), checkWorkspace(app), checkDeviceKey(app), checkModels(app, options.probeProvider ?? false), checkChatGPT(app),
-    checkLocalRuntimes(),
+    checkDatabase(app), checkWorkspace(app, options.probeProvider ?? false), checkDeviceKey(app), checkModels(app, options.probeProvider ?? false), checkChatGPT(app),
+    checkLocalRuntimes(app),
   ])).filter((i): i is HealthItem => i !== null);
   items.push(checkChannels(app), checkSchedules(app), checkAttention(app));
   return { ok: items.every((i) => i.ok), checkedAt: new Date().toISOString(), items };

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import type { Store } from "./store.js";
 import { listPrompts, savePrompt, commandProblem, type PromptInput } from "./prompt-library.js";
-import { exampleServerVersion, exampleTools } from "./examples/mcp-notes-server.js";
+import { exampleServerVersion, exampleTools } from "./examples/mcp-notes-info.js";
 
 /**
  * Bucket 12 (family "examples"): starter prompts that ship with Branch. Nothing is added until the

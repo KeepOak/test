@@ -507,12 +507,13 @@ export class Store {
   }
   /**
    * DESIGN-DIRECTION PR 2: each task's plain title for lists: the one the engine gave it (`run.titled`, a room turn's),
-   * else its prompt's first line. One query for the whole list.
+   * else its prompt's whole first line (a list shows a task's words whole and wraps them; each list cuts for itself).
+   * One query for the whole list.
    */
   runTitles(runs: readonly Run[]): Map<string, string> {
     const given = new Map(this.db.prepare("SELECT run_id AS id, json_extract(data,'$.title') AS title FROM events WHERE kind='run.titled' AND run_id IN (SELECT value FROM json_each(?))")
       .all(JSON.stringify(runs.map((run) => run.id))).map((row) => [String(row.id), String(row.title ?? "")]));
-    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!.slice(0, 200)]));
+    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!]));
   }
   /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
   keptFromRecent(runId: string): boolean {
@@ -673,7 +674,7 @@ export class Store {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");
     // unhold-control: a run that wrote nothing into its conversation (a command pressed by hand) leaves the transcript alone.
-    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status);
+    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status, status === "needs_input" ? this.askedCall(id) : undefined);
     if (added) this.event(id, "session.reconciled", { added, reason: status });
     // NAS 3fd7700: where the conversation stood when this task stopped to ask, so a yes carries it on only while
     // nothing else (a heartbeat's note, a Trunk routine's report) has been written there since.
@@ -747,14 +748,49 @@ export class Store {
       .all(sessionId)
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
-  reconcileMessages(sessionId: string, reason: string): number {
+  /**
+   * QA (first task): a call stopped before execution to ask the person never ran. Its result says so, and what to do after
+   * the answer, instead of "side effects may have occurred", which told qwen3:14b the opposite of the note that carries
+   * the task on after a yes (Runtime.continueNote), so it asked the person again whether to start. Approvals raised after
+   * execution started preserve the unknown result, because the outer tool may already have had side effects.
+   */
+  private askedCall(runId: string): ReadonlyMap<string, string> {
+    const events = this.events(runId);
+    const callId = events.filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
+    if (typeof callId !== "string") return new Map();
+    if (events.some((event) => event.kind === "policy.execution_unknown" && event.data.id === callId)) return new Map();
+    const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId);
+    return new Map([[callId, JSON.stringify(approval
+      ? { ok: false, status: "interrupted", outcome: "not_run", error: "Not run: Branch stopped at this call to ask the person. When the task "
+        + "carries on after a yes (or after a restart), make this same call again, exactly as before; after a no, do not make it." }
+      : { ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
+  }
+  /**
+   * After the person answers, the asking call's "not run" result says what they answered, so the model reads the same
+   * thing in its transcript as in the note that carries the task on. Only that recorded result is ever rewritten.
+   */
+  answerAskedCall(sessionId: string, callId: string, allowed: boolean): boolean {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      if (!String(body.content ?? "").includes('"outcome":"not_run"')) return false;
+      const content = JSON.stringify(allowed
+        ? { ok: false, status: "allowed", outcome: "not_run", error: "The person said yes to this call. It has not run yet: make this same call again now, exactly as before." }
+        : { ok: false, status: "refused", outcome: "not_run", error: "The person said no to this call. It did not run and will not; do not make it again." });
+      this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return true;
+    }
+    return false;
+  }
+  reconcileMessages(sessionId: string, reason: string, known?: ReadonlyMap<string, string>): number {
     const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
     // attach-anything: what was read out of a message's files follows the message to its new row.
     const oldIds = new Map([...sources.keys()].map((message, i) => [message, Number(rows[i]!.id)]));
     // A repaired transcript keeps when each message was first written.
     const times = new Map([...sources.keys()].map((message, i) => [message, rows[i]!.created_at == null ? null : String(rows[i]!.created_at)]));
-    const repaired = reconcileTranscript([...sources.keys()], reason);
+    const repaired = reconcileTranscript([...sources.keys()], reason, known);
     if (!repaired.added) return 0;
     this.db.exec("BEGIN");
     try {
@@ -1019,7 +1055,7 @@ export class Store {
   memorySuppressed(owner: string, sessionId: string) { return this.memories.suppressed(owner, sessionId); }
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
-  restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  restoreMemory(owner: string, id: string, preserveExpiry = false) { return this.memories.restore(owner, id, preserveExpiry); }
   /** Seasons: moves one fact into the archive with a note; nothing is destroyed and the Memory view can bring it back. */
   setAsideMemory(owner: string, id: string, note: string) { return this.memories.setAside(owner, id, note); }
   archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
@@ -1038,6 +1074,23 @@ export class Store {
         "UPDATE schedules SET data=json_set(data,'$.status','running'),updated_at=? WHERE owner=? AND id=? AND json_extract(data,'$.status')='pending' AND json_extract(data,'$.dueAt')<=? RETURNING *",
       )
       .get(now, owner, id, now);
+    return result ? this.toRecord(result) : undefined;
+  }
+  /**
+   * A turn asked for by hand or by a webhook takes the schedule in one conditional write, as `claimSchedule` does for
+   * a due turn, so two callers (or a caller and the clock) can never both start it. The status it had is kept in
+   * `statusBeforeTrigger` so the turn can put it back. A `slot` that already started a turn of this schedule is never
+   * claimed again: the same webhook delivery sent twice starts one turn.
+   */
+  claimScheduleTrigger(owner: string, id: string, now: string, slot: string | null): SavedRecord | undefined {
+    const result = this.db
+      .prepare(
+        `UPDATE schedules SET data=json_set(data,'$.statusBeforeTrigger',json_extract(data,'$.status'),'$.status','running'),updated_at=?
+         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed')
+         AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(data,'$.triggerSlots') WHERE json_extract(value,'$.slot')=?))
+         RETURNING *`,
+      )
+      .get(now, owner, id, slot, slot);
     return result ? this.toRecord(result) : undefined;
   }
   dueSchedules(owner: string, now: string): SavedRecord[] {
@@ -1137,4 +1190,3 @@ export class Store {
     };
   }
 }
-

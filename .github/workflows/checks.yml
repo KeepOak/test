@@ -13,38 +13,84 @@ name: Checks
 # beside the others, a file that runs past six minutes is ended and named, and node_modules (with the Electron
 # binary inside it) and the browser are kept between runs. The downloads and the phone apps are built for a release
 # tag, or by hand, in package.yml and mobile.yml, never here.
+#
+# A pull request into redesign/window runs what its change can reach (scripts/select-affected-tests.mjs, the `plan`
+# job): documentation alone runs no test; tests, helpers and page files run the tests that use them (every browser
+# test for a page file); anything in src/ runs the whole Linux lane. Windows and macOS run on a pull request only when
+# it touches their own code or tests. Every push, the nightly run and a run by hand run the whole suite on every
+# system, and verify-suite refuses anything less on a push, so promote only ever moves mac/cross-platform to a commit
+# the whole suite passed. (PR Fast Checks, pr-fast.yml, did the same selection in a workflow of its own; it is folded
+# in here.)
 on:
   pull_request:
   push:
-    branches: [main, wave2/integration, 'release/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
+    branches: [main, wave2/integration, 'release/**', 'redesign/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
 permissions:
   contents: read
-# One run per branch or pull request. A newer run replaces an older one, except on the two integration trunks,
-# where every commit may be released and therefore needs its own result.
+# A pull request keeps one run: a new push, or a base merge into it, cancels the older run for the same PR.
+# Pushes to a branch (redesign/window, mac/cross-platform and the rest; not main or release/**) share one group per
+# branch without cancel-in-progress: the running base run always finishes (and
+# promote follows it), and GitHub keeps one pending run, which a newer merge replaces. A merge storm therefore runs the
+# whole suite once per batch, on the newest commit, which covers every commit before it; a red base names a batch, not
+# one merge. (Cancelling in progress there once meant no base run ever finished, so promote never ran.) Pushes to main
+# and release/**, the nightly run and runs by hand have a group of their own and are never replaced.
 concurrency:
-  group: checks-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/mac/cross-platform' }}
+  group: ${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') && format('checks-base-{0}', github.ref) || format('checks-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # What this run tests: the whole suite, or for a pull request into redesign/window what its change reaches.
+  # A push, the nightly run and a run by hand skip it and run the whole suite at once, with no wait for its runner.
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      selected: ${{ steps.plan.outputs.selected }}
+      summary: ${{ steps.plan.outputs.summary }}
+    steps:
+      # Two commits: a pull request's run tests the merge ref, whose first parent is the commit it merges onto.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: node scripts/select-affected-tests.mjs --event="$EVENT" --base-ref="$BASE_REF"
+      - name: Check documentation-only changes
+        if: steps.plan.outputs.mode == 'docs'
+        run: |
+          git diff --check HEAD^1 HEAD
+          node scripts/check-docs.mjs
+  # The plan's shares on a pull request; without a plan, the whole suite (FULL_MATRIX in select-affected-tests.mjs).
   test:
     name: test (${{ matrix.lane }}, ${{ matrix.shard }}/${{ matrix.total }})
+    needs: [plan]
+    if: ${{ !cancelled() && (needs.plan.result == 'skipped' || (needs.plan.result == 'success' && needs.plan.outputs.mode != 'docs')) }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { lane: linux, os: ubuntu-latest, shard: 1, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 2, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 3, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 4, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 5, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 6, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 7, total: 8, concurrency: '2,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 8, total: 8, concurrency: '2,2' }
-          - { lane: windows, os: windows-latest, shard: 1, total: 2, concurrency: '3,1' }
-          - { lane: windows, os: windows-latest, shard: 2, total: 2, concurrency: '3,1' }
-          - { lane: macos, os: macos-latest, shard: 1, total: 1, concurrency: '3,2' }
+      matrix: >-
+        ${{ fromJSON(needs.plan.result == 'success' && needs.plan.outputs.matrix || '{"include":[
+        {"lane":"linux","os":"ubuntu-latest","shard":1,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":2,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":3,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":4,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":5,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":6,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":7,"total":8,"concurrency":"2,2"},
+        {"lane":"linux","os":"ubuntu-latest","shard":8,"total":8,"concurrency":"2,2"},
+        {"lane":"windows","os":"windows-latest","shard":1,"total":2,"concurrency":"3,1"},
+        {"lane":"windows","os":"windows-latest","shard":2,"total":2,"concurrency":"3,1"},
+        {"lane":"macos","os":"macos-latest","shard":1,"total":1,"concurrency":"3,2"}
+        ]}') }}
     runs-on: ${{ matrix.os }}
     # A share is measured at under eight minutes. Past fifteen something is stuck: fail rather than wait.
     timeout-minutes: 15
@@ -98,9 +144,15 @@ jobs:
         run: node dist/cli.js run "Write, read and verify the fixture file."
         env:
           BRANCH_PROVIDER: demo
+      # A partial run's Linux shares split the plan's selection instead of the whole lane.
+      - if: matrix.selected
+        shell: bash
+        env:
+          SELECTED: ${{ needs.plan.outputs.selected }}
+        run: printf '%s' "$SELECTED" > "$RUNNER_TEMP/selected-tests.json"
       # Linux has no screen on the runner; Electron and browser tests draw into a virtual one.
       - shell: bash
-        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}node scripts/run-tests.mjs --lane=${{ matrix.lane }} --shard=${{ matrix.shard }}/${{ matrix.total }}
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}node scripts/run-tests.mjs --lane=${{ matrix.lane }} --shard=${{ matrix.shard }}/${{ matrix.total }}${{ matrix.selected && format(' --files-from={0}/selected-tests.json', runner.temp) || '' }}
         env:
           BRANCH_TEST_TIMINGS: ${{ runner.temp }}/test-timings.json
           BRANCH_TEST_CONCURRENCY: ${{ matrix.concurrency }}
@@ -113,18 +165,69 @@ jobs:
           path: ${{ runner.temp }}/test-timings.json
           if-no-files-found: ignore
           retention-days: 14
-  # The one check to require. It runs even when a share fails, so the check is red rather than skipped, and it is
-  # green only when every share of every lane passed.
+  # The one check to require. It runs even when a share fails, so the check is red rather than skipped. On a pull
+  # request it is green only when the plan ran and every share it planned passed (a documentation-only one plans
+  # none); anywhere else only when there was no plan, so the whole suite ran and passed, since promote follows it.
+  # A partial run says so.
   verify:
     name: verify-suite
-    needs: [test]
+    needs: [plan, test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Every share of every lane passed
+      - name: The plan ran, and every share it planned passed
         env:
+          PLAN: ${{ needs.plan.result }}
+          MODE: ${{ needs.plan.outputs.mode }}
           TEST: ${{ needs.test.result }}
+          EVENT: ${{ github.event_name }}
+          SUMMARY: ${{ needs.plan.outputs.summary }}
         run: |
-          echo "tests: $TEST"
-          test "$TEST" = success
+          if [ "$EVENT" = pull_request ]; then test "$PLAN" = success; else test "$PLAN" = skipped; MODE=full; fi
+          echo "plan: $PLAN, mode: $MODE, tests: $TEST"
+          if [ "$MODE" = docs ]; then
+            test "$EVENT" = pull_request
+            test "$TEST" = skipped
+            echo "::notice::Documentation only: no test file ran."
+          else
+            test "$TEST" = success
+          fi
+          if [ -n "$SUMMARY" ]; then printf '%s' "$SUMMARY" | jq -r '.[]' | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$MODE" = partial ]; then
+            echo "::notice::PARTIAL: only the test files this change reaches ran. The whole suite runs on the merge into redesign/window."
+          fi
+  # Every merge reaches the owner: once the whole suite passed on a push to redesign/window, mac/cross-platform (the line
+  # the owner's Beta and Dev app follows) is moved to that very commit. Fast-forward only: a plain `git push` refuses
+  # anything else, so a commit that is not ahead of mac/cross-platform is reported, never merged and never forced. An
+  # older run that finishes after a newer commit already went across has nothing to do. The push passes branch
+  # protection because the check mac/cross-platform requires, verify-suite, passed on this commit in this run.
+  promote:
+    name: promote to mac/cross-platform
+    needs: [verify]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && github.repository == 'stabrea/Branch-Agent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+    concurrency:
+      group: promote-mac-cross-platform
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Fast-forward mac/cross-platform to this commit
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin redesign/window mac/cross-platform
+          if git merge-base --is-ancestor "$SHA" origin/mac/cross-platform; then
+            echo "mac/cross-platform already has $SHA."; exit 0
+          fi
+          if ! git merge-base --is-ancestor origin/mac/cross-platform "$SHA"; then
+            echo "::error::mac/cross-platform has commits redesign/window does not, so $SHA is not a fast-forward. Merge mac/cross-platform into redesign/window first; nothing was pushed."
+            exit 1
+          fi
+          git push origin "$SHA:refs/heads/mac/cross-platform"
+          echo "mac/cross-platform is now $SHA."

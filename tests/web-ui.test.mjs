@@ -17,6 +17,7 @@ import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
+import { pickGsel } from "./gsel.mjs";
 
 const FIXTURE = join(import.meta.dirname, "fixtures", "markdown-sample.md");
 
@@ -298,15 +299,15 @@ test("U5 the playground runs a read-only tool and shows what came back", async (
   await page.locator('[data-act="setlevel"][data-v="technical"]').click();
   await page.locator('[data-act="setpage"][data-v="developer"]').click();
   await page.locator("#main").getByRole("button", { name: "Open", exact: true }).first().click({ timeout: 10000 });
-  await page.waitForFunction(() => (document.getElementById("play-tool")?.options.length ?? 0) > 1);
+  await page.waitForFunction(() => JSON.parse(document.getElementById("play-tool")?.dataset.opts ?? "[]").length > 1);
   // The playground (claude/unhold-control): its button reads "Run <tool>" as in the prototype.
-  await page.locator("#play-tool").selectOption("files.write");
+  await pickGsel(page.locator("#play-tool"), "files.write");
   await page.locator("#play-field-path").fill("playground.txt");
   await page.locator("#play-field-content").fill("written by hand");
   await page.getByRole("button", { name: /^Run / }).first().click();
   await page.locator("#play-result .code-block").waitFor();
   assert.match(await page.locator("#play-result .code-body").innerText(), /playground\.txt/);
-  await page.locator("#play-tool").selectOption("files.read");
+  await pickGsel(page.locator("#play-tool"), "files.read");
   await page.locator("#play-field-path").fill("playground.txt");
   await page.getByRole("button", { name: /^Run / }).first().click();
   await page.locator("#play-result .code-block").waitFor();
@@ -326,8 +327,8 @@ test("U5 a tool the settings say to ask about stops and asks before it runs", as
   await page.locator('[data-act="setlevel"][data-v="technical"]').click();
   await page.locator('[data-act="setpage"][data-v="developer"]').click();
   await page.locator("#main").getByRole("button", { name: "Open", exact: true }).first().click({ timeout: 10000 });
-  await page.waitForFunction(() => (document.getElementById("play-tool")?.options.length ?? 0) > 1);
-  await page.locator("#play-tool").selectOption("files.write");
+  await page.waitForFunction(() => JSON.parse(document.getElementById("play-tool")?.dataset.opts ?? "[]").length > 1);
+  await pickGsel(page.locator("#play-tool"), "files.write");
   await page.locator("#play-field-path").fill("asked.txt");
   await page.locator("#play-field-content").fill("only after a yes");
   await page.getByRole("button", { name: /^Run / }).first().click();
@@ -486,7 +487,7 @@ const SHARED_WITH_FRENCH = new Set([
   // phase2/delight: the near-impossible achievements' rank is written the same way in French.
   "SSS+",
   // bugfix-10 proposal: the same word in French (animals, borrowed or identical words, abbreviations, names, a command).
-  "Pangolin", "Quokka", "{count} messages", "Branches", "{n} min", "Document", "Position", "CLI", "Version {n}",
+  "Pangolin", "Quokka", "{count} messages", "{count} message", "{n} pages", "Webhook", "Branches", "{n} min", "Document", "Position", "CLI", "Version {n}",
   "version {cur} → {v}", "version {version}", "Hooks", "Trunk", "Local", "Version {value}",
   "{documents} documents · {chunks} passages", "Version", "Agents", "Animation", "Code", "Budgets", "GitLab", "git status",
   "Isolation", "2 min", "3 min", "Guide",

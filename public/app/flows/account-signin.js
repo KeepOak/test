@@ -52,7 +52,7 @@ export function signInCards() {
     if (!p) return [];
     const pool = poolById(p.pool);
     return [{ act: pool ? "aa-prov" : "aa-plan", v: pool ? p.pool : id, id: mark, name, group: "plan", note: t(note),
-      small: pool ? `${t("window.flows.acct.signed-in", { count: pool.accounts.length })} · ${t("window.flows.acct.your-plan-lower")}` : small(p) }];
+      small: pool ? `${t("window.flows.acct.signed-in", { count: pool.accounts.filter((one) => one.ready === true).length })} · ${t("window.flows.acct.your-plan-lower")}` : small(p) }];
   });
   const code = (SI.view.programs ?? []).filter((p) => !poolById(p.pool))
     .map((p) => ({ act: "aa-plan", v: p.id, id: p.pool, name: p.label ?? p.name, group: "code", small: small(p), note: p.note ?? "" }));

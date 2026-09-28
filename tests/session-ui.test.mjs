@@ -59,11 +59,11 @@ async function branchButton(page, text) {
 async function branchFrom(page, text) {
   await (await branchButton(page, text)).click({ timeout: 10000 });
   /* Redesign: "Branch from here" opens pass 17's dialog; "Start the new path" (data-act="brmake17c") makes it. The dialog
-     closes once the engine made the path; when the engine refuses, its reason is a toast and the dialog stays open. */
+     closes once the engine made the path; when the engine refuses, its reason stays inside the dialog. */
   const dlg = page.locator(".dlg");
   await dlg.waitFor({ timeout: 10000 });
   await dlg.locator('[data-act="brmake17c"]').click();
-  await page.waitForFunction(() => !document.querySelector(".dlg") || document.querySelector(".toast"), null, { timeout: 15000 });
+  await page.waitForFunction(() => !document.querySelector(".dlg") || document.querySelector("#br-error17c")?.textContent, null, { timeout: 15000 });
 }
 async function readyConversation(page) {
   await page.waitForFunction(() => !document.getElementById('send').disabled);
@@ -91,6 +91,8 @@ test('browser branches a historical prefix and follows up without changing the o
   assert.notEqual(id, f.source.sessionId);
   // Redesign: replaced by the new window (the old "Branched conversation" label and its "shares workspace files and
   // saved memory" line are not in the design; that files and memory stay shared is still checked below).
+  // The branch's messages are read after it becomes the open conversation, so they are waited for.
+  await f.page.locator('#conversation').getByText('Original choice').first().waitFor({ timeout: 15000 });
   assert.match(await f.page.locator('#conversation').innerText(), /Original choice/);
   assert.doesNotMatch(await f.page.locator('#conversation').innerText(), /Later instruction|Later outcome/);
   assert.equal(await f.page.locator('#conversation').getByRole('button', { name: 'Branch from here' }).count(), 2);
@@ -177,7 +179,7 @@ test('a rejected historical tool-request branch leaves the current conversation 
   await reloadSignedIn(f.page);
   await openConversation(f.page, run.sessionId, 'Unsafe checkpoint');
   await branchFrom(f.page, 'Unsafe checkpoint');
-  await f.page.locator('.toast').filter({ hasText: 'without tool requests' }).waitFor();
+  await f.page.locator('.dlg').getByRole('alert').filter({ hasText: 'without tool requests' }).waitFor();
   assert.equal(await f.page.locator('.dlg').isVisible(), true, 'the refused dialog stays open with its reason');
   await f.page.locator('.dlg [data-act="dlg-close"]').first().click();
   await readyConversation(f.page);

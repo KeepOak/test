@@ -8,6 +8,7 @@ import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.
 import { readFileSync } from "node:fs";
 import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
+import { isOfferUrl } from "../usage-offers.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
 
@@ -43,7 +44,9 @@ export interface UpdateHooks {
   backup: () => Promise<void>;
   stopDaemon?: () => Promise<number | null>;
   /** mac3/never-break: the new version's check on a copy of the data (see src/never-break/canary.ts). */
-  canary?: (stagedDir: string, version: string) => Promise<void>;
+  canary?: (stagedDir: string, version: string, options?: { required: boolean }) => Promise<void>;
+  /** Beta: the new version started for real before it is used (src/desktop/beta-smoke.ts). */
+  tryOut?: (stagedDir: string, version: string) => Promise<string | null>;
   /**
    * mac7/safe-rollback: writes down what this update is about to change, before the hand-over moves
    * a single file, so it can be undone afterwards. It throws when it cannot be written, and the
@@ -104,6 +107,7 @@ export function registerUpdaterIpc(
     ...(hooks ? { backup: hooks.backup } : {}),
     ...(hooks?.stopDaemon ? { stopDaemon: hooks.stopDaemon } : {}),
     ...(hooks?.canary ? { canary: hooks.canary } : {}),
+    ...(hooks?.tryOut ? { tryOut: hooks.tryOut } : {}),
     beforeStop: ensureIdle,
     devBuildDir: hooks?.buildDir ?? null,
     onChange: statusSender((status) => {
@@ -186,7 +190,8 @@ export function registerUpdaterIpc(
   });
   ipcMain.handle("branch:open-external", async (event, url: unknown) => {
     authorized(event);
-    if (typeof url !== "string" || !(externalAllowed.some((prefix) => url.startsWith(prefix)) || settingsPages.has(url)))
+    // The usage bar's "more usage" pages (src/usage-offers.ts) are matched on their origin and path exactly.
+    if (typeof url !== "string" || !(externalAllowed.some((prefix) => url.startsWith(prefix)) || settingsPages.has(url) || isOfferUrl(url)))
       throw new Error("That link cannot be opened from here");
     await shell.openExternal(url);
     return true;

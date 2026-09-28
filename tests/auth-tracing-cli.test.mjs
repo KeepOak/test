@@ -647,7 +647,7 @@ test("C6 a coding assistant already installed here can answer as a model", async
   const missing = new CliAgentProvider(rowFor({ id: "gone", command: "definitely-not-a-program-here" }), { timeoutMs: 5000 });
   await assert.rejects(missing.complete(request), /is not on this computer/);
   const fails = new CliAgentProvider(rowFor({ id: "broken", command: broken.command, args: broken.args }), { timeoutMs: 20_000 });
-  await assert.rejects(fails.complete(request), /stopped with an error/);
+  await assert.rejects(fails.complete(request), /could not finish the task \(exit code 2\)/);
 
   // Registering one only offers it; the model in use is not changed by that.
   const before = app.runtime.models.presets.size;
