@@ -52,6 +52,7 @@ async function chaosModel(t) {
     }
   };
   const server = createServer((request, response) => {
+    progress(`model: ${request.method} ${request.url} arrived`);
     let raw = ""; request.on("data", (chunk) => { raw += chunk; });
     request.on("end", async () => {
       if (request.url.endsWith("/models")) { response.end(JSON.stringify({ data: [{ id: "m" }] })); return; }
@@ -61,6 +62,7 @@ async function chaosModel(t) {
       const tag = tags.find((one) => text.includes(one)) ?? "other";
       const afterTool = messages.some((one) => one.role === "tool");
       asked.push({ tag, afterTool });
+      progress(`model: ${tag}${afterTool ? " after its tool" : ""} asked`);
       if (tag === "STREAM-A" && body.stream) {
         held.add(tag);
         response.writeHead(200, { "content-type": "text/event-stream" });
@@ -202,9 +204,10 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
     const { addresses } = await engine("/api/channels/addresses");
     const address = addresses.find((one) => one.channel === "mattermost")?.address;
     assert.ok(address, `the chat service's address is there: ${JSON.stringify(addresses)}`);
-    const inbound = await fetch(new URL(new URL(address, running.url).pathname, running.url), { method: "POST", headers: { "content-type": "application/json" },
+    // The chat service's post stays open while its turn works (a webhook's answer may go back on it), across every switch.
+    const inbound = fetch(new URL(new URL(address, running.url).pathname, running.url), { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ token: chatSecret, post_id: "p-chaos-1", channel_id: "c1", channel_name: "town-square", user_id: "user-9", user_name: "alice", text: "CHAT-C: what is on today?" }) });
-    assert.equal(inbound.status, 200, await inbound.text());
+    inbound.catch(() => undefined);
     await until("all four at work", async () => tags.every((tag) => model.held.has(tag)), 120_000);
     assert.ok(model.asked.some((one) => one.tag === "TOOL-B" && one.afterTool), "the tool task ran its tool and is working on the result");
     const wordsAtStart = model.streamed.words;
@@ -285,6 +288,8 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       const runs = (await runsOf()).filter((run) => tags.some((tag) => run.prompt.includes(tag)));
       return runs.length === 4 && runs.every((run) => ["completed", "failed", "cancelled", "error"].includes(run.status)) ? runs : null;
     }, 180_000, 500);
+    const posted = await inbound;
+    assert.equal(posted.status, 200, `the chat service's post, open across all three switches, was answered: ${await posted.text()}`);
     for (const [name, open] of [["tool task", tool], ["helper", helper]])
       assert.equal((await open).status ?? "completed", "completed", `the ${name}'s own request, open across all three switches, got its answer`);
     assert.deepEqual(finished.map((run) => run.status), ["completed", "completed", "completed", "completed"], JSON.stringify(finished.map((run) => [run.prompt, run.status])));
