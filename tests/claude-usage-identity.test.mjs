@@ -74,6 +74,21 @@ test("the first usage response has verified emails per profile and never exposes
   assert.equal(fx.statusHomes.length, 3, "identity cache is bounded and keyed per profile");
 });
 
+test("unresolved status cannot hold usage closed and unrelated saved pools are not probed", { timeout: 5000 }, async (t) => {
+  const fx = await fixture(t), held = Promise.withResolvers();
+  const settings = fx.service.settings();
+  settings.pools.push({ pool: "cli-codex", kind: "cli", accounts: [{ id: "primary", label: "Unrelated", createdAt: new Date().toISOString() }] });
+  saveAccountsSettings(fx.app.store, fx.app.runtime.owner, settings);
+  fx.service.deps.statusRun = async () => { await held.promise; return { code: 0, missing: false, stdout: "{}" }; };
+  try {
+    const response = await fx.call("/api/usage/glance");
+    assert.equal(response.identitiesPending, true);
+    assert.equal(response.rows.filter((r) => r.connection === "cli-claude-code").length, 3);
+    assert.equal(fx.service.signIns.has("cli-codex/primary"), false);
+    assert.equal(JSON.stringify(response).includes(secret), false);
+  } finally { held.resolve(); await fx.service.readIdentities(["cli-claude-code"]); }
+});
+
 test("a profile switch during the usage identity read returns no owner's rows", async (t) => {
   const fx = await fixture(t), gate = Promise.withResolvers(), began = Promise.withResolvers();
   let reads = 0;
@@ -115,6 +130,26 @@ async function connect(t, fx) {
   await page.locator("#app #side").waitFor();
   return page;
 }
+
+test("a slow profile leaves the popup open and verified emails hydrate progressively", async (t) => {
+  const fx = await fixture(t), page = await connect(t, fx), held = Promise.withResolvers(), began = Promise.withResolvers();
+  fx.service.signIns.clear(); fx.service.identities.clear();
+  fx.service.deps.statusRun = async (_row, _args, env) => {
+    const i = fx.homes.indexOf(env.CLAUDE_CONFIG_DIR);
+    if (i === 1) { began.resolve(); await held.promise; }
+    return { code: 0, missing: false, stdout: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: emails[i] }) };
+  };
+  try {
+    await page.locator('#statusbar [data-act="usagepop"]').click();
+    await began.promise;
+    await page.locator(".lim-list").waitFor({ timeout: 5000 });
+    assert.equal(await page.locator(".lim-list .lim-h").filter({ hasText: emails[0] }).count(), 1);
+    assert.equal(await page.locator(".lim-list .lim-h").filter({ hasText: "Claude 2" }).count(), 1);
+    held.resolve();
+    await page.waitForFunction(() => document.querySelector(".lim-list")?.textContent.includes("work@example.test"));
+    for (const email of emails) assert.equal(await page.locator(".lim-list .lim-h").filter({ hasText: email }).count(), 1);
+  } finally { held.resolve(); }
+});
 
 test("usage and identity use the same profiles; popup and Settings show verified emails", async (t) => {
   const fx = await fixture(t);

@@ -10,7 +10,7 @@ import { $, esc, render, renderNow, pressIn, whenReleased } from "../core/dom.js
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
 import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -200,6 +200,7 @@ function countDown(el) {
    Settings › Data & usage, or the window is not the owner's. It is read again every 20 seconds and whenever the engine's
    state is read again (each event), and the bar is drawn again only when the line changed. */
 let glance = null, readFor = null, reading = false, again = false;
+let identityTimer = null;
 const STALE_MS = 15 * 60_000, METER_EVERY_MS = 5 * 60_000;
 const inUseRow = (g) => {
   const id = E.state?.activeModel?.presetId;
@@ -241,8 +242,17 @@ async function readGlance() {
 }
 function keep(g) {
   const before = JSON.stringify(planOf(glance));
+  const rowsBefore = JSON.stringify(glance?.rows);
   glance = g;
   if (JSON.stringify(planOf(glance)) !== before) render();
+  if (JSON.stringify(g?.rows) !== rowsBefore) redrawPop(looks);
+  hydrateIdentities();
+}
+function hydrateIdentities() {
+  clearTimeout(identityTimer);
+  const visible = () => ownerHere() && !document.querySelector(".lockscreen") && document.querySelector(".pop .lims");
+  if (!glance?.identitiesPending || !visible()) return;
+  identityTimer = setTimeout(() => { if (visible()) readGlance(); }, 1000);
 }
 
 /* The status bar's own cadence: a ChatGPT plan in use is read again every five minutes while this window is in front (and
@@ -327,6 +337,7 @@ export function initUsage() {
   setInterval(checkLimits, 20000);
   setInterval(meterCheck, 60_000);
   window.addEventListener("focus", meterCheck);
+  for (const event of ["click", "keydown"]) document.addEventListener(event, () => queueMicrotask(hydrateIdentities));
   on("limcheck", () => checkRows(glance?.rows ?? []));
   on("updmenu", (el) => openUpdates(el));
   on("upd-snooze", (el) => { closePop(); snoozeUpdate(el.dataset.v); });
@@ -345,6 +356,7 @@ export function initUsage() {
     if (g) keep(g);
     openPop(el, popHTML(g), { right: true });
     if (!g || !document.querySelector(".pop .lims")) return;
+    hydrateIdentities();
     checkRows(g.rows ?? []);
     const look = looks;
     api("usage/limits/look", {}).then((next) => { keep(next); redrawPop(look); }).catch((error) => toast(error.message));

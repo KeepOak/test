@@ -183,7 +183,7 @@ export class AccountsService {
   private identityVisible(): boolean {
     return this.deps.store.profiles.scope() === this.deps.owner && !startedWithShortLivedKey() && !currentPerson();
   }
-  async readIdentities(): Promise<void> {
+  async readIdentities(onlyPools?: readonly string[]): Promise<void> {
     if (!this.identityVisible()) return;
     const pools = new Set(this.settings().pools.filter((pool) => pool.kind !== "api-key").map((pool) => pool.pool));
     if (this.deps.chatgpt) pools.add("chatgpt");
@@ -192,6 +192,7 @@ export class AccountsService {
       if (found && found.kind !== "api-key") pools.add(found.pool);
     }
     for (const pool of pools) for (const account of new Set([primaryAccount, ...(this.pool(pool)?.accounts.map((one) => one.id) ?? [])])) {
+      if (onlyPools && !onlyPools.includes(pool)) continue;
       if (!this.identityVisible()) return;
       await this.readIdentity(pool, account);
     }
