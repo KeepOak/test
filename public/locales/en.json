@@ -10125,5 +10125,6 @@
   "window.places.library17.import-spreadsheet-hint": "Choose a CSV, TSV, JSON or Excel file. Branch keeps it in Library and fills in a SELECT question you can run.",
   "window.places.library17.import-spreadsheet-limit": "Choose a spreadsheet smaller than 8 MB.",
   "window.places.library17.import-spreadsheet-read-error": "The file could not be read. Choose it again.",
-  "window.core.gsel.narrow": "Type to narrow"
+  "window.core.gsel.narrow": "Type to narrow",
+  "commands.voice": "spoken replies in this chat: to voice notes (on), to every message (always), or never (off)"
 }

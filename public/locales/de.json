@@ -10125,5 +10125,6 @@
   "window.places.library17.import-spreadsheet-hint": "Wähle eine CSV-, TSV-, JSON- oder Excel-Datei. Branch behält sie in der Bibliothek und füllt eine SELECT-Frage aus, die du ausführen kannst.",
   "window.places.library17.import-spreadsheet-limit": "Wähle eine Tabelle, die kleiner als 8 MB ist.",
   "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal.",
-  "window.core.gsel.narrow": "Tippen zum Eingrenzen"
+  "window.core.gsel.narrow": "Tippen zum Eingrenzen",
+  "commands.voice": "gesprochene Antworten in diesem Chat: auf Sprachnachrichten (on), auf jede Nachricht (always) oder nie (off)"
 }

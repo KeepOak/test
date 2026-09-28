@@ -10125,5 +10125,6 @@
   "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
   "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
   "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo.",
-  "window.core.gsel.narrow": "Escribe para filtrar"
+  "window.core.gsel.narrow": "Escribe para filtrar",
+  "commands.voice": "respuestas habladas en este chat: a las notas de voz (on), a cada mensaje (always) o nunca (off)"
 }

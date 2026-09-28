@@ -29,6 +29,7 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { chatVoiceMode, speaksHere } from "./chat-voice.js"; // CHAT-096
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
@@ -982,6 +983,7 @@ export class ChannelRouter {
       runtime: this.runtime, channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
+      ownAccount: this.ownAccount(channel, message.senderId),
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
         turn.dropped = true;
@@ -1246,7 +1248,9 @@ export class ChannelRouter {
     const delivered = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null);
     // The owner's "remove the steps message after a good answer"; a failed task keeps it as the record.
     if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
-    if (message.voice) await this.voiceReply(message, said).catch(() => undefined);
+    // CHAT-096: this chat's /voice choice says when a reply is spoken too (a voice note, every reply, or never).
+    if (speaksHere(chatVoiceMode(this.store, this.runtime.owner, message.channel, message.chatId), !!message.voice))
+      await this.voiceReply(message, said).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
   /**
