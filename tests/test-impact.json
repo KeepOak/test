@@ -46,7 +46,8 @@
       "src/**/*windows*",
       "src/**/*win32*",
       "src/**/*uninstall*",
-      "src/**/*console*"
+      "src/**/*console*",
+      "public/app/shell/controls.js"
     ],
     "macos": [
       "src/desktop/**",

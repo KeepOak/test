@@ -462,6 +462,8 @@ export const ROUTES = {
   "/api/trunks/:id/resume": "owner POST",
   // P17-D §9: the computers a Trunk may use and how many at once; reading names the owner's computers.
   "/api/trunks/:id/computers": "owner GET,POST",
+  "/api/trunks/:id/default": "owner POST",
+  "/api/trunks/:id/files": "other GET,POST", // personal files; scripts cannot read or change them, people only their own
   "/api/trunks/pause-all": "owner POST",
   "/api/trunks/resume-all": "owner POST",
   "/api/trunks/rooms/:id": "owner POST",
@@ -1067,6 +1069,7 @@ export const ROUTES = {
   // record is a wider window than any one of those alone, so it is refused like a secret read.
   "/api/search": "secret-read",
   "/api/second-opinion": "owner POST",
+  "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
   "/api/secrets/default": "look",
@@ -1080,6 +1083,11 @@ export const ROUTES = {
   // A chat's requests to change Branch itself: what people wrote, and who they are. Reading and
   // answering them is the owner's alone (src/self-development-requests.ts).
   "/api/self-development/requests": "secret-read",
+  "/api/self-development/merge": "secret-read",
+  "/api/self-development/merge/runner": "secret-read",
+  "/api/self-development/merge/review": "owner POST",
+  "/api/self-development/merge/approve": "owner POST",
+  "/api/self-development/merge/finish": "owner POST",
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
@@ -1307,6 +1315,8 @@ export const OUTBOUND = [
   /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
+  // selfdev: GitHub Enterprise's own /api/v3 and /api/graphql addresses, called outwards; not routes of ours.
+  /^src\/integrations\/github\.ts$/,
   // Only ones I list: OpenRouter's own documented /api/v1/providers, called outwards; not a route of ours.
   /^src\/model-savings\/openrouter\.ts$/,
 ];
