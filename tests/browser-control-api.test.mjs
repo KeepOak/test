@@ -12,6 +12,9 @@ import { BrowserControlApi, browserApiPath, requireBrowserOwner } from '../dist/
 import { OwnerInputSchema, ownerPageInput } from '../dist/integrations/browser-owner-input.js';
 import { startServer } from '../dist/server.js';
 import { savePolicy } from '../dist/policy.js';
+import { chromium } from 'playwright'; // a real headless Chromium opens these pages (CI installs it for this file)
+
+assert.equal(typeof chromium.launch, 'function');
 import { underShortLivedKey } from '../dist/key-context.js';
 import { setLockdown } from '../dist/lockdown.js';
 import { discardTemp } from './temp-dir.mjs';

@@ -285,7 +285,6 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
-import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -1967,24 +1966,8 @@ async function api(
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
   if (request.method === "GET" && path === liveStagePath)
-    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser, browsed: browsedRun },
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
       new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
-  // parity-b2: the owner's live view of this computer's screen (src/live-screen.ts), and the owner typing an address
-  // into Branch's browser (src/owner-browse.ts). Both the owner's alone, at this computer's own window.
-  if (request.method === "POST" && path === ownerBrowsePath) {
-    const input = BrowseSchema.parse(await readBody(request));
-    return browse({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
-      busy: (sessionId) => { const newest = app.store.sessionRuns(app.runtime.owner, sessionId).at(-1); return !!newest && ["running", "queued", "needs_input", "waiting"].includes(newest.status); },
-      context: (signal) => app.runtime.context({ signal }),
-      tryTool: (context, tried, ownRun) => tryToolByHand(app, TryToolSchema.parse(tried), context, ownRun) }, input)
-      .catch((error: unknown) => { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; });
-  }
-  if (request.method === "POST" && path === ownerBrowseClosePath) {
-    const { sessionId } = BrowseCloseSchema.parse(await readBody(request));
-    // Refused through a door, as typing an address is: the window it closes is this computer's own window's.
-    try { return closeBrowseFor({ viaDoor: throughDoor(request), profiles: app.store.profiles }, sessionId); }
-    catch (error) { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; }
-  }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -3943,7 +3926,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const browserQuery = new URL(request.url ?? "/", "http://local").searchParams;
           const input = request.method === "GET" && path === browserApiPath
             ? { sessionId: browserQuery.get("sessionId"), clientId: browserQuery.get("clientId"), profile: browserQuery.get("profile"),
-              id: browserQuery.get("id"), epoch: Number(browserQuery.get("epoch")) } : await readBody(request);
+              ...(browserQuery.has("id") ? { id: browserQuery.get("id"), epoch: Number(browserQuery.get("epoch")) } : {}) } : await readBody(request);
           const answer = await browserControls.handle(request.method ?? "GET", path, input, { authorize: authorizeBrowser, signal: stopped.signal })
             .catch((error: unknown) => { if (error instanceof z.ZodError) throw error; const refused = browserControls.error(error); throw new HttpError(refused.status, refused.message); });
           send(response, 200, answer); return;
@@ -4497,7 +4480,6 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingAddresses(); // mac7/bind
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
-      closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
       browserControls.close();
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();

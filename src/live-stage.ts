@@ -13,8 +13,8 @@
  * owner's own. A window borrowed in the owner's own browser (browser.borrow) is never pictured. Every word that
  * comes back (addresses, titles, the step) is passed through the saved-secret scrubber and the leak guard.
  *
- * parity-b2: with no task going, the window the owner opened by typing an address (src/owner-browse.ts) is the one
- * watched, and each read keeps it open.
+ * The owner's own browser for the conversation (its kept browser) is read through /api/panels/browser instead
+ * (src/browser-control-api.ts); a task working in it is watched here like any other.
  *
  *   GET /api/panels/live?session=<id>
  */
@@ -55,8 +55,6 @@ export interface LiveStageDeps {
   /** Who is at the window: records are theirs (`scope`), and only the owner is shown anything. */
   profiles: { scope(): string; isOwner(): boolean };
   browser: { watch?(owner: string, runId: string): Promise<WatchedWindow | null> } | null;
-  /** parity-b2: the run whose window the owner opened in this conversation by typing an address, if one is open. */
-  browsed?: (sessionId: string) => string | null;
 }
 
 const GOING = new Set(["running", "needs_input"]);
@@ -99,7 +97,7 @@ export async function liveStage(deps: LiveStageDeps, sessionId: string): Promise
   // the conversation starts the next task), so its question is no longer the one that matters.
   const going = runs[0] && GOING.has(runs[0].status) ? runs[0] : null;
   const key = JSON.stringify([scope, sessionId]);
-  const found = await watching(deps, going?.id ?? deps.browsed?.(sessionId) ?? null), last = kept.get(key);
+  const found = await watching(deps, going?.id ?? null), last = kept.get(key);
   // A frame can fail while the page is between two addresses or its window is closing; the last one of the same
   // window stands in for that moment rather than a blank. Only a real frame is kept.
   const now = found && found.preview !== "borrowed" && !found.frame && last?.runId === found.runId ? { ...found, frame: last.frame } : found;

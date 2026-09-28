@@ -29,6 +29,7 @@ import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault
 import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
 import { OwnerInputSchema, ownerPageInput, type OwnerInput } from './browser-owner-input.js';
+import { platformFetch } from '../pinned-fetch.js';
 
 export const BrowserConfigSchema = z.object({
   /** The only websites the browser may open, as exact origins. */
@@ -126,7 +127,7 @@ interface RunEntry {
 export interface WatchedWindow {
   url: string;
   title: string;
-  tabs: { url: string; title: string; active: boolean }[];
+  tabs: { url: string; title: string; active: boolean; loading?: boolean; icon?: string }[];
   /** A JPEG of the tab being worked in, or null (a borrowed window, or no frame could be taken). */
   frame: Buffer | null;
   borrowed: boolean;
@@ -161,6 +162,13 @@ export class BranchBrowser {
   private readonly controlled = new Map<string, RunEntry>();
   private readonly controlledOpening = new Map<string, Promise<RunEntry>>();
   private readonly ownerCommands = new WeakMap<object, { command: BrowserCommand; authorize?: () => void; effectStarted?: () => void }>();
+  /**
+   * Which tasks may work in a conversation's kept browser on their own: set by the owner's browser controls
+   * (src/browser-control-api.ts) to the owner's own running tasks in that conversation. Unset, none do.
+   */
+  sharesWith: ((owner: string, conversation: string, runId: string) => boolean) | undefined;
+  /** Each site's small icon for the owner's tabs, as a data: address ("" while unknown or when it has none). */
+  private readonly icons = new Map<string, string>();
   constructor(input: unknown) {
     this.config = BrowserConfigSchema.parse(input);
     this.origins = originsOf(this.config.allowedOrigins ?? []);
@@ -247,7 +255,7 @@ export class BranchBrowser {
   }
   private entry(context: ToolContext): RunEntry {
     if (this.closed) throw new Error('Browser is closed');
-    const key = this.key(context), existing = this.sessions.get(key);
+    const key = this.key(context), existing = this.sessions.get(key) ?? this.sharedFor(context);
     if (existing) {
       if (existing.control?.view().state === 'stopped') throw new Error('This browser was stopped.');
       return existing;
@@ -270,6 +278,46 @@ export class BranchBrowser {
     return created;
   }
 
+  /**
+   * A Trunk's task works in its conversation's kept browser (the one the owner opened or took over), so what the owner
+   * signed into and left open is where the task carries on. Only the owner's own tasks in that conversation, and never
+   * one using another Trunk's saved sign-in.
+   */
+  private sharedFor(context: ToolContext): RunEntry | undefined {
+    const run = typeof this.store?.run === 'function' ? this.store.run(context.runId) : undefined;
+    if (!run?.sessionId || run.owner !== context.owner) return undefined;
+    const control = this.controls.forConversation(context.owner, run.sessionId), entry = control && this.controlled.get(control.id);
+    if (!control || !entry || !this.sharesWith?.(context.owner, run.sessionId, context.runId)) return undefined;
+    const profile = control.binding.profile;
+    if (profile && isTrunkProfile(profile) && profile !== trunkProfileName(context.trunk ?? '')) return undefined;
+    this.controls.bindRun(control.binding, control.id, context.runId, true);
+    this.sessions.set(this.key(context), entry);
+    return entry;
+  }
+  /**
+   * The owner takes over a running task's own window: it becomes the conversation's kept browser, the task keeps its
+   * limits so far, and its next step waits for Hand back. A borrowed browser, a benchmark window and a window being
+   * recorded are never taken over.
+   */
+  adoptRun(owner: string, conversation: string, runId: string, clientId: string): BrowserControl {
+    const key = this.key({ owner, runId }), entry = this.sessions.get(key);
+    if (entry?.control) {
+      if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
+      return entry.control;
+    }
+    if (!entry || !entry.session.started()) throw new Error('That task has no browser page open.');
+    if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
+    if (entry.held) throw new Error('A benchmark window cannot be taken over.');
+    if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
+    const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
+    entry.control = control;
+    entry.tabIds = control.view().tabs;
+    entry.budgets = new Map([[runId, { actions: entry.actions, origins: entry.origins }]]);
+    entry.trunkChecked = true;
+    this.controlled.set(control.id, entry);
+    this.sessions.set(this.key({ owner, runId: `browser-control:${control.id}` }), entry);
+    return control;
+  }
   /** Creates a kept Branch-owned session before its first page; routes retain their existing caller/tool gates. */
   async createControlled(binding: BrowserBinding, clientId: string, context: ToolContext) {
     this.controlledScope(binding, context);
@@ -371,11 +419,13 @@ export class BranchBrowser {
     const index = entry.tabIds?.indexOf(tabId) ?? -1, page = entry.session.tabPage(index);
     return page && !page.isClosed() ? { page, url: page.url() } : null;
   }
-  private writeFor<T>(context: ToolContext, action: (write: BrowserWrite | null, signal: AbortSignal) => Promise<T>): Promise<T> {
+  private async writeFor<T>(context: ToolContext, action: (write: BrowserWrite | null, signal: AbortSignal) => Promise<T>): Promise<T> {
     const entry = this.entry(context), control = entry.control;
     if (!control) return action(null, context.signal);
     const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
-    const own = token && this.ownerCommands.get(token), view = control.view();
+    const own = token && this.ownerCommands.get(token);
+    if (!own) await control.agentTurn(context.runId, context.signal);
+    const view = control.view();
     own?.authorize?.();
     const sequence = entry.agentSequence?.epoch === view.epoch ? entry.agentSequence.next : 1;
     const active = entry.session.tabs().find(tab => tab.active)?.index ?? 0;
@@ -969,15 +1019,49 @@ export class BranchBrowser {
     // A tab whose page is busy may not answer; its title is left empty after a second rather than holding up the view.
     const titleOf = (tab: Page) => Promise.race([tab.title().catch(() => ''), new Promise<string>(done => { setTimeout(() => done(''), 1000).unref?.(); })]);
     const tabs = await Promise.all(seen.tabs.map(async (tab, index) => {
-      const [title, hidden] = await Promise.all([titleOf(tab), entry.control ? this.watchedSecrets(entry, tab) : undefined]);
+      const [title, hidden, extra] = await Promise.all([titleOf(tab), entry.control ? this.watchedSecrets(entry, tab) : undefined,
+        entry.control ? this.tabExtras(tab) : undefined]);
       return { url: hidden === undefined ? tab.url() : scrubAddress(tab.url(), hidden),
-        title: hidden === undefined ? title : hidden === null ? '' : scrubText(title, hidden), active: index === seen.active };
+        title: hidden === undefined ? title : hidden === null ? '' : scrubText(title, hidden), active: index === seen.active, ...extra };
     }));
     const borrowed = entry.session.isBorrowed();
     // A box a saved sign-in was typed into holds that secret whatever kind of box it is (a code goes into a plain one).
     const filled = entry.filled.get(seen.page)?.boxes ?? [];
     const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
     return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
+  }
+  /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
+  private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
+    const state = await Promise.race([tab.evaluate(() => document.readyState).catch(() => 'complete'),
+      new Promise<string>(done => { setTimeout(() => done('loading'), 300).unref?.(); })]);
+    return { loading: state !== 'complete', icon: this.iconFor(tab) };
+  }
+  /**
+   * A site's icon, fetched once per site under the same network rules as every other request (the policy's own
+   * checked fetch, held to the addresses it judged), no bigger than 16 KB and only an image. Never blocks the view:
+   * the first read says "" and a later one has the icon.
+   */
+  private iconFor(tab: Page): string {
+    let origin: string;
+    try { const url = new URL(tab.url()); if (!['http:', 'https:'].includes(url.protocol)) return ''; origin = url.origin; } catch { return ''; }
+    const known = this.icons.get(origin);
+    if (known !== undefined) return known;
+    this.icons.set(origin, '');
+    while (this.icons.size > 64) this.icons.delete(this.icons.keys().next().value!);
+    const guard = (this.policy as { guard?: (base: typeof fetch) => typeof fetch } | undefined)?.guard;
+    if (!guard) return '';
+    void (async () => {
+      const href = await Promise.race([tab.evaluate(() => (document.querySelector('link[rel~="icon"]') as HTMLLinkElement | null)?.href ?? '').catch(() => ''),
+        new Promise<string>(done => { setTimeout(() => done(''), 1000).unref?.(); })]);
+      const target = new URL(/^https?:\/\//.test(href) ? href : '/favicon.ico', origin);
+      if (!this.allowed(target.href)) return;
+      const answer = await guard.call(this.policy, platformFetch)(target, { redirect: 'manual', signal: AbortSignal.timeout(3000) });
+      const type = answer.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+      const bytes = Buffer.from(await answer.arrayBuffer());
+      if (answer.ok && /^image\/[\w.+-]+$/.test(type) && bytes.length > 0 && bytes.length <= 16_384)
+        this.icons.set(origin, `data:${type};base64,${bytes.toString('base64')}`);
+    })().catch(() => undefined);
+    return '';
   }
   /** The website the run's page is on, so the approval policy can match on it. */
   hostFor(context: Pick<ToolContext, 'owner' | 'runId'>): string {

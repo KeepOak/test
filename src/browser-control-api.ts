@@ -15,12 +15,13 @@ import { lockdownActive, onLockdownChange } from './lockdown.js';
 
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 export const browserApiPath = '/api/panels/browser';
-export const browserApiPaths = [browserApiPath, `${browserApiPath}/start`, `${browserApiPath}/control`,
-  `${browserApiPath}/action`, `${browserApiPath}/disconnect`, `${browserApiPath}/stop`] as const;
+export const browserApiPaths = ['/api/panels/browser', '/api/panels/browser/start', '/api/panels/browser/control',
+  '/api/panels/browser/action', '/api/panels/browser/disconnect', '/api/panels/browser/stop'] as const;
 export const handlesBrowserApiPath = (path: string): boolean => browserApiPaths.some(value => value === path);
 const ScopeSchema = z.object({ sessionId: z.string().uuid(), profile: profileNameSchema.nullable(), clientId: z.string().uuid() }).strict();
 const BoundSchema = ScopeSchema.extend({ id: z.string().uuid(), epoch: z.number().int().min(1) });
-const StartSchema = ScopeSchema.extend({ confirmToken: z.string().uuid().optional() });
+/** `runId`: take over that running task's own window, which becomes this conversation's kept browser. */
+const StartSchema = ScopeSchema.extend({ confirmToken: z.string().uuid().optional(), runId: z.string().uuid().optional() });
 const ControlSchema = BoundSchema.extend({ operation: z.enum(['takeover', 'handback']), runId: z.string().uuid().optional(), confirmToken: z.string().uuid().optional() });
 const ActionSchema = BoundSchema.extend({ frameId: z.string().uuid(), sequence: z.number().int().min(1), tabId: z.string().uuid(),
   tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
@@ -52,6 +53,15 @@ export class BrowserControlApi {
   constructor(private readonly app: Branch) {
     this.stopLockdown = onLockdownChange((store, owner, on) => { if (store === app.store && owner === app.runtime.owner && on) this.revoke(); });
     app.channelHost.onLock(async () => { if (!this.closed) this.revoke(); });
+    this.share();
+  }
+  /** The owner's own running tasks in a conversation work in its kept browser; nobody else's ever do. */
+  private share(): void {
+    const browser = this.app.browser;
+    if (browser && !browser.sharesWith) browser.sharesWith = (owner, conversation, runId) => {
+      if (this.closed || owner !== this.app.runtime.owner || lockdownActive(this.app.store, owner)) return false;
+      try { this.liveRun({ owner, conversation, profile: null }, runId); return true; } catch { return false; }
+    };
   }
   revoke(): void {
     this.app.browser?.controls.revokeAll(); this.frames.clear(); this.approvals.clear();
@@ -60,6 +70,7 @@ export class BrowserControlApi {
   }
   private browser() {
     if (!this.app.browser) throw new BrowserApiError(503, 'Branch browser is not configured.');
+    this.share();
     return this.app.browser;
   }
   private binding(input: Scope, access: RequestAccess): BrowserBinding {
@@ -132,6 +143,7 @@ export class BrowserControlApi {
     timer.unref?.(); this.leases.set(view.id, { clientId: input.clientId, timer });
   }
   private async start(input: z.infer<typeof StartSchema>, access: RequestAccess) {
+    if (input.runId) return this.adopt(input, input.runId, access);
     const binding = this.binding(input, access);
     return this.withRun(binding, access, async context => {
       const { confirmToken, ...payload } = input, permit = this.permit(payload, context, 'browser.tab', { action: 'list' }, confirmToken);
@@ -142,6 +154,34 @@ export class BrowserControlApi {
       const control = this.browser().controls.get(binding, view.id); this.lease(input, control);
       return { status: 'ready', control: view };
     });
+  }
+  /** Take over a running task's own window: it becomes the kept browser, the owner drives, and the task waits. */
+  private async adopt(input: z.infer<typeof StartSchema>, runId: string, access: RequestAccess) {
+    const scope = this.binding({ ...input, profile: null }, access);
+    this.liveRun(scope, runId);
+    return this.withRun(scope, access, async context => {
+      const { confirmToken, ...payload } = input, permit = this.permit(payload, context, 'browser.tab', { action: 'list' }, confirmToken);
+      if ('status' in permit) return permit;
+      this.manualGuard(scope, access, permit, context, 'browser.tab', { action: 'list' })();
+      let control: BrowserControl;
+      try { control = this.browser().adoptRun(scope.owner, scope.conversation, runId, input.clientId); }
+      catch (error) { throw error instanceof BrowserControlError ? error : new BrowserApiError(409, error instanceof Error ? error.message : String(error)); }
+      const binding = control.binding;
+      if (binding.profile && isTrunkProfile(binding.profile)
+        && binding.profile !== trunkProfileName(this.app.trunks.trunkForConversation(binding.conversation)?.trunkId ?? ''))
+        throw new BrowserApiError(403, 'This browser profile belongs to another Trunk.');
+      this.browser().bindControlledRun(binding, control.id, context);
+      this.changed(control.id);
+      const view = control.view().writer?.kind === 'owner' ? control.view() : await control.takeOver(control.view().epoch, input.clientId);
+      this.lease({ ...input, profile: binding.profile }, control);
+      return { status: 'ready', control: view };
+    });
+  }
+  /** The conversation's kept browser, if it has one, so a window that reopened finds it again. */
+  private find(input: Scope, access: RequestAccess) {
+    this.binding(input, access);
+    const found = this.app.browser?.controls.forConversation(this.app.runtime.owner, input.sessionId) ?? null;
+    return found ? { status: 'found', control: found.view() } : { status: 'none' };
   }
   private async view(input: Bound, access: RequestAccess) {
     const { binding, control } = this.bound(input, access), revision = this.revisions.get(input.id) ?? 0;
@@ -224,7 +264,10 @@ export class BrowserControlApi {
   async handle(method: string, path: string, body: unknown, access: RequestAccess): Promise<unknown> {
     if (this.closed) throw new BrowserApiError(503, 'Browser controls are closed.');
     access.authorize(); access.signal.throwIfAborted();
-    if (method === 'GET' && path === browserApiPath) return this.view(BoundSchema.parse(body), access);
+    if (method === 'GET' && path === browserApiPath) {
+      const asked = body as { id?: unknown };
+      return asked?.id ? this.view(BoundSchema.parse(body), access) : this.find(ScopeSchema.parse(body), access);
+    }
     if (method !== 'POST') throw new BrowserApiError(405, 'Browser endpoint does not support that method.');
     if (path === `${browserApiPath}/start`) return this.start(StartSchema.parse(body), access);
     if (path === `${browserApiPath}/control`) return this.transfer(ControlSchema.parse(body), access);
