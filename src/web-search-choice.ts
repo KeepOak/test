@@ -40,7 +40,7 @@ export function saveSearchChoice(store: Store, owner: string, input: unknown): S
   const saved = SearchBackendSchema.safeParse(store.get("settings", owner, webSearchKey)?.data);
   const before = saved.success ? saved.data : null;
   const searxngUrl = given.searxngUrl ?? before?.searxngUrl;
-  if (given.backend === "searxng" && !searxngUrl) throw new Error("Give the address of your SearXNG first, like http://192.168.1.20:8080.");
+  if (given.backend === "searxng" && !searxngUrl) throw new Error("Give the address of your SearXNG first, like https://search.example.org. An address on your own network also needs private addresses allowed in the web settings.");
   // A secret name the owner gave for this same service is kept; otherwise the service's usual name is used.
   const keySecret = given.keySecret ?? (before?.backend === given.backend ? before.keySecret : undefined);
   const value = SearchBackendSchema.parse({ backend: given.backend, ...(searxngUrl ? { searxngUrl } : {}), ...(keySecret ? { keySecret } : {}) });
