@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import { fixture } from "./trunks-helpers.mjs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createBranch } from "../dist/index.js";
+import { discardTemp } from "./temp-dir.mjs";
+import { brain, fixture } from "./trunks-helpers.mjs";
 import { startServer } from "../dist/server.js";
 import { saveOnboarding } from "../dist/onboarding.js";
 
@@ -43,5 +48,51 @@ test("the window uses the default face, edits live files, changes default and li
   await page.locator(`[data-act="trunk-default"][data-id="${other.id}"]`).click();
   assert.equal((await changed).status(), 200);
   assert.equal(app.trunks.defaultTrunk().id, other.id);
+  assert.deepEqual(errors, []);
+});
+
+test("after an update, the sidebar lists every stray conversation under the default Trunk, and a hand-made Trunk under its own", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-default-window-"));
+  const closing = [];
+  t.after(async () => { for (const close of closing.reverse()) await close(); await discardTemp(root); });
+  const open = (data) => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, data), provider: brain() });
+  // ---- a Branch from before threads: setup skipped, a hand-made Trunk, stray conversations ----
+  const before = await open("data");
+  saveOnboarding(before.store, before.runtime.owner, { done: true, skipped: true });
+  const stray = [await before.runtime.run({ prompt: "hey" }), await before.runtime.run({ prompt: "please remember this" })];
+  const kite = before.trunks.create({ name: "Kite" });
+  await before.trunks.introduced();
+  before.store.sqlite.exec("DELETE FROM trunk_threads; DELETE FROM governance WHERE id='trunk-default' OR id GLOB 'trunk-files:*'");
+  await before.close();
+  // ---- this build starts on it ----
+  const app = await open("data");
+  closing.push(() => app.close());
+  const home = app.trunks.ownerDefault();
+  assert.notEqual(home.id, kite.id);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  closing.push(() => server.close(), () => browser.close());
+  const page = await browser.newPage({ serviceWorkers: "block" });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  const headingOf = (sessionId) => page.locator(`#side [data-act="chat"][data-id="${sessionId}"]`).evaluate((row) => {
+    let previous = row.closest(".rw18").previousElementSibling;
+    while (previous && !previous.classList.contains("lh")) previous = previous.previousElementSibling;
+    return previous?.textContent?.trim() ?? null;
+  });
+  for (const run of stray) {
+    await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).waitFor({ state: "visible" });
+    assert.equal(await headingOf(run.sessionId), home.name, "a moved conversation is listed under the default Trunk");
+  }
+  assert.equal(await headingOf(kite.chatSessionId), kite.name, "the hand-made Trunk keeps its own chat");
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll('#side [data-act="chat"][data-id]')].filter((row) => {
+    let previous = row.closest(".rw18")?.previousElementSibling;
+    while (previous && !previous.classList.contains("lh")) previous = previous.previousElementSibling;
+    return !previous;
+  }).length), 0, "no conversation is left loose");
   assert.deepEqual(errors, []);
 });
