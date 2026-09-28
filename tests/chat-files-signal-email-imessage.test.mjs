@@ -46,7 +46,13 @@ test("Signal: a file is fetched from signal-cli only when asked, and a voice not
   signal.say({ jsonrpc: "2.0", result: { data: Buffer.from("%PDF!").toString("base64") }, id: call.id });
   assert.equal(Buffer.from(await fetching).toString(), "%PDF!");
 
-  signal.say(envelope({ attachments: [{ id: "v1", contentType: "audio/aac", size: 3 }], groupInfo: { groupId: "G1" } }));
+  // A plain audio file (isVoiceNote false, as signal-cli always writes the flag) stays a file.
+  signal.say(envelope({ attachments: [{ id: "song", contentType: "audio/mpeg", filename: "song.mp3", size: 3, isVoiceNote: false }] }));
+  const song = await until(() => got[1], "an audio file comes in");
+  assert.equal(song.voice, undefined);
+  assert.equal(song.attachments[0].name, "song.mp3");
+  got.splice(1, 1);
+  signal.say(envelope({ attachments: [{ id: "v1", contentType: "audio/aac", size: 3, isVoiceNote: true }], groupInfo: { groupId: "G1" } }));
   const voice = await until(() => got[1], "a voice note comes in");
   assert.equal(voice.voice.mediaType, "audio/aac");
   assert.equal(voice.attachments, undefined);
@@ -75,6 +81,8 @@ test("Signal: files and spoken replies go out inline as data addresses, and a na
   await signal.adapter.sendVoice("G1", new Uint8Array([9]), "audio/ogg");
   assert.equal(signal.written[1].params.groupId, "G1");
   assert.match(signal.written[1].params.attachments[0], /^data:audio\/ogg;filename=reply\.ogg;base64,/);
+  assert.equal(signal.written[1].params.voiceNote, true, "a spoken reply is marked as a voice note");
+  assert.equal(signal.written[0].params.voiceNote, undefined, "a file is not");
   await signal.adapter.sendFile("+1555", { name: "x", mediaType: "text/html\r\nX: y", bytes: new Uint8Array(1) });
   assert.match(signal.written[2].params.attachments[0], /^data:application\/octet-stream;/, "a strange type is sent as plain bytes");
   await assert.rejects(signal.adapter.sendFile("+1555", { name: "x", mediaType: "a/b", bytes: new Uint8Array(51 * 1024 * 1024) }), /50 MB/);

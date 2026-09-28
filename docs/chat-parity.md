@@ -217,7 +217,7 @@ proved against stand-in adapters and providers; real account connections remain 
 | DC | ✅ / ✅ (voice channels) | ✅ / ✅ | ✅ in; — out |
 | SL | ✅ / ? | ? | — |
 | WA | ✅ / ✅ | ✅ / ◐ calls, experimental | ✅ in; — out |
-| SG | ✅ / ✅ as attachment | ? | ✅ in; ◐ out: an audio attachment |
+| SG | ✅ / ✅ as attachment | ? | ✅ in (`isVoiceNote`); ✅ out as a voice note (`voiceNote`) |
 | IM | ? / ✅ | ? | ✅ in (audio messages); ◐ out: an audio file, not a recorded-audio bubble |
 | MX | ✅ / ✅ | ✅ / ? | — |
 | EM, SMS | — | — | — |
@@ -384,7 +384,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | qq-bot | yes | — | — | — | — | — | — | — | — | 3500 |
 | reddit | yes | — | — | — | — | — | — | — | — | 3500 |
 | revolt | yes | — | — | — | — | — | — | — | — | 2000 |
-| signal-cli | yes | — | — | — | — | yes (audio file) | yes | yes | yes | 2000 |
+| signal-cli | yes | — | — | — | — | yes | yes | yes | yes | 2000 |
 | simplex | yes | — | — | — | — | — | — | — | — | 3500 |
 | slack | yes | yes | — | yes | — | — | yes | — | — | 3000 |
 | synology-chat | yes | — | — | — | — | — | — | — | — | 2000 |

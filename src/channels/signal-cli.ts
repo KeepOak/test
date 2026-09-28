@@ -42,7 +42,9 @@ const envelopeSchema = z.object({
 /** One file on a received message, as signal-cli describes it; read apart from the envelope so a strange one is skipped alone. */
 const attachmentSchema = z.object({
   id: z.string().min(1).max(200), contentType: z.string().max(100).nullish(), filename: z.string().max(300).nullish(),
-  size: z.number().nonnegative().nullish(), voiceNote: z.boolean().nullish(),
+  size: z.number().nonnegative().nullish(),
+  /** signal-cli's own flag for a recorded voice note (src/main/java/org/asamk/signal/json/JsonAttachment.java). */
+  isVoiceNote: z.boolean().nullish(),
 }).passthrough();
 type SignalAttachment = z.infer<typeof attachmentSchema>;
 const attachmentsOf = (dataMessage: unknown): SignalAttachment[] => {
@@ -127,7 +129,8 @@ export class SignalAdapter implements ChannelAdapter {
       return bytes;
     };
     const type = (file: SignalAttachment) => (file.contentType ?? "application/octet-stream").split(";")[0]!.toLowerCase();
-    const voice = files.length === 1 && (files[0]!.voiceNote === true || type(files[0]!).startsWith("audio/")) ? files[0]! : null;
+    // Only an attachment signal-cli marks as a voice note is one; any other audio file is a file like the rest.
+    const voice = files.length === 1 && files[0]!.isVoiceNote === true ? files[0]! : null;
     if (voice) return { voice: { mediaType: type(voice), seconds: undefined, bytes: fetch(voice) } };
     return { attachments: files.map((file) => ({ name: file.filename || `signal-${file.id.slice(0, 12)}`, sourceId: file.id, mediaType: type(file),
       kind: kindOf(type(file)), ...(file.size != null ? { size: file.size } : {}), bytes: fetch(file) })) };
@@ -168,20 +171,20 @@ export class SignalAdapter implements ChannelAdapter {
     return this.write(chatId, (file.caption ?? "").slice(0, this.maxTextLength),
       [`data:${mimeOf(file.mediaType)};filename=${dataName(file.name)};base64,${Buffer.from(file.bytes).toString("base64")}`]);
   }
-  /** A spoken reply, as an audio attachment (signal-cli sends it as a file, not a voice-note bubble). */
+  /** A spoken reply as a Signal voice note, shown inline (signal-cli's `--voice-note`, `voiceNote` over JSON-RPC). */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string): Promise<string | undefined> {
     if (audio.byteLength > this.maxFileBytes) throw new Error("That spoken reply is larger than the 50 MB Branch sends through Signal");
     const extension = /ogg|opus/.test(mediaType) ? "ogg" : /mpeg|mp3/.test(mediaType) ? "mp3" : /wav/.test(mediaType) ? "wav" : "m4a";
-    return this.write(chatId, "", [`data:${mimeOf(mediaType)};filename=reply.${extension};base64,${Buffer.from(audio).toString("base64")}`]);
+    return this.write(chatId, "", [`data:${mimeOf(mediaType)};filename=reply.${extension};base64,${Buffer.from(audio).toString("base64")}`], true);
   }
   async send(chatId: string, text: string): Promise<string | undefined> {
     return this.write(chatId, text.slice(0, this.maxTextLength));
   }
-  private async write(chatId: string, message: string, attachments?: string[]): Promise<string | undefined> {
+  private async write(chatId: string, message: string, attachments?: string[], voiceNote = false): Promise<string | undefined> {
     if (!this.child?.stdin?.writable) throw new Error("signal-cli is not running, so the message could not be sent");
     const id = this.nextId++;
     const isGroup = !chatId.startsWith("+");
-    const params = { ...(isGroup ? { groupId: chatId } : { recipient: [chatId] }), message, ...(attachments ? { attachments } : {}) };
+    const params = { ...(isGroup ? { groupId: chatId } : { recipient: [chatId] }), message, ...(attachments ? { attachments } : {}), ...(voiceNote ? { voiceNote } : {}) };
     this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "send", params, id }) + "\n");
     return String(id);
   }
