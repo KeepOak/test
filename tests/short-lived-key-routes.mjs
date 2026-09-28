@@ -149,6 +149,7 @@ export const ROUTES = {
   "/api/channels/link": "owner POST",
   "/api/channels/live": "owner POST",
   "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
+  "/api/channels/steps": "owner POST", // Settings › Chat apps › Show steps in chats: the steps knobs
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
   "/api/channels/reply-style": "owner POST", // Per-app quoting of the person's message and the reaction on it

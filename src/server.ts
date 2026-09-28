@@ -3033,6 +3033,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
+  // Settings › Chat apps › Show steps in chats: detail, grouping, line length, commands, long lists, tidying up, apps
+  // that cannot edit and groups, for every app and for each one (src/channels/steps-display.ts).
+  if (path === "/api/channels/steps") {
+    if (request.method === "GET") return { steps: app.channels.stepsView() };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    app.channels.setStepsSettings(await readBody(request));
+    return { steps: app.channels.stepsView() };
+  }
   if (request.method === "POST" && path === "/api/channels/owner-commands") {
     if (throughDoor(request)) throw new HttpError(403, "Commands from your own chat are enabled in Branch's window on this computer.");
     if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing commands from your own chat.");
