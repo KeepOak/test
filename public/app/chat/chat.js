@@ -11,7 +11,7 @@ import { markLive } from "../core/features.js";
 import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
-import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, readyWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
@@ -58,6 +58,7 @@ import { stillOutOfSight } from "../core/still.js";
 import { liveRun as engineRun } from "./timeline.js"; // household: the task the engine says works here
 
 const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null };
+const routingSends = new Set();
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
@@ -497,6 +498,20 @@ async function carryOut(client) {
 /* Sends what is in the box, or `words` when given (an earlier message edited and sent again). While a task works, the
    message joins the conversation's waiting line instead; a message for a room or naming a Trunk goes where the engine
    expects it (rooms.js). */
+async function destinationReady(sid, prompt) {
+  if (sid && ((ownerHere() && E.trunkModes?.trunks !== "off") || E.rooms.some((room) => room.sessionId === sid))) {
+    if (routingSends.has(sid)) return false;
+    routingSends.add(sid);
+    try { await readyWho(); } catch (error) {
+      if (!S.drafts[sid]) S.drafts[sid] = prompt;
+      toast(error.message);
+      if (C.sessionId === sid) renderNow();
+      return false;
+    } finally { routingSends.delete(sid); }
+  }
+  return true;
+}
+
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
@@ -504,9 +519,10 @@ async function send(words, answered = false) {
   if (!prompt && !(words === undefined && hasFiles())) return;
   /* While a task works, words join its waiting line; files wait on their chips for the next message. */
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
+  if (prompt.startsWith("/") && (await command(prompt))) return;
+  if (!(await destinationReady(C.sessionId, prompt))) return;
   /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
   if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain(""); return; }
-  if (prompt.startsWith("/") && (await command(prompt))) return;
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
   if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
   /* Ask me questions first (chat/askfirst.js): the engine's questions come first, and their dialog sends the words. */
@@ -794,7 +810,7 @@ export function init() {
   initFurniture({ send: (words) => answerChoice(words) });
   initComfort();
   // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
-  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render, onShow: render });
   initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);

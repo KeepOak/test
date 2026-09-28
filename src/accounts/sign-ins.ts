@@ -9,6 +9,7 @@ import { geminiSignInState } from "../voice-api.js";
 import { startCall } from "../windows-command.js";
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
+import { claudeIdentity } from "./identity.js";
 
 /**
  * The sign-ins that could be made, before any of them is: the "Your plan" and "Coding assistants" choices of the
@@ -155,23 +156,31 @@ const CheckSchema = z.object({
   account: z.string().regex(/^(primary|[a-f0-9]{8})$/).optional(),
 }).strict();
 
-type Ran = { code: number | null; missing: boolean };
+type Ran = { code: number | null; missing: boolean; stdout?: string };
 export type RunStatus = (row: CliAgentRow, args: readonly string[], env: NodeJS.ProcessEnv) => Promise<Ran>;
 
-/** Starts the status command with no shell, the prompt-free way the program's own docs give; its output is not read. */
+/** Reads bounded status output with no shell; only its identity whitelist is returned to a screen. */
 export const runStatus: RunStatus = (row, args, env) => new Promise((resolve) => {
   const start = startCall(row.command, [...args], env);
-  const child = spawn(start.command, start.args, { stdio: ["ignore", "ignore", "ignore"], windowsHide: true, shell: false, env });
+  const child = spawn(start.command, start.args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true, shell: false, env });
+  let stdout = "";
+  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => { stdout = (stdout + chunk).slice(0, 32 * 1024 + 1); });
   let settled = false;
   const finish = (value: Ran): void => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
   const timer = setTimeout(() => { child.kill(); finish({ code: null, missing: false }); }, 20_000);
   timer.unref?.();
   child.on("error", (error: NodeJS.ErrnoException) => finish({ code: 1, missing: error.code === "ENOENT" }));
-  child.on("close", (code) => finish({ code, missing: false }));
+  child.on("close", (code) => finish({ code, missing: false, stdout }));
 });
 
 /** Whether one program is on this computer and signed in, in plain words, for its usual sign-in or one account's folder. */
-export async function checkProgram(host: SignInsHost, input: unknown, run: RunStatus = runStatus) {
+export async function checkProgram(host: SignInsHost, input: unknown, run: RunStatus = host.service.deps.statusRun ?? runStatus) {
+  const asked = CheckSchema.parse(input);
+  const status = await inspectProgram(host, asked, run);
+  host.service.noteSignIn(`cli-${asked.id}`, asked.account ?? primaryAccount, status);
+  return status;
+}
+async function inspectProgram(host: SignInsHost, input: unknown, run: RunStatus) {
   const { id, account } = CheckSchema.parse(input);
   const row = cliAgentCatalog.find((entry) => entry.id === id);
   if (!row) throw new Error(`Branch does not know a coding assistant called "${id}".`);
@@ -184,9 +193,13 @@ export async function checkProgram(host: SignInsHost, input: unknown, run: RunSt
   if (ran.missing) return { id, installed: false, signedIn: false, message: notHere };
   const login = logins(host).get(loginKey(id, account));
   const canStart = !!programLoginArgs[id];
-  if (ran.code === 0) { login?.stop(); return { id, installed: true, signedIn: true, taskReady: null, canStart,
+  const parsed = id === "claude-code" && ran.stdout !== undefined ? claudeIdentity(ran.stdout) : null;
+  const signedIn = id === "claude-code" && ran.stdout !== undefined ? ran.code === 1 ? false : ran.code === 0 ? parsed?.signedIn ?? null : null
+    : ran.code === 0 ? true : ran.code === 1 ? false : null;
+  const identity = signedIn === true ? parsed?.identity : undefined;
+  if (signedIn === true) { login?.stop(); return { id, installed: true, signedIn: true, taskReady: null, canStart, ...(identity ? { identity } : {}),
     message: `${row.name} reports a saved sign-in. Its first task checks whether that sign-in still works.` }; }
-  if (ran.code === 1) {
+  if (signedIn === false) {
     if (login?.running) return { id, installed: true, signedIn: false, canStart, signingIn: true, ...(login.url && login.send ? { url: login.url, takesCode: true } : {}),
       message: `${row.name} opened its sign-in page in your browser. Finish there and Branch carries on by itself; it never sees that sign-in. If no page opened, run "${loginLine(row, id)}" in a terminal.` };
     if (login?.failed) return { id, installed: true, signedIn: false, canStart, message: login.failed };
@@ -200,6 +213,7 @@ export async function checkProgram(host: SignInsHost, input: unknown, run: RunSt
 
 function programEnv(host: SignInsHost, id: string, account: string | undefined): NodeJS.ProcessEnv {
   const env = strippedEnvironment();
+  if (id === "claude-code" && (!account || account === primaryAccount)) env.CLAUDE_CONFIG_DIR = host.service.primaryClaudeHome;
   const variable = accountHomeVariables[id];
   if (account && account !== primaryAccount && variable) env[variable] = host.service.homeOf(`cli-${id}`, account);
   return env;
@@ -227,7 +241,7 @@ const lockedOut = (row: CliAgentRow, id: string): string =>
  * One click: start the program's own sign-in (its page opens in the browser; the program finishes by itself). Already
  * signed in, nothing is started. It runs until it ends, is stopped, or ten minutes pass; the window asks `checkProgram`.
  */
-export async function startProgramSignIn(host: SignInsHost, input: unknown, run: RunStatus = runStatus, launch: StartLogin = startLogin) {
+export async function startProgramSignIn(host: SignInsHost, input: unknown, run: RunStatus = host.service.deps.statusRun ?? runStatus, launch: StartLogin = startLogin) {
   const { id, account } = CheckSchema.parse(input);
   const row = cliAgentCatalog.find((entry) => entry.id === id);
   const args = programLoginArgs[id];

@@ -9,11 +9,22 @@
 import { api } from "../core/api.js";
 import { toast } from "../core/ui.js";
 
-const L = { sid: null, view: null, said: "", timer: 0, busy: false, want: null, fast: false, onChange: null };
+const L = { sid: null, view: null, said: "", timer: 0, busy: false, want: null, fast: false, onChange: null, again: null };
 const FAST = 500, SLOW = 2500;
 
 /** What the engine last said for this conversation (null before the first answer, or for another conversation). */
 export const liveOf = (sid) => (sid && sid === L.sid ? L.view : null);
+export const liveError = (sid) => (sid && sid === L.want ? L.said : "");
+export const liveLoading = (sid) => !!sid && (!L.want || sid === L.want) && !L.view && !L.said;
+
+/** An address just opened: refresh immediately, without overlapping the read already in flight. */
+export function refreshLive(sid) {
+  if (L.want !== sid) return;
+  if (L.busy) { L.again = sid; return; }
+  clearTimeout(L.timer);
+  L.timer = 0;
+  tick();
+}
 
 async function tick() {
   L.timer = 0;
@@ -29,12 +40,16 @@ async function tick() {
     L.said = "";
     L.onChange?.(before, view);
   } catch (error) {
+    if (L.want !== sid) return;
     // Said once, not again on every read while the engine keeps refusing for the same reason.
     if (error.message !== L.said) toast(error.message);
     L.said = error.message;
+    if (L.want === sid) L.onChange?.(L.view, L.view);
   } finally {
     L.busy = false;
-    if (L.want) L.timer = setTimeout(tick, L.fast && (L.view?.runId || L.view?.browser?.live) ? FAST : SLOW);
+    const delay = L.again === L.want ? 0 : L.fast && (L.view?.runId || L.view?.browser?.live) ? FAST : SLOW;
+    L.again = null;
+    if (L.want) L.timer = setTimeout(tick, delay);
   }
 }
 
@@ -45,7 +60,7 @@ export function watchLive(sid, onChange, fast) {
   L.fast = !!fast;
   if (L.want === sid) { if (sooner && L.timer) { clearTimeout(L.timer); L.timer = 0; tick(); } return; }
   L.want = sid;
-  if (L.sid !== sid) { L.sid = null; L.view = null; }
+  if (L.sid !== sid) { L.sid = null; L.view = null; L.said = ""; }
   clearTimeout(L.timer);
   L.timer = 0;
   if (sid && !L.busy) tick();

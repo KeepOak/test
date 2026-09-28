@@ -10,8 +10,8 @@
    wake what they concern at once; what wakes plays a short wake (app.css area: sleep) instead of jumping. A hidden
    window pauses everything as before (core/art17.js, core/figures.js, core/pebble.js, core/pets.js). */
 
-import { E, S } from "./state.js";
-import { render, afterDraw } from "./dom.js";
+import { E, S, defaultTrunk, threadTrunk } from "./state.js";
+import { render, renderNow, afterDraw } from "./dom.js";
 
 export const DOZE_MS = 2 * 60 * 1000;
 export const STILL_MS = 10 * 60 * 1000;
@@ -24,14 +24,16 @@ const bornAt = Date.now();
 let lastInput = bornAt;
 const focusAt = new Map();                 // face key ("t:<trunk id>" or "branch") → when it was last in focus
 
-/* The faces of the conversation that is open: its Trunk, a room's members, or Branch for any other conversation. */
+/* The faces shown in the open conversation: its own or assigned Trunk, the room's members, or the default Trunk. */
 function openKeys() {
   if (S.view !== "chat") return [];
   const id = S.chat;
   const own = id ? E.trunks.find((t) => t.chatSessionId === id || (t.retiredChats ?? []).includes(id)) : null;
   if (own) return [`t:${own.id}`];
   const room = id ? (E.rooms ?? []).find((r) => r.sessionId === id) : null;
-  return room ? (room.members ?? []).map((m) => `t:${m}`) : ["branch"];
+  if (room) return (room.members ?? []).map((m) => `t:${m}`);
+  const assigned = threadTrunk(id) ?? defaultTrunk();
+  return assigned ? [`t:${assigned.id}`] : [];
 }
 
 const stageAt = (since, now) => (now - since >= STILL_MS ? "still" : now - since >= DOZE_MS ? "doze" : "awake");
@@ -90,8 +92,9 @@ export const onRest = (fn) => { listeners.push(fn); };
 let shown = "";
 function changed() {
   const stage = windowRest(), html = document.documentElement;
+  const woke = !!shown && shown !== "awake" && stage === "awake";
   if (stage !== shown) {
-    if (shown && shown !== "awake" && stage === "awake") wakeUp(html);
+    if (woke) wakeUp(html);
     html.classList.toggle("doze18", stage !== "awake");
     html.classList.toggle("still18", stage === "still");
     shown = stage;
@@ -100,7 +103,8 @@ function changed() {
   for (const fn of listeners) {
     try { fn(); } catch (error) { console.error(error); }
   }
-  render();
+  // Waking is drawn in the same moment as the window's wake class, so no face shows its sleeping loop after it.
+  if (woke) renderNow(); else render();
   plan();
 }
 /* A short wake, for the window's own motion; a face plays its own (app.css .av.wake18, core/pebble.js "wake"). */

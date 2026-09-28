@@ -35,6 +35,8 @@ export interface SelfDevelopmentDeps {
   contracts: ContractBook;
   /** Q12: the audit record, where each widening is written. */
   store: Store;
+  /** A direct, persisted local-owner Full Access choice in this very conversation. */
+  fullAccessOwner?: (context: ToolContext) => string | null;
 }
 
 const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
@@ -225,18 +227,19 @@ function registerSelfDevelopment(deps: SelfDevelopmentDeps): void {
 }
 
 /**
- * Q12: a wider (or otherwise changed) contract, as a new revision. The approval policy puts every
- * call of this tool to the owner and never keeps the yes (`contractHold`), so each widening is one
- * explicit answer. The old revisions stay readable, and the widening is written in the audit record.
+ * Q12: a wider (or otherwise changed) contract, as a new revision. A direct owner's
+ * selected Full Access authorizes it; otherwise each widening needs a fresh explicit
+ * answer. The old revisions stay readable, and the widening is written in the audit record.
  */
 const widenTarget = (name: string): string => `the self-development contract of self-${name}`;
 
 /**
- * Q12: who said yes to this widening. It is the newest "allowed" answer to this very question, in
- * this conversation, given after the contract's newest revision was written, so one yes widens once.
- * With none (a call that never met the question) the widening is refused.
+ * Q12: a direct local owner may select Full Access for this conversation. Otherwise the
+ * newest "allowed" answer to this exact question must follow the prior revision.
  */
 function widenedBy(deps: SelfDevelopmentDeps, context: ToolContext, name: string, after: string): string {
+  const selected = deps.fullAccessOwner?.(context);
+  if (selected) return selected; // the saved mode is authorization, not a fabricated approval.decided answer
   const session = context.runId ? deps.store.run(context.runId)?.sessionId : undefined;
   const subject = `${widenToolName} on ${widenTarget(name)}`;
   const answer = session ? deps.store.audit.list(deps.owner, { action: "approval.decided", from: after, limit: 200 })
@@ -249,7 +252,7 @@ function registerWidening(deps: SelfDevelopmentDeps): void {
   deps.registry.register({
     name: widenToolName,
     permission: "git.remote",
-    description: "Ask the owner to widen the contract of a Branch Agent self-development worktree: more allowed paths, more tools, or changed tests, done, side effects or rollback. The owner is asked every time. Give only the terms that change and the reason.",
+    description: "Widen the contract of a Branch Agent self-development worktree: more allowed paths, more tools, or changed tests, done, side effects or rollback. Outside the owner's selected Full Access, each change asks the owner. Give only the terms that change and the reason.",
     parameters: z.object({ name: nameSchema, reason: z.string().trim().min(1).max(500), changes: ContractTermsSchema.partial().strict() }).strict(),
     // Named without the source folder's path: Branch's never-break check reads "branch-agent" in a
     // changing call's target as Branch's own service and would refuse the question before it is put.
