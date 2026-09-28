@@ -58,8 +58,8 @@ export class Wakeups {
   private all(): Wakeup[] {
     return this.store.list("settings", this.owner).filter((row) => row.id.startsWith(prefix)).map((row) => row.data as unknown as Wakeup);
   }
-  private save(entry: Wakeup): void { this.store.save("settings", this.owner, `${prefix}${entry.id}`, { ...entry }); }
-  private drop(entry: Wakeup): void { this.store.delete("settings", this.owner, `${prefix}${entry.id}`); }
+  private save(entry: Wakeup): void { this.store.save("settings", this.owner, `wakeup:${entry.id}`, { ...entry }); }
+  private drop(entry: Wakeup): void { this.store.delete("settings", this.owner, `wakeup:${entry.id}`); }
   list(sessionId: string): Wakeup[] {
     return this.all().filter((entry) => entry.sessionId === sessionId).sort((a, b) => a.nextAt.localeCompare(b.nextAt));
   }
