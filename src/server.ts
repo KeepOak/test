@@ -286,6 +286,7 @@ import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
 import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
+import { replyStyles, saveReplyStyle } from "./channels/reply-style.js";
 import { practiceRunsEnabled, savePracticeRuns } from "./practice-runs.js";
 import { setupIds } from "./channel-setup/service.js";
 import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
@@ -3065,6 +3066,13 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
     try { return { formats: saveChannelFormatting(app.store, owner, await readBody(request), setupIds()) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
+  // Settings › Chat apps › Replies in each app: quoting the person's message, and the reaction on it (src/channels/reply-style.ts).
+  if (path === "/api/channels/reply-style") {
+    if (request.method === "GET") return { styles: replyStyles(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { styles: saveReplyStyle(app.store, owner, await readBody(request), setupIds()) }; }
     catch (error) { throw new HttpError(400, errorText(error)); }
   }
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.

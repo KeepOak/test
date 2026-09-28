@@ -1432,6 +1432,10 @@ ${result.output || "(it said nothing)"}`;
   try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
   setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
+  channels.trunkName = (sessionId) => {
+    const owned = trunks.trunkForConversation(sessionId);
+    return (owned ? trunks.records.find(owned.trunkId)?.name : undefined) ?? null;
+  };
   // defaulttrunk: the default Trunk is the owner's own assistant, so it answers on every chat app, as Branch always did.
   const reachRefusal = (channel: string, trunkId: string): string | null => {
     const trunk = trunks.records.find(trunkId);

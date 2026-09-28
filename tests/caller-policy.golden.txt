@@ -268,6 +268,8 @@ owner GET /api/channels/owner-commands | here=ok remote=ok phone=ok legacy=ok pe
 owner POST /api/channels/owner-commands | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/channels/formatting | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channels/formatting | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/channels/reply-style | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/channels/reply-style | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/channels/pairings/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channels/pairings/approve | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/be5052 run=401/be5052 nobody=401/40daee
 owner GET /api/channels/pairings/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2438,6 +2440,8 @@ owner+lockdown GET /api/channels/owner-commands | here=ok remote=ok phone=ok leg
 owner+lockdown POST /api/channels/owner-commands | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/channels/formatting | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channels/formatting | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/channels/reply-style | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/channels/reply-style | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/channels/pairings/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channels/pairings/approve | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/be5052 run=401/be5052 nobody=401/40daee
 owner+lockdown GET /api/channels/pairings/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4608,6 +4612,8 @@ household GET /api/channels/owner-commands | here=400/fb6b79 remote=400/fb6b79 r
 household POST /api/channels/owner-commands | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household GET /api/channels/formatting | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household POST /api/channels/formatting | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
+household GET /api/channels/reply-style | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household POST /api/channels/reply-style | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household GET /api/channels/pairings/approve | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household POST /api/channels/pairings/approve | here=400/fb6b79 remote=403/4bac86 read=401/be5052 run=401/be5052
 household GET /api/channels/pairings/remove | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
@@ -6778,6 +6784,8 @@ household+lockdown GET /api/channels/owner-commands | here=400/fb6b79 remote=400
 household+lockdown POST /api/channels/owner-commands | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household+lockdown GET /api/channels/formatting | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household+lockdown POST /api/channels/formatting | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
+household+lockdown GET /api/channels/reply-style | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household+lockdown POST /api/channels/reply-style | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household+lockdown GET /api/channels/pairings/approve | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household+lockdown POST /api/channels/pairings/approve | here=400/fb6b79 remote=403/4bac86 read=401/be5052 run=401/be5052
 household+lockdown GET /api/channels/pairings/remove | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
@@ -8948,6 +8956,8 @@ applock GET /api/channels/owner-commands | here=423/a8f863
 applock POST /api/channels/owner-commands | here=423/a8f863
 applock GET /api/channels/formatting | here=423/a8f863
 applock POST /api/channels/formatting | here=423/a8f863
+applock GET /api/channels/reply-style | here=423/a8f863
+applock POST /api/channels/reply-style | here=423/a8f863
 applock GET /api/channels/pairings/approve | here=423/a8f863
 applock POST /api/channels/pairings/approve | here=423/a8f863
 applock GET /api/channels/pairings/remove | here=423/a8f863
