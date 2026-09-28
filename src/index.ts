@@ -55,6 +55,7 @@ import { registerSessions } from "./sessions.js";
 // Wave 8: conversations branched off other conversations, seen as a tree, and one answer carried back.
 import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
+import { runOrigin } from "./key-context.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
 import { startMcpServer } from "./mcp-server.js";
@@ -2325,4 +2326,3 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
-import { runOrigin } from "./key-context.js";

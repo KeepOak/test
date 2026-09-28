@@ -16,6 +16,7 @@ import { PETS, petOf, petLabel, petKindName, pixelCanvas, paintPixels, stepWhile
 import { t } from "../../i18n.js";
 import { windowRest, onRest } from "../core/sleep.js";
 import { say as inWords } from "../core/words.js";
+import { binding, spoken } from "./keys.js";
 
 const KEY = "branch-scene";
 export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side" };
@@ -224,7 +225,9 @@ function applyMood() {
 function petWords() {
   const waiting = (E.state?.attention ?? []).find((w) => !w.parentRunId); // a helper's question is not in the Inbox
   if (waiting) return t("window.shell.scene.who-needs-a-yes-its-in", { who: waiting.who || "Branch" });
-  return [t("window.shell.scene.ctrl-k-finds-anything-even-settings"), t("window.shell.scene.hover-anything-to-see-what-it")][Math.floor(Date.now() / 60000) % 2];
+  const key = binding("palette"); // the owner may have moved it, or taken it away (shell/keys.js)
+  const tips = [key ? t("window.shell.scene.find-anything", { key: spoken(key) }) : "", t("window.shell.scene.hover-anything-to-see-what-it")].filter(Boolean);
+  return tips[Math.floor(Date.now() / 60000) % tips.length];
 }
 export function say(text) {
   P.say = text;
