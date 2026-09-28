@@ -39,8 +39,11 @@ test("the frame shows an earlier turn's helper, a wake-up and a program, and Can
       await new Promise((resolve, reject) => { gate.then(resolve); request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true }); });
       return { content: "Logs read.", toolCalls: [] };
     }
-    const said = [...request.messages].reverse().find((m) => m.role === "user" && !/Work still open/.test(m.content))?.content ?? "";
-    const done = request.messages.slice(request.messages.map((m) => m.role).lastIndexOf("user")).filter((m) => m.role === "tool").length;
+    // Branch's own notes (the open work, sent in place each round) are not what the owner asked.
+    const asked = (m) => m.role === "user" && !String(m.content).startsWith("<system-reminder>") && !/Work still open/.test(m.content);
+    const said = [...request.messages].reverse().find(asked)?.content ?? "";
+    const from = request.messages.findLastIndex(asked);
+    const done = request.messages.slice(from).filter((m) => m.role === "tool").length;
     if (/Watch the build/.test(said) && done < plan.length) return plan[done];
     return { content: "All set.", toolCalls: [] };
   } };
