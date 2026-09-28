@@ -10065,6 +10065,6 @@
   "window.panes.answer": "Responder",
   "window.panes.full": "Ya hay {count} paneles esperando una respuesta; espera a que termine uno.",
   "window.panes.none-left": "Todas las conversaciones ya están abiertas.",
-  "window.panes.open-in-pane": "Abrir en un panel",
+  "window.panes.open-in-pane": "Añadir como panel",
   "window.panes.needs-you": "Esperando tu respuesta."
 }

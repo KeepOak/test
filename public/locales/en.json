@@ -10065,6 +10065,6 @@
   "window.panes.answer": "Answer",
   "window.panes.full": "{count} panes are already waiting on an answer; wait for one to finish.",
   "window.panes.none-left": "Every conversation is already open.",
-  "window.panes.open-in-pane": "Open in a pane",
+  "window.panes.open-in-pane": "Add as a pane",
   "window.panes.needs-you": "Waiting for your answer."
 }

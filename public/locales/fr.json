@@ -10066,6 +10066,6 @@
   "window.panes.answer": "Répondre",
   "window.panes.full": "{count} volets attendent déjà une réponse ; attendez que l’un se termine.",
   "window.panes.none-left": "Toutes les conversations sont déjà ouvertes.",
-  "window.panes.open-in-pane": "Ouvrir dans un volet",
+  "window.panes.open-in-pane": "Ajouter comme volet",
   "window.panes.needs-you": "En attente de votre réponse."
 }

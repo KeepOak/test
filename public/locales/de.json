@@ -10065,6 +10065,6 @@
   "window.panes.answer": "Antworten",
   "window.panes.full": "Schon {count} Bereiche warten auf eine Antwort; warte, bis einer fertig ist.",
   "window.panes.none-left": "Alle Unterhaltungen sind schon geöffnet.",
-  "window.panes.open-in-pane": "In einem Bereich öffnen",
+  "window.panes.open-in-pane": "Als Bereich hinzufügen",
   "window.panes.needs-you": "Wartet auf deine Antwort."
 }
