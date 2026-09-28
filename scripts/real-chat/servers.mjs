@@ -24,7 +24,7 @@ const home = process.env.BRANCH_REAL_CHAT_HOME
 const distro = process.env.BRANCH_REAL_CHAT_WSL ?? "BranchCI";
 const inWsl = "/opt/branch-real-chat";
 const stateFile = process.env.BRANCH_REAL_CHAT_STATE ?? join(home, "state.json");
-const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167 };
+const ports = { irc: 16667, smtp: 13025, imap: 13143, xmpp: 15222, xmppTls: 15223, matrix: 16167, mqtt: 11883, gotify: 18080, ntfy: 18090 };
 const registrationToken = "branch-real-chat-local";
 const downloads = {
   ergo: { file: "ergo-2.19.1-windows-x86_64.zip", sha256: "5397fac56f7110839aac2d8ab436279eb2a00dddfcc07032605b423e85ea40b6",
@@ -33,7 +33,12 @@ const downloads = {
     url: "https://repo1.maven.org/maven2/com/icegreen/greenmail-standalone/2.1.14/greenmail-standalone-2.1.14.jar" },
   tuwunel: { file: "tuwunel-1.9.3.zst", sha256: "98c3b0be352cc03b2c6b21d6f2ed60fedc926f4aab61ce37f0b89eed97d5b756",
     url: "https://github.com/matrix-construct/tuwunel/releases/download/v1.9.3/v1.9.3-release-all-x86_64-v1-linux-gnu-tuwunel.zst" },
+  gotify: { file: "gotify-windows-amd64.exe.zip", sha256: "dea4183870bff3fecbc158aebb12a4a9ed69be9da18d1ba6a5d3490ae530bbb1",
+    url: "https://github.com/gotify/server/releases/download/v3.1.1/gotify-windows-amd64.exe.zip" },
+  ntfy: { file: "ntfy_2.28.0_linux_amd64.tar.gz", sha256: "881a1530e30e01f1dec202c7f41e1664e57edfb7844e73e21e345159ac3ea9b7",
+    url: "https://github.com/binwiederhier/ntfy/releases/download/v2.28.0/ntfy_2.28.0_linux_amd64.tar.gz" },
 };
+const gotifyAdmin = { user: "admin", pass: "branch-real-chat-admin" };
 
 function run(command, args, { input, cwd } = {}) {
   const done = spawnSync(command, args, { input, cwd, encoding: "utf8", windowsHide: true });
@@ -42,6 +47,8 @@ function run(command, args, { input, cwd } = {}) {
 }
 /** A root shell in the WSL distro; `input` becomes the script's stdin. */
 const wsl = (script, input) => run("wsl.exe", ["-d", distro, "-u", "root", "-e", "bash", "-c", script], { input });
+/** Windows' own tar (bsdtar), which reads zip; the tar on PATH may be Git's, which does not. */
+const systemTar = join(process.env.SystemRoot ?? "C:/Windows", "System32", "tar.exe");
 const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 async function fetchPinned({ file, url, sha256: expected }) {
@@ -56,8 +63,8 @@ async function fetchPinned({ file, url, sha256: expected }) {
   if (actual !== expected) throw new Error(`${file}: checksum ${actual}, expected ${expected}. Delete it and run up again.`);
   return path;
 }
-function startDetached(command, args, cwd) {
-  const child = spawn(command, args, { cwd, detached: true, windowsHide: true, stdio: "ignore" });
+function startDetached(command, args, cwd, env = {}) {
+  const child = spawn(command, args, { cwd, detached: true, windowsHide: true, stdio: "ignore", env: { ...process.env, ...env } });
   child.unref();
   return child.pid;
 }
@@ -81,7 +88,7 @@ async function listening(port, label, pid) {
 async function ircUp() {
   const zip = await fetchPinned(downloads.ergo);
   const dir = join(home, "ergo-2.19.1-windows-x86_64");
-  if (!existsSync(join(dir, "ergo.exe"))) run(join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe"), ["-xf", zip], { cwd: home }); // Windows' bsdtar reads zip
+  if (!existsSync(join(dir, "ergo.exe"))) run(systemTar, ["-xf", zip], { cwd: home });
   const base = readFileSync(join(dir, "default.yaml"), "utf8").replace(/\r\n/g, "\n");
   let config = base.replace('"127.0.0.1:6667":', `"127.0.0.1:${ports.irc}":`).replace(/^ {8}"\[::1\]:6667":.*$/m, "");
   const tlsAt = config.indexOf('        ":6697":');
@@ -119,10 +126,8 @@ chown prosody:prosody localhost.key localhost.pem 2>/dev/null || true; chmod 600
 }
 /** XMPP: Prosody from apt (its own service stays off), on loopback, TLS required, two accounts. */
 async function xmppUp() {
-  wsl(`set -e; command -v prosody >/dev/null && exit 0
-printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
-apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq prosody zstd >/dev/null; rm -f /usr/sbin/policy-rc.d
-systemctl disable --now prosody >/dev/null 2>&1 || true`);
+  aptInstall("prosody", "prosody");
+  aptInstall("zstd", "zstd"); // for unpacking tuwunel
   const ca = tlsUp();
   const config = `-- Branch real-chat harness: a throwaway Prosody on this computer only.
 pidfile = "${inWsl}/data/prosody.pid"
@@ -169,6 +174,54 @@ setsid -f ./tuwunel -c tuwunel.toml > ${inWsl}/matrix.log 2>&1 < /dev/null`, con
   return { state: { base: `http://127.0.0.1:${ports.matrix}`, domain: "localhost", registrationToken } };
 }
 
+/** An apt package in the WSL distro, its own service kept from starting during the install and left off. */
+function aptInstall(pkg, command) {
+  wsl(`set -e; command -v ${command} >/dev/null && exit 0
+printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
+apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ${pkg} >/dev/null; rm -f /usr/sbin/policy-rc.d
+systemctl disable --now ${pkg} >/dev/null 2>&1 || true`);
+}
+/** MQTT: Mosquitto from apt, one loopback listener, no accounts (the topics are the test's own). */
+async function mqttUp() {
+  aptInstall("mosquitto", "mosquitto");
+  const config = `# Branch real-chat harness: a throwaway MQTT broker on this computer only.
+listener ${ports.mqtt} 127.0.0.1
+allow_anonymous true
+persistence false
+`;
+  wsl(`set -e; mkdir -p ${inWsl}; cat > ${inWsl}/mosquitto.conf
+setsid -f mosquitto -c ${inWsl}/mosquitto.conf > ${inWsl}/mosquitto.log 2>&1 < /dev/null`, config);
+  await listening(ports.mqtt, "Mosquitto");
+  return { state: { host: "127.0.0.1", port: ports.mqtt } };
+}
+/** Gotify: one Windows binary with SQLite, loopback only; its admin account exists only here. */
+async function gotifyUp() {
+  const zip = await fetchPinned(downloads.gotify);
+  const dir = join(home, "gotify");
+  mkdirSync(dir, { recursive: true });
+  if (!existsSync(join(dir, "gotify-windows-amd64.exe"))) run(systemTar, ["-xf", zip], { cwd: dir });
+  const pid = startDetached(join(dir, "gotify-windows-amd64.exe"), [], dir, {
+    GOTIFY_SERVER_LISTENADDR: "127.0.0.1", GOTIFY_SERVER_PORT: String(ports.gotify), GOTIFY_DATABASE_DIALECT: "sqlite3",
+    GOTIFY_DATABASE_CONNECTION: "gotify.db", GOTIFY_DEFAULTUSER_NAME: gotifyAdmin.user, GOTIFY_DEFAULTUSER_PASS: gotifyAdmin.pass,
+    GOTIFY_UPLOADEDIMAGESDIR: "images", GOTIFY_PLUGINSDIR: "plugins" });
+  await listening(ports.gotify, "Gotify", pid);
+  return { pid, state: { base: `http://127.0.0.1:${ports.gotify}`, admin: gotifyAdmin } };
+}
+/**
+ * ntfy: its server does not run on Windows, so the Linux binary runs in the WSL distro, loopback only, open topics.
+ * Loopback is exempt from its request limit: the test and Branch both poll, and a public server would limit that.
+ */
+async function ntfyUp() {
+  const archive = await fetchPinned(downloads.ntfy);
+  const placed = spawnSync("wsl.exe", ["-d", distro, "-u", "root", "-e", "test", "-x", `${inWsl}/ntfy/ntfy`], { windowsHide: true }).status === 0;
+  if (!placed) wsl(`set -e; mkdir -p ${inWsl}/ntfy; cd ${inWsl}/ntfy; tar -xzf - --strip-components=1 ntfy_2.28.0_linux_amd64/ntfy`, readFileSync(archive));
+  wsl(`set -e; cd ${inWsl}/ntfy; setsid -f ./ntfy serve --listen-http 127.0.0.1:${ports.ntfy} --base-url http://127.0.0.1:${ports.ntfy} \
+  --visitor-request-limit-exempt-hosts 127.0.0.1 \
+  --cache-file ${inWsl}/ntfy/cache.db > ${inWsl}/ntfy.log 2>&1 < /dev/null`);
+  await listening(ports.ntfy, "ntfy");
+  return { state: { base: `http://127.0.0.1:${ports.ntfy}` } };
+}
+
 async function up() {
   mkdirSync(home, { recursive: true });
   down({ quiet: true });
@@ -180,7 +233,9 @@ async function up() {
     }
   }
   const irc = await ircUp(), email = await emailUp(), xmpp = await xmppUp(), matrix = await matrixUp();
-  const state = { pids: [irc.pid, email.pid], servers: { irc: irc.state, email: email.state, xmpp: xmpp.state, matrix: matrix.state } };
+  const mqtt = await mqttUp(), gotify = await gotifyUp(), ntfy = await ntfyUp();
+  const state = { pids: [irc.pid, email.pid, gotify.pid], servers: { irc: irc.state, email: email.state, xmpp: xmpp.state,
+    matrix: matrix.state, mqtt: mqtt.state, gotify: gotify.state, ntfy: ntfy.state } };
   writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
   console.log(`Up. State in ${stateFile}. Run: node scripts/real-chat/servers.mjs test`);
 }
@@ -188,7 +243,7 @@ function down({ quiet = false } = {}) {
   const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8")) : { pids: [] };
   for (const pid of state.pids ?? []) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
   spawnSync("wsl.exe", ["-d", distro, "-u", "root", "-e", "bash", "-c",
-    `pkill -f '${inWsl}/[p]rosody.cfg.lua' ; pkill -f '[t]uwunel -c tuwunel.toml' ; true`], { windowsHide: true });
+    `pkill -f '${inWsl}/[p]rosody.cfg.lua' ; pkill -f '[t]uwunel -c tuwunel.toml' ; pkill -f '${inWsl}/[m]osquitto.conf' ; pkill -f '[n]tfy serve --listen-http' ; true`], { windowsHide: true });
   if (existsSync(stateFile)) writeFileSync(stateFile, `${JSON.stringify({ servers: {} })}\n`);
   if (!quiet) console.log("Down.");
 }

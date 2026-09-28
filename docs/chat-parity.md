@@ -26,7 +26,8 @@ The cells below mostly rest on stand-in adapters. This section says which apps a
 with no account anywhere: Branch's own channel, built from a connections-file entry exactly as at start, talks to a
 real server on this computer, and a person on the other side uses a small client of their own that shares no code
 with Branch. The walk is the owner's: a stranger writes and gets a pairing code, the owner approves it, and the same
-person asks a question with an accent and emoji in it and gets the answer back. The model is a stand-in that echoes
+person asks a question with an accent and emoji in it and gets the answer back. An app that can only be sent to
+(Gotify) gets Branch's own delivery instead, read back by the person's client. The model is a stand-in that echoes
 the question, so what is real is the transport: the app's server, the connection, and Branch's adapter on it.
 
 How to run it (Windows with a WSL distro; `BRANCH_REAL_CHAT_WSL`, default `BranchCI`):
@@ -38,10 +39,10 @@ node scripts/real-chat/servers.mjs down
 ```
 
 - Every server listens on 127.0.0.1 only, with no federation and throwaway passwords that exist only there.
-- Downloads come to about 52 MB in all, each checked against a pinned SHA-256: Ergo 7 MB, GreenMail 11 MB,
-  tuwunel 32 MB, and Prosody about 2 MB from apt.
+- Downloads come to about 95 MB in all, each checked against a pinned SHA-256: Ergo 7 MB, GreenMail 11 MB,
+  tuwunel 32 MB, ntfy 30 MB, Gotify 12 MB, and Prosody and Mosquitto about 3 MB together from apt.
 - Java 11 or later must already be installed for GreenMail; the script does not download it.
-- CI has no servers, so there the four real walks are skipped with a reason. The check that every catalog app has
+- CI has no servers, so there the real walks are skipped with a reason. The check that every catalog app has
   either a real test or a reason still runs in CI, and so does the check that this table is current.
 - The first runs found two bugs in Branch's email reader, both fixed in #834:
   - A server may send a message's text before its headers, and GreenMail does about half the time. Branch read the
@@ -51,7 +52,7 @@ node scripts/real-chat/servers.mjs down
 
 <!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
 
-4 of 56 apps are tested for real; every other one says why not.
+7 of 56 apps are tested for real; every other one says why not.
 
 | App | Result | Server, or why not |
 | --- | --- | --- |
@@ -76,7 +77,7 @@ node scripts/real-chat/servers.mjs down
 | Viber | Skipped | needs a Viber bot account; there is no local or sandbox server for it |
 | IRC | **Real-tested** | Ergo 2.19.1 (one Go binary, 7 MB) on 127.0.0.1:16667 |
 | Twitch chat | Skipped | needs a Twitch account and an OAuth token; there is no local or sandbox server for it |
-| Gotify | Skipped | a local Gotify server is possible (one Go binary, about 20 MB) but is not in this harness yet |
+| Gotify | **Real-tested** | Gotify 3.1.1 (one Go binary, 12 MB) on 127.0.0.1:18080; send-only, so the walk is a delivery the person's client reads |
 | iMessage | Skipped | needs a Mac with Messages signed in to an Apple ID |
 | iMessage through BlueBubbles | Skipped | needs a Mac running the BlueBubbles server, signed in to an Apple ID |
 | Microsoft Teams (bot) | Skipped | needs an Azure Bot registration; there is no local or sandbox server for it |
@@ -93,12 +94,12 @@ node scripts/real-chat/servers.mjs down
 | Twist | Skipped | needs a Twist workspace and integration; there is no local or sandbox server for it |
 | Nextcloud Talk | Skipped | a local Nextcloud with Talk needs a web server, PHP and a database (several hundred MB; over the limit without asking) |
 | Text messages (Twilio) | Skipped | needs a Twilio phone number; there is no local or sandbox server for it |
-| ntfy | Skipped | a local ntfy server is possible (one Go binary, about 20 MB) but is not in this harness yet |
+| ntfy | **Real-tested** | ntfy 2.28.0 (one Go binary, 30 MB; its server does not run on Windows) in the BranchCI WSL distro on 127.0.0.1:18090 |
 | Pushover | Skipped | needs a Pushover application token; there is no local or sandbox server for it |
 | Threema Gateway | Skipped | needs a Threema Gateway ID (paid); there is no local or sandbox server for it |
 | Home Assistant | Skipped | a local Home Assistant is several hundred MB of Python packages (over the limit without asking) |
 | XMPP (Jabber) | **Real-tested** | Prosody 0.12 (apt, about 2 MB) in the BranchCI WSL distro, STARTTLS with a certificate from a throwaway local CA |
-| MQTT | Skipped | a local Mosquitto broker is possible (apt, about 1 MB) but is not in this harness yet |
+| MQTT | **Real-tested** | Mosquitto (apt, under 1 MB) in the BranchCI WSL distro on 127.0.0.1:11883 |
 | Keybase | Skipped | needs a Keybase account signed in to the keybase program |
 | SimpleX Chat | Skipped | a local SimpleX chat program is possible (about 80 MB) but is not in this harness yet |
 | Delta Chat | Skipped | possible with the local mail server above and deltachat-rpc-server (about 20 MB), but not in this harness yet |

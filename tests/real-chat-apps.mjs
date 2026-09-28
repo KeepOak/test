@@ -9,6 +9,9 @@ export const LOCAL = {
   xmpp: "Prosody 0.12 (apt, about 2 MB) in the BranchCI WSL distro, STARTTLS with a certificate from a throwaway local CA",
   matrix: "tuwunel 1.9.3 (a Conduit fork, one Rust binary, 32 MB) in the BranchCI WSL distro on 127.0.0.1:16167",
   email: "GreenMail 2.1.14 (one Java jar, 11 MB) SMTP 127.0.0.1:13025 and IMAP 127.0.0.1:13143",
+  mqtt: "Mosquitto (apt, under 1 MB) in the BranchCI WSL distro on 127.0.0.1:11883",
+  ntfy: "ntfy 2.28.0 (one Go binary, 30 MB; its server does not run on Windows) in the BranchCI WSL distro on 127.0.0.1:18090",
+  gotify: "Gotify 3.1.1 (one Go binary, 12 MB) on 127.0.0.1:18080; send-only, so the walk is a delivery the person's client reads",
 };
 const account = (what) => `needs ${what}; there is no local or sandbox server for it`;
 /** Why each other app is not tested for real, in words someone can act on. */
@@ -31,7 +34,6 @@ export const SKIPPED = {
   line: account("a LINE Messaging API channel"),
   viber: account("a Viber bot account"),
   twitch: account("a Twitch account and an OAuth token"),
-  gotify: "a local Gotify server is possible (one Go binary, about 20 MB) but is not in this harness yet",
   imessage: "needs a Mac with Messages signed in to an Apple ID",
   bluebubbles: "needs a Mac running the BlueBubbles server, signed in to an Apple ID",
   "msteams-bot": account("an Azure Bot registration"),
@@ -48,11 +50,9 @@ export const SKIPPED = {
   twist: account("a Twist workspace and integration"),
   "nextcloud-talk": "a local Nextcloud with Talk needs a web server, PHP and a database (several hundred MB; over the limit without asking)",
   sms: account("a Twilio phone number"),
-  ntfy: "a local ntfy server is possible (one Go binary, about 20 MB) but is not in this harness yet",
   pushover: account("a Pushover application token"),
   threema: account("a Threema Gateway ID (paid)"),
   homeassistant: "a local Home Assistant is several hundred MB of Python packages (over the limit without asking)",
-  mqtt: "a local Mosquitto broker is possible (apt, about 1 MB) but is not in this harness yet",
   keybase: "needs a Keybase account signed in to the keybase program",
   simplex: "a local SimpleX chat program is possible (about 80 MB) but is not in this harness yet",
   deltachat: "possible with the local mail server above and deltachat-rpc-server (about 20 MB), but not in this harness yet",

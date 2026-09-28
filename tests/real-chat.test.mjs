@@ -222,6 +222,86 @@ test("Matrix, for real: a local tuwunel homeserver", { skip: state.servers.matri
   await ownerWalk(context, { label: "Matrix", heard: () => said, say });
 });
 
+// ---- MQTT: the person is a plain MQTT 3.1.1 client on the same broker, packets written by hand ----
+const mqttString = (text) => { const bytes = Buffer.from(text, "utf8"); return Buffer.concat([Buffer.from([bytes.length >> 8, bytes.length & 255]), bytes]); };
+function mqttPacket(type, body) {
+  const length = [];
+  let left = body.length;
+  do { let byte = left % 128; left = Math.floor(left / 128); if (left > 0) byte |= 128; length.push(byte); } while (left > 0);
+  return Buffer.concat([Buffer.from([type, ...length]), body]);
+}
+/** Connects, subscribes to one topic, and collects every PUBLISH that arrives on it (QoS 0). */
+async function mqttPerson({ host, port }, clientId, subscribe) {
+  const socket = tcp({ host, port });
+  await opened(socket);
+  const got = [];
+  let buffer = Buffer.alloc(0);
+  socket.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    for (;;) {
+      let length = 0, multiplier = 1, at = 1;
+      while (at < buffer.length && at < 5) { const byte = buffer[at++]; length += (byte & 127) * multiplier; multiplier *= 128; if (!(byte & 128)) break; }
+      if (buffer.length < at + length || at === 1) return;
+      const type = buffer[0] >> 4, body = buffer.subarray(at, at + length);
+      buffer = buffer.subarray(at + length);
+      if (type === 3) { const topicLength = body.readUInt16BE(0); got.push(body.subarray(2 + topicLength).toString("utf8")); }
+    }
+  });
+  socket.write(mqttPacket(0x10, Buffer.concat([mqttString("MQTT"), Buffer.from([4, 2, 0, 60]), mqttString(clientId)])));
+  socket.write(mqttPacket(0x82, Buffer.concat([Buffer.from([0, 1]), mqttString(subscribe), Buffer.from([0])])));
+  return { socket, got, publish: (topic, payload) => socket.write(mqttPacket(0x30, Buffer.concat([mqttString(topic), Buffer.from(payload, "utf8")]))) };
+}
+test("MQTT, for real: a local Mosquitto broker", { skip: state.servers.mqtt ? false : notRunning("MQTT") }, async (t) => {
+  const context = await engine(t);
+  saveParitySwitches(context.app.store, context.app.runtime.owner, { mqtt: "on" }, ["mqtt"]);
+  const run = `r${Date.now()}`; // topics of this run only, so nothing retained from an earlier one is read
+  const person = await mqttPerson(state.servers.mqtt, `sam${run}`.slice(0, 23), `${run}/out/#`);
+  t.after(() => person.socket.destroy());
+  await connect(context.app, { type: "mqtt", id: "mqtt", host: state.servers.mqtt.host, port: state.servers.mqtt.port, tls: false,
+    clientId: `branch${run}`.slice(0, 23), inboundTopic: `${run}/in`, replyTopic: `${run}/out/{chat}`, activation: "mention", pairing: true, allowlist: [] }, {});
+  await until(() => context.app.channels.summary().channels.find((c) => c.id === "mqtt")?.health?.state === "connected", "MQTT: the assistant connected");
+  const heard = () => person.got.map((payload) => { try { return JSON.parse(payload).text ?? ""; } catch { return ""; } });
+  await ownerWalk(context, { label: "MQTT", heard, say: async (text) => person.publish(`${run}/in`, JSON.stringify({ from: "sam", chat: "sam", text })) });
+});
+
+// ---- ntfy: the person publishes to the listen topic and reads the answers there, over ntfy's own HTTP API ----
+test("ntfy, for real: a local ntfy server", { skip: state.servers.ntfy ? false : notRunning("ntfy") }, async (t) => {
+  const { base } = state.servers.ntfy;
+  const context = await engine(t);
+  saveParitySwitches(context.app.store, context.app.runtime.owner, { ntfy: "on" }, ["ntfy"]);
+  const run = `r${Date.now()}`;
+  await connect(context.app, { type: "ntfy", id: "ntfy", server: base, topic: `${run}-out`, listenTopic: `${run}-in`, pollSeconds: 2,
+    activation: "mention", pairing: true, allowlist: [] }, {});
+  let said = [];
+  const refresh = setInterval(async () => {
+    // Branch answers on the topic it was written on; the person's own messages there carry no code and no "Echo:".
+    const text = await fetch(`${base}/${run}-in/json?poll=1&since=all`).then((r) => r.text()).catch(() => "");
+    said = text.split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((e) => e.event === "message").map((e) => e.message);
+  }, 500);
+  t.after(() => clearInterval(refresh));
+  await delay(2500); // the first look only learns where the listen topic stands
+  await ownerWalk(context, { label: "ntfy", heard: () => said,
+    say: (text) => fetch(`${base}/${run}-in`, { method: "POST", body: Buffer.from(text, "utf8") }).then((r) => assert.equal(r.status, 200)) });
+});
+
+// ---- Gotify: send-only, so the walk is the owner's own delivery; the person reads it with a client token ----
+test("Gotify, for real: a local Gotify server (it can only be sent to)", { skip: state.servers.gotify ? false : notRunning("Gotify") }, async (t) => {
+  const { base, admin } = state.servers.gotify;
+  const basic = { authorization: `Basic ${Buffer.from(`${admin.user}:${admin.pass}`).toString("base64")}`, "content-type": "application/json" };
+  const made = (path, body) => fetch(`${base}${path}`, { method: "POST", headers: basic, body: JSON.stringify(body) }).then((r) => r.json());
+  const application = await made("/application", { name: `branch ${Date.now()}` });
+  const reader = await made("/client", { name: `phone ${Date.now()}` });
+  const context = await engine(t);
+  saveParitySwitches(context.app.store, context.app.runtime.owner, { gotify: "on" }, ["gotify"]);
+  await connect(context.app, { type: "gotify", id: "gotify", server: base, activation: "mention", pairing: true, allowlist: [] },
+    { GOTIFY_APP_TOKEN: application.token });
+  const text = `Your report is ready: ça va, naïve café 🌳 ${Date.now()}`;
+  const sent = await context.app.channels.deliver("gotify", "owner", text);
+  assert.equal(sent.sent, true, "delivered through Branch's own delivery path");
+  const inbox = await fetch(`${base}/application/${application.id}/message`, { headers: { "x-gotify-key": reader.token } }).then((r) => r.json());
+  assert.ok(inbox.messages.some((m) => m.message === text), "the phone's client reads exactly what was sent");
+});
+
 // ---- Every other app: why it is not tested for real ----
 for (const [app, reason] of Object.entries(SKIPPED)) test(`${app}, for real`, { skip: reason }, () => undefined);
 test("every app in the setup catalog is either tested for real or says why not", async () => {
