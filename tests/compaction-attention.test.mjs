@@ -97,3 +97,20 @@ test("a task that needs an answer stops, is listed for attention, reaches channe
   assert.equal(outcome, "replied");
   assert.equal(channel.sent[0].text, "Delete the duplicates too?");
 });
+
+test("selfdev (SELF-307): after a long conversation is compacted, the task's plan is still in front of the model", async (t) => {
+  const { app, provider } = await fixture(t, [
+    { content: "", toolCalls: [{ id: "plan", name: "checklist.write", arguments: JSON.stringify({ steps: [
+      { text: "Rename IMG_0001 to IMG_0003", done: true }, { text: "Rename IMG_0004 and the rest", done: false }] }) }] },
+    { content: "Plan written.", toolCalls: [] },
+  ]);
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: 20000 });
+  const first = await app.runtime.run({ prompt: "start renaming photos in /pics; keep a checklist" });
+  assert.equal(first.status, "completed", first.output);
+  for (let n = 1; n <= 40; n++) app.store.message(first.sessionId, { role: n % 2 ? "user" : "assistant", content: filler(n) });
+  const run = await app.runtime.run({ prompt: "what is left to do?", sessionId: first.sessionId });
+  assert.ok(app.store.events(run.id).some((e) => e.kind === "context.compacted"), "the conversation was compacted");
+  const sent = provider.requests.at(-1).messages.map((m) => m.content).join("\n");
+  assert.match(sent, /compacted summary/);
+  assert.match(sent, /2\. \[ \] Rename IMG_0004 and the rest/, "the plan survives compaction, sent fresh every round");
+});
