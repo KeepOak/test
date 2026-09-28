@@ -139,6 +139,7 @@ const flipped = [
     old: (s) => s.raw("accounts", { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] }) },
   { name: "quick answers from the web", read: (s) => askMode(s, owner, "answer-engine"), ships: "when-needed", off: (s) => saveAskMode(s, owner, "answer-engine", { mode: "off" }) },
   // Defaults audit (2026-09-28, DEFAULTS-AUDIT.md): none of (a)–(f).
+  { name: "tidying the history before it is sent", read: (s) => safetyMode(s, owner, "history-repair"), ships: "when-needed", off: (s) => saveSafetyMode(s, owner, "history-repair", { mode: "off" }) },
   { name: "tools for building on Branch", read: (s) => sdkKitMode(s, owner), ships: "when-needed", off: (s) => saveSdkKitSettings(s, owner, { mode: "off" }) },
   { name: "the about-you note", read: (s) => (readKnobs(s, owner, "memory").aboutYouOn ? "on" : "off"), ships: "on", off: (s) => saveKnobs(s, owner, "memory", { aboutYouOn: false }),
     old: (s) => s.raw("knobs-memory", { snapshotFacts: 30, snapshotChars: 2000, aboutYouOn: false, aboutYou: "", aboutYouChars: 1500 }) },
@@ -262,8 +263,6 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
   const kept = {
     "procedures that start themselves (f)": autonomyMode(store, owner, "procedures"),
     "asking whether a long task is getting anywhere (a)": safetyMode(store, owner, "progress-judge"),
-    // Not (a)–(f), but on it drops the real result of an approved call from a model that reuses call ids.
-    "tidying a conversation before it is sent (breaks ordinary use)": safetyMode(store, owner, "history-repair"),
     "outside memory services (b)": learningMode(store, owner, "providers"),
     "add-on packages (b, f)": addOnMode(store, owner, "packages"),
     "counting how Branch is used (b)": askMode(store, owner, "analytics"),
