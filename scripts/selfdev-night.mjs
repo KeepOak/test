@@ -4,6 +4,9 @@
 //   node scripts/selfdev-night.mjs                       offline, scripted model: proves the gate itself (no real calls)
 //   node scripts/selfdev-night.mjs --model claude        offline world, the owner's Claude Code subscription
 //   node scripts/selfdev-night.mjs --model chatgpt:gpt-5.6-terra [--chatgpt-auth <bench chatgpt-auth.json>]
+//   node scripts/selfdev-night.mjs --github --model chatgpt:gpt-5.6-terra   the same night on real GitHub and Actions,
+//                                  on selfdev-proof/night-* scratch lines (scripts/selfdev-night-github.mjs), removed after
+//   node scripts/selfdev-night.mjs --github --dry-run                        makes the scratch world, stops its CI, removes it
 //
 // The engine runs as its own process (`branch start`) on its own data folder, workspace and free port (never 3210,
 // 3299 or 3300), and is killed once mid-run (at the Nth github.wait_for_checks, --kill-at 2) and started again on the
@@ -25,6 +28,7 @@ import { defaultTrunkConversation, roomToWork, startEngine } from "../tests/fixt
 import { addProgram } from "../dist/accounts/saved-sign-ins.js";
 import { startNightBrain } from "./selfdev-night-brain.mjs";
 import { canonicalCoord, coordFingerprint, offlineOutcome, offlineWorld } from "./selfdev-night-world.mjs";
+import { cleanUp, githubOutcome, githubWorld } from "./selfdev-night-github.mjs";
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => { const at = args.indexOf(`--${name}`); return at >= 0 ? args[at + 1] : fallback; };
@@ -106,8 +110,8 @@ function openSteps(paths, runId) {
 }
 
 async function setUp(world, conn, paths) {
-  const engine = await startEngine(root, { token: world.token, githubApiBase: world.apiBase, githubPollSeconds: world.poll,
-    privateAddresses: world.mode === "offline", python: true, ...conn.setup });
+  const engine = await startEngine(root, { token: world.token, ...(world.apiBase ? { githubApiBase: world.apiBase } : {}), githubPollSeconds: world.poll,
+    privateAddresses: world.mode === "offline", python: true, npm: world.mode === "github", ...conn.setup });
   try {
     roomToWork(engine.app);
     return await defaultTrunkConversation(engine);
@@ -187,13 +191,15 @@ function judge(night, outcome, coordBefore, coordAfter, runJournal) {
   const asked = night.events.filter((event) => /approval|needs_input|input\.needed|attention\.needed/.test(event.kind)).map((event) => event.kind);
   const started = night.events.filter((event) => event.kind === "tool.started").length;
   const ended = night.events.filter((event) => event.kind === "tool.completed" || event.kind === "tool.failed").length;
-  const merges = night.events.filter((event) => (event.kind === "tool.completed" || event.kind === "tool.failed") && event.data.name === "github.merge_pull_request").length;
+  const merges = night.events.filter((event) => (event.kind === "tool.completed" || event.kind === "tool.failed")
+    && ["github.merge_pull_request", "branch.finish_source_change"].includes(event.data.name)).length;
   const outside = night.health.filter((row) => !night.restart.killedAt || row.at < night.restart.killedAt || row.at > night.restart.backAt + 5000);
   const checks = {
     noOwnerPrompts: asked.length === 0,
     completed: night.task?.status === "completed" && !night.timedOut,
     mergedOnlyGreen: outcome.mergeAttempts.every((row) => !row.merged || (row.green && !row.pending)) && outcome.mergeAttempts.some((row) => row.merged),
-    redLeftOpen: outcome.pulls.filter((pull) => pull.merged).length === 1,
+    redLeftOpen: outcome.pulls.filter((pull) => pull.merged).length === 1 && !outcome.redMerged,
+    sharedLinesUntouched: outcome.fixOnlyIntoBase !== false,
     // The coordinator keeps working in its own copy (commits, its own build.py runs), so what is judged is that the
     // night never named it and left it no uncommitted change.
     coordUntouched: planFilesUnchanged(coordBefore, coordAfter) && !night.events.some((event) => JSON.stringify(event.data).replaceAll("\\\\", "/").toLowerCase().includes(canonicalCoord.toLowerCase())),
@@ -208,33 +214,55 @@ function judge(night, outcome, coordBefore, coordAfter, runJournal) {
   return { passed: Object.values(checks).every(Boolean), checks, asked, tools: { started, ended } };
 }
 
+/** --github --dry-run: the scratch lines and pull requests are made and seen, their CI stopped, and all of it removed. */
+async function dryRun(world) {
+  await log({ step: "world", base: world.base, from: world.from, redPull: world.redPull, otherPull: world.otherPull, testFile: world.testFile });
+  await pause(20_000);
+  const heads = [world.redBranch, world.redBranch.replace("night-red-", "night-other-")];
+  for (const head of heads) {
+    const runs = JSON.parse(execFileSync("gh", ["api", `repos/${world.repo}/actions/runs?branch=${encodeURIComponent(head)}&per_page=20`, "--jq", "[.workflow_runs[] | select(.status != \"completed\") | .id]"], { encoding: "utf8", windowsHide: true }) || "[]");
+    for (const id of runs) { try { execFileSync("gh", ["api", "-X", "POST", `repos/${world.repo}/actions/runs/${id}/cancel`], { windowsHide: true, stdio: "ignore" }); } catch { /* finished */ } }
+    await log({ step: "ci-stopped", head, runs: runs.length });
+  }
+  await log({ step: "cleaned", done: cleanUp(world.made, world) });
+  return true;
+}
+
 async function main() {
   await mkdir(root, { recursive: true });
-  if (option("github", null) !== null || args.includes("--github")) throw new Error("The real-GitHub night is not built yet; run it offline.");
-  const world = await offlineWorld(root, stamp);
-  const brain = model === "scripted" ? await startNightBrain(world) : null;
-  const conn = connection(brain);
-  const paths = { root, dataDir: join(root, "data"), workspace: join(root, "workspace"), integrations: join(root, "integrations.json"), prompt: world.prompt };
-  const coordBefore = await coordFingerprint();
-  await log({ step: "start", model, root, killAt, prompt: world.prompt });
-  const sessionId = await setUp(world, conn, paths);
-  const port = await freePort();
-  const since = new Date().toISOString();
-  const watched = await watch(paths, port, conn.env, sessionId, Date.now() + Number(option("hours", "4")) * 3600_000);
-  killHard(watched.engine); running.delete(watched.engine);
-  await pause(2000); // the killed engine's files are let go
-  if (conn.chatgptAuth) await copyFile(join(paths.dataDir, "chatgpt-auth.json"), conn.chatgptAuth).catch(() => undefined);
-  const night = { ...watched, ...nightRecord(paths, sessionId, since) };
-  const journalRows = night.tasks.flatMap((task) => openSteps(paths, task.id));
-  const settled = night.events.filter((event) => event.kind === "run.auto_resumed").flatMap((event) => event.data.steps ?? []).length;
-  const verdict = judge(night, await offlineOutcome(world), coordBefore, await coordFingerprint(), { open: journalRows.length, settled });
-  const summary = { model, root, killAt, status: night.task?.status, output: night.task?.output?.slice(0, 1500), ...verdict,
-    restart: night.restart, outcome: await offlineOutcome(world), brain: brain ? { requests: brain.state.requests, answered: brain.state.answered } : undefined };
-  await log({ step: "summary", ...summary });
-  await writeFile(join(root, "summary.json"), JSON.stringify(summary, null, 2));
-  await world.github.close(); await brain?.close();
-  console.log(`\nnight gate ${verdict.passed ? "PASSED" : "FAILED"}; evidence in ${root}`);
-  process.exitCode = verdict.passed ? 0 : 1;
+  const onGitHub = args.includes("--github");
+  if (onGitHub && model === "scripted" && !args.includes("--dry-run")) throw new Error("The real-GitHub night needs a real model: --model claude or chatgpt:<model>.");
+  const world = onGitHub ? await githubWorld(stamp) : await offlineWorld(root, stamp);
+  try {
+    if (onGitHub && args.includes("--dry-run")) { process.exitCode = await dryRun(world) ? 0 : 1; return; }
+    const brain = model === "scripted" ? await startNightBrain(world) : null;
+    const conn = connection(brain);
+    const paths = { root, dataDir: join(root, "data"), workspace: join(root, "workspace"), integrations: join(root, "integrations.json"), prompt: world.prompt };
+    const coordBefore = await coordFingerprint();
+    await log({ step: "start", model, root, killAt, world: world.mode, ...(onGitHub ? { base: world.base, redPull: world.redPull, otherPull: world.otherPull } : {}), prompt: world.prompt });
+    const sessionId = await setUp(world, conn, paths);
+    const port = await freePort();
+    const since = new Date().toISOString();
+    const watched = await watch(paths, port, conn.env, sessionId, Date.now() + Number(option("hours", "4")) * 3600_000);
+    killHard(watched.engine); running.delete(watched.engine);
+    await pause(2000); // the killed engine's files are let go
+    if (conn.chatgptAuth) await copyFile(join(paths.dataDir, "chatgpt-auth.json"), conn.chatgptAuth).catch(() => undefined);
+    const night = { ...watched, ...nightRecord(paths, sessionId, since) };
+    const journalRows = night.tasks.flatMap((task) => openSteps(paths, task.id));
+    const settled = night.events.filter((event) => event.kind === "run.auto_resumed").flatMap((event) => event.data.steps ?? []).length;
+    const outcome = onGitHub ? githubOutcome(world) : await offlineOutcome(world);
+    const verdict = judge(night, outcome, coordBefore, await coordFingerprint(), { open: journalRows.length, settled });
+    const summary = { model, root, killAt, world: world.mode, status: night.task?.status, output: night.task?.output?.slice(0, 1500), ...verdict,
+      restart: night.restart, outcome, brain: brain ? { requests: brain.state.requests, answered: brain.state.answered } : undefined };
+    await log({ step: "summary", ...summary });
+    await writeFile(join(root, "summary.json"), JSON.stringify(summary, null, 2));
+    await brain?.close();
+    console.log(`\nnight gate ${verdict.passed ? "PASSED" : "FAILED"}; evidence in ${root}`);
+    process.exitCode = verdict.passed ? 0 : 1;
+  } finally {
+    if (onGitHub && !args.includes("--dry-run") && !args.includes("--keep")) await log({ step: "cleaned", done: cleanUp(world.made, world) });
+    if (!onGitHub) await world.github.close();
+  }
 }
 
 await main();
