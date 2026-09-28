@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { basename, delimiter, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { cleanChildEnvironment } from "../child-env.js";
@@ -31,10 +34,44 @@ export function codexEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJ
   return { ...cleanChildEnvironment(source), ...(source.CODEX_HOME ? { CODEX_HOME: source.CODEX_HOME } : {}) };
 }
 
+/**
+ * QA 2026-09-28: the program the npm-installed `codex` launcher itself starts. The launcher (bin/codex.js) is a node
+ * process that only starts the platform's own codex binary and waits; kept running beside a warm app-server it held
+ * about 61 MB. Found as the launcher finds it: the platform package that the codex package itself resolves, else its
+ * own vendor folder. Null (the launcher is used) when codex is not an npm install or anything is not where expected.
+ */
+const platformPackages: Record<string, string> = {
+  "linux-x64": "x86_64-unknown-linux-musl", "linux-arm64": "aarch64-unknown-linux-musl",
+  "darwin-x64": "x86_64-apple-darwin", "darwin-arm64": "aarch64-apple-darwin",
+  "win32-x64": "x86_64-pc-windows-msvc", "win32-arm64": "aarch64-pc-windows-msvc",
+};
+export function codexBinary(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform, arch: string = process.arch): { path: string; packageRoot: string } | null {
+  try {
+    const triple = platformPackages[`${platform}-${arch}`];
+    if (!triple) return null;
+    const start = startCall(command, [], env, platform);
+    let script = start.args[0] ?? "";
+    if (!/codex\.js$/.test(script)) { // not through a .cmd: the command on PATH, followed to where it really is
+      const found = (env.PATH ?? env.Path ?? "").split(delimiter).map((folder) => join(folder, command)).find((file) => existsSync(file));
+      script = found ? realpathSync(found) : "";
+    }
+    if (basename(script) !== "codex.js" || basename(dirname(script)) !== "bin") return null;
+    const packageRoot = realpathSync(dirname(dirname(script)));
+    const exe = platform === "win32" ? "codex.exe" : "codex";
+    let vendor = join(packageRoot, "vendor");
+    try { vendor = join(dirname(createRequire(join(packageRoot, "bin", "codex.js")).resolve(`@openai/codex-${platform}-${arch}/package.json`)), "vendor"); } catch { /* the package's own vendor folder */ }
+    const path = join(vendor, triple, "bin", exe);
+    return existsSync(path) ? { path, packageRoot } : null;
+  } catch { return null; }
+}
+
 export const startCodexAppServer: StartAppServer = (command, env = codexEnvironment()) => {
+  // Started as the npm launcher would start it, with what the launcher adds to its environment, but without the launcher.
+  const binary = codexBinary(command, env);
   // An npm-installed codex is a .cmd launcher on Windows, started through its script with no shell (src/windows-command.ts).
-  const start = startCall(command, ["app-server"], env);
-  const child = spawn(start.command, start.args, { stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true, env });
+  const start = binary ? { command: binary.path, args: ["app-server"] } : startCall(command, ["app-server"], env);
+  const childEnv = binary ? { ...env, CODEX_MANAGED_PACKAGE_ROOT: binary.packageRoot, CODEX_MANAGED_BY_NPM: "1" } : env;
+  const child = spawn(start.command, start.args, { stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true, env: childEnv });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   const listeners: ((message: Record<string, unknown>) => void)[] = [];
   lines.on("line", (line) => {

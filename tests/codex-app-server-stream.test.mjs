@@ -94,3 +94,26 @@ test("the app-server stays warm: a second turn reuses it on a new thread, and a 
   closeWarmCodex();
   assert.equal(warmCodexCount(), 0, "Branch closing stops it");
 });
+
+test("an npm-installed Codex's own binary is found, so no launcher process sits beside the warm app-server", { skip: process.platform !== "win32" }, async (t) => {
+  const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { discardTemp } = await import("./temp-dir.mjs");
+  const { codexBinary } = await import("../dist/asks/codex-app-server.js");
+  const root = await mkdtemp(join(tmpdir(), "branch-codex-npm-"));
+  t.after(() => discardTemp(root));
+  const pkg = join(root, "node_modules", "@openai", "codex");
+  const platformPkg = join(pkg, "node_modules", "@openai", `codex-win32-${process.arch}`);
+  const triple = process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
+  await mkdir(join(pkg, "bin"), { recursive: true });
+  await mkdir(join(platformPkg, "vendor", triple, "bin"), { recursive: true });
+  await writeFile(join(pkg, "bin", "codex.js"), "");
+  await writeFile(join(platformPkg, "package.json"), JSON.stringify({ name: `@openai/codex-win32-${process.arch}` }));
+  await writeFile(join(platformPkg, "vendor", triple, "bin", "codex.exe"), "");
+  await writeFile(join(root, "codex.cmd"), '@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');
+  const found = codexBinary("codex", { PATH: root });
+  assert.ok(found, "found");
+  assert.ok(found.path.endsWith(join("codex", "node_modules", "@openai", `codex-win32-${process.arch}`, "vendor", triple, "bin", "codex.exe")), found.path);
+  assert.equal(codexBinary("codex", { PATH: join(root, "nowhere") }), null, "no npm install: the launcher is used");
+});
