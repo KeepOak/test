@@ -28,7 +28,7 @@ import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
-import { panesWrap, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
+import { panesWrap, panesOn, paneOpen, followPane, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
@@ -168,6 +168,10 @@ function askCard(q) {
     ${(q.question && q.label) || q.bytes || q.jobs?.length ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${requestBody(q)}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
+
+/** RES-703: the approval cards of a conversation open in a pane beside this one (chat/panes.js), the same card as here:
+    each bound to its exact request, answered in place, never through the main conversation. */
+export const paneAsks = (sid) => C.waiting.filter((q) => q.sessionId === sid).map((q) => askCard(q).replace(' id="live-ask"', "")).join(""); // the page's one #live-ask is the main conversation's
 
 /* The thread, 1:1 with the prototype's blocks: a stamp where the day changes or time has passed, the owner's messages,
    each reply signed by whoever wrote it, the tool calls between replies folded to one steps line, and, where a task
@@ -742,6 +746,8 @@ async function answer(el, decision, extra = {}) {
   answering.delete(key);
   if (said?.standingNote) toast(said.standingNote); // the engine kept the yes for this conversation only, and says why
   C.waiting = C.waiting.filter((w) => w !== q);
+  /* A pane's question (RES-703) is answered in its pane, which follows its task on; the main conversation stays. */
+  if (q.sessionId !== C.sessionId && paneOpen(q.sessionId)) { renderNow(); await followPane(q.sessionId); return; }
   if (said?.task === "carrying-on") await follow(q.sessionId);
   else await openConversation(q.sessionId);
 }
@@ -823,7 +829,7 @@ export function init() {
   initBg();
   initMedia();
   initBeside();
-  initPanes();
+  initPanes({ asks: paneAsks, readAsks: () => loadWaiting().then(render) });
   initMessages({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
   initMore({ state: () => C });
   initLeaveOut({ state: () => C, reopen: openConversation });
@@ -875,7 +881,7 @@ export function init() {
     $("#send")?.classList.toggle("ready", !!e.target.value.trim() || hasFiles()); // pass 17: Send turns copper once there is something to send
   });
   setInterval(async () => {
-    if (S.view !== "chat" || !C.sessionId || C.sending) return;
+    if (S.view !== "chat" || (!C.sessionId && !panesOn()) || C.sending) return; // panes' questions are read too
     const before = JSON.stringify(C.waiting);
     await loadWaiting();
     if (JSON.stringify(C.waiting) !== before) render();
