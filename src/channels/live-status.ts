@@ -117,7 +117,7 @@ export class LiveStatus {
    */
   constructor(private readonly target: LiveTarget, private readonly guard: OutboundGuard,
     private readonly timing: LiveTiming = defaultLiveTiming, private readonly patient = false,
-    private readonly stepsSource?: StepsSource) {
+    private readonly stepsSource?: StepsSource, private readonly separateReply = false) {
     this.limit = Math.min(target.adapter.maxTextLength ?? 3500, 3500);
     this.awake = !patient;
   }
@@ -174,7 +174,7 @@ export class LiveStatus {
   /** A piece of the reply as the model writes it. */
   text(delta: string): void {
     // The steps message stays the steps; the reply goes out on its own at the end.
-    if (this.closed || this.streamBlocked || this.stepsSource) return;
+    if (this.closed || this.streamBlocked || this.stepsSource || this.separateReply) return;
     if (this.reply.length <= this.limit) this.reply += delta;
     this.scheduleEdit();
   }
@@ -194,7 +194,7 @@ export class LiveStatus {
     return this.enqueue(async () => {
       await this.applyReaction();
       if (!this.progressId) return null;
-      if (outcome === "done" && reply !== undefined && fitsOne(reply, this.limit)) {
+      if (!this.separateReply && outcome === "done" && reply !== undefined && fitsOne(reply, this.limit)) {
         const text = await this.checked(reply);
         if (text !== null && fitsOne(text, this.limit) && await this.editTo(text)) return { messageId: this.progressId, text };
       }

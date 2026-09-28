@@ -276,6 +276,7 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
+import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
 import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
 import { setupIds } from "./channel-setup/service.js";
@@ -1144,7 +1145,7 @@ async function api(
       throw error instanceof LearningCoreApiError ? new HttpError(error.status, error.message) : error;
     });
   // P17-D §4: decision models on the owner's own connections. Reading names the connections; deciding asks a model.
-  if (path === "/api/decisions" || path === "/api/decisions/settings" || path === "/api/decisions/decide") {
+  if (path === "/api/decisions" || path === "/api/decisions/settings" || path === "/api/decisions/decide" || path === "/api/decisions/urgency") {
     app.store.profiles.requireOwner("Decision models");
     if (path === "/api/decisions") {
       if (request.method === "GET") return app.decisionModels.overview();
@@ -1152,6 +1153,10 @@ async function api(
     }
     if (request.method !== "POST") throw new HttpError(405, "Use POST here.");
     const body = await readBody(request, 256 * 1024);
+    // Sort the Inbox by urgency: scores for the rows Needs you shows (refused while the switch is off).
+    if (path === "/api/decisions/urgency") return app.decisionModels.urgency(body).catch((error: unknown) => {
+      throw (error as { status?: unknown }).status === 409 ? new HttpError(409, (error as Error).message) : error;
+    });
     return path === "/api/decisions/settings" ? { settings: app.decisionModels.configure(body) } : app.decisionModels.decide(body);
   }
   // P17-D §3: behaviour workbooks. Starting one, running it again and making a skill are the owner's.
@@ -1287,7 +1292,8 @@ async function api(
   if (path.startsWith("/api/agents/"))
     return remoteAgentsApi(app.remoteAgents, request, path, () => readBody(request), {
       base: `http://${request.headers.host ?? "127.0.0.1:3210"}`,
-      token: /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "YOUR_SESSION_KEY",
+      // A pairing link carries a key of its own that reaches only the A2A door and runs out; never the caller's key.
+      pairingKey: () => app.sessionTokens.createPairingKey(app.runtime.owner),
     });
   // A phone-sized list of conversations. It goes through the same door and needs the same key as
   // everything else, so a paired phone can pick up what was started at the computer.
@@ -2458,6 +2464,7 @@ async function connectionsApi(app: Branch, request: IncomingMessage, path: strin
       id,
     );
     forgetProgram(app.store, app.runtime.owner, id); // a coding assistant taken out stays out after a restart
+    syncMixtures(app.store, app.runtime.owner, app.runtime.models); // a mixture that used it leaves the model picker
     return forgotten;
   }
   if (request.method === "GET" && path === "/api/connections/catalog")
@@ -2495,7 +2502,7 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (request.method === "GET" && !match[2]) return { ...record, hookPath: record.data.hookToken ? `/hooks/${record.id}` : null };
   if (request.method === "POST" && match[2] === "trigger") {
     z.object({}).strict().parse(await readBody(request));
-    return app.scheduler.trigger(owner, record.id, undefined, "local");
+    return app.scheduler.trigger(owner, record.id, undefined, "local", triggerSlot(request));
   }
   if (request.method === "POST" && match[2] === "remove") {
     z.object({}).strict().parse(await readBody(request));
@@ -2536,8 +2543,16 @@ async function hook(app: Branch, request: IncomingMessage, path: string): Promis
     timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
   if (!record || !same) throw new HttpError(401, "Hook token rejected");
   const payload = await readBody(request, 16 * 1024).catch(() => ({}));
-  const run = await app.scheduler.trigger(app.runtime.owner, record.id, payload, "webhook");
+  const run = await app.scheduler.trigger(app.runtime.owner, record.id, payload, "webhook", triggerSlot(request));
   return { runId: run.id, status: run.status };
+}
+/** The caller's Idempotency-Key, when it sent one: the same key starts a schedule once (src/scheduler.ts). */
+function triggerSlot(request: IncomingMessage): string | null {
+  const header = request.headers["idempotency-key"];
+  const value = String((Array.isArray(header) ? header[0] : header) ?? "").trim();
+  if (!value) return null;
+  if (!/^[!-~]{1,200}$/.test(value)) throw new HttpError(400, "Idempotency-Key must be 1 to 200 printable characters");
+  return value;
 }
 /**
  * WhatsApp sends messages to this address instead of holding a connection open, so the route has
@@ -3849,7 +3864,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         }
         const scope = app.sessionTokens.scopeOf(app.runtime.owner, offered);
         if (scope === null) return app.sessionTokens.check(app.runtime.owner, offered, { method: request.method ?? "GET", executes: false, path });
-        who.key = scope;
+        // A pairing key is judged as a "run" key, and its own check (session-tokens.ts) keeps it to the A2A door.
+        who.key = scope === "a2a" ? "run" : scope;
         return null;
       }, (offered) => app.sessionTokens.scopeOf(app.runtime.owner, offered) !== null
         || app.people.keys.working(offered)); // bucket 19
