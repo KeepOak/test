@@ -132,12 +132,18 @@ test("the switch waits for the invisible moment: out of sight, or the owner away
     let visible = true, polls = 0, kept = null;
     const window = { isVisible: () => visible, isMinimized: () => false, isDestroyed: () => false,
       webContents: { executeJavaScript: async () => kept } };
-    const hook = handOverHook({ window, userData: dir, power: { getSystemIdleState: () => "active" }, sleep: async () => { polls++; if (polls === 2) visible = false; if (polls === 3) kept = "{\"drafts\":{}}"; } });
+    const hook = handOverHook({ window: () => window, userData: dir, power: { getSystemIdleState: () => "active" }, sleep: async () => { polls++; if (polls === 2) visible = false; if (polls === 3) kept = "{\"drafts\":{}}"; } });
     assert.deepEqual(await hook({ version: "2.0.0", stillWanted: () => true }), { minimized: true });
     assert.equal(polls, 3, "it waited while visible, then while the first message's conversation was confirmed");
     assert.equal(JSON.parse(await readFile(join(dir, "shell-handover.json"), "utf8")).kept, "{\"drafts\":{}}");
-    const stopped = handOverHook({ window: { ...window, isVisible: () => true }, userData: dir, power: { getSystemIdleState: () => "active" }, sleep: async () => undefined });
+    const stopped = handOverHook({ window: () => ({ ...window, isVisible: () => true }), userData: dir, power: { getSystemIdleState: () => "active" }, sleep: async () => undefined });
     await assert.rejects(stopped({ version: "2.0.0", stillWanted: () => false }), /called off/);
+    // Started in the tray with no window yet (or its window closed for good): nothing to wait for or keep.
+    let waited = 0;
+    const none = handOverHook({ window: () => null, userData: dir, power: { getSystemIdleState: () => "active" }, sleep: async () => { waited++; } });
+    assert.deepEqual(await none({ version: "3.0.0", stillWanted: () => true }), { minimized: true });
+    assert.equal(waited, 0, "no window: the moment is invisible at once");
+    assert.equal(JSON.parse(await readFile(join(dir, "shell-handover.json"), "utf8")).kept, null);
   } finally { await discardTemp(dir); }
 });
 

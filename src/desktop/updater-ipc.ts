@@ -15,7 +15,7 @@ import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
-import { watchForOwner } from "./quiet-build.js";
+import { watchForOwner, type OwnerWindow } from "./quiet-build.js";
 
 /** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
 export const updateScratchDir = (): string => join(app.getPath("temp"), "branch-agent-update");
@@ -90,10 +90,19 @@ export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250
 }
 
 
+/** Stands in for the window while none is open (a start in the tray): no keys to hear, so only tasks hold an install. */
+const noWindow: OwnerWindow = { isDestroyed: () => true, webContents: { on: () => undefined, off: () => undefined } };
+
+/**
+ * `window` answers the window open right now, or null: the updater and update by itself run for the life of the app,
+ * with a window or without one (a start in the tray opens none until the owner does), and pick up whichever is open.
+ * Called once per app run.
+ */
 export function registerUpdaterIpc(
-  window: BrowserWindow, origin: string, version: string, requestQuit: () => void,
+  window: () => BrowserWindow | null, origin: string, version: string, requestQuit: () => void,
   hooks?: UpdateHooks,
 ): Updater {
+  const open = (): BrowserWindow | null => { const now = window(); return now && !now.isDestroyed() ? now : null; };
   // Dogfood F1 (NAS): what the owner had chosen when the install under way began; the last gate reads it again.
   let started: InstallStart | null = null;
   // hot-update: a live update needs no quiet moment (work is handed over, not stopped); the packaged swap still does (beforeStop).
@@ -129,15 +138,17 @@ export function registerUpdaterIpc(
     ...(hooks?.handOver ? { handOver: hooks.handOver } : {}),
     devBuildDir: hooks?.buildDir ?? null,
     onChange: statusSender((status) => {
-      if (window.isDestroyed()) return;
+      const shown = open();
+      if (!shown) return;
       // Only the page this window was opened on, as every handler here checks for the other direction.
-      const at = (() => { try { return new URL(window.webContents.getURL()).origin; } catch { return null; } })();
-      if (at === origin) window.webContents.send("branch:update-changed", status);
+      const at = (() => { try { return new URL(shown.webContents.getURL()).origin; } catch { return null; } })();
+      if (at === origin) shown.webContents.send("branch:update-changed", status);
     }),
   });
   const authorized = (event: IpcMainInvokeEvent) => {
-    if (event.sender !== window.webContents ||
-      event.senderFrame !== window.webContents.mainFrame ||
+    const shown = open();
+    if (!shown || event.sender !== shown.webContents ||
+      event.senderFrame !== shown.webContents.mainFrame ||
       new URL(event.senderFrame.url).origin !== origin)
       throw new Error("Desktop update access denied");
   };
@@ -182,7 +193,7 @@ export function registerUpdaterIpc(
       started = { channel: readiness.channel, automatic: automatic === true };
       await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
       // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
-      const stopWatching = watchForOwner(window, updater, async () => {
+      const stopWatching = watchForOwner(open() ?? noWindow, updater, async () => {
         const state = await hooks.readiness!();
         // Dogfood F1 while it builds or waits: a changed channel, or update by itself switched off, calls it off now.
         const why = changedMind(state, started);
@@ -239,7 +250,7 @@ export function registerUpdaterIpc(
   const loop = app.isPackaged && hooks?.readiness && hooks.plan ? new UpdateLoop({
     readiness: async () => { const state = await hooks.readiness!(); return { channel: state.channel, autoUpdate: state.autoUpdate ?? "off" }; },
     plan: hooks.plan, updater, install: async () => { await installNow(true, null); },
-    tell: (words) => { if (!window.isDestroyed()) window.webContents.send("branch:update-said", words); diagnose("updater", "warn", words); },
+    tell: (words) => { open()?.webContents.send("branch:update-said", words); diagnose("updater", "warn", words); },
   }) : null;
   // The first look waits a minute: the window and its engine settle first, and nothing is built during start-up.
   loop?.start(60_000);
@@ -251,10 +262,7 @@ export function registerUpdaterIpc(
     await shell.openExternal(url);
     return true;
   });
-  window.on("closed", () => {
-    loop?.stop();
-    for (const channel of ["branch:update-status", "branch:update-check", "branch:update-install", "branch:update-loop", "branch:open-external"])
-      ipcMain.removeHandler(channel);
-  });
+  // Nothing is torn down when a window closes: the app, closed to the tray or with no window yet, keeps itself up to date.
+  app.once("will-quit", () => loop?.stop());
   return updater;
 }

@@ -328,12 +328,14 @@ async function createWindow(
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
-  registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
+  // The window as it is at each moment (none while closed for good or not yet opened): updates go on without one.
+  const openWindow = () => window ?? null;
+  registerUpdaterIpc(openWindow, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key(), client.fetch),
       // Update by itself runs in this process, whatever the page is doing (update-loop.ts).
       plan: (facts) => updatePlanFrom(url, key(), facts, client.fetch),
       // Versioned app folders: the switch waits for the window's invisible moment and hands its state over (shell-window.ts).
-      handOver: handOverHook({ window, userData: app.getPath("userData"), power: powerMonitor }) });
+      handOver: handOverHook({ window: openWindow, userData: app.getPath("userData"), power: powerMonitor }) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
   const liveWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) });

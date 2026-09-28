@@ -24,21 +24,22 @@ export const shellKeptChannel = "branch:shell-kept";
 type Win = Pick<BrowserWindow, "isVisible" | "isMinimized" | "isDestroyed"> & { webContents: Pick<BrowserWindow["webContents"], "executeJavaScript"> };
 
 /** What the page has open, as text; "" when the page has no such record (not loaded yet), null while it must wait. */
-async function keptByPage(window: Win): Promise<string | null> {
-  if (window.isDestroyed()) return "";
+async function keptByPage(window: Win | null): Promise<string | null> {
+  if (!window || window.isDestroyed()) return "";
   const kept: unknown = await window.webContents.executeJavaScript("window.branchKeepForShell ? window.branchKeepForShell() : ''", true).catch(() => "");
   return typeof kept === "string" ? kept : kept === null ? null : "";
 }
 
-export function handOverHook(options: { window: Win; userData: string; power: Pick<PowerMonitor, "getSystemIdleState">; pollMs?: number;
+/** `window` answers the window open now, or null: with none open (a start in the tray), any moment is invisible. */
+export function handOverHook(options: { window: () => Win | null; userData: string; power: Pick<PowerMonitor, "getSystemIdleState">; pollMs?: number;
   sleep?: (ms: number) => Promise<void> }) {
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
   return async (target: { version: string; stillWanted?: () => boolean }): Promise<{ minimized: boolean }> => {
-    const { window } = options;
     for (;;) {
       if (target.stillWanted && !target.stillWanted()) throw new UpdateDeferredError("The update was called off before it took over.");
+      const found = options.window(), window = found && !found.isDestroyed() ? found : null;
       const idle = options.power.getSystemIdleState(120);
-      const visible = !window.isDestroyed() && window.isVisible(), minimized = !window.isDestroyed() && window.isMinimized();
+      const visible = !!window?.isVisible(), minimized = !!window?.isMinimized();
       if (invisibleMoment({ visible, minimized, idle })) {
         const kept = await keptByPage(window);
         if (kept !== null) {
