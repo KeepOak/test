@@ -67,7 +67,7 @@ test("the native rules repeat the address rule and keep the bridge to the app's 
   const plugin = read("ios/App/App/BranchPhonePlugin.swift");
   const methods = plugin.match(/@objc func \w+\(_ call: CAPPluginCall\) \{\n/g) ?? [];
   const guarded = plugin.match(/@objc func \w+\(_ call: CAPPluginCall\) \{\n\s+guard fromAppPage\(call\) else \{ return \}/g) ?? [];
-  assert.equal(methods.length, 20); // mac7/phone-pairing added four, mac7/residuals deviceKey, B6 phonePair
+  assert.equal(methods.length, 23); // mac7/phone-pairing added four, mac7/residuals deviceKey, B6 phonePair, PH-03 lendStart, lendStop, lendResult
   
   assert.equal(guarded.length, methods.length);
   // Android: without an origin-scoped bridge, the owner's Branch is never shown inside the app.
