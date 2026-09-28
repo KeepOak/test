@@ -9,6 +9,7 @@ import { esc } from "./dom.js";
 import { E } from "./state.js";
 import { sleeps } from "./sleep.js";
 import { drop17, hold17, play17 } from "./held.js";
+import { say } from "./words.js";
 
 /* The prototype's key → [what it shows, file without its extension, still only]. */
 export const ART17 = {
@@ -110,9 +111,9 @@ function fillArt(slot) {
   if (!a) return;
   const [label, file, stillOnly] = a, move = !slot.dataset.art17Still && !stillOnly && !calm17(), m = move ? "v" : "i", have = slot.firstElementChild;
   slot.classList.add("slot17e");
-  if (have?.dataset.art17Id === slot.dataset.art17 && have.dataset.m === m) return;
+  if (have?.dataset.art17Id === slot.dataset.art17 && have.dataset.m === m) { have.title = say(label); return; } // its words follow the language
   put(slot, kept(`${slot.dataset.art17}|${m}`, () => {
-    const box = Object.assign(document.createElement("span"), { className: "art17e", title: label });
+    const box = Object.assign(document.createElement("span"), { className: "art17e", title: say(label) });
     Object.assign(box.dataset, { art17Id: slot.dataset.art17, m });
     box.setAttribute("aria-hidden", "true");
     box.append(picture(file + ".webp", move ? file + ".webm" : "", ""));
