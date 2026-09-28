@@ -10033,7 +10033,7 @@
   "window.chat-reply.title": "Respuestas en cada app",
   "window.chat-reply.quote-in": "Citar tu mensaje en {name}",
   "window.chat-reply.quote-hint": "Auto cita en un chat individual solo cuando antes llegó un mensaje tuyo más nuevo, y siempre en grupos. Primero cita el primer mensaje de cada respuesta; Todos los cita todos.",
-  "window.chat-reply.auto": "Auto",
+  "window.chat-reply.auto": "Automático",
   "window.chat-reply.first": "Primero",
   "window.chat-reply.all": "Todos",
   "window.chat-reply.never": "Nunca",
