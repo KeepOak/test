@@ -6161,14 +6161,18 @@ The spreadsheet at `GET /api/usage/export.csv` carries `estimatedCostUsd`, `cost
 had no price leaves the money cells empty rather than writing a zero.
 
 ### Keeping a usage spreadsheet on a schedule (metering)
-Branch can keep a spreadsheet of this month's usage in a folder of your own workspace and write it
-again at an interval you choose. It is off until you ask for it, and it is written on this computer
-only — nothing is sent anywhere.
+Usage is always counted in Branch's own data (the Usage page reads it); nothing here switches that. A spreadsheet is
+written into your workspace only when you ask: Settings › Usage › Open the report › **Save as a spreadsheet** writes the
+report's 7, 30 or 90 days (in the desktop app into the `usage` folder, and it says where; a browser downloads it).
+Branch can also keep a spreadsheet of this month's usage there and write it again at an interval you choose. That
+schedule is off until you switch it on (a file written into every project by itself is clutter, not a feature), and it
+is written on this computer only — nothing is sent anywhere.
 
 - `GET /api/usage/metering` / `POST /api/usage/metering` — `{ enabled, folder, every }`, where
   `every` is `hourly`, `daily` or `weekly` and `folder` is a plain name inside the workspace. A
   folder that would climb out of the workspace is refused when you save it, not later.
-- `POST /api/usage/metering/now` — writes it straight away and says where it went.
+- `POST /api/usage/metering/now` — writes it straight away and says where it went. With `{ "range": "7d" | "30d" |
+  "90d" }` it writes those days instead, as `usage-report-<range>-<date>.csv` (the report's Save as a spreadsheet).
 
 The file is named after the month (`usage-2026-09.csv`) and holds the same money columns as the
 export above. The scheduler's existing beat writes it; a folder it cannot write to is passed over
