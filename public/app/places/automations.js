@@ -102,8 +102,14 @@ function autoRow(p) {
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.procedure.name)}${pill}</b><small>${esc(small)}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}" data-v="auto">${t("ov.open")}</button></div>`;
 }
 
+/* QA retest 2026-09-28 (S2): the box's words are kept for each tab and drawn back into it. The page is drawn anew whenever
+   the engine's state moves (it does while a model reads the words), and a box drawn without them came back empty, so words
+   the engine could not read were gone before the person could fix them. */
+const NL = { scheduled: "", triggers: "" };
+const nlTab = () => (S.tabs.automations === "triggers" ? "triggers" : "scheduled");
+const nlValue = () => ` value="${esc(NL[nlTab()])}"`;
 /* B002: Add is drawn pressable only while the box has words (a redraw keeps what was typed). */
-const boxEmpty = () => (document.getElementById("nl-in")?.value.trim() ? "" : " disabled");
+const boxEmpty = () => (NL[nlTab()].trim() ? "" : " disabled");
 const promptsOff = () => prompts?.settings?.mode === "off";
 async function modeOfProcedures() {
   const a = await api("autonomy");
@@ -124,7 +130,7 @@ export function draw() {
 
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in"${nlValue()} placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
     ${schedules.length ? `<div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>` : empty18("automations:scheduled")}
   <div class="sec ideas15"><div class="sec-h15"><h2>${t("window.places.automations.ideas")}</h2><button type="button" class="link15" data-act="ideas15">${t("window.places.automations.see-all-count", { count: IDEAS.length })}</button></div><div class="idea-row15">${IDEAS.slice(0, 3).map(ideaCard).join('')}</div></div>${ordersSection()}${onItsOwnSection()}`;
 
@@ -137,7 +143,7 @@ export function draw() {
 
   } else if (tab === "triggers") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>${proceduresMode === "off" ? offTile("procedures", t("window.switch-on.off", { label: autonomyLabel }), t("window.switch-on.triggers-why")) : ""}
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-task-finishes"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${trigCard()}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in"${nlValue()} placeholder="${esc(t("window.places.automations.describe-it-when-a-task-finishes"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${trigCard()}
     ${triggers.length ? "" : empty18("automations:triggers")}<div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : `<span class="ico-tile">${ic("bolt", "s")}</span>`}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
 
     markLive(triggers.map((_, i) => `sw:auto-triggers-${i}`));
@@ -246,6 +252,7 @@ export function init() {
   /* B002: Add waits for words: it is pressable once the box has some (typed, or put there from an idea). */
   document.addEventListener("input", (e) => {
     if (e.target.id !== "nl-in") return;
+    NL[nlTab()] = e.target.value;
     const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
     if (add) add.disabled = !e.target.value.trim();
   });
