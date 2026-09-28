@@ -3,13 +3,14 @@
    - Email and calendar: the owner's own Google and Microsoft sign-ins (src/personal/signin.ts). The client id of the
      owner's own app is saved with POST /api/personal/signin/<service>; its client secret, when typed, goes only one way,
      into the engine's secrets locker with POST /api/personal/signin/<service>/secret (the owner's alone). The field is
-     never filled from the engine and never kept by the window, so a saved secret is never shown back; Sign in is POST
+     never filled from the engine, and a secret typed is held in memory only until it is saved (so a redraw in between
+     never takes it), never written into the page, so a saved secret is never shown back; Sign in is POST
      /api/personal/signin/<service>/start, whose address is opened only when it is https on that service's own sign-in
      host. Whether it is signed in is GET /api/personal/signin/<service> status.signedIn.
    - Bring back your Branch: a backup file (GET /api/backup's own format) sent to POST /api/restore. The engine brings
      it back only into a Branch with no conversations yet and says so otherwise; nothing here replaces what is there
      (the route's replace=1 is never used). What it holds back for the owner's yes waits in Data & usage. */
-import { esc, renderNow } from "../core/dom.js";
+import { esc, renderNow, afterDraw } from "../core/dom.js";
 import { api, apiBytes } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -19,7 +20,7 @@ import { t } from "../../i18n.js";
 
 const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
-const M = { signin: {}, busy: false, typed: {} };
+const M = { signin: {}, busy: false, typed: {}, secrets: {} };
 const typed = (id, saved) => esc(M.typed[id] ?? saved ?? "");
 
 /* The saved settings and whether each service is signed in; a refusal says why and leaves that service out. */
@@ -61,6 +62,7 @@ async function save(id) {
     delete M.typed[client.id];
     const value = secret.value.trim();
     if (value) await api(`personal/signin/${id}/secret`, { value });
+    delete M.secrets[secret.id];
     secret.value = "";
     return true;
   } catch (error) { toast(error.message); return false; }
@@ -108,7 +110,18 @@ export function initMore() {
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));
   on("more18-restore", () => document.getElementById("more18-file")?.click());
-  document.addEventListener("input", (e) => { if (/^more18-\w+-client$/.test(e.target?.id ?? "")) M.typed[e.target.id] = e.target.value; }); // never the secret
+  document.addEventListener("input", (e) => {
+    const id = e.target?.id ?? "";
+    if (/^more18-\w+-client$/.test(id)) M.typed[id] = e.target.value;
+    // A secret typed and not saved yet goes back into its field after a redraw, as a value only: never into the page's markup.
+    else if (/^more18-\w+-secret$/.test(id)) { if (e.target.value) M.secrets[id] = e.target.value; else delete M.secrets[id]; }
+  });
+  afterDraw(() => {
+    for (const [id, value] of Object.entries(M.secrets)) {
+      const field = document.getElementById(id);
+      if (field && !field.value) field.value = value;
+    }
+  });
   document.addEventListener("change", (e) => {
     if (e.target?.id !== "more18-file" || !e.target.files?.[0]) return;
     const file = e.target.files[0];
