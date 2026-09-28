@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join, isAbsolute, resolve, dirname, basename } from "node:path";
 import { tmpdir } from "node:os";
@@ -92,8 +93,36 @@ async function removePrivateRequest(root: string): Promise<void> {
   catch { removeLater(target, 1); }
 }
 function removeLater(target: string, attempt: number): void {
-  setTimeout(() => void rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
-    .catch(() => { if (attempt < 30) removeLater(target, attempt + 1); }), 2000).unref();
+  setTimeout(() => {
+    // The same conversation's next request may be using this folder again by now: it removes the folder itself.
+    if (inUse.has(target)) return;
+    void rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      .catch(() => { if (attempt < 30) removeLater(target, attempt + 1); });
+  }, 2000).unref();
+}
+/** Request folders being used right now, so two requests never share one and a late removal never takes a live one. */
+const inUse = new Set<string>();
+/**
+ * selfdev: the native process's working folder appears in the environment note Claude Code puts near the start of
+ * every request, so a fresh random folder each round changed the prompt's front and no round after the first could
+ * be read from Anthropic's prompt cache (each round of a long task was paid in full). The folder is now named from
+ * what stays the same for one conversation (its standing instructions and its first message, with the owner, the
+ * account and the model), so every round of it starts with the same bytes. It is still private, still emptied after
+ * each request, and a second request of the same conversation at the same moment gets a random one instead.
+ */
+async function requestFolder(parent: string, options: Readonly<ClaudeSubscriptionOptions>, request: CompletionRequest): Promise<string> {
+  const first = request.messages.find((message) => message.role !== "system");
+  const stable = createHash("sha256").update(JSON.stringify([options.owner, options.accountHome?.path ?? "", options.model ?? "",
+    request.messages.filter((message) => message.role === "system").map((message) => message.content).join("\n").slice(0, 20000),
+    first?.content.slice(0, 20000) ?? ""])).digest("hex").slice(0, 24);
+  const path = join(parent, `branch-claude-subscription-${stable}`);
+  if (inUse.has(path)) return mkdtemp(join(parent, "branch-claude-subscription-"));
+  inUse.add(path);
+  try {
+    await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); // left by a crash, never in use here
+    await mkdir(path, { mode: 0o700 });
+    return path;
+  } catch (error) { inUse.delete(path); throw error; }
 }
 /** Claude is an inert model transport; Branch retains every tool, approval, outcome and agent loop. */
 export class ClaudeSubscriptionProvider implements Provider {
@@ -126,7 +155,7 @@ export class ClaudeSubscriptionProvider implements Provider {
     signal.addEventListener("abort", stop, { once: true });
     try {
       const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true, mode: 0o700 });
-      root = await mkdtemp(join(parent, "branch-claude-subscription-"));
+      root = await requestFolder(parent, this.options, request);
       relay = new NativeAdmission(scope, nativeInventory(request.tools), authorize, this.dependencies.connect);
       await relay.listen(); authorize();
       const input = await invocation(root, this.options, scope, relay); authorize();
@@ -138,7 +167,7 @@ export class ClaudeSubscriptionProvider implements Provider {
     } finally {
       clearTimeout(timer); signal.removeEventListener("abort", stop); controller.abort();
       try { await native?.stop(); } finally {
-        try { await relay?.close(); } finally { if (root) await removePrivateRequest(root); }
+        try { await relay?.close(); } finally { if (root) try { await removePrivateRequest(root); } finally { inUse.delete(root); } }
       }
     }
   }

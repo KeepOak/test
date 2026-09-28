@@ -24,11 +24,25 @@ import { checkAddress, readNever } from "./rules.js";
 const PROTOCOL = 1;
 const MEDIA_LIMIT = 8 * 1024 * 1024;
 export const PHONE_OFFERS = ["camera", "location", "open-url", "speak", "listen", "canvas"];
+/**
+ * PH-03: what the phone apps really do when lent. The app's own page takes the photo, records and speaks (the native
+ * side only carries the socket): camera and microphone on both, speaking where the web view has speech (iOS; Android's
+ * WebView has none). Neither app asks for the location, opens pages for Branch or shows its pages, so none is offered.
+ * The native sides keep the same lists (BranchLend.java OFFERS, BranchLend.swift offers).
+ */
+export const APP_OFFERS = { ios: ["camera", "listen", "speak"], android: ["camera", "listen"] };
 /** What this phone offers Branch: what it can do, less what the owner told it here never to do. */
-export const offersLess = (never) => PHONE_OFFERS.filter((capability) => !readNever(never).includes(capability));
+export const offersLess = (never, can = PHONE_OFFERS) => can.filter((capability) => !readNever(never).includes(capability));
 
 const text = new TextEncoder();
 const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+/** The same for a picture or a recording: in pieces, since one spread of megabytes overflows the stack. */
+const b64Large = (bytes) => {
+  const all = new Uint8Array(bytes);
+  let out = "";
+  for (let at = 0; at < all.length; at += 0x8000) out += String.fromCharCode(...all.subarray(at, at + 0x8000));
+  return btoa(out);
+};
 const hexOk = (value, length) => typeof value === "string" && new RegExp(`^[a-f0-9]{${length}}$`).test(value);
 
 /** Makes (or reuses) the phone's key. `store` keeps the CryptoKey pair itself; the private half is not extractable. */
@@ -75,7 +89,7 @@ async function answerInvitation(env, link, code, name, never) {
     if (!response.ok) throw new Error(answer.error ?? `Branch answered ${response.status}`);
     return answer;
   };
-  const { requestId } = await post("/api/devices/pair", { offer, code, name, platform: env.platform, publicKey: key.publicKey, offers: offersLess(never) });
+  const { requestId } = await post("/api/devices/pair", { offer, code, name, platform: env.platform, publicKey: key.publicKey, offers: offersLess(never, env.offers) });
   for (let tries = 0; tries < (env.tries ?? 200); tries++) {
     const status = await post("/api/devices/pair/status", { requestId, signature: await signed(env, key, `branch-node-status-v1\n${requestId}`) });
     if (status.status === "approved") {
@@ -88,14 +102,40 @@ async function answerInvitation(env, link, code, name, never) {
   throw new Error(env.say("phone.node.late", "Nobody answered in time. Make a new invitation and try again."));
 }
 
+/** Cancels an outstanding browser operation even when its promise never settles. */
+function cancellable(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const stop = () => reject(new Error("Lending stopped."));
+    if (signal.aborted) { void Promise.resolve(promise).catch(() => undefined); return stop(); }
+    signal.addEventListener("abort", stop, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
+}
+
 async function capture(env, capability, args) {
-  if (capability === "camera") {
-    const stream = await env.media.getUserMedia({ video: { facingMode: args.facing === "front" ? "user" : "environment" } });
-    try { return { mime: "image/jpeg", name: "camera.jpg", data: await env.frame(stream) }; } finally { stream.getTracks().forEach((track) => track.stop()); }
-  }
-  const stream = await env.media.getUserMedia({ audio: true });
-  try { return { mime: "audio/webm", name: "listen.webm", data: await env.record(stream, Math.min(30, Number(args.seconds ?? 5)) * 1000) }; }
-  finally { stream.getTracks().forEach((track) => track.stop()); }
+  const signal = env.signal;
+  const pending = env.media.getUserMedia(capability === "camera"
+    ? { video: { facingMode: args.facing === "front" ? "user" : "environment" } } : { audio: true });
+  const stopTracks = (stream) => stream.getTracks().forEach((track) => track.stop());
+  // Permission can finish after stopping: a late stream must never stay open.
+  void pending.then((stream) => { if (signal?.aborted) stopTracks(stream); }, () => undefined);
+  const stream = await cancellable(pending, signal);
+  const stop = () => stopTracks(stream);
+  signal?.addEventListener("abort", stop, { once: true });
+  try {
+    if (signal?.aborted) throw new Error("Lending stopped.");
+    if (capability === "camera") {
+      return { mime: "image/jpeg", name: "camera.jpg", data: await cancellable(env.frame(stream, signal), signal) };
+    }
+    // PH-03: the recording's own kind (iOS records audio/mp4, others audio/webm), with any codec detail taken off.
+    const seconds = Number(args.seconds ?? 5);
+    if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("Give a recording length between 0 and 30 seconds.");
+    const made = await cancellable(env.record(stream, Math.min(30, seconds) * 1000, signal), signal);
+    const data = made?.data ?? made, mime = String(made?.mime ?? "audio/webm").split(";")[0].trim().toLowerCase();
+    const kind = /^audio\/[a-z0-9.+-]{1,60}$/.test(mime) ? mime : "audio/webm";
+    return { mime: kind, name: `listen.${kind === "audio/mp4" ? "m4a" : kind.slice(6)}`, data };
+  } finally { signal?.removeEventListener("abort", stop); stop(); }
 }
 
 /** Does one switched-on thing. Arguments are checked again here, whatever Branch sent. */
@@ -110,7 +150,8 @@ export async function perform(env, capability, args = {}) {
     env.open(String(args.url));
     return { value: { done: "opened" } };
   }
-  if (capability === "speak") { env.speak(String(args.text ?? "").slice(0, 2000)); return { value: { done: "spoken" } }; }
+  // PH-03: "spoken" only once the phone said it started; a speaker that never starts is an error, not a success.
+  if (capability === "speak") { await cancellable(env.speak(String(args.text ?? "").slice(0, 2000), env.signal), env.signal); return { value: { done: "spoken" } }; }
   if (capability === "canvas") {
     // Integration review: checked here too, so a hub that was taken over cannot show a javascript: or file: address.
     const html = typeof args.html === "string" && args.html ? args.html.slice(0, 60000) : null;
@@ -124,13 +165,100 @@ export async function perform(env, capability, args = {}) {
 }
 
 /**
+ * One invoke from Branch, checked and done: the answer to send back (a `result`, and the picture or sound's bytes when
+ * there are any), or null for an invoke to ignore (a malformed or repeated id). Arguments and switches are checked here
+ * whatever Branch or the native side already checked: the phone's own "never", what is switched on, what this phone
+ * offers, and the deadline.
+ */
+export async function answerInvoke(env, lent, frame) {
+  const refuse = (error) => ({ result: { type: "result", id: frame.id, ok: false, error } });
+  if (!hexOk(frame?.id, 32) || lent.seen.has(frame.id)) return null;
+  lent.seen.add(frame.id);
+  if (lent.seen.size > 500) lent.seen.delete(lent.seen.values().next().value);
+  // Looked at again here: Branch switches a capability on by what the platform can do, not by what
+  // this phone offered, so a refused one can still arrive. The phone turns it away itself.
+  if (lent.never.includes(frame.capability)) return refuse("This phone never allows that.");
+  if (!lent.offers.includes(frame.capability) || !lent.enabled.has(frame.capability)) return refuse("That is switched off on this phone.");
+  if (!Number.isFinite(frame.deadline) || frame.deadline < env.now()) return refuse("The request came too late.");
+  try {
+    const result = await perform(env, frame.capability, frame.args ?? {});
+    if (env.signal?.aborted || frame.deadline < env.now() || !lent.enabled.has(frame.capability)) return refuse("Lending stopped or the request expired.");
+    if (!result.media) return { result: { type: "result", id: frame.id, ok: true, value: result.value } };
+    const bytes = new Uint8Array(result.media.data);
+    if (bytes.length > MEDIA_LIMIT) return refuse("The picture or sound was larger than Branch accepts.");
+    return { result: { type: "result", id: frame.id, ok: true, value: result.value, media: { mime: result.media.mime, bytes: bytes.length, name: result.media.name } }, bytes };
+  } catch (error) {
+    return refuse(String(error?.message ?? error).slice(0, 500));
+  }
+}
+
+/**
+ * PH-03: lending from the phone app. The native side (BranchLend) holds the socket and the key: it dials only the
+ * Branch this phone was paired with, proves the phone over the challenge itself, and hands the page each invoke while
+ * the app's own page is showing. The page does the one thing and gives the answer back. `bridge` is the native plugin
+ * (lendStart, lendStop, lendResult, and its "lendState" and "lendInvoke" events), or a stand-in in the tests.
+ * Returns a function that stops listening.
+ */
+export async function serveLending(env, bridge, onState = () => undefined) {
+  const status = await bridge.deviceStatus();
+  const never = readNever(status?.never), lent = { never, offers: offersLess(never, env.offers ?? APP_OFFERS[env.platform] ?? []), enabled: new Set(), seen: new Set() };
+  const active = new Map();
+  let stopped = false, generation;
+  const cancel = () => { for (const request of active.values()) request.controller.abort(); env.stopOutput?.(); };
+  const hidden = env.onHidden?.(() => { lent.enabled.clear(); cancel(); });
+  const handles = [
+    await bridge.addListener("lendState", (state) => {
+      if (Number.isSafeInteger(state?.generation)) {
+        if (generation !== undefined && state.generation < generation) return;
+        if (generation !== state.generation) cancel();
+        generation = state.generation;
+      } else if (generation !== undefined) return;
+      lent.enabled = new Set(state?.connected && !stopped ? (state.enabled ?? []).filter((c) => lent.offers.includes(c)) : []);
+      if (!state?.connected || !lent.enabled.has("speak")) env.stopOutput?.();
+      for (const request of active.values()) if (!lent.enabled.has(request.capability)) request.controller.abort();
+      onState({ connected: Boolean(state?.connected), enabled: [...lent.enabled] });
+    }),
+    await bridge.addListener("lendInvoke", async (frame) => {
+      if (stopped || !hexOk(frame?.id, 32) || lent.seen.has(frame.id)) return;
+      if (generation !== undefined && frame.generation !== generation) return;
+      const tag = generation === undefined ? {} : { generation };
+      if (active.size) {
+        lent.seen.add(frame.id);
+        if (lent.seen.size > 500) lent.seen.delete(lent.seen.values().next().value);
+        await bridge.lendResult({ type: "result", ...tag, id: frame.id, ok: false, error: "This phone is already answering a request." }).catch(() => undefined);
+        return;
+      }
+      const controller = new AbortController(), request = { controller, capability: frame.capability };
+      active.set(frame.id, request);
+      const timer = setTimeout(() => controller.abort(), Math.max(0, Math.min(2_147_483_647, frame.deadline - env.now())));
+      try {
+        const answer = await answerInvoke({ ...env, signal: controller.signal }, lent, frame);
+        if (!answer || stopped || controller.signal.aborted || (tag.generation !== undefined && tag.generation !== generation)) return;
+        const { result, bytes } = answer;
+        await bridge.lendResult({ ...result, ...tag, ...(bytes ? { media: { ...result.media, data: b64Large(bytes) } } : {}) });
+      } catch { /* The native connection may already have discarded this request. */ }
+      finally { clearTimeout(timer); active.delete(frame.id); }
+    }),
+  ];
+  if (status?.paired) await bridge.lendStart();
+  return async () => {
+    stopped = true;
+    lent.enabled.clear();
+    cancel();
+    hidden?.();
+    await bridge.lendStop();
+    for (const handle of handles) await handle?.remove?.();
+  };
+}
+
+/**
  * Stays connected while the app is open; dials again with a growing wait when the line drops.
  * Returns a function that stops it.
  */
 export function connectPhone(env, device, key, onState = () => undefined) {
-  let enabled = new Set(), stopped = false, attempt = 0, socket = null;
-  const never = readNever(device.never), offers = offersLess(device.never);
-  const seen = new Set();
+  let stopped = false, attempt = 0, socket = null;
+  const never = readNever(device.never), offers = offersLess(device.never, env.offers);
+  const lent = { never, offers, enabled: new Set(), seen: new Set() };
   const dial = () => {
     if (stopped) return;
     const address = new URL("/api/devices/socket", device.hub);
@@ -140,7 +268,7 @@ export function connectPhone(env, device, key, onState = () => undefined) {
     socket.binaryType = "arraybuffer";
     socket.onmessage = (event) => void onMessage(JSON.parse(event.data));
     socket.onclose = () => {
-      enabled = new Set();
+      lent.enabled = new Set();
       onState({ connected: false, enabled: [] });
       if (stopped) return;
       attempt += 1;
@@ -154,8 +282,8 @@ export function connectPhone(env, device, key, onState = () => undefined) {
         signature: await signed(env, key, `branch-node-hello-v1\n${device.id}\n${frame.nonce}`) });
     } else if (frame.type === "welcome" || frame.type === "enabled") {
       attempt = 0;
-      enabled = new Set((frame.enabled ?? []).filter((c) => offers.includes(c)));
-      onState({ connected: true, enabled: [...enabled] });
+      lent.enabled = new Set((frame.enabled ?? []).filter((c) => offers.includes(c)));
+      onState({ connected: true, enabled: [...lent.enabled] });
     } else if (frame.type === "invoke") {
       await invoke(frame);
     } else if (frame.type === "bye" && /taken off/.test(String(frame.reason))) {
@@ -164,27 +292,14 @@ export function connectPhone(env, device, key, onState = () => undefined) {
     }
   }
   async function invoke(frame) {
-    const refuse = (error) => reply({ type: "result", id: frame.id, ok: false, error });
-    if (!hexOk(frame.id, 32) || seen.has(frame.id)) return;
-    seen.add(frame.id);
-    // Looked at again here: Branch switches a capability on by what the platform can do, not by what
-    // this phone offered, so a refused one can still arrive. The phone turns it away itself.
-    if (never.includes(frame.capability)) return refuse("This phone never allows that.");
-    if (!enabled.has(frame.capability)) return refuse("That is switched off on this phone.");
-    if (typeof frame.deadline !== "number" || frame.deadline < env.now()) return refuse("The request came too late.");
-    try {
-      const result = await perform(env, frame.capability, frame.args ?? {});
-      if (!result.media) return reply({ type: "result", id: frame.id, ok: true, value: result.value });
-      const bytes = new Uint8Array(result.media.data);
-      if (bytes.length > MEDIA_LIMIT) return refuse("The picture or sound was larger than Branch accepts.");
-      reply({ type: "result", id: frame.id, ok: true, value: result.value, media: { mime: result.media.mime, bytes: bytes.length, name: result.media.name } });
-      const framed = new Uint8Array(32 + bytes.length);
-      framed.set(text.encode(frame.id), 0);
-      framed.set(bytes, 32);
-      socket.send(framed);
-    } catch (error) {
-      refuse(String(error?.message ?? error).slice(0, 500));
-    }
+    const answer = await answerInvoke(env, lent, frame);
+    if (!answer) return;
+    reply(answer.result);
+    if (!answer.bytes) return;
+    const framed = new Uint8Array(32 + answer.bytes.length);
+    framed.set(text.encode(frame.id), 0);
+    framed.set(answer.bytes, 32);
+    socket.send(framed);
   }
   dial();
   return () => { stopped = true; socket?.close(); };

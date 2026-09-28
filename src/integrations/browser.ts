@@ -30,7 +30,13 @@ import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
 
 export const BrowserConfigSchema = z.object({
-  allowedOrigins: z.array(z.string().url()).min(1).max(30),
+  /** The only websites the browser may open, as exact origins. */
+  allowedOrigins: z.array(z.string().url()).min(1).max(30).optional(),
+  /**
+   * Instead of a list: any website the shared network rules let Branch reach (never this computer or the home network
+   * unless the owner allows them there). Every request a page makes is then held to those rules, not only the page.
+   */
+  anyWebsite: z.literal(true).optional(),
   channel: z.enum(['chrome', 'msedge']).optional(),
   maxRuns: z.number().int().min(1).max(30).default(8),
   /** Most browser actions one task may take before it has to stop and report back. */
@@ -42,8 +48,18 @@ export const BrowserConfigSchema = z.object({
   /** File endings that may be saved from a website. Anything else is refused and reported. */
   downloadTypes: z.array(z.string().regex(/^[a-z0-9]{1,8}$/)).max(40)
     .default(['pdf', 'csv', 'txt', 'md', 'json', 'xml', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'xlsx', 'docx', 'pptx', 'zip']),
-}).strict();
+}).strict().refine(config => (config.anyWebsite === true) !== (config.allowedOrigins !== undefined),
+  'The browser takes either a list of websites (allowedOrigins) or anyWebsite, not both and not neither');
 export type BrowserConfig = z.infer<typeof BrowserConfigSchema>;
+/**
+ * Branch's own browser ships on (the owner's rule: a useful feature is on by default). With no launch settings file it
+ * may open any website the network rules allow, the way the owner's own browser would, under the owner's approval rules.
+ */
+export const defaultBrowserConfig: z.input<typeof BrowserConfigSchema> = { anyWebsite: true };
+/** What a page that cannot open says when the small private browser Branch uses is not on this computer. */
+export const missingBrowser = 'The private browser Branch uses is not installed on this computer. Run: npx playwright install chromium --only-shell (or branch doctor --fix), then try again.';
+/** Whether a browser step failed only because its task reached the per-task limit on websites or actions. */
+export const runLimitReached = (message: string): boolean => /^This task has already (opened|taken) \d+ /.test(message);
 /** Where files a website sends are kept, inside the person's workspace. */
 export const downloadFolder = 'downloads';
 /** What the person is told when a task has wandered too far; it stops and reports instead. */
@@ -146,8 +162,10 @@ export class BranchBrowser {
   private readonly ownerCommands = new WeakMap<object, { command: BrowserCommand; authorize?: () => void }>();
   constructor(input: unknown) {
     this.config = BrowserConfigSchema.parse(input);
-    this.origins = originsOf(this.config.allowedOrigins);
+    this.origins = originsOf(this.config.allowedOrigins ?? []);
   }
+  /** Any website the network rules allow, rather than a list. */
+  get anyWebsite(): boolean { return this.config.anyWebsite === true; }
   /** Shared network policy; when set, navigation is checked against it as well as the origin list. */
   policy: { assertAllowed(target: URL, what?: string): Promise<void> } | undefined;
   /** Saved sign-ins, encrypted beside the private database. */
@@ -177,17 +195,21 @@ export class BranchBrowser {
   /** A1726: besides the listed websites, the one address this run was granted (the local task page). */
   private allowed(value: string, entry?: RunEntry): boolean {
     try {
-      const origin = new URL(value).origin;
+      const url = new URL(value), origin = url.origin;
+      if (this.anyWebsite && ['http:', 'https:'].includes(url.protocol)) return true;
       return this.origins.has(origin) || (!!entry?.granted && entry.granted === origin);
     } catch { return false; }
   }
   /** Checks Chromium's actual request, including each redirect destination, before it is sent. */
   private async guardRequest(request: BrowserRequest, entry?: RunEntry): Promise<void> {
     if (!this.allowed(request.url, entry)) throw new Error('Browser destination is not an allowed origin');
+    const target = new URL(request.url);
+    // With no list, nothing but the network rules keeps a page's pictures, scripts and fetches away from this computer
+    // and the home network, so every request is held to them, not only the page itself.
+    if (this.anyWebsite && entry?.granted !== target.origin) await this.networkRules().assertAllowed(target, 'browser address');
     // Playwright says 'document' and Chromium's pause says 'Document'; both are the same navigation.
     if (request.resourceType.toLowerCase() !== 'document') return;
-    const target = new URL(request.url);
-    if (entry?.granted !== target.origin)
+    if (entry?.granted !== target.origin && !this.anyWebsite)
       await this.policy?.assertAllowed(target, 'browser address');
     // How many different websites a task may visit is charged here, where every real navigation
     // passes — including the ones a site sends the browser to. Charging it only where an address is
@@ -199,11 +221,21 @@ export class BranchBrowser {
     if (entry.origins.size >= this.config.maxOriginsPerRun) throw new Error(originStop(this.config.maxOriginsPerRun));
     entry.origins.add(target.origin);
   }
+  /** The network rules any-website mode relies on; without them it opens nothing at all. */
+  private networkRules(): { assertAllowed(target: URL, what?: string): Promise<void> } {
+    if (!this.policy) throw new Error('The browser opens any website only under the network rules, and none are set');
+    return this.policy;
+  }
   private async launch(): Promise<Browser> {
     const env = Object.fromEntries(['PATH', 'SystemRoot', 'LOCALAPPDATA', 'TEMP', 'TMP', 'HOME']
       .flatMap(key => process.env[key] ? [[key, process.env[key]!]] : []));
     const browser = await chromium.launch({ headless: true, env,
-      ...(this.config.channel ? { channel: this.config.channel } : {}) });
+      ...(this.config.channel ? { channel: this.config.channel } : {}) }).catch((error: unknown) => {
+      // Said the way `branch doctor` says it (src/doctor-fix.ts), not as Playwright's own instructions.
+      if (!this.config.channel && /Executable doesn't exist/i.test(error instanceof Error ? error.message : String(error)))
+        throw new Error(missingBrowser);
+      throw error;
+    });
     this.browser = browser;
     if (this.closed) { await browser.close(); throw new Error('Browser is closed'); }
     return browser;
@@ -426,7 +458,7 @@ export class BranchBrowser {
     const target = new URL(url);
     if (target.username || target.password) throw new Error('Browser destination is not an allowed origin');
     // w911 (A1726): the one loopback page Branch itself serves to this window skips the network policy.
-    if (known?.granted !== target.origin) await this.policy?.assertAllowed(new URL(url), 'browser address');
+    if (known?.granted !== target.origin) await (this.anyWebsite ? this.networkRules() : this.policy)?.assertAllowed(new URL(url), 'browser address');
   }
   async navigate(url: string, context: ToolContext) {
     const entry = this.entry(context);
