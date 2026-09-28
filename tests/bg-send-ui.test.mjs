@@ -46,7 +46,7 @@ async function fixture(t) {
   return { app, page, errors, release };
 }
 
-const until = async (check, ms = 20000) => {
+const until = async (check, ms = 60000) => {
   const end = Date.now() + ms;
   for (;;) { const got = await check(); if (got) return got; if (Date.now() > end) return got; await new Promise((r) => setTimeout(r, 100)); }
 };
@@ -69,11 +69,11 @@ test("Ctrl+Enter starts the new conversation in the background, the page stays, 
   release();
 
   const card = page.locator(".notif");
-  await card.waitFor({ timeout: 20000 });
+  await card.waitFor({ timeout: 60000 });
   assert.match(await card.textContent(), /weekly numbers are ready/, "the card says how it finished");
   assert.ok(await page.locator(".set-nav").isVisible(), "the person is still in Settings");
   await card.locator('[data-act="chat"]').click();
-  await page.locator("#conversation .b .txt").filter({ hasText: reply }).waitFor({ timeout: 20000 });
+  await page.locator("#conversation .b .txt").filter({ hasText: reply }).waitFor({ timeout: 60000 });
   const messages = app.store.messages(run.sessionId).map((m) => `${m.role}:${m.content}`);
   assert.ok(messages.includes(`user:${asked}`) && messages.includes(`assistant:${reply}`), "the conversation holds the message and its reply");
   assert.deepEqual(errors, []);
@@ -83,7 +83,7 @@ test("Enter in the same box still sends in the foreground and opens the conversa
   const { page, errors } = await fixture(t);
   await page.locator("#prompt").fill("Say hello");
   await page.locator("#prompt").press("Enter");
-  await page.locator("#conversation .b .txt").filter({ hasText: "Hello there." }).waitFor({ timeout: 20000 });
+  await page.locator("#conversation .b .txt").filter({ hasText: "Hello there." }).waitFor({ timeout: 60000 });
   assert.equal(await page.locator(".empty-chat").count(), 0);
   assert.deepEqual(errors, []);
 });

@@ -44,8 +44,9 @@ export function sendInBackground(prompt, fields = {}) {
       if (!announce({ sessionId: run.sessionId, who: title, question: lineOf(run) }) && S.chat !== run.sessionId) toast(t("window.chat.bgsend.finished", { name: title }));
     }, (error) => {
       toast(error.message);
-      /* The engine was away, so it never started: the words go back in an empty new-conversation box. */
-      if (error.offline && !String(S.drafts.new ?? "").trim()) { S.drafts.new = prompt; if (!S.chat) render(); }
+      /* Never started (the engine was away, or refused the message): the words go back in an empty new-conversation box. */
+      const refused = error.offline || (error.status >= 400 && error.status < 500);
+      if (refused && !String(S.drafts.new ?? "").trim()) { S.drafts.new = prompt; if (!S.chat) render(); }
     })
     .finally(() => { going.delete(key); render(); });
   return true;

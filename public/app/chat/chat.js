@@ -622,12 +622,15 @@ async function sendPlain(prompt) {
 /* RES-702: the new conversation's message, started in the background (chat/bgsend.js) with everything Enter would send
    with it, while the person stays here. A command, a room, Ask me questions first and a refused model go the usual way,
    which says why; files still arriving wait, as they do for Enter. */
+let away = false;
 async function sendAway() {
   const box = $("#prompt"), prompt = (box?.value ?? "").trim();
-  if (!prompt || viewingHelper()) return;
+  if (!prompt || viewingHelper() || away) return;
   if (prompt.startsWith("/") || asksFirst() || trunkModelRefused() || whoHere()?.kind === "room") { await send(); return; }
-  const fields = { ...(await takePending(true)), ...(await startMode()), ...newProject() };
-  if (!sendInBackground(prompt, fields)) return;
+  away = true; // a second press while files finish arriving starts nothing more
+  let started = false;
+  try { started = sendInBackground(prompt, { ...(await takePending(true)), ...(await startMode()), ...newProject() }); } finally { away = false; }
+  if (!started) return;
   filesSent();
   clearBox(true);
   box?.dispatchEvent(new Event("input", { bubbles: true }));
