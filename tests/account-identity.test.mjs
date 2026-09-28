@@ -83,7 +83,7 @@ test("per-profile status replaces generic labels everywhere and duplicate or sig
   assert.equal(duplicate.duplicateOf, "primary");
   assert.equal(duplicate.ready, false);
   assert.equal(pool.accounts.filter((one) => one.ready).length, 1);
-  assert.deepEqual(calls.map((one) => one.home), [null, service.homeOf("cli-claude-code", "abcd1234"), service.homeOf("cli-claude-code", "bcd12345")]);
+  assert.deepEqual(calls.map((one) => one.home), [service.primaryClaudeHome, service.homeOf("cli-claude-code", "abcd1234"), service.homeOf("cli-claude-code", "bcd12345")]);
   assert.ok(calls.every((one) => JSON.stringify(one.args) === '["auth","status"]'));
   const session = app.store.createSession(app.runtime.owner);
   const picker = viewSession(service, session.id);

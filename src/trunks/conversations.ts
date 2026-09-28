@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Store } from "../store.js";
 import type { Trunk, TrunkRecords } from "./record.js";
 import type { Room, TrunkRooms } from "./rooms.js";
+import type { TrunkThreads } from "./threads.js"; // defaulttrunk
 
 /**
  * Redesign phase 2 "rooms" (critique #32): who answers in a conversation.
@@ -43,6 +44,10 @@ export interface ConversationDeps {
   /** A conversation belongs to the one asking (the owner's own, not a household person's). */
   owns: (sessionId: string) => boolean;
   changed: () => void;
+  /** defaulttrunk: which Trunk each conversation is a thread with (src/trunks/threads.ts), the one place that says so. */
+  threads: TrunkThreads;
+  /** defaulttrunk: the default Trunk, which a conversation given back goes to; null while there is none. */
+  fallback: () => string | null;
 }
 
 export class TrunkConversations {
@@ -51,10 +56,22 @@ export class TrunkConversations {
   private saved(sessionId: string): Choice | undefined {
     return this.deps.store.get("governance", this.deps.owner, key(sessionId))?.data as unknown as Choice | undefined;
   }
-  /** Every conversation a Trunk was chosen for: conversation → Trunk. */
+  /** Every conversation that is a thread with a Trunk (chosen, routed, the default's): conversation → Trunk. */
   chosen(): Map<string, string> {
-    return new Map(this.deps.store.list("governance", this.deps.owner).filter((r) => r.id.startsWith("trunk-conversation:"))
-      .map((r) => r.data as unknown as Choice).filter((c) => c.trunkId).map((c) => [c.sessionId, c.trunkId!] as const));
+    return this.deps.threads.all();
+  }
+  /**
+   * defaulttrunk (migration): a choice saved before threads had a table of their own is written there once, read
+   * straight from the table so none is missed however many there are. Idempotent: a thread already there is kept.
+   */
+  mirrorChoices(here: ReadonlySet<string>): number {
+    let mirrored = 0;
+    for (const row of this.deps.store.sqlite.prepare("SELECT data FROM governance WHERE owner=? AND id GLOB 'trunk-conversation:*'").all(this.deps.owner)) {
+      let choice: Choice;
+      try { choice = JSON.parse(String(row.data)) as Choice; } catch { continue; } // a damaged record chose nobody
+      if (choice.trunkId && here.has(choice.trunkId) && this.deps.threads.claim(choice.sessionId, choice.trunkId, "chosen")) mirrored++;
+    }
+    return mirrored;
   }
   private roomOf(sessionId: string): Room | undefined {
     return this.deps.rooms.list().find((room) => room.sessionId === sessionId);
@@ -63,7 +80,7 @@ export class TrunkConversations {
     if (this.roomOf(sessionId)) return "room";
     if (this.deps.rooms.memberRooms().has(sessionId)) return "member";
     if (this.deps.records.list().some((t) => t.chatSessionId === sessionId || t.retiredChats.includes(sessionId))) return "trunk-chat";
-    return this.saved(sessionId)?.trunkId ? "trunk" : "plain";
+    return this.deps.threads.get(sessionId) ? "trunk" : "plain";
   }
   private check(sessionId: string): void {
     if (!this.deps.owns(sessionId)) throw Object.assign(new Error("Conversation not found"), { status: 404 });
@@ -96,7 +113,7 @@ export class TrunkConversations {
   }
 
   private trunkIdOf(sessionId: string, kind: ConversationKind): string | null | undefined {
-    return kind === "trunk" ? this.saved(sessionId)!.trunkId
+    return kind === "trunk" ? this.deps.threads.get(sessionId)?.trunkId
       : kind === "trunk-chat" ? this.deps.records.list().find((t) => t.chatSessionId === sessionId || t.retiredChats.includes(sessionId))?.id
         : kind === "member" ? this.deps.rooms.memberConversations().get(sessionId) : undefined;
   }
@@ -122,14 +139,28 @@ export class TrunkConversations {
       throw new Error(kind === "room" ? "This is a room: add or take out Trunks with its members instead."
         : "This conversation belongs to a Trunk already. Start a new conversation to choose another.");
     if (trunkId) this.deps.records.get(trunkId);
-    const before = this.saved(sessionId);
-    if ((before?.trunkId ?? null) === trunkId) return this.info(sessionId);
-    const from = this.deps.store.messages(sessionId).filter((m) => m.role === "assistant" && !m.toolCalls?.length).length;
-    const authors = [...(before?.authors ?? [{ from: 0, trunkId: null }]).filter((a) => a.from < from), { from, trunkId }].slice(-50);
-    this.deps.store.save("governance", this.deps.owner, key(sessionId),
-      { sessionId, trunkId, authors, updatedAt: new Date().toISOString() } satisfies Choice);
+    this.put(sessionId, trunkId);
     this.deps.changed();
     return this.info(sessionId);
+  }
+  /**
+   * Saves who answers here from the next reply on, in the thread table and in the record of who signed each reply, as
+   * one step. Giving a conversation back (null) gives it to the default Trunk while there is one (defaulttrunk).
+   */
+  private put(sessionId: string, asked: string | null, how: "chosen" | "handed" = "chosen"): void {
+    const fallback = asked ? null : this.deps.fallback();
+    const trunkId = asked ?? fallback;
+    const was = this.deps.threads.get(sessionId)?.trunkId ?? null;
+    if (was === trunkId) return;
+    const before = this.saved(sessionId);
+    const from = this.deps.store.messages(sessionId).filter((m) => m.role === "assistant" && !m.toolCalls?.length).length;
+    const authors = [...(before?.authors ?? [{ from: 0, trunkId: was }]).filter((a) => a.from < from), { from, trunkId }].slice(-50);
+    this.deps.store.atomically(() => {
+      if (trunkId) this.deps.threads.set(sessionId, trunkId, asked ? how : "default");
+      else this.deps.threads.clear(sessionId);
+      this.deps.store.save("governance", this.deps.owner, key(sessionId),
+        { sessionId, trunkId, authors, updatedAt: new Date().toISOString() } satisfies Choice);
+    });
   }
 
   /**
@@ -138,10 +169,14 @@ export class TrunkConversations {
    */
   carryTo(fromId: string, toId: string): void {
     const kind = this.kind(fromId), trunkId = this.trunkIdOf(fromId, kind), now = new Date().toISOString();
-    const choice: Choice | null = kind === "trunk" ? { ...this.saved(fromId)!, sessionId: toId, updatedAt: now }
-      : kind === "trunk-chat" && trunkId ? { sessionId: toId, trunkId, authors: [{ from: 0, trunkId }], updatedAt: now } : null;
-    if (!choice) return;
-    this.deps.store.save("governance", this.deps.owner, key(toId), { ...choice });
+    if (!trunkId || (kind !== "trunk" && kind !== "trunk-chat")) return;
+    const saved = this.saved(fromId);
+    const choice: Choice = kind === "trunk" && saved ? { ...saved, sessionId: toId, updatedAt: now }
+      : { sessionId: toId, trunkId, authors: [{ from: 0, trunkId }], updatedAt: now };
+    this.deps.store.atomically(() => {
+      this.deps.threads.set(toId, trunkId, kind === "trunk" ? this.deps.threads.get(fromId)!.how : "chosen");
+      this.deps.store.save("governance", this.deps.owner, key(toId), { ...choice });
+    });
     this.deps.changed();
   }
 
@@ -185,6 +220,7 @@ export class TrunkConversations {
 
   /** A Trunk that is removed stops answering in the conversations it was chosen for. */
   forget(trunkId: string): void {
-    for (const [sessionId, chosen] of this.chosen()) if (chosen === trunkId) this.choose(sessionId, { trunkId: null });
+    // defaulttrunk: its threads go to the default Trunk (the next one, when it was the default), kept in history either way.
+    for (const [sessionId, chosen] of this.chosen()) if (chosen === trunkId) this.put(sessionId, null, "handed");
   }
 }
