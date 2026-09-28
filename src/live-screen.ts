@@ -25,6 +25,10 @@
  * is told why, in the engine's words, and the frames resume by themselves when it no longer does.
  * Frames are never written to disk, never logged, never put in an event and never shown to a model.
  *
+ * Each frame also says whether the owner is driving ("Take over": every task's screen actions wait) and, while a task
+ * that clicked is still going, where its newest click landed on this frame (`cursor`, as a share of the frame's width and
+ * height, with the Trunk whose task it is), so the view draws that Trunk's cursor. A click on another screen is not drawn.
+ *
  *   GET /api/panels/screen
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -40,8 +44,17 @@ export const liveScreenSignInRefusal = "Branch is handling a sign-in right now, 
 
 export interface LiveScreenFrame { frame: string; width: number; height: number; at: string }
 export interface LiveFrameSource {
-  next(maxWidth: number, signal: AbortSignal): Promise<{ bytes: Buffer; type: string; width: number; height: number }>;
+  next(maxWidth: number, signal: AbortSignal): Promise<{ bytes: Buffer; type: string; width: number; height: number; screen?: { x: number; y: number; w: number; h: number } }>;
   close(): void;
+}
+/** Where a task's newest click landed, in the pixels the screen box is in. */
+export interface LivePointer { x: number; y: number; at: string; trunk: string | null }
+/** A click placed on a frame: shares of its width and height, or null when it is not on this screen. */
+export function placeOnFrame(pointer: LivePointer | null, screen: { x: number; y: number; w: number; h: number } | undefined): { x: number; y: number; at: string; trunk: string | null } | null {
+  if (!pointer || !screen || screen.w <= 0 || screen.h <= 0) return null;
+  const x = (pointer.x - screen.x) / screen.w, y = (pointer.y - screen.y) / screen.h;
+  if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return null;
+  return { x: Math.round(x * 10000) / 10000, y: Math.round(y * 10000) / 10000, at: pointer.at, trunk: pointer.trunk };
 }
 export interface LiveScreenDeps {
   store: Store;
@@ -51,7 +64,7 @@ export interface LiveScreenDeps {
   viaDoor: boolean;
   /** Why Branch is locked right now (the app lock), or null. */
   locked: () => string | null;
-  desktop: { liveFrames(owner: string): LiveFrameSource } | null;
+  desktop: { liveFrames(owner: string): LiveFrameSource; pointer?(): LivePointer | null; isDriving?(): boolean } | null;
 }
 
 export class LiveScreenRefusal extends Error {
@@ -120,7 +133,9 @@ async function loop(current: Hub): Promise<void> {
       const since = liveScreenRefusal(current.deps);
       if (since && since.status !== 409) { endAll({ refusal: since.message, status: since.status }); return; }
       if (since) throw since;
-      line = { frame: `data:${shot.type};base64,${shot.bytes.toString("base64")}`, width: shot.width, height: shot.height, at: new Date().toISOString() };
+      const cursor = placeOnFrame(current.deps.desktop?.pointer?.() ?? null, shot.screen);
+      line = { frame: `data:${shot.type};base64,${shot.bytes.toString("base64")}`, width: shot.width, height: shot.height, at: new Date().toISOString(),
+        driving: current.deps.desktop?.isDriving?.() === true, ...(cursor ? { cursor } : {}) };
       said = "";
     } catch (error) {
       if (hub !== current) return;
@@ -175,4 +190,24 @@ export function streamLiveScreen(deps: LiveScreenDeps, request: IncomingMessage,
   const current: Hub = { viewers: new Set([viewer]), source: deps.desktop.liveFrames(deps.owner), abort: new AbortController(), deps };
   hub = current;
   void loop(current).catch(() => endAll(null));
+}
+
+/**
+ * "Take over" and "Hand back" for this computer's screen (POST /api/panels/screen/take-over and /hand-back): the owner,
+ * at this computer's own window, drives, and every task's screen action waits until they hand it back. Refused to a
+ * paired phone or any caller through a door, to anyone but the owner (a household person, and a short-lived key, which
+ * src/short-lived-keys.ts refuses before this), and while Branch is locked. No tool reaches these, so no task, Trunk or
+ * model can hand the screen back to itself.
+ */
+export const screenTakeOverPath = "/api/panels/screen/take-over";
+export const screenHandBackPath = "/api/panels/screen/hand-back";
+export interface ScreenControl { takeOver(): { driving: boolean }; handBack(): { driving: boolean } }
+export function screenControl(deps: Pick<LiveScreenDeps, "viaDoor" | "profiles" | "locked" | "store" | "owner">, control: ScreenControl | null, path: string): { driving: boolean } {
+  if (deps.viaDoor) throw new LiveScreenRefusal(403, liveScreenDoorRefusal);
+  if (!deps.profiles.isOwner()) throw new LiveScreenRefusal(403, "Only the owner takes over this computer's screen.");
+  if (lockdownActive(deps.store, deps.owner)) throw new LiveScreenRefusal(403, lockdownToolRefusalText);
+  const locked = deps.locked();
+  if (locked) throw new LiveScreenRefusal(423, locked);
+  if (!control) throw new LiveScreenRefusal(404, "This Branch has no screen to show.");
+  return path === screenTakeOverPath ? { driving: control.takeOver().driving } : control.handBack();
 }

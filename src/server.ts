@@ -222,7 +222,8 @@ import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
 import { conversationBootstrapIds } from "./conversation-bootstrap.js";
-import { builtInImagePrices, imagePricedAt, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { builtInImagePrices, imagePricedAt, knownPictureModels, mediaSettings, saveMediaSettings } from "./media-settings.js";
+import { providerImages } from "./media-images.js";
 // Bucket 17.
 import { bucket17Api, handlesBucket17, readMediaBody } from "./media-understand-api.js";
 import { troubleshootApi } from "./troubleshoot.js"; // w911 (A0374) hook.
@@ -289,7 +290,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -1121,7 +1122,8 @@ async function api(
   // --- mac7/connect: the Set up panel for each chat app (src/channel-setup/) ---
   if (handlesChannelSetupPath(path))
     return channelSetupApi({ store: app.store, owner: app.runtime.owner, fetch: app.web.policy.guard(globalThis.fetch),
-      telegram: app.neverBreak.telegram, requireOwner: (what) => app.store.profiles.requireOwner(what) },
+      telegram: app.neverBreak.telegram, live: app.channelSetup, thisComputer: !throughADoor(request),
+      requireOwner: (what) => app.store.profiles.requireOwner(what) },
     request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof SetupRefusal ? new HttpError(error.status, error.message) : error;
     });
@@ -1474,7 +1476,8 @@ async function api(
     return voiceApi(voiceDeps(app), request.method ?? "GET", path, () => readBody(request));
   // Pictures and sounds (wave 5): what the media tools should use, and everything they have made.
   if (request.method === "GET" && path === "/api/media/settings")
-    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt };
+    return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt,
+      pictures: picturesNow(app), pictureModels: knownPictureModels };
   if (request.method === "POST" && path === "/api/media/settings")
     return { settings: saveMediaSettings(app.store, app.runtime.owner, await readBody(request)) };
   // w911 (A1753) hook: plain-language page test scenarios, drafted, accepted and run as suites.
@@ -3051,6 +3054,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
+  // Settings › Chat apps › Show steps in chats: detail, grouping, line length, commands, long lists, tidying up, apps
+  // that cannot edit and groups, for every app and for each one (src/channels/steps-display.ts).
+  if (path === "/api/channels/steps") {
+    if (request.method === "GET") return { steps: app.channels.stepsView() };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    app.channels.setStepsSettings(await readBody(request));
+    return { steps: app.channels.stepsView() };
+  }
   if (request.method === "POST" && path === "/api/channels/owner-commands") {
     if (throughDoor(request)) throw new HttpError(403, "Commands from your own chat are enabled in Branch's window on this computer.");
     if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing commands from your own chat.");
@@ -3171,6 +3182,15 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
     amount += cost;
   }
   return { amount: runs.length ? amount : null, currency: "USD" };
+}
+/**
+ * models-ui: the connection that makes pictures now (src/media.ts preset: the owner's plan for "media") and the kind of
+ * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
+ */
+function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
+  const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  const where = preset ? providerImages(preset.provider) : null;
+  return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
 }
 function runCost(app: Branch, runId: string) {
   const usage = app.store.usage(runId);
@@ -3965,6 +3985,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
         return;
       }
+      // "Take over" and "Hand back" for this computer's screen: the owner at this computer's own window, and nobody else.
+      if (request.method === "POST" && (path === screenTakeOverPath || path === screenHandBackPath)) {
+        z.object({}).strict().parse(await readBody(request));
+        try {
+          send(response, 200, screenControl({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("POST", path) }, app.desktop ?? null, path));
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
@@ -4523,6 +4552,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
     void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
+    // CHAT-147: every other chat app set up in the window; each problem goes to the diagnostics.
+    void app.channelSetup.connectSaved().catch((error: unknown) => console.error(`Chat apps did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
     await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);

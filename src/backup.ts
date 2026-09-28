@@ -281,6 +281,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "reflection-cursor:": "how far a look back has read; nothing runs from it",
   "reflection-note:": "what accepting a queued note would do; it still needs the owner's yes",
   "skill-install-log": "install history for display only",
+  "stays-here:": "only keeps a conversation that held personal details on this computer; it can never send anything elsewhere",
   "tool-context-modes": "only how much of an already-permitted tool's or skill's description a request carries",
   "ask-first": "askFirst and maxQuestions only decide whether clarifying questions are asked",
   "calendar": "country, days off, working days, timezone and quiet hours only skip or hold existing work",

@@ -76,13 +76,15 @@ function run(argv) {
       var node = named(t, request.name);
       if (!node) throw new Error('Nothing in that window is called "' + request.name + '". Use desktop.read to see what is there.');
       node.actions.byName('AXPress').perform();
-      return { how: 'invoke', name: node.name() };
+      var spot = [];
+      try { var p = node.position(), z = node.size(); spot = [Math.round(p[0] + z[0] / 2), Math.round(p[1] + z[1] / 2)]; } catch (e) { spot = []; }
+      return { how: 'invoke', name: node.name(), at: spot };
     }
     var at = t.w.position(), size = t.w.size();
     if (request.x > size[0] || request.y > size[1]) throw new Error('That point is outside the window.');
     forward(t);
     se.click({ at: [at[0] + request.x, at[1] + request.y] });
-    return { how: 'point', name: '' };
+    return { how: 'point', name: '', at: [at[0] + request.x, at[1] + request.y] };
   }
   function type(t) {
     if (request.name) {

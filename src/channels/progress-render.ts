@@ -27,13 +27,40 @@ export interface RenderOptions {
   scrub?: (text: string) => string;
   /** The task is over: a last line says how it ended. */
   final?: "done" | "error";
+  /**
+   * The owner's knobs (src/channels/steps-display.ts): `new` shows a step only when the tool changes, `verbose` whole
+   * commands and each tool's input; `lineChars` bounds a line; `commands: "hide"` says only that a command ran.
+   */
+  detail?: "new" | "all" | "verbose";
+  lineChars?: number;
+  commands?: "show" | "hide";
 }
 
 const COMMAND_KEY = "window.chat.live.running";
-/** Longest command or first line of a script shown in a code block. */
-const CODE_CLIP = 200;
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+/** The most of a whole command, a script or a tool's input shown in verbose detail. */
+const VERBOSE_CLIP = 1500;
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text);
 const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+/** A sentence cut at a word, so repeated edits do not wrap differently (OpenClaw's compact lines). */
+export function cutWords(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const room = text.slice(0, Math.max(1, max - 1));
+  const space = room.lastIndexOf(" ");
+  return `${(space > max * 0.6 ? room.slice(0, space) : room).trimEnd()}…`;
+}
+/** A path cut in the middle, so the file's own name at its end stays visible (OpenClaw's middle ellipsis). */
+export function cutMiddle(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const tail = Math.ceil((max - 1) * 0.6), head = Math.max(1, max - 1 - tail);
+  return `${text.slice(0, head)}…${text.slice(text.length - tail)}`;
+}
+/** A command's first line, cut at its end (Hermes Agent: the program and its first arguments are what matter). */
+function commandLine(command: string, max: number): string {
+  const lines = command.split("\n").filter((line) => line.trim());
+  const first = (lines[0] ?? command).trimEnd();
+  const more = lines.length > 1 ? " …" : "";
+  return first.length + more.length > max ? clip(first, max) : first + more;
+}
 
 /** One line of the message, before repeats are folded: its text and the spans inside it, measured from its start. */
 interface Line { text: string; spans: RichSpan[] }
@@ -42,34 +69,63 @@ interface Line { text: string; spans: RichSpan[] }
 export function chatSteps(steps: readonly LiveStep[]): LiveStep[] {
   return steps.filter((step) => step.kind !== "think" && step.kind !== "ask" && !(step.tool ?? "").startsWith("tools."));
 }
+/** "Changes only" (Hermes Agent's `new`): a step whose tool is the one before it is left out, unless it failed. */
+function changesOnly(steps: readonly LiveStep[]): LiveStep[] {
+  return steps.filter((step, index) => index === 0 || !step.tool || step.tool !== steps[index - 1]!.tool || step.state === "failed");
+}
 
-/** A script's first line and its language, from the call's input, for `code.run`. */
-function scriptOf(step: LiveStep): { code: string; language: string } | null {
+/** A script and its language from the call's input, for `code.run`: its first line, or all of it in verbose detail. */
+function scriptOf(step: LiveStep, whole: boolean): { code: string; language: string } | null {
   if (step.tool !== "code.run" || !step.input) return null;
   try {
     const input = JSON.parse(step.input) as { source?: unknown; language?: unknown };
-    const first = typeof input.source === "string" ? input.source.split("\n").find((line) => line.trim()) ?? "" : "";
-    const more = typeof input.source === "string" && input.source.trim().includes("\n");
-    return first.trim() ? { code: first.trimEnd() + (more ? " …" : ""), language: input.language === "python" ? "python" : "javascript" } : null;
+    const source = typeof input.source === "string" ? input.source : "";
+    const first = source.split("\n").find((line) => line.trim()) ?? "";
+    const more = source.trim().includes("\n");
+    const code = whole ? source.trim() : first.trimEnd() + (more ? " …" : "");
+    return code.trim() ? { code, language: input.language === "python" ? "python" : "javascript" } : null;
   } catch { return null; } // cut short or not JSON: the label alone is shown
 }
 
-function lineOf(step: LiveStep, scrub: (text: string) => string): Line {
+/** The words of a line, a path in them cut in the middle and the rest at a word; with where the path landed. */
+function wordsOf(said: string, path: string, max: number): { words: string; path: string } {
+  const at = path ? said.indexOf(path) : -1;
+  if (at < 0) return { words: cutWords(said, max), path: "" };
+  if (said.length <= max) return { words: said, path };
+  const shown = cutMiddle(path, Math.max(12, max - (said.length - path.length)));
+  const words = said.slice(0, at) + shown + said.slice(at + path.length);
+  // Words before the path that still leave the line too long are cut, keeping the path whole where it fits.
+  return words.length <= max || at + shown.length >= max ? { words, path: shown } : { words: cutWords(words, max), path: shown };
+}
+
+function lineOf(step: LiveStep, scrub: (text: string) => string, options: RenderOptions): Line {
+  const max = options.lineChars ?? 120, verbose = options.detail === "verbose";
   const lead = `${step.depth > 0 ? "↳ " : ""}${step.icon} `;
-  const failed = step.state === "failed" ? ` ${STEP_ICONS.failed}${step.result ? ` ${clip(oneLine(scrub(step.result)), 160)}` : ""}` : "";
+  const failed = step.state === "failed" ? ` ${STEP_ICONS.failed}${step.result ? ` ${cutWords(oneLine(scrub(step.result)), Math.min(160, max))}` : ""}` : "";
   const block = (head: string, code: string, language: string): Line => {
     const top = `${lead}${head}${failed}\n`;
     return { text: top + code, spans: [{ offset: top.length, length: code.length, kind: "block", language }] };
   };
   const command = step.say?.label?.key === COMMAND_KEY ? step.say.label.values?.command : undefined;
-  if (typeof command === "string" && command.trim()) return block("Running", clip(scrub(command), CODE_CLIP), "shell");
-  const script = scriptOf(step);
+  if (typeof command === "string" && command.trim()) {
+    if (options.commands === "hide") return { text: `${lead}Running a command${failed}`, spans: [] };
+    const shown = scrub(command);
+    return block("Running", verbose ? clip(shown.trim(), VERBOSE_CLIP) : commandLine(shown, max), "shell");
+  }
+  const script = scriptOf(step, verbose);
   const label = oneLine(scrub(step.label)) || (step.tool ?? "");
-  if (script) return block(label, clip(scrub(script.code), CODE_CLIP), script.language);
-  const text = `${lead}${label}${step.kind === "state" && step.result ? ` — ${oneLine(scrub(step.result))}` : ""}${failed}`;
-  const path = step.path ? oneLine(scrub(step.path)) : "";
+  if (script) return block(cutWords(label, max), verbose ? clip(scrub(script.code), VERBOSE_CLIP) : clip(scrub(script.code), max), script.language);
+  const said = step.kind === "state" && step.result ? `${label} — ${oneLine(scrub(step.result))}` : label;
+  const { words, path } = wordsOf(said, step.path ? oneLine(scrub(step.path)) : "", max);
+  const text = `${lead}${words}${failed}`;
   const at = path ? text.indexOf(path, lead.length) : -1;
-  return { text, spans: at >= 0 ? [{ offset: at, length: path.length, kind: "inline" }] : [] };
+  const line: Line = { text, spans: at >= 0 ? [{ offset: at, length: path.length, kind: "inline" }] : [] };
+  // Verbose (Hermes Agent's /verbose): what the tool was given, as code under its line.
+  if (verbose && step.input && step.kind === "tool") {
+    const input = clip(scrub(step.input), VERBOSE_CLIP), top = `${text}\n`;
+    return { text: top + input, spans: [...line.spans, { offset: top.length, length: input.length, kind: "block", language: "json" }] };
+  }
+  return line;
 }
 
 /** Consecutive lines that say the same thing become one, with "(×N)" after it. */
@@ -111,25 +167,58 @@ function join(lines: Line[]): RichText {
   }
   return { text, spans };
 }
+/** A single line longer than a whole message (a verbose input) is cut to fit; a code span is kept only while whole. */
+function fitLine(line: Line, room: number): Line {
+  if (line.text.length <= room) return line;
+  const text = clip(line.text, Math.max(1, room));
+  return { text, spans: line.spans.filter((span) => span.offset + span.length <= text.length - 1) };
+}
+
+/** The lines the message shows, folded, from the task's steps and the owner's knobs. */
+function stepLines(view: ChatStepsView, options: RenderOptions): { lines: Line[]; tail: Line[] } {
+  const scrub = options.scrub ?? ((text: string) => text);
+  const shown = chatSteps(view.steps);
+  const picked = options.detail === "new" ? changesOnly(shown) : shown;
+  const lines = fold(picked.map((step) => lineOf(step, scrub, options)));
+  const tail: Line[] = options.final ? [{ text: summary(shown.length, view.seconds, options.final), spans: [] }] : [];
+  return { lines, tail };
+}
+const size = (list: Line[]) => list.reduce((sum, line) => sum + line.text.length + 1, 0);
 
 /** The whole progress message: the newest lines that fit, an "(N earlier)" line when some do not, and the ending. */
 export function renderChatSteps(view: ChatStepsView, options: RenderOptions): RichText {
-  const scrub = options.scrub ?? ((text: string) => text);
-  const shown = chatSteps(view.steps);
-  const lines = fold(shown.map((step) => lineOf(step, scrub)));
-  const tail: Line[] = options.final ? [{ text: summary(shown.length, view.seconds, options.final), spans: [] }] : [];
+  const { lines, tail } = stepLines(view, options);
   if (!lines.length && !tail.length) return { text: "Working on it…", spans: [] };
-  const size = (list: Line[]) => list.reduce((sum, line) => sum + line.text.length + 1, 0);
   const room = options.limit - size(tail) - 20; // 20: the "(N earlier)" line
   const kept: Line[] = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     if (size(kept) + lines[i]!.text.length + 1 > room) break;
     kept.unshift(lines[i]!);
   }
-  // A single line longer than the whole message (it cannot happen with the clips above) is cut, never sent too long.
-  if (!kept.length && lines.length) kept.push({ text: clip(lines.at(-1)!.text.split("\n")[0]!, Math.max(1, room)), spans: [] });
+  if (!kept.length && lines.length) kept.push(fitLine(lines.at(-1)!, room));
   const earlier = lines.length - kept.length;
   return join([...(earlier > 0 ? [{ text: `(${earlier} earlier)`, spans: [] }] : []), ...kept, ...tail]);
+}
+/**
+ * The steps as one or more messages (Hermes Agent's overflow): each message holds the lines that fit, in order, and a
+ * list too long for one carries on in the next, so nothing is dropped. The last message ends with how the task ended.
+ * `each` puts every line in a message of its own (Hermes Agent's "separate"), with no ending line.
+ */
+export function pageChatSteps(view: ChatStepsView, options: RenderOptions & { each?: boolean }): RichText[] {
+  const { final, ...rest } = options;
+  const { lines, tail } = stepLines(view, options.each || !final ? rest : { ...rest, final });
+  if (!lines.length && !tail.length) return options.each ? [] : [{ text: "Working on it…", spans: [] }];
+  const pages: Line[][] = [];
+  let current: Line[] = [];
+  for (const raw of lines) {
+    const line = fitLine(raw, options.limit - size(tail) - 1);
+    if (current.length && (options.each || size(current) + line.text.length + 1 > options.limit)) { pages.push(current); current = []; }
+    current.push(line);
+  }
+  if (tail.length && current.length && size(current) + size(tail) > options.limit) { pages.push(current); current = []; }
+  current.push(...tail);
+  if (current.length) pages.push(current);
+  return pages.map(join);
 }
 
 /** The spans as Telegram message entities: a code block with its language label and copy button, or inline code. */
@@ -149,8 +238,10 @@ const KIND_WORDS: Partial<Record<StepCategory, (n: number) => string>> = {
   read: (n) => `Reading ${count(n, "file", "files")}`,
   write: (n) => `Writing ${count(n, "file", "files")}`,
   edit: (n) => `Changing ${count(n, "file", "files")}`,
+  find: (n) => times("Searching files", n),
   files: (n) => times("Looking through files", n),
   command: (n) => `Running ${count(n, "command", "commands")}`,
+  process: (n) => times("Managing a background program", n),
   code: (n) => `Running ${count(n, "script", "scripts")}`,
   memory: (n) => times("Checking memory", n),
   browser: (n) => times("Using the browser", n),
