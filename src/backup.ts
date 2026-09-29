@@ -11,8 +11,9 @@ import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { ensureOrchardTables, orchardTables } from "./orchard/store.js";
 import { settleForgotten } from "./conversation-residue.js";
-import { introPrompt, introSystem } from "./trunks/intro.js";
+import { defaultGreeting, introPrompt, introSystem } from "./trunks/intro.js";
 import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
+import { MemoryFileSchema, memoryFileName } from "./trunks/files.js"; // workbench (SELF-311)
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -68,7 +69,7 @@ const restoredFiles = (data: string): string | null => {
     "AGENTS.md": z.string().max(8000).optional(), "USER.md": z.string().max(8000).optional(),
     "MEMORY.md": z.string().max(8000).optional(), "TOOLS.md": z.string().max(8000).optional(),
     "HEARTBEAT.md": z.string().max(8000).optional(),
-  }).strict() }).strict();
+  }).strict(), memories: z.record(memoryFileName, MemoryFileSchema).optional() }).strict(); // workbench (SELF-311)
   try { return JSON.stringify(schema.parse(JSON.parse(data))); } catch { return null; }
 };
 export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables,
@@ -178,6 +179,11 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // Q230 (NAS eba8bd8): a conversation's live waiting line, whose words run by themselves; this computer's MCP tool
   // cache, plugins and their fingerprints; and a running task's shared notes.
   "followups:", "mcp-tools:", "plugin-catalog:", "plugin:", "scratch:",
+  // workbench (SELF-305): a wake-up set in a conversation, whose words later run as the owner's own task; like the
+  // waiting line, a file must never put one in place.
+  "wakeup:",
+  // workbench (SELF-307): which plan window a conversation was last asked to write a handoff in; this computer's own.
+  "handoff-asked:",
   // Q230, keys worked out in code: this computer's place in each chat stream and its offsets, its holds against redoing
   // a chat task, its webhook word, its MCP sign-in clients, which Trunk a flow run works as, the file-undo slots, a
   // "Watch me" under way, kept answers (a planted one comes back as if real) and the yeses carried over a restart.
@@ -529,9 +535,17 @@ function onlyIntroduction(db: DatabaseSync, sessionId: string, setup: readonly S
   if (!tasks.every(engines)) return false;
   if (markedByThePerson(db, sessionId, tasks.map((task) => task.id))) return false;
   const messages = db.prepare("SELECT body FROM messages WHERE session_id=?").all(sessionId) as { body: string }[];
-  // The default is created quietly, with no model introduction. Only its exact engine opening counts as setup.
-  if (!messages.length) return tasks.length === 1 && tasks[0]!.status === "completed" && tasks[0]!.output === "Opened"
+  // The default is created quietly, with no model introduction: its exact engine opening, and at most the greeting the
+  // engine writes for it (src/trunks/intro.ts defaultGreeting), count as setup.
+  const quiet = tasks.length === 1 && tasks[0]!.status === "completed" && tasks[0]!.output === "Opened"
     && setup.some((trunk) => tasks[0]!.owner === trunk.owner && tasks[0]!.prompt === `Trunk: ${trunk.name}`);
+  if (!messages.length) return quiet;
+  if (quiet && messages.length === 1) {
+    try {
+      const only = JSON.parse(messages[0]!.body) as { role?: unknown; content?: unknown; toolCalls?: unknown };
+      if (only.role === "assistant" && only.toolCalls === undefined && setup.some((trunk) => only.content === defaultGreeting(trunk.name))) return true;
+    } catch { return false; }
+  }
   let asks = 0;
   for (const row of messages) {
     let message: { role?: unknown; content?: unknown; system?: unknown; toolCalls?: unknown };
