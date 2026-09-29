@@ -185,6 +185,31 @@ function readFirst(store: Store, runId: string) {
 }
 
 /** Everything the "Look inside" screen needs, and the same shape the JSON export writes out. */
+/**
+ * Where a task's time went, in milliseconds, from its record: waiting before it started (a chat's split-message wait and
+ * a free slot), reading its memory and instructions, choosing its tools and model, the model's first words, the whole
+ * answer, and sending it back to the chat. A part the record cannot say is left out, never guessed.
+ */
+export interface TimingPart { part: "waited" | "memory" | "tools" | "firstWords" | "answer" | "sent"; ms: number }
+export function timing(store: Store, runId: string): { parts: TimingPart[]; totalMs: number | null } {
+  const events = store.events(runId);
+  const first = (kind: string) => events.find((event) => event.kind === kind);
+  const last = (kind: string) => events.filter((event) => event.kind === kind).at(-1);
+  const gap = (from?: { createdAt: string }, to?: { createdAt: string }) => from && to ? Math.max(0, at(to.createdAt) - at(from.createdAt)) : null;
+  const inbound = first("channel.inbound")?.data as { waitedMs?: unknown } | undefined;
+  const started = first("run.started"), memory = first("memory.snapshot"), model = first("model.started");
+  const words = first("channel.first_words"), done = last("model.completed") ?? last("model.failed"), finished = first("run.finished");
+  const sent = first("channel.sent");
+  const waited = count(inbound?.waitedMs);
+  const parts: [TimingPart["part"], number | null][] = [
+    ["waited", waited], ["memory", gap(started, memory)], ["tools", gap(memory, model)], ["firstWords", gap(model, words)],
+    ["answer", gap(model, done)], ["sent", gap(finished ?? done, sent)],
+  ];
+  const sentMs = count((sent?.data as { ms?: unknown } | undefined)?.ms);
+  return { parts: parts.filter((entry): entry is [TimingPart["part"], number] => entry[1] !== null).map(([part, ms]) => ({ part, ms })),
+    totalMs: sentMs ?? gap(started, finished) };
+}
+
 export function inspectRun(
   store: Store,
   runId: string,
@@ -209,5 +234,6 @@ export function inspectRun(
     timeline: extras.timeline,
     usage: store.usage(runId),
     cost: extras.cost,
+    timing: timing(store, runId),
   };
 }
