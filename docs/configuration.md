@@ -96,7 +96,7 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 
 ### ChatGPT plan sign-in
 
-`node dist/cli.js login` (or **Settings → ChatGPT account** in the app) starts OpenAI's device-code sign-in: open the shown page, enter the code, and Branch receives tokens that are stored in `chatgpt-auth.json` inside the data directory, protected with the device key in the desktop app. Signing in registers `ChatGPT (unofficial) · GPT-5.6 Sol (light)`, `GPT-5.6 Terra`, `GPT-5.6 Luna` and `GPT-5.5` presets (models `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`; plain `gpt-5.6` and `gpt-5.4` are refused for a ChatGPT account) and makes ChatGPT the default, with Sol first and the others as fallbacks, when no other model was chosen yet. Requests carry the `originator: branch-agent` header and a `BranchAgent/<version>` user agent. Access through a ChatGPT plan is provided by OpenAI for its own tools and may change without notice. **This route is unofficial**; see [ChatGPT plan sign-in and OpenAI's terms](#chatgpt-plan-sign-in-and-openais-terms).
+`node dist/cli.js login` (or **Settings → ChatGPT account** in the app) starts OpenAI's device-code sign-in: open the shown page, enter the code, and Branch receives tokens that are stored in `chatgpt-auth.json` inside the data directory, protected with the device key in the desktop app and otherwise sealed (AES-256-GCM) with the locker's key, `locker.key` beside it, never kept as readable or reversible text. Signing in registers `ChatGPT (unofficial) · GPT-5.6 Sol (light)`, `GPT-5.6 Terra`, `GPT-5.6 Luna` and `GPT-5.5` presets (models `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`; plain `gpt-5.6` and `gpt-5.4` are refused for a ChatGPT account) and makes ChatGPT the default, with Sol first and the others as fallbacks, when no other model was chosen yet. Requests carry the `originator: branch-agent` header and a `BranchAgent/<version>` user agent. Access through a ChatGPT plan is provided by OpenAI for its own tools and may change without notice. **This route is unofficial**; see [ChatGPT plan sign-in and OpenAI's terms](#chatgpt-plan-sign-in-and-openais-terms).
 
 ### Several accounts per connection (mac6)
 
@@ -7946,7 +7946,12 @@ the "ask before changes" rules ask about it every time whatever the rule for com
 `GET /api/remotes` lists them, `POST /api/remotes` adds one, `POST /api/remotes/remove` takes one
 off. Each computer is `RemoteComputerSchema` (`src/remote/ssh-workspace.ts`): `alias` the short name
 from your SSH config, `root` the folder on that computer everything is kept inside, `label` a name
-you will recognise, `executables` the programs it may run, and `addedAt` when you added it.
+you will recognise, `executables` the programs it may run, `trunks` the Trunks you lent it to, and `addedAt`
+when you added it.
+
+Your own conversations may use every computer you added. A Trunk may use one only once you lend it to
+that Trunk (`trunks`); `remote.list` shows a Trunk only what it was lent, and the other tools refuse the
+rest by name.
 
 ## A way back to before a change (batch 26, wave 8)
 
@@ -8075,6 +8080,7 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | Setting | What it is |
 | --- | --- |
 | `autoReadAloud` | Read every reply aloud as it arrives. |
+| `readAloudWhen` | With `autoReadAloud` on: `always` (the default) reads every reply the owner is watching; `spoken` only the reply to a message dictated in the window (Settings › Voice › Answer aloud › When I talk). |
 | `voiceId` | Which voice reads aloud. Which ones exist depends on this computer. |
 | `speechRate` | How fast it reads, from 0.5 to 2 times normal speed. |
 | `useProviderVoice` | Prefer the connected service's higher-quality voice over the browser's. |
