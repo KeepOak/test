@@ -4,6 +4,8 @@ import { registerSignedInGemini } from "../gemini-signin.js";
 import type { ModelRouter } from "../models.js";
 import type { OAuthConnections } from "../oauth.js";
 import { CliAgentChoiceSchema, registerCliAgent } from "../providers/cli-agent.js";
+import { claudeCodePool, claudeSubscriptionPreset } from "../providers/claude-models.js";
+import { forgetRuntimeChoice } from "../asks/runtimes.js";
 import type { Store } from "../store.js";
 import { geminiSignInState } from "../voice-api.js";
 
@@ -40,6 +42,10 @@ export function addProgram(models: Registers, store: Store, owner: string, input
 /** A connection taken out (POST /api/connections/forget) stays out after a restart. */
 export function forgetProgram(store: Store, owner: string, connection: string): void {
   if (!connection.startsWith("cli-")) return;
+  if (claudeSubscriptionPreset(connection)) {
+    connection = claudeCodePool;
+    forgetRuntimeChoice(store, owner, "claude-code");
+  }
   const kept = savedPrograms(store, owner).filter((entry) => `cli-${entry.id}` !== connection);
   if (kept.length !== savedPrograms(store, owner).length) store.save("settings", owner, settingKey, { agents: kept });
 }

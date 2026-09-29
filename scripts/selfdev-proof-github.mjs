@@ -53,7 +53,8 @@ export async function githubProof({ root, model, stamp, log, connection, roomToW
     summary = { mode: "github", model, base, status: run?.status ?? `http ${started.status}`, output: run?.output?.slice(0, 2000),
       elapsedSeconds: Math.round((Date.now() - began) / 1000), ...(run ? evidence(engine, runId) : {}), pulls,
       health: { checks: results.length, allOk: results.every((status) => status === 200) } };
-    for (const pull of pulls) if (pull.state === "open") { gh("pr", "close", String(pull.number), "--repo", repo); pull.closedAfterwards = true; }
+    // REST only: GitHub's GraphQL allowance is shared by every lane.
+    for (const pull of pulls) if (pull.state === "open") { gh("api", "-X", "PATCH", `repos/${repo}/pulls/${pull.number}`, "-f", "state=closed"); pull.closedAfterwards = true; }
   } finally {
     clearInterval(poller);
     await engine.close();

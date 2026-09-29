@@ -46,7 +46,7 @@ function service(answer = (n) => ({ ok: true, result: { message_id: n } })) {
 test("every knob ships on; an app's own knobs win over every app's, its id over its kind; null follows every app again", async (t) => {
   const app = await branch(t), owner = app.runtime.owner;
   assert.deepEqual(stepsDisplayDefaults, { detail: "all", grouping: "one", lineChars: 120, commands: "show", overflow: "roll",
-    cleanup: false, noEdit: "summary", groups: "kinds" });
+    cleanup: false, noEdit: "summary", groups: "kinds", pictures: "browser" });
   assert.deepEqual(stepsDisplayFor(stepsSettings(app.store, owner), { id: "telegram", kind: "telegram" }), stepsDisplayDefaults);
   saveStepsSettings(app.store, owner, { all: { detail: "new", lineChars: 80 }, apps: { telegram: { detail: "verbose" }, "tg-work": { detail: "off" } } });
   const settings = stepsSettings(app.store, owner);
