@@ -48,17 +48,24 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   const temp = await mkdtemp(join(tmpdir(), 'branch-held-'));
   // Built from the plan alone: this process's own environment carries WSL's way back out to Windows.
   const env: NodeJS.ProcessEnv = { ...plan.env, PATH: linuxPath, HOME: homedir(), TMPDIR: temp, TMP: temp, TEMP: temp,
-    npm_config_cache: join(temp, '.npm'), npm_config_update_notifier: 'false' };
+    npm_config_cache: join(temp, '.npm'), npm_config_update_notifier: 'false',
+    // selfdev: the browsers shown read-only by heldCover, where Playwright looks for them.
+    ...(existsSync(join(homedir(), '.cache', 'ms-playwright')) ? { PLAYWRIGHT_BROWSERS_PATH: join(homedir(), '.cache', 'ms-playwright') } : {}) };
   for (const name of ['WSL_INTEROP', 'WSLENV', 'WSL_DISTRO_NAME']) delete env[name];
   // The held view hides /mnt, /run and the home folder, and binds each held program's install folder
   // back read-only (heldView). The workspace, under /mnt, is bound after so it still shows through;
   // /var/run is a link to /run, so it is covered too. So no Windows drive, no WSL link back to
   // Windows, no per-user or system socket (dbus, snapd, the container daemon) and no other agent's
   // control socket or saved sign-in under the home is reachable from inside.
-  const { covered, restored } = await heldCover({ home: homedir(), programs: [program], searchPath: linuxPath, workspace: plan.workspace });
+  const { covered, restored, refusal } = await heldCover({ home: homedir(), programs: [program], args: plan.args, searchPath: linuxPath, workspace: plan.workspace });
+  if (refusal) {
+    await rm(temp, { recursive: true, force: true }).catch(() => undefined);
+    process.stderr.write(`${refusal}\n`);
+    return 1;
+  }
   let wall;
   try {
-    wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry }), readOnly: restored },
+    wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry, open: plan.open === true }), readOnly: restored },
       { executable: program, args: plan.args, cwd: plan.cwd, env },
       { workspace: plan.workspace, temp, held: true, covered, secrets: Object.fromEntries(plan.secrets.map((name) => [name, ''])) },
       { ...deps, platform: 'linux' });

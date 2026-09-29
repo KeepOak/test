@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { apiRoutes, createBranch, routeSnippets, starterProgram } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { saveSdkKitSettings } from "../dist/sdk-kit.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const run = promisify(execFile);
@@ -44,6 +45,8 @@ test("the Go client drives a real Branch Agent: start, stream, read, search, ref
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  // Building on Branch ships when needed (defaults audit); switched off here, so the client's refusal is exercised.
+  saveSdkKitSettings(app.store, app.runtime.owner, { mode: "off" });
 
   // The key is read from the data folder by the client itself, never passed on a command line.
   const env = { ...goEnv, BRANCH_DATA_DIR: join(root, "data"), BRANCH_PORT: new URL(server.url).port };

@@ -42,7 +42,8 @@ async function fixture(t) {
      seen: the Trunks' own faces on this screen are the 3D pebbles. */
   await page.evaluate(() => {
     const face = Object.assign(document.createElement("span"), { className: "av probe-cpu", innerHTML: '<span class="peb"></span><span class="eye l"></span><span class="eye r"></span>' });
-    document.querySelector("#main").append(face);
+    // Keep the CSS probe outside regions redrawn by live state refreshes.
+    document.body.append(face);
   });
   await page.locator("#main .av.pbl.pbl-live").first().waitFor({ state: "attached", timeout: 30000 });
   await page.locator("#side .keeper .petbox").waitFor({ state: "attached" });
@@ -148,7 +149,10 @@ test("a hidden window pauses its loops and its pet, and both carry on when it is
   }, hidden);
   await flip(true);
   assert.equal(await page.evaluate(() => document.querySelector("#main video").paused), true, "the loop is paused while hidden");
-  await page.waitForTimeout(500); // a step already started finishes its 0.32 s move
+  /* A step already under way finishes its 0.32 s move (app.css .petbox transition). Waited for as itself, never as a
+     time: on a busy runner a step written just before the hide began to move frames later, and was still moving 500 ms
+     on ("the pet does not walk while hidden", 241 !== 238 on CI). */
+  await page.waitForFunction(() => document.querySelector("#side .keeper .petbox").getAnimations().length === 0, null, { timeout: 10000 });
   const x0 = await page.evaluate(() => document.querySelector("#side .keeper .petbox").getBoundingClientRect().x);
   await page.waitForTimeout(1200);
   const x1 = await page.evaluate(() => document.querySelector("#side .keeper .petbox").getBoundingClientRect().x);
@@ -157,6 +161,6 @@ test("a hidden window pauses its loops and its pet, and both carry on when it is
   assert.equal(hiddenDraws.draws, 0, "no face is drawn while hidden");
   await flip(false);
   await page.waitForFunction(() => !document.querySelector("#main video").paused, null, { timeout: 5000 });
-  await page.waitForFunction((x0) => document.querySelector("#side .keeper .petbox").getBoundingClientRect().x !== x0, x0, { timeout: 5000 });
+  await page.waitForFunction((x0) => document.querySelector("#side .keeper .petbox").getBoundingClientRect().x !== x0, x0, { timeout: 15000 });
   assert.deepEqual(errors, []);
 });

@@ -12,18 +12,24 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
+import { watchSettled } from "./page-settled.mjs";
 
 /* The new window: Settings › Permissions is the prototype's page. At Regular: its title, "Without asking, Trunks may…",
-   the folded Advanced part, Pinned settings, and the Lockdown row, in that order, wide and on a phone, and it fits. */
+   the folded Advanced part, Pinned settings, and the Lockdown row, in that order, wide and on a phone, and it fits.
+   The page draws some sections once its own reads land (This PC or This Mac from GET /api/os-permissions, settings/os17.js,
+   on Windows and macOS only), so it is read once they have: read before, the list depended on which answer came first. */
+const OWN_COMPUTER = { win32: ["This PC"], darwin: ["This Mac"] }[process.platform] ?? [];
 for (const [width, height] of [[1440, 950], [860, 900], [400, 844]]) {
   test(`DG-187 at ${width} px: the prototype's sections, in order, with Lockdown on the page`, async (t) => {
     const { page, errors } = await settingsWindow(t, { name: "permissions", width, height });
+    const settled = watchSettled(page);
     await openSettingsPage(page, "permissions");
     await setLevel(page, "regular");
+    await settled();
     const col = page.locator(".set-col");
     const shown = await col.locator("h1, h2, summary, .danger b").evaluateAll((all) =>
       all.filter((node) => node.getClientRects().length > 0).map((node) => node.textContent.replace(/\s+/g, " ").trim()));
-    assert.deepEqual(shown, ["Permissions", "Without asking, Trunks may…", "Advanced", "Lockdown", "Pinned settings"]);
+    assert.deepEqual(shown, ["Permissions", ...OWN_COMPUTER, "Without asking, Trunks may…", "Advanced", "Lockdown", "Pinned settings"]);
     await col.getByRole("button", { name: "Turn Lockdown on", exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `${width} px fits`);
     assert.deepEqual(errors, []);

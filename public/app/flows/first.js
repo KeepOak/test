@@ -8,7 +8,7 @@
 
 import { $, esc, applyCss, onRender } from "../core/dom.js";
 import { app, av, toast, ic, closePop, closeDlg } from "../core/ui.js";
-import { E, refresh } from "../core/state.js";
+import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
@@ -16,6 +16,7 @@ import { logo } from "../core/logos.js";
 import { openAddAcct, poolById } from "./account.js";
 import { openLocalPicker } from "./localpick.js";
 import { t } from "../../i18n.js";
+import { setupNeeds } from "../core/setup-needs.js";
 
 const N = 8;
 /* A template's name and job are keys: shown in the chosen language, and the Trunk it makes is named in those words. */
@@ -34,7 +35,7 @@ function accounts() {
   return `<h1>${t("window.flows.first.accounts")}</h1><p class="lede">${t("window.flows.first.accounts-lede")}</p><div class="ways">${rows}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-next">${t("action.next")}</button></div>`;
 }
 function apps() {
-  const rows = F.channels.slice(0, 4).map((c) => `<button class="way" type="button" data-act="ch-open" data-v="${esc(c.id)}"><span data-css="display:flex;align-items:center;gap:10px">${logo(c.id, c.name, 26)}<b>${esc(c.name)}</b></span><small>${t("window.flows.first.two-minutes")}</small></button>`).join("");
+  const rows = F.channels.slice(0, 4).map((c) => `<button class="way" type="button" data-act="ch-open" data-v="${esc(c.id)}"><span data-css="display:flex;align-items:center;gap:10px">${logo(c.id, c.name, 26)}<b>${esc(c.name)}</b></span><small>${esc(setupNeeds(c) ?? "")}</small></button>`).join("");
   return `<h1>${t("window.flows.first.anywhere")}</h1><p class="lede">${t("window.flows.first.anywhere-lede")}</p><div class="ways">${rows}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-next">${t("action.next")}</button><button class="btn ghost" type="button" data-act="fr-next">${t("window.flows.first.later")}</button></div>`;
 }
 function recs() {
@@ -150,7 +151,7 @@ function wanted() {
 }
 function welcome() {
   if (!E.loaded || $(".welcome10") || $(".ob9") || $(".tour-layer") || !wanted()) return;
-  app().insertAdjacentHTML("beforeend", `<div class="welcome10" role="region" aria-label="${t("window.flows.first.welcome")}"><img class="pose11 wel11" src="/art/branch-wave.webp" alt="" draggable="false"><span class="grow"><b>${t("window.flows.first.new")}</b><small>${t("window.flows.first.new-hint")}</small></span><button class="btn pri sm" type="button" data-act="onboard">${t("channel-setup.row-button")}</button><button class="btn sm" type="button" data-act="tour">${t("window.flows.first.walkthrough")}</button>${E.state?.onboarding?.mine ? `<button class="link wel-never" type="button" data-act="welcome-never">${t("window.flows.first.never")}</button>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.flows.first.dismiss")}" data-act="welcome-x">${ic("x", "s")}</button></div>`);
+  app().insertAdjacentHTML("beforeend", `<div class="welcome10" role="region" aria-label="${t("window.flows.first.welcome")}"><span class="mark mark-face wel11" aria-hidden="true"></span><span class="grow"><b>${t("window.flows.first.new")}</b><small>${t("window.flows.first.new-hint")}</small></span><button class="btn pri sm" type="button" data-act="onboard">${t("channel-setup.row-button")}</button><button class="btn sm" type="button" data-act="tour">${t("window.flows.first.walkthrough")}</button>${E.state?.onboarding?.mine ? `<button class="link wel-never" type="button" data-act="welcome-never">${t("window.flows.first.never")}</button>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.flows.first.dismiss")}" data-act="welcome-x">${ic("x", "s")}</button></div>`);
   greyOut($(".welcome10"));
   placeWelcome();
 }
@@ -159,6 +160,9 @@ function welcome() {
 function placeWelcome() {
   const card = $(".welcome10"), dock = $("#main .dock"), root = app();
   if (!card || !root) return;
+  /* It belongs to the conversation, where it keeps clear of the message box; over Settings or a place it would sit on
+     their own controls (the Appearance language picker, a card's buttons), so there it waits unseen. */
+  card.hidden = S.view !== "chat";
   const over = dock?.getClientRects().length ? root.getBoundingClientRect().bottom - dock.getBoundingClientRect().top + 12 : 0;
   card.style.bottom = over > 0 ? `${Math.round(over)}px` : "";
 }

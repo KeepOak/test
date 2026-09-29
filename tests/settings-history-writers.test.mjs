@@ -83,6 +83,8 @@ const cards = [
   ["/api/comfort", { card: "mcp", values: { startupTimeoutSeconds: 20 } }, "comfort-mcp.startupTimeoutSeconds"],
   ["/api/knobs", { card: "limits", values: { maxModelRounds: 20 } }, "round-limit.maxModelRounds"],
   ["/api/knobs", { card: "limits", reset: true }, "round-limit.maxModelRounds"],
+  ["/api/knobs", { card: "limits", values: { maxTaskTokens: 400000 } }, "task-tokens.taskAllowance"],
+  ["/api/knobs", { card: "limits", reset: true }, "task-tokens.taskAllowance"],
   // The switch families: every part that is a Settings setting, through its family's one route.
   ...catalogueKeys.filter((key) => key.startsWith("reach-")).map((key) => ["/api/reach/switch", { part: key.slice(6), mode: "on" }, `${key}.mode`]),
   ...catalogueKeys.filter((key) => key.startsWith("asks-")).map((key) => ["/api/asks/switch", { part: key.slice(5), mode: "on" }, `${key}.mode`]),
@@ -248,7 +250,7 @@ test("every writer of a Settings setting leaves a change record for each value i
   await check("--preset for one task, put back after", null, () => usePreset(app.store, owner, "off", false).restore());
   await check("a remembered answer", null, () => addPolicyRule(app.store, owner, { tool: "file.read", match: "*", decision: "allow" }));
   await check("/switch vim", "comfort-keys.vim", () => switchComfort(app.store, owner, "vim", "", { t: (_key, english) => english }));
-  await check("a folder's own trust", null, () => post("/api/folder-trust", { folder: "", decision: "trust" }));
+  await check("a folder's own trust", null, () => post("/api/folder-trust", { folder: "", decision: "trust", confirmLoosening: true }));
 
   // A path made from a conversation (src/conversation-paths-api.ts) copies that conversation's own choices. None of
   // them is in the catalogue, so check() holds it to moving nothing there unrecorded; the copies themselves still land.

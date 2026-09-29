@@ -51,15 +51,15 @@ async function longConversation(app, turns) {
   return first.sessionId;
 }
 
-test("every card ships as today's behaviour", (t) => {
+test("every card ships as today's behaviour (a new limit, messages per conversation per hour, ships at 60)", (t) => {
   const store = { get: () => undefined };
   const values = allKnobs(store, owner);
   assert.deepEqual(values.compaction, { autoCompact: true, compactAtPercent: null, keepRecentMessages: 6, contextWindowTokens: null });
-  assert.deepEqual(values.limits, { maxSteps: 60, spendCapDollars: null, apiRetries: null, localFirstReplySeconds: null, maxModelRounds: null });
+  assert.deepEqual(values.limits, { maxSteps: 60, spendCapDollars: null, apiRetries: null, localFirstReplySeconds: null, maxModelRounds: null, maxTaskTokens: null, messagesPerConversationHour: 60 });
   assert.deepEqual(values.commands, { toolAnswerChars: null, toolTimeoutSeconds: null, commandTimeoutSeconds: null, keptOpenShell: true, passEnvironment: [] });
   assert.deepEqual(values.subtasks, { subtaskModel: null, sideJobModel: null, parallelSubtasks: 4, subtaskTimeoutSeconds: 120 });
   assert.deepEqual(values.reasoning, { effortByModel: {}, showReasoning: true, serviceTier: "standard" });
-  assert.deepEqual(values.memory, { snapshotFacts: memorySnapshotLimits.facts, snapshotChars: memorySnapshotLimits.chars, aboutYouOn: false, aboutYou: "", aboutYouChars: 1500 });
+  assert.deepEqual(values.memory, { snapshotFacts: memorySnapshotLimits.facts, snapshotChars: memorySnapshotLimits.chars, aboutYouOn: true, aboutYou: "", aboutYouChars: 1500 }); // defaults audit: the note is used once written
   assert.deepEqual(values.leakGuard, { sensitivity: "standard", exceptions: [] });
   assert.equal(contextWindow(store, owner, 20000), 20000);
   const budget = { limit: 20000, threshold: 12345 };

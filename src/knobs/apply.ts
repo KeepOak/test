@@ -33,7 +33,8 @@ export function keepRecent(store: Reader, owner: string): number {
 
 /** R17-S09: the step and token budget a new task of the owner's gets. */
 export function taskBudget(store: Reader, owner: string): { maxSteps: number; maxTokens: number } {
-  return { maxSteps: readKnobs(store, owner, "limits").maxSteps, maxTokens: 200000 };
+  const limits = readKnobs(store, owner, "limits");
+  return { maxSteps: limits.maxSteps, maxTokens: limits.maxTaskTokens ?? 200000 };
 }
 
 /** R17-S09: the retry policy, with the owner's count in place of the launch setting's. */
@@ -101,6 +102,17 @@ export function maxModelRounds(store: Reader, owner: string, launch: { maxModelR
   const own = readKnobs(store, owner, "limits").maxModelRounds;
   if (own !== null) return own;
   return coding ? Math.max(launch.maxModelRounds, codingModelRounds) : launch.maxModelRounds;
+}
+
+/**
+ * Settings › Permissions › Messages per conversation per hour: why a new task may not start in this conversation now,
+ * or null. It counts the tasks the conversation started in the last hour.
+ */
+export function conversationRateRefusal(store: Reader & { sessionTasksSince(sessionId: string, since: string): number }, owner: string, sessionId: string, now = Date.now()): string | null {
+  const limit = readKnobs(store, owner, "limits").messagesPerConversationHour;
+  const count = store.sessionTasksSince(sessionId, new Date(now - 3_600_000).toISOString());
+  return count < limit ? null
+    : `This conversation has had ${limit} messages in the last hour, the most Settings › Permissions allows, so this one did not start. That stops a runaway loop; raise the figure there if you meant it.`;
 }
 
 /** mac7/coding-next: how long a model on this computer may take to start its reply, in milliseconds. */

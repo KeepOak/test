@@ -16,8 +16,8 @@ import { markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
  * - `off`: nothing is drafted, and asking for one says the switch is off.
  * - `when-needed`: a skill is drafted only when asked — "make this into a skill", the button, or
  *   accepting a skill idea — and the assistant sees one short tool for the first of those.
- * - `on`: also after a finished task that looked like a repeatable procedure, and a look back may
- *   suggest one.
+ * - `on`: also a look back may suggest one. (A skill is never drafted after a task just because it used
+ *   several tools; the Gardener's four triggers decide that, src/seasons/triggers.ts.)
  *
  * Whatever the positions, nothing is written or switched on without the owner saying yes.
  *

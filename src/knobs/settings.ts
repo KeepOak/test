@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { forgetChosen, markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * R17-S08 … R17-S14: the knobs that used to be constants, written down as settings the owner can
@@ -41,7 +42,18 @@ export const KnobTaskLimitsSettingsSchema = z.object({
    * answer it has; null keeps the launch setting (12), or `codingModelRounds` for a task that works on
    * the project's files. A planned task is given more room on top.
    */
-  maxModelRounds: z.number().int().min(2).max(60).nullable().default(null),
+  maxModelRounds: z.number().int().min(2).max(500).nullable().default(null),
+  /**
+   * selfdev: how many tokens one task may use in all, counting every request it sends to the model; null keeps the
+   * built-in 200,000. Long coding work on Branch itself (edit, test, push, wait for checks, merge) needs more.
+   */
+  maxTaskTokens: z.number().int().min(20_000).max(20_000_000).nullable().default(null),
+  /**
+   * Settings › Permissions › Messages per conversation per hour: the most tasks one conversation may start in an hour.
+   * It stops a runaway loop (a schedule, a trigger, a chat app or two Trunks answering each other): such a task past it is
+   * refused in words and nothing is lost. The owner's own messages count but are never refused. 60 as shipped.
+   */
+  messagesPerConversationHour: z.number().int().min(1).max(1000).default(60),
 }).strict();
 
 /** The rounds a task working on the project's files gets while the owner has set no figure of their own. */
@@ -55,9 +67,9 @@ export const KnobCommandSettingsSchema = z.object({
   /** Longest tool answer the model reads, in characters; null keeps the launch setting. */
   toolAnswerChars: z.number().int().min(1000).max(60000).nullable().default(null),
   /** Longest one tool call may run, in seconds; null keeps the launch setting. */
-  toolTimeoutSeconds: z.number().int().min(5).max(600).nullable().default(null),
+  toolTimeoutSeconds: z.number().int().min(5).max(1800).nullable().default(null),
   /** Longest one command may run, in seconds; null keeps the launch settings file's figure. */
-  commandTimeoutSeconds: z.number().int().min(1).max(120).nullable().default(null),
+  commandTimeoutSeconds: z.number().int().min(1).max(1800).nullable().default(null),
   /** Whether a task may keep a command line open between commands. */
   keptOpenShell: z.boolean().default(true),
   /** Extra environment variable names handed to commands, beyond the built-in safe list. */
@@ -124,11 +136,20 @@ export const knobCardNames = Object.keys(knobCards) as KnobCard[];
 const keyOf = (card: KnobCard): string => `knobs-${card}`;
 type Reader = Pick<Store, "get">;
 
+/**
+ * The owner's ship-on rule (defaults audit, 2026-09-28): the "about you" note goes in front of every conversation once the
+ * owner writes one; with no note nothing is added (src/knobs/apply.ts). None of (a)–(f), so it ships on. A card is written
+ * whole, so a saved false that the owner never set reads as it ships (src/ship-on.ts); one they set is kept.
+ */
+export const knobShipsOn: Partial<Record<KnobCard, Record<string, unknown>>> = { memory: { aboutYouOn: true } };
+
 /** One card's settings, with today's behaviour for anything never saved or saved wrongly. */
 export function readKnobs<K extends KnobCard>(store: Reader, owner: string, card: K): KnobValues[K] {
   const schema = knobCards[card] as unknown as z.ZodType<KnobValues[K]>;
   const saved = schema.safeParse(store.get("settings", owner, keyOf(card))?.data ?? {});
-  return saved.success ? saved.data : schema.parse({});
+  if (!saved.success) return schema.parse({ ...(knobShipsOn[card] ?? {}) });
+  const ships = knobShipsOn[card];
+  return ships ? shippedUnlessChosen(store, owner, keyOf(card), saved.data as Record<string, unknown>, ships) as KnobValues[K] : saved.data;
 }
 
 /** Saves one card; fields left out keep what was there. Returns what is now in force. */
@@ -136,6 +157,7 @@ export function saveKnobs<K extends KnobCard>(store: Store, owner: string, card:
   const schema = knobCards[card] as unknown as z.ZodType<KnobValues[K]>;
   const next = schema.parse({ ...readKnobs(store, owner, card), ...(input && typeof input === "object" ? input : {}) });
   store.save("settings", owner, keyOf(card), next as Record<string, unknown>);
+  markChosen(store, owner, keyOf(card), sentKeys(input));
   return next;
 }
 
@@ -147,4 +169,5 @@ export function allKnobs(store: Reader, owner: string): KnobValues {
 /** Puts one card back to how Branch ships. */
 export function resetKnobs(store: Store, owner: string, card: KnobCard): void {
   store.save("settings", owner, keyOf(card), {});
+  forgetChosen(store, owner, keyOf(card));
 }

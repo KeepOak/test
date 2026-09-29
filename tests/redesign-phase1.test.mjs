@@ -62,6 +62,8 @@ async function pickTheme(page, id) {
 
 test("a new window wears Slate, and a picked Forest is remembered over the new default", async (t) => {
   const f = await fixture(t);
+  // The window puts on its look once it has read it from the engine (GET /api/look), which can land after the side list.
+  await f.page.waitForFunction(() => document.documentElement.dataset.palette);
   assert.equal(await f.page.evaluate(() => document.documentElement.dataset.palette), "slate");
   assert.equal((await f.call("/api/look")).theme, "slate", "the shared record starts on Slate too");
   await pickTheme(f.page, "forest");
@@ -211,11 +213,15 @@ test("the connection button can be hidden in Settings, and nobody but the owner 
   await f.page.locator("#h-usage").check();
   await usageButton(f.page).waitFor({ state: "visible" });
   const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
+  /* The window starts again by itself when the person changes (public/app/main.js watchPerson); a reload of our own
+     raced that one and was aborted, so the window's own restart is what is waited for. */
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
   const seen = await fetch(new URL("/api/usage/glance", f.server.url), { headers: { authorization: `Bearer ${f.server.token}` } });
   assert.equal(seen.status, 200, "not an error");
   assert.deepEqual(await seen.json(), { available: false }, "and not a number");
-  await signedInAgain(f.page);
+  await restarted;
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   if (await usageButton(f.page).count()) {
     await usageButton(f.page).click();
     await f.page.locator(".pop").waitFor();
@@ -281,7 +287,9 @@ test("with saving progress off, or nothing running, it never asks; Not now chang
   await offer(f.page).waitFor({ state: "visible", timeout: 30000 });
   await offer(f.page).getByRole("button", { name: "Not now" }).click();
   await offer(f.page).waitFor({ state: "detached" });
-  assert.equal((await f.call(`/api/runs/${run.id}`)).events.some((event) => event.kind === "run.steered"), false, "Not now sends nothing");
+  // Not now sends no save-progress note. (With every account this near its limit, Branch's own handoff note may reach
+  // the task; that is src/lead-usage.ts, labelled as Branch's, and never the owner's answer to this prompt.)
+  assert.equal((await f.call(`/api/runs/${run.id}`)).events.some((event) => event.kind === "run.steered" && !event.data.from), false, "Not now sends nothing");
   model.release();
   assert.deepEqual(f.errors, []);
 });

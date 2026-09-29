@@ -31,15 +31,14 @@ const noSideways = (page) => page.evaluate(() => document.documentElement.scroll
 /* Redesign: the prototype has no places bar and no Trunks strip; up to 760 px its side list slides over the conversation
    ("Show conversations", data-act="side"), and from 761 px it is a column. Its approval card (#live-ask) answers with the
    action's own verb, "Always allow" (greyed out until a standing yes can be kept for one Trunk) and "Don’t allow". */
-/** The same model for the new window: its yes carries the task that asked on (Q050), told that the call it asked about
-    did not run, so it makes the call again, which then goes through. */
+/** The same model for the new window: its yes carries the task that asked on (Q050), and the engine makes the approved
+    call itself (QA R1), so the model only reports it. */
 const carryingOn = {
   name: "scripted",
   async complete(request) {
     const last = request.messages.at(-1);
-    const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(last.content ?? ""));
-    if (last.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
-    if ((last.role === "user" || allowed) && request.messages.some((m) => m.role === "user" && String(m.content).includes("note")))
+    if (last.role === "tool") return { content: "Written.", toolCalls: [] };
+    if (last.role === "user" && request.messages.some((m) => m.role === "user" && String(m.content).includes("note")))
       return { content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 8)}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] };
     return { content: "Hello.", toolCalls: [] };
   },
@@ -144,7 +143,12 @@ test("a computer's window is unchanged: no bar, the side list where it always wa
   for (const [width, height] of [[1440, 950], [1024, 700]]) {
     const f = await signedIn(t, { width, height });
     await f.signIn();
-    const side = await f.page.locator("#side").boundingBox(), prompt = await f.page.locator("#prompt").boundingBox();
+    // The window draws again as its first reads arrive, so both are measured in one go once the side list has its width.
+    await f.page.waitForFunction(() => document.getElementById("side")?.getBoundingClientRect().width > 0 && document.getElementById("prompt"));
+    const [side, prompt] = await f.page.evaluate(() => ["side", "prompt"].map((id) => {
+      const box = document.getElementById(id).getBoundingClientRect();
+      return { x: box.x, width: box.width };
+    }));
     assert.ok(side.x >= 0 && side.width > 0, `${width}: the side list shows without being asked`);
     assert.ok(prompt.x >= side.x + side.width, `${width}: the conversation sits beside it`);
     assert.equal(await f.page.locator('[data-act="side"]').first().isVisible(), false, `${width}: no button to slide it over`);

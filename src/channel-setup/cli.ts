@@ -66,7 +66,7 @@ async function localBackend(dataDir: string, workspace: string): Promise<{ backe
     setMode: async (mode) => { saveSetupMode(app.store, owner, { mode }); },
     save: async (id, values, enable) => {
       const answer = await saveSetup(host, id, { values, enable }) as unknown as SaveAnswer;
-      return { ...answer, connectNote: enable && enable !== "off" ? "Branch is not running: it connects the next time it starts." : null };
+      return { ...answer, connectNote: answer.connectNote ?? (enable && enable !== "off" ? "Branch is not running: it connects the next time it starts." : null) };
     },
   };
   return { backend, close: () => app.close() };

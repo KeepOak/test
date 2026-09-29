@@ -153,6 +153,7 @@ test.skip("U2 French: every word has a key, and French is real French", async (t
 
 /* mac7/account-pooling: a list that shared work between the owner's own plans, from before the rule. */
 function oldSharedList(app, owner) {
+  accountsServiceFor(app.runtime.models).deps.statusRun = async () => ({ code: 0, missing: false });
   registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, async () => ({ code: 0, stdout: "{}", stderr: "" }));
   const at = "2026-09-19T10:00:00.000Z";
   app.store.save("settings", owner, "accounts", { mode: "on", pools: [{ pool: "cli-claude-code", kind: "cli", autoSwitch: true,

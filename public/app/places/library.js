@@ -9,7 +9,7 @@
 
 import { esc, renderNow } from "../core/dom.js";
 import { S, E, refresh, level } from "../core/state.js";
-import { ic, mi, toast, openPop, closePop, openDlg, dialog } from "../core/ui.js";
+import { ic, mi, toast, openPop, closePop, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -20,6 +20,9 @@ import { t, language, plural } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
+import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
+import { seasonsTab, readSeasons, initSeasons } from "./seasons.js";
+import { lockdownOn } from "../chat/approvals.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -36,6 +39,9 @@ let artsList = [];
 let findings = null;
 let tidyFailed = false;
 let docView = "list";
+/* QA retest 2026-09-28 (m11): whether a Trunk asks before it remembers anything (GET/POST /api/memory/settings
+   requireApproval); null until read, and never shown to a household person (the switch is the owner's). */
+let memSettings = null;
 
 const TIDY_SOURCE = "Suggested while tidying memory";
 const TIDY_LABEL = { merge: "Said twice", archive: "Disagree" };
@@ -53,19 +59,21 @@ function memoryTab(mem) {
   const acts = `<span class="st-acts15"><button type="button" class="btn sm" data-act="tidy15">${t("memory.card.tidy-up")}${n ? `<span class="n15">${n}</span>` : ""}</button><button type="button" class="icon-btn" aria-label="${t("window.places.library.more-for-memory")}" data-act="memmore15">${ic("more", "s")}</button></span>`;
   let html = `<div class="status memst15" data-css="margin:6px 0 10px">${cap ? ring(cap.count, cap.maxFacts) : '<span class="sdot"></span>'}<div>
       <b>${cap ? t("window.places.library.count-of-maxfacts-remembered", { count: cap.count, maxFacts: cap.maxFacts }) : plural(mem.length, { one: "window.places.library.count-things-remembered.one", other: "window.places.library.count-things-remembered" })}</b>
-      <p>${t("window.places.library.trunks-suggest-what-to-remember-and")}</p></div>${acts}</div>`;
+      <p>${t(memSettings?.requireApproval === false ? "window.places.library.remembers-when-asked" : "window.places.library.trunks-suggest-what-to-remember-and")}</p></div>${acts}</div>`;
+  if (memSettings) html += `<div class="ctl" data-css="margin:0 0 10px"><b>${t("window.places.library.ask-before-remembering")}</b><input class="sw" type="checkbox" id="mem-ask15" data-sw="mem-ask15" ${memSettings.requireApproval ? "checked" : ""} aria-label="${t("window.places.library.ask-before-remembering")}"><small>${t("window.places.library.ask-before-remembering-sub")}</small></div>`;
   html += mem.map((m, i) => `<div class="prow"><span class="ico-tile">${ic('star', 's')}</span>
         <span class="grow"><b>${inlineText(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "")}</b><small>${esc([m.data?.source, when(m.updatedAt ?? m.createdAt)].filter(Boolean).join(" · "))}</small></span>
         <button class="btn ghost sm" type="button" data-act="forget" data-i="${i}" data-id="${esc(m.id || '')}">${t("window.places.library.forget")}</button></div>`).join('');
   return html + (mem.length ? "" : empty18("library:memory"));
 }
 
-/* "Write a new document" stays greyed with its reason (window.why.doc-new): the engine keeps a document only from a file
-   or finished text (src/documents.ts AddSchema). A document's Open and a Made file's Open read it in the window
+/* "Write a new document" opens a small editor: a name and the text, kept as a document of the owner's (POST /api/documents
+   { name, text }, src/documents.ts AddSchema), searched like any other. A household person's window keeps it greyed, as
+   the documents are the owner's (Q261). A document's Open and a Made file's Open read it in the window
    (places/docread.js: GET /api/documents/<id>, dogfood D6; GET /api/artifacts/read, dogfood-ux-2). */
 function documentsTab() {
   const view = [["list", "list15", t("addons.lists.address")], ["map", "map15", t("window.places.library.map")]].map(([k, i, l]) => `<button type="button" aria-pressed="${docView === k}" data-act="dv15" data-v="${k}">${ic(i, "s")}${l}</button>`).join("");
-  let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="toast" data-why="doc-new" data-msg="Opens a blank document.">
+  let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="${E.profiles?.isOwner === false ? "doc-new-owner" : "doc-new"}"${E.profiles?.isOwner === false ? ' data-why="knobs-owner-only"' : ""}>
       ${ic('file', 's')}${t("window.places.library.write-a-new-document")}</button><span class="seg dv15" role="group" aria-label="${t("window.places.library.show-documents-as")}">${view}</span></div>`;
   html += workSection();
   /* The Map view shows what the map says about a name in place of the list, as the prototype's Map does. */
@@ -88,16 +96,18 @@ export function draw() {
   const tabs = [
     ["memory", t("memory.movein.kind.memory"), mem.length],
     ["documents", t("nav.documents"), 0],
-    ["made", t("place.library.made"), 0]
+    ["made", t("place.library.made"), 0],
+    ["seasons", "Seasons", 0]
   ];
 
-  const lockBanner = E.state.lock ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
+  const lockBanner = lockdownOn() ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
 
   let html = `<main class="main enter11" id="main">${lockBanner}<div class="scroll"><div class="place">
     <h1>${t("place.library")}</h1><p class="lede">${t("window.places.library.what-your-trunks-remember-the-documents")}</p>
     ${tabBar(tabs, "library", tab)}<div class="rows">`;
 
-  if (tab === "memory") html += memoryTab(mem) + learnSection();
+  if (tab === "memory") html += pendingMemories() + memoryTab(mem) + learnSection();
+  else if (tab === "seasons") html += seasonsTab();
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
@@ -113,10 +123,17 @@ export function draw() {
 export async function after() {
   const tab = S.tabs.library || "memory";
   if (tab === "memory") {
+    try { await readPendingMemories(); } catch (error) { toast(error.message); }
+    if (E.profiles?.isOwner !== false) {
+      const read = await api("memory/settings").catch(() => null);
+      if (read && JSON.stringify(read) !== JSON.stringify(memSettings)) { memSettings = read; renderNow(); }
+    }
     if (tidyFailed) return;
     let fresh = null;
     try { fresh = await api("memory/tidy"); } catch (error) { tidyFailed = true; toast(error.message); return; }
     if (JSON.stringify(fresh) !== JSON.stringify(findings)) { findings = fresh; renderNow(); }
+  } else if (tab === "seasons") {
+    try { await readSeasons(); } catch (error) { toast(error.message); }
   } else if (tab === "documents") {
     const p17 = await readLibrary17(tab, docView);
     if (p17.error) toast(p17.error.message);
@@ -224,8 +241,37 @@ async function putBack(data) {
   renderNow();
 }
 
+/* ---------- Write a new document ---------- */
+function openNewDoc() {
+  openDlg({ title: t("window.places.library.write-a-new-document"),
+    body: `<div class="fld"><label for="doc-new-name">${t("window.places.library.doc-name")}</label><input class="inp" id="doc-new-name" maxlength="190" placeholder="${esc(t("window.places.library.doc-name-hint"))}"></div>`
+      + `<div class="fld"><label for="doc-new-text">${t("window.places.library.doc-text")}</label><textarea class="inp" id="doc-new-text" rows="12" data-css="width:100%;resize:vertical"></textarea></div>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="doc-new-save">${t("window.places.library.doc-keep")}</button>`, wide: true });
+}
+async function saveNewDoc() {
+  const typed = document.getElementById("doc-new-name")?.value.trim() ?? "", text = document.getElementById("doc-new-text")?.value ?? "";
+  if (!text.trim()) { toast(t("window.places.library.doc-needs-text")); return; }
+  const name = !typed ? `${t("window.places.library.doc-untitled")} ${new Date().toISOString().slice(0, 10)}.md` : /\.[a-z0-9]{1,6}$/i.test(typed) ? typed : `${typed}.md`;
+  try { await api("documents", { name, text }); } catch (error) { toast(error.message); return; }
+  closeDlg();
+  try { docsList = (await api("documents")).documents ?? docsList; docsKey = JSON.stringify(docsList); } catch (error) { toast(error.message); }
+  toast(t("window.places.library.doc-kept"));
+  renderNow();
+}
+
 export function init() {
-  markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15"]);
+  initSeasons();
+  initMemoryReview();
+  markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15", "sw:mem-ask15", "doc-new", "doc-new-save", "sw:doc-new-name", "sw:doc-new-text"]);
+  on("doc-new", () => openNewDoc());
+  on("doc-new-save", () => saveNewDoc());
+  /* The whole setting is sent: the engine keeps what it is given (src/memory-review.ts configure). */
+  document.addEventListener("change", async (e) => {
+    if (e.target.id !== "mem-ask15" || !memSettings) return;
+    try { memSettings = await api("memory/settings", { ...memSettings, requireApproval: e.target.checked }); }
+    catch (error) { e.target.checked = !e.target.checked; toast(error.message); }
+    renderNow();
+  });
   /* List or Map: which way the documents are shown (window state); the Map asks the engine's map (library17.js). */
   on("dv15", (el) => { docView = el.dataset.v === "map" ? "map" : "list"; renderNow(); });
   initLibrary17();

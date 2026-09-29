@@ -10,6 +10,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { validationText } from "../dist/request-errors.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const HELLO = "Hello, I am the new Trunk and I help with research.";
 /* A model that answers after a moment, so a new Trunk's hello lands after its conversation has opened. */
@@ -59,7 +60,7 @@ test("validation failures read as sentences: the field and what it needs, never 
   const own = z.object({ at: z.string().refine(() => false, "A daily time needs a timezone") });
   assert.equal(validationText(own.safeParse({ at: "x" }).error), "A daily time needs a timezone", "a schema's own sentence is kept");
   // A key the request chose itself (an unknown field, a record's key) can be a pasted secret: never said back.
-  const secret = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c";
+  const secret = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c"; // not-a-real-secret
   const unknown = validationText(z.object({ a: z.string() }).strict().safeParse({ a: "x", [secret]: 1 }).error);
   assert.equal(unknown, "The request has a field that is not accepted.");
   const keyed = validationText(z.object({ env: z.record(z.string(), z.string().max(3)) }).safeParse({ env: { [secret]: "too long" } }).error);
@@ -130,7 +131,7 @@ test("offline anywhere: a stopped engine never shows the browser's words; back, 
   t.after(async () => { await up.server?.close(); await up.app?.close(); await discardTemp(root); });
   const port = Number(new URL(up.server.url).port), token = up.server.token;
   const stop = async () => { const { server, app } = up; up.server = up.app = null; await server.close(); await app.close(); };
-  const start = async () => { up.app = await createBranch({ workspace, dataDir, provider: slow }); up.server = await startServer(up.app, { dataDir, port }); };
+  const start = async () => { up.app = await createBranch({ workspace, dataDir, provider: slow }); up.server = await startServer(up.app, { dataDir, port }); }; // same-port-restart: the port port: 0 gave above
   await fetch(new URL("/api/onboarding", up.server.url), { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
@@ -174,7 +175,7 @@ test("offline anywhere: a stopped engine never shows the browser's words; back, 
   await page.waitForTimeout(4000);
   assert.equal(await page.locator("#offline18").count(), 0, "no offline notice during an install");
   await start();
-  await page.waitForFunction(async () => (await import("/app/core/api.js")).link.up && !(await import("/app/core/api.js")).link.quiet, null, { timeout: 40000 });
+  await waitInPage(page, async () => (await import("/app/core/api.js")).link.up && !(await import("/app/core/api.js")).link.quiet, null, { timeout: 40000 });
   const after = await page.evaluate(() => window.toastsSeen);
   assert.equal(after.slice(before).filter((words) => /fetch|NetworkError|Load failed|abort|isn't running/i.test(words)).length, 0, after.join(" | "));
   assert.equal(await page.evaluate(() => window.samePage), true);
@@ -248,8 +249,21 @@ test("Q016: every tour stop's card is whole on screen at 1440 and at 390", async
     await f.page.locator("#pal-in").fill("tour");
     await f.page.keyboard.press("Enter");
     await f.page.locator(".tour-card").waitFor({ timeout: 15000 });
+    let shown = null;
     for (let stop = 0; stop < 40 && await f.page.locator(".tour-layer").count(); stop++) {
-      await f.page.waitForTimeout(300);
+      // A stop is measured once its card has come to rest: a new stop, and the same place for five frames running (the
+      // card moves to its part and the part is scrolled into view first).
+      await f.page.waitForFunction((was) => {
+        const card = document.querySelector(".tour-card");
+        if (!card) return true;
+        const n = card.querySelector(".n")?.textContent ?? "";
+        if (n === was) return false;
+        const r = card.getBoundingClientRect(), key = [n, r.left, r.top, r.right, r.bottom].join();
+        const settle = (globalThis.__tourSettle ??= { key: "", frames: 0 });
+        if (settle.key === key) settle.frames += 1; else Object.assign(settle, { key, frames: 0 });
+        return settle.frames >= 5;
+      }, shown, { timeout: 10000 });
+      if (!await f.page.locator(".tour-card").count()) break;
       const at = await f.page.evaluate(() => {
         const r = document.querySelector(".tour-card").getBoundingClientRect(), s = document.querySelector(".tour-spot");
         const q = s.classList.contains("none") ? null : s.getBoundingClientRect();
@@ -258,6 +272,7 @@ test("Q016: every tour stop's card is whole on screen at 1440 and at 390", async
       const inside = ([l, tp, r, b]) => l >= 0 && tp >= 0 && r <= width && b <= height;
       assert.ok(inside(at.card), `${width}: the card of ${at.n} is on screen (${at.card})`);
       if (at.spot) assert.ok(at.spot[3] > 0 && at.spot[1] < height && at.spot[2] > 0 && at.spot[0] < width, `${width}: the part of ${at.n} is on screen (${at.spot})`);
+      shown = at.n;
       await f.page.keyboard.press("ArrowRight");
     }
   }

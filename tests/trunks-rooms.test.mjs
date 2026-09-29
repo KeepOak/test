@@ -158,6 +158,23 @@ test("a Trunk that writes a tool call out as text posts nothing of it to the roo
   assert.ok(!app.store.messages(room.sessionId).some((m) => String(m.content ?? "").includes('"arguments"')), "the room's conversation has none of it");
 });
 
+test("a tool call with a stray word in front and a closing tag is never posted to the room (qfix3's real run)", async (t) => {
+  // qwen2.5:7b answered a room with `portun {"name": ...} </tool_call>`, posted as its words.
+  const rules = [({ last }) => (String(last?.content ?? "").startsWith("[Room") || /tool call written out as text/.test(last?.content ?? "")
+    ? 'portun {"name": "memory.search", "arguments": {"query": "Roman Empire", "limit": 1}} </tool_call>' : null)];
+  const { app } = await fixture(t, rules);
+  on(app, "rooms");
+  const k = app.trunks.create({ name: "Kim" });
+  const l = app.trunks.create({ name: "Lee" });
+  await app.trunks.introduced();
+  const room = app.trunks.rooms.create({ name: "Pair", members: [k.id, l.id] });
+  app.trunks.rooms.send(room.id, { text: "@kim one fact about Rome" });
+  await app.trunks.rooms.settled(room.id);
+  const events = app.trunks.rooms.view(room.id).events;
+  assert.deepEqual(events.filter((e) => e.kind === "member"), []);
+  assert.ok(!app.store.messages(room.sessionId).some((m) => /"arguments"|portun/.test(String(m.content ?? ""))), "the room's conversation has none of it");
+});
+
 test("a room of Trunks: each answers as itself, @mentions pull others in, and @you raises needs-you", async (t) => {
   const rules = [({ last, system, request }) => {
     const text = last?.content ?? "";
@@ -280,6 +297,7 @@ test("trunk.message: checked against the roster, signed by Branch, answered late
   }];
   const { app, provider } = await fixture(t, rules);
   on(app, "messages");
+  app.trunks.ensureDefault(true);
   const ann = app.trunks.create({ name: "Ann" }), ben = app.trunks.create({ name: "Ben", title: "Scheduler" });
   await app.trunks.introduced();
   const asked = await app.runtime.run({ prompt: "ask ben", sessionId: ann.chatSessionId });

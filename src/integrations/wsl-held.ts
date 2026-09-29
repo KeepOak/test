@@ -33,7 +33,18 @@ export interface WslHeldPlan {
   secrets: string[];
   /** `npm ci`: the npm registry, and nothing else, is reachable. */
   registry: boolean;
+  /** selfdev: the owner's selected Full Access: any site is reachable (writes stay held to the worktree). */
+  open?: boolean;
   timeoutMs: number;
+}
+
+/**
+ * selfdev: Windows has no native npm program, so its npm alias is node.exe with npm's own `npm-cli.js` (or
+ * `npx-cli.js`) as the first argument (src/integrations/shell-config.ts). That pair is npm (or npx) by name.
+ */
+export function npmScript(argument: string | undefined): 'npm' | 'npx' | null {
+  const found = /[\\/]node_modules[\\/]npm[\\/]bin[\\/](npm|npx)-cli\.js$/i.exec(argument ?? '');
+  return found ? found[1]!.toLowerCase() as 'npm' | 'npx' : null;
 }
 
 /** The Linux program an alias stands for, by its file name; anything else is refused. */
@@ -49,17 +60,20 @@ const droppedNames = new Set(['PATH', 'HOME', 'TMP', 'TEMP', 'TMPDIR', 'WSL_INTE
 
 export function wslHeldPlan(input: {
   executable: { path: string; args: readonly string[] }; args: readonly string[]; cwd: string; workspace: string;
-  env: NodeJS.ProcessEnv; secrets: readonly string[]; registry: boolean; timeoutMs: number;
+  env: NodeJS.ProcessEnv; secrets: readonly string[]; registry: boolean; open?: boolean; timeoutMs: number;
 }): WslHeldPlan {
-  const program = wslProgram(input.executable.path);
+  const named = wslProgram(input.executable.path), all = [...input.executable.args, ...input.args];
+  // Windows' npm alias (node.exe npm-cli.js) is Linux's npm: the Windows script path never goes into WSL.
+  const script = named === 'node' ? npmScript(all[0]) : null;
+  const program: WslHeldProgram = script ?? named, args = script ? all.slice(1) : all;
   const workspace = wslPath(input.workspace), cwd = wslPath(input.cwd);
   if (!workspace.startsWith('/mnt/') || !cwd.startsWith('/mnt/'))
     throw new Error('On Windows a command held to its folder runs inside WSL, which cannot reach this folder, so it did not run.');
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(input.env))
     if (typeof value === 'string' && !droppedNames.has(name.toUpperCase()) && !input.secrets.includes(name)) env[name] = value;
-  return { program, args: [...input.executable.args, ...input.args], cwd, workspace, env, secrets: [...input.secrets],
-    registry: input.registry, timeoutMs: input.timeoutMs };
+  return { program, args, cwd, workspace, env, secrets: [...input.secrets],
+    registry: input.registry, ...(input.open ? { open: true } : {}), timeoutMs: input.timeoutMs };
 }
 
 /**
@@ -116,22 +130,54 @@ export async function gitCommonDir(folder: string): Promise<string | null> {
 }
 
 /**
- * The held view for this computer: `programs` (the held command's own program) and node, npm, npx
- * and git as found on `searchPath`, each by its real path, then heldView; and the workspace's Git
+ * The held view for this computer: `programs` (the held command's own program first) and node, npm,
+ * npx and git as found on `searchPath`, each by its real path, then heldView; and the workspace's Git
  * folder, bound back read-only when a cover would hide it, so Git keeps working in a worktree. Only
- * places that exist are returned (bwrap cannot cover or bind a missing one).
+ * places that exist are returned (bwrap cannot cover or bind a missing one). `refusal` says, before
+ * anything runs, why a command could not work behind this view and what does instead.
  */
-export async function heldCover(input: { home: string; programs: readonly string[]; searchPath: string; workspace: string }): Promise<{ covered: string[]; restored: string[] }> {
+export async function heldCover(input: { home: string; programs: readonly string[]; args?: readonly string[]; searchPath: string; workspace: string }):
+  Promise<{ covered: string[]; restored: string[]; refusal: string | null }> {
   const dirs = input.searchPath.split(':').filter((dir) => dir.startsWith('/'));
   const onPath = (name: string): string | undefined => dirs.map((dir) => posix.join(dir, name)).find((path) => existsSync(path));
-  const found = [...input.programs.map((program) => (program.startsWith('/') ? program : onPath(program))), ...wslHeldPrograms.map(onPath)]
-    .filter((path): path is string => !!path);
+  const own = input.programs.map((program) => (program.startsWith('/') ? program : onPath(program)));
+  const found = [...own, ...wslHeldPrograms.map(onPath)].filter((path): path is string => !!path);
   const reals = await Promise.all(found.map((path) => realpath(path).catch(() => path)));
   const view = heldView(input.home, reals);
   const git = await gitCommonDir(input.workspace);
   const hidden = git && view.covered.some((folder) => git === folder || git.startsWith(`${folder}/`));
-  return { covered: view.covered.filter((path) => existsSync(path)),
-    restored: [...new Set([...view.restored, ...(hidden ? [git] : [])])].filter((path) => existsSync(path)) };
+  const covered = view.covered.filter((path) => existsSync(path));
+  // selfdev: the browsers Playwright installed for this Linux user are programs too; they are shown read-only so a
+  // held test run (scripts/review.mjs's window gates) can start one. Nothing else under the home is shown.
+  const browsers = posix.join(input.home, '.cache', 'ms-playwright');
+  const restored = [...new Set([...view.restored, ...(hidden ? [git] : []), browsers])].filter((path) => existsSync(path));
+  const program = own[0] ? await realpath(own[0]).catch(() => own[0]!) : null;
+  return { covered, restored, refusal: await heldRefusal({ home: input.home, program, args: input.args ?? [], workspace: input.workspace, covered, restored }) };
+}
+
+const inside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
+
+/**
+ * Why a held command cannot work behind its view, in plain words with what works instead, or null.
+ * A program sitting straight in the home cannot be shown without the whole home; a file the command
+ * is given by its full path is not there when it sits in a covered folder outside the worktree and
+ * the programs' own folders.
+ */
+export async function heldRefusal(input: { home: string; program: string | null; args: readonly string[]; workspace: string;
+  covered: readonly string[]; restored: readonly string[] }): Promise<string | null> {
+  if (input.program && posix.dirname(input.program) === input.home)
+    return `${input.program} sits straight in your home folder, which a command held to its folder cannot see (only the folders a program is installed in are shown there), so it did not run. Install it under a folder of its own, such as ~/.local/bin (its bin and lib folders are then shown to the command), or use one installed outside your home.`;
+  const workspace = await realpath(input.workspace).catch(() => input.workspace);
+  for (const arg of input.args) {
+    if (!arg.startsWith('/')) continue;
+    const real = await realpath(arg).catch(() => null);
+    if (!real || !(await stat(real).then((found) => found.isFile(), () => false))) continue;
+    // /tmp too: the command gets a fresh, empty one of its own.
+    const folder = [...input.covered, '/tmp'].find((each) => inside(real, each));
+    if (!folder || inside(real, workspace) || input.restored.some((each) => inside(real, each))) continue;
+    return `${arg} is in ${folder}, which a command held to its folder cannot see (only its worktree and the folders of the programs it runs are shown there), so it did not run. Move the file into the worktree and run it from there.`;
+  }
+  return null;
 }
 
 /** `wsl.exe` itself, by full path, so no search path decides which program starts. */

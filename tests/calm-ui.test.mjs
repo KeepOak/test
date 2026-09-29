@@ -274,7 +274,7 @@ test("calm: a running task reads under its message, with a real Stop, and its co
   assert.match(await row.innerText(), /Sort my Downloads folder[\s\S]*Working/);
   model.release();
   await f.page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 15000 });
-  assert.equal(await f.page.locator('#side [data-act="chat"]').count(), 1, "still in Recents once finished");
+  assert.equal(await row.count(), 1, "the task's own conversation remains exactly once after finishing");
   assert.deepEqual(f.errors, []);
 });
 
@@ -327,13 +327,13 @@ test("calm: the empty screen offers three starting points that send as a run", a
   const chips = f.page.locator('#main .empty-chat [data-act="sugg"]');
   assert.ok(await chips.count() >= 3, "at least three starting points");
   const words = (await chips.first().innerText()).trim();
-  const initialRuns = f.app.store.runs(f.app.runtime.owner).length;
+  const initialRuns = new Set(f.app.store.runs(f.app.runtime.owner).map(run => run.id));
   await chips.first().click();
   // Wait for the run to appear in the store
   await f.page.locator("#conversation .u").waitFor({ state: "visible", timeout: 10000 });
-  const newRuns = f.app.store.runs(f.app.runtime.owner);
-  assert.ok(newRuns.length > initialRuns, "a new run was sent");
-  const lastRun = newRuns[newRuns.length - 1];
+  const newRuns = f.app.store.runs(f.app.runtime.owner).filter(run => !initialRuns.has(run.id));
+  assert.equal(newRuns.length, 1, "exactly one new run was sent");
+  const lastRun = newRuns[0];
   assert.equal(lastRun.prompt, words, "the run has the chip's words as the prompt");
   assert.deepEqual(f.errors, []);
 });
@@ -424,6 +424,11 @@ test("a popover whose button a redraw replaced closes when that button is presse
       const before = document.querySelector(sel);
       const main = document.querySelector("#main");
       main.replaceChild(main.firstElementChild.cloneNode(true), main.firstElementChild);
+      // The shell's regions are drawn again only when their markup changed or something replaced what was drawn
+      // (core/dom.js paintChanged): the button's own region is marked replaced too, so a draw that landed since the
+      // click cannot leave this one with nothing to do.
+      const region = before.closest("#side, #tbActions, #statusbar, .tb-head14");
+      if (region?.firstChild) region.replaceChild(region.firstChild.cloneNode(true), region.firstChild);
       const { renderNow } = await import("/app/core/dom.js");
       renderNow();
       return before !== document.querySelector(sel);
@@ -437,4 +442,3 @@ test("a popover whose button a redraw replaced closes when that button is presse
   }
   assert.deepEqual(f.errors, []);
 });
-

@@ -28,6 +28,8 @@ import { t } from "../../../i18n.js";
 import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17, viewOf } from "../../flows/computers17.js"; // pass 17 part D §9, §1
 import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
 import { computer17 } from "../p17-more.js";
+import { siteRow, loadSites, initSites } from "../sites17.js"; // Site skills (siteb17)
+import { initCiSetup } from "../ci-setup.js"; // wire-greyed: Branch in CI › Copy the setup
 
 const D = { coding: null, notes: null, prs: null, devices: null, desktop: null, wall: null, reach: null, appAsk: null };
 const onMode = (mode) => (mode ? mode !== "off" : false);
@@ -58,6 +60,7 @@ async function loadAll() {
   const [c, n, p, d, desktop, wall, reach, appAsk] = await Promise.all(["coding", "browser/notes/settings", "developer/pull-requests", "devices", "desktop/settings", "os-sandbox", "reach", "desktop/app-ask"]
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   Object.assign(D, { coding: c, notes: n?.settings ?? null, prs: p, devices: d, desktop, wall, reach, appAsk });
+  await loadSites();
   render();
   await loadComputers17();
 }
@@ -68,10 +71,12 @@ export function init() {
     "sw:f15-keep-large-tool-outputs", "sw:f15-read-jupyter-notebooks", "sw:f15-review-checks-and-a-checklist-per-task",
     "lend15", "dev-remove", "dev-remove-yes", "sw:c-screen", "sw:c-ask", "sw:f15-work-in-apps-in-the-background", "c-where"]);
   on("lend15", (el) => stopLending(el.dataset.v));
+  initCiSetup();
   on("dev-remove", (el) => removeDialog(el.dataset.v));
   on("dev-remove-yes", (el) => removeDevice(el.dataset.v));
   on("c-where", (el) => where(el.dataset.v));
   onPaired.add(() => loadAll());
+  initSites(render);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];
     if (!wire) return;
@@ -190,8 +195,8 @@ const browserMore = () => sec15(t("window.settings.computer.the-browser-more"),
   seg15(t("window.settings.computer.run-the-browser-in-a-sandbox"), "", [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], null, "seg", "f15-run-the-browser-in-a-sandbox")
   + sw("Record browser tasks", "A step-by-step trace you can replay.")
   + sw("Number the clickable things", "Faster and steadier on busy pages.")
-  // The engine has no list or count of site skills, so the prototype's "See N sites" button is not drawn.
-  + `<div class="ctl"><b>${t("window.settings.computer.site-skills")}</b><small>${t("window.settings.computer.what-branch-learned-about-the-sites")}</small></div>`
+  // Site skills: the websites the owner's skills know about, with See N and Forget (settings/sites17.js).
+  + siteRow()
   + sw("Page notes and “Send to Branch”", "A right-click in Chrome or Edge sends the page to a Trunk. Turns on when the browser extension is installed."));
 
 const code = () => sec15(t("window.settings.computer.code"),
@@ -206,7 +211,7 @@ const codeTechnical = () => sec15(t("window.settings.computer.code-technical"),
   code15(t("window.settings.computer.files-branch-never-reads"), t("window.settings.computer.like-gitignore"), ".branchignore")
   + sw("Read a file before editing it", "Refuses an edit to a file it hasn’t read in this task.")
   + sw("Keep large tool outputs", "Saved to a file instead of cut off.")
-  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup"), "soon", "f15-branch-in-ci"));
+  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup"), "ci-open"));
 
 const computerMore = () => sec15(t("window.settings.computer.on-a-computer-more"),
   sw("Work in apps in the background", "Through the accessibility tree, without taking the screen.")

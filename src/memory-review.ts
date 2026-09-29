@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { MemoryDataSchema, reworded, takeBackFact, visibleTo, type MemoryFacts, type MemoryRecord, type OutsideMemoryProvider } from "./memory.js";
+import { isCurrentFact, MemoryDataSchema, reworded, takeBackFact, visibleTo, type MemoryFacts, type MemoryRecord, type OutsideMemoryProvider } from "./memory.js";
 import { FactKindSchema } from "./memory-layers.js";
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
-import type { Runtime } from "./runtime.js";
-import { checkResult } from "./delegation.js";
 import { detectInjection } from "./content-guard.js";
+import { MemoryDestinationSchema, type MemoryWriteReceipt } from "./memory-backend.js";
 
 /**
  * Governance for what the assistant learns: exact versions of every memory, whole-memory
@@ -18,10 +17,7 @@ export const LearningSettingsSchema = z.object({
   review: z.boolean().default(false),
   /** Memory changes the model makes on its own are staged for the owner instead of applied. */
   requireApproval: z.boolean().default(false),
-  /** Once a day, look over what happened since last time and suggest what is worth remembering. */
-  consolidateDaily: z.boolean().default(false),
 }).strict();
-export interface ConsolidationReport { runs: number; through: string | null; proposals: number; skipped: boolean; reason?: string }
 export type LearningSettings = z.infer<typeof LearningSettingsSchema>;
 const ProposedFactSchema = MemoryDataSchema.pick({ scope: true, entity: true, attribute: true, validFrom: true, kind: true, layer: true, project: true }).strict();
 export const ProposalSchema = z.object({
@@ -67,10 +63,14 @@ export const ProposalSchema = z.object({
   runId: z.string().max(200).default(""),
   note: z.string().max(500).default(""),
 }).strict();
-export interface Proposal extends z.infer<typeof ProposalSchema> { id: string; status: "pending" | "accepted" | "rejected"; createdAt: string; decidedAt: string | null }
+export interface Proposal extends z.infer<typeof ProposalSchema> { id: string; status: "pending" | "accepted" | "rejected"; createdAt: string; decidedAt: string | null; appliedId?: string | null; appliedReceipt?: MemoryWriteReceipt | null }
+function readProposal(row: Record<string, unknown>): Proposal {
+  return { ...ProposalSchema.parse(JSON.parse(String(row.data))), id: String(row.id), status: String(row.status) as Proposal["status"],
+    createdAt: String(row.created_at), decidedAt: row.decided_at === null ? null : String(row.decided_at), appliedId: row.applied_id ? String(row.applied_id) : null,
+    appliedReceipt: row.applied_receipt ? JSON.parse(String(row.applied_receipt)) as MemoryWriteReceipt : null };
+}
 export interface MemoryVersion { memoryId: string; revision: number; data: Record<string, unknown>; reason: string; createdAt: string }
 export interface Checkpoint { id: string; label: string; memories: number; skills: number; createdAt: string }
-const reviewPrompt = "You review a batch of finished tasks. Reply with JSON only: {\"memories\":[{\"text\":\"a durable fact or preference about the person, in one sentence\",\"source\":\"which task showed it\"}]}. Include only things worth keeping for future tasks; an empty list is the normal answer.";
 export const memorySnapshotLimits = { facts: 20, chars: 2000 };
 /** Suggestions that tidy the store: they set facts aside in the archive and never delete anything. */
 /**
@@ -81,7 +81,9 @@ export const memorySnapshotLimits = { facts: 20, chars: 2000 };
  */
 export const lookBackSource = "Looked back over messages";
 export const tidyByInstructionsSource = "Tidying by your instructions:";
-const modelWritten = (source: string): boolean => [lookBackSource, tidyByInstructionsSource].some((start) => source.startsWith(start));
+/** Seasons: what Rings writes as the source of a fact it keeps overnight (src/seasons/rings.ts). */
+export const ringsSource = "Rings, night of";
+const modelWritten = (source: string): boolean => [lookBackSource, tidyByInstructionsSource, ringsSource].some((start) => source.startsWith(start));
 /** Whose a fact is: missing means the owner's own. */
 const whose = (data: Record<string, unknown>): string => String(data.scope ?? "private");
 const notTheOwners = "A suggestion a model wrote can only change the owner's own facts, and this one names someone else's, so it is not made. Decline it, then tidy again.";
@@ -120,15 +122,20 @@ export class MemoryReview {
    * itself, the same boundary `src/memory.ts` draws for `memory.keep`/`memory.at`/`memory.timeline`.
    */
   provider?: OutsideMemoryProvider;
-  /** The consolidation under way for each person, so a second request shares it (see `consolidate`). */
-  private readonly consolidating = new Map<string, Promise<ConsolidationReport>>();
   constructor(private readonly db: DatabaseSync, private readonly memories: MemoryFacts) {
     db.exec(`CREATE TABLE IF NOT EXISTS memory_proposals(id TEXT PRIMARY KEY, owner TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, decided_at TEXT);
       CREATE TABLE IF NOT EXISTS memory_checkpoints(id TEXT PRIMARY KEY, owner TEXT NOT NULL, label TEXT NOT NULL, memories TEXT NOT NULL, skills TEXT NOT NULL, created_at TEXT NOT NULL);`);
+    if (!db.prepare("PRAGMA table_info(memory_proposals)").all().some((row) => row.name === "applied_id"))
+      db.exec("ALTER TABLE memory_proposals ADD COLUMN applied_id TEXT");
+    // A backup may carry suggestions, but cannot plant a destination receipt for a Rings action.
+    db.exec("CREATE TABLE IF NOT EXISTS memory_proposal_receipts(owner TEXT NOT NULL,proposal_id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(owner,proposal_id))");
   }
   settings(owner: string): LearningSettings {
     const row = this.db.prepare("SELECT data FROM settings WHERE owner=? AND id='learning'").get(owner);
-    const parsed = LearningSettingsSchema.safeParse(row ? JSON.parse(String(row.data)) : {});
+    // Seasons: the old daily look (`consolidateDaily`) is Rings now. A record saved with it still holds the owner's
+    // other two switches, so that field is dropped before reading rather than the whole record read as unset.
+    const { consolidateDaily: _replaced, ...saved } = row ? JSON.parse(String(row.data)) as Record<string, unknown> : {};
+    const parsed = LearningSettingsSchema.safeParse(saved);
     return parsed.success ? parsed.data : LearningSettingsSchema.parse({});
   }
   configure(owner: string, input: unknown): LearningSettings {
@@ -146,19 +153,34 @@ export class MemoryReview {
     const data = { ...ProposalSchema.parse(input), fact: fact === null ? null : ProposedFactSchema.parse(fact) };
     if ((data.kind === "put" || data.kind === "update") && !data.text) throw new Error("A memory suggestion needs text");
     if (tidyingKinds.includes(data.kind) && !data.memoryIds.length) throw new Error("A tidying suggestion needs the facts it applies to");
+    // QA retest 2026-09-28 (m12): the same fact suggested again while the first is still waiting is that suggestion,
+    // not a second row the owner has to accept or reject twice.
+    const waiting = data.kind === "put" ? this.samePut(owner, data) : undefined;
+    if (waiting) return waiting;
     const proposal: Proposal = { ...data, id: randomUUID(), status: "pending", createdAt: new Date().toISOString(), decidedAt: null };
-    this.db.prepare("INSERT INTO memory_proposals VALUES(?,?,?,?,?,NULL)").run(proposal.id, owner, JSON.stringify(data), "pending", proposal.createdAt);
+    this.db.prepare("INSERT INTO memory_proposals(id,owner,data,status,created_at,decided_at) VALUES(?,?,?,?,?,NULL)").run(proposal.id, owner, JSON.stringify(data), "pending", proposal.createdAt);
     return proposal;
+  }
+  /** A waiting suggestion to remember the same words with the same details (spacing and case aside), if there is one. */
+  private samePut(owner: string, data: { text?: string | undefined; fact: unknown; skillId?: string | null | undefined }): Proposal | undefined {
+    const words = (text: string | undefined) => String(text ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+    const key = JSON.stringify([words(data.text), data.fact ?? null, data.skillId ?? null]);
+    return this.proposals(owner, "pending").find((one) => one.kind === "put" && JSON.stringify([words(one.text), one.fact ?? null, one.skillId ?? null]) === key);
   }
   proposals(owner: string, status: Proposal["status"] | "all" = "pending"): Proposal[] {
     const rows = status === "all"
-      ? this.db.prepare("SELECT * FROM memory_proposals WHERE owner=? ORDER BY created_at DESC LIMIT 200").all(owner)
-      : this.db.prepare("SELECT * FROM memory_proposals WHERE owner=? AND status=? ORDER BY created_at DESC LIMIT 200").all(owner, status);
-    return rows.map((row) => ({ ...ProposalSchema.parse(JSON.parse(String(row.data))), id: String(row.id), status: String(row.status) as Proposal["status"], createdAt: String(row.created_at), decidedAt: row.decided_at === null ? null : String(row.decided_at) }));
+      ? this.db.prepare("SELECT p.*,r.data AS applied_receipt FROM memory_proposals p LEFT JOIN memory_proposal_receipts r ON r.owner=p.owner AND r.proposal_id=p.id WHERE p.owner=? ORDER BY p.created_at DESC LIMIT 200").all(owner)
+      : this.db.prepare("SELECT p.*,r.data AS applied_receipt FROM memory_proposals p LEFT JOIN memory_proposal_receipts r ON r.owner=p.owner AND r.proposal_id=p.id WHERE p.owner=? AND p.status=? ORDER BY p.created_at DESC LIMIT 200").all(owner, status);
+    return rows.map(readProposal);
+  }
+  /** Exact provenance lookup stays available after the proposal leaves the recent list. */
+  proposal(owner: string, id: string): Proposal | undefined {
+    const row = this.db.prepare("SELECT p.*,r.data AS applied_receipt FROM memory_proposals p LEFT JOIN memory_proposal_receipts r ON r.owner=p.owner AND r.proposal_id=p.id WHERE p.owner=? AND p.id=?").get(owner, id);
+    return row ? readProposal(row) : undefined;
   }
   /** Accepting applies the change exactly as staged; rejecting only records the decision. */
   async decide(owner: string, id: string, accept: boolean): Promise<{ proposal: Proposal; applied: unknown }> {
-    const proposal = this.proposals(owner, "all").find((p) => p.id === id);
+    const proposal = this.proposal(owner, id);
     if (!proposal) throw new Error("No such suggestion");
     if (proposal.status !== "pending") throw new Error("That suggestion was already decided");
     // Marked decided before it is applied, with nothing awaited between the check above and here, so a second
@@ -167,6 +189,7 @@ export class MemoryReview {
     const decidedAt = new Date().toISOString();
     this.db.prepare("UPDATE memory_proposals SET status=?, decided_at=? WHERE id=? AND owner=?").run(accept ? "accepted" : "rejected", decidedAt, id, owner);
     let applied: unknown = null;
+    const destination = this.provider?.destinationFor?.(owner) ?? (this.provider?.isOutside(owner) ? null : { kind: "built-in" as const });
     if (accept) {
       try { applied = await this.apply(owner, proposal); }
       catch (error) {
@@ -174,7 +197,12 @@ export class MemoryReview {
         throw error;
       }
     }
-    return { proposal: { ...proposal, status: accept ? "accepted" : "rejected", decidedAt }, applied };
+    const appliedId = applied && typeof applied === "object" && "id" in applied && typeof applied.id === "string" ? applied.id : null;
+    if (appliedId) this.db.prepare("UPDATE memory_proposals SET applied_id=? WHERE id=? AND owner=?").run(appliedId, id, owner);
+    const appliedReceipt = appliedId && destination && (proposal.kind === "put" || proposal.kind === "update")
+      ? { destination: MemoryDestinationSchema.parse(destination), record: applied as MemoryRecord } : null;
+    if (appliedReceipt) this.db.prepare("INSERT INTO memory_proposal_receipts VALUES(?,?,?) ON CONFLICT(owner,proposal_id) DO UPDATE SET data=excluded.data").run(owner, id, JSON.stringify(appliedReceipt));
+    return { proposal: { ...proposal, status: accept ? "accepted" : "rejected", decidedAt, appliedId, appliedReceipt }, applied };
   }
   private async apply(owner: string, proposal: Proposal): Promise<unknown> {
     // FQ-memory.providers: put/update/delete are exactly the three methods `memory.put`/`.update`/
@@ -302,64 +330,6 @@ export class MemoryReview {
       return { id, memories: records.length, skills: restoredSkills };
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
-  /** Where consolidation got to: only runs after this moment are looked at next time. */
-  cursor(owner: string): { through: string; lastRunAt: string | null } {
-    const row = this.db.prepare("SELECT data FROM settings WHERE owner=? AND id='dream-cursor'").get(owner);
-    return row ? (JSON.parse(String(row.data)) as { through: string; lastRunAt: string | null }) : { through: "1970-01-01T00:00:00.000Z", lastRunAt: null };
-  }
-  dreamDue(owner: string, now = new Date()): boolean {
-    if (!this.settings(owner).consolidateDaily) return false;
-    const last = this.cursor(owner).lastRunAt;
-    return !last || now.getTime() - Date.parse(last) >= 86_400_000;
-  }
-  /**
-   * Looks over completed tasks since the cursor (at most 20), asks the model once what is worth
-   * remembering, stages the answers as suggestions, and advances the cursor only when that worked.
-   *
-   * One at a time per person. The scheduler checks every few seconds whether the daily look is due,
-   * and it stays due until the cursor moves at the very end; a model that took longer than one check
-   * (or the owner pressing the button while it ran) used to start a second look over the same tasks
-   * and stage every suggestion twice. A request while one is under way now waits for that one and
-   * gets its result.
-   */
-  consolidate(runtime: Runtime, owner: string): Promise<ConsolidationReport> {
-    const running = this.consolidating.get(owner);
-    if (running) return running;
-    const started = this.consolidateOnce(runtime, owner).finally(() => this.consolidating.delete(owner));
-    this.consolidating.set(owner, started);
-    return started;
-  }
-  private async consolidateOnce(runtime: Runtime, owner: string): Promise<ConsolidationReport> {
-    const cursor = this.cursor(owner);
-    const runs = this.db.prepare("SELECT * FROM tasks WHERE owner=? AND status='completed' AND created_at>? AND prompt NOT LIKE 'Consolidate %' ORDER BY created_at ASC LIMIT 20").all(owner, cursor.through)
-      .map((row) => ({ id: String(row.id), sessionId: String(row.session_id), prompt: String(row.prompt), output: String(row.output), createdAt: String(row.created_at) }))
-      .filter((run) => !this.isChildRun(run.id));
-    const stamp = new Date().toISOString();
-    if (!runs.length) { this.saveCursor(owner, cursor.through, stamp); return { runs: 0, through: cursor.through, proposals: 0, skipped: true, reason: "nothing new" }; }
-    const digest = runs.map((r, i) => `Task ${i + 1} (${r.createdAt}): ${r.prompt.slice(0, 400)}\nOutcome: ${r.output.slice(0, 600)}`).join("\n\n").slice(0, 12000);
-    const parent = await runtime.run({ prompt: `Consolidate what happened in ${runs.length} task(s) since ${cursor.through.slice(0, 10)}` });
-    const child = await runtime.delegate(digest, runtime.context({ runId: parent.id }), [], reviewPrompt, { timeoutMs: 120000 });
-    const parsed = child.status === "completed" ? checkResult(child.output, { type: "object", properties: { memories: { type: "array" } } }) : { status: "unresolved" as const, reason: child.status };
-    if (parsed.status !== "resolved") { this.db.exec("SELECT 1"); return { runs: runs.length, through: cursor.through, proposals: 0, skipped: true, reason: `the review could not be read (${parsed.reason})` }; }
-    const memories = ((parsed.value as { memories?: { text?: string; source?: string }[] }).memories ?? []).filter((m) => m?.text).slice(0, 8);
-    for (const m of memories) this.propose(owner, { kind: "put", text: String(m.text).slice(0, 4000), source: `Consolidation of ${runs.length} tasks: ${String(m.source ?? "").slice(0, 400)}`.slice(0, 500), runId: parent.id });
-    const through = runs.at(-1)!.createdAt;
-    this.saveCursor(owner, through, stamp);
-    this.db.prepare("INSERT INTO settings VALUES('dream-log',?,?,?,?) ON CONFLICT(id,owner) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at")
-      .run(owner, JSON.stringify({ at: stamp, runs: runs.length, proposals: memories.length, through }), stamp, stamp);
-    return { runs: runs.length, through, proposals: memories.length, skipped: false };
-  }
-  /** Delegated children (the consolidation's own reviewer included) are not tasks of the person. */
-  private isChildRun(runId: string): boolean {
-    const row = this.db.prepare("SELECT data FROM events WHERE run_id=? AND kind='run.started' ORDER BY id LIMIT 1").get(runId);
-    if (!row) return false;
-    const data = JSON.parse(String(row.data)) as { parentRunId?: string | null };
-    return !!data.parentRunId;
-  }
-  private saveCursor(owner: string, through: string, lastRunAt: string): void {
-    this.db.prepare("INSERT INTO settings VALUES('dream-cursor',?,?,?,?) ON CONFLICT(id,owner) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at")
-      .run(owner, JSON.stringify({ through, lastRunAt }), lastRunAt, lastRunAt);
-  }
   /** The memory snapshot a conversation started with; the same one is returned for the rest of that conversation. */
   sessionSnapshot(owner: string, sessionId: string, agent?: string): { text: string; count: number; reused: boolean; takenAt: string } {
     // FQ-routing.isolated-agents: one per conversation and per whoever answers in it, so a conversation the owner
@@ -370,7 +340,7 @@ export class MemoryReview {
     const lines: string[] = []; let chars = 0;
     const binned = binnedRuns(this.db); // a fact a conversation in Recently Deleted taught is not handed to a new one
     const ordered = (this.orderFacts?.(owner, agent, sessionId) ?? this.memories.list(owner).filter((r) => visibleTo(r, agent)))
-      .filter((r) => !learnedInBin(binned, r.data));
+      .filter((r) => !learnedInBin(binned, r.data) && isCurrentFact(r)); // SELF-202: a fact a newer one ended is not current
     const limits = this.snapshotLimits?.(owner) ?? memorySnapshotLimits; // R17-S13
     for (const record of ordered.slice(0, limits.facts)) {
       const line = `- ${String(record.data.text).replace(/\s+/g, " ").trim()}`;

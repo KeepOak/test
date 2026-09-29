@@ -19,20 +19,19 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { savePracticeRuns } from "../dist/practice-runs.js";
 
-const allowedNote = /The call you asked about did not run/;
 const repliedNote = /their answer is their newest message/;
 const system = (request) => String(request.messages[0]?.content ?? "");
 const start = () => ({ content: "", toolCalls: [{ id: `p${Math.random()}`, name: "process.start",
   arguments: JSON.stringify({ program: "node", args: ["-e", "1"], name: "a check" }) }] });
 const write = (path) => ({ content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path, content: "hello" }) }] });
 
-/** Starts a program when told to (and once more after a yes); asks where a trip goes, and writes the answer down. */
+/** Starts a program when told to (after a yes the engine starts it, QA R1); asks where a trip goes, and writes the answer down. */
 function model() {
   return { name: "scripted", async complete(request) {
     const last = request.messages.at(-1), text = String(last?.content ?? "");
     if (last?.role === "user" && text === "start the check") return start();
-    if (last?.role === "tool" && !/"ok":true/.test(text) && allowedNote.test(system(request)) && !/Lockdown|Permission denied/.test(text)) return start();
     if (last?.role === "user" && text === "plan my trip")
       return { content: "", toolCalls: [{ id: `a${Math.random()}`, name: "user.ask", arguments: JSON.stringify({ question: "Where to?" }) }] };
     if (last?.role === "user" && repliedNote.test(system(request))) return write("trip.txt");
@@ -95,6 +94,7 @@ test("a reply to a practice run's question keeps it a practice run: nothing is r
   const f = await fixture(t);
   const first = await f.app.runtime.run({ prompt: "plan my trip", dryRun: true });
   assert.equal(first.status, "needs_input", "control: the practice run asked where to");
+  savePracticeRuns(f.app.store, f.app.runtime.owner, { enabled: false });
   const reply = await f.call("run", { prompt: "Paris", sessionId: first.sessionId });
   assert.equal(reply.status, 200, JSON.stringify(reply.body));
   assert.equal(reply.body.id, first.id, "control: the reply went to the task that asked");

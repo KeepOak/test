@@ -5,7 +5,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -33,6 +33,13 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), chatgpt: new ChatGPTAuth(vault()) });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' });
+  const bin = join(root, "bin");
+  await mkdir(bin, { recursive: true });
+  for (const name of ["claude", "claude.cmd"]) await writeFile(join(bin, name), "", { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}${delimiter}${oldPath}`;
+  t.after(() => { process.env.PATH = oldPath; });
   let clock = Date.parse("2026-09-27T10:00:00Z");
   Object.defineProperty(service, "now", { value: () => clock });
   const calls = [];
@@ -138,8 +145,8 @@ test("R6 a Claude Code sign-in shows its 5-hour and weekly windows from the prog
   assert.equal(row.connectionName, "Claude plan");
   assert.equal(row.readable, true);
   assert.deepEqual(row.windows.map((w) => [w.title, w.remaining, w.resetAt]), [["This 5-hour window", 63, "2026-09-27T13:00:00.000Z"], ["This week", 20, "2026-10-01T09:00:00.000Z"]]);
-  assert.equal(asked[0].CLAUDE_CONFIG_DIR, undefined, "its usual sign-in, in its usual folder");
-  assert.ok(!Object.keys(asked[0]).some((name) => /ANTHROPIC|CLAUDE/.test(name)), "nothing of Branch's own environment is handed over");
+  assert.equal(asked[0].CLAUDE_CONFIG_DIR, fx.service.primaryClaudeHome, "the same primary profile that status and answers use");
+  assert.ok(!Object.keys(asked[0]).some((name) => /ANTHROPIC|CLAUDE/.test(name) && name !== "CLAUDE_CONFIG_DIR"), "only the selected profile location is handed over");
 
   fx.tick(121_000);
   limits = null;
@@ -152,7 +159,7 @@ test("R7 a Claude Code signed in here but not added is offered once, and not aft
   const fx = await fixture(t);
   const bin = join(fx.root, "bin");
   await mkdir(bin, { recursive: true });
-  for (const name of ["claude", "claude.cmd", "claude.exe"]) { await writeFile(join(bin, name), ""); await chmod(join(bin, name), 0o755); }
+  for (const name of ["claude", "claude.cmd"]) await writeFile(join(bin, name), "", { mode: 0o755 });
   const path = process.env.PATH;
   process.env.PATH = `${bin}${delimiter}${path}`;
   t.after(() => { process.env.PATH = path; });
@@ -190,7 +197,7 @@ test("R8 Claude Code accounts are read one at a time, each from its own folder",
   for (let i = 0; i < 2; i++) { await until(() => gates.length > i); gates[i](); }
   await both;
   assert.equal(most, 1, "one program at a time");
-  assert.deepEqual(homes, [null, fx.service.homeOf("cli-claude-code", work)]);
+  assert.deepEqual(homes, [fx.service.primaryClaudeHome, fx.service.homeOf("cli-claude-code", work)]);
 });
 async function until(done) {
   for (let i = 0; i < 500; i++) { if (done()) return; await new Promise((resolve) => setImmediate(resolve)); }

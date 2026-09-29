@@ -15,10 +15,31 @@ export function applyCss(root = document) {
   }
 }
 
+/* Opt-in disclosure state survives a redraw of the same content. */
+function detailState(from) {
+  const openDetails = new Map();
+  for (const details of from.querySelectorAll("details[data-persist]")) {
+    const key = details.dataset.persist;
+    const states = openDetails.get(key) ?? [];
+    states.push(details.open);
+    openDetails.set(key, states);
+  }
+  return openDetails;
+}
+function restoreDetails(openDetails, to) {
+  for (const details of to.querySelectorAll("details[data-persist]")) {
+    const states = openDetails.get(details.dataset.persist);
+    if (states?.length) details.open = states.shift();
+  }
+}
+export function keepDetails(from, to) { restoreDetails(detailState(from), to); }
+
 /* Draws html into a region and applies its styles. Returns the region. */
 export function paint(region, html) {
   if (!region) return region;
+  const previous = detailState(region);
   region.innerHTML = html;
+  restoreDetails(previous, region);
   applyCss(region);
   return region;
 }
@@ -28,14 +49,24 @@ export function paint(region, html) {
    the press ends (after its click has been handled). A press whose end never comes (a drag, a context menu, the window
    losing focus) lets go after a second at most, so nothing stays undrawn. */
 let pressed = null, heldBack = false, letGo = null;
-const released = () => { clearTimeout(letGo); pressed = null; if (heldBack) { heldBack = false; render(); } };
+const afterPress = [];
+const released = () => {
+  clearTimeout(letGo); pressed = null;
+  if (heldBack) { heldBack = false; render(); }
+  // Released at the click's capture: a held-back draw of its own waits until that click has reached its handler.
+  if (afterPress.length) { const due = afterPress.splice(0); setTimeout(() => { for (const draw of due) draw(); }); }
+};
+/** A draw that is not render()'s (a popover drawn again) held back by pressIn(), run once the press has ended. */
+export function whenReleased(draw) { afterPress.push(draw); }
 document.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   pressed = e.target instanceof Element ? e.target : null;
   clearTimeout(letGo);
   letGo = setTimeout(released, 1000);
 }, true);
-for (const kind of ["pointerup", "pointercancel", "dragstart", "contextmenu", "visibilitychange"]) document.addEventListener(kind, released, true);
+/* A click follows pointerup. Keep its target through that gap: a queued engine draw at pointerup otherwise replaces
+   the button before the click reaches the action listener. A release with no click still uses the one-second cap. */
+for (const kind of ["click", "pointercancel", "dragstart", "contextmenu", "visibilitychange"]) document.addEventListener(kind, released, true);
 addEventListener("blur", released);
 /* trunk-rooms-live: a drag (a Trunk's row carried onto another, flows/roomwith.js) is a press that lasts until it is dropped
    or let go: its region drawn anew would replace the row being carried and end the drag, so the region waits for it. */

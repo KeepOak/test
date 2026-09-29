@@ -134,6 +134,9 @@ test("W2 a chart block is drawn in the page, reads out under the pointer and sho
   assert.match(await chart.locator(".note").innerText(), /Shown in a sealed frame/);
   /* The numbers behind it, as the design shows them: "The code that drew it". */
   await chart.locator("details summary").click();
+  await page.evaluate(async () => { const { renderNow } = await import("/app/core/dom.js"); renderNow(); });
+  assert.equal(await chart.locator("details").evaluate((details) => details.open), true,
+    "an engine redraw keeps the chart's opened code visible");
   assert.match(await chart.locator("details pre").innerText(), /Mon[\s\S]*3[\s\S]*Tue[\s\S]*7[\s\S]*Wed[\s\S]*5/);
   // Redesign: replaced by the new window (prototype.html's chart has no hover read-out and no "Show the numbers" table).
   assert.deepEqual(errors, []);
@@ -162,7 +165,6 @@ test("W1 Save to workspace keeps the artifact beside its task, where Documents l
   const card = artCard(page);
   await card.waitFor({ timeout: 10000 });
   await card.getByRole("button", { name: "Save to Library", exact: true }).click();
-  await page.waitForFunction(async () => true);
   let mine;
   for (let tries = 0; tries < 40 && !mine; tries++) {
     mine = (await app.artifacts.list(20)).find((entry) => entry.name.startsWith("artifact-"));

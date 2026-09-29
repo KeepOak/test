@@ -65,6 +65,8 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
   // switch back to the owner included, so a window left on a household profile would stay shut for
   // good. The PIN is the guard here (src/session-lock.ts); setting or removing it stays the owner's.
   ...own("/api/lock/unlock"),
+  // The route itself accepts only the active person's own Trunk, never an owner's or another person's files.
+  ...own("/api/trunks/:id/files", "GET,POST"),
   // The table's "other" rows: a person's own conversations, memory, documents, notes and lists.
   ...[
     own("/api/asks/analytics/event"),
@@ -96,6 +98,8 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/learning-more/blocks/edit"),
     own("/api/learning-more/blocks/remove"),
     own("/api/learning-more/memory/label"),
+    // Seasons: a person reads, undoes and vetoes only their own nights of Rings (the scope is always theirs).
+    own("/api/seasons/morning/seen"), own("/api/seasons/rings/keep"), own("/api/seasons/rings/undo"), own("/api/seasons/rings/veto"),
     own("/api/local-models/details"),
     own("/api/local-models/offers"),
     own("/api/local-models/routing/preview"),
@@ -287,6 +291,7 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/activity", "tasks working now, only the person's own (profiles.scope(), #324)"),
   read("/api/commands", "the typed commands a household person may send; the owner's saved commands left out (Q259)"),
   read("/api/policy", "the presets and the person's own waiting questions; the owner's policy is null (Q259)"),
+  read("/api/practice-runs", "only whether practice is available, so a person can practice their own task"),
   read("/api/conversation-mode", "the mode chip of the person's own conversation (another conversation's id reads as none)"),
   read("/api/conversation-mode/settings", "what a new conversation starts on, which the mode chip's answer already carries"),
   read("/api/usage/glance", "the status bar's ring, which answers a household person with nothing"),
@@ -330,6 +335,7 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/prompts", "saved prompts, an empty list for a household person (Q259)"),
   read("/api/approvals/categories", "an empty list for a household person (Q259)"),
   read("/api/trunks", "the private rooms the person is a member of, and nothing of the owner's Trunks"),
+  read("/api/trunks/:id/files", "only the active person's own default Trunk files; the route rejects foreign ids"),
   read("/api/trunks/rooms/:id", "a private room the person is a member of, without the owner's context or questions"),
   read("/api/trunks/conversations/:id", "who answers in a private room's conversation the person is a member of"),
   read("/api/collab/events", "the household's signed events, each person's own to read and publish"),
@@ -342,6 +348,8 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/memory/learned", "what was noticed about the person"),
   read("/api/memory/proposals", "facts proposed for the person to keep"),
   read("/api/memory/versions", "the earlier versions of one of the person's facts"),
+  read("/api/seasons", "the person's own nights of Rings and what they kept (src/seasons/api.ts reads profiles.scope())"),
+  read("/api/seasons/morning", "what the person's own last night kept"),
   read("/api/labels", "the person's own labels"),
   // Public catalogues and facts about the program: the same for everybody, with nothing of the owner's in them.
   read("/api/connections/catalog", "the connector catalogue"),
