@@ -145,7 +145,10 @@ function list() {
   const recent = rows.filter((s) => !pinnedRow(s) && !trunkFor(s));
   const threads = E.trunks.map((trunk) => {
     const own = rows.filter((session) => !pinnedRow(session) && trunkFor(session)?.id === trunk.id);
-    return own.length ? `<div class="lh">${esc(trunk.name)}</div>${own.map(row).join("")}` : "";
+    // QA 2026-09-28 (Pass 2): the default Trunk's own conversation alone is itself a row named for the Trunk, so its
+    // heading says what the list is rather than the same name twice.
+    const alone = trunk.id === E.defaultTrunkId && own.length === 1 && sessionId(own[0]) === trunk.chatSessionId;
+    return own.length ? `<div class="lh">${esc(alone ? t("rail.conversations") : trunk.name)}</div>${own.map(row).join("")}` : "";
   }).join("");
   return `<nav class="list" aria-label="${t("people.home.list")}">
     ${hidden("projects") ? "" : `<button class="lh lh-btn" type="button" data-act="projtoggle" aria-expanded="${!!S.projOpen}" data-hide="projects">${ic(S.projOpen ? "down" : "chev", "s")}${t("memory.movein.kind.project")}</button>${S.projOpen ? projectRows() : ""}`}

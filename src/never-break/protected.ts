@@ -32,7 +32,7 @@ export interface ProtectedAreas {
 export const guardedDataFiles = [
   "branch.sqlite", "branch.sqlite-wal", "branch.sqlite-shm", "branch.sqlite-journal",
   "journal.sqlite", "journal.sqlite-wal", "journal.sqlite-shm", "journal.sqlite-journal",
-  "locker.key", "session-token", "chatgpt-auth.json", "question-fingerprint.key",
+  "locker.key", "session-token", "chatgpt-auth.json", "question-fingerprint.key", "desktop-control",
 ] as const;
 /** Files and folders in the data folder the gateway and the updater own. */
 export const gatewayDataFiles = [
@@ -42,6 +42,8 @@ export const gatewayDataFiles = [
   "running.json", "first-start.json", "update-backups", "updates", "update-watch.json",
   // Q45 leaf 0: the port the window asks for again; the assistant must not choose where the app listens.
   "local-port.json",
+  // One window per data folder (src/desktop/shell-lock.ts): an assistant that could remove it could open a second.
+  "shell.lock",
   // The record of what each update changed: an assistant that could edit this could make a bad
   // update look undoable, or an undoable one look unsafe.
   "activation.sqlite", "activation.sqlite-wal", "activation.sqlite-shm", "activation.sqlite-journal",
