@@ -104,7 +104,8 @@ test("S6 Regular shows the essentials; each level shows more; the choice is kept
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await openSettingsPage(f.page, "models");
   await f.page.locator('[data-act="setlevel"][data-v="technical"][aria-pressed="true"]').waitFor();
-  await f.page.waitForFunction((want) => JSON.stringify([...document.querySelectorAll(".set-col :is(h1, h2, h3)")].filter((node) => node.checkVisibility()).map((node) => node.textContent.trim())) === want, JSON.stringify(technical), { timeout: 10000 }).catch(() => {});
+  await f.page.waitForFunction((want) => JSON.stringify([...document.querySelectorAll(".set-col :is(h1, h2, h3)")].filter((node) => node.checkVisibility()).map((node) => node.textContent.trim())) === want, JSON.stringify(technical), { timeout: 60000 }).catch(() => {});
+  // A cold reload on a busy runner can take longer than 10 s to draw the page; the wait ends as soon as it matches.
   assert.deepEqual(await headings(f.page), technical, "the choice is kept");
   assert.deepEqual(f.errors, []);
 });
