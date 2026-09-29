@@ -72,6 +72,7 @@ The application reads environment variables when it starts. It does not automati
 | Variable | Meaning |
 | --- | --- |
 | `BRANCH_PROVIDER` | `openai` or `anthropic`. Unset means no model is set up: every task is refused with "No model yet. Choose one in setup or in Settings › Models." until one is added there. (`demo` names the tests' scripted fixture; only tests use it.) |
+| `BRANCH_MODEL_CATALOG_FILE` | Optional absolute path to a checked model-metadata JSON bundle. Load new model choices and prices at startup without replacing Branch. It can update existing services' `defaultModel`, `recommendedModels` and `prices`, but cannot change addresses, authentication, capabilities or terms. Nothing is downloaded automatically. A missing or invalid selected bundle is an error; remove this variable to use the shipped catalogue. |
 | `BRANCH_ENDPOINT` | API base URL, for example `https://api.openai.com/v1` or `https://api.anthropic.com/v1` |
 | `BRANCH_MODEL` | Model identifier accepted by that endpoint |
 | `BRANCH_API_KEY` | API credential; keep outside source control |
@@ -80,6 +81,28 @@ The application reads environment variables when it starts. It does not automati
 | `BRANCH_PORT` | Local web port, default `3210`; `0` selects an available port |
 | `BRANCH_INTEGRATIONS` | Path to a trusted integration configuration JSON file |
 | `BRANCH_MODEL_PRESETS` | Optional JSON list of named model presets (see below); overrides the single-provider variables |
+
+### Model catalogue metadata updates
+
+`BRANCH_MODEL_CATALOG_FILE` selects a local JSON file in this format. Prices are US dollars per million tokens;
+the bundle's explicit prices take precedence over Branch's shipped tables, while your saved price overrides still win.
+Only list fields you want to replace; unlisted services retain their shipped model choices and prices.
+
+```json
+{
+  "version": 1,
+  "pricedAt": "2026-09-29",
+  "services": [
+    { "id": "openai", "defaultModel": "your-model-id", "recommendedModels": ["your-model-id"],
+      "prices": { "your-model-id": { "input": 1, "output": 4 } } }
+  ]
+}
+```
+
+Obtain model ids and prices from the service's published catalogue, then restart Branch after replacing the file.
+This is an owner-managed metadata update, with no background download or hot reload. Addresses, credentials,
+provider shapes, capabilities and service terms remain those shipped with Branch. Unknown or repeated service ids
+and extra fields are rejected. Removing `BRANCH_MODEL_CATALOG_FILE` restores the shipped catalogue on the next start.
 
 ### Model presets
 

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { ModelPrice } from "./pricing.js";
+import { catalogWithLocalUpdates } from "./provider-catalog-updates.js";
 
 /**
  * Every model service Branch knows how to talk to, kept as data in `data/providers.json` rather
@@ -104,7 +105,7 @@ export function providerCatalog(): Catalog {
   for (const source of bundled) {
     let text: string;
     try { text = readFileSync(source, "utf8"); } catch { continue; }
-    return (loaded = CatalogSchema.parse(JSON.parse(text) as unknown));
+    return (loaded = catalogWithLocalUpdates(CatalogSchema.parse(JSON.parse(text) as unknown)));
   }
   throw new Error("The list of model services (providers.json) is missing from this installation");
 }

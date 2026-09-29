@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { catalogPrices } from "./provider-catalog.js";
+import { localCatalogPriceUpdates } from "./provider-catalog-updates.js";
 import type { Store } from "./store.js";
 
 /**
@@ -127,13 +128,14 @@ export function resetCatalogPrices(): void {
 
 /**
  * The table price for a model, trying the exact identifier, then the catalog's own prices, then
- * the normalized identifier. This file wins where the two overlap, so nothing silently changes.
+ * the normalized identifier. An explicitly selected metadata bundle's prices win over the shipped tables.
  */
 export function tablePrice(model: string, table: Record<string, ModelPrice> = builtInPrices): ModelPrice | undefined {
   const normalized = normalizeModelId(model);
   if (table !== builtInPrices) return table[model] ?? table[normalized];
   const catalog = pricesFromCatalog();
-  return table[model] ?? table[normalized] ?? catalog[model] ?? catalog[normalized];
+  const updated = localCatalogPriceUpdates?.prices;
+  return updated?.[model] ?? updated?.[normalized] ?? table[model] ?? table[normalized] ?? catalog[model] ?? catalog[normalized];
 }
 
 const round = (value: number): number => Math.round(value * 1_000_000) / 1_000_000;
@@ -155,11 +157,13 @@ export function estimateCost(
     (usage.input * price.input + usage.output * price.output + cachedTokens * (price.cached ?? price.input)) / 1_000_000,
   );
   const confidence: CostConfidence = override ? "override" : "table";
+  const updates = localCatalogPriceUpdates;
+  const priceDate = updates && (updates.prices[model] || updates.prices[normalizeModelId(model)]) ? updates.pricedAt : pricedAt;
   return {
     amount,
     currency: "USD",
     confidence,
-    note: override ? "your own price" : `list price as of ${pricedAt}`,
+    note: override ? "your own price" : `list price as of ${priceDate}`,
   };
 }
 
