@@ -42,8 +42,8 @@ const TEMPLATES = [
   ["window.flows.tmpl.trip", "window.flows.tmpl.trip-job", "#8A5AA8", 3],
 ];
 /* The language comes first (the owner's call). Only languages with words on file are listed (i18n.js LANGUAGES, the
-   locale files), so one appears as soon as its file does; each is named in its own language by the browser
-   (Intl.DisplayNames), never written here. The one shown is the one in force. */
+   locale files), so one appears as soon as its file does; each keeps its own-language label and any translation notice.
+   The one shown is the one in force. */
 
 const pressed = (on) => `aria-pressed="${on}"`;
 const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animation:none" aria-hidden="true"></span>` : "";

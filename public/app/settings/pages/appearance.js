@@ -109,7 +109,7 @@ function shownSection() {
 }
 
 /* Only the languages that have words on file (public/locales, i18n.js LANGUAGES) are listed, the same list setup's
-   Language picker shows, each named in its own language by the browser (Intl.DisplayNames). The one in force is the one
+   Language picker shows, each with the catalogue's own-language label and translation notice. The one in force is the one
    shown; picking one saves it (shell/language.js). */
 function languageSection() {
   const now = language();
