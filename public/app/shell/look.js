@@ -48,12 +48,22 @@ function themeEF(row, mode, more) {
     ink2: overC(at("--text-2"), bg), ink3: overC(at("--text-3"), bg), line: overC(at("--line"), bg), accent: at("--copper"),
     btn: T, onBtn: bg, ok: at("--ok"), warn: at("--warn"), bad: at("--bad"), accentText: at("--copper-text") };
 }
+/* UI-225: text in the accent reads at AA (4.5:1) on every ground it is drawn on (the page, a card, the accent's own
+   tint). A theme's or the owner's accent that falls short is moved toward white on dark, black on light, only as far as
+   it takes, so it stays that accent's colour. */
+export function readableOn(fg, grounds, toward) {
+  let out = fg;
+  for (let k = 1; k <= 20 && grounds.some((g) => contrastC(out, g) < 4.5); k++) out = mixC(fg, toward, k * 0.05);
+  return out;
+}
 /* Everything else follows from the thirteen. */
 export function varsFromEF(c, mode) {
   const dark = mode === "dark", bg = c.bg, T = c.ink;
+  const tint = mixC(bg, c.accent, dark ? 0.2 : 0.13);
+  const accentInk = readableOn(c.accentText || mixC(c.accent, dark ? "#FFFFFF" : "#000000", 0.22), [bg, c.raise, c.side, tint], dark ? "#FFFFFF" : "#000000");
   return { "--bg": bg, "--side": c.side, "--raise": c.raise, "--title": dark ? mixC(c.side, "#000000", 0.3) : mixC(c.side, T, 0.06),
     "--ink": T, "--ink-2": c.ink2, "--ink-3": c.ink3, "--line": c.line, "--line-2": mixC(c.line, T, 0.14), "--fill": mixC(bg, T, dark ? 0.07 : 0.05), "--fill-2": mixC(bg, T, dark ? 0.12 : 0.09),
-    "--accent": c.accent, "--accent-ink": c.accentText || mixC(c.accent, dark ? "#FFFFFF" : "#000000", 0.22), "--accent-tint": mixC(bg, c.accent, dark ? 0.2 : 0.13), "--brand-tint": mixC(bg, c.ok, 0.16),
+    "--accent": c.accent, "--accent-ink": accentInk, "--accent-tint": tint, "--brand-tint": mixC(bg, c.ok, 0.16),
     "--btn": c.btn, "--on-btn": c.onBtn, "--ok": c.ok, "--ok-tint": mixC(bg, c.ok, 0.14), "--warn": c.warn, "--warn-tint": mixC(bg, c.warn, 0.14), "--bad": c.bad, "--bad-tint": mixC(bg, c.bad, 0.14) };
 }
 const VAR_KEYS = Object.keys(varsFromEF(BRANCH_EF.light, "light"));

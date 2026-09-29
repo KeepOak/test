@@ -61,7 +61,9 @@ test("on an app with no buttons, /approve answers the question it was shown, and
   assert.match(chat.sent.at(-1), /\/approve or \/deny/, "the question says how to answer by typing");
   const runs = app.store.runs(app.runtime.owner).length;
   assert.equal(await app.channels.handle(message("plain", "/approve")), "replied");
-  assert.match(chat.sent.at(-1), /Noted/);
+  // QA R1 follow-up: the task that asked carries on, the engine runs the approved call, and its reply comes back here.
+  assert.match(chat.sent.at(-1), /Done\./);
+  assert.equal(app.store.events(lastRun(app).id).filter((event) => event.kind === "run.approved_call").length, 1, "the engine ran the approved call");
   assert.equal(app.store.runs(app.runtime.owner).length, runs, "/approve was an answer, not a new task");
   assert.equal(await app.channels.handle(message("plain", "/deny")), "replied");
   assert.equal(chat.sent.at(-1), nothingToApprove, "with nothing waiting it says so rather than starting a task");
@@ -116,7 +118,7 @@ test("Slack buttons through the router: the press answers the waiting question",
   assert.ok(question, "the question went out with buttons");
   const yes = question.body.blocks.find((block) => block.type === "actions").elements[0].value;
   assert.equal(await app.channels.handle(message("slack", yes, { chatId: "D1" })), "replied");
-  assert.match(posts.filter((post) => post.method === "chat.postMessage").at(-1).body.text, /Noted/);
+  assert.match(posts.filter((post) => post.method === "chat.postMessage").at(-1).body.text, /Done\./, "the carried task's reply");
 });
 
 test("Matrix: a question carries 👍 and 👎 to tap, and a reaction by the person answers it; the bot's own does not", async () => {
@@ -135,7 +137,8 @@ test("Matrix: a question carries 👍 and 👎 to tap, and a reaction by the per
 });
 
 /* Review attack on #658: every press in one thread used to share the router's delivery keys (answered:<id>), so the
-   second approval of a task had its "Noted" dropped as a repeat. Two questions in one thread, two answers, two replies. */
+   second approval of a task had its reply dropped as a repeat. Two questions in one thread, two answers, two replies
+   (QA R1 follow-up: each the carried task's own reply). */
 test("Slack: two approvals in one thread each get their own answer", async (t) => {
   const posts = [];
   const fetch = async (url, init) => { posts.push({ method: String(url).split("/").pop(), body: JSON.parse(init.body) }); return Response.json({ ok: true, ts: `18${posts.length}.0`, user_id: "UBOT", user: "juniper" }); };
@@ -150,7 +153,7 @@ test("Slack: two approvals in one thread each get their own answer", async (t) =
     const yes = question.body.blocks.find((block) => block.type === "actions").elements[0].value;
     const before = posts.length;
     assert.equal(await app.channels.handle(message("slack", yes, { chatId: "D1", messageId: `1690.1#17${round}0.5` })), "replied");
-    const reply = posts.slice(before).find((post) => post.method === "chat.postMessage" && /Noted/.test(post.body.text ?? ""));
+    const reply = posts.slice(before).find((post) => post.method === "chat.postMessage" && /Done\./.test(post.body.text ?? ""));
     assert.ok(reply, `round ${round}: the answer was replied to`);
     assert.equal(reply.body.thread_ts, "1690.1");
     answered.push(reply);
