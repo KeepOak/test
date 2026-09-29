@@ -5,7 +5,7 @@
 //   3.                  PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-bugfix-2.cjs
 // It must run before anything marks onboarding done: the first check is that setup opens under automation.
 "use strict";
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT, TOKEN } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN"); process.exit(2); }

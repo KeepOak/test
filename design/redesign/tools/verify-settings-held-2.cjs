@@ -2,7 +2,7 @@
      PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-settings-held-2.cjs
    Clicks each control this work made live in a headless browser and confirms the change through the engine's own GET
    route. Nothing leaves this computer. Covered: sw:f15-slow-down-near-a-rate-limit (model-savings pacing). */
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 
 const BASE = `http://127.0.0.1:${process.env.PORT}`, TOKEN = process.env.TOKEN;

@@ -11,7 +11,7 @@
    Both: no raw key (any key these folders look up, or "window.…"), and zero page errors. Before any window opens, every key
    the five folders look up has English and French in the locale files, and every translated toast's English is the
    prototype's own words (check-fakes' rule for a literal toast). */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
 
