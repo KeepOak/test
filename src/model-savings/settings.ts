@@ -44,7 +44,7 @@ export const OpenRouterSettingsSchema = z.object({
 /** R17-047: a small model says whether a task is easy or hard, and the answer picks the connection. */
 export const DifficultySettingsSchema = z.object({
   mode: threeWay.default("off"),
-  /** Which connection answers the easy-or-hard question; null uses the easy connection. */
+  /** Which connection answers the easy-or-hard question; null uses a model on this computer when there is one, else the easy connection. */
   classifierModel: presetId.nullable().default(null),
   easyModel: presetId.nullable().default(null),
   hardModel: presetId.nullable().default(null),
