@@ -46,7 +46,7 @@ test("two channels: the owner picks Stable or Beta in the window, a saved Dev re
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.channel, "stable", "Stable until picked");
   assert.equal((await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: "beta" } })).status, 200);
   // The ship-on rule: updating by itself ships "install"; picking the channel leaves it as it ships.
-  assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body, { channel: "beta", busyTasks: 0, autoUpdate: "install" });
+  assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body, { channel: "beta", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   for (const bad of ["nightly", "redesign/window", "--upload-pack=touch /tmp/x", ""]) {
     const refused = await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: bad } });
     assert.equal(refused.status, 400, bad);
@@ -54,7 +54,7 @@ test("two channels: the owner picks Stable or Beta in the window, a saved Dev re
   assert.equal(readComfort(app.store, owner, "notify").releaseChannel, "beta", "nothing refused was kept");
   // Dev was the source build before it became Beta: a record from then reads, and is kept, as Beta.
   app.store.save("settings", owner, "comfort-notify", { autoUpdate: "install", releaseChannel: "dev" });
-  assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body, { channel: "beta", busyTasks: 0, autoUpdate: "install" });
+  assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body, { channel: "beta", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   assert.equal((await call("GET", "/api/comfort")).body.values.notify.releaseChannel, "beta");
   assert.equal((await call("POST", "/api/comfort", { card: "notify", values: { sound: "chime" } })).status, 200);
   assert.equal(app.store.get("settings", owner, "comfort-notify").data.releaseChannel, "beta", "the next save writes Beta");
