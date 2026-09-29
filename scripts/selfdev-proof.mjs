@@ -13,11 +13,12 @@
 //     pull request into the scratch line, waits for the real checks and finishes it. Beta never builds that line,
 //     and nothing is ever proposed to redesign/window. The pull request is closed afterwards if it is still open.
 //
-//   node scripts/selfdev-proof.mjs --sandbox
+//   node scripts/selfdev-proof.mjs --sandbox [--owner-limits]
 //     Real GitHub, a throwaway repository (KeepOak/branch-selfdev-sandbox: one required check in a ruleset, and main
 //     merges only through GitHub's merge queue). A scripted model stand-in drives Branch's own tools through edit, test,
 //     commit, push, pull request, exact checks, the merge queue and merged (scripts/selfdev-proof-sandbox.mjs). No
 //     subscription is used; the verdict comes from GitHub's record, not the model.
+//     --owner-limits keeps a fresh install's limits (tool time, rounds, steps) instead of the room a long task is given.
 //
 //   node scripts/selfdev-proof.mjs --candidate
 //     Never-break: while an isolated engine serves, a Branch candidate with a syntax error fails its build and its
@@ -133,7 +134,7 @@ async function local() {
 async function main() {
   await mkdir(root, { recursive: true });
   const passed = mode === "candidate" ? await (await import("./selfdev-proof-candidate.mjs")).candidateProof({ root, stamp, log, health })
-    : mode === "sandbox" ? await (await import("./selfdev-proof-sandbox.mjs")).sandboxProof({ root, stamp, log, evidence, health, roomToWork, defaultTrunkConversation })
+    : mode === "sandbox" ? await (await import("./selfdev-proof-sandbox.mjs")).sandboxProof({ root, stamp, log, evidence, health, roomToWork: flag("owner-limits") ? () => undefined : roomToWork, defaultTrunkConversation })
     : onGitHub ? await (await import("./selfdev-proof-github.mjs")).githubProof({ root, model, knob, stamp, log, connection, roomToWork, defaultTrunkConversation, evidence, health })
     : await local();
   console.log(`\nselfdev proof ${passed ? "PASSED" : "FAILED"}; evidence in ${root}`);

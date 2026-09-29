@@ -283,3 +283,26 @@ test("a base guarded only by rulesets has no classic protection to read, and its
     changeBranch: (b) => { b.protection = { enabled: false }; } });
   await assert.rejects(missing.github.mergeReview(repo, 7), waiting, "the ruleset's own required check is awaited");
 });
+
+test("on a busy merge-queue base another change landing meanwhile does not refuse; the head stays pinned exactly", async () => {
+  // redesign/window moves every few minutes, and a pull request's base.sha is only refreshed when the pull request changes.
+  const landed = fixture({ rules: queueRules, changeBranch: (b) => { b.commit.sha = moved; } });
+  const evidence = await landed.github.mergeReview(repo, 7);
+  assert.equal(evidence.mergeQueue, true);
+  assert.deepEqual(await landed.github.mergeReviewed(evidence, () => {}), { merged: false, queued: true, state: "QUEUED", position: 1 });
+  const midway = fixture({ rules: queueRules, changeBranch: (b, n) => { if (n > 1) b.commit.sha = moved; }, changePull: (p, n) => { if (n > 2) p.base.sha = moved; } });
+  const pinned = await midway.github.mergeReview(repo, 7);
+  assert.equal((await midway.github.mergeReviewed(pinned, () => {})).queued, true, "a base refreshed while it was read is not a moved head");
+  const pushed = fixture({ rules: queueRules, changePull: (p, n) => { if (n > 1) p.head.sha = moved; } });
+  await assert.rejects(pushed.github.mergeReview(repo, 7), /head or base moved/, "a head pushed while checks were read still refuses");
+  await assert.rejects(fixture({ changeBranch: (b) => { b.commit.sha = moved; } }).github.mergeReview(repo, 7), /base branch moved/,
+    "without a queue the tested head must still sit on the exact base");
+});
+
+test("a pull-request rule that needs a person (code owner, approval after the last push, resolved threads) refuses up front", async () => {
+  const zero = { required_approving_review_count: 0, require_code_owner_review: false, require_last_push_approval: false, required_review_thread_resolution: false };
+  assert.equal((await fixture({ rules: [{ type: "pull_request", parameters: zero }, ...queueRules] }).github.mergeReview(repo, 7)).mergeQueue, true);
+  for (const needs of ["require_code_owner_review", "require_last_push_approval", "required_review_thread_resolution"])
+    await assert.rejects(fixture({ rules: [{ type: "pull_request", parameters: { ...zero, [needs]: true } }] }).github.mergeReview(repo, 7),
+      (error) => !(error instanceof ChecksPending) && /pull_request rule needs review on GitHub/.test(error.message), needs);
+});

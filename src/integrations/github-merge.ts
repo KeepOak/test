@@ -7,7 +7,8 @@ type Row = {
   head?: Ref; base?: Ref; protected?: boolean; protection?: { enabled?: boolean }; commit?: { sha?: string }; sha?: string;
   required_status_checks?: { checks?: unknown; contexts?: unknown } | null;
   required_pull_request_reviews?: { required_approving_review_count?: number } | null;
-  type?: string; parameters?: { required_status_checks?: unknown; required_approving_review_count?: number };
+  type?: string; parameters?: { required_status_checks?: unknown; required_approving_review_count?: number; require_code_owner_review?: boolean;
+    require_last_push_approval?: boolean; required_review_thread_resolution?: boolean };
   status?: string; behind_by?: number; base_commit?: { sha?: string };
   node_id?: string; total_count?: number; workflow_runs?: unknown;
 };
@@ -79,6 +80,9 @@ async function activeRules(request: Request, repo: string, base: string): Promis
   return fail("there are more active branch rules than Branch can verify. Review on GitHub.");
 }
 
+/** What a merge-queue entry is pinned to: the pull request and its exact head, not a base the queue moves on. */
+const headOf = (pin: MergePin): Omit<MergePin, "baseSha"> => ({ repo: pin.repo, number: pin.number, headSha: pin.headSha, base: pin.base, head: pin.head });
+
 /** Rules that only guard the branch itself (deleting it, forcing it, creating it) never stand between a checked merge and GitHub. */
 const branchOnlyRules = new Set(["deletion", "non_fast_forward", "creation", "required_signatures"]);
 
@@ -107,7 +111,10 @@ async function baseRules(request: Request, repo: string, pin: MergePin, branch: 
   const rules = await activeRules(request, repo, pin.base);
   for (const rule of rules) {
     if (rule.type === "required_status_checks") required.push(...requiredChecks(rule.parameters?.required_status_checks, "integration_id"));
-    else if (rule.type === "pull_request" && (rule.parameters?.required_approving_review_count ?? 0) === 0) continue;
+    // A pull-request rule that asks for no person's approval is met by any pull request; one that asks for a code owner,
+    // a fresh approval after the last push or resolved threads needs a person, so it is said now rather than waited on.
+    else if (rule.type === "pull_request" && (rule.parameters?.required_approving_review_count ?? 0) === 0
+      && !rule.parameters?.require_code_owner_review && !rule.parameters?.require_last_push_approval && !rule.parameters?.required_review_thread_resolution) continue;
     // The queue runs the base's checks again on the merged result and merges only if they pass: Branch enqueues the checked head.
     else if (rule.type === "merge_queue") mergeQueue = true;
     else if (!branchOnlyRules.has(String(rule.type))) fail(`the active ${String(rule.type)} rule needs review on GitHub; Branch will not go around it.`);
@@ -169,19 +176,21 @@ export async function mergeEvidence(request: Request, checks: (input: { repo: st
   const pin = pullPin(await request("GET", `repos/${repo}/pulls/${number}`) as Row, repo, number, draft, line);
   const base = `repos/${repo}/branches/${encodeURIComponent(pin.base)}`;
   const branch = await request("GET", base) as Row;
-  if (branch.commit?.sha !== pin.baseSha) fail("the base branch moved or cannot be verified. Update the pull request and wait for its checks again.");
+  if (!sha.test(branch.commit?.sha ?? "")) fail("the base branch cannot be verified.");
   const rules = await baseRules(request, repo, pin, branch);
+  // A merge queue tests the head merged onto the newest base itself before anything lands, so on a busy base another
+  // change landing meanwhile is not a reason to refuse; without a queue the tested head must sit on the exact base.
+  if (!rules.mergeQueue && branch.commit?.sha !== pin.baseSha) fail("the base branch moved or cannot be verified. Update the pull request and wait for its checks again.");
   const result = await checks({ repo, ref: pin.headSha });
   const workflows = await workflowRuns(request, repo, pin.headSha);
   judgeChecks(result, rules.required, workflows, pin);
-  // A merge queue tests the head merged onto the newest base itself before anything lands, so a head behind its base
-  // (but free of conflicts) may join it; without a queue the tested head must already contain the exact base.
   const comparison = rules.mergeQueue ? null : await request("GET", `repos/${repo}/compare/${pin.baseSha}...${pin.headSha}`) as Row;
   if (comparison && (!["ahead", "identical"].includes(comparison.status ?? "") || comparison.behind_by !== 0
     || comparison.base_commit?.sha !== pin.baseSha)) fail("the tested head does not contain the exact base commit. Update the pull request and wait for its checks again.");
   const latestRow = await request("GET", `repos/${repo}/pulls/${number}`) as Row;
   const latest = pullPin(latestRow, repo, number, draft, line);
-  if (hash(latest) !== hash(pin) || (await request("GET", base) as Row).commit?.sha !== pin.baseSha) fail("the head or base moved while checks were read. Review again.");
+  if (rules.mergeQueue ? hash(headOf(latest)) !== hash(headOf(pin)) : hash(latest) !== hash(pin) || (await request("GET", base) as Row).commit?.sha !== pin.baseSha)
+    fail("the head or base moved while checks were read. Review again.");
   if (!draft && latestRow.mergeable_state === blockedForNow)
     pending("every check passed, but GitHub still says the pull request is blocked. It usually catches up within a minute; if it stays blocked, a rule Branch cannot see needs a person on GitHub.");
   return { ...pin, checks: result, requiredChecksVerified: true, required: rules.required, workflows, rulesHash: rules.hash, mergeQueue: rules.mergeQueue };
@@ -206,7 +215,8 @@ const queueStates = new Set(["QUEUED", "AWAITING_CHECKS", "MERGEABLE", "LOCKED"]
 export async function enqueueChecked(request: Request, pin: MergePin, graphqlUrl: string, line: MergeLine = "self"): Promise<MergeResult> {
   const row = await request("GET", `repos/${pin.repo}/pulls/${pin.number}`) as Row;
   const current = pullPin(row, pin.repo, pin.number, false, line);
-  if (hash(current) !== hash({ repo: pin.repo, number: pin.number, headSha: pin.headSha, baseSha: pin.baseSha, base: pin.base, head: pin.head })
+  // The head is what is pinned (expectedHeadOid); the queue itself merges it onto whatever the base is by then.
+  if (hash(headOf(current)) !== hash(headOf(pin))
     || typeof row.node_id !== "string" || !/^[A-Za-z0-9_=-]{4,160}$/.test(row.node_id))
     fail("the pull request or its exact head/base changed before it joined the merge queue. Review again.");
   const answer = await request("POST", graphqlUrl, { query: enqueueQuery, variables: { id: row.node_id, oid: pin.headSha } }) as {

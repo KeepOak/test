@@ -240,6 +240,14 @@ test("SELF-014: the contract's tests run as evidence needs them, and a failed ru
   assert.match(red.reason, /Not every step passed/);
   assert.deepEqual(red.failing, ["FAIL  tests/fixture.test.mjs  0.1s  1/2 passed", "✖ fixture adds"]);
   assert.equal(f.merges.evidence.get(worktree), null, "a failed run is never evidence, and the earlier pass no longer counts");
+  f.state.output = "PASS  tests/fixture.test.mjs  0.1s  2/2 passed\nall steps passed in 1.0s\n";
+  for (const other of [{ ...context, source: "channel" }, { ...context, source: "schedule" }]) {
+    const outside = await runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, other);
+    assert.equal(outside.recorded, false, `a ${other.source} task never records evidence`);
+  }
+  const unnamed = { ...context }; delete unnamed.source;
+  assert.equal((await runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, unnamed)).passed, true,
+    "the owner's own task in the app names no source, and counts");
   await writeFile(join(f.cwd, "README.md"), "uncommitted\n");
   await assert.rejects(runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, context), /Commit all changes/);
   await assert.rejects(runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, "branch-agent-source/.branch-worktrees/self-none", context), /no self-development contract/);

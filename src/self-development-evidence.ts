@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { ToolContext } from "./contracts.js";
-import { startedWithShortLivedKey } from "./key-context.js";
+import { runOrigin, startedWithShortLivedKey } from "./key-context.js";
 import { contractHash, remoteBroken, type SelfDevelopmentContract } from "./self-development-contract.js";
 import type { SelfDevelopmentDeps } from "./self-development.js";
 
@@ -58,12 +58,24 @@ export class SelfDevelopmentEvidence {
       return after ? after(name, args, result, context) : result;
     };
   }
+  /**
+   * The owner's own task. A task the owner starts in the app carries no source at all (only a chat, a schedule, a
+   * door or a key names one), so an absent source is the owner's, and the task's own record must say so too, as
+   * `ownerOnly` (src/self-development.ts) judges it. Found by the WSL-held proof: evidence was never recorded for a
+   * real task, only for a test that set source "owner" by hand.
+   */
+  private ownersOwnTask(context: ToolContext): boolean {
+    if ((context.source ?? "owner") !== "owner") return false;
+    if (!context.runId) return true;
+    const origin = runOrigin(this.deps.store, context.runId);
+    return origin.source === "owner" && !origin.shortLivedKey && origin.keyIds.length === 0 && !origin.personProfileId && !origin.lentTo;
+  }
   get(worktree: string): TestEvidence | null { return this.passed.get(worktree) ?? null; }
   /** SELF-014: how the newest run of the contract's tests went in this worktree (a failure is kept too, never as evidence). */
   lastRun(worktree: string): TestRun | null { return this.runs.get(worktree) ?? null; }
   private async before(name: string, input: unknown, context: ToolContext, confined?: string): Promise<void> {
     this.pending.delete(context);
-    if (name !== "shell.execute" || startedWithShortLivedKey() || context.owner !== this.deps.owner || context.source !== "owner" || context.dryRun) return;
+    if (name !== "shell.execute" || startedWithShortLivedKey() || context.owner !== this.deps.owner || !this.ownersOwnTask(context) || context.dryRun) return;
     const args = input as ReviewInput;
     if (args.executable !== "node" || typeof args.cwd !== "string" || !Array.isArray(args.args) || !confined) return;
     const contract = this.deps.contracts.current(this.deps.owner, args.cwd);
