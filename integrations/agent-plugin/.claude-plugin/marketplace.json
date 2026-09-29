@@ -8,7 +8,7 @@
       "name": "branch-agent",
       "source": "./",
       "description": "Hand work to Branch Agent, your own assistant on this computer, through the tools you shared with it.",
-      "version": "0.19.3"
+      "version": "0.19.4"
     }
   ]
 }

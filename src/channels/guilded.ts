@@ -44,6 +44,8 @@ const messageSchema = z.object({
 
 export class GuildedChannel implements ChannelAdapter {
   readonly kind = "guilded";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   readonly id: string;
   /** Guilded allows four thousand characters; replies are kept shorter. */
   readonly maxTextLength = 3500;
