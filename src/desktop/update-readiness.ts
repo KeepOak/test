@@ -4,6 +4,9 @@ const readinessSchema = z.object({
   /* Two channels. An engine from before Beta became the source build says "dev" for it (src/comfort/settings.ts). */
   channel: z.preprocess((value) => (value === "dev" ? "beta" : value), z.enum(["stable", "beta"])),
   busyTasks: z.number().int().nonnegative(),
+  /* Of those, the tasks at work now (not waiting on the owner's answer): an install under way waits for these. An
+     engine from before it says only busyTasks, which is used instead. */
+  workingTasks: z.number().int().nonnegative().optional(),
   /* Dogfood F1 (NAS): the owner's "update by itself" choice, read again at the last gate. An engine that does not say
      it leaves an automatic install waiting. */
   autoUpdate: z.enum(["off", "check", "install"]).optional(),

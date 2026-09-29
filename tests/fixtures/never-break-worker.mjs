@@ -19,10 +19,17 @@ let port = 0;
 const server = createServer((request, response) => {
   if (request.headers.host !== `127.0.0.1:${port}`) { response.writeHead(403); response.end("wrong host"); return; }
   if (request.url === "/api/state") { response.end(JSON.stringify({ version: process.env.FAKE_VERSION ?? "9.9.9", pid: process.pid })); return; }
+  if (request.url === "/api/headers") { response.end(JSON.stringify({ authorization: request.headers.authorization ?? null, ask: request.headers["x-branch-ask"] ?? null })); return; }
   if (request.url === "/api/echo") {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => response.end(JSON.stringify({ body, origin: request.headers.origin ?? null })));
+    return;
+  }
+  // As Restart the engine does (src/dashboard-api.ts restartEngine): stop with exit code 75 to be started again.
+  if (request.url === "/api/dashboard/restart" && request.method === "POST") {
+    response.end(JSON.stringify({ restarting: true }));
+    setTimeout(() => process.exit(75), 50);
     return;
   }
   if (request.url === "/api/deployment/close" && request.method === "POST") {

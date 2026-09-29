@@ -78,6 +78,8 @@ export class NativeAdmission {
   used = false;
   denied = 0;
   status: number | null = null;
+  /** When the plan limit a 429 reported resets, if the service said. */
+  resetsAt: Date | null = null;
   completion: Completion | null = null;
   failure: string | null = null;
   /** selfdev: why the response could not be read, kept so a reply cut off at its ceiling is told apart. */
@@ -116,6 +118,9 @@ export class NativeAdmission {
     this.authorize(); this.request.signal.throwIfAborted();
     const upstream = await this.connect(forwardHeaders(incoming), cacheHistory(body), path.search, this.request.signal);
     this.status = upstream.status;
+    // selfdev: when a plan limit says when it resets (Unix seconds), the refusal can say so too.
+    const reset = Number(upstream.headers.get("anthropic-ratelimit-unified-reset"));
+    if (upstream.status === 429 && Number.isFinite(reset) && reset > 0) this.resetsAt = new Date(reset * 1000);
     const headers: Record<string, string> = {};
     upstream.headers.forEach((value, key) => { if (!omittedHeaders.has(key) && key !== "content-length") headers[key] = value; });
     response.writeHead(upstream.status, { ...headers, connection: "close" });
