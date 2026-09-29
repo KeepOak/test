@@ -12,7 +12,7 @@ import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { liveWindowCommit, liveWindowFile, liveWindowNames, ownBuild } from "./hot-update/window-files.js"; // hot-update
-import { readFile, writeFile, lstat } from "node:fs/promises";
+import { readFile, writeFile, lstat, rename } from "node:fs/promises";
 import { dirname, extname, join, resolve as resolvePath } from "node:path"; // R17-S-B: resolvePath
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -32,6 +32,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
@@ -185,6 +186,7 @@ import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { saveWakeWordSettings, wakeWordSettings, wakeWordView } from "./voice-wake.js"; // mac7/wake-pins
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48 review
 import { dictationOwnerOnlyRefusal, dictationSettings, dictationView, saveDictationSettings } from "./voice-dictation.js"; // mac7/live-voice
+import { HearRefused, hearInWindow } from "./voice-dictation-window.js"; // RES-709
 import { voiceSettings, saveVoiceSettings } from "./voice.js";
 import { voiceApi } from "./voice-api.js";
 // bucket-18: pull requests from changes (A0300), and which requests came with a short-lived key.
@@ -329,6 +331,7 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 // questions at once, and what each project has cost.
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
+import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
@@ -406,9 +409,13 @@ async function sessionToken(dataDir: string): Promise<string> {
     if ((await lstat(path)).isSymbolicLink())
       throw new Error("Session token must not be a link");
     const token = (await readFile(path, "utf8")).trim();
-    if (!/^[a-f0-9]{64}$/.test(token))
-      throw new Error("Invalid saved session token");
-    return token;
+    if (/^[a-f0-9]{64}$/.test(token)) return token;
+    // QA retest 2026-09-28 (TRUNK-180): a damaged token file used to stop every start ("Invalid saved session token"),
+    // and `branch quit` could not ask the gateway to close either. A damaged token matches no window, so a new one is
+    // made; the window asks for the new one (`branch token` shows it), as after a first start.
+    const aside = `${path}.unreadable-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await rename(path, aside);
+    console.error(`The saved session token was damaged; it was put aside as ${aside} and a new one made.`);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
@@ -804,6 +811,7 @@ function toolInventory(app: Branch) {
     "shell.execute": "ready (configured host commands)",
     "git.remote": "ready (sending to a server switched on)",
     "github.manage": "ready (GitHub token saved)",
+    "gitlab.read": "ready (GitLab connected)", "gitlab.manage": "ready (GitLab connected)",
     "browser.read": "ready (configured origins)", "browser.act": "ready (configured origins)",
     "browser.interact": "ready (configured origins)",
   };
@@ -927,6 +935,14 @@ function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySe
   for (const run of runs) if (setup.has(run.id)) found.add(run.id);
   return found;
 }
+/** models-ui: the latest moves of Trunks' work between accounts (the last ten minutes), each named by its Trunk. */
+function trunkMoves(app: Branch) {
+  const since = Date.now() - 10 * 60_000;
+  return (accountsServiceFor(app.runtime.models)?.trunkMoves ?? []).filter((move) => Date.parse(move.at) >= since).map((move) => {
+    const by = app.trunks.conversations.answerer(move.sessionId);
+    return { ...move, ...(by ? { who: by.name, open: by.sessionId } : {}) };
+  });
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
@@ -945,6 +961,8 @@ function state(app: Branch): unknown {
     needsYou: needsYou(app), // Q050: the one count every "needs you" in the window reads
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
+    // models-ui: a Trunk's work moved to another account at a limit; the window tells the owner which (shell/notify.js).
+    trunkMoves: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? trunkMoves(app) : [],
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
@@ -1067,6 +1085,12 @@ async function api(
     return webPagesApi({ store: app.store, owner: app.runtime.owner, requireOwner: (what) => app.store.profiles.requireOwner(what) },
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
+    });
+  // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
+  if (handlesGitLabPath(path))
+    return gitlabApi({ connection: app.gitlab, store: app.store, owner: app.runtime.owner,
+      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof GitLabApiError ? new HttpError(error.status, error.message) : error;
     });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))
@@ -1253,12 +1277,20 @@ async function api(
   // a household profile, a Trunk and another computer all arrive here as something that is not the
   // owner at this window, and all five are refused by the two guards below and by the fail-closed
   // rule for short-lived keys in src/short-lived-keys.ts, which never lists this path.
+  // RES-709: a piece of what the window's own microphone heard, written out on this computer (hearInWindow below).
+  if (request.method === "POST" && path === "/api/voice/dictation/hear") {
+    const host = { store: app.store, owner: app.runtime.owner, isOwner: app.store.profiles.isOwner(),
+      locked: app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
+    try { return await hearInWindow(host, request); } catch (error) {
+      throw new HttpError(error instanceof HearRefused ? error.status : 400, errorText(error));
+    }
+  }
   if (path === "/api/voice/dictation" || path === "/api/voice/dictation/listen") {
     if (request.method === "GET") {
       // Whether the microphone is open comes from the listener itself, so the card cannot say one
       // thing while the microphone does another.
       const mine = app.store.profiles.isOwner();
-      const view = dictationView(app.store, app.runtime.owner, app.dictation.platform, mine, app.dictation.open, app.dictation.present);
+      const view = dictationView(app.store, app.runtime.owner, app.dictation.platform, mine, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner));
       // The words are screen state: they go to the window that is dictating and nowhere else. They
       // are never written to disk, never traced, never kept past the phrase, and never sent. Anybody
       // else on this computer is not shown them, because they are not shown any of this.
@@ -1274,14 +1306,14 @@ async function api(
       // — the switch, Lockdown, the lock, a missing speech program — says it must not.
       const refusal = body?.on === true ? app.dictation.start() : (app.dictation.stop(), null);
       return { open: app.dictation.open, refusal,
-        state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
+        state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
     }
     const dictation = await readBody(request);
     recordedWrite(app.store, app.runtime.owner, byCard("live-dictation"), ["live-dictation"],
       () => saveDictationSettings(app.store, app.runtime.owner, dictation));
     app.dictation.refresh(); // the switch going off stops it and lets go of the microphone at once
     return { settings: dictationSettings(app.store, app.runtime.owner),
-      state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
+      state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
   }
   // ── end mac7/live-voice ──
   if (request.method === "GET" && path === "/api/state") {
@@ -1309,7 +1341,8 @@ async function api(
   if (request.method === "POST" && path === "/api/tools/try") {
     // mac5/manual-actions: the same hand-pressed gate as /api/action, with its question kept, the
     // two-minute ceiling and the secret scrub; shared with the host-bridge card (src/playground.ts).
-    const tried = TryToolSchema.parse(await readBody(request));
+    // A megabyte: room for an OpenAPI description a person chose in Settings › Developer (src/openapi-tools.ts).
+    const tried = TryToolSchema.parse(await readBody(request, 1024 * 1024));
     // unhold-control: a key bound to one conversation keeps what it runs in that conversation only.
     if (tried.sessionId) requireBoundSession(shortLivedKeyMark().sessionId, tried.sessionId);
     return tryToolByHand(app, tried);
@@ -1707,6 +1740,10 @@ async function api(
     }
     return result;
   }
+  // QA 2026-09-28: which model Codex answers with, and which ones it takes (src/codex-models.ts).
+  if (request.method === "GET" && path === "/api/codex-models") return codexModelsView(app.runtime.models);
+  if (request.method === "POST" && path === "/api/codex-models") return chooseCodexModel(app.runtime.models, await readBody(request));
+  if (request.method === "POST" && path === "/api/codex-models/check") return checkCodexModels(app.runtime.models);
   // models-ui (MODEL-052): who spent what: the owner's own tasks and each Trunk's, with the accounts they used.
   if (request.method === "GET" && path === "/api/usage/by-trunk")
     return usageByTrunk({ store: app.store, owner: app.runtime.owner, trunkName: (id) => app.trunks.records.find(id)?.name ?? null,
@@ -3103,7 +3140,18 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     })) };
   const retry = /^\/api\/channels\/deliveries\/([^/]{1,220})\/retry$/.exec(path);
   if (request.method === "POST" && retry) return app.channels.retryDelivery(decodeURIComponent(retry[1]!));
-  if (request.method === "POST" && path === "/api/channels/pairings/approve") return app.channels.approve(owner, await readBody(request));
+  if (request.method === "POST" && path === "/api/channels/pairings/approve") {
+    const { firstOwner, pin, ...code } = z.object({ code: z.unknown(), firstOwner: z.boolean().optional(), pin: z.string().max(64).optional() })
+      .strict().parse(await readBody(request));
+    // owner-dm-signin: naming the sender as the owner's own account is guarded as "Commands from your own chat" is below:
+    // the window on this computer, unlocked, with the PIN where one is set. A plain approval is unchanged.
+    if (firstOwner) {
+      if (throughDoor(request)) throw new HttpError(403, "Your own chat account is named in Branch's window on this computer.");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before naming your own chat account.");
+      if (app.sessionLock.pinSet()) await appLockAnswer(async () => app.sessionLock.unlock({ pin }));
+    }
+    return app.channels.approve(owner, code, { firstOwner: firstOwner === true });
+  }
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
