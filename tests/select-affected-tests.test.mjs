@@ -124,6 +124,9 @@ test("Windows and macOS run for their own code, the files their own tests use, a
   assert.deepEqual(lanesFor("tests/windows-helpers.test.mjs"), { windows: true, macos: false });
   assert.deepEqual(lanesFor("src/win-only.ts"), { windows: true, macos: false });
   assert.deepEqual(lanesFor("src/a.ts", "public/app.js", "docs/x.md"), { windows: false, macos: false });
+  // A change to how the suite is built or run (workflows, packages, the runner) runs every system's lane.
+  for (const file of [".github/workflows/checks.yml", "package-lock.json", "package.json", "scripts/run-tests.mjs"])
+    assert.deepEqual(lanesFor(file), { windows: true, macos: true }, file);
   // The window's own buttons are drawn by the page and proved on Windows by tests/desktop-window.test.mjs.
   assert.deepEqual(lanesFor("public/app/shell/controls.js"), { windows: true, macos: false });
 });

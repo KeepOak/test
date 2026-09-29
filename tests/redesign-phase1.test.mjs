@@ -287,7 +287,9 @@ test("with saving progress off, or nothing running, it never asks; Not now chang
   await offer(f.page).waitFor({ state: "visible", timeout: 30000 });
   await offer(f.page).getByRole("button", { name: "Not now" }).click();
   await offer(f.page).waitFor({ state: "detached" });
-  assert.equal((await f.call(`/api/runs/${run.id}`)).events.some((event) => event.kind === "run.steered"), false, "Not now sends nothing");
+  // Not now sends no save-progress note. (With every account this near its limit, Branch's own handoff note may reach
+  // the task; that is src/lead-usage.ts, labelled as Branch's, and never the owner's answer to this prompt.)
+  assert.equal((await f.call(`/api/runs/${run.id}`)).events.some((event) => event.kind === "run.steered" && !event.data.from), false, "Not now sends nothing");
   model.release();
   assert.deepEqual(f.errors, []);
 });
