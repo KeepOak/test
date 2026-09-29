@@ -10,10 +10,11 @@ import { cleanHead, SelfDevelopmentEvidence, sourceGit } from "./self-developmen
 import type { SelfDevelopmentDeps } from "./self-development.js";
 import { ownerGitHubConnection } from "./integrations/git-tools.js";
 import { ChecksPending } from "./integrations/github-merge.js";
-import { repositoryPath } from "./integrations/github.js";
+import { queuedNote, repositoryPath } from "./integrations/github.js";
 import { HttpError } from "./server-http.js";
 import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { currentCaller } from "./caller.js";
+import { canonicalRepo } from "./desktop/repo-pair.js";
 import { throughPairedDoor } from "./people/context.js";
 import type { ToolContext } from "./contracts.js";
 
@@ -74,7 +75,7 @@ export class SelfDevelopmentMerges {
     authorize();
     this.sourceIdle(input.worktree, exceptRunId);
     const contract = this.deps.contracts.current(this.deps.owner, input.worktree);
-    if (!contract || !contract.sendRepositories?.includes(input.repo.toLowerCase())) throw new Error("The contract does not allow that repository.");
+    if (!contract || !contract.sendRepositories?.some((allowed) => canonicalRepo(allowed) === canonicalRepo(input.repo))) throw new Error("The contract does not allow that repository.");
     const signal = AbortSignal.timeout(120_000);
     const head = await cleanHead(this.deps, contract, signal);
     const tests = this.evidence.get(input.worktree);
@@ -126,7 +127,7 @@ export class SelfDevelopmentMerges {
       if (Date.now() >= grant.expires || ownerGitHubConnection(this.deps.registry) !== github)
         throw new Error("The review expired or GitHub connection changed before the merge was sent. Review again.");
     });
-    this.record(grant, "merged");
+    this.record(grant, result.merged ? "merged" : "queued");
     return { ...result, repository: grant.input.repo, number: grant.input.number, reviewedHead: snapshot.github.headSha };
   }
   private autoOwner(input: ReviewInput, context: ToolContext): string {
@@ -188,8 +189,10 @@ export class SelfDevelopmentMerges {
     });
     audit(this.deps.store, this.deps.owner, { action: "self_development.merge", actor,
       subject: `${input.repo}#${input.number} ${ready.github.headSha}`, runId: context.runId,
-      reason: `Independent read-only task ${result.runId} passed; exact tested protected commit merged normally.`, source: "owner", outcome: "merged" });
-    return { ...merged, repository: input.repo, number: input.number, reviewedHead: ready.github.headSha, reviewerRunId: result.runId };
+      reason: `Independent read-only task ${result.runId} passed; exact tested protected commit ${merged.merged ? "merged normally" : "joined the base's merge queue"}.`,
+      source: "owner", outcome: merged.merged ? "merged" : "queued" });
+    return { ...merged, repository: input.repo, number: input.number, reviewedHead: ready.github.headSha, reviewerRunId: result.runId,
+      ...(merged.merged ? {} : { note: queuedNote }) };
   }
   /** GitHub works out a newly ready pull request's mergeability again; that short wait is pending, never passed. */
   private async afterReady(input: ReviewInput, context: ToolContext): Promise<Snapshot> {
@@ -206,9 +209,10 @@ export class SelfDevelopmentMerges {
     if (!grant || grant.expires <= Date.now()) { this.grants.delete(id); throw new Error("That review expired or was already used. Review again."); }
     return grant;
   }
-  private record(grant: Grant, outcome: "approved" | "merged"): void {
+  private record(grant: Grant, outcome: "approved" | "merged" | "queued"): void {
     audit(this.deps.store, this.deps.owner, { action: "self_development.merge", actor: this.deps.owner,
-      subject: `${grant.input.repo}#${grant.input.number} ${grant.snapshot.github.headSha}`, reason: `Owner ${outcome} this exact reviewed commit in the app`, source: "owner", outcome });
+      subject: `${grant.input.repo}#${grant.input.number} ${grant.snapshot.github.headSha}`,
+      reason: outcome === "queued" ? "Owner sent this exact reviewed commit to the base's merge queue in the app" : `Owner ${outcome} this exact reviewed commit in the app`, source: "owner", outcome });
   }
 }
 export const handlesSourceMergePath = (path: string): boolean => path === "/api/self-development/merge"

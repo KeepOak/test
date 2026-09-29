@@ -473,6 +473,12 @@ export interface ToolDefinition<T = unknown> {
    * a tool whose permission does not say enough declares it here.
    */
   reach?: "local" | "outbound";
+  /**
+   * selfdev (SELF-022): a tool that only looks and waits (github.wait_for_checks) may run this long in one call even
+   * past the owner's tool time limit, so a long CI run or merge queue is waited on in a few calls rather than dozens
+   * the loop guard would refuse. It never changes anything, and the task can still be stopped at any moment.
+   */
+  waitsUpToMs?: number;
   execute: (args: T, context: ToolContext) => Promise<unknown>;
   /** What this call would touch, for the approval policy, when the arguments alone do not say. */
   target?: (args: T, context: ToolContext) => string | null;

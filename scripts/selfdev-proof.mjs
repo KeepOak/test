@@ -13,6 +13,12 @@
 //     pull request into the scratch line, waits for the real checks and finishes it. Beta never builds that line,
 //     and nothing is ever proposed to redesign/window. The pull request is closed afterwards if it is still open.
 //
+//   node scripts/selfdev-proof.mjs --sandbox
+//     Real GitHub, a throwaway repository (KeepOak/branch-selfdev-sandbox: one required check in a ruleset, and main
+//     merges only through GitHub's merge queue). A scripted model stand-in drives Branch's own tools through edit, test,
+//     commit, push, pull request, exact checks, the merge queue and merged (scripts/selfdev-proof-sandbox.mjs). No
+//     subscription is used; the verdict comes from GitHub's record, not the model.
+//
 //   node scripts/selfdev-proof.mjs --candidate
 //     Never-break: while an isolated engine serves, a Branch candidate with a syntax error fails its build and its
 //     canary, an unchanged candidate builds and passes the canary on a copy of the running data, and the running
@@ -34,7 +40,8 @@ const option = (name, fallback) => { const at = args.indexOf(`--${name}`); retur
 const flag = (name) => args.includes(`--${name}`);
 const model = option("model", "claude"), knob = option("knob", "replyLength"), broken = flag("broken"), onGitHub = flag("github");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-const root = option("root", join(process.env.LOCALAPPDATA ?? process.env.TMPDIR ?? ".", "Temp", "claude-session-files", "selfdev-proof", `${flag("candidate") ? "candidate" : onGitHub ? "github" : "local"}-${stamp}`));
+const mode = flag("candidate") ? "candidate" : flag("sandbox") ? "sandbox" : onGitHub ? "github" : "local";
+const root = option("root", join(process.env.LOCALAPPDATA ?? process.env.TMPDIR ?? ".", "Temp", "claude-session-files", "selfdev-proof", `${mode}-${stamp}`));
 const logFile = join(root, "run.log");
 const log = async (entry) => { const line = JSON.stringify({ at: new Date().toISOString(), ...entry }); console.log(line.slice(0, 400)); await appendFile(logFile, `${line}\n`); };
 
@@ -125,7 +132,8 @@ async function local() {
 
 async function main() {
   await mkdir(root, { recursive: true });
-  const passed = flag("candidate") ? await (await import("./selfdev-proof-candidate.mjs")).candidateProof({ root, stamp, log, health })
+  const passed = mode === "candidate" ? await (await import("./selfdev-proof-candidate.mjs")).candidateProof({ root, stamp, log, health })
+    : mode === "sandbox" ? await (await import("./selfdev-proof-sandbox.mjs")).sandboxProof({ root, stamp, log, evidence, health, roomToWork, defaultTrunkConversation })
     : onGitHub ? await (await import("./selfdev-proof-github.mjs")).githubProof({ root, model, knob, stamp, log, connection, roomToWork, defaultTrunkConversation, evidence, health })
     : await local();
   console.log(`\nselfdev proof ${passed ? "PASSED" : "FAILED"}; evidence in ${root}`);

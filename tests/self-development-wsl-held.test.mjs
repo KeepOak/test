@@ -42,4 +42,21 @@ test("a held command in the worktree this task prepared runs in WSL, held to its
   assert.match(outside.stdout, /EROFS|EACCES|ENOENT/, "a write to the protected checkout is refused");
   assert.equal(await readFile(join(source, "a.txt"), "utf8"), "original\n");
   assert.match((await shell("npm", ["--version"])).stdout.trim(), /^\d+\.\d+\.\d+$/, "Windows' npm alias runs as npm in WSL");
+  // SELF-016: a real test run, not a probe: node's test runner in WSL behind the wall, at the worktree's root, pass and fail both read.
+  await mkdir(join(engine.workspace, worktree, "tests"), { recursive: true });
+  const suite = (expected) => [
+    'import test from "node:test";', 'import assert from "node:assert/strict";', 'import { writeFileSync } from "node:fs";',
+    'test("runs on Linux inside the worktree", () => { assert.equal(process.platform, "linux"); writeFileSync("tests/ran.txt", "yes"); });',
+    `test("adds", () => { assert.equal(1 + 1, ${expected}); });`, ""].join("\n");
+  const runTests = () => engine.app.registry.execute("shell.execute", { executable: "node", args: ["--test", "tests/a.test.mjs"], cwd: worktree }, context);
+  await writeFile(join(engine.workspace, worktree, "tests", "a.test.mjs"), suite(2));
+  const green = await runTests();
+  assert.equal(green.exitCode, 0, green.stdout);
+  assert.match(green.stdout, /# pass 2/);
+  assert.match(green.stdout, /# fail 0/);
+  assert.equal(await readFile(join(engine.workspace, worktree, "tests", "ran.txt"), "utf8"), "yes", "the tests wrote inside the worktree");
+  await writeFile(join(engine.workspace, worktree, "tests", "a.test.mjs"), suite(3));
+  const red = await runTests().catch((error) => ({ exitCode: 1, stdout: String(error.message) }));
+  assert.notEqual(red.exitCode, 0, "a failing test is a failed run");
+  assert.match(red.stdout, /# fail 1/, "the failure is read, not guessed");
 });

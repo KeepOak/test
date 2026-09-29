@@ -15,6 +15,7 @@ import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { lockdownActive } from "./lockdown.js";
 import { betaLine } from "./desktop/dev-build.js";
 import { githubRepositoryOf } from "./github-address.js";
+import { canonicalRepo } from "./desktop/repo-pair.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -587,8 +588,9 @@ function sendPinned(name: string, args: unknown, repositories: readonly string[]
   // Only into a repository written with the contract when the worktree was made, never one named later.
   if (!repositories?.length)
     return notPinned;
-  const repo = String(input.repo ?? "").toLowerCase();
-  if (!repositories.includes(repo))
+  // stabrea/Branch-Agent and KeepOak/Branch-Agent are one repository (GitHub redirects the old name).
+  const repo = canonicalRepo(String(input.repo ?? ""));
+  if (!repositories.some((allowed) => canonicalRepo(allowed) === repo))
     return `A change to Branch itself is proposed only to ${repositories.join(" or ")}, where this worktree was made from, so no pull request is opened in ${String(input.repo ?? "") || "that repository"}.`;
   if (!selfDevelopmentBase(input.base)) return `A change to Branch itself is proposed only to ${selfDevelopmentBaseWords}.`;
   if (input.draft !== true) return "A change to Branch itself is opened only as a draft pull request, for the owner to review.";
@@ -606,7 +608,7 @@ const notPinned = "This worktree was prepared before Branch kept where its chang
 export function pushRepositoryRefusal(repositories: readonly string[] | undefined, remote: string, repos: readonly string[]): string | null {
   const origin = repositories?.[0];
   if (!origin) return notPinned;
-  if (repos.length && repos.every((repo) => repo.toLowerCase() === origin)) return null;
+  if (repos.length && repos.every((repo) => canonicalRepo(repo) === canonicalRepo(origin))) return null;
   return `A change to Branch itself is sent only to ${origin}, where this worktree was made from, and ${remote} sends to ${[...new Set(repos)].join(", ") || "no GitHub repository"}, so nothing is sent.`;
 }
 
