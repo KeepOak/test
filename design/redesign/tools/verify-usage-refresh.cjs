@@ -8,7 +8,7 @@
      then what the engine answered: its windows, or its own sentence (GET /api/usage/glance agrees);
    - Check now asks the same route again; the popover is drawn again from its answer;
    - no page errors. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT = "3456", TOKEN } = process.env;
 const base = `http://127.0.0.1:${PORT}`;

@@ -12,7 +12,7 @@ import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { liveWindowCommit, liveWindowFile, liveWindowNames, ownBuild } from "./hot-update/window-files.js"; // hot-update
-import { readFile, writeFile, lstat } from "node:fs/promises";
+import { readFile, writeFile, lstat, rename } from "node:fs/promises";
 import { dirname, extname, join, resolve as resolvePath } from "node:path"; // R17-S-B: resolvePath
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -331,6 +331,7 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 // questions at once, and what each project has cost.
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
+import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
@@ -408,9 +409,13 @@ async function sessionToken(dataDir: string): Promise<string> {
     if ((await lstat(path)).isSymbolicLink())
       throw new Error("Session token must not be a link");
     const token = (await readFile(path, "utf8")).trim();
-    if (!/^[a-f0-9]{64}$/.test(token))
-      throw new Error("Invalid saved session token");
-    return token;
+    if (/^[a-f0-9]{64}$/.test(token)) return token;
+    // QA retest 2026-09-28 (TRUNK-180): a damaged token file used to stop every start ("Invalid saved session token"),
+    // and `branch quit` could not ask the gateway to close either. A damaged token matches no window, so a new one is
+    // made; the window asks for the new one (`branch token` shows it), as after a first start.
+    const aside = `${path}.unreadable-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await rename(path, aside);
+    console.error(`The saved session token was damaged; it was put aside as ${aside} and a new one made.`);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
@@ -806,6 +811,7 @@ function toolInventory(app: Branch) {
     "shell.execute": "ready (configured host commands)",
     "git.remote": "ready (sending to a server switched on)",
     "github.manage": "ready (GitHub token saved)",
+    "gitlab.read": "ready (GitLab connected)", "gitlab.manage": "ready (GitLab connected)",
     "browser.read": "ready (configured origins)", "browser.act": "ready (configured origins)",
     "browser.interact": "ready (configured origins)",
   };
@@ -929,6 +935,14 @@ function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySe
   for (const run of runs) if (setup.has(run.id)) found.add(run.id);
   return found;
 }
+/** models-ui: the latest moves of Trunks' work between accounts (the last ten minutes), each named by its Trunk. */
+function trunkMoves(app: Branch) {
+  const since = Date.now() - 10 * 60_000;
+  return (accountsServiceFor(app.runtime.models)?.trunkMoves ?? []).filter((move) => Date.parse(move.at) >= since).map((move) => {
+    const by = app.trunks.conversations.answerer(move.sessionId);
+    return { ...move, ...(by ? { who: by.name, open: by.sessionId } : {}) };
+  });
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
@@ -947,6 +961,8 @@ function state(app: Branch): unknown {
     needsYou: needsYou(app), // Q050: the one count every "needs you" in the window reads
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
+    // models-ui: a Trunk's work moved to another account at a limit; the window tells the owner which (shell/notify.js).
+    trunkMoves: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? trunkMoves(app) : [],
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
@@ -1069,6 +1085,12 @@ async function api(
     return webPagesApi({ store: app.store, owner: app.runtime.owner, requireOwner: (what) => app.store.profiles.requireOwner(what) },
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
+    });
+  // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
+  if (handlesGitLabPath(path))
+    return gitlabApi({ connection: app.gitlab, store: app.store, owner: app.runtime.owner,
+      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof GitLabApiError ? new HttpError(error.status, error.message) : error;
     });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))

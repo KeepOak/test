@@ -7,7 +7,7 @@
 // Computer; with no phone app in this copy, the engine's own reason is shown and no download door is opened.
 //   BRANCH_DATA_DIR=<fresh dir> BRANCH_WORKSPACE=<fresh dir> BRANCH_PORT=<port> node dist/cli.js start
 // Run: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-phone-pairing.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { createHash, generateKeyPairSync, sign } = require("node:crypto");
 
 const PORT = process.env.PORT || "3487", TOKEN = process.env.TOKEN;
