@@ -1287,6 +1287,7 @@ export const ROUTES = {
   // both are the owner's alone at the app window and neither is anything a key may do.
   "/api/voice/dictation": "secret-read",
   "/api/voice/dictation/listen": "secret-read",
+  "/api/voice/dictation/hear": "secret-read", // RES-709: what the window's microphone heard, written out on this computer
   "/api/webhooks": "secret-read",
   "/api/webhooks/:id": "secret-read",
   "/api/webhooks/:id/enable": "owner POST",

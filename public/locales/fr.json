@@ -6609,6 +6609,7 @@
   "window.chat.dia.text-drew": "Le texte qui l'a dessiné",
   "window.chat.dict.label": "Dicter dans la zone de texte",
   "window.chat.dict.listening": "J’écoute… parlez naturellement",
+  "window.chat.dict.mic-refused": "Le micro n’a pas été autorisé. Autorisez-le pour Branch, puis appuyez de nouveau sur Dicter.",
   "window.chat.done-in": "Terminé en {time}",
   "window.chat.empty.ask": "Demander à {name}",
   "window.chat.empty.downloads": "Ranger mon dossier Téléchargements",

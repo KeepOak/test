@@ -6608,6 +6608,7 @@
   "window.chat.dia.text-drew": "Der Text, aus dem es gezeichnet wurde",
   "window.chat.dict.label": "In das Feld diktieren",
   "window.chat.dict.listening": "Hört zu … sprich ganz natürlich",
+  "window.chat.dict.mic-refused": "Das Mikrofon wurde nicht erlaubt. Erlaube es für Branch und drücke dann erneut auf Diktieren.",
   "window.chat.done-in": "Fertig in {time}",
   "window.chat.empty.ask": "{name} fragen",
   "window.chat.empty.downloads": "Meinen Downloads-Ordner aufräumen",

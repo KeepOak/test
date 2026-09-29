@@ -137,6 +137,7 @@ import { VoiceService, registerVoice } from "./voice-service.js";
 import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRunner } from "./voice-wake.js"; // mac7/wake-mic
 import { startDictation, type SoundStreamRunner, type SpeechStreamRunner } from "./voice-dictation-run.js"; // mac7/live-voice
 import { soundStreamRunner, speechStreamRunner } from "./voice-dictation-host.js"; // mac7/live-voice
+import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
 import { wakeCaptureRunner, wakeRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
@@ -365,6 +366,11 @@ export async function createBranch(options: {
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
    */
   dictation?: { speech?: SpeechStreamRunner; sound?: SoundStreamRunner; present?: ProgramPresent; platform?: string };
+  /**
+   * RES-709: the free speech program on this computer (src/voice-whisper.ts). Left out, Branch looks for the real
+   * faster-whisper; a test hands in its own, or null for none.
+   */
+  localSpeech?: LocalWhisper | null;
   /** Test-only: clock function for deterministic rate limiting. Normal production uses Date.now. */
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
@@ -858,7 +864,8 @@ export async function createBranch(options: {
   registerMedia(registry, media);
   // Wave 7: one place that turns speech into words and words into speech, whichever service does
   // the work, plus switching model in one conversation. Voice notes on chat apps come through here.
-  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch));
+  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch),
+    options.localSpeech !== undefined ? { whisper: options.localSpeech } : {});
   // Wave 8: live conversations. Every connection that stays open leaves a span and a line in the
   // record of what the assistant was allowed to do — the host and the path only, never the whole
   // address, because a key can travel in the query string.
@@ -1981,6 +1988,7 @@ ${result.output || "(it said nothing)"}`;
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
+      voice.close(); // RES-709: the free speech worker ends with the app
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
       await autonomy.close(); // r17-b: nothing more starts by itself, and a turn that is working gets a moment
       await trunks.close(); // R17-A: rooms stop between turns
@@ -2344,6 +2352,7 @@ export * from "./voice-stt.js";
 export * from "./voice-tts.js";
 export * from "./voice-talk.js";
 export * from "./voice-service.js";
+export * from "./voice-whisper.js"; // RES-709
 export * from "./realtime.js";
 export * from "./realtime-openai.js";
 export * from "./realtime-gemini.js";
