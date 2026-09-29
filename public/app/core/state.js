@@ -59,16 +59,23 @@ export async function refresh() {
     api("sessions?limit=50").catch(() => null),
     api("profiles").catch(() => null),
   ]);
-  E.profiles = profiles;
+  /* A read that failed keeps what the window last had. Emptied, one refused or dropped GET /api/trunks lost every Trunk
+     and the modes: "@Ada …" then found no Ada and went out as an ordinary message in a new conversation (trunks-ui on
+     CI), and the side list lost its Trunks and conversations until the next read. */
+  if (profiles) E.profiles = profiles;
   E.state = state;
-  E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
-  E.trunksRead = !!trunks; // pass 18: an empty Trunks list is a welcome only when the engine answered
-  E.trunkModes = trunks?.modes ?? {};
-  E.defaultTrunkId = trunks?.defaultId ?? null; // the default Trunk answers every chat nobody routed elsewhere
-  E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
-  if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
-  E.sessions = sessions?.sessions ?? [];
-  E.putAway = { archived: sessions?.archived ?? 0, deleted: sessions?.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
+  if (trunks) {
+    E.trunks = trunks.trunks ?? (Array.isArray(trunks) ? trunks : []);
+    E.trunksRead = true; // pass 18: an empty Trunks list is a welcome only when the engine answered
+    E.trunkModes = trunks.modes ?? {};
+    E.defaultTrunkId = trunks.defaultId ?? null; // the default Trunk answers every chat nobody routed elsewhere
+    E.rooms = Array.isArray(trunks.rooms) ? trunks.rooms : [];
+    if (Array.isArray(trunks.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
+  }
+  if (sessions) {
+    E.sessions = sessions.sessions ?? [];
+    E.putAway = { archived: sessions.archived ?? 0, deleted: sessions.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
+  }
   E.loaded = true;
   render();
 }

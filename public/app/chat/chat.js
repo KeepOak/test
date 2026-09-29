@@ -24,7 +24,7 @@ import { FIND, findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
 import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } from "./dictate.js";
 import { initTalkLive } from "./talklive.js";
-import { replyMark, readNewReply } from "./aloud.js";
+import { replyMark, readNewReply, sentMessage } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
@@ -537,6 +537,7 @@ async function send(words, answered = false) {
   const prompt = (words ?? box?.value ?? "").trim();
   if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
   if (!prompt && !(words === undefined && hasFiles())) return;
+  sentMessage(); // whether these words were said or typed, for Answer aloud › When I talk
   /* RES-703: the box writes to the active pane; one that is not this conversation is sent to in its own. */
   const pane = words === undefined ? paneTarget() : null;
   if (pane) { await sendOver(pane, prompt); return; }
