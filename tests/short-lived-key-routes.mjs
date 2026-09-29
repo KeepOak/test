@@ -1078,6 +1078,8 @@ export const ROUTES = {
   // record is a wider window than any one of those alone, so it is refused like a secret read.
   "/api/search": "secret-read",
   "/api/second-opinion": "owner POST",
+  "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
+  "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
