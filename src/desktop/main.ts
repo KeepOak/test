@@ -987,6 +987,8 @@ function startDetachedGateway(): void {
   });
   void app.whenReady().then(async () => {
     const where = await folders(base);
+    // The windowless gateway is a main process too: its lines (updates with no window open among them) go to the same log.
+    openMainLog(where.dataDir);
     gateway = await runDesktopGateway({ base, ...where, appRoot: liveAppRoot(),
       providerEnv: async () => desktopProviderEnv(await loadDesktopSettings(join(base, "model-settings.json"))) });
     if (testHooksOn()) (globalThis as { branchGatewayForTests?: unknown }).branchGatewayForTests = gateway;
