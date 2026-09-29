@@ -123,6 +123,31 @@ export function holdingTasks(store: Pick<Store, "sqlite">, owner: string, now = 
   return rows.map((row) => ({ id: row.id, sessionId: row.sessionId, state: row.status === "running" ? "working" : "asking" }));
 }
 
+/** What an update held by the plan is waiting on, for its line in the activity log. */
+export interface UpdateWaitFacts {
+  channel: string; version: string | null; busyTasks: number; workingTasks: number; askingTasks: number;
+  holding: HoldingTask[]; heldSince: string | null; overdueTasks: number;
+}
+/** The last wait written, per owner: the window asks every 30 s to 5 min, and the same wait is written once. */
+const lastWait = new Map<string, string>();
+/**
+ * Writes why the plan tells update by itself to wait with a ready update (a plan with `until`), only when that wait is
+ * new: another reason, another version or channel. At warn, so it is kept at the log's shipped "when needed" mode; a wait
+ * is never an error, so it never becomes an automatic problem report. Answers whether a line was written.
+ */
+export function noteUpdateWait(owner: string, plan: UpdatePlan, facts: UpdateWaitFacts): boolean {
+  if (!plan.until) { lastWait.delete(owner); return false; }
+  const key = JSON.stringify([plan.reason, plan.until, facts.version, facts.channel]);
+  if (lastWait.get(owner) === key) return false;
+  lastWait.set(owner, key);
+  diagnose("updater", "warn", `Update by itself waits: ${plan.reason}`, { fields: {
+    until: plan.until, version: facts.version, channel: facts.channel, busyTasks: facts.busyTasks, workingTasks: facts.workingTasks,
+    askingTasks: facts.askingTasks, tasks: facts.holding.map((task) => `${task.id} (${task.state})`).join(", "),
+    heldSince: facts.heldSince, overdueTasks: facts.overdueTasks,
+  } });
+  return true;
+}
+
 /**
  * The last thing that went wrong while Branch updated itself (a look, a build, an install, or asking the engine), in
  * the updater's or engine's own words. It is kept until a look goes through cleanly, so Settings › Updates can say it.
