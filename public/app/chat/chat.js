@@ -24,7 +24,7 @@ import { FIND, findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
 import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } from "./dictate.js";
 import { initTalkLive } from "./talklive.js";
-import { replyMark, readNewReply } from "./aloud.js";
+import { replyMark, readNewReply, sentMessage } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
@@ -342,11 +342,14 @@ export const sendingWithoutSession = () => C.sending && !C.sessionId;
 /** Whether the open conversation's message is being answered now. */
 export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S.chat;
 
+/* The conversation's box takes focus when it is clicked (tabindex -1: never a Tab stop), so Space, Shift+Space and
+   the arrows keep scrolling it after a redraw: a click in it makes its part draw anew (main.js touched), and the box the
+   browser's keys scrolled was the one taken away. Focused, it is found again by its id (core/dom.js keepFocus). */
 export function draw() {
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
      in the composer's place */
-  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
-  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll" tabindex="-1">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
@@ -528,6 +531,7 @@ async function send(words, answered = false) {
   const prompt = (words ?? box?.value ?? "").trim();
   if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
   if (!prompt && !(words === undefined && hasFiles())) return;
+  sentMessage(); // whether these words were said or typed, for Answer aloud › When I talk
   const busy = C.sending || ["running", "queued"].includes(liveRun()?.status);
   if (refusePracticeRoute(prompt, busy, !!routeFor(prompt, C.sessionId, whoHere(), HOOKS))) return;
   /* While a task works, words join its waiting line; files wait on their chips for the next message. */

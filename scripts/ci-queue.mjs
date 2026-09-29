@@ -2,13 +2,14 @@
 // pushes to redesign/window are never held. GitHub's own `concurrency:` cannot say "N at once" (a group keeps one run
 // and one pending, and replaces the pending one), so the queue is kept here, over REST, at two points of every run:
 //
-//   admit    the `plan` job of a pull-request run. A first attempt takes a slot only when one is free and no older run
+//   admit    the `plan` job of a pull-request run. A run takes a slot only when one is free and no run ahead of it
 //            is waiting; otherwise the run says "Waiting for a CI slot, position k of m", labels its pull request
-//            `ci-waiting` and cancels itself. A rerun (attempt 2 or later) was started by this queue and takes its slot.
+//            `ci-waiting` and cancels itself. Only a rerun this queue started (its triggering actor is the workflow's
+//            own token, github-actions[bot]) takes its slot at once; a rerun started by a person waits like any run.
 //   restart  the end of verify-suite, on every run. Each free slot reruns the oldest waiting pull request: an open,
 //            non-draft pull request without `hold` whose newest Checks run for its current head was cancelled (held
 //            here, or parked by hand). A run cancelled because a newer push replaced it is not waiting: its head is
-//            no longer the pull request's.
+//            no longer the pull request's. Pull requests labelled `ci-priority` are first in line, oldest first.
 //
 // Two to six REST calls a decision, so the queue stays inside the token's hourly allowance. A failed call never
 // holds a run: the run goes ahead.
@@ -18,20 +19,26 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const WAITING_LABEL = "ci-waiting";
+export const PRIORITY_LABEL = "ci-priority";
+/** The actor a rerun has when this queue started it, with the workflow's own token. */
+export const QUEUE_ACTOR = "github-actions[bot]";
 
 /**
- * The decision. `active`: other pull-request runs holding runners now. `waiting`: the waiting runs, oldest first.
- * `self`: this run when it is asking for a slot ({ attempt }), or null when a run is handing its slot on.
+ * The decision. `active`: other pull-request runs holding runners now. `waiting`: the waiting runs in line order
+ * (`ci-priority` first). `self`: this run when it is asking for a slot ({ started } when this queue started it,
+ * { priority } when its pull request is labelled ci-priority), or null when a run is handing its slot on.
  */
 export function schedule({ slots, active, waiting, self = null }) {
   let free = slots - active;
-  let admitSelf = false;
-  if (self && self.attempt > 1) { admitSelf = true; free -= 1; }
-  const rerun = waiting.slice(0, Math.max(0, free));
+  if (self?.started) return { admitSelf: true, rerun: waiting.slice(0, Math.max(0, free - 1)), position: null, queued: Math.max(0, waiting.length - Math.max(0, free - 1)) };
+  // The runs ahead of this one: every waiting run, or for a ci-priority pull request only the other priority ones.
+  const ahead = self?.priority ? waiting.filter((run) => run.priority) : waiting;
+  const rerun = (self ? ahead : waiting).slice(0, Math.max(0, free));
   free -= rerun.length;
-  if (self && self.attempt <= 1) admitSelf = free > 0;
-  const behind = waiting.length - rerun.length;
-  return { admitSelf, rerun, position: self && !admitSelf ? behind + 1 : null, queued: behind + (self && !admitSelf ? 1 : 0) };
+  const admitSelf = Boolean(self) && free > 0;
+  const position = self && !admitSelf ? ahead.length - rerun.length + 1 : null;
+  const queued = waiting.length - rerun.length + (self && !admitSelf ? 1 : 0);
+  return { admitSelf, rerun, position, queued };
 }
 
 /** Pull-request runs holding runners now (this run left out), from the newest Checks runs. */
@@ -51,9 +58,13 @@ export function waitingRuns(pulls, runs, selfId) {
   for (const pull of pulls) {
     if (pull.draft || pull.labels?.some((label) => label.name === "hold")) continue;
     const run = newest.get(pull.head?.sha);
-    if (run?.status === "completed" && run.conclusion === "cancelled") waiting.push({ pr: pull.number, runId: run.id, created: run.created_at });
+    if (run?.status === "completed" && run.conclusion === "cancelled") {
+      const priority = pull.labels?.some((label) => label.name === PRIORITY_LABEL) === true;
+      waiting.push({ pr: pull.number, runId: run.id, created: run.created_at, priority });
+    }
   }
-  return waiting.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.runId - b.runId));
+  return waiting.sort((a, b) => (a.priority !== b.priority ? (a.priority ? -1 : 1)
+    : a.created < b.created ? -1 : a.created > b.created ? 1 : a.runId - b.runId));
 }
 
 /** The words a waiting run shows, in its annotation and summary. */
@@ -116,7 +127,8 @@ async function main() {
     return rerun(api, decision.rerun);
   }
   const pr = Number(argument("pr"));
-  const decision = schedule({ slots, active, waiting, self: { attempt: Number(argument("attempt")) } });
+  const priority = (await api("GET", `issues/${pr}/labels`))?.some((label) => label.name === PRIORITY_LABEL) === true;
+  const decision = schedule({ slots, active, waiting, self: { started: argument("actor") === QUEUE_ACTOR, priority } });
   await rerun(api, decision.rerun);
   if (decision.admitSelf) {
     await api("DELETE", `issues/${pr}/labels/${WAITING_LABEL}`);

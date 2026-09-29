@@ -48,7 +48,9 @@ class LineSocket {
   private failure: Error | undefined;
   constructor(private socket: Socket | TLSSocket) { this.listen(); }
   private listen(): void {
-    this.socket.setEncoding("utf8");
+    // One character per byte: IMAP counts a literal in bytes, so reading UTF-8 here made any message with accents or
+    // emoji overrun its literal and the inbox wait forever (CHAT-003). Literal contents are decoded where they are read.
+    this.socket.setEncoding("latin1");
     this.socket.on("data", (chunk: string) => { this.buffer += chunk; this.waiting?.(); });
     this.socket.on("error", (error: Error) => { this.failure = error; this.waiting?.(); });
     this.socket.on("close", () => { this.failure ??= new Error("The mail server closed the connection"); this.waiting?.(); });
@@ -174,7 +176,7 @@ export class ImapClient {
     if (size > maxBytes) throw new Error(`That message is ${Math.ceil(size / 1048576)} MB, larger than Branch will open`);
     const raw = await this.command(`UID FETCH ${Math.floor(uid)} (BODY.PEEK[])`);
     const literal = /\{(\d+)\}\r\n/.exec(raw);
-    return literal ? raw.slice(literal.index + literal[0].length, literal.index + literal[0].length + Number(literal[1])) : "";
+    return literal ? fromBytes(raw.slice(literal.index + literal[0].length, literal.index + literal[0].length + Number(literal[1]))) : "";
   }
   // ---- end R17-C ----
   async close(): Promise<void> {
@@ -193,16 +195,26 @@ export class ImapClient {
     return answer;
   }
 }
+/** A literal as read off the socket (one character per byte) back to the UTF-8 text it carries. */
+const fromBytes = (bytes: string) => Buffer.from(bytes, "latin1").toString("utf8");
 const quote = (value: string) => `"${value.replace(/([\\"])/g, "\\$1")}"`;
 
-/** Splits one FETCH answer into the headers we thread on and the plain text body. */
+/**
+ * Splits one FETCH answer into the headers we thread on and the plain text body. Each part is found by its name: a
+ * server may answer the items in any order (RFC 3501 7.4.2), and GreenMail sends the text first about half the time,
+ * which read the headers as the message and dropped it (found by tests/real-chat.test.mjs, CHAT-003).
+ */
 export function parseFetched(seq: number, raw: string): MailMessage {
-  const literals = [...raw.matchAll(/\{(\d+)\}\r\n/g)].map((match) => {
-    const start = match.index + match[0].length;
-    return raw.slice(start, start + Number(match[1]));
-  });
-  const headers = literals[0] ?? "";
-  const body = literals[1] ?? "";
+  // Literals are stepped over, so a subject or body that spells "BODY[TEXT] {5}" cannot pose as a part.
+  const literals: Record<string, string> = {};
+  const literal = /(BODY\[(HEADER|TEXT)\](?:<\d+>)? )?\{(\d+)\}\r\n/g;
+  for (let match = literal.exec(raw); match; match = literal.exec(raw)) {
+    const start = match.index + match[0].length, end = start + Number(match[3]);
+    if (match[2] && literals[match[2]] === undefined) literals[match[2]] = fromBytes(raw.slice(start, end));
+    literal.lastIndex = end;
+  }
+  const headers = literals.HEADER ?? "";
+  const body = literals.TEXT ?? "";
   const header = (name: string) => new RegExp(`^${name}:[ \\t]*([\\s\\S]*?)(?=\\r\\n[^ \\t]|$)`, "im").exec(headers)?.[1]?.replace(/\r\n[ \t]+/g, " ").trim() ?? "";
   const from = header("From");
   const address = /<([^>]+)>/.exec(from)?.[1] ?? from.split(/\s+/).pop() ?? "";
