@@ -908,6 +908,23 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
+### The window's commands from your own chat (CHAT-185)
+
+From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
+Chat apps › Commands from your own chat), in a direct chat, on Telegram, Discord, Slack or Matrix (whose servers
+vouch for who sent a message; never email, SMS or a posted webhook), these also work: `/goal`, `/subgoal`, `/bg`,
+`/memory`, `/skills`, `/health`, `/sessions`, `/queue`, `/busy`, `/lockdown` and `/lockdown on`, and the looking,
+pausing and stopping half of `/loop`, `/heartbeat`, `/suggestions` and `/blueprint`. They are read whether or not
+the chat commands switch is on, because naming the account is the owner's choice. What they hold to:
+
+- a task `/goal` or `/bg` starts is that chat's task, not yours: the chat's short list of permissions, and your
+  approval rules held to "Ask before changes", every round of a goal included (below);
+- nothing that keeps running is made from a chat (starting a `/loop` or `/heartbeat`, accepting a suggestion, making
+  a blueprint), and Lockdown is switched off only in the app on this computer;
+- under Lockdown or the App lock only `/lockdown` and `/lockdown on` are read, and nothing is sent back until it is
+  off; a command sent while Branch was closed is never carried out;
+- from anybody else, in a group, or on another app, the same line is an ordinary message.
+
 ### Who a chat message's task counts as (mac7/chat-source)
 
 A chat app cannot prove who is typing, even when the sender is you on your own paired account. So a
@@ -1842,7 +1859,7 @@ Speech-to-text transcription requires an OpenAI-compatible provider with an API 
 
 **Talk** next to the message box is hold-to-talk: hold it, speak, let go. What you said is written out, put in the message box so you can see it, sent as an ordinary message, and the answer is read back to you. Press Talk again while it is talking and it stops. The four states it moves through (waiting, listening, working, reading aloud) live in `src/voice-talk.ts` and are tested on their own.
 
-Three services can write out what you say, and Branch picks whichever one your settings point at: an OpenAI-shaped `/audio/transcriptions` (the Whisper shape, which most providers speak), Gemini's own route (the sound goes inline with the request), or **a speech program already installed on this computer** — whisper.cpp or faster-whisper. Branch never downloads a speech model for you: you point it at the program and its model file, and it checks the program is there before it tries. The transcript is read from what the program prints, using the flags whisper.cpp's and faster-whisper's own command lines document; this has not been run against a real installation, so a build that names its flags differently will refuse in plain words rather than silently return nothing. Three can read text aloud: the OpenAI-shaped `/audio/speech`, Gemini's speech route, and **the voices that come with Windows**, which need no key, no account and no internet. The Windows voice is driven by a short PowerShell script written to a temporary file and run with `-File` and no console window; the words are put in as a quoted string, so nothing in a reply can be run as a command.
+Three services can write out what you say, and Branch picks whichever one your settings point at: an OpenAI-shaped `/audio/transcriptions` (the Whisper shape, which most providers speak), Gemini's own route (the sound goes inline with the request), or **a speech program already installed on this computer** — whisper.cpp or faster-whisper. Branch never downloads a speech program or model for you. **faster-whisper is found by itself** (RES-709): installed with `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli`, with a model it already fetched once (`faster-whisper --model_size_or_path base.en` on any recording), Branch runs it as a small worker that keeps the model loaded, offline (`HF_HUB_OFFLINE=1`, `local_files_only`), and writes nothing to disk. Left on **auto**, that free route is used before any paid service, and Telegram voice notes go through it too. With dictation switched on (it ships off), the window's microphone button uses it for push-to-talk with live captions: hold it to talk, or press it once and press Done; the words land in the message box and nothing is sent until you send it. whisper.cpp is still run the old way: you point Branch at the program and its model file, and the transcript is read from what it prints. Three can read text aloud: the OpenAI-shaped `/audio/speech`, Gemini's speech route, and **the voices that come with Windows**, which need no key, no account and no internet. The Windows voice is driven by a short PowerShell script written to a temporary file and run with `-File` and no console window; the words are put in as a quoted string, so nothing in a reply can be run as a command.
 
 - **Keep audio on this computer**: nothing containing sound may leave. Both cloud routes then refuse in plain words instead of sending anyway, and the refusal lives in the service itself, so the `voice.say` tool cannot go around it. The two sound tools in the media toolbox (`media.transcribe` and `media.speak`) read the same setting straight from your settings and refuse the same way, so a workspace sound file is not a way round it either. It also wins over "answer a voice note with a voice note": a spoken reply would be uploaded to the chat app, so with this on the words are sent instead.
 - **Who writes out what you say** / **Who reads replies aloud**: pick a service, or leave it on "whatever suits".
@@ -8097,9 +8114,9 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `ttsModel` | The model name to use for reading aloud, when the route wants one. |
 | `keepAudioOnThisComputer` | Nothing containing sound may leave. Both cloud routes then refuse in plain words, and so does a live conversation. |
 | `replyWithVoiceOnChannels` | Answer a voice note on a chat app with a voice note back. Telegram only, today. |
-| `localSpeechExecutable` | The full path to whisper.cpp or faster-whisper, if you have one. Branch downloads nothing. |
-| `localSpeechModel` | The model file that program should use. |
-| `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`, so the right flags are used. |
+| `localSpeechExecutable` | The full path to whisper.cpp, or to the Python that has faster-whisper. Empty: Branch looks for faster-whisper where `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli` put it. Branch downloads nothing. |
+| `localSpeechModel` | The model file whisper.cpp should use; for faster-whisper a model name (`base.en`) or folder. Empty: the fastest faster-whisper model already on this computer. |
+| `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`. faster-whisper runs as a small worker kept loaded while it is used, offline. |
 | `localSpeechStream` | The full path to a streaming speech program that is handed sound on its standard input and writes words out as it hears them, for live dictation. Empty means none, and Branch looks for `whisper-stream` or sherpa-onnx on your search path instead. Branch downloads nothing. |
 | `liveMaxMinutes` | How many minutes one live conversation may last. 10 by default. |
 | `liveMaxDollars` | How much one live conversation may cost. $1.00 by default. |
@@ -8609,6 +8626,12 @@ With several accounts per connection switched on (`src/accounts/`), the account 
 the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
 connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to
 your Claude Code or Codex (`refuseAnyTrunk`).
+**A Trunk's own secrets (RES-260).** A Trunk can keep secrets of its own (`GET/POST /api/trunks/<id>/secrets`,
+`{ name, value }` or `{ name, remove: true }`; names and dates come back, never a value). When a command it runs asks
+for a secret by name, its own turns get its own first; a name it does not keep comes from your active project only
+while it copies your keys, and is refused by name otherwise. A helper it sets going, another Trunk and your own
+conversations never read them, a short-lived key cannot reach them, and they are removed with the Trunk
+(`src/trunks/secrets.ts`).
 The same holds for everything a Trunk's turn sets going: a summary or document read one of its tools asks
 for, a workflow or flow it starts, a mixture of models and the keep-alive ping. Each sign-in connection
 refuses work marked as a Trunk's that somebody else is behind, whichever way the call arrives
