@@ -206,15 +206,15 @@ const quote = (value: string) => `"${value.replace(/([\\"])/g, "\\$1")}"`;
  */
 export function parseFetched(seq: number, raw: string): MailMessage {
   // Literals are stepped over, so a subject or body that spells "BODY[TEXT] {5}" cannot pose as a part.
-  const parts: Record<string, string> = {};
+  const fetched: Record<string, string> = {};
   const literal = /(BODY\[(HEADER|TEXT)\](?:<\d+>)? )?\{(\d+)\}\r\n/g;
   for (let match = literal.exec(raw); match; match = literal.exec(raw)) {
     const start = match.index + match[0].length, end = start + Number(match[3]);
-    if (match[2] && parts[match[2]] === undefined) parts[match[2]] = fromBytes(raw.slice(start, end));
+    if (match[2] && fetched[match[2]] === undefined) fetched[match[2]] = fromBytes(raw.slice(start, end));
     literal.lastIndex = end;
   }
-  const headers = parts.HEADER ?? "";
-  const body = parts.TEXT ?? "";
+  const headers = fetched.HEADER ?? "";
+  const body = fetched.TEXT ?? "";
   const header = (name: string) => new RegExp(`^${name}:[ \\t]*([\\s\\S]*?)(?=\\r\\n[^ \\t]|$)`, "im").exec(headers)?.[1]?.replace(/\r\n[ \t]+/g, " ").trim() ?? "";
   const from = header("From");
   const address = /<([^>]+)>/.exec(from)?.[1] ?? from.split(/\s+/).pop() ?? "";

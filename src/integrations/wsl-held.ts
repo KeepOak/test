@@ -36,6 +36,9 @@ export interface WslHeldPlan {
   /** selfdev: the owner's selected Full Access: any site is reachable (writes stay held to the worktree). */
   open?: boolean;
   timeoutMs: number;
+  /** Tool scripts use stdin replies and framed stdout requests, never Windows descriptor 3. */
+  interactive?: boolean;
+  unreadable?: string[];
 }
 
 /**
