@@ -100,7 +100,8 @@ const bg: Handler = async (call) => {
   const mode = backgroundMode(call);
   // A separate conversation, not awaited: this one stays free. It is a task like any the owner starts.
   await new Promise<void>((resolve) => {
-    void runtime.run({ prompt, source: "owner", onTextDelta: () => undefined, ...(call.permissions ? { permissions: call.permissions } : {}),
+    // CHAT-185: from the owner's own chat it is that chat's task, never the owner's own (a chat cannot prove who typed).
+    void runtime.run({ prompt, source: call.surface === "chat" ? "channel" : "owner", onTextDelta: () => undefined, ...(call.permissions ? { permissions: call.permissions } : {}),
       ...(mode ? { conversationMode: mode } : {}),
       onStarted: (run) => { sessionId = run.sessionId; runId = run.id; working.add(run.id); resolve(); } })
       .catch(() => undefined).finally(() => { working.delete(runId); resolve(); });

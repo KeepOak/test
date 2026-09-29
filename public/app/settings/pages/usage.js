@@ -13,7 +13,8 @@
    Flagged replies (the owner's): GET /api/reply-flags lists each flag's reasons and conversation; Remove is
    POST /api/reply-flags/<id>/remove. The reply's words leave the engine only through its audited export, so they are
    not drawn, and sending a flag to the Branch team has no engine route, so that switch stays greyed.
-   The tray has no engine or desktop setting: greyed, and not drawn on a phone. */
+   "Show usage in the tray" is the glance setting tray (the desktop app's icon rings with the same share as the ring,
+   src/desktop/tray-ring.ts); it ships on and is not drawn on a phone. */
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { api } from "../../core/api.js";
@@ -205,13 +206,14 @@ async function loadGlance() {
    "Show me" only played its own demo, so it is not drawn. */
 const WIRES = {
   "u-ring": [() => glance?.settings?.ring === "shown", (on) => api("usage/glance/settings", { ring: on ? "shown" : "hidden" })],
+  "u-tray": [() => glance?.settings?.tray === "shown", (on) => api("usage/glance/settings", { tray: on ? "shown" : "hidden" })],
   "u-ckpt": [() => glance?.settings?.saveProgress === "ask", (on) => api("usage/glance/settings", { saveProgress: on ? "ask" : "off" })],
   "u-ask": [() => Boolean(limits?.mode) && limits.mode !== "off", (on) => api("usage/limits/settings", { mode: on ? "when-needed" : "off" })],
 };
 const checked = (id) => (WIRES[id][0]() ? "checked" : "");
 
 function limitsSec() {
-  const tray = onPhone() ? "" : `<div class="ctl"><b>${t("window.settings.usage.show-usage-in-the-tray")}</b><input class="sw" type="checkbox" id="u-tray" aria-label="${t("window.settings.usage.show-usage-in-the-tray")}" data-sw="set"><small>${t("window.settings.usage.a-small-ring-by-the-clock")}</small></div>`;
+  const tray = onPhone() ? "" : `<div class="ctl"><b>${t("window.settings.usage.show-usage-in-the-tray")}</b><input class="sw" type="checkbox" id="u-tray" ${checked("u-tray")} aria-label="${t("window.settings.usage.show-usage-in-the-tray")}" data-sw="set"><small>${t("window.settings.usage.tray-ring")}</small></div>`;
   return `<div class="sec"><h2>${t("glance.title")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.usage.how-much-of-each-services-allowance")}</p><div class="lims flat">${(glance?.rows ?? []).map(limitRow).join("")}</div>
     <div class="ctl"><b>${t("window.settings.usage.the-ring-bottom-right")}</b><input class="sw" type="checkbox" id="u-ring" ${checked("u-ring")} aria-label="${t("window.settings.usage.show-the-ring")}" data-sw="ring"><small>${t("window.settings.usage.the-connection-used-next-how-much")}</small></div>
     <div class="ctl"><b>${t("window.settings.usage.offer-to-save-progress-at-95")}</b><input class="sw" type="checkbox" id="u-ckpt" ${checked("u-ckpt")} aria-label="${t("window.settings.usage.offer-to-save-progress-at-95")}" data-sw="ckpt"><small>${t("window.settings.usage.it-only-asks-once-per-connection")}</small></div>
@@ -315,7 +317,7 @@ export function init() {
   loadByTrunk();
   loadRetention();
   loadFlags();
-  markLive(["sw:u-ring", "sw:u-ckpt", "sw:u-ask"]);
+  markLive(["sw:u-ring", "sw:u-tray", "sw:u-ckpt", "sw:u-ask"]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];
     if (!wire) return;

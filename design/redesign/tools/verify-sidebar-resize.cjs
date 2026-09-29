@@ -4,7 +4,7 @@
 // prototype and folds from anywhere on its header, and arrow keys move a focused edge. Layout is the window's own state,
 // so it is read back from the window's saved choices (localStorage "branch-window") and from what is drawn.
 // Run against a throwaway engine: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-sidebar-resize.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT || "3583", TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;
