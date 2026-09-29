@@ -126,10 +126,13 @@ test("a question on a phone scrolls into view above the message box, and is answ
     const head = document.querySelector(".titlebar")?.getBoundingClientRect();
     return answers && dock && head && answers.bottom <= dock.top + 1 && answers.top >= head.bottom - 1;
   }, null, { timeout: 30000 });
-  for (const button of await card.locator(".acts button").all()) {
-    const where = await button.boundingBox();
-    assert.ok(where.x >= 0 && where.x + where.width <= 390, `${await button.innerText()} is on the screen`);
-  }
+  // One page call: a button found first and measured after can be drawn anew in between, and measures as nothing.
+  const buttons = await f.page.evaluate(() => [...document.querySelectorAll("#live-ask .acts button")].map((button) => {
+    const where = button.getBoundingClientRect();
+    return { text: button.innerText, x: where.x, right: where.right };
+  }));
+  assert.ok(buttons.length > 1, "the question has its answers");
+  for (const button of buttons) assert.ok(button.x >= 0 && button.right <= 390, `${button.text} is on the screen`);
   assert.equal(existsSync(join(f.workspace, "note.txt")), false, "nothing is written before the answer");
   await card.locator(".acts .btn.pri").tap();
   await f.page.locator("#conversation").getByText("Written.").waitFor({ timeout: 30000 });
@@ -186,7 +189,7 @@ test("at every width from a phone to a wide screen nothing runs off sideways and
 test("a quick double tap on a phone's big answer sends one answer, not two", async (t) => {
   const f = await signedIn(t);
   await f.signIn();
-  const card = await ask(f.page);
+  await ask(f.page);
   await f.page.evaluate(() => {
     const original = window.fetch.bind(window);
     window.__branchApprovalRequests = 0;
@@ -200,8 +203,10 @@ test("a quick double tap on a phone's big answer sends one answer, not two", asy
     };
   });
   /* Three presses in the same instant (a thumb's double tap, then a slip onto Don't allow), so a slow machine cannot
-     let the first answer come back before the others land. */
-  await card.evaluate((node) => {
+     let the first answer come back before the others land. The card is found in the same page call that presses it: a
+     card found first can be drawn anew before the presses, and a press on the card taken off the page does nothing. */
+  await f.page.evaluate(() => {
+    const node = document.querySelector("#live-ask");
     const yes = node.querySelector(".acts .btn.pri");
     const no = [...node.querySelectorAll(".acts button")].find((button) => button.textContent === "Don’t allow");
     yes.click();
@@ -232,7 +237,8 @@ test("an answer that could not be sent gives the buttons back; No is the quiet a
     const buttons = [...document.querySelectorAll("#live-ask .acts button, .acts button")];
     return buttons.length > 1 && buttons.every((b) => b.isConnected && getComputedStyle(b).backgroundColor);
   });
-  const answers = await card.locator(".acts button").evaluateAll((buttons) => buttons.map((b) => ({
+  // One page call: a locator's evaluateAll finds the buttons and reads them in two, and can read none between redraws.
+  const answers = await f.page.evaluate(() => [...document.querySelectorAll("#live-ask .acts button")].map((b) => ({
     text: b.textContent.trim(), live: b.getAttribute("aria-disabled") !== "true" && !b.disabled, pri: b.classList.contains("pri"), bg: getComputedStyle(b).backgroundColor })));
   assert.equal(answers.some((b) => /^Always allow/.test(b.text) && b.live), false, `no live standing yes: ${JSON.stringify(answers)}`);
   const yes = answers.find((b) => b.pri), no = answers.find((b) => b.text === "Don’t allow");
