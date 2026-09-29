@@ -64,13 +64,24 @@ const callbackSchema = z.object({
   from: userSchema.optional(),
   message: messageSchema.optional(),
 }).passthrough();
+const reactionSchema = z.object({
+  type: z.string(), emoji: z.string().max(80).optional(), custom_emoji_id: z.string().max(100).optional(),
+}).passthrough();
+const reactionUpdateSchema = z.object({
+  chat: z.object({ id: z.number(), type: z.string(), title: z.string().optional() }).passthrough(),
+  message_id: z.number().int(), user: userSchema.optional(),
+  old_reaction: z.array(reactionSchema).max(20), new_reaction: z.array(reactionSchema).max(20),
+}).passthrough();
 const updateSchema = z.object({
   update_id: z.number(),
   message: messageSchema.optional(),
   /** Settings › Chat apps › Edited messages: a new version of a message sent before. */
   edited_message: messageSchema.optional(),
   callback_query: callbackSchema.optional(),
+  message_reaction: reactionUpdateSchema.optional(),
 }).passthrough();
+/** Adapted from OpenClaw extensions/telegram/src/allowed-updates.ts (MIT): explicitly subscribe to reaction updates. */
+const allowedUpdates = ["message", "edited_message", "callback_query", "message_reaction"];
 /** `parameters.retry_after`: Telegram's "too many requests, try again in N seconds" (https://core.telegram.org/bots/api#responseparameters). */
 const responseSchema = z.object({ ok: z.boolean(), result: z.unknown().optional(), description: z.string().optional(),
   parameters: z.object({ retry_after: z.number().optional() }).passthrough().optional() });
@@ -92,6 +103,8 @@ const telegramTarget = (address: string): { chat_id: number; message_thread_id?:
 };
 
 export class TelegramAdapter implements ChannelAdapter {
+  /** Only reactions to messages this bot sent in this run become inbound feedback; topic addresses stay exact. */
+  private readonly sentChats = new Map<string, string>();
   readonly kind = "telegram";
   /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
   readonly replyQuotes = true;
@@ -187,6 +200,7 @@ export class TelegramAdapter implements ChannelAdapter {
     const parsed = responseSchema.parse(await response.json());
     if (!parsed.ok) throw new Error(`Telegram sendAudio failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
+    if (message.success) this.rememberReactionTarget(chatId, message.data.message_id);
     return message.success ? String(message.data.message_id) : undefined;
   }
   // ---- R17-C (R17-022): a file as a Telegram document. Bots may send up to 50 MB. ----
@@ -206,6 +220,7 @@ export class TelegramAdapter implements ChannelAdapter {
     if (!parsed.ok) throw new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
     if (!message.success) throw new Error(`Telegram ${method} failed: response missing message_id`);
+    this.rememberReactionTarget(chatId, message.data.message_id);
     return String(message.data.message_id);
   }
   // ---- end R17-C ----
@@ -229,6 +244,7 @@ export class TelegramAdapter implements ChannelAdapter {
     if (!parsed.ok) throw Object.assign(new Error(`Telegram sendPhoto failed: ${parsed.description ?? response.status}`), retryOf(parsed));
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
     if (!message.success) throw new Error("Telegram sendPhoto failed: response missing message_id");
+    this.rememberReactionTarget(chatId, message.data.message_id);
     return String(message.data.message_id);
   }
   async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[]): Promise<void> {
@@ -249,7 +265,7 @@ export class TelegramAdapter implements ChannelAdapter {
         this.advance(); // Retry a failed position write before asking Telegram to acknowledge it.
         // "callback_query" has to be asked for by name, or a pressed button never arrives at all.
         const renumbered = this.mayBeRenumbered();
-        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: renumbered ? 0 : this.offset, timeout: this.pollTimeout, allowed_updates: ["message", "edited_message", "callback_query"] }, true));
+        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: renumbered ? 0 : this.offset, timeout: this.pollTimeout, allowed_updates: allowedUpdates }, true));
         this.contactAt = Date.now(); // Staying connected: Telegram answered, even with nothing new
         if (updates.length) this.takeNumbering(updates, renumbered);
         if (this.refused || this.nameUnknown) { // P17-D §8: the token works again, or Telegram is reachable at last
@@ -265,6 +281,10 @@ export class TelegramAdapter implements ChannelAdapter {
           // and it has to be read while the task is still going. The router keeps one task per chat.
           const pressed = update.callback_query && this.fromButton(update.callback_query);
           if (pressed) { this.handOver(update.update_id, pressed, onMessage); continue; }
+          if (update.message_reaction) {
+            this.handOver(update.update_id, this.fromReaction(update.update_id, update.message_reaction), onMessage);
+            continue;
+          }
           const edited = !update.message && update.edited_message ? this.inbound(update.edited_message) : null;
           const message = update.message ? this.inbound(update.message) : edited ? { ...edited, edited: true } : null;
           this.handOver(update.update_id, message || null, onMessage);
@@ -430,6 +450,23 @@ export class TelegramAdapter implements ChannelAdapter {
       } } : {}),
     };
   }
+  /** Reaction feedback remains the actual reacting user's message; anonymous actors and bot echoes are ignored. */
+  private fromReaction(updateId: number, reaction: z.infer<typeof reactionUpdateSchema>): InboundMessage | null {
+    const sender = reaction.user;
+    const chatId = this.sentChats.get(`${reaction.chat.id}:${reaction.message_id}`);
+    if (!sender || sender.is_bot || !chatId) return null;
+    const label = (item: z.infer<typeof reactionSchema>): string => item.emoji ?? (item.custom_emoji_id ? `custom emoji ${item.custom_emoji_id}` : item.type);
+    const before = reaction.old_reaction.map(label), after = reaction.new_reaction.map(label);
+    const added = after.filter((one) => !before.includes(one)), removed = before.filter((one) => !after.includes(one));
+    if (!added.length && !removed.length) return null;
+    const changes = [...(added.length ? [`added ${added.map((one) => JSON.stringify(one)).join(", ")}`] : []),
+      ...(removed.length ? [`removed ${removed.map((one) => JSON.stringify(one)).join(", ")}`] : [])].join("; ");
+    return { channel: this.id, chatId, chatKind: reaction.chat.type === "private" ? "direct" : "group",
+      ...(reaction.chat.title ? { chatTitle: reaction.chat.title } : {}),
+      senderId: String(sender.id), senderName: sender.username ?? sender.first_name ?? String(sender.id),
+      text: `Reaction to Branch's message ${reaction.message_id}: ${changes}.`, addressed: true,
+      messageId: `reaction:${updateId}`, reactTo: String(reaction.message_id) };
+  }
   /** Fetches a voice note's bytes, and only once the message has earned an answer. */
   private async download(fileId: string, declaredSize: number): Promise<Uint8Array> {
     const limit = 20 * 1024 * 1024;
@@ -483,7 +520,18 @@ export class TelegramAdapter implements ChannelAdapter {
     const parsed = responseSchema.parse(await response.json());
     if (!parsed.ok) throw Object.assign(new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`),
       { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
+    if (method === "sendMessage") {
+      const target = z.object({ chat_id: z.number().int(), message_thread_id: z.number().int().positive().optional() }).passthrough().safeParse(body);
+      const sent = z.object({ message_id: z.number().int() }).passthrough().safeParse(parsed.result);
+      if (target.success && sent.success) {
+        this.rememberReactionTarget(topicAddress(target.data.chat_id, target.data.message_thread_id), sent.data.message_id);
+      }
+    }
     return parsed.result;
+  }
+  private rememberReactionTarget(chatId: string, messageId: number): void {
+    this.sentChats.set(`${telegramTarget(chatId).chat_id}:${messageId}`, chatId);
+    if (this.sentChats.size > 1000) this.sentChats.delete(this.sentChats.keys().next().value!);
   }
 }
 
