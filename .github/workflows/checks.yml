@@ -250,7 +250,9 @@ jobs:
   promote:
     name: promote to mac/cross-platform
     needs: [verify]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && github.repository == 'stabrea/Branch-Agent'
+    # On a push, plan is skipped (it only queues pull-request runs), and a skipped job anywhere upstream skips this one
+    # unless the condition says otherwise; so it asks for verify's own success instead.
+    if: ${{ !cancelled() && needs.verify.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && github.repository == 'stabrea/Branch-Agent' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
