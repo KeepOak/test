@@ -92,7 +92,7 @@ export interface LiveTarget {
    */
   picture?: (() => Promise<{ bytes: Uint8Array; caption: string } | null>) | undefined;
   /** The buttons under a picture kept in place (Take over, or Hand back): values the router reads back as a press. */
-  pictureButtons?: (() => { label: string; value: string }[]) | undefined;
+  pictureButtons?: (() => { label: string; value: string; webApp?: string }[]) | undefined;
 }
 /** Pictures of the browser: the first after the first browser step, then at most one every so often, and a cap per task. */
 export const pictureTiming = { everyMs: 20_000, most: 6, inPlaceEveryMs: 4_000, inPlaceMost: 150 };

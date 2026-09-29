@@ -168,6 +168,14 @@ export class SessionLock {
   shut(): boolean {
     return this.pinSet() && this.locked();
   }
+  /**
+   * A fresh yes with the App lock PIN for something done from beyond this computer (the Telegram Mini App taking a
+   * task's browser): checked exactly as an unlock is, counting towards the same wait. Throws when there is no PIN.
+   */
+  confirmPin(pin: string): void {
+    if (!this.pinSet()) throw new AppLockRefusal(403, "Set an App lock PIN in Branch's Settings first.");
+    this.checkPin(pin);
+  }
   /** Whether an App lock PIN is set. */
   pinSet(): boolean {
     return this.hasPin;
