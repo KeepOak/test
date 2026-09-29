@@ -44,7 +44,7 @@ async function openAbout(page) {
    Branch Agent and its version under the title; Updating by itself saves as it is switched,
    with no Save button. (Remove Branch is never pressed here.) */
 test("DG-192 Updates & about has the prototype's sections at every width and level, with Branch Agent and its version", async (t) => {
-  const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const { settingsWindow, openSettingsPage, setLevel, assertHeadings } = await import("./settings-window.mjs");
   const { page, errors } = await settingsWindow(t, { name: "about-dg192" });
   for (const width of [1440, 860, 400]) {
     await page.setViewportSize({ width, height: 950 });
@@ -61,12 +61,8 @@ test("DG-192 Updates & about has the prototype's sections at every width and lev
       // #455's page: the status card, then Updating; the channel ("Update channel", public/app/settings/updates-channel.js),
       // which the prototype does not show, is folded under the quieter More.
       const want = ["Updates & about", "Updating", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])];
-      const read = () => page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
-        all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // A redraw between the title and its sections read them as none; wait (in the page) for the sections, then check.
-      await page.waitForFunction((list) => JSON.stringify([...document.querySelectorAll(".set-col :is(h1, h2, h3, h4)")]
-        .filter((node) => node.checkVisibility()).map((node) => node.textContent.trim())) === list, JSON.stringify(want), { timeout: 15000 }).catch(() => {});
-      assert.deepEqual(await read(), want, `${width} px, ${one}`);
+      await assertHeadings(page, want, `${width} px, ${one}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), true, "no sideways scroll");
     }
   }

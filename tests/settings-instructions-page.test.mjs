@@ -15,7 +15,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { contextFileSettings } from "../dist/context-files.js";
 import { openSettings } from "./places.mjs";
-import { settingsWindow, openSettingsPage } from "./settings-window.mjs";
+import { settingsWindow, openSettingsPage, assertHeadings } from "./settings-window.mjs";
 
 const SOUL = "# Who you are\n\nYou are Branch, a calm and practical assistant.\n";
 
@@ -28,9 +28,7 @@ test("DG-182: the page is the prototype's title over its files, at every width",
     await page.setViewportSize({ width, height: 900 });
     await openSettingsPage(page, "instructions");
     await page.locator(".set-col .prow", { hasText: "SOUL.md" }).waitFor();
-    const headings = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
-      all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
-    assert.deepEqual(headings, ["Instructions & personality"], `${width} px`);
+    await assertHeadings(page, ["Instructions & personality"], `${width} px`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `${width} px fits`);
   }
   assert.deepEqual(errors, []);

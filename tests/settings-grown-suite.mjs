@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { offLimitsToHousehold } from "../dist/server.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
-import { openSettingsPage, setLevel, settingsWindow } from "./settings-window.mjs";
+import { assertHeadings, openSettingsPage, setLevel, settingsWindow, shownHeadings } from "./settings-window.mjs";
 import { watchSettled } from "./page-settled.mjs";
 
 test("every Settings page introduction has English and French words", async () => {
@@ -57,9 +57,8 @@ async function fixture(t, { width = 1440, height = 950, preferences } = {}) {
 /** The page list's own button (a page may also link to another with the same data-act). */
 const navButton = (page, id) => page.locator(`.settings button.nav[data-act="setpage"][data-v="${id}"]`);
 const allPages = (page) => page.locator('.settings button.nav[data-act="setpage"]').evaluateAll((all) => all.map((one) => one.dataset.v));
-/** The headings on the open page, in order. */
-const headings = (page) => page.locator(".set-col").locator("h1, h2, h3").evaluateAll((all) =>
-  all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+/** The headings on the open page, in order, read in one turn (settings-window.mjs shownHeadings). */
+const headings = (page) => shownHeadings(page, "h1, h2, h3");
 
 test("the desktop Settings level and version stay at the bottom of the rail", async (t) => {
   // Redesign: the prototype's page list ends with its level switch (.set-level); the version is in the status bar.
@@ -105,7 +104,7 @@ test("S6 Regular shows the essentials; each level shows more; the choice is kept
   await openSettingsPage(f.page, "models");
   await f.page.locator('[data-act="setlevel"][data-v="technical"][aria-pressed="true"]').waitFor();
   await settled();
-  assert.deepEqual(await headings(f.page), technical, "the choice is kept");
+  await assertHeadings(f.page, technical, "the choice is kept", { levels: "h1, h2, h3" });
   assert.deepEqual(f.errors, []);
 });
 

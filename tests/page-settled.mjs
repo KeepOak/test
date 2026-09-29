@@ -11,10 +11,15 @@ const counted = (request) => new URL(request.url()).pathname.startsWith("/api/")
 /** Starts counting `page`'s requests now; answers `settled()`, which resolves once the page has settled. */
 export function watchSettled(page, { limit = 60000 } = {}) {
   const pending = new Set();
+  let navigating = false;
   page.on("request", (request) => {
-    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) pending.clear();
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) { pending.clear(); navigating = true; }
     else if (counted(request)) pending.add(request);
   });
+  /* The old document runs until the new one commits: a request it starts after the navigation's own (the 2 s check of
+     who is at the window, main.js watchPerson) is never reported either, and held the wait to its limit (Checks: "still
+     in flight: GET /api/profiles"). So the count starts again once the new document is in, too. */
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame() && navigating) { navigating = false; pending.clear(); } });
   for (const done of ["requestfinished", "requestfailed"]) page.on(done, (request) => pending.delete(request));
   return async () => {
     const until = Date.now() + limit;
