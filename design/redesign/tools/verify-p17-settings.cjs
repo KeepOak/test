@@ -157,7 +157,7 @@ async function compare(page) {
   check("run again: the engine ran the suite on both connections", after.length === before + 2, `${before} → ${after.length}`);
   const cells = await dlg(page).locator(".tbl-b17 tbody tr td:nth-child(2)").allTextContents();
   check("compare: the table shows the engine's right answers", cells.includes(`${after[0].summary.passed} of ${after[0].summary.total}`), cells.join(" | "));
-  check("compare: side by side stays greyed", await greyed(dlg(page).locator('[data-act="cmpsideb17"]')));
+  check("compare: side by side is live", !(await greyed(dlg(page).locator('[data-act="cmpsideb17"]'))));
   await closeDlg(page);
   await page.locator('[data-act="savingsb17"]').click();
   await settle(page, 1200);

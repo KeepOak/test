@@ -191,6 +191,7 @@ test("live status: held-back text is not streamed, a failing part is left alone,
   const blind = new LiveStatus({ adapter: quiet.adapter, chatId: "c1", messageId: "q1" }, async (text) => ({ text, blocked: false }), fast);
   blind.start();
   blind.thinking();
+  blind.event("tool.started", { name: "files.read", id: "a", label: "Reading" }); // a task with no step gets no progress message
   await until(() => quiet.calls.some((c) => c.op === "send"), "progress message without an id");
   blind.text("streaming");
   assert.equal(await blind.finish("done", "streaming"), null, "without an id the reply goes the ordinary way");

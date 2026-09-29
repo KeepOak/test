@@ -9,8 +9,9 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { RepeatedText, judgeMessages, readVerdict } from "../dist/safety-extras/progress-judge.js";
+import { RepeatedText, judgeMessages, readVerdict, roundSignature } from "../dist/safety-extras/progress-judge.js";
 import { repairHistory } from "../dist/safety-extras/history-repair.js";
+import { saveLoopGuardSettings } from "../dist/loop-guard.js";
 
 test("one passage said over and over is noticed; ordinary text, code and tables are not", () => {
   const stuck = new RepeatedText();
@@ -52,24 +53,49 @@ async function served(t, provider) {
 }
 const lookup = (i) => ({ id: `c${i}`, name: "memory.search", arguments: JSON.stringify({ query: `thing ${i}` }) });
 
-test("a task that keeps giving the same answer between steps is ended in one sentence", async (t) => {
+/* QA 2026-09-28: a round is judged on what it did. The canary's task said the same sentence before reading a different
+   file each round and was stopped as stuck; the same call with the same arguments after the same result is stuck. */
+test("a round is known by its calls and the results it answers; its words count only when it does nothing else", () => {
+  const answer = (content, calls) => ({ role: "assistant", content, ...(calls.length ? { toolCalls: calls } : {}) });
+  const turn = (content, calls, results = []) => [{ role: "user", content: "go" }, ...results.map(([id, text]) => result(id, text)), answer(content, calls)];
+  const sign = (content, calls, results) => roundSignature(content, turn(content, calls, results));
+  assert.notEqual(sign("Let me look.", [lookup(1)]), sign("Let me look.", [lookup(2)]), "same words, another call: progress");
+  assert.notEqual(sign("Again.", [lookup(1)], [["c0", "one"]]), sign("Again.", [lookup(1)], [["c0", "two"]]), "same call after a new result: progress");
+  assert.equal(sign("Checking.", [lookup(1)], [["c0", "same"]]), sign("Checking once more!", [lookup(1)], [["c0", "same"]]), "same call after the same result: the same round, however worded");
+  const reordered = { ...lookup(1), arguments: JSON.stringify({ query: "thing 1" }).replace("{", "{ ") };
+  assert.equal(sign("x", [lookup(1)]), sign("x", [reordered]), "the arguments are compared as values");
+  assert.notEqual(sign("All done.", []), sign("Nearly done.", []), "a round with no call is known by its words");
+});
+
+test("the same words before a different step each round is progress, and the task runs on", async (t) => {
+  let turn = 0;
+  const provider = { name: "scripted", async complete(request) {
+    if (request.messages[0]?.content?.includes("You check whether an assistant is stuck")) return { content: '{"stuck": false, "confidence": 0.99}', toolCalls: [] };
+    turn += 1;
+    return { content: "Let me look at the next part of this, one more time, carefully.", toolCalls: [lookup(turn)] };
+  } };
+  const { app, api } = await served(t, provider);
+  await api("/api/safety-extras/switch", { part: "progress-judge", mode: "when-needed" });
+  const moving = await api("/api/run", { prompt: "go" });
+  assert.match(moving.output, /went back to the model 12 times/, moving.output);
+  assert.ok(turn >= 12, `every round ran: each one looked up something new (${turn})`);
+  assert.equal(app.store.events(moving.id).some((event) => event.kind === "progress.stopped"), false);
+});
+
+test("the same call with the same arguments after the same result is stuck, and ended in one sentence", async (t) => {
   let turn = 0;
   const provider = { name: "scripted", async complete() {
     turn += 1;
-    return { content: "Let me look at that once more.", toolCalls: [lookup(turn)] };
+    return { content: `Checking that again (${turn}).`, toolCalls: [lookup(0)] };
   } };
   const { app, api } = await served(t, provider);
-  const plain = await api("/api/run", { prompt: "go" });
-  // mac7/speed: the limit now ends with the best answer it has and a plain sentence saying why.
-  assert.match(plain.output, /went back to the model 12 times/, "off: it still runs to the limit");
+  // The tool loop guard would refuse these calls itself; switched off, the progress check alone is tested.
+  saveLoopGuardSettings(app.store, app.runtime.owner, { mode: "off" });
   await api("/api/safety-extras/switch", { part: "progress-judge", mode: "when-needed" });
-  turn = 0;
-  const judged = [];
   const stopped = await api("/api/run", { prompt: "go" });
   assert.match(stopped.output, /^Stopped: the assistant was not getting anywhere \(it gave the same answer again and again\)/, stopped.output);
-  assert.equal(turn, 3);
+  assert.equal(turn, 4, "the first round answers nothing yet; the next three are the same call after the same result");
   assert.ok(app.store.events(stopped.id).some((event) => event.kind === "progress.stopped"));
-  assert.deepEqual(judged, []);
 });
 
 test("the judge ends a long task only when it is sure", async (t) => {

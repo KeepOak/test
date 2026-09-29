@@ -61,7 +61,8 @@ test("the screen names the version being installed and the one it replaces, neve
   s.hear(building({ target: { version: null, commit: NEW } }));
   assert.ok(s.layer.innerHTML.includes("window.updates.screen.to-change[commit=aaaaaaa]"), "before its version is known, the change is named");
   assert.ok(!s.layer.innerHTML.includes(`screen.to[version=${INSTALLED}]`));
-  assert.match(s.layer.innerHTML, /building-dark\.webm/, "the dark look's loop, with its still for reduced motion");
+  assert.match(s.layer.innerHTML, /\/assets\/icon-192\.png/, "Branch appears as its static logo");
+  assert.doesNotMatch(s.layer.innerHTML, /building-(dark|light)|\.webm/, "no decorative mascot loop");
   s.hear(building({ installed: { version: "0.19.3", commit: null }, release: { channel: "stable", latestVersion: "0.20.0", available: true }, target: { version: "0.20.0", commit: null } }));
   assert.ok(s.layer.innerHTML.includes('<h2 id="upd18-title">window.updates.screen.to[version=0.20.0]</h2><p>window.updates.screen.from[version=0.19.3]'),
     "a release's version reads as it is");
@@ -266,4 +267,36 @@ test("up to date says so, with Check now; the switch says how often it really lo
   const stable = await settings({ status: { ...ready(), phase: "current", release: null }, channel: "stable" });
   assert.match(stable.html, /window.settings.updates.checks-every-day/, "Stable looks once a day");
   assert.match(beta.html, /<details class="adv upd18-more" id="u-more"><summary>window.updates.card.more<\/summary>.*<channel\/>.*<\/details>/s, "the channel and the rest sit under More");
+});
+
+/* ---------- quiet background builds (the owner: "everything is slow and my computer is crying") ---------- */
+
+test("while it waits for the owner, the status bar keeps the step's real time and says why it waits", async () => {
+  const s = await screen(building({ automatic: true, paused: "typing" }));
+  assert.match(s.run("statusItem()"), /window.updates.bar\[step=window.updates.stage.building\] <time data-upd-since="[^"]+">[\d:]+<\/time> · window.updates.paused.typing<\/button>/);
+  const renders = s.renders.length;
+  s.hear(building({ automatic: true, paused: "task" }));
+  assert.ok(s.renders.length > renders, "a pause starting or ending redraws the status bar at once");
+  assert.match(s.run("statusItem()"), /· window.updates.paused.task</);
+  s.hear(building({ automatic: true, paused: null }));
+  assert.doesNotMatch(s.run("statusItem()"), /paused/, "going on again, it says nothing more");
+});
+
+test("the card says plainly why a build takes longer: it is gentle, or it waits for the owner", async () => {
+  const gentle = await settings({ status: building() });
+  assert.match(gentle.html, /<p>window.updates.card.gentle<\/p>/, "low priority, in plain words");
+  const typing = await settings({ status: building({ paused: "typing" }) });
+  assert.match(typing.html, /<p>window.updates.card.paused-typing<\/p>/);
+  assert.doesNotMatch(typing.html, /card.gentle/, "one reason at a time");
+  const task = await settings({ status: building({ paused: "task" }) });
+  assert.match(task.html, /<p>window.updates.card.paused-task<\/p>/);
+  const swapping = building();
+  swapping.stages = swapping.stages.map((one) => ({ ...one, state: one.id === "swapping" ? "running" : one.id === "restarting" ? "waiting" : "done" }));
+  assert.doesNotMatch((await settings({ status: swapping })).html, /card.gentle|card.paused/, "the swap is not slowed, so nothing says it is");
+  // A Stable install downloads, and builds nothing: nothing says it builds at low priority.
+  const stable = building({ release: { channel: "stable", available: true, latestVersion: "0.20.0" }, target: { version: "0.20.0", commit: null },
+    stages: [stage("downloading", "running", 0), stage("checking", "waiting"), stage("copying", "waiting"), stage("swapping", "waiting"), stage("restarting", "waiting")] });
+  assert.doesNotMatch((await settings({ status: stable })).html, /card.gentle/, "a download is not a build");
+  const stableWaits = await settings({ status: { ...stable, paused: "typing" } });
+  assert.match(stableWaits.html, /<p>window.updates.card.paused-typing<\/p>/, "but it does hold back for the owner, and says so");
 });
