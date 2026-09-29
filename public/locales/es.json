@@ -9098,6 +9098,7 @@
   "window.settings.gateway.gateway": "Pasarela",
   "window.settings.gateway.in-one-command": "Con un solo comando.",
   "window.settings.gateway.nothing-is-watching-branch": "Nada está vigilando Branch",
+  "window.settings.gateway.nothing-to-report": "Nada que contar: el motor sigue funcionando desde que la pasarela lo inició.",
   "window.settings.gateway.off-when-you-close-branch-your": "Desactivada. Cuando cierras Branch, tus Trunks se detienen, y Telegram y las automatizaciones se quedan en silencio hasta que lo vuelvas a abrir.",
   "window.settings.gateway.on-telegram-your-phone-and-automations": "Activada. Telegram, tu teléfono y las automatizaciones siguen funcionando con la ventana cerrada, y reinicia el motor si se detiene.",
   "window.settings.gateway.pause-a-chat-app-from-the": "Pausar una app de chat desde el chat",

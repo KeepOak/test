@@ -9099,6 +9099,7 @@
   "window.settings.gateway.gateway": "Passerelle",
   "window.settings.gateway.in-one-command": "En une commande.",
   "window.settings.gateway.nothing-is-watching-branch": "Rien ne surveille Branch",
+  "window.settings.gateway.nothing-to-report": "Rien à signaler : le moteur tourne sans interruption depuis que la passerelle l'a démarré.",
   "window.settings.gateway.off-when-you-close-branch-your": "Désactivée. Quand vous fermez Branch, vos Trunks s’arrêtent, et Telegram et les automatisations se taisent jusqu’à ce que vous le rouvriez.",
   "window.settings.gateway.on-telegram-your-phone-and-automations": "Activée. Telegram, votre téléphone et les automatisations continuent de marcher quand la fenêtre est fermée, et elle relance le moteur s’il s’arrête.",
   "window.settings.gateway.pause-a-chat-app-from-the": "Mettre une messagerie en pause depuis la discussion",

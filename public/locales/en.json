@@ -9098,6 +9098,7 @@
   "window.settings.gateway.gateway": "Gateway",
   "window.settings.gateway.in-one-command": "In one command.",
   "window.settings.gateway.nothing-is-watching-branch": "Nothing is watching Branch",
+  "window.settings.gateway.nothing-to-report": "Nothing to report: the engine has kept running since the gateway started it.",
   "window.settings.gateway.off-when-you-close-branch-your": "Off. When you close Branch, your Trunks stop, and Telegram and automations go quiet until you open it again.",
   "window.settings.gateway.on-telegram-your-phone-and-automations": "On. Telegram, your phone and automations keep working when the window is closed, and it restarts the engine if it stops.",
   "window.settings.gateway.pause-a-chat-app-from-the": "Pause a chat app from the chat",
