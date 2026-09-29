@@ -18,6 +18,7 @@ import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
 import { stepsCard, initSteps } from "../chat-steps.js";
+import { phoneAccessCard, initPhoneAccess, loadPhoneAccess } from "../phone-access.js";
 import { logo } from "../../core/logos.js";
 import { sw15, sec15, seg15 } from "../rows15.js";
 import { on } from "../../core/actions.js";
@@ -42,7 +43,7 @@ async function loadApps() {
   A.approved = live?.approved ?? [];
   A.steps = live?.steps ?? null;
   A.apps = setup?.channels ?? [];
-  await Promise.all([loadFormats(), loadReplyStyles()]);
+  await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
   render();
 }
 
@@ -57,7 +58,7 @@ export function draw() {
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
-  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A);
+  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
   // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
   const kinds = [...new Set(on.map(kindOf))];
   const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
@@ -130,5 +131,6 @@ export function init() {
   loadApps();
   initOwnerCommands(A, loadApps);
   initSteps(loadApps);
+  initPhoneAccess(loadApps);
 }
 export function load() { return loadApps(); }

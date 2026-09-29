@@ -2,6 +2,7 @@ import { randomBytes, randomInt } from "node:crypto";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { z } from "zod";
 import type { Store } from "../store.js";
+import type { MiniAppUser } from "../miniapp/init-data.js";
 import { heldReplay } from "../never-break/resume.js"; // mac3/never-break
 import type { Runtime } from "../runtime.js";
 import { carryable } from "../carry-on.js"; // QA R1 follow-up
@@ -215,6 +216,11 @@ export interface ChannelAdapter {
   sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
   /** Replaces the picture, caption and buttons of a message `sendPicture` made. */
   editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[]): Promise<void>;
+  /**
+   * The Telegram Mini App's signed launch data, checked with this bot's own token (src/miniapp/init-data.ts): the user
+   * who opened it. Throws when it was not made by this bot or is too old.
+   */
+  miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
 }
 /**
@@ -231,6 +237,8 @@ export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Arr
 export interface ApprovalButton {
   label: string;
   value: string;
+  /** Telegram only: the button opens this HTTPS address as the bot's Mini App instead of sending `value`. */
+  webApp?: string;
 }
 
 /**
@@ -444,6 +452,8 @@ export class ChannelRouter {
    * throws the plain reason it cannot. `held` says who holds it without changing anything.
    */
   browserHold: ((runId: string, op: "take" | "give" | "held") => Promise<"owner" | "task" | "none">) | undefined;
+  /** The Telegram Mini App's address for this task's browser, while the owner's phone can reach it; null otherwise. */
+  miniAppUrl: ((runId: string) => string | null) | undefined;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
   /**
@@ -1493,11 +1503,14 @@ export class ChannelRouter {
   }
   /** Who holds each chat task's browser, as its picture's buttons last showed it. */
   private readonly holders = new Map<string, "owner" | "task" | "none">();
-  private holdButtons(runId: string | null): { label: string; value: string }[] {
+  private holdButtons(runId: string | null, telegram: boolean): ApprovalButton[] {
     if (!runId) return [];
     void this.browserHold?.(runId, "held").then((who) => { this.holders.set(runId, who); }, () => undefined);
-    return this.holders.get(runId) === "owner"
-      ? [{ label: "▶️ Hand back", value: `br:g:${runId}` }] : [{ label: "✋ Take over", value: `br:t:${runId}` }];
+    const hold = this.holders.get(runId) === "owner"
+      ? { label: "▶️ Hand back", value: `br:g:${runId}` } : { label: "✋ Take over", value: `br:t:${runId}` };
+    // Where the owner's phone can reach the Mini App (src/miniapp/phone-access.ts), it opens the page to drive it there.
+    const phone = telegram ? this.miniAppUrl?.(runId) ?? null : null;
+    return phone ? [hold, { label: "📱 Drive it here", value: "", webApp: phone }] : [hold];
   }
   /**
    * A press on the live browser's Take over or Hand back. Only in the direct chat the task came from, by the person who
@@ -1510,9 +1523,8 @@ export class ChannelRouter {
   private async pressHold(message: InboundMessage, op: "take" | "give", runId: string): Promise<Outcome> {
     const say = (text: string) => this.deliver(message.channel, message.chatId, text, `browser-hold:${message.messageId}`, message.messageId)
       .then(() => "replied" as const, () => "replied" as const);
-    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
-    const mine = came?.channel === message.channel && came?.chatId === message.chatId && came?.senderId === message.senderId;
-    if (!this.browserHold || message.chatKind !== "direct" || !mine || !this.senderAllowed(message.channel, message.senderId) || !this.liveOn())
+    if (!this.browserHold || message.chatKind !== "direct" || !this.mayHoldBrowser(runId, message.channel, message.chatId, message.senderId)
+      || !this.liveOn())
       return say("Only the person who started this task, in this chat, can take over its browser.");
     try {
       const who = await this.browserHold(runId, op);
@@ -1526,6 +1538,20 @@ export class ChannelRouter {
     } catch (error) {
       return say(error instanceof Error ? error.message : String(error));
     }
+  }
+  /**
+   * Whether this sender may take over this task's browser from outside Branch's window: the task came from this very
+   * chat, sent by them, and they may still talk to Branch (paired, or on the owner's list).
+   */
+  mayHoldBrowser(runId: string, channel: string, chatId: string, senderId: string): boolean {
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return came?.channel === channel && came?.chatId === chatId && came?.senderId === senderId && this.senderAllowed(channel, senderId);
+  }
+  /** The chat app a task came from, as its first message recorded it, or null. */
+  cameFrom(runId: string): { channel: string; chatId: string; senderId: string } | null {
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return typeof came?.channel === "string" && typeof came.chatId === "string" && typeof came.senderId === "string"
+      ? { channel: came.channel, chatId: came.chatId, senderId: came.senderId } : null;
   }
   /** Whether a chat may be shown typing, reactions and progress right now. */
   private liveOn(): boolean {
@@ -1582,7 +1608,7 @@ export class ChannelRouter {
     const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
     // Pictures of Branch's browser while the task works in it: a direct chat only, where the owner has them on.
     const pictures = message.chatKind === "direct" && switches.steps !== "off" && display.pictures !== "off" && !!adapter.sendFile && !adapter.paidPerMessage;
-    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf()) : undefined;
+    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf(), adapter.kind === "telegram") : undefined;
     const picture = pictures ? async () => {
       const runId = runOf(), seen = runId ? await this.browserPicture(runId) : null;
       if (!seen) return null;
