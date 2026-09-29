@@ -2465,7 +2465,10 @@ ${run.output.slice(0, 6000)}`;
       // qa-fixes-4: a tool call written out as text, naming one of Branch's tools, is neither an answer nor a call. Its
       // words are never streamed on, kept or posted (a room would post them as a Trunk's). Beside real calls, the calls
       // go on without it; alone, the model is asked once to make the call, and a second one ends the task in plain words.
-      const isBranchTool = (name: string): boolean => this.isToolName(name);
+      // QA retest 2026-09-28 pass 2: qwen2.5:7b answered "Tell me my favourite colour…" with nothing but
+      // {"name": "user.fact", "arguments": {}}, a tool Branch does not have in its own "user." family, and the window
+      // showed the JSON as the answer. A made-up name in one of Branch's tool families counts as Branch's too.
+      const isBranchTool = (name: string): boolean => this.isToolName(name) || this.inToolFamily(name);
       // An answer that ends with a call written out (see endsWithToolCallAsText) counts too, unless the person asked how
       // something would be done, where showing the call is the answer.
       const callText = writesToolCallAsText(withoutThinking(spoken), isBranchTool)
@@ -2730,6 +2733,11 @@ ${run.output.slice(0, 6000)}`;
   }
   /** Adds a message to the working context and to the stored transcript, so nothing is lost later. */
   /** qa-fixes-4: a name that is one of Branch's tools, as written or as it travels to a model (`wireName`). */
+  /** A name shaped like one of Branch's (family.verb) whose family is one Branch's tools belong to. */
+  private inToolFamily(name: string): boolean {
+    const family = /^([a-z][a-z0-9_-]{0,30})\.[a-z][a-z0-9_]{0,40}$/.exec(name)?.[1];
+    return !!family && this.registry.names().some((tool) => tool.startsWith(`${family}.`));
+  }
   private isToolName(name: string): boolean {
     return this.registry.names().some((tool) => tool === name || wireName(tool) === name || wireName(tool, "local") === name);
   }
