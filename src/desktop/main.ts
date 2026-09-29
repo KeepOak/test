@@ -28,7 +28,8 @@ import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from
 import { updateReadiness } from "./update-readiness.js";
 import { logoShare, readTrayUsage, trayBitmap, trayTip, type TrayUsage } from "./tray-ring.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
-import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
+import { crashReporterPlan, diagnose } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
+import { openMainLog } from "./main-log.js";
 import type { DesktopSettings } from "./settings.js";
 import { registerConversationExportIpc } from "./conversation-export-ipc.js";
 // 0.18.1: "Branch stopped responding — Restart" relaunches the app, and with it the local server.
@@ -514,6 +515,9 @@ async function start(): Promise<void> {
   }
   app.once("will-quit", () => { void lock.release(); });
   startCrashReporter(dataDir);
+  // Main's own lines (the updater's steps among them) go into the engine's activity log, engine running or not.
+  openMainLog(dataDir);
+  diagnose("desktop", "info", "The window's main process started", { fields: { version: app.getVersion() } });
   // An engine already working in the background is joined rather than started a second time; one from a version
   // before the engine's proof is moved to this version first.
   // The desktop's gateway preference is written ON before anything can save the file's other fields, so no later
@@ -803,6 +807,8 @@ function joinedGate(dataDir: string, url: string, key: () => string): EngineGate
  */
 function shutDown(): void {
   quitting = true;
+  const forUpdate = quitReason === "update";
+  if (forUpdate) diagnose("updater", "info", "Stopping the engine so the update can be handed over");
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 8000).unref());
   void Promise.race([(stop?.() ?? Promise.resolve()), deadline])
     .catch((error) => console.error("Shutdown:", error.message))
@@ -810,6 +816,7 @@ function shutDown(): void {
     // ended first and this waits (briefly) until it has really gone.
     .finally(() => (engine?.end(2000) ?? Promise.resolve()))
     .finally(() => {
+      if (forUpdate) diagnose("updater", "info", "The engine has stopped; the hand-over takes it from here");
       if (trayTimer) clearInterval(trayTimer);
       tray?.destroy();
       app.exit(0);
