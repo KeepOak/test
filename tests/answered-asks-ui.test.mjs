@@ -25,9 +25,8 @@ function writer() {
     const last = request.messages.at(-1);
     const named = /^write (\S+)/.exec(String(last?.content ?? ""));
     if (last?.role === "user" && named) file = named[1];
-    // Q050: after a yes the task that asked carries on itself, told in its instructions that the call did not run.
-    const allowed = last?.role === "tool" && !/"ok":true/.test(last.content) && /The call you asked about did not run/.test(String(request.messages[0]?.content ?? ""));
-    if ((last?.role === "user" && named) || allowed)
+    // Q050, QA R1: after a yes the task that asked carries on itself, and the engine runs the approved call.
+    if (last?.role === "user" && named)
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path: file, content: "hello" }) }] };
     return { content: "Done.", toolCalls: [] };
   } };
