@@ -307,6 +307,9 @@ export const ROUTES = {
   "/api/flows/check": "other POST",
   "/api/flows/runs/:id": "look",
   "/api/folder-trust": "owner POST",
+  "/api/gitlab": "owner POST", // RES-719: the GitLab switch
+  "/api/gitlab/connect": "owner POST", // RES-719: a token checked with GitLab, then kept in the locker
+  "/api/gitlab/disconnect": "owner POST", // RES-719: the token taken out of the locker
   "/api/goal-undo/settings": "owner POST",
   "/api/goals": "task POST",
   "/api/governance": "owner POST",
@@ -1103,6 +1106,8 @@ export const ROUTES = {
   // record is a wider window than any one of those alone, so it is refused like a secret read.
   "/api/search": "secret-read",
   "/api/second-opinion": "owner POST",
+  "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
+  "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
@@ -1310,6 +1315,7 @@ export const ROUTES = {
   // both are the owner's alone at the app window and neither is anything a key may do.
   "/api/voice/dictation": "secret-read",
   "/api/voice/dictation/listen": "secret-read",
+  "/api/voice/dictation/hear": "secret-read", // RES-709: what the window's microphone heard, written out on this computer
   "/api/webhooks": "secret-read",
   "/api/webhooks/:id": "secret-read",
   "/api/webhooks/:id/enable": "owner POST",
