@@ -10,6 +10,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const quiet = { name: "scripted", async complete() { return { content: "Here is a short answer.", toolCalls: [] }; } };
 
@@ -37,7 +38,7 @@ async function fixture(t, { width = 1440, height = 950 } = {}) {
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   errors.length = 0; // what failed before the key was given is the login page's business
   if (width <= 760) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
-  await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).click();
+  await openChat(page, run.sessionId);
   await page.locator("#conversation .b").first().waitFor();
   return { page, errors };
 }
