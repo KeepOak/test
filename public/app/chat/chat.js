@@ -709,7 +709,8 @@ async function sendPlain(said, withLead = false) {
     started = true;
     filesSent();
     practiceSent();
-    if (!moved()) await adopt(run.sessionId, before, (restore) => { restoreDraft = restore; });
+    // Gone and come back to it before the answer came: it is on screen again, so its answer is read here all the same.
+    if (!moved() || C.sessionId === run.sessionId) await adopt(run.sessionId, before, (restore) => { restoreDraft = restore; });
     /* The task is over once its answer is read back: from here the window only reads what it left (its questions, the
        picture, the extras). Still "sending" meanwhile, a message sent after the answer showed went to the waiting line of
        a task that had ended, and in a new conversation, which has no line, it was left unsent in the box (D1 on CI). */
