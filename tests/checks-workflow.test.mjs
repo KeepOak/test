@@ -99,8 +99,9 @@ test("pull-request runs take a CI slot first, and every finished run hands its s
   const plan = workflow.jobs.plan.steps;
   const slot = plan.findIndex((step) => step.id === "slot");
   assert.ok(slot >= 0 && slot < plan.findIndex((step) => step.id === "plan"), "the slot is taken before planning");
-  assert.match(plan[slot].run, /ci-queue\.mjs admit --run="\$RUN" --attempt="\$ATTEMPT" --pr="\$PR"/);
+  assert.match(plan[slot].run, /ci-queue\.mjs admit --run="\$RUN" --actor="\$ACTOR" --pr="\$PR"/);
   assert.equal(plan.find((step) => step.id === "plan").if, "steps.slot.outputs.held != 'true'");
+  assert.equal(plan[slot].env.ACTOR, "${{ github.triggering_actor }}", "who started this attempt: the queue, or a person");
   const hand = workflow.jobs.verify.steps.find((step) => /ci-queue\.mjs restart/.test(step.run ?? ""));
   assert.equal(hand.if, "always()", "a failed share still hands its slot on");
   assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push to redesign/window is never held");
