@@ -130,6 +130,9 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
 export const thisComputerSettings: readonly string[] = [
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
+  // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
+  // no backup carries, so the account stays with it.
+  "gitlab-account",
   // NAS 49b183b's unchecked class: this computer's OS sandbox, whether its emergency stop is pressed (letting it go
   // needs the authenticator code, which a replacing restore would skip), and which tools need that code.
   "os-sandbox", "safety-emergency-stop", "safety-code-approvals-setup",
@@ -218,6 +221,8 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   // switch, the chats a relay may bring, the USB rules that start a task, and the git sources the assistant shares to.
   "desktop-control", "approval_reviewer", "loop_guard", "security-check", ...safetyParts.map(safetyKey), ...reachParts.map(reachKey),
   "reach-relay-chats", "reach-usb-rules", "reach-agent-git-sources",
+  // RES-719: the GitLab switch reaches a server, so a file cannot switch it on by itself.
+  "gitlab-connection",
   // NAS 23e7382: which chat accounts count as the owner for `/platform`, read before the sender list is.
   "reach-platform-settings",
   // NAS f30facf: where the owner's words and records are sent: the trace export's endpoint and the memory service.
@@ -248,7 +253,7 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "flowboards-kanban-settings", "flowboards-widget-ideas", "gemini-signin", "governance", "interop-modes-list",
   "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
   "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
-  "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults",
+  "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults", "codex-models",
   "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages",
   // wire-greyed: where web searches go and the name of the secret sent with them.
   "web-search"];

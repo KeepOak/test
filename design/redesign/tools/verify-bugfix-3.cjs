@@ -6,7 +6,7 @@
    through the window with no API switch. Test data it makes through the engine: the cli-claude-code program connection
    (POST /api/providers/cli-agents, which installs and signs in to nothing), one Trunk, one household person (switched to
    and back), and the pet and achievements switches. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }

@@ -32,11 +32,15 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
+import { executeCommand } from "../commands/execute.js";
+import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
-import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
+import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
@@ -94,6 +98,8 @@ export interface ChannelHealth {
 }
 /** mac3/never-break: how long a pairing code can be used; the sender gets a new one after that. */
 const pairingCodeMs = 60 * 60_000;
+/** owner-dm-signin: the task sources a chat's chain may hold and still be the owner's own (never MCP, ACP or A2A). */
+const ownersOrChat = new Set(["owner", "channel", "schedule", "trigger"]);
 const pairingCodeFresh = (pair: { requestedAt?: string }): boolean => Date.now() - Date.parse(pair.requestedAt ?? "") <= pairingCodeMs;
 export interface ChannelAdapter {
   readonly id: string;
@@ -630,6 +636,8 @@ export class ChannelRouter {
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
+      // owner-dm-signin: whether any chat account is named as the owner's yet, so approving a pairing may offer "this is me".
+      ownerNamed: ownerAccountNamed(this.store, owner),
       // Settings › Chat apps › Show steps in chats: the knobs, for every app and for each (src/channels/steps-display.ts).
       steps: this.stepsView(),
     };
@@ -941,6 +949,9 @@ export class ChannelRouter {
     }
     if (saved) message = { ...message, text: saved.text };
     // ---- end of the bucket 12 hook ----
+    // CHAT-185: the owner's own commands from their own direct chat, before the chat's own list.
+    const ownerDm = await this.ownerDmLine(message);
+    if (ownerDm) return ownerDm;
     // A press on /model's menu is /model with that connection, by the same rules as typing it.
     // The live browser's own buttons in a chat: Take over, and Hand back.
     const hold = /^br:([tg]):([0-9a-f-]{36})$/.exec(message.text.trim());
@@ -1083,6 +1094,37 @@ export class ChannelRouter {
     return false;
   }
   /**
+   * owner-dm-signin: whether a chat's task came only from the owner's own account, so the owner's sign-in accounts may
+   * answer it (Runtime.trunkSignIns). Every chat message along the task's chain (parent, resumed, carried on) must pass
+   * `ownerDmHere` (an account the owner named as their own, in a direct chat, on an app whose servers vouch for the
+   * sender) and still be allowed to talk to Branch; nothing along it may come from another program. A message fetched
+   * after a restart is the same person's (the app still vouched for it), so its freshness is not asked, as `ownerDmLine`
+   * does. Pairing alone is never enough: a friend or a household member pairs the same way. Anything unread: no.
+   */
+  ownerDmRun(runId: string): boolean {
+    const queue = [runId], seen = new Set<string>();
+    let chats = 0;
+    while (queue.length && seen.size < 100) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const events = this.store.events(id);
+      for (const event of events) {
+        if (event.kind !== "channel.inbound") continue;
+        const came = event.data;
+        if (typeof came.channel !== "string" || typeof came.senderId !== "string" || came.chatKind !== "direct") return false;
+        const kind = this.adapters.get(came.channel)?.adapter.kind ?? "";
+        if (!ownerDmHere(this.store, this.runtime.owner, kind, { channel: came.channel, senderId: came.senderId, chatKind: "direct", caughtUp: false })
+          || !this.senderAllowed(came.channel, came.senderId)) return false;
+        chats++;
+      }
+      const started = events.find((event) => event.kind === "run.started")?.data;
+      if (typeof started?.source === "string" && !ownersOrChat.has(started.source)) return false;
+      for (const next of [started?.parentRunId, started?.resumedFrom, started?.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return chats > 0 && !queue.length;
+  }
+  /**
    * A command is approved in a chat only with its own Yes button (the exact request's fingerprint), pressed by the
    * owner's own account, in the very chat the task came from. A typed "y" is not enough: it answers whatever this chat
    * was last shown. Another chat pointed at the same conversation (a linked group) can never say yes to it.
@@ -1108,6 +1150,9 @@ export class ChannelRouter {
     const { channel, chatId } = message;
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
+    // held back when the owner turned steering off, and answered as the next turn if the task never read it.
+    if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
@@ -1125,6 +1170,29 @@ export class ChannelRouter {
     });
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
+    return "replied";
+  }
+  /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
+  ownerDmHost: (() => CommandHost) | null = null;
+  /**
+   * CHAT-185 (src/channels/owner-dm-commands.ts): one of the window's commands from the owner's own account in a direct
+   * chat, carried out through the one command table with that chat's conversation and permissions. Null when the line is
+   * not one, or the sender is not the owner there, so it goes on as an ordinary message.
+   */
+  private async ownerDmLine(message: InboundMessage): Promise<Outcome | null> {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const dm = message.voice ? null : ownerDmCommand(message.text);
+    if (!dm || !adapter || !this.ownerDmHost || !ownerDmHere(this.store, this.runtime.owner, adapter.kind, { ...message, caughtUp: false })) return null;
+    if (message.caughtUp) return "ignored"; // the owner's command sent while Branch was closed is old news, never carried out
+    const refused = ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), dm.name, dm.argument);
+    const key = `owner-dm:${message.chatId}:${message.messageId}`;
+    if (refused) { await this.deliver(message.channel, message.chatId, refused, key, this.quoteFor(message)).catch(() => undefined); return "replied"; }
+    const work = async () => (await executeCommand({ ...this.ownerDmHost!(), lockdownOffRefusal: "Lockdown can only be switched off in the app on this computer." }, {
+      surface: "chat", line: message.text, sessionId: this.sessionFor(message.channel, message.chatId), access: "full",
+      permissions: this.chatPermissions(message), ownerDm: true,
+    }))?.text ?? "I do not know that command.";
+    const reply = ["goal", "bg", "health"].includes(dm.name) ? await this.withSlot(work) : await work();
+    await this.deliver(message.channel, message.chatId, reply, key, this.quoteFor(message)).catch(() => undefined);
     return "replied";
   }
   /** `/model` menus sent to chats, so a press can be read back (src/channels/model-picker.ts). */
@@ -1445,7 +1513,9 @@ export class ChannelRouter {
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
-      : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
+      : run.status === "cancelled" ? "Stopped."
+      // owner-dm-signin: the task's own reason, scrubbed and kept short, rather than the bare status.
+      : chatFailureLine(run.status, run.output ?? "", message.chatKind, (text) => this.hideLeaks(this.runtime.hideSecrets(text)));
     // A task that stopped to ask goes out as a question with buttons, not as words to read.
     // PR #289 review 2: its own question, not whichever one is newest in the conversation.
     const own = run.status === "needs_input" ? this.runtime.waitingApprovals(run.sessionId).find((one) => one.runId === run.id) : undefined;
@@ -1710,7 +1780,30 @@ export class ChannelRouter {
     return code;
   }
   /** The owner approves a pending sender by typing the code the sender was shown. */
-  approve(owner: string, input: unknown) {
+  /**
+   * `firstOwner` (owner-dm-signin): the owner, in the window, said the sender is their own account. It is taken only while
+   * no account is named as the owner's yet and only on an app that vouches for its senders; the caller has already
+   * checked that this is the window on this computer (and the PIN, where one is set).
+   */
+  approve(owner: string, input: unknown, options: { firstOwner?: boolean } = {}) {
+    if (options.firstOwner) this.store.profiles.requireOwner("Naming your own chat account");
+    const approved = this.approveCode(owner, input);
+    const madeOwner = options.firstOwner === true && this.nameFirstOwner(owner, approved.channel, approved.senderId);
+    return { ...approved, madeOwner };
+  }
+  /**
+   * owner-dm-signin: names this approved sender as the owner's own account, as the only one, in "Commands from your own
+   * chat" (its switch left as it is). The model is OpenClaw's "Also make this sender the first command owner"
+   * (github.com/openclaw/openclaw, docs/channels/pairing.md, MIT): offered only while no owner exists, never replacing
+   * or adding to one; the code here is Branch's own. False when an owner is already named or the app cannot vouch.
+   */
+  private nameFirstOwner(owner: string, channel: string, senderId: string): boolean {
+    const kind = this.adapters.get(channel)?.adapter.kind ?? "";
+    if (!vouchedSenderKinds.includes(kind) || ownerAccountNamed(this.store, owner)) return false;
+    saveOwnerCommands(this.store, owner, { ...ownerCommands(this.store, owner), accounts: [{ channel, sender: senderId }] });
+    return true;
+  }
+  private approveCode(owner: string, input: unknown) {
     const { code } = z.object({ code: z.string().regex(/^\d{6}$/) }).strict().parse(input);
     // mac3/never-break (integration review): a code works once, only while fresh, never when two
     // requests share it, and a run of wrong guesses is slowed down.
