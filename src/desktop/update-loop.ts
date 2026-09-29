@@ -11,6 +11,11 @@ import type { UpdateChannel, UpdateStatus } from "./updater.js";
  * seconds while it may matter (updating by itself on Beta, or an update found and waiting), and backs off to every five
  * minutes while nothing changes (updating is off, or Stable, which is looked at once a day). A look never runs beside
  * another, and never while an install is under way.
+ *
+ * It never stops for good: each look first sets a timer for `stuckMs` (ten minutes) from its start, so a look that
+ * never ends (an engine or git call that never answers) is left behind, said once, and a new look starts. Ten minutes
+ * is well past each step's own time limit and before the engine calls updating stopped (fifteen, auto-update.ts). An
+ * install under way (the updater says so) is never left behind.
  */
 export interface LoopPlan {
   mode: "off" | "check" | "install";
@@ -36,6 +41,9 @@ export interface UpdateLoopOptions {
   /** Said once, in the updater's own words, when something failed (never silently). */
   tell?: (words: string) => void;
   fastMs?: number; slowMs?: number;
+  /** How long a look may run before it is left behind and a new one starts (default ten minutes). */
+  stuckMs?: number;
+  now?: () => number;
   setTimer?: (run: () => void, ms: number) => { cancel(): void };
 }
 
@@ -53,6 +61,9 @@ export class UpdateLoop {
   private running = false;
   private stopped = false;
   private told = "";
+  /** Which look is the current one: a look left behind (stuck) finds it changed and does nothing more. */
+  private generation = 0;
+  private startedAt = 0;
   /** The last plan, for the window's status line. */
   last: { plan: LoopPlan | null; wait: string | null; at: string | null } = { plan: null, wait: null, at: null };
   constructor(private readonly options: UpdateLoopOptions) {}
@@ -74,39 +85,55 @@ export class UpdateLoop {
 
   /** One look: read the choice, ask the plan, look for a newer version or install the one found. Answers the next wait. */
   async look(): Promise<number> {
-    const fast = this.options.fastMs ?? 30_000, slow = this.options.slowMs ?? 5 * 60_000;
-    if (this.running || this.options.updater.inProgress) { this.schedule(fast); return fast; }
+    const fast = this.options.fastMs ?? 30_000, slow = this.options.slowMs ?? 5 * 60_000, stuck = this.options.stuckMs ?? 10 * 60_000;
+    const now = this.options.now ?? Date.now;
+    if (this.options.updater.inProgress) { this.schedule(fast); return fast; }
+    if (this.running) {
+      if (now() - this.startedAt < stuck) { this.schedule(fast); return fast; }
+      this.say(`Looking for an update had not finished after ${Math.round(stuck / 60_000)} minutes, so Branch started looking again.`);
+    }
+    const mine = ++this.generation;
+    const current = () => mine === this.generation && !this.stopped;
     this.running = true;
+    this.startedAt = now();
+    // The safety net: fires even if this look never ends, and is replaced by the next wait when it does.
+    this.schedule(stuck);
     let next = slow;
     try {
       const choice = await this.options.readiness();
-      if (choice.autoUpdate === "off") return next;
+      if (!current() || choice.autoUpdate === "off") return next;
       if (this.options.updater.selectedChannel !== choice.channel) this.options.updater.setChannel(choice.channel);
       let plan = await this.options.plan(factsOf(this.options.updater.status));
+      if (!current()) return next;
       if (plan.failed) this.say(plan.failed);
       if (plan.step === "check") {
         const status = await this.options.updater.check();
+        if (!current()) return next;
         if (status.phase === "error") { await this.report(status.message, { ...factsOf(status), checked: true }); return fast; }
         plan = await this.options.plan({ ...factsOf(status), checked: true });
+        if (!current()) return next;
       }
       this.last = { plan, wait: null, at: new Date().toISOString() };
       if (plan.step === "install") {
         try { await this.options.install(); }
         catch (error) {
+          // A wait is quiet; anything else (UpdateStuckError included: the engine could not be closed) is said and kept.
           if ((error as Error)?.name === "UpdateDeferredError") this.last.wait = ownWords(error);
-          else await this.report(this.options.updater.status.phase === "error" ? this.options.updater.status.message : ownWords(error), factsOf(this.options.updater.status));
+          else if (current()) await this.report(this.options.updater.status.phase === "error" ? this.options.updater.status.message : ownWords(error), factsOf(this.options.updater.status));
         }
       }
       // Beta updating by itself, or a version found and waiting: looked at again soon. Otherwise, rarely.
       next = choice.autoUpdate === "install" && (choice.channel === "beta" || this.options.updater.status.phase === "available") ? fast : slow;
       return next;
     } catch (error) {
-      this.say(ownWords(error));
+      if (current()) this.say(ownWords(error));
       next = fast;
       return next;
     } finally {
-      this.running = false;
-      this.schedule(next);
+      if (mine === this.generation) {
+        this.running = false;
+        this.schedule(next);
+      }
     }
   }
   private async report(words: string, facts: LoopFacts): Promise<void> {

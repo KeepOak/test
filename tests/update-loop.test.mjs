@@ -63,3 +63,78 @@ test("after a live update the install is free again, so the next change lands to
   assert.equal(await once(), "done");
   assert.equal(installs, 2);
 });
+
+/* The owner's copy stopped updating by itself (13:04 UTC): the loop lived in the window's page, and that page stopped
+   looking. In the app a look that never ends is left behind: the loop goes on looking, with no window open at all. */
+test("with no window open, a look that never ends is left behind and the loop keeps looking", async () => {
+  let clock = 0, hung = null, reads = 0;
+  const calls = [], said = [], timers = [];
+  const updater = {
+    status: { phase: "idle", release: null, outcome: null, message: "" }, inProgress: false, selectedChannel: "beta",
+    setChannel() {}, async check() { calls.push("check"); return this.status; },
+  };
+  const loop = new UpdateLoop({
+    // The first read never answers (an engine call that hangs); later ones do.
+    readiness: () => { reads++; return reads === 1 ? new Promise((resolve) => { hung = resolve; }) : Promise.resolve({ channel: "beta", autoUpdate: "install" }); },
+    plan: async (facts) => { calls.push(`plan ${facts.updaterPhase}`); return { mode: "install", step: "nothing", reason: "" }; },
+    updater, install: async () => { calls.push("install"); }, tell: (words) => said.push(words), now: () => clock,
+    setTimer: (run, ms) => { const timer = { run, ms, cancelled: false, cancel() { this.cancelled = true; } }; timers.push(timer); return timer; },
+  });
+  const live = () => timers.filter((timer) => !timer.cancelled);
+  loop.start(60_000);
+  clock = 60_000;
+  const first = loop.look();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [], "the first look is stuck reading the owner's choice");
+  assert.deepEqual(live().map((timer) => timer.ms), [600_000], "but it left a timer that fires even if it never ends");
+  clock += 600_000;
+  live()[0].run(); // the safety net fires, as setTimeout would
+  for (let turn = 0; turn < 5; turn++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["plan idle"], "a new look asks the engine's plan");
+  assert.match(said[0], /had not finished after 10 minutes, so Branch started looking again/);
+  assert.deepEqual(live().map((timer) => timer.ms), [30_000], "and the next look is on the schedule");
+  hung({ channel: "beta", autoUpdate: "install" });
+  await first;
+  assert.deepEqual(calls, ["plan idle"], "the look left behind does nothing more when it finally answers");
+  assert.deepEqual(live().map((timer) => timer.ms), [30_000], "nor does it set a second schedule");
+});
+
+test("an engine that could not be closed for an update (UpdateStuckError) is said and kept, never a quiet wait, and the release is not marked failed", async () => {
+  const { loop, calls, said } = world({ plans: [{ mode: "install", step: "install", reason: "" }, { mode: "install", step: "nothing", reason: "", tellProblem: true }] });
+  const stuck = new Error("Branch could not close its background engine: taskkill refused.");
+  stuck.name = "UpdateStuckError";
+  loop.options.install = async () => { calls.push("install"); throw stuck; };
+  assert.equal(await loop.look(), 30_000);
+  assert.deepEqual(said, [stuck.message]);
+  assert.equal(loop.last.wait, null);
+  const told = calls.find((call) => call.includes('"problem"'));
+  assert.ok(told && !told.includes("failedTag"), "kept as a problem; the release is tried again, not skipped");
+});
+
+/* The owner's case: dev-a460a1b failed to install once (GitHub had the repo locked while it moved), and newer green
+   builds exist. Driven through the engine's real plan (src/comfort/auto-update.ts), as /api/comfort/update-plan runs it. */
+test("a release that failed once is not retried, and the newer one after it installs by itself", async () => {
+  const { updatePlan, noteUpdateCheck, noteFailedInstall } = await import("../dist/comfort/auto-update.js");
+  const records = { "comfort-notify": { autoUpdate: "install", releaseChannel: "beta" }, "ship-on-chosen": { "comfort-notify": ["autoUpdate", "releaseChannel"] } };
+  const store = { get: (_kind, _owner, key) => ({ data: records[key] }), save: (_kind, _owner, key, data) => { records[key] = data; } };
+  let clock = Date.parse("2026-09-29T13:30:00Z");
+  noteFailedInstall(store, "local", "dev-a460a1b", new Date(clock - 3_600_000));
+  const plan = async (facts) => {
+    if (facts.checked) noteUpdateCheck(store, "local", new Date(clock));
+    if (facts.failedTag) noteFailedInstall(store, "local", facts.failedTag, new Date(clock));
+    return updatePlan(store, "local", { busyTasks: 0, ...facts, now: new Date(clock) });
+  };
+  const newest = ["dev-a460a1b", "dev-c0ffee1"];
+  const installs = [];
+  const updater = {
+    status: { phase: "idle", release: null, outcome: null, message: "" }, inProgress: false, selectedChannel: "beta", setChannel() {},
+    async check() { this.status = { phase: "available", release: { tag: newest.shift() }, outcome: null, message: "" }; return this.status; },
+  };
+  const loop = new UpdateLoop({ readiness: async () => ({ channel: "beta", autoUpdate: "install" }), plan, updater,
+    install: async () => { installs.push(updater.status.release.tag); }, setTimer: () => ({ cancel() {} }) });
+  await loop.look();
+  assert.deepEqual(installs, [], "the release that failed here is not tried again by itself");
+  clock += 60_000;
+  await loop.look();
+  assert.deepEqual(installs, ["dev-c0ffee1"], "a minute on, the newer build is found and installed");
+});
