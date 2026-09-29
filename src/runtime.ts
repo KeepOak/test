@@ -69,6 +69,7 @@ import type { WebhookNotifier } from "./webhooks.js";
 import type { HookDecision } from "./hooks.js";
 import { environmentFacts, environmentLine } from "./environment.js"; // where Branch runs, for the model
 import { assistantIdentity, identityInstructions } from "./identity.js";
+import { adaptiveInstructions, adaptiveTools, capabilityActionRequested, capabilityDiscoveryFailure, capabilityDiscoveryNudge, uncheckedCapabilityClaim } from "./adaptive-capabilities.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
@@ -2333,6 +2334,7 @@ ${run.output.slice(0, 6000)}`;
     let droppedNudged = false; // Q066: an empty reply that spent tokens, most likely a call the model service dropped
     let unofferedRounds = 0; // Q066: rounds in a row whose every call named a tool that was not offered
     let announcedNudged = false; // Q067: a reply that said what it would do next and then stopped
+    let capabilityNudged = false;
     let tidyNudges = 0;
     let textCallNudged = false; // qa-fixes-4: a reply that was a tool call written out as text
     let knownTools = this.registry.version;
@@ -2463,6 +2465,14 @@ ${run.output.slice(0, 6000)}`;
       this.store.message(run.sessionId, assistant);
       if (!runnable.length) {
         unofferedRounds = 0; // an answer ends a streak of calls to tools that were not offered
+        if (!usedTools && offered.has(toolSearchName) && conductor.lastStep() && !context.dryRun && !context.isolated && !this.learningOf(run.id)
+          && capabilityActionRequested(run.prompt) && uncheckedCapabilityClaim(withoutThinking(spoken))) {
+          this.store.event(run.id, "model.capability_unchecked", { round: round + 1, nudged: capabilityNudged });
+          if (capabilityNudged) throw new CheckError(capabilityDiscoveryFailure);
+          capabilityNudged = true;
+          this.add(run, messages, ids, { role: "user", from: "branch", content: capabilityDiscoveryNudge });
+          continue;
+        }
         const remainder = conductor.lastStep() && !context.dryRun ? ownerTidyRemainder(this.store, run.id, run.prompt) : null;
         if (remainder) {
           this.store.event(run.id, "model.folder_unfinished", { round: round + 1, nudges: tidyNudges });
@@ -2900,7 +2910,10 @@ ${run.output.slice(0, 6000)}`;
     if (working.summary) messages.push(summaryMessage(working.summary));
     // Where Branch is running, where the message came from and the local time: last of the system text, after
     // everything that stays the same between turns, so a service's prompt cache keeps the rest (src/environment.ts).
-    messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id))) });
+    const available = this.offered(run, context).map(tool => tool.name);
+    const hidden = switchedToolTiers(this.store, context.owner, available).hidden;
+    messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id)))
+      + adaptiveInstructions(run.prompt, available.filter(name => !hidden.includes(name))) });
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
     return { messages, ids };
@@ -3063,6 +3076,8 @@ ${run.output.slice(0, 6000)}`;
     const learned = this.store.toolUsage, notes = learned.noteMap(context.owner);
     // mac2/desktop-ui: the owner's three-way switches — "on" loads a feature's tools, "off" hides them.
     const switched = switchedToolTiers(this.store, context.owner, tools.map((tool) => tool.name));
+    const adaptive = context.isolated || this.learningOf(run.id) ? []
+      : tools.map(tool => tool.name).filter(name => !switched.hidden.includes(name));
     const catalog = new ToolLoader(tools, {
       expanded: [...alwaysOpenGroups, ...guessed, ...opened], signals,
       // mac2/fly-core-2: with the learning core "on", its top tools join this pre-load (src/fly-core/apply.ts).
@@ -3070,6 +3085,7 @@ ${run.output.slice(0, 6000)}`;
       // mac7/speed: with "fewer rounds" on, a coding task starts with the tools it always needs, so
       // it never spends a whole round trip searching for files.edit before it can begin.
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
+        ...adaptiveTools(run.prompt, adaptive),
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.

@@ -29,3 +29,9 @@ Continuity uses an already paired Branch engine. Ownership remains held locally 
 Publication recovery preserves the local commit and reconciles the remote branch and pull request before retrying. It requires the original source project and approved pins to remain valid. Cancellation does not delete a branch or pull request already created. See [publication recovery](self-development-publication.md).
 
 A merged change is not necessarily present in an installed desktop build. Release and live destination acceptance are separate checks.
+
+## Discovering capabilities before refusing work
+
+Requests about settings, skills, installation or changing Branch preload relevant tools the task is permitted to discover. Disabled tools stay disabled and the existing context budget applies. The model is guided to inspect current settings, tools and compatibility, act within the task's authority, check the result, and retain verified lessons.
+
+An action request that receives an unsupported first-person inability claim before any tool use gets one corrective discovery attempt. Repeating the claim without checking ends the task as unfinished. Explicit permission refusals, tool results, explanation or writing requests, dry runs, isolated graders and sealed learning tasks are excluded. This does not grant another task's permissions or credentials, or guarantee every model will follow the guidance.
