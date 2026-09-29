@@ -28,7 +28,8 @@ import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from
 import { updateReadiness } from "./update-readiness.js";
 import { logoShare, readTrayUsage, trayBitmap, trayTip, type TrayUsage } from "./tray-ring.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
-import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
+import { crashReporterPlan, diagnose } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
+import { openMainLog } from "./main-log.js";
 import type { DesktopSettings } from "./settings.js";
 import { registerConversationExportIpc } from "./conversation-export-ipc.js";
 // 0.18.1: "Branch stopped responding — Restart" relaunches the app, and with it the local server.
@@ -468,6 +469,8 @@ async function folders(base: string): Promise<{ dataDir: string; workspace: stri
  * taken before each update leaves out (src/install/data-copy.ts).
  */
 const betaBuildDir = (dataDir: string): string => join(dataDir, "updates", "beta-build");
+/** A live update's own notes (the engine handed over, a live build not used): on the console and in the activity log. */
+const liveNote = (line: string): void => { console.error(line); diagnose("updater", "info", line); };
 /**
  * mac7/safe-rollback: the app's Update button writes the same record `branch update --yes` does, so
  * a person who updates from the window can go back afterwards. It stays `staged` until the next
@@ -514,6 +517,9 @@ async function start(): Promise<void> {
   }
   app.once("will-quit", () => { void lock.release(); });
   startCrashReporter(dataDir);
+  // Main's own lines (the updater's steps among them) go into the engine's activity log, engine running or not.
+  openMainLog(dataDir);
+  diagnose("desktop", "info", "The window's main process started", { fields: { version: app.getVersion() } });
   // An engine already working in the background is joined rather than started a second time; one from a version
   // before the engine's proof is moved to this version first.
   // The desktop's gateway preference is written ON before anything can save the file's other fields, so no later
@@ -538,8 +544,8 @@ async function start(): Promise<void> {
       host: () => undefined, forkLive: forkEngine, runtime: process.execPath,
       snapshot: async () => engineSnapshot(running.url, key(), client.fetch),
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
-      tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(),
-    }).catch((error: Error) => { console.error("Background engine's update channel:", error.message); return null; }) : null;
+      tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), log: liveNote,
+    }).catch((error: Error) => { liveNote(`Background engine's update channel: ${error.message}`); return null; }) : null;
     if (testHooksOn() && brokerLive) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: brokerLive.hooks, engineState: brokerLive.inspect };
     await createWindow(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
@@ -565,7 +571,7 @@ async function start(): Promise<void> {
     return;
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
-  const live = await liveAtStart(liveAppRoot(), (line) => console.error(line));
+  const live = await liveAtStart(liveAppRoot(), liveNote);
   liveWindowNow = live.window;
   const url = await startEngine(base, settings, { dataDir, workspace }, live.engineFile);
   // The key, and anything main sends, go only to the app's own engine serving at the window's address that has proved
@@ -583,7 +589,7 @@ async function start(): Promise<void> {
     snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
     tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
     onEngineDeparture: () => closeCapture(),
-    log: (line) => console.error(line) });
+    log: liveNote });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
   await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
@@ -803,6 +809,8 @@ function joinedGate(dataDir: string, url: string, key: () => string): EngineGate
  */
 function shutDown(): void {
   quitting = true;
+  const forUpdate = quitReason === "update";
+  if (forUpdate) diagnose("updater", "info", "Stopping the engine so the update can be handed over");
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 8000).unref());
   void Promise.race([(stop?.() ?? Promise.resolve()), deadline])
     .catch((error) => console.error("Shutdown:", error.message))
@@ -810,6 +818,7 @@ function shutDown(): void {
     // ended first and this waits (briefly) until it has really gone.
     .finally(() => (engine?.end(2000) ?? Promise.resolve()))
     .finally(() => {
+      if (forUpdate) diagnose("updater", "info", "The engine has stopped; the hand-over takes it from here");
       if (trayTimer) clearInterval(trayTimer);
       tray?.destroy();
       app.exit(0);
@@ -978,6 +987,8 @@ function startDetachedGateway(): void {
   });
   void app.whenReady().then(async () => {
     const where = await folders(base);
+    // The windowless gateway is a main process too: its lines (updates with no window open among them) go to the same log.
+    openMainLog(where.dataDir);
     gateway = await runDesktopGateway({ base, ...where, appRoot: liveAppRoot(),
       providerEnv: async () => desktopProviderEnv(await loadDesktopSettings(join(base, "model-settings.json"))) });
     if (testHooksOn()) (globalThis as { branchGatewayForTests?: unknown }).branchGatewayForTests = gateway;

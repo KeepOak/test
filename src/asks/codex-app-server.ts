@@ -7,6 +7,7 @@ import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { cleanChildEnvironment } from "../child-env.js";
 import { agentPromptFrom } from "../providers/cli-agent.js";
 import { startCall } from "../windows-command.js";
+import { assertRealAgentAllowed } from "../providers/real-agent-guard.js"; // owner-dm-signin: never the real program from a test
 
 /**
  * A0601: Codex's app-server as a backend. Where the owner has OpenAI's `codex` program installed and
@@ -66,6 +67,7 @@ export function codexBinary(command: string, env: NodeJS.ProcessEnv, platform: N
 }
 
 export const startCodexAppServer: StartAppServer = (command, env = codexEnvironment()) => {
+  assertRealAgentAllowed(command, env);
   // Started as the npm launcher would start it, with what the launcher adds to its environment, but without the launcher.
   const binary = codexBinary(command, env);
   // An npm-installed codex is a .cmd launcher on Windows, started through its script with no shell (src/windows-command.ts).
