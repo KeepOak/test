@@ -6,6 +6,7 @@
    A better version is tried, kept or thrown away through POST /api/skill-revisions/try|accept|reject; a suggested skill
    you have switched off is switched on through POST /api/skills/{id}/activate. */
 
+import { setupNeeds } from "../core/setup-needs.js";
 import { esc, renderNow, paint } from "../core/dom.js";
 import { S, E, refresh } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
@@ -237,12 +238,12 @@ function specialistsTab() {
     <div class="pats15" role="radiogroup" aria-label="${t("window.places.customize.how-trunks-work-together")}">${pats}</div></div>${codingAgentsSection()}`;
 }
 
-const FAM_WORDS = { core: "Two minutes to set up", chat: "Text through a webhook" };
+const FAM_WORDS = { chat: "Text through a webhook" };
 function channelGrid() {
   const q = CH.q.trim().toLowerCase();
   const on = new Set(connected.map((c) => c.id ?? c.kind));
   const list = channelSetup.filter((c) => (CH.fam === "all" || c.family === CH.fam) && (!q || [c.name, say(c.name)].some((n) => String(n).toLowerCase().includes(q))));
-  return list.map((c) => `<button type="button" class="ch12 ${on.has(c.id) ? "on12" : ""}" data-act="ch-open" data-v="${esc(c.id)}">${logo(c.id, c.name, 32)}<span><b>${esc(say(c.name))}</b><small>${offlineIn(connected, c.id) ? t("window.p17d.offline-token-revoked") : on.has(c.id) ? t("window.places.customize.connected-reaches-branch") : say(FAM_WORDS[c.family]) ?? t("addons.switch.on")}</small></span>${on.has(c.id) ? `<i class="dot12${offlineIn(connected, c.id) ? " off17d" : ""}"></i>` : ""}</button>`).join("");
+  return list.map((c) => `<button type="button" class="ch12 ${on.has(c.id) ? "on12" : ""}" data-act="ch-open" data-v="${esc(c.id)}">${logo(c.id, c.name, 32)}<span><b>${esc(say(c.name))}</b><small>${offlineIn(connected, c.id) ? t("window.p17d.offline-token-revoked") : on.has(c.id) ? t("window.places.customize.connected-reaches-branch") : setupNeeds(c) ?? say(FAM_WORDS[c.family]) ?? t("addons.switch.on")}</small></span>${on.has(c.id) ? `<i class="dot12${offlineIn(connected, c.id) ? " off17d" : ""}"></i>` : ""}</button>`).join("");
 }
 
 function channelsTab() {

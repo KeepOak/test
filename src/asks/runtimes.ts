@@ -4,6 +4,7 @@ import { delimiter, join } from "node:path";
 import { z } from "zod";
 import type { ModelRouter } from "../models.js";
 import { cliAgentCatalog, registerCliAgent } from "../providers/cli-agent.js";
+import { claudeSubscriptionModels } from "../providers/claude-models.js";
 import type { Store } from "../store.js";
 import { CodexAppServerProvider, startCodexAppServer, type StartAppServer } from "./codex-app-server.js";
 import { askMode, partSettings, requireAsk } from "./settings.js";
@@ -31,6 +32,12 @@ export const runtimeRows: readonly RuntimeRow[] = [
 
 const AddedSchema = z.object({ added: z.array(z.string().max(64)).max(20).default([]) }).strict();
 const addedKey = "asks-runtimes-added";
+
+/** A removed connection must not return from the runtime's saved registration after a restart. */
+export function forgetRuntimeChoice(store: Store, owner: string, id: string): void {
+  const { added } = partSettings(store, owner, addedKey, AddedSchema);
+  if (added.includes(id)) store.save("settings", owner, addedKey, { added: added.filter((entry) => entry !== id) });
+}
 
 /** Whether a program of that name is on this computer's path. Nothing is run to find out. */
 export async function onPath(command: string, env: NodeJS.ProcessEnv = process.env, platform = process.platform): Promise<boolean> {
@@ -79,7 +86,7 @@ export class AgentRuntimes {
     for (const id of this.added()) {
       const row = runtimeRows.find((r) => r.id === id);
       if (!row) continue;
-      if (on) this.register(id); else this.models.remove(connectionId(row));
+      if (on) this.register(id); else this.removeConnection(row);
     }
   }
 
@@ -87,9 +94,14 @@ export class AgentRuntimes {
     const row = runtimeRows.find((r) => r.id === id);
     if (!row || row.kind === "builtin") throw new Error("That runtime was not found");
     const had = this.added().includes(id);
-    this.store.save("settings", this.owner, addedKey, { added: this.added().filter((a) => a !== id) });
-    this.models.remove(connectionId(row));
+    forgetRuntimeChoice(this.store, this.owner, id);
+    this.removeConnection(row);
     return { removed: had };
+  }
+
+  private removeConnection(row: RuntimeRow): void {
+    const ids = row.id === "claude-code" ? claudeSubscriptionModels.map((entry) => entry.presetId) : [connectionId(row)];
+    for (const id of ids) this.models.remove(id);
   }
 }
 

@@ -116,15 +116,13 @@ async function routed(t, options = {}) {
     senderId: "owner", senderName: "Owner", text: "answer", addressed: true, messageId: "in1" });
   return { app, calls, result, output };
 }
-test("router keeps quiet steps separate and records a streamed reply only once", async t => {
+test("router sends no steps message for a turn without steps and records a streamed reply only once", async t => {
   const { app, calls, result } = await routed(t);
   assert.equal(result, "replied");
   const sent = calls.filter(c => c.op === "send");
-  assert.equal(sent.length, 2);
-  assert.equal(sent[0].format.quiet, true);
-  assert.equal(sent[1].text, "The");
-  assert.ok(calls.some(c => c.op === "edit" && c.id === sent[1].id && c.text === "The answer is ready."));
-  assert.ok(!calls.some(c => c.id === sent[0].id && c.text === "The answer is ready."));
+  assert.equal(sent.length, 1, "a turn that took no step posts only its reply");
+  assert.equal(sent[0].text, "The");
+  assert.ok(calls.some(c => c.op === "edit" && c.id === sent[0].id && c.text === "The answer is ready."));
   const rows = app.channels.deliveries.list().filter(r => r.key.startsWith("reply:"));
   assert.equal(rows.length, 1); assert.equal(rows[0].text, "The answer is ready.");
 });
