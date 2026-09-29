@@ -41,7 +41,7 @@ async function settingsRoute(deps: PersonalHttpDeps, part: { settings(): unknown
   return { settings: deps.method === "POST" ? part.save(await deps.readBody()) : part.settings() };
 }
 
-const signInPath = /^\/api\/personal\/signin\/(google|microsoft|spotify)(?:\/(start|secret))?$/;
+const signInPath = /^\/api\/personal\/signin\/(google|microsoft|spotify)(?:\/(start|secret|test))?$/;
 type SignInName = "google" | "microsoft" | "spotify";
 const SecretValueSchema = z.object({ value: z.string().trim().min(1).max(4096) }).strict();
 /** Where the window saves a service's client secret: the locker name the sign-in then reads it by. */
@@ -67,6 +67,10 @@ async function signInRoute(deps: PersonalHttpDeps, path: string): Promise<unknow
   const signIn = deps.personal.signIns[service];
   if (match[2]) {
     if (deps.method !== "POST") return undefined;
+    if (match[2] === "test") {
+      z.object({}).strict().parse(await deps.readBody());
+      return { health: await signIn.test(), status: await signIn.status() };
+    }
     if (match[2] === "secret") return saveSignInSecret(deps, service);
     requirePersonal(deps.runtime.store, deps.runtime.owner, signIn.part);
     return signIn.start();
