@@ -47,6 +47,8 @@ import { makeTransport, McpTransportSchema, type McpTransportConfig } from "./in
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
 import { workspaceRefusal } from "./mcp-workspace-guard.js";
+import { searchPublicRegistry } from "./mcp-public-registry.js";
+import { platformFetch } from "./pinned-fetch.js";
 
 export const AddServerSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -114,6 +116,12 @@ export class OwnMcpServers {
   private launchIds: string[] = [];
   constructor(private readonly deps: OwnServersDeps) {
     deps.approvals.onResolved((taken) => this.answered(taken));
+  }
+  /** Read-only public discovery, using today's network policy. No package is installed or started. */
+  async searchRegistry(input: unknown) {
+    const policy = this.deps.policy();
+    if (!policy) throw new Error("The network policy is not ready. Try again after Branch has started.");
+    return searchPublicRegistry(input, policy.guard(platformFetch));
   }
   private get env(): NodeJS.ProcessEnv { return this.deps.env ?? process.env; }
   /** Refuses a launch that runs anything inside the workspace, in plain words. */

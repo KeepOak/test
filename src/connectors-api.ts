@@ -24,6 +24,11 @@ const flagRemove = /^\/api\/reply-flags\/([a-f0-9-]{36})\/remove$/;
 const Empty = z.object({}).strict();
 
 async function serversApi(app: ConnectorsHost, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path === "/api/mcp/registry/search" && request.method === "POST") {
+    app.store.profiles.requireOwner("Searching the public MCP registry");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Search the public registry from the app window.");
+    return app.ownMcp.searchRegistry(await readBody(request, 4096));
+  }
   if (path === "/api/mcp/catalogue" && request.method === "GET") {
     const file = mcpCatalogue();
     return { checked: file.checked, count: file.connectors.length, categories: catalogueByCategory(file) };
