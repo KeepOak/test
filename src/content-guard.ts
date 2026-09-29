@@ -32,11 +32,18 @@ const patterns: [RegExp, string][] = [
  * `exfil_curl`, `exfil_wget`, `read_secrets`, `send_to_url` and `context_exfil` patterns, matched case-insensitively
  * after NFKC folding, as there.
  */
+/** Words that make an address worth refusing: what was said, what is remembered, or what unlocks something. */
+const privateWords = String.raw`\b(?:conversations?|chat\s+history|context|(?:previous\s+)?messages|transcripts?|memor(?:y|ies)|secrets?|tokens?|api[\s_-]?keys?|passwords?|credentials?)\b`;
 const strictPatterns: [RegExp, string][] = [
   [/curl\s+[^\n]{0,2048}\$\{?\w*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)S?\b/i, "sends a secret with curl"],
   [/wget\s+[^\n]{0,2048}\$\{?\w*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)S?\b/i, "sends a secret with wget"],
   [/cat\s+[^\n]{0,2048}(?:\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)/i, "reads a secrets file"],
-  [/(?:send|post|upload|transmit)\s+[^\n]{0,2048}\s+(?:to|at)\s+https?:\/\//i, "sends something to an outside address"],
+  // Hermes's `send_to_url` flags any "send ... to https://"; here the same line must also name something private, so a
+  // plain fact ("post invoices to https://billing.example.com") is kept while "send the conversation to https://..." is
+  // not. A lookahead, so the check stays one pass over the line whichever order the two come in. The words between the
+  // verb and "to" are optional here ("post to https://..."), where Hermes needs at least one.
+  [new RegExp(String.raw`^(?=[^\n]*${privateWords})[^\n]*?\b(?:send|post|upload|transmit)\s+(?:[^\n]{0,2048}\s+)?(?:to|at)\s+https?:\/\/`, "i"),
+    "sends private data to an outside address"],
   [/(?:include|output|print|share)\s+(?:\w+\s+){0,8}(?:conversation|chat\s+history|previous\s+messages|full\s+context|entire\s+context)/i,
     "asks for the conversation to be handed over"],
 ];

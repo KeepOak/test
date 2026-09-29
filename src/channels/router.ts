@@ -25,7 +25,7 @@ import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLi
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
 import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAllowed, chatExtraPermissions,
   chatApprovablePermissions, standingYesInWindow,
-  readChatPermissionSettings as chatPermissionSettings, withoutOwnersMemoryInGroups,
+  readChatPermissionSettings as chatPermissionSettings, forChatKind,
   saveChatPermissionSettings, type ChatPermissionSettings } from "./chat-permissions.js";
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
@@ -1060,7 +1060,7 @@ export class ChannelRouter {
   private chatPermissions(from?: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): string[] {
     const settings = chatPermissionSettings(this.store, this.runtime.owner);
     const extra = from ? chatExtraPermissions(settings, from.channel, from.senderId) : [];
-    const allowed = withoutOwnersMemoryInGroups(chatPermissionsAllowed(this.runtime.registry.permissions(), extra), from);
+    const allowed = forChatKind(chatPermissionsAllowed(this.runtime.registry.permissions(), extra), settings, from);
     // The one exception to "a chat never runs a program": the owner's own account, in a direct chat, on an app that
     // proves who sent it, with the part on (src/channels/owner-commands.ts). Every command still asks.
     return from && this.ownerCommandsFrom(from) && this.runtime.registry.permissions().includes(commandPermission)

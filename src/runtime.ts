@@ -3073,6 +3073,8 @@ ${run.output.slice(0, 6000)}`;
    */
   private async addDocuments(run: Run, context: ToolContext, messages: Message[], ids: (number | null)[]): Promise<void> {
     if (!this.documents || context.depth > 0 || context.agent || context.isolated || this.learningOf(run.id)) return;
+    // The person's own documents are theirs: never added for a group chat's task, where a message may be anybody's.
+    if (fromGroupChat(this.store, run.id)) return;
     // Batch 20 (wave 8): looking something up in the person's own documents is a step of the task
     // like any other, so it gets its own span and shows up in whatever tracing tool they use.
     const span = this.tracer.start(run.id, "retrieval", "branch.documents_retrieval", {
