@@ -100,6 +100,26 @@ test('a command waiting for its turn is stopped with its run, and a turn not giv
   const later = turns.take('/w/copy-a', new AbortController().signal, 1000);
   release();
   (await later)();
+  // A copy inside the project (.branch-worktrees) and the project itself are one place; copies side by side are not.
+  const nested = new CommandTurns(8), project = join(tmpdir(), 'w'), copy = join(project, '.branch-worktrees', 'helper-1');
+  const inCopy = await nested.take(copy, new AbortController().signal, 1000);
+  await assert.rejects(nested.take(project, new AbortController().signal, 50), /Another command was still running/);
+  const sibling = await nested.take(join(project, '.branch-worktrees', 'helper-2'), new AbortController().signal, 50);
+  let rootStarted = false;
+  const root = nested.take(project, new AbortController().signal, 1000).then((release) => { rootStarted = true; return release; });
+  // A later command in another copy waits behind the project's command that came first, instead of starving it.
+  let laterStarted = false;
+  const later2 = nested.take(join(project, '.branch-worktrees', 'helper-3'), new AbortController().signal, 1000).then((release) => { laterStarted = true; return release; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(laterStarted, false, 'the later copy waits behind the project');
+  inCopy(); sibling();
+  const releaseRoot = await root;
+  assert.ok(rootStarted);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(laterStarted, false, 'and still waits while the project runs');
+  releaseRoot();
+  (await later2)();
+  assert.ok(laterStarted);
   // The engine as a whole is bounded too.
   const one = new CommandTurns(1);
   const held = await one.take('/w/a', new AbortController().signal, 1000);

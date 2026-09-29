@@ -1,5 +1,5 @@
 import { realpath, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 /**
  * SELF-302: the most host commands the engine runs at once, whatever folders they are in. Each one holds its own memory
@@ -31,7 +31,20 @@ export async function projectRoot(cwd: string, workspace: string): Promise<strin
 
 interface Waiter { key: string; start: () => void }
 
-/** Whose turn it is: one command per folder at a time, first come first served, and at most `max` at once overall. */
+/**
+ * Whether two folders are one place for taking turns: the same folder, or one inside the other. Helpers' copies sit
+ * inside the project (`.branch-worktrees`), and a command in the project sweeps every `.git` under it, so a command in
+ * the project and one in a copy take turns; two copies side by side do not.
+ */
+const overlaps = (a: string, b: string): boolean => {
+  const within = (outer: string, inner: string) => inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
+  return a === b || within(a, b) || within(b, a);
+};
+
+/**
+ * Whose turn it is: one command per folder at a time (a folder and the folders inside it count as one), first come
+ * first served, and at most `max` at once overall.
+ */
 export class CommandTurns {
   private readonly busy = new Set<string>();
   private readonly waiting: Waiter[] = [];
@@ -58,7 +71,7 @@ export class CommandTurns {
       } };
       if (signal.aborted) { stopped(); return; }
       this.waiting.push(waiter);
-      timer = setTimeout(() => leave(new Error(this.busy.has(key)
+      timer = setTimeout(() => leave(new Error([...this.busy].some((held) => overlaps(held, key))
         ? `Another command was still running in ${folder} after ${Math.round(waitMs / 1000)} seconds, so this one did not start. Run it again once that one has finished.`
         : `${this.max} commands were still running after ${Math.round(waitMs / 1000)} seconds, so this one did not start. Run it again once one has finished.`)), waitMs);
       timer.unref?.();
@@ -66,11 +79,15 @@ export class CommandTurns {
       this.next();
     });
   }
-  /** Starts every waiting command whose folder is free, in the order they came, while there is room. */
+  /**
+   * Starts every waiting command whose folder is free, in the order they came, while there is room. One still waiting
+   * holds its place: a later command in the same place waits behind it rather than going first.
+   */
   private next(): void {
+    const ahead: string[] = [];
     for (let at = 0; at < this.waiting.length && this.busy.size < this.max;) {
       const waiter = this.waiting[at]!;
-      if (this.busy.has(waiter.key)) { at++; continue; }
+      if ([...this.busy, ...ahead].some((key) => overlaps(key, waiter.key))) { ahead.push(waiter.key); at++; continue; }
       this.waiting.splice(at, 1);
       waiter.start();
     }
