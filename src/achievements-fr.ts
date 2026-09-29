@@ -126,10 +126,10 @@ function happened(): Record<string, Pair> {
 
 /** One of a kind: its measure's last part names it. */
 const flags: Record<string, [string, string]> = {
-  "acorn-shown": ["Gardien du gland", "Afficher le gland dans le coin."],
-  "acorn-turned": ["Toupie de gland", "Faire tourner le gland en le faisant glisser."],
+  "acorn-shown": ["Gardien de l’arbre", "Garder l’arbre au pied de la liste."],
+  "acorn-turned": ["Changement de saison", "Changer vous-même la saison derrière la vitre."],
   still: ["Nature morte", "Activer Garder les choses immobiles."],
-  everything: ["Tout, partout", "Activer Tout afficher."],
+  everything: ["Tout, partout", "Choisir Technique dans Quantité d'éléments affichés."],
   "follow-system": ["Suivre le soleil", "Laisser Branch suivre le mode clair ou sombre de votre ordinateur."],
   language: ["Polyglotte", "Changer la langue."],
   "pet-named": ["Médaille gravée", "Donner un nom à votre animal."],

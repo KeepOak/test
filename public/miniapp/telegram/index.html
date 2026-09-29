@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Branch</title>
+    <!-- Relative to /miniapp/telegram (with or without Tailscale's /branch in front), so it works under either. -->
+    <link rel="stylesheet" href="telegram/style.css" />
+    <script type="module" src="telegram/app.js"></script>
+  </head>
+  <body>
+    <main id="app" class="ma">
+      <header class="ma-head">
+        <strong data-t="miniapp.title">Branch's browser</strong>
+        <span id="holder" class="ma-chip" role="status"></span>
+      </header>
+      <p id="note" class="ma-note" role="alert" hidden></p>
+
+      <form id="pin" class="ma-pin" hidden>
+        <label for="pin-box" data-t="miniapp.pin.prompt">Enter your App lock PIN to drive this task's browser.</label>
+        <input id="pin-box" type="password" inputmode="numeric" autocomplete="off" maxlength="64" required />
+        <button id="pin-open" type="submit" data-t="miniapp.pin.open">Open</button>
+      </form>
+
+      <section id="live" class="ma-live" hidden>
+        <div class="ma-frame">
+          <img id="frame" alt="" draggable="false" />
+          <p id="address" class="ma-address"></p>
+        </div>
+        <div id="question" class="ma-question" hidden>
+          <p id="question-text"></p>
+          <button id="question-yes" type="button" data-t="miniapp.question.yes">Yes, do it</button>
+          <button id="question-no" type="button" class="ma-quiet" data-t="miniapp.question.no">No</button>
+        </div>
+        <div class="ma-row">
+          <button id="take" type="button" data-t="miniapp.take">Take over</button>
+          <button id="give" type="button" hidden data-t="miniapp.give">Hand back</button>
+          <button id="end" type="button" class="ma-quiet" data-t="miniapp.end">End</button>
+        </div>
+        <div id="drive" class="ma-drive" hidden>
+          <form id="type" class="ma-row">
+            <input id="type-box" type="text" autocomplete="off" autocapitalize="off" data-t-placeholder="miniapp.type.placeholder" placeholder="Type into the page" />
+            <button type="submit" data-t="miniapp.type.send">Type</button>
+          </form>
+          <div class="ma-row">
+            <button id="enter" type="button" class="ma-quiet" data-t="miniapp.enter">Enter</button>
+            <button id="up" type="button" class="ma-quiet" data-t="miniapp.scroll.up">Scroll up</button>
+            <button id="down" type="button" class="ma-quiet" data-t="miniapp.scroll.down">Scroll down</button>
+            <button id="back" type="button" class="ma-quiet" data-t="miniapp.back">Back</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
