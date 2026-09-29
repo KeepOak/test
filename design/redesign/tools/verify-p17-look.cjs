@@ -17,7 +17,7 @@
 //   7. Settings has no sideways scroll at 390.
 // Run on a throwaway engine: PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-p17-look.cjs
 // It puts back the theme, contrast and light-or-dark it found.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;

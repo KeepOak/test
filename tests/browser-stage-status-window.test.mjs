@@ -5,6 +5,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newWindow } from "./new-window-places.mjs";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const TEMP = tmpdir();
 const JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==";
@@ -41,7 +42,7 @@ async function stage(t) {
     return route.fulfill({ json: { status: "ready", control, frameId: randomUUID(), tabId, ready: false,
       page: { url: "about:blank", title: "", tabs: [{ url: "about:blank", title: "", active: true }], frame: null, borrowed: false } } });
   });
-  await w.page.locator(`[data-act="chat"][data-id="${run.sessionId}"]`).first().click();
+  await openChat(w.page, run.sessionId);
   await w.page.locator("#conversation .b").first().waitFor();
   await w.page.locator('.head [data-act="stage"][data-v="browser"]').first().click();
   const view = (extra = {}) => ({ live: true, runId: run.id, url: "https://example.org/", title: "Example page",
