@@ -32,6 +32,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
@@ -185,6 +186,7 @@ import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { saveWakeWordSettings, wakeWordSettings, wakeWordView } from "./voice-wake.js"; // mac7/wake-pins
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48 review
 import { dictationOwnerOnlyRefusal, dictationSettings, dictationView, saveDictationSettings } from "./voice-dictation.js"; // mac7/live-voice
+import { HearRefused, hearInWindow } from "./voice-dictation-window.js"; // RES-709
 import { voiceSettings, saveVoiceSettings } from "./voice.js";
 import { voiceApi } from "./voice-api.js";
 // bucket-18: pull requests from changes (A0300), and which requests came with a short-lived key.
@@ -1253,12 +1255,20 @@ async function api(
   // a household profile, a Trunk and another computer all arrive here as something that is not the
   // owner at this window, and all five are refused by the two guards below and by the fail-closed
   // rule for short-lived keys in src/short-lived-keys.ts, which never lists this path.
+  // RES-709: a piece of what the window's own microphone heard, written out on this computer (hearInWindow below).
+  if (request.method === "POST" && path === "/api/voice/dictation/hear") {
+    const host = { store: app.store, owner: app.runtime.owner, isOwner: app.store.profiles.isOwner(),
+      locked: app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
+    try { return await hearInWindow(host, request); } catch (error) {
+      throw new HttpError(error instanceof HearRefused ? error.status : 400, errorText(error));
+    }
+  }
   if (path === "/api/voice/dictation" || path === "/api/voice/dictation/listen") {
     if (request.method === "GET") {
       // Whether the microphone is open comes from the listener itself, so the card cannot say one
       // thing while the microphone does another.
       const mine = app.store.profiles.isOwner();
-      const view = dictationView(app.store, app.runtime.owner, app.dictation.platform, mine, app.dictation.open, app.dictation.present);
+      const view = dictationView(app.store, app.runtime.owner, app.dictation.platform, mine, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner));
       // The words are screen state: they go to the window that is dictating and nowhere else. They
       // are never written to disk, never traced, never kept past the phrase, and never sent. Anybody
       // else on this computer is not shown them, because they are not shown any of this.
@@ -1274,14 +1284,14 @@ async function api(
       // — the switch, Lockdown, the lock, a missing speech program — says it must not.
       const refusal = body?.on === true ? app.dictation.start() : (app.dictation.stop(), null);
       return { open: app.dictation.open, refusal,
-        state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
+        state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
     }
     const dictation = await readBody(request);
     recordedWrite(app.store, app.runtime.owner, byCard("live-dictation"), ["live-dictation"],
       () => saveDictationSettings(app.store, app.runtime.owner, dictation));
     app.dictation.refresh(); // the switch going off stops it and lets go of the microphone at once
     return { settings: dictationSettings(app.store, app.runtime.owner),
-      state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
+      state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
   }
   // ── end mac7/live-voice ──
   if (request.method === "GET" && path === "/api/state") {
@@ -1707,6 +1717,10 @@ async function api(
     }
     return result;
   }
+  // QA 2026-09-28: which model Codex answers with, and which ones it takes (src/codex-models.ts).
+  if (request.method === "GET" && path === "/api/codex-models") return codexModelsView(app.runtime.models);
+  if (request.method === "POST" && path === "/api/codex-models") return chooseCodexModel(app.runtime.models, await readBody(request));
+  if (request.method === "POST" && path === "/api/codex-models/check") return checkCodexModels(app.runtime.models);
   // models-ui (MODEL-052): who spent what: the owner's own tasks and each Trunk's, with the accounts they used.
   if (request.method === "GET" && path === "/api/usage/by-trunk")
     return usageByTrunk({ store: app.store, owner: app.runtime.owner, trunkName: (id) => app.trunks.records.find(id)?.name ?? null,

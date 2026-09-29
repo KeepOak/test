@@ -32,6 +32,9 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { executeCommand } from "../commands/execute.js";
+import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
@@ -941,6 +944,9 @@ export class ChannelRouter {
     }
     if (saved) message = { ...message, text: saved.text };
     // ---- end of the bucket 12 hook ----
+    // CHAT-185: the owner's own commands from their own direct chat, before the chat's own list.
+    const ownerDm = await this.ownerDmLine(message);
+    if (ownerDm) return ownerDm;
     // A press on /model's menu is /model with that connection, by the same rules as typing it.
     // The live browser's own buttons in a chat: Take over, and Hand back.
     const hold = /^br:([tg]):([0-9a-f-]{36})$/.exec(message.text.trim());
@@ -1108,6 +1114,9 @@ export class ChannelRouter {
     const { channel, chatId } = message;
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
+    // held back when the owner turned steering off, and answered as the next turn if the task never read it.
+    if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
@@ -1125,6 +1134,29 @@ export class ChannelRouter {
     });
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
+    return "replied";
+  }
+  /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
+  ownerDmHost: (() => CommandHost) | null = null;
+  /**
+   * CHAT-185 (src/channels/owner-dm-commands.ts): one of the window's commands from the owner's own account in a direct
+   * chat, carried out through the one command table with that chat's conversation and permissions. Null when the line is
+   * not one, or the sender is not the owner there, so it goes on as an ordinary message.
+   */
+  private async ownerDmLine(message: InboundMessage): Promise<Outcome | null> {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const dm = message.voice ? null : ownerDmCommand(message.text);
+    if (!dm || !adapter || !this.ownerDmHost || !ownerDmHere(this.store, this.runtime.owner, adapter.kind, { ...message, caughtUp: false })) return null;
+    if (message.caughtUp) return "ignored"; // the owner's command sent while Branch was closed is old news, never carried out
+    const refused = ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), dm.name, dm.argument);
+    const key = `owner-dm:${message.chatId}:${message.messageId}`;
+    if (refused) { await this.deliver(message.channel, message.chatId, refused, key, this.quoteFor(message)).catch(() => undefined); return "replied"; }
+    const work = async () => (await executeCommand({ ...this.ownerDmHost!(), lockdownOffRefusal: "Lockdown can only be switched off in the app on this computer." }, {
+      surface: "chat", line: message.text, sessionId: this.sessionFor(message.channel, message.chatId), access: "full",
+      permissions: this.chatPermissions(message), ownerDm: true,
+    }))?.text ?? "I do not know that command.";
+    const reply = ["goal", "bg", "health"].includes(dm.name) ? await this.withSlot(work) : await work();
+    await this.deliver(message.channel, message.chatId, reply, key, this.quoteFor(message)).catch(() => undefined);
     return "replied";
   }
   /** `/model` menus sent to chats, so a press can be read back (src/channels/model-picker.ts). */
