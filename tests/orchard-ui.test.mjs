@@ -91,8 +91,9 @@ test("Orchard creates a second board, holds a dependency until review, and saves
   await page.locator('[data-act="orc-new-board"]').click();
   await page.locator("#orc-board-name").fill("Garden");
   await page.locator('[data-act="orc-board-save"]').click();
+  // The save is answered after the click returns: wait for the board, then for each card, before reading them.
+  await until(async () => (await call("/api/orchard")).boards.some((board) => board.name === "Garden"), "the board is saved");
   const board = (await call("/api/orchard")).boards.find((board) => board.name === "Garden");
-  assert.ok(board);
   const find = async (title) => Object.values((await call(`/api/orchard?board=${board.id}`)).lanes).flat().find((card) => card.title === title);
   const add = async (title, after) => {
     await place.locator('[data-act="orc-new"]').first().click();
@@ -104,6 +105,7 @@ test("Orchard creates a second board, holds a dependency until review, and saves
   await until(async () => (await find("First card"))?.lane === "ripe", "the first card is ready for review");
   const first = await find("First card");
   await add("Dependent card", first.id);
+  await until(async () => await find("Dependent card"), "the dependent card is saved");
   const dependent = await find("Dependent card");
   assert.equal(dependent.lane, "seed");
   assert.deepEqual(dependent.after, [first.id]);
