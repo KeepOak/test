@@ -2193,6 +2193,7 @@ export * from "./integrations/job-object.js";
 export * from "./artifacts.js";
 export * from "./channels/router.js";
 export * from "./channels/telegram.js";
+export * from "./channels/telegram-inbox.js";
 export * from "./channels/discord.js";
 export * from "./channels/slack.js";
 export * from "./channels/whatsapp.js";
