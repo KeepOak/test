@@ -44,7 +44,9 @@ const PLANS = [["chatgpt", "ChatGPT", "chatgpt", "window.flows.acct.note-chatgpt
 /* Cards for every sign-in whose connection does not exist yet; a plan whose program is already connected opens it. */
 export function signInCards() {
   if (!SI.view) return [];
-  const small = (p) => (p && !p.installed ? t("window.flows.acct.not-installed") : t("window.flows.acct.not-signed-in-plan"));
+  /* QA retest 2026-09-28 pass 2: an installed program is not asked about its sign-in until it is chosen (canCheck), so
+     it is not called "Not signed in": Claude Code signed in on this computer was listed so, then connected at once. */
+  const small = (p) => (p && !p.installed ? t("window.flows.acct.not-installed") : p ? t("window.flows.acct.installed-plan") : t("window.flows.acct.not-signed-in-plan"));
   const plans = PLANS.flatMap(([id, name, mark, note]) => {
     if (id === "chatgpt") return SI.view.chatgpt?.available && !poolById("chatgpt")
       ? [{ act: "aa-plan", v: id, id: mark, name, group: "plan", small: small(null), note: t(note) }] : [];

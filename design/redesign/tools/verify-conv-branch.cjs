@@ -217,7 +217,9 @@ async function verifyDiagram(page, browser) {
   await page.waitForSelector("#side .row");
   await openChat(page, imported.sessionId);
   await page.locator(".dia17c").waitFor();
-  check("a mermaid block draws as a diagram card with its text", (await page.locator(".dia17c pre").innerText()).includes("flowchart LR"));
+  check("a mermaid block draws as a diagram card with its text", (await page.locator(".dia17c details pre").textContent()).includes("flowchart LR"));
+  check("the card's frame is sandboxed with scripts only", (await page.locator(".dia17c iframe.dmm-frame").getAttribute("sandbox")) === "allow-scripts");
+  check("Mermaid drew it inside the sealed frame (GET /diagram-frame)", await drewIn(page, ".dia17c iframe.dmm-frame", "Something breaks"));
   check("with no task holding the answer, Save to Library stays greyed", (await page.locator(".dia17c .acts button").nth(2).getAttribute("aria-disabled")) === "true");
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
   await page.locator(".dia17c [data-act='diacopy17c']").click();
@@ -225,13 +227,23 @@ async function verifyDiagram(page, browser) {
   const copied = await until(async () => { const t = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n"); return t === MERMAID && t; });
   check("diacopy17c copies the diagram's text", copied, copied ? "" : `clipboard: ${JSON.stringify(await page.evaluate(() => navigator.clipboard.readText()).catch((e) => e.message))}; toast: ${await page.locator(".toast").innerText().catch(() => "")}`);
   await page.locator(".dia17c [data-act='diaopen17c']").click();
-  const frame = page.locator(".dlg iframe.dframe17c");
+  const frame = page.locator(".dlg iframe.dmm-frame.big");
   await frame.waitFor();
   const src = await frame.getAttribute("src"), sandbox = await frame.getAttribute("sandbox");
-  const served = await fetch(BASE + src).then(async (r) => ({ ok: r.ok, csp: r.headers.get("content-security-policy"), body: await r.text() }));
-  check("diaopen17c opens it larger as an artifact, in a sandboxed frame", sandbox === "" && served.ok && /sandbox/.test(served.csp) && served.body.includes("flowchart LR"), src);
+  const served = await fetch(BASE + src).then(async (r) => ({ ok: r.ok, csp: r.headers.get("content-security-policy") }));
+  check("diaopen17c opens it larger, in the same sealed frame", sandbox === "allow-scripts" && served.ok && /sandbox allow-scripts/.test(served.csp)
+    && await drewIn(page, ".dlg iframe.dmm-frame.big", "Landlord pays"), src);
   await page.locator(".dlg [data-act='dlg-close']").click();
   await verifyDiagramSave(browser);
+}
+
+/* Mermaid drew the diagram in that frame: the frame's own page holds the drawing, and its height came back. */
+async function drewIn(page, selector, words) {
+  return until(async () => {
+    const inner = await (await page.locator(selector).elementHandle())?.contentFrame();
+    const drawn = inner && await inner.evaluate((w) => !!document.querySelector("svg") && document.body.textContent.includes(w), words).catch(() => false);
+    return drawn && parseInt(await page.locator(selector).evaluate((f) => f.style.height), 10) > 40;
+  });
 }
 
 /* Save to Library needs the task whose answer holds the diagram, so it runs on an engine whose model writes one. */

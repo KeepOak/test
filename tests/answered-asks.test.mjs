@@ -19,9 +19,7 @@ import { randomUUID } from "node:crypto";
 
 /** Lets a task hold the conversation busy until the test releases it. */
 const hold = { release: null };
-/** Q050: the note a task taken up after a yes is given (src/runtime.ts continueNote), in place of any message. */
-const allowedNote = /The call you asked about did not run/;
-/** A model that writes the file its first message names, again when its yes arrives, then says it is done. */
+/** A model that writes the file its first message names, then says it is done: after the yes the engine runs it (QA R1). */
 function writer() {
   let file = "";
   return { name: "writer", async complete(request) {
@@ -29,8 +27,7 @@ function writer() {
     if (last?.role === "user" && last.content === "hold") { await new Promise((resolve) => { hold.release = resolve; }); return { content: "Held.", toolCalls: [] }; }
     const named = /^write (\S+)/.exec(String(last?.content ?? ""));
     if (last?.role === "user" && named) file = named[1];
-    const allowed = last?.role === "tool" && !/"ok":true/.test(last.content) && allowedNote.test(String(request.messages[0]?.content ?? ""));
-    if ((last?.role === "user" && named) || allowed)
+    if (last?.role === "user" && named)
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path: file, content: "hello" }) }] };
     return { content: "Done.", toolCalls: [] };
   } };
@@ -63,6 +60,7 @@ test("a yes in the window to the owner's own task carries it on, and the banner 
   assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "allow", remember: "never", fingerprint: asked.fingerprint, carryOn: true })).status, 200);
   assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"), "the task that asked carried on and finished");
   assert.ok(existsSync(join(f.root, "workspace", "a.txt")), "and did what the yes was for");
+  assert.equal(f.app.store.events(first.id).filter((event) => event.kind === "run.approved_call").length, 1, "the engine ran the approved call");
   assert.deepEqual(f.runsIn(first.sessionId).map((run) => run.id), [first.id], "no second task started");
   assert.deepEqual(f.app.store.messages(first.sessionId).filter((m) => m.role === "user").map((m) => m.content), ["write a.txt"],
     "nothing was written in the owner's name");
