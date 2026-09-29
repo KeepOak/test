@@ -15,6 +15,7 @@ import { newWindow } from "./new-window-places.mjs";
 import { createBranch } from "../dist/index.js";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
 import { savePolicy } from "../dist/policy.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 assert.equal(typeof chromium.launch, "function");
 const PAGE = `<!doctype html><meta charset="utf-8"><title>Speed</title><body style="margin:0;font:40px sans-serif">
@@ -45,7 +46,7 @@ test("click to picture and key to picture in the owner's live browser", { timeou
   t.after(async () => { await browser.close(); await app.close(); site.close(); await discardTemp(root); });
   const w = await newWindow(t, { app, root });
   const { page } = w;
-  await page.locator(`[data-act="chat"][data-id="${sid}"]`).first().click();
+  await openChat(page, sid);
   await page.locator("#conversation .b").first().waitFor();
   await page.locator('.head [data-act="stage"][data-v="browser"]').first().click();
   const bar = page.locator("#stage7 #st-addr");
