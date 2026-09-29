@@ -97,6 +97,8 @@ function petSection() {
 
 /* Each switch names a part of the window the engine keeps in preferences.hidden. */
 const HIDES = [["h-usage", "usage", "The usage ring"], ["h-gateway", "gateway", "The gateway in the status bar"], ["h-pet", "pet", "The pet"], ["h-projects", "projects", "Projects in the list"], ["h-notes", "notes", "The Guide button"], ["h-statusbar", "statusbar", "The whole status bar"]];
+/** The parts that can be hidden, by the key preferences.hidden keeps (shell/notices.js: all of them hidden is "lonely"). */
+export const HIDEABLE = HIDES.map(([, k]) => k);
 function shownSection() {
   const hidden = prefs().hidden ?? [];
   const rows = HIDES.map(([id, k, l]) => `<div class="ctl"><b>${say(l)}</b><input class="sw" type="checkbox" id="${id}" ${hidden.includes(k) ? "" : "checked"} aria-label="${say(l)}" data-sw="hide" data-k="${k}"><small>${k === "statusbar" ? t("window.settings.appearance.lockdowns-banner-and-stop-while-a") : t("window.settings.appearance.right-click-it-anywhere-to-hide")}</small></div>`).join("");
@@ -181,7 +183,11 @@ export function init() {
   on("bg-remove", () => removeDlg());
   on("bg-remove-yes", () => removeOwn());
   on("scene-set", async (el) => { await pickScene(el.dataset.v); renderNow(); });
-  on("season", (el) => { W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow(); });
+  on("season", (el) => {
+    const turned = W.season !== el.dataset.v;
+    W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow();
+    if (turned) noticed({ what: "flag", flag: "acorn-turned" }); // "Turn of the season": the old acorn's turn, re-mapped
+  });
   on("bg-peek", () => document.getElementById("app").classList.add("peek"));
   on("petset", async (el) => { await pickPet(el.dataset.v); renderNow(); });
   on("petwhere15", (el) => { W.petWhere = el.dataset.v; saveWindow(); renderNow(); });

@@ -359,6 +359,8 @@ export interface ToolContext {
   budget: Budget;
   permissions: ReadonlySet<string>;
   depth: number;
+  /** workbench (SELF-302): this helper's lead asked for it to work in its own copy of the project (a git worktree). */
+  ownCopy?: boolean;
   /** Set for delegated specialists: memory reads are limited to shared facts and this agent's own. */
   agent?: string;
   /** FQ-routing.isolated-agents: the Trunk this work is for, set on a Trunk's turn and carried through every
