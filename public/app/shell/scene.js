@@ -123,6 +123,11 @@ export async function pickPet(v) {
 /* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove, one of the drawn
    ones (shell/procbg.js) or your own. */
 export const bgChoice = () => (D.settings?.background?.on ? W.bg : "none");
+/* The oak's season on screen: the painted grove by the season, or one season's grove, in daylight (Moonlight shows the
+   night grove). Null when no oak is shown. For the "The oak in …" achievements (shell/notices.js). */
+const OAK_SCENES = ["spring", "autumn", "winter"];
+export const oakSeason = () => (bgChoice() !== "painted" || effMode() === "dark" ? null
+  : W.scene === "auto" ? seasonNow() : OAK_SCENES.includes(W.scene) ? W.scene : null);
 export const showsBackground = () => bgChoice() === "painted" || DRAWN.includes(bgChoice()) || (bgChoice() === "own" && !!OWN.url);
 const calm = () => !!E.state?.preferences?.reduceMotion || matchMedia("(prefers-reduced-motion: reduce)").matches;
 
