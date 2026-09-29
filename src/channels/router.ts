@@ -32,7 +32,7 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
-import { ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
 import type { CommandHost } from "../commands/handlers.js";
@@ -40,7 +40,7 @@ import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
-import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
+import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
@@ -636,6 +636,8 @@ export class ChannelRouter {
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
+      // owner-dm-signin: whether any chat account is named as the owner's yet, so approving a pairing may offer "this is me".
+      ownerNamed: ownerAccountNamed(this.store, owner),
       // Settings › Chat apps › Show steps in chats: the knobs, for every app and for each (src/channels/steps-display.ts).
       steps: this.stepsView(),
     };
@@ -1778,7 +1780,30 @@ export class ChannelRouter {
     return code;
   }
   /** The owner approves a pending sender by typing the code the sender was shown. */
-  approve(owner: string, input: unknown) {
+  /**
+   * `firstOwner` (owner-dm-signin): the owner, in the window, said the sender is their own account. It is taken only while
+   * no account is named as the owner's yet and only on an app that vouches for its senders; the caller has already
+   * checked that this is the window on this computer (and the PIN, where one is set).
+   */
+  approve(owner: string, input: unknown, options: { firstOwner?: boolean } = {}) {
+    if (options.firstOwner) this.store.profiles.requireOwner("Naming your own chat account");
+    const approved = this.approveCode(owner, input);
+    const madeOwner = options.firstOwner === true && this.nameFirstOwner(owner, approved.channel, approved.senderId);
+    return { ...approved, madeOwner };
+  }
+  /**
+   * owner-dm-signin: names this approved sender as the owner's own account, as the only one, in "Commands from your own
+   * chat" (its switch left as it is). The model is OpenClaw's "Also make this sender the first command owner"
+   * (github.com/openclaw/openclaw, docs/channels/pairing.md, MIT): offered only while no owner exists, never replacing
+   * or adding to one; the code here is Branch's own. False when an owner is already named or the app cannot vouch.
+   */
+  private nameFirstOwner(owner: string, channel: string, senderId: string): boolean {
+    const kind = this.adapters.get(channel)?.adapter.kind ?? "";
+    if (!vouchedSenderKinds.includes(kind) || ownerAccountNamed(this.store, owner)) return false;
+    saveOwnerCommands(this.store, owner, { ...ownerCommands(this.store, owner), accounts: [{ channel, sender: senderId }] });
+    return true;
+  }
+  private approveCode(owner: string, input: unknown) {
     const { code } = z.object({ code: z.string().regex(/^\d{6}$/) }).strict().parse(input);
     // mac3/never-break (integration review): a code works once, only while fresh, never when two
     // requests share it, and a run of wrong guesses is slowed down.

@@ -16,7 +16,7 @@ import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
 import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import { saveOnboarding } from "../dist/onboarding.js";
-import { saveOwnerCommands } from "../dist/channels/owner-commands.js";
+import { ownerCommands, saveOwnerCommands } from "../dist/channels/owner-commands.js";
 import { chatThread } from "../dist/channels/threads.js";
 import { chatFailureLine, chatSignInRefusal, reasonAtMost } from "../dist/channels/failure-reason.js";
 import { trunkSignInRefusal } from "../dist/accounts/context.js";
@@ -142,4 +142,34 @@ test("the chat's failure line carries the task's own reason, scrubbed and short"
   assert.equal(chatFailureLine("failed", "One. Two. Three.", "direct", same), "I could not finish that: One. Two.", "two sentences at most");
   const scrubbed = chatFailureLine("failed", "Bad key sk-live-abc123.", "direct", (text) => text.replace(/sk-[\w-]+/g, "[hidden]"));
   assert.equal(scrubbed, "I could not finish that: Bad key [hidden].");
+});
+
+test("approving a pairing in the window may name the first owner account, once, and only on an app that vouches", async (t) => {
+  const { app, say } = await fixture(t, { named: false });
+  const owner = app.runtime.owner;
+  const codeFrom = async (senderId) => {
+    const { reply } = await say(senderId, "hi");
+    return /code (\d{6})/.exec(reply)[1];
+  };
+  const first = app.channels.approve(owner, { code: await codeFrom("new-owner") }, { firstOwner: true });
+  assert.equal(first.madeOwner, true);
+  assert.deepEqual(ownerCommands(app.store, owner).accounts, [{ channel: "tg", sender: "new-owner" }]);
+  assert.equal(ownerCommands(app.store, owner).on, false, "the commands switch is left as it was");
+  const { run, programRan } = await say("new-owner", "Hola");
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(programRan, true, "the named account now answers through the owner's sign-in");
+  // Once an owner exists, approving another pairing only lets that person talk; it never adds or replaces an owner.
+  const second = app.channels.approve(owner, { code: await codeFrom("someone-else") }, { firstOwner: true });
+  assert.equal(second.madeOwner, false);
+  assert.deepEqual(ownerCommands(app.store, owner).accounts, [{ channel: "tg", sender: "new-owner" }]);
+  const plain = app.channels.approve(owner, { code: await codeFrom("third") });
+  assert.equal(plain.madeOwner, false);
+});
+
+test("an app that cannot vouch for its senders never gets a first owner from a pairing", async (t) => {
+  const { app, say } = await fixture(t, { kind: "email", named: false });
+  const { reply } = await say("mail-person", "hi");
+  const made = app.channels.approve(app.runtime.owner, { code: /code (\d{6})/.exec(reply)[1] }, { firstOwner: true });
+  assert.equal(made.madeOwner, false);
+  assert.deepEqual(ownerCommands(app.store, app.runtime.owner).accounts, []);
 });
