@@ -4,8 +4,9 @@
  * selected there; its eye shows exactly what is sent, its x leaves it out, and the engine's own record of the message
  * says which happened. The full-page button opens the panel's conversation as the page with the draft in the box and
  * the snapshot still attached. A real engine and window, a scripted model, a hidden browser.
- * Mutation: send the words without the snapshot, keep sending it after its x, or drop the draft on the way to the full
- * page, and it goes red.
+ * Simple (RES-704) closes the panel and Advanced opens it again only if it was open.
+ * Mutation: send the words without the snapshot, keep sending it after its x, drop the draft on the way to the full
+ * page, leave the panel open under Simple or open a shut one on the way back, and it goes red.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -178,5 +179,28 @@ test("the panel is the default Trunk's: named and faced as it, and it writes in 
   await page.locator("#home19-prompt").press("Enter");
   await page.locator("#home19 .b .txt").filter({ hasText: "Noted." }).waitFor({ timeout: 60000 });
   assert.ok(app.store.messages(home.chatSessionId).some((m) => m.role === "user" && m.content.endsWith("Hello default Trunk")), "the words went to the default Trunk's conversation");
+  assert.deepEqual(errors, []);
+});
+
+test("Simple closes the panel and Advanced opens it again, and a panel shut before Simple stays shut", async (t) => {
+  const { page, errors } = await fixture(t);
+  const simple = page.locator('[data-act="simple19"]');
+  await page.locator('.titlebar [data-act="home19"]').click();
+  await panel(page).waitFor();
+  await simple.click();
+  await page.locator("#app.simple19").waitFor();
+  assert.ok(await page.locator("#home19").isHidden(), "Simple puts the panel away");
+  await simple.click();
+  await page.waitForFunction(() => !document.getElementById("app").classList.contains("simple19"));
+  await panel(page).waitFor();
+  assert.equal(await page.locator('.titlebar [data-act="home19"]').getAttribute("aria-pressed"), "true", "the panel is open again");
+
+  await page.locator('.titlebar [data-act="home19"]').click();
+  await page.locator("#home19").waitFor({ state: "hidden" });
+  await simple.click();
+  await page.locator("#app.simple19").waitFor();
+  await simple.click();
+  await page.waitForFunction(() => !document.getElementById("app").classList.contains("simple19"));
+  assert.ok(await page.locator("#home19").isHidden(), "a panel shut before Simple is not opened by Advanced");
   assert.deepEqual(errors, []);
 });

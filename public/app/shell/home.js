@@ -17,6 +17,7 @@ import { text, plain } from "../chat/markdown.js";
 import { openConversation, startConversation, addDockItem, addSendPrefix } from "../chat/chat.js";
 import { attachedChips, pickFiles, readyUploads, filesSent, hasFiles, moveFiles } from "../chat/attach.js";
 import { newConversationMode } from "../chat/chips.js";
+import { simplePart } from "./simple.js";
 import { t } from "../../i18n.js";
 
 const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: false, left: null, picked: null, row: null, carried: null };
@@ -202,6 +203,9 @@ function takeCarried(sid) {
   H.carried = null;
   return c.words;
 }
+
+/* RES-704: Simple closes the panel; Advanced opens it again if it was open. */
+simplePart({ name: "home19", take: () => panelOpen(), hide: () => { if (panelOpen()) keep({ open: false }); }, give: (open) => { if (typeof open === "boolean") keep({ open }); } });
 
 /** The title row's button that opens and closes the panel. */
 export function homeButton() {
