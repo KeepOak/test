@@ -13,6 +13,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
 import { recordInWindow } from "./dictate-window.js";
+import { heardSpeech } from "./aloud.js";
 
 const D = { state: null, reading: false, on: false, timer: null, base: "", heard: "", rec: null, pressAt: 0, pointer: false };
 /* RES-709: no streaming speech program, but a free one is here, so the window records with its own microphone. */
@@ -54,6 +55,7 @@ function put(words) {
   const box = $("#prompt");
   if (!box) return;
   box.value = D.base + words;
+  if (words) heardSpeech(); // the message is spoken, for Answer aloud › When I talk (chat/aloud.js)
   box.dispatchEvent(new Event("input", { bubbles: true }));
 }
 

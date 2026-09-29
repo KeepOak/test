@@ -1092,7 +1092,16 @@ ${result.output || "(it said nothing)"}`;
   };
   // Figures, looking things up properly, watching pages, and the one message first thing.
   const deliverMessage = (channel: string, chatId: string, text: string, key: string) => channels.deliver(channel, chatId, text, key);
-  const dataTables = new DataTables(files, web, writeObserver);
+  // QA retest 2026-09-28 (m6): data.load opens a file attached to the task's own conversation, by id or exact name.
+  const dataTables = new DataTables(files, web, writeObserver, async (runId, key) => {
+    const sessionId = store.run(runId)?.sessionId;
+    if (!sessionId) return null;
+    const temporary = store.sessionTemporary(sessionId);
+    const ref = (await attachments.list(sessionId, { temporary })).find((one) => (key.id ? one.id === key.id : one.name === key.name));
+    if (!ref) return null;
+    const found = await attachments.locate(sessionId, ref.id, { temporary });
+    return { name: found.ref.name, size: found.size, read: async () => (await attachments.read(sessionId, ref.id, { temporary })).bytes };
+  });
   registerData(registry, dataTables, artifacts);
   // Writing Word, spreadsheet, slide, Markdown and web-page files, and changing Word and
   // spreadsheet files in place with every untouched part kept byte for byte.
@@ -1882,6 +1891,8 @@ ${result.output || "(it said nothing)"}`;
     debugAdapters,
     /** Programs left running, and the switch that stops them all when the app closes. */
     processes,
+    /** workbench (SELF-305): wake-ups set inside conversations, for the window's open-work list. */
+    wakeups,
     /** What integrations need to host messaging channels: the router and default-project secrets. */
     channelHost: {
       router: channels,
