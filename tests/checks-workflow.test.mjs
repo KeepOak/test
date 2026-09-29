@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import YAML from "yaml";
@@ -105,4 +106,17 @@ test("pull-request runs take a CI slot first, and every finished run hands its s
   const hand = workflow.jobs.verify.steps.find((step) => /ci-queue\.mjs restart/.test(step.run ?? ""));
   assert.equal(hand.if, "always()", "a failed share still hands its slot on");
   assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push to redesign/window is never held");
+});
+
+/* The build starts from the newest earlier build: only what changed is compiled, outputs whose source is gone are
+   removed first (scripts/prune-dist.mjs), and the folders the copy steps fill are never taken from the cache. */
+test("each share builds on the newest earlier build, and never trusts it as done", () => {
+  const steps = workflow.jobs.test.steps;
+  const build = steps.findIndex((step) => step.run === "npm run build");
+  const cache = steps[build - 1];
+  assert.match(cache.uses ?? "", /^actions\/cache@/);
+  assert.deepEqual(cache.with.path.trim().split("\n"), ["dist", "!dist/handbook", "!dist/bundled-add-ons", "!dist/data", ".build-cache"]);
+  assert.match(cache.with.key, /hashFiles\('src\/\*\*', 'tsconfig\.json', 'package-lock\.json', 'scripts\/build-ts\.mjs', 'scripts\/prune-dist\.mjs'\)/);
+  assert.ok(cache.with.key.startsWith(cache.with["restore-keys"]), "the fallback is any earlier build of this system and Node");
+  assert.match(readFileSync(new URL("../scripts/build-ts.mjs", import.meta.url), "utf8"), /pruneDist\(dist, src\)/, "orphans go first");
 });

@@ -157,6 +157,20 @@ jobs:
       # single assertion. This relaxes it on the build machine only. The app is not changed.
       - if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # The compiled program and tsc's build info from the newest earlier build (any tree), so `npm run build` compiles
+      # only what changed since (scripts/build-ts.mjs is incremental and removes outputs whose source is gone, and tsc
+      # checks every source against its build info). The folders the copy steps fill are left out: they are copied
+      # whole on every build. An exact hit is the same tree; anything else is a starting point, never trusted as done.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dist
+            !dist/handbook
+            !dist/bundled-add-ons
+            !dist/data
+            .build-cache
+          key: build-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('src/**', 'tsconfig.json', 'package-lock.json', 'scripts/build-ts.mjs', 'scripts/prune-dist.mjs') }}
+          restore-keys: build-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-
       - run: npm run build
       # What the downloads' own build used to check on every run, and takes seconds: the experiments' Python tests
       # and one task end to end through the tests' scripted fixture, named explicitly (Branch never offers it).
