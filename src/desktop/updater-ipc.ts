@@ -2,7 +2,7 @@ import { app, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
-import { Updater, UpdateDeferredError, type LiveHooks, type UpdateChannel, type UpdateStatus } from "./updater.js";
+import { Updater, UpdateDeferredError, beforeInstall, type LiveHooks, type UpdateChannel, type UpdateStatus } from "./updater.js";
 import { changedMind, confirmedChange, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
 import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -167,16 +167,15 @@ export function registerUpdaterIpc(
   ipcMain.handle("branch:update-check", async (event) => {
     authorized(event);
     if (installClaim.active) return updater.status;
-    // mac7/diagnostics: each check, and any failure, is a line in the activity log.
-    if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
-    updater.setChannel((await hooks.readiness()).channel);
-    return updater.check().then((status) => {
-      diagnose("updater", "info", "Checked for updates", { fields: { current: version, latest: updater.status.release?.latestVersion ?? "" } });
-      return status;
-    }, (error: unknown) => {
+    // mac7/diagnostics: each look writes what it found (updater.ts, lookUp); one that cannot start says why here.
+    try {
+      if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
+      updater.setChannel((await hooks.readiness()).channel);
+    } catch (error) {
       diagnose("updater", "warn", `Checking for updates failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
-    });
+    }
+    return updater.check();
   });
   /**
    * One install, the Update button's and the app's own update loop's alike (update-loop.ts): `automatic` for update by
@@ -184,33 +183,38 @@ export function registerUpdaterIpc(
    */
   const installNow = (automatic: boolean, confirmed: string | null) =>
     installClaim.run(() => updater.status, () => updater.inProgress, async () => {
-      if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
-      const readiness = await hooks.readiness();
-      const moved = updater.selectedChannel !== readiness.channel;
-      updater.setChannel(readiness.channel);
-      // NAS 2e3ead6: an automatic install that finds the channel just changed only switches it. The release it
-      // would take was never looked at on this channel (a Dev change that failed here, say), so the next turn looks
-      // first, and the plan weighs what that look finds. The Update button, pressed by the owner, goes on.
-      // Thrown, not returned: the install claim is only given back on a throw (NAS 1f61d43), and the window's
-      // automatic look ignores a deferral.
-      if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
-      started = { channel: readiness.channel, automatic: automatic === true };
-      await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
+      diagnose("updater", "info", automatic ? "Update by itself asked to install an update" : "The owner asked to install an update",
+        { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
+      const read = hooks?.readiness;
+      // Update by itself ignores a wait, so a wait before the install starts is written down here (the updater writes
+      // its own from there on): without it, an update that never went in left no reason anywhere.
+      await beforeInstall(async () => {
+        if (!read) throw new Error("Branch cannot read its update channel.");
+        const readiness = await read();
+        const moved = updater.selectedChannel !== readiness.channel;
+        updater.setChannel(readiness.channel);
+        // NAS 2e3ead6: an automatic install that finds the channel just changed only switches it. The release it
+        // would take was never looked at on this channel (a Dev change that failed here, say), so the next turn looks
+        // first, and the plan weighs what that look finds. The Update button, pressed by the owner, goes on.
+        // Thrown, not returned: the install claim is only given back on a throw (NAS 1f61d43), and the automatic
+        // look ignores a deferral.
+        if (automatic && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
+        started = { channel: readiness.channel, automatic };
+        await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
+      });
       // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
       const stopWatching = watchForOwner(open() ?? noWindow, updater, async () => {
-        const state = await hooks.readiness!();
+        const state = await read!();
         // Dogfood F1 while it builds or waits: a changed channel, or update by itself switched off, calls it off now.
         const why = changedMind(state, started);
         if (why) updater.callOff(why);
         return state.workingTasks ?? state.busyTasks;
       });
-      diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
-      const installed = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
-        diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
-        throw error;
-      }).finally(stopWatching);
+      // Every way install() ends is written to the activity log by the updater itself.
+      const installed = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) })
+        .finally(stopWatching);
       // hot-update: applied live; nothing to hand over, nothing restarts.
       if ("live" in installed) {
         diagnose("updater", "info", "Updated live", { fields: { tier: installed.live.tier, ms: String(installed.live.ms), to: installed.live.version } });
@@ -225,14 +229,17 @@ export function registerUpdaterIpc(
         // Versioned app folders need no record to undo: the version before stays whole and the switch goes back by itself.
         if (hooks?.record && !appFolders) await hooks.record(stagedDir, updater.status.release?.latestVersion ?? "");
         // The background engine is already closed by this point, so say so if the hand-over cannot start.
+        diagnose("updater", "info", "Starting the hand-over", { fields: { to: updater.status.release?.latestVersion ?? "" } });
         await launchHandOver(script, process.pid).catch((error: unknown) => {
           const why = error instanceof Error ? error.message : String(error);
           throw new Error(updater.backgroundStopped
             ? `The update could not be started: ${why}. Branch has stopped working in the background; it starts again next time you sign in to ${signInPlace}.`
             : `The update could not be started: ${why}.`);
         });
+        diagnose("updater", "info", "The hand-over started; this window closes for it");
       } catch (error) {
         // Q55: nothing was swapped, so the status says what is still installed instead of "Restarting…".
+        // (`failed` writes the reason to the activity log.)
         updater.failed(error instanceof Error ? error.message : String(error));
         throw error;
       }

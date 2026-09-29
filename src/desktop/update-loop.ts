@@ -1,4 +1,5 @@
 import type { UpdateChannel, UpdateStatus } from "./updater.js";
+import { diagnose } from "../diagnostic-log.js";
 
 /**
  * "Keep Branch up to date by itself", run by the app itself rather than by its window's page: the owner never presses
@@ -90,7 +91,10 @@ export class UpdateLoop {
     if (this.options.updater.inProgress) { this.schedule(fast); return fast; }
     if (this.running) {
       if (now() - this.startedAt < stuck) { this.schedule(fast); return fast; }
-      this.say(`Looking for an update had not finished after ${Math.round(stuck / 60_000)} minutes, so Branch started looking again.`);
+      const words = `Looking for an update had not finished after ${Math.round(stuck / 60_000)} minutes, so Branch started looking again.`;
+      // Every time in the activity log (main-log.ts); the owner is told once.
+      diagnose("updater", "warn", words);
+      this.say(words);
     }
     const mine = ++this.generation;
     const current = () => mine === this.generation && !this.stopped;
@@ -126,6 +130,8 @@ export class UpdateLoop {
       next = choice.autoUpdate === "install" && (choice.channel === "beta" || this.options.updater.status.phase === "available") ? fast : slow;
       return next;
     } catch (error) {
+      // Reading the choice or the plan failed: each one is a line, as each failed check was when the page looked.
+      diagnose("updater", "warn", `Update by itself could not look: ${ownWords(error)}`);
       if (current()) this.say(ownWords(error));
       next = fast;
       return next;

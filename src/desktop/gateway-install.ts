@@ -1,6 +1,7 @@
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
-import { UpdateDeferredError, type LiveHooks } from "./updater.js";
+import { UpdateDeferredError, beforeInstall, type LiveHooks } from "./updater.js";
+import { diagnose } from "../diagnostic-log.js";
 import { WindowUpdateDeferred } from "./live-window-ipc.js";
 import type { Layout } from "./app-folders.js";
 
@@ -26,18 +27,26 @@ export interface GatewayInstallOptions {
 }
 
 export async function gatewayInstall(options: GatewayInstallOptions): Promise<"live" | "switched"> {
-  if (options.shellOpen()) throw new UpdateDeferredError("A window opened, so it takes the update.");
+  diagnose("updater", "info", "Update by itself asked to install an update with no window open");
+  // A wait before the updater takes the install over is written down here (the updater writes its own from there on).
+  await beforeInstall(async () => {
+    if (options.shellOpen()) throw new UpdateDeferredError("A window opened, so it takes the update.");
+  });
   const { updater } = options;
   updater.useLive(options.live());
   const adopt = options.adopt ?? (<T>(action: () => Promise<T>) => action());
   const installed = await adopt(() => updater.install({ automatic: true })).catch((error: unknown) => {
-    if (error instanceof WindowUpdateDeferred) throw new UpdateDeferredError(error.message);
+    if (error instanceof WindowUpdateDeferred) {
+      diagnose("updater", "info", `The update waits: ${error.message}`);
+      throw new UpdateDeferredError(error.message);
+    }
     throw error;
   });
   if ("live" in installed) return "live";
   // A new version of the app itself: in use from the next window. Nothing runs from it yet, so no script is needed.
   try {
     if (!options.appFolders) throw new Error("This copy keeps the older layout, so a change to the app itself waits for its window.");
+    diagnose("updater", "info", "Switching to the new version's folder with no window open");
     await (options.renameFile ?? rename)(join(options.appFolders.root, "current.next.json"), join(options.appFolders.root, "current.json"));
     updater.switchedWithoutWindow();
     return "switched";
