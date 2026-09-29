@@ -99,9 +99,11 @@ export interface RunSocketScope {
   scrub?: <T>(value: T) => T;
 }
 
-export async function serveRunSocket(store: Store, runId: string, request: IncomingMessage, socket: Duplex, options: { pollMs?: number; maxMs?: number; pingMs?: number; idleMs?: number } & RunSocketHooks & RunSocketScope = {}): Promise<void> {
+export async function serveRunSocket(store: Store, runId: string, request: IncomingMessage, socket: Duplex, options: { pollMs?: number; maxMs?: number; pingMs?: number; idleMs?: number; answerHeaders?: string[] } & RunSocketHooks & RunSocketScope = {}): Promise<void> {
   const key = String(request.headers["sec-websocket-key"] ?? "");
-  socket.write(["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade", `Sec-WebSocket-Accept: ${acceptKey(key)}`, "Sec-WebSocket-Protocol: bearer", "", ""].join("\r\n"));
+  // `answerHeaders`: the desktop window's mark on this answer (src/engine-proof.ts), already checked for its shape.
+  socket.write(["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade", `Sec-WebSocket-Accept: ${acceptKey(key)}`, "Sec-WebSocket-Protocol: bearer",
+    ...(options.answerHeaders ?? []), "", ""].join("\r\n"));
   let open = true, pending = Buffer.alloc(0), heard = Date.now();
   const inScope = (): boolean => options.scopeNow === undefined || options.scopeNow() === options.owner;
   // A live conversation's sound and lines are written here straight away, between polls, so they
