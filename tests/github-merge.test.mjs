@@ -14,11 +14,12 @@ const runs = () => ({ total_count: 2, workflow_runs: [
   { id: 12, workflow_id: 2, name: "PR Fast Checks", event: "pull_request", head_sha: head, status: "completed", conclusion: "success", run_number: 9, run_attempt: 1 },
 ] });
 function fixture({ changePull, changeProtection, rules = [], changeCheck, changeBranch, changeCompare, changeRuns, tokenHook, status = 200,
-  draft = false, readyResponse, unprotected = false, enqueueResponse, timeline = [], pullRepo = repo } = {}) {
+  draft = false, readyResponse, unprotected = false, enqueueResponse, timeline = [], pullRepo = repo, networkFault } = {}) {
   const calls = [], seen = { pulls: 0, branches: 0, ready: false };
   const fetchImpl = async (address, init) => {
     const url = new URL(address), path = decodeURIComponent(url.pathname);
     calls.push({ path, method: init.method, body: init.body ? JSON.parse(init.body) : null });
+    networkFault?.(path);
     let answer;
     if (init.method === "PUT") answer = { merged: true, sha: moved };
     else if (path.endsWith("/graphql") && JSON.parse(init.body).query.includes("enqueuePullRequest"))
@@ -305,4 +306,20 @@ test("a pull-request rule that needs a person (code owner, approval after the la
   for (const needs of ["require_code_owner_review", "require_last_push_approval", "required_review_thread_resolution"])
     await assert.rejects(fixture({ rules: [{ type: "pull_request", parameters: { ...zero, [needs]: true } }] }).github.mergeReview(repo, 7),
       (error) => !(error instanceof ChecksPending) && /pull_request rule needs review on GitHub/.test(error.message), needs);
+});
+
+test("a network blip or GitHub's own trouble while waiting is looked at again, never reported as failed checks", async () => {
+  // Seen on the sandbox proof (pull request #8): one "fetch failed" mid-wait came back as failed, and the task stopped.
+  let faults = 0;
+  const blip = fixture({ networkFault: (path) => { if (path.endsWith("/check-runs") && faults++ < 1) throw new TypeError("fetch failed"); } });
+  const once = await blip.github.checkVerdict(repo, 7);
+  assert.equal(once.state, "pending", once.summary);
+  assert.match(once.summary, /could not be reached just now \(fetch failed\)\. Looking again/);
+  assert.equal((await blip.github.waitForChecks({ repo, number: 7, seconds: 60 }, AbortSignal.timeout(5000), async () => {})).state, "passed");
+  const trouble = fixture({ status: 502 });
+  assert.equal((await trouble.github.checkVerdict(repo, 7)).state, "pending", "a 5xx from GitHub is not a verdict");
+  const refused = fixture({ status: 404 });
+  await assert.rejects(refused.github.checkVerdict(repo, 7), /could not find that repository/, "a real refusal still says so");
+  const redirected = fixture({ networkFault: () => { throw new TypeError("fetch failed", { cause: new Error("unexpected redirect") }); } });
+  await assert.rejects(redirected.github.checkVerdict(repo, 7), /fetch failed/, "a redirect is refused on purpose, not retried");
 });

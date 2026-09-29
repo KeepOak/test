@@ -50,17 +50,25 @@ export class GitHubAccess {
     const url = new URL(path.replace(/^\//, ""), this.config.apiBase.replace(/\/?$/, "/"));
     await this.policy.assertAllowed(url, "GitHub address");
     beforeSend?.();
-    const response = await this.fetchImpl(url, {
-      method, redirect: "error", signal: AbortSignal.timeout(this.config.timeoutMs),
-      headers: {
-        authorization: `Bearer ${token}`, accept: "application/vnd.github+json",
-        "user-agent": this.userAgent, "x-github-api-version": "2022-11-28",
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method, redirect: "error", signal: AbortSignal.timeout(this.config.timeoutMs),
+        headers: {
+          authorization: `Bearer ${token}`, accept: "application/vnd.github+json",
+          "user-agent": this.userAgent, "x-github-api-version": "2022-11-28",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (error) {
+      // A redirect is refused on purpose (the address must be the one asked for); anything else never reached GitHub.
+      const why = error instanceof Error ? `${error.message}${error.cause instanceof Error ? `: ${error.cause.message}` : ""}` : String(error);
+      if (/redirect/i.test(why)) throw error;
+      throw new GitHubUnreachable(`GitHub could not be reached just now (${why.slice(0, 160)}).`);
+    }
     const text = scrubSecrets((await response.text()).slice(0, this.config.maxBytes), { [this.config.tokenSecret]: token });
-    if (!response.ok) throw new Error(explainGitHub(response.status, text));
+    if (!response.ok) throw response.status >= 500 ? new GitHubUnreachable(explainGitHub(response.status, text)) : new Error(explainGitHub(response.status, text));
     return text ? JSON.parse(text) : {};
   }
 
@@ -150,6 +158,14 @@ export class GitHubAccess {
   }
   /** One look: passed (with the exact commit), failed (with why) or still pending (with what is running). */
   async checkVerdict(repo: string, number: number): Promise<ChecksVerdict> {
+    try { return await this.lookOnce(repo, number); }
+    catch (error) {
+      // Nothing was learned from GitHub this time (the network, or its own trouble): look again, never "failed".
+      if (error instanceof GitHubUnreachable) return { state: "pending", repo, number, summary: `${error.message} Looking again.` };
+      throw error;
+    }
+  }
+  private async lookOnce(repo: string, number: number): Promise<ChecksVerdict> {
     const row = await this.request("GET", `repos/${repo}/pulls/${number}`) as { draft?: unknown; merged?: unknown; merge_commit_sha?: unknown };
     if (row.merged === true) {
       const mergeSha = typeof row.merge_commit_sha === "string" && /^[0-9a-f]{40}$/.test(row.merge_commit_sha) ? row.merge_commit_sha : undefined;
@@ -157,7 +173,8 @@ export class GitHubAccess {
     }
     const draft = row.draft === true;
     // A pull request in the merge queue waits for the queue's own checks on the merged result: pending, never passed.
-    const standing = draft ? null : await queueStanding((method, path) => this.request(method, path), repo, number).catch(() => null);
+    const standing = draft ? null : await queueStanding((method, path) => this.request(method, path), repo, number)
+      .catch((error: unknown) => { if (error instanceof GitHubUnreachable) throw error; return null; });
     if (standing === "queued") return { state: "pending", repo, number, draft, queued: true,
       summary: "It is in GitHub's merge queue, which merges it once the base's checks pass on the merged result. Wait again until it says merged." };
     if (standing === "removed") return { state: "failed", repo, number, draft,
@@ -168,6 +185,7 @@ export class GitHubAccess {
         checks: evidence.checks.checks.map((check) => `${check.name}: ${check.result}`),
         summary: `Every check on ${evidence.headSha.slice(0, 12)} finished and passed${draft ? "; the pull request is still a draft" : ""}.${evidence.mergeQueue ? " Its base merges through GitHub's merge queue: merging adds it to the queue." : ""}` };
     } catch (error) {
+      if (error instanceof GitHubUnreachable) throw error;
       const text = error instanceof Error ? error.message : String(error);
       return { state: error instanceof ChecksPending ? "pending" : "failed", repo, number, draft, summary: text.slice(0, 600) };
     }
@@ -274,6 +292,12 @@ export class GitHubAccess {
   }
 }
 
+/**
+ * GitHub could not be reached, or answered with its own trouble (5xx): nothing was learned. A look (waiting for
+ * checks) tries again; anything that changes something reports it as before. Seen on the sandbox proof (PR #8):
+ * one "fetch failed" mid-wait was reported as failed checks, and the task stopped.
+ */
+export class GitHubUnreachable extends Error { override name = "GitHubUnreachable"; }
 export type FailedCheck = { name: string; conclusion: string; log: string; note?: string };
 /** The lines of a job log around its failures (with a little context), without the runner's timestamps, at most `limit`. */
 export function failureLines(text: string, limit: number): { log: string; note?: string } {
