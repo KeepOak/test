@@ -54,8 +54,9 @@ export function captureInputPayload(action: DesktopAction, payload: Record<strin
 export const desktopScript = String.raw`
 param([Parameter(Mandatory=$true)][string]$Action, [Parameter(Mandatory=$true)][string]$Payload)
 $ErrorActionPreference = 'Stop'
+$script:started = [System.Diagnostics.Stopwatch]::StartNew()
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
-Add-Type -TypeDefinition @'
+Add-Type -ReferencedAssemblies Accessibility -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -140,6 +141,62 @@ public class BranchDesktop {
     } finally { for (int i = pressed - 1; i >= 0; i--) keybd_event(keys[i], 0, 0x0002u, IntPtr.Zero); }
   }
   public static void KeysUp(byte[] keys) { for (int i = keys.Length - 1; i >= 0; i--) keybd_event(keys[i], 0, 0x0002u, IntPtr.Zero); }
+  // computer-control: a part UI Automation sees only as a bare window (a WinForms or Win32 button read as a Pane with no
+  // Invoke) is read and pressed through its own window's MSAA object (what UI Automation calls LegacyIAccessible), and
+  // a button that has none is sent the button's own click message. Neither moves the pointer or needs the part on a
+  // screen. After Windows-MCP (MIT, CursorTouch/Windows-MCP: Legacy role and value for such parts, and
+  // LegacyIAccessiblePattern.DoDefaultAction) and FlaUI (MIT, its LegacyIAccessiblePattern); written afresh here.
+  [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(IntPtr h, uint id, ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object found);
+  [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeoutW(IntPtr h, uint m, IntPtr w, IntPtr l, uint flags, uint ms, out IntPtr result);
+  [DllImport("user32.dll")] static extern int GetWindowLongW(IntPtr h, int index);
+  static Accessibility.IAccessible Legacy(IntPtr h) {
+    var iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+    object found;
+    if (AccessibleObjectFromWindow(h, 0xFFFFFFFC, ref iid, out found) != 0) return null;
+    return found as Accessibility.IAccessible;
+  }
+  static string RoleName(object role) {
+    if (!(role is int)) return "";
+    switch ((int)role) {
+      case 0x1E: return "Hyperlink"; case 0x21: return "List"; case 0x22: return "ListItem"; case 0x23: return "Tree";
+      case 0x24: return "TreeItem"; case 0x25: return "TabItem"; case 0x28: return "Image"; case 0x29: return "Text";
+      case 0x2A: return "Edit"; case 0x2B: return "Button"; case 0x2C: return "CheckBox"; case 0x2D: return "RadioButton";
+      case 0x2E: return "ComboBox"; case 0x30: return "ProgressBar"; case 0x33: return "Slider"; case 0x34: return "Spinner";
+      case 0x3C: return "Tab"; default: return "";
+    }
+  }
+  /** What MSAA says a part's own window is: its role (as UI Automation names it, or ""), name and value; null if nothing. */
+  public static string[] LegacyOf(IntPtr h) {
+    try {
+      var a = Legacy(h);
+      if (a == null) return null;
+      string value = "";
+      try { value = a.get_accValue(0) ?? ""; } catch { value = ""; }
+      return new string[] { RoleName(a.get_accRole(0)), a.get_accName(0) ?? "", value };
+    } catch { return null; }
+  }
+  /**
+   * Presses a part of the window top by its own window own: its MSAA default action, else (a button) BM_CLICK. Gives
+   * back how, or "" when neither applies. A part whose press closed its window was pressed.
+   */
+  public static string PressPart(IntPtr top, IntPtr own) {
+    if (own == IntPtr.Zero || (own != top && !IsChild(top, own))) return "";
+    try {
+      var a = Legacy(own);
+      string action = a == null ? null : a.get_accDefaultAction(0);
+      if (!string.IsNullOrEmpty(action)) {
+        try { a.accDoDefaultAction(0); return "legacy"; } catch { if (!IsWindow(own)) return "legacy"; }
+      }
+    } catch { }
+    if (IsWindow(own) && ClassOf(own).IndexOf("BUTTON", StringComparison.OrdinalIgnoreCase) >= 0) {
+      IntPtr answer;
+      if (SendMessageTimeoutW(own, 0x00F5, IntPtr.Zero, IntPtr.Zero, 0x0002, 5000, out answer) != IntPtr.Zero || !IsWindow(own)) return "message";
+    }
+    return "";
+  }
+  /** Whether a window stands above every ordinary window (WS_EX_TOPMOST). */
+  public static bool Topmost(IntPtr h) { return (GetWindowLongW(h, -20) & 0x8) != 0; }
 }
 '@
 [void][BranchDesktop]::SetProcessDpiAwarenessContext([IntPtr](-4))
@@ -163,6 +220,7 @@ function Get-Windows {
       program = $program
       processId = $owner
       minimised = [BranchDesktop]::IsIconic($handle)
+      topmost = [BranchDesktop]::Topmost($handle)
       x = $rect.Left
       y = $rect.Top
       width = $rect.Right - $rect.Left
@@ -268,7 +326,7 @@ function New-ReadCache {
   $cache = New-Object System.Windows.Automation.CacheRequest
   foreach ($property in @($auto::NameProperty, $auto::ControlTypeProperty, $auto::AutomationIdProperty, $auto::IsEnabledProperty,
     $auto::BoundingRectangleProperty, $auto::RuntimeIdProperty, $auto::IsValuePatternAvailableProperty,
-    [System.Windows.Automation.ValuePattern]::ValueProperty)) { $cache.Add($property) }
+    [System.Windows.Automation.ValuePattern]::ValueProperty, $auto::NativeWindowHandleProperty)) { $cache.Add($property) }
   $cache.TreeFilter = [System.Windows.Automation.Automation]::ControlViewCondition
   return $cache
 }
@@ -277,6 +335,21 @@ function Read-Node($node) {
   $value = ''
   try { if ($node.GetCachedPropertyValue($auto::IsValuePatternAvailableProperty)) { $value = [string]$node.GetCachedPropertyValue([System.Windows.Automation.ValuePattern]::ValueProperty) } } catch { $value = '' }
   $role = $node.Cached.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+  $name = $node.Cached.Name
+  # A bare window UI Automation cannot say more about (a WinForms or Win32 control read as a Pane): its own MSAA object
+  # says what it is (a Button, a Text, an Edit), its name and its value.
+  if ($role -eq 'Pane' -or $role -eq 'Custom') {
+    $own = 0
+    try { $own = [int]$node.GetCachedPropertyValue($auto::NativeWindowHandleProperty) } catch { $own = 0 }
+    if ($own -ne 0) {
+      $legacy = [BranchDesktop]::LegacyOf([IntPtr]$own)
+      if ($legacy -ne $null) {
+        if ($legacy[0]) { $role = $legacy[0] }
+        if (-not $name) { $name = $legacy[1] }
+        if (-not $value) { $value = $legacy[2] }
+      }
+    }
+  }
   # A handle on this exact part (UI Automation's runtime id) and where it sits in the window, so a tool can act on it by
   # ref even when several parts share a name. The box is in window pixels, like a picture's.
   $ref = ''
@@ -288,7 +361,7 @@ function Read-Node($node) {
   }
   return [pscustomobject]@{
     role = $role
-    name = $node.Cached.Name
+    name = $name
     value = $value
     id = $node.Cached.AutomationId
     enabled = $node.Cached.IsEnabled
@@ -444,8 +517,11 @@ function Bring-Forward($handle) {
   return ([BranchDesktop]::GetForegroundWindow() -eq $handle)
 }
 
+# One action. Its answer is left in $script:answer; anything a step prints by itself is dropped, so the one line a
+# resident helper writes back per action is only ever that answer.
+function Invoke-DesktopAction($Action) {
 $result = $null
-switch ($Action) {
+$null = switch ($Action) {
   'windows' { $result = @{ windows = @(Get-Windows) } }
   'capture-targets' {
     $monitors = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
@@ -499,6 +575,12 @@ switch ($Action) {
       } elseif ($node.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
         $pattern.Expand(); $result = @{ how = 'expand'; name = $node.Current.Name; at = $at }
       } else {
+        # A part UI Automation cannot press (a WinForms or Win32 button seen as a bare Pane): its own window's MSAA
+        # default action, then the button's click message; the pointer only after both, and only on a screen.
+        $label = $node.Current.Name
+        if (-not $node.Current.IsEnabled) { throw ('"' + $label + '" is turned off (greyed out), so nothing was pressed.') }
+        $how = [BranchDesktop]::PressPart($handle, [IntPtr][int]$node.Current.NativeWindowHandle)
+        if ($how) { $result = @{ how = $how; name = $label; at = $at }; break }
         if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
         Assert-CaptureInput $handle
         Assert-Uncovered $handle @{ x = [int]($box.X + $box.Width / 2); y = [int]($box.Y + $box.Height / 2) }
@@ -915,7 +997,40 @@ public static class BranchLive {
   default { throw ('Unknown screen action: ' + $Action) }
 }
 if ($request.expectedTarget -and $result) { $result.target = $request.expectedTarget; $result.processId = $request.expectedProcessId }
-[Console]::Out.Write((@{ ok = $true; result = $result } | ConvertTo-Json -Depth 8 -Compress))
+$script:answer = $result
+}
+
+# computer-control: the resident helper (DesktopHelper below). One program keeps this script's compiled code and UI
+# Automation loaded and answers one action per line ("<id> <action> <base64 JSON>" in, one JSON line with that id out),
+# so an action costs what it does, not a PowerShell start and a C# compile each time (30 to 60 s apiece on a busy
+# build machine). It ends when Branch lets go of its input. The live view and opening programs keep programs of their own.
+if ($Action -eq 'serve') {
+  try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+  [Console]::Out.WriteLine('{"id":0,"ok":true,"result":{"ready":true,"ms":' + $script:started.ElapsedMilliseconds + '}}')
+  [Console]::Out.Flush()
+  while ($true) {
+    $line = [Console]::In.ReadLine()
+    if ($line -eq $null) { break }
+    $parts = $line.Split(' ')
+    if ($parts.Length -ne 3) { continue }
+    $id = [int]$parts[0]
+    try {
+      if ($parts[1] -in @('live', 'serve', 'open')) { throw 'That action runs in a program of its own.' }
+      $script:request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($parts[2])) | ConvertFrom-Json
+      $script:origin = $null
+      $script:answer = $null
+      Invoke-DesktopAction $parts[1]
+      $out = @{ id = $id; ok = $true; result = $script:answer } | ConvertTo-Json -Depth 8 -Compress
+    } catch {
+      $out = @{ id = $id; ok = $false; error = [string]$_.Exception.Message } | ConvertTo-Json -Compress
+    }
+    [Console]::Out.WriteLine($out)
+    [Console]::Out.Flush()
+  }
+  exit 0
+}
+Invoke-DesktopAction $Action
+[Console]::Out.Write((@{ ok = $true; result = $script:answer } | ConvertTo-Json -Depth 8 -Compress))
 `;
 
 /** How long one screen action may take, and how much it may say. A tree of controls is the big one. */
@@ -955,6 +1070,7 @@ export interface PosixDesktopOptions {
 
 export class DesktopScriptRunner {
   private folder: Promise<string> | undefined;
+  private resident: DesktopHelper | undefined;
   constructor(private readonly executable = powerShellPath, private readonly posix: PosixDesktopOptions = {}) {}
   private get platform(): string { return this.posix.platform ?? process.platform; }
   /** Writes the script once, into a private folder of its own, and gives back its path. */
@@ -990,13 +1106,17 @@ export class DesktopScriptRunner {
         : 'Right-click, double-click, dragging, hovering, holding keys and the scroll wheel work on Windows and on Linux (X11) for now. Use desktop.click with a name here.');
     if (this.platform !== 'win32') return this.runPosix(action, payload, signal);
     assertRealScreenAllowed(); // dogfood follow-up: never the real screen from a test without the opt-in
+    const limit = Math.min(120000, Math.max(1000, this.posix.timeoutMs ?? timeoutMs));
+    // computer-control: every action but opening a program goes to the one resident helper. A program is opened from a
+    // PowerShell of its own, so ending a stuck helper never ends what it opened.
+    if (action !== 'open') return this.helper(limit).run(action, payload, signal);
     const script = await this.scriptPath();
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
     const child = new ShellProcess({
       executable: this.executable,
       args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Action', action, '-Payload', body],
       cwd: tmpdir(), env: scriptEnvironment(),
-      signal, timeoutMs: Math.min(120000, Math.max(1000, this.posix.timeoutMs ?? timeoutMs)), maxOutputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
+      signal, timeoutMs: limit, maxOutputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
     });
     const outcome = await child.run();
     if (outcome.status !== 'completed' || outcome.exitCode !== 0)
@@ -1048,7 +1168,18 @@ export class DesktopScriptRunner {
     this.folder ??= mkdtemp(join(tmpdir(), 'branch-desktop-'));
     return this.folder;
   }
+  /** The resident helper that runs Windows actions, made on first use; its program starts with its first action. */
+  private helper(limit: number): DesktopHelper {
+    this.resident ??= new DesktopHelper(async () => {
+      assertRealScreenAllowed(); // computer-control: the helper's program is the real screen too
+      return { executable: this.executable,
+        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await this.scriptPath(), '-Action', 'serve', '-Payload', 'e30='] };
+    }, limit);
+    return this.resident;
+  }
   async close(): Promise<void> {
+    this.resident?.close();
+    this.resident = undefined;
     const folder = await this.folder?.catch(() => undefined);
     if (folder) await rm(folder, { recursive: true, force: true });
   }
@@ -1089,6 +1220,150 @@ function failureText(status: string, stderr: string): string {
   if (status === 'timed_out') return 'Windows did not answer in time, so nothing was done.';
   const detail = stderr.split('\n').map((line) => line.trim()).filter(Boolean)[0] ?? '';
   return detail ? detail.slice(0, 300) : 'That did not work on this computer.';
+}
+
+/** How long the resident helper may take to start (PowerShell, UI Automation and one C# compile), at the least. */
+const helperStartMs = 60000;
+/** How long the resident helper waits unused before it ends; the next action starts a new one. */
+const helperIdleMs = 5 * 60 * 1000;
+
+/**
+ * computer-control: one PowerShell running the desktop script in its `serve` mode, kept while Branch uses the screen,
+ * instead of one started (and its C# compiled) per action, which took 30 to 60 s an action on a busy build machine.
+ * Actions go one at a time, each tagged with a number its answer must carry. One that runs past its time or is
+ * stopped ends the program (only it: it starts no others), and the next action starts a fresh one. Unused for five
+ * minutes it is let go; should Branch die, its input closes and it ends on its next read. While it waits it holds
+ * nothing that keeps Branch (or a test) running.
+ */
+export class DesktopHelper {
+  private child: ChildProcess | null = null;
+  private buffer = '';
+  private errors = '';
+  private waiting: { id: number; ok: (answer: Record<string, unknown>) => void; fail: (error: Error) => void } | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
+  private next = 0;
+  private idle: NodeJS.Timeout | null = null;
+  private closed = false;
+  constructor(private readonly command: () => Promise<{ executable: string; args: string[] }>, private readonly limitMs: number) {}
+
+  /** Runs one action after any before it. One stopped while it waits never reaches the program. */
+  run(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const turn = this.queue.then(() => this.send(action, payload, signal));
+    this.queue = turn.catch(() => undefined);
+    return turn;
+  }
+
+  private async send(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+    if (this.closed) throw new Error('The screen helper was closed.');
+    if (signal.aborted) throw new Error('That was stopped before it finished.');
+    if (this.idle) { clearTimeout(this.idle); this.idle = null; }
+    const child = this.child ?? await this.start(signal);
+    this.hold(child, true);
+    try {
+      const id = ++this.next;
+      const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+      const answer = await this.answer(child, id, this.limitMs, signal, `${id} ${action} ${body}\n`);
+      if (answer.ok !== true || !answer.result || typeof answer.result !== 'object')
+        throw new Error(typeof answer.error === 'string' && answer.error ? answer.error.slice(0, 300) : 'That did not work on this computer.');
+      return answer.result as Record<string, unknown>;
+    } finally {
+      if (this.child === child) {
+        this.hold(child, false);
+        this.idle = setTimeout(() => this.close(false), helperIdleMs);
+        this.idle.unref();
+      }
+    }
+  }
+
+  /** Starts the program and waits for it to say it is ready (its answer 0). */
+  private async start(signal: AbortSignal): Promise<ChildProcess> {
+    const { executable, args } = await this.command();
+    if (this.closed) throw new Error('The screen helper was closed.');
+    const child = spawn(executable, args, { cwd: tmpdir(), env: scriptEnvironment(), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = child;
+    this.buffer = '';
+    this.errors = '';
+    child.stdout!.setEncoding('utf8');
+    child.stderr!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => this.heard(child, chunk));
+    child.stderr!.on('data', (chunk: string) => { if (child === this.child) this.errors = (this.errors + chunk).slice(-2000); });
+    child.on('error', () => this.gone(child, 'Windows could not start the screen helper.'));
+    child.once('exit', () => this.gone(child, this.errorText() || 'The screen helper stopped.'));
+    child.stdin!.on('error', () => undefined);
+    await this.answer(child, 0, Math.max(helperStartMs, this.limitMs), signal, null);
+    return child;
+  }
+
+  /** Waits for the answer carrying `id`, after sending `line`; past `ms`, or stopped, the program is ended. */
+  private answer(child: ChildProcess, id: number, ms: number, signal: AbortSignal, line: string | null): Promise<Record<string, unknown>> {
+    return new Promise((ok, fail) => {
+      const stop = (why: string) => { settle(); this.end(child); fail(new Error(why)); };
+      const timer = setTimeout(() => stop('Windows did not answer in time, so nothing was done.'), ms);
+      const aborted = () => stop('That was stopped before it finished.');
+      const settle = () => { clearTimeout(timer); signal.removeEventListener('abort', aborted); if (this.waiting?.id === id) this.waiting = null; };
+      this.waiting = { id, ok: (value) => { settle(); ok(value); }, fail: (error) => { settle(); fail(error); } };
+      if (signal.aborted) { aborted(); return; }
+      signal.addEventListener('abort', aborted, { once: true });
+      if (line !== null) child.stdin!.write(line);
+    });
+  }
+
+  private heard(child: ChildProcess, chunk: string): void {
+    if (child !== this.child) return;
+    this.buffer += chunk;
+    if (this.buffer.length > maxOutputBytes) { this.end(child); this.settle(new Error('Windows answered more than Branch reads.')); return; }
+    for (let at = this.buffer.indexOf('\n'); at >= 0; at = this.buffer.indexOf('\n')) {
+      const line = this.buffer.slice(0, at).trim();
+      this.buffer = this.buffer.slice(at + 1);
+      let answer: Record<string, unknown>;
+      try { answer = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+      // Anything that is not the answer being waited for (a stray line a step printed) is passed over.
+      if (this.waiting && answer.id === this.waiting.id) this.waiting.ok(answer);
+    }
+  }
+
+  private gone(child: ChildProcess, message: string): void {
+    if (child !== this.child) return;
+    this.child = null;
+    this.settle(new Error(message));
+  }
+
+  private settle(error: Error): void {
+    const waiting = this.waiting;
+    this.waiting = null;
+    waiting?.fail(error);
+  }
+
+  private errorText(): string {
+    return this.errors.split('\n').map((text) => text.trim()).filter(Boolean)[0]?.slice(0, 300) ?? '';
+  }
+
+  /** Whether the program (and its pipes) may keep Branch's process running: only while an action is out. */
+  private hold(child: ChildProcess, held: boolean): void {
+    const parts = [child, child.stdin, child.stdout, child.stderr] as Array<{ ref?: () => unknown; unref?: () => unknown } | null>;
+    for (const part of parts) {
+      if (held) part?.ref?.();
+      else part?.unref?.();
+    }
+  }
+
+  /** Ends the program: its input first, then the program itself (never anything else) if it has not gone at once. */
+  private end(child: ChildProcess): void {
+    if (child === this.child) this.child = null;
+    child.stdin?.end();
+    const timer = setTimeout(() => { if (child.exitCode === null) child.kill(); }, 1000);
+    timer.unref();
+    child.once('exit', () => clearTimeout(timer));
+  }
+
+  /** Lets the program go; with `final`, no action runs after this. */
+  close(final = true): void {
+    if (final) this.closed = true;
+    if (this.idle) { clearTimeout(this.idle); this.idle = null; }
+    const child = this.child;
+    if (child) this.end(child);
+    this.settle(new Error('The screen helper was closed.'));
+  }
 }
 
 /** What one live frame comes back as: the frame and the windows open just before and just after it. */
