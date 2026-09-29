@@ -24,10 +24,17 @@ export const dataBytesLimit = 8 * 1024 * 1024;
 /** The most a saved export may weigh; a table this big is already far past what anyone reads. */
 export const exportBytesLimit = 8 * 1024 * 1024;
 const tablesPerRun = 8;
+/**
+ * QA retest 2026-09-28 (m6): a file attached to the conversation a task belongs to, by the id its message named or by its
+ * exact name; null when there is none. Attached files are kept outside the workspace, so a path never reached them.
+ */
+export type AttachedFiles = (runId: string, key: { id?: string; name?: string }) => Promise<{ name: string; size: number; read: () => Promise<Buffer> } | null>;
+const missing = (error: unknown) => (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
 
 export class DataTables {
   private readonly byRun = new Map<string, Map<string, DataTable>>();
-  constructor(private readonly files: WorkspaceFiles, private readonly web?: WebAccess, private readonly observer?: WriteObserver) {}
+  constructor(private readonly files: WorkspaceFiles, private readonly web?: WebAccess, private readonly observer?: WriteObserver,
+    private readonly attached?: AttachedFiles) {}
   /** Every table this task has open, oldest first. */
   list(runId: string): DataTable[] {
     return [...(this.byRun.get(runId)?.values() ?? [])];
@@ -62,6 +69,23 @@ export class DataTables {
       await handle.read(buffer, 0, stat.size, 0);
       return tableFrom(name, path, buffer);
     } finally { await handle.close(); }
+  }
+  /** Reads a file attached to this task's conversation, or null when there is no such file. */
+  async fromAttachment(runId: string, key: { id?: string; name?: string }, given?: string): Promise<DataTable | null> {
+    const found = this.attached ? await this.attached(runId, key) : null;
+    if (!found) return null;
+    if (found.size > dataBytesLimit) throw new Error(`Files up to ${dataBytesLimit / 1048576} MB can be opened`);
+    return tableFrom(nameFor(found.name, given), found.name, await found.read());
+  }
+  /** A workspace file; a bare name that is no workspace file but is a file attached to this conversation opens that. */
+  async fromPath(runId: string, path: string, given?: string): Promise<DataTable> {
+    try { return await this.fromWorkspace(path, nameFor(path, given)); }
+    catch (error) {
+      const bare = !/[\\/]/.test(path);
+      const table = bare && missing(error) ? await this.fromAttachment(runId, { name: path }, given) : null;
+      if (table) return table;
+      throw error;
+    }
   }
   /** Reads a table from a public address; the network policy decides what may be reached. */
   async fromUrl(url: string, name: string): Promise<DataTable> {
@@ -103,18 +127,22 @@ export function registerData(registry: ToolRegistry, tables: DataTables, artifac
   for (const tool of dataTools(tables, artifacts)) registry.register(tool);
 }
 function dataTools(tables: DataTables, artifacts?: RunArtifacts): ToolDefinition<never>[] {
-  const load: ToolDefinition<{ path?: string | undefined; url?: string | undefined; text?: string | undefined; name?: string | undefined }> = {
+  const load: ToolDefinition<{ path?: string | undefined; url?: string | undefined; text?: string | undefined; name?: string | undefined; attachment?: string | undefined }> = {
     name: "data.load", reach: "outbound", permission: "data.read",
-    description: `Open a table of figures from a workspace file (.csv, .tsv, .json, .xlsx), a public address, or pasted text. Returns the columns, the row count and a small preview — never the whole table. Up to ${maxRows} rows are kept for this task only.`,
+    description: `Open a table of figures from a workspace file (.csv, .tsv, .json, .xlsx), a file attached to this conversation (attachment: the id its message named), a public address, or pasted text. Returns the columns, the row count and a small preview — never the whole table. Up to ${maxRows} rows are kept for this task only.`,
     parameters: z.object({
       path: z.string().min(1).max(500).optional(), url: z.string().url().max(2048).optional(),
       text: z.string().min(1).max(1_000_000).optional(), name: tableName.optional(),
+      attachment: z.string().regex(/^[a-f0-9]{16}$/).optional(),
     }).strict(),
     execute: async (input, context) => {
-      const chosen = [input.path, input.url, input.text].filter((value) => value !== undefined);
-      if (chosen.length !== 1) throw new Error("Give exactly one of a file path, an address, or some text");
+      const chosen = [input.path, input.url, input.text, input.attachment].filter((value) => value !== undefined);
+      if (chosen.length !== 1) throw new Error("Give exactly one of a file path, an attached file, an address, or some text");
+      const attached = input.attachment ? await tables.fromAttachment(context.runId, { id: input.attachment }, input.name) : null;
+      if (input.attachment && !attached) throw new Error("That file is not attached to this conversation");
       const name = nameFor(input.path ?? input.url ?? "pasted", input.name);
-      const table = input.path ? await tables.fromWorkspace(input.path, name)
+      const table = attached ? attached
+        : input.path ? await tables.fromPath(context.runId, input.path, input.name)
         : input.url ? await tables.fromUrl(input.url, name)
         : tableFromText(name, "pasted text", input.text!);
       tables.put(context.runId, table);

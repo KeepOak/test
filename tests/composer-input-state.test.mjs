@@ -7,6 +7,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 async function fixture(t, viewport = { width: 1440, height: 950 }, { everything = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-composer-parity-"));
@@ -176,7 +177,7 @@ test("the model chip opens a real model picker without leaving the conversation"
   await menu.waitFor({ state: "visible" });
   assert.deepEqual(await rows(), ["Default connection · configured", "Alternate connection · other-model"].map((r) => r.split(" · ").sort().join(" · ")));
   await menu.locator('[data-act="pick-model"]').nth(1).click();
-  await page.waitForFunction(async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
+  await waitInPage(page, async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
     headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") } })).json()).preset === "alternate", sessionId, { timeout: 10_000 });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(4_000);
@@ -186,7 +187,7 @@ test("the model chip opens a real model picker without leaving the conversation"
   said.push((await chip.locator(".lbl").innerText()).trim());
   await chip.click();
   await menu.locator('[data-act="pick-model"]').first().click();
-  await page.waitForFunction(async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
+  await waitInPage(page, async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
     headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") } })).json()).preset === "default", sessionId, { timeout: 10_000 });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(600);

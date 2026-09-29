@@ -5,7 +5,11 @@
    What it may change about itself and the gateway's timings are rules in the approval policy (a deny rule for
    settings.* / gateway.propose); taking one back loosens approvals, so those show the engine's state and stay greyed.
    Every change is the settings history (GET /api/settings-kit/history); Roll back undoes one
-   (POST /api/settings-kit/undo { record }), and the engine refuses one that would make Branch less careful. */
+   (POST /api/settings-kit/undo { record }), and the engine refuses one that would make Branch less careful.
+   selfdev: what it may do about itself (its own settings, the gateway's timings, restarting its own engine, working on
+   its own code) is GET/POST /api/self-rules (src/self-rules.ts): each row the approval rule in force for its own tools.
+   A change that makes Branch less careful shows the engine's words and waits for the owner's yes (confirmLoosening).
+   Reload without dropping work is POST /api/dashboard/restart { whenIdle: true }: it waits until no task is working. */
 import { E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { esc, render } from "../../core/dom.js";
@@ -17,11 +21,13 @@ import { self17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
 
-const D = { history: [], names: {}, gw: null, policy: null, comfort: null };
+const D = { history: [], names: {}, gw: null, policy: null, comfort: null, rules: null };
+let pendingRule = null;
 
 async function loadData() {
-  const [hist, kit, gw, pol, comfort] = await Promise.all(["settings-kit/history", "settings-kit", "never-break", "policy", "comfort"]
+  const [hist, kit, gw, pol, comfort, rules] = await Promise.all(["settings-kit/history", "settings-kit", "never-break", "policy", "comfort", "self-rules"]
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+  D.rules = rules;
   D.history = hist?.records ?? [];
   D.names = Object.fromEntries((kit?.settings ?? []).map((s) => [s.key, s.name]));
   Object.assign(D, { gw, policy: pol?.policy ?? null, comfort: comfort?.values ?? null });
@@ -31,6 +37,27 @@ async function loadData() {
 async function rollBack(id) {
   try { await api("settings-kit/undo", { record: id }); toast(t("window.settings.self.rolled-back-to-before-that-change")); } catch (error) { toast(error.message); }
   await loadData();
+}
+
+/* One row of what Branch may do about itself; a loosening waits for the owner's yes in a dialog with the engine's words. */
+async function setRule(control, value, confirmLoosening = false) {
+  try {
+    D.rules = await api("self-rules", { control, value, ...(confirmLoosening ? { confirmLoosening } : {}) });
+  } catch (error) {
+    if (!confirmLoosening && /less careful/.test(error.message)) {
+      pendingRule = { control, value };
+      openDlg({ title: t("window.settings.self.what-branch-may-change-about-itself"), body: `<p data-css="margin:0">${esc(error.message)}</p>`,
+        foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="self-rule-yes">${t("settings-kit.confirm")}</button>` });
+    } else toast(error.message);
+  }
+  await loadData();
+}
+
+async function reloadWhenIdle() {
+  try {
+    const done = await api("dashboard/restart", { whenIdle: true });
+    toast(done.waiting ? t("window.settings.self.reload-waits", { working: done.working }) : t("window.settings.self.reloading"));
+  } catch (error) { toast(error.message); }
 }
 
 async function setUpdating(v) {
@@ -57,7 +84,14 @@ export function init() {
   on("doctor", () => doctor());
   on("self-rollback", (el) => rollBack(el.dataset.id));
   on("self-upd", (el) => setUpdating(el.dataset.v));
-  markLive(["doctor", "gw-restart", "self-rollback", "self-upd"]);
+  on("self-own", (el) => setRule("ownSettings", el.dataset.v));
+  on("self-timings", (el) => setRule("gatewayTimings", el.dataset.v));
+  on("self-restart", (el) => setRule("restart", el.dataset.v));
+  on("self-loosen", () => toast(t("window.why.f15-loosening-what-it-may-do")));
+  on("self-rule-yes", () => { const rule = pendingRule; pendingRule = null; closeDlg(); if (rule) setRule(rule.control, rule.value, true); });
+  on("self-reload", () => reloadWhenIdle());
+  document.addEventListener("change", (e) => { if (e.target?.id === "self-dev") setRule("selfDev", e.target.checked ? "on" : "off"); });
+  markLive(["doctor", "gw-restart", "self-rollback", "self-upd", "self-own", "self-timings", "self-restart", "self-loosen", "self-rule-yes", "self-reload", "sw:self-dev"]);
 }
 
 export async function load() {
@@ -75,6 +109,11 @@ export const live = {
   "gw-restart": true,
   "self-rollback": true,
   "self-upd": true,
+  "self-own": true,
+  "self-timings": true,
+  "self-restart": true,
+  "self-loosen": true,
+  "self-reload": true,
 };
 
 function statusSection() {
@@ -85,28 +124,32 @@ function statusSection() {
   const watched = D.gw?.mode && D.gw.mode !== "off" ? ` · ${t("window.settings.self.the-gateway-watches-it-and-starts")}` : ".";
   if (version) html += `<p>${t("window.settings.self.engine")} ` + esc(version) + watched + "</p>";
   html += "</div></div>";
-  html += `<div class="acts" data-css="margin-top:12px"><button class="btn" type="button" data-act="doctor">${ic("check", "s")}${t("window.settings.self.check-and-fix")}</button><button class="btn" type="button" data-act="gw-restart">${ic("retry", "s")}${t("window.settings.gateway.restart-the-engine")}</button><button class="btn ghost" type="button" data-act="soon" data-why="reload-without-dropping-work">${t("window.settings.self.reload-without-dropping-work")}</button></div>`;
+  html += `<div class="acts" data-css="margin-top:12px"><button class="btn" type="button" data-act="doctor">${ic("check", "s")}${t("window.settings.self.check-and-fix")}</button><button class="btn" type="button" data-act="gw-restart">${ic("retry", "s")}${t("window.settings.gateway.restart-the-engine")}</button><button class="btn ghost" type="button" data-act="self-reload">${t("window.settings.self.reload-without-dropping-work")}</button></div>`;
   return html;
 }
 
-const denied = (tool) => (D.policy?.rules ?? []).some((r) => r.decision === "deny" && (r.tool === tool || r.tool === tool.split(".")[0] + ".*"));
 
 /* A row of choices greys with its reason by an explicit key: the title is already translated, so id15(title) would
    differ by language (these are the English titles' ids, as the locale files keep them). */
 function policySection() {
-  const own = D.policy ? (denied("settings.change") ? "never" : "ask") : null;
-  const timings = D.policy ? (denied("gateway.propose") ? "never" : "suggest") : null;
+  const R = D.rules;
+  const own = R?.ownSettings ?? null, timings = R?.gatewayTimings ?? null, restart = R?.restart ?? null;
   const upd = D.comfort?.notify?.autoUpdate ?? null;
-  // Loosening always asks, but the engine returns no value for it, so no choice is shown pressed.
-  const loosen = null;
+  // Loosening always asks: the engine holds every less careful change for the owner's own yes.
+  const loosen = R ? R.loosening : null;
+  // Working on its own code needs sending Git work to a remote (GitHub) on; until then it says so in place.
+  const dev = R?.selfDev ?? { on: false, available: false };
+  const devBox = dev.available
+    ? `<input class=\"sw\" type=\"checkbox\" id=\"self-dev\" aria-label=\"${t("window.settings.self.work-on-its-own-code-in")}\" data-sw=\"set\"${dev.on ? " checked" : ""}>`
+    : `<input class=\"sw\" type=\"checkbox\" id=\"self-dev-remote\" aria-label=\"${t("window.settings.self.work-on-its-own-code-in")}\" data-why=\"self-dev-remote\">`;
   return `<div class=\"sec\"><h2>${t("window.settings.self.what-branch-may-change-about-itself")}</h2>`
-    + seg15(t("window.settings.self.its-own-settings"), t("window.settings.self.it-shows-you-the-change-first"), [["ask", t("toolKinds.ask")], ["never", t("window.settings.advanced.never")]], own, "seg", "f15-its-own-settings")
-    + seg15(t("window.settings.self.loosening-what-it-may-do"), t("window.settings.self.asked-every-time-the-answer-is"), [["ask", t("window.settings.self.ask-every-time")]], loosen, "seg", "f15-loosening-what-it-may-do")
-    + seg15(t("window.settings.self.the-gateways-timings"), t("window.settings.self.it-can-suggest-you-decide"), [["suggest", t("window.settings.self.suggest")], ["never", t("window.settings.advanced.never")]], timings, "seg", "f15-the-gateway-s-timings")
-    + seg15(t("window.settings.self.restarting-its-own-engine"), t("window.settings.self.when-its-stuck-safe-steps-carry"), [["allowed", t("window.settings.self.allowed")], ["ask", t("toolKinds.ask")]], null, "seg", "f15-restarting-its-own-engine")
+    + seg15(t("window.settings.self.its-own-settings"), t("window.settings.self.it-shows-you-the-change-first"), [["ask", t("toolKinds.ask")], ["never", t("window.settings.advanced.never")]], own, "self-own", "f15-its-own-settings")
+    + seg15(t("window.settings.self.loosening-what-it-may-do"), t("window.settings.self.asked-every-time-the-answer-is"), [["ask", t("window.settings.self.ask-every-time")]], loosen, "self-loosen", "f15-loosening-what-it-may-do")
+    + seg15(t("window.settings.self.the-gateways-timings"), t("window.settings.self.it-can-suggest-you-decide"), [["suggest", t("window.settings.self.suggest")], ["never", t("window.settings.advanced.never")]], timings, "self-timings", "f15-the-gateway-s-timings")
+    + seg15(t("window.settings.self.restarting-its-own-engine"), t("window.settings.self.when-its-stuck-safe-steps-carry"), [["allowed", t("window.settings.self.allowed")], ["ask", t("toolKinds.ask")]], restart, "self-restart", "f15-restarting-its-own-engine")
     + seg15(t("window.settings.self.updating-itself"), t("window.settings.self.only-when-nothing-is-working-with"), [["install", t("window.settings.self.allowed")], ["check", t("toolKinds.ask")], ["off", t("window.settings.advanced.never")]], upd, "self-upd")
     + `<div class=\"ctl\"><b>${t("window.settings.self.its-own-program-and-your-saved")}</b><span class=\"right\"><span class=\"pill idle\">${t("window.settings.self.never-by-itself")}</span></span><small>${t("window.settings.self.this-one-cant-be-switched-on")}</small></div>`
-    + `<div class=\"ctl\"><b>${t("window.settings.self.work-on-its-own-code-in")}</b><input class=\"sw\" type=\"checkbox\" id=\"self-dev\" aria-label=\"${t("window.settings.self.work-on-its-own-code-in")}\" data-sw=\"set\"><small>${t("window.settings.self.a-private-copy-of-branchs-source")}</small></div></div>`;
+    + `<div class=\"ctl\"><b>${t("window.settings.self.work-on-its-own-code-in")}</b>${devBox}<small>${t("window.settings.self.a-private-copy-of-branchs-source")}</small></div></div>`;
 }
 
 function neverDiesSection() {

@@ -4,6 +4,7 @@ import type { Readable, Writable } from "node:stream";
 import { z } from "zod";
 import { errorText, type Run } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
+import { carryable } from "../carry-on.js"; // QA R1 follow-up
 import { askMode } from "./settings.js";
 import { conversationBegunBy, notYourConversation } from "../outside-origin.js";
 
@@ -137,15 +138,17 @@ export class AppServerConnection {
   private async runTurn(threadId: string, turnId: string, first: string): Promise<void> {
     this.notify("turn/started", { threadId, turn: turnView(turnId, "inProgress", null) });
     const itemId = randomUUID();
-    let text = "", prompt = first, run: Run | undefined;
+    let text = "", prompt = first, run: Run | undefined, carry: string | null = null;
+    const hooks = {
+      onStarted: (started: Run) => { this.turns.set(turnId, started.id); },
+      onTextDelta: (delta: string) => { if (!delta) return; text += delta; this.notify("item/agentMessage/delta", { threadId, turnId, itemId, delta }); },
+    };
     for (let round = 0; round <= maxApprovals; round++) {
-      run = await this.runtime.run({
-        prompt, sessionId: threadId, source: "acp",
-        onStarted: (started) => { this.turns.set(turnId, started.id); },
-        onTextDelta: (delta) => { if (!delta) return; text += delta; this.notify("item/agentMessage/delta", { threadId, turnId, itemId, delta }); },
-      });
+      // QA R1 follow-up: after the client's yes, the task that asked carries on and the engine runs the approved call.
+      run = carry ? await this.runtime.continueAsked(carry, hooks) : await this.runtime.run({ prompt, sessionId: threadId, source: "acp", ...hooks });
       if (run.status !== "needs_input" || !(await this.askApproval(threadId, turnId))) break;
-      prompt = "Go ahead with the step you were waiting on.";
+      carry = carryable(this.runtime, run.id, "acp")?.id ?? null;
+      if (!carry) prompt = "Go ahead with the step you were waiting on."; // a task that can no longer be carried on
     }
     this.notify("item/completed", { threadId, turnId, item: { type: "agentMessage", id: itemId, text: text || run?.output || "" } });
     const status = run?.status === "completed" || run?.status === "needs_input" ? "completed" : run?.status === "cancelled" ? "interrupted" : "failed";
