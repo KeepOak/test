@@ -10,13 +10,13 @@ import { refuseAnyTrunk } from "../accounts/context.js";
 import { primaryAccount, savedAccountsSettings } from "../accounts/settings.js";
 import { accountHomeVariables, codexDefaultModel, strippedEnvironment } from "../providers/cli-agent.js"; // codexDefaultModel: QA 2026-09-28
 import { codexChosen, codexModelSettings } from "../codex-models.js";
+import { codexBinary } from "../asks/codex-app-server.js";
+import { killProcessGroup, killWindowsTree } from "../integrations/shell-process.js";
 import type { ToolRegistry } from "../registry.js";
 import { globFits, worktreeOf, type ContractBook } from "../self-development-contract.js";
 import type { Store } from "../store.js";
 import type { GitOutcome, GitRunOptions } from "../integrations/git-run.js";
 import { startCall } from "../windows-command.js";
-import { codexBinary } from "../asks/codex-app-server.js";
-import { killProcessGroup, killWindowsTree } from "../integrations/shell-process.js";
 
 /**
  * Handing a coding job to Claude Code or Codex, the programs the owner signed in to with their own plans, so the

@@ -6,13 +6,13 @@ import type { ToolContext } from '../contracts.js';
 import type { ToolRegistry } from '../registry.js';
 import { commandFolder, ShellConfigSchema, ShellInputSchema, shellEnvironment, netlessEnvironment, validateExecutables, type ShellConfig, type ShellInput } from './shell-config.js';
 import { ShellProcess, type ProcessResult } from './shell-process.js';
+import { CommandTurns, maxParallelCommands, projectRoot, queueGraceMs } from './command-turns.js'; // SELF-302
 import { defaultJobObjects, type Job, type JobObjects } from './job-object.js';
 import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
 import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
-import { CommandTurns, maxParallelCommands, projectRoot, queueGraceMs } from './command-turns.js'; // SELF-302
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -25,7 +25,7 @@ export interface ShellTarget {
   isolation: 'job-object' | 'sampling';
 }
 
-interface Operation { controller: AbortController; owner: string; runId: string; done: Promise<unknown> }
+interface Operation { controller: AbortController; owner: string; runId: string; done: Promise<unknown>; cleared: Promise<unknown> }
 export class BranchShell {
   private readonly config: ShellConfig;
   private readonly env: NodeJS.ProcessEnv;
@@ -60,13 +60,22 @@ export class BranchShell {
     if (this.closed) return Promise.reject(new Error('Host command execution is closed'));
     if (!context.owner || !context.runId) return Promise.reject(new Error('Host commands require an owner and run ID'));
     const parsed = ShellInputSchema.parse(input);
-    const operation: Operation = { controller: new AbortController(), owner: context.owner, runId: context.runId, done: Promise.resolve() };
+    const operation: Operation = { controller: new AbortController(), owner: context.owner, runId: context.runId, done: Promise.resolve(), cleared: Promise.resolve() };
     // A command waiting for its turn is pending too, so a run finishing or the shell closing stops it as well.
     this.pending.add(operation);
     const done = this.perform(parsed, context, operation.controller.signal);
     operation.done = done;
-    void done.finally(() => this.pending.delete(operation)).catch(() => undefined);
+    operation.cleared = done.finally(() => this.pending.delete(operation)).catch(() => undefined);
     return done;
+  }
+  /** Resolves once no host command is running, so a caller can take its turn instead of guessing. */
+  async whenIdle(signal?: AbortSignal): Promise<void> {
+    const stopped = signal ? new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })) : null;
+    while (this.pending.size && !signal?.aborted) {
+      const settled = Promise.allSettled([...this.pending].map(operation => operation.cleared));
+      await (stopped ? Promise.race([settled, stopped]) : settled);
+    }
+    signal?.throwIfAborted();
   }
   private async perform(input: ShellInput, context: ToolContext, stopping: AbortSignal) {
     const own = this.extra();
