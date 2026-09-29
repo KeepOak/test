@@ -86,6 +86,7 @@ import { helperDefaultFor, withHelperDefault } from "./helper-defaults.js"; // m
 import { checkResult, fanoutWaves, helperRoute, helperRouteWords, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
+import { alreadyRunResult, approvedWork, notRunResult, type ApprovedWork } from "./approved-call.js"; // QA R1
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
 import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation } from "./comfort/browser-safety.js"; // R17-S19
@@ -98,6 +99,7 @@ import { privateConversationRoute, routeForTask, routingSettings } from "./local
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
 import { memoryScope } from "./memory.js";
+import { keyWords, ownerFactsBlock, ownersLastMessage, personalQuestion, relevantFacts, type OwnerFact } from "./owner-facts.js"; // QA R1 follow-up (recall)
 import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
 import {
@@ -152,6 +154,7 @@ import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
 import { loadWords, type Words } from "./terminal-words.js"; // the workspace's language, for a stopped task's sentences
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
+import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -223,7 +226,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -254,7 +257,9 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
 export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
-export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string }
+export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
+  /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
+  tellsLead?: boolean }
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
@@ -496,6 +501,27 @@ const namesNoModel = (preset: Pick<ModelPreset, "model"> & { provider?: { name: 
   unnamedModels.has(preset.model) || preset.provider?.name === mixtureProviderName
   || /^(cli-agent|app-server|retired):/.test(preset.provider?.name ?? "");
 /** Dogfood B18: the first system message, with the line that says which model and connection are answering. */
+/**
+ * selfdev (SELF-314): a task carried on after a restart starts again with a fresh catalog, and a model that had loaded
+ * its tools by name (tools.describe) would find its next call "not offered". So the carried-on task starts with the
+ * tools its conversation had been calling or had named, newest last, at most 24; only ones this task is offered.
+ */
+export function carriedOnTools(store: Pick<Store, "events">, runId: string, messages: readonly Message[],
+  tools: readonly { name: string }[], hidden: ReadonlySet<string> | readonly string[]): { name: string; reason: string }[] {
+  const resumed = store.events(runId).find((event) => event.kind === "run.started")?.data.resumedFrom;
+  if (typeof resumed !== "string") return [];
+  const offered = new Set(tools.map((tool) => tool.name)), off = new Set(hidden);
+  const lastSeen = new Map<string, number>(); // each name at its newest mention
+  let at = 0;
+  for (const message of messages) for (const call of message.toolCalls ?? []) {
+    let named: unknown[] = [];
+    if (call.name === "tools.describe") try { named = (JSON.parse(call.arguments) as { names?: unknown[] }).names ?? []; } catch { /* not a list */ }
+    for (const name of [call.name, ...named]) if (typeof name === "string") lastSeen.set(name, at++);
+  }
+  const newestLast = [...lastSeen.entries()].sort((a, b) => a[1] - b[1]).map(([name]) => name);
+  return newestLast.filter((name) => offered.has(name) && !off.has(name)).slice(-24)
+    .map((name) => ({ name, reason: "used before Branch was restarted" }));
+}
 export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset, "name" | "model"> & { provider?: { name: string } }): Message[] {
   const first = messages[0];
   if (first?.role !== "system") return messages;
@@ -685,6 +711,10 @@ export class Runtime {
   private readonly spendMembers = new Map<string, Set<string>>();
   /** Results of background specialists that finished after their parent, newest first. */
   readonly backgroundResults: BackgroundResult[] = [];
+  /** selfdev (SELF-303): told when a background helper finishes, so its lead hears without checking (src/helper-messages.ts). */
+  onBackgroundFinished: ((result: BackgroundResult) => void) | null = null;
+  /** workbench (SELF-307): what a conversation still has going, sent with every round and never stored (src/open-work.ts). */
+  openWork: ((sessionId: string) => string | null) | null = null;
   /** Per session: write tool calls whose outcome is unknown after an interruption, until a read has checked the state. */
   private readonly unreconciled = new Map<string, { name: string; arguments: string }[]>();
   /** Dogfood B7: set once a real model has answered and the first-run card is done with. */
@@ -967,21 +997,30 @@ export class Runtime {
    * Q050: carries on a task that stopped to ask, as that same task, after a yes to its exact request (the person's reply
    * to its own question reaches it through replyToAsk). No second task is started, and a task no longer waiting is refused. Every refusal comes before the first await, as a new task's does (see execute).
    */
-  async continueAsked(runId: string): Promise<Run> {
+  async continueAsked(runId: string, hooks: CarryOnHooks = {}): Promise<Run> {
     const waiting = this.store.run(runId);
     if (!waiting) throw new Error(nothingToContinue);
     return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
-      continuing: { runId, allowed: true } }));
+      ...this.carriedAs(runId, hooks), continuing: { runId, allowed: true } }));
+  }
+  /**
+   * QA R1 follow-up: a task carried on from where it came (a chat app, an editor, the terminal, a room) is held as it
+   * started: its recorded source, never the owner's own, and the caller's live hooks for its words and its start.
+   */
+  private carriedAs(runId: string, hooks: CarryOnHooks): Partial<RunOptions> {
+    const source = runOrigin(this.store, runId).source as RunSource;
+    return { ...(source !== "owner" ? { source } : {}), ...(hooks.onStarted ? { onStarted: hooks.onStarted } : {}),
+      ...(hooks.onTextDelta ? { onTextDelta: hooks.onTextDelta } : {}), ...(hooks.signal ? { signal: hooks.signal } : {}) };
   }
   /**
    * Dogfood D5: carries on a task that stopped to ask, as that same task, after the owner said No to its exact request:
    * told of the No, it replies with what it can do instead. Refused, like continueAsked, before the first await.
    */
-  async continueRefused(runId: string, fingerprint: string): Promise<Run> {
+  async continueRefused(runId: string, fingerprint: string, hooks: CarryOnHooks = {}): Promise<Run> {
     const waiting = this.store.run(runId);
     if (!waiting) throw new Error(nothingToContinue);
     return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
-      continuing: { runId, refused: { fingerprint } } }));
+      ...this.carriedAs(runId, hooks), continuing: { runId, refused: { fingerprint } } }));
   }
   /** Messages waiting for a busy conversation, in order. */
   queued(sessionId: string): FollowUp[] {
@@ -1047,24 +1086,31 @@ export class Runtime {
     if (permissions.some((p) => !parent.permissions.has(p))) throw new Error("Delegation permission escalation denied");
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
     const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
-    const connection = await this.helperConnection(parent, options);
+    // workbench (SELF-303): only a helper's own conversation (one with a pinned helper route) is carried on in, and only
+    // on the model and account it was pinned to, so a lead cannot pour a helper into any other conversation.
+    const resumed = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
+    if (options.sessionId && !resumed) throw new Error("That conversation is not a helper's own, so it cannot be carried on as one.");
+    const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
     context.signal.throwIfAborted();
     let started: Run | undefined;
     const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
     void startedAt;
-    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.sessionId ? { sessionId: options.sessionId } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     void child.then((run) => {
-      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
+      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
+        ...(options.tellsLead ? { tellsLead: true } : {}) };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
+      try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
     }, () => undefined);
     for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
     if (!started) throw new Error("The background specialist did not start");
-    if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200) });
+    if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200), sessionId: started.sessionId });
     return { childRunId: started.id, sessionId: started.sessionId };
   }
   /**
@@ -1643,8 +1689,11 @@ ${run.output.slice(0, 6000)}`;
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
         }), trunk);
-    if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom);
-    if (options.continuing) instructions += this.continueNote(run, options.continuing);
+    // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
+    // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
+    const approved = this.approvedFor(run, options);
+    if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom) + (approved ? resumedAskNote : "");
+    if (options.continuing) instructions += this.continueNote(run, options.continuing, approved !== null);
     if (context.dryRun) instructions += "\nThis task is a practice run. Read-only tools may really read; changes are simulated. Describe what would change and never claim a simulated action happened. Model use still counts.\n";
     if (!options.resumeFrom && !options.continuing?.allowed && !options.continuing?.refused) {
       // The files themselves are kept first: a message may only carry a reference to something real.
@@ -1723,7 +1772,9 @@ ${run.output.slice(0, 6000)}`;
         this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
       }
       options.onStarted?.(run);
-      const work = (working: ToolContext) => this.loop(run, working, instructions, options.onTextDelta, {
+      const work = async (working: ToolContext) => {
+        if (approved) await this.runApproved(run, working, approved); // QA R1
+        return this.loop(run, working, instructions, options.onTextDelta, {
         ...(options.model !== undefined ? { preset: options.model } : {}),
         ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
       }, options.checks, options.images, {
@@ -1733,6 +1784,7 @@ ${run.output.slice(0, 6000)}`;
         ...(context.depth > 0 || (context.agent && (!trunk || trunk.roomTurn)) ? { delegated: true } : {}),
         ...(options.continuing ? { continuing: true } : {}),
       }, options.style);
+      };
       output = place && this.coding ? await this.coding.inPlace(place.scope, () => work({ ...context, workspace: place.workspace })) : await work(context);
     } catch (error) {
       status = this.failureStatus(context, error);
@@ -1769,6 +1821,7 @@ ${run.output.slice(0, 6000)}`;
     // running — so every task lets go of its ids here, child runs included.
     this.tracer.forget(run.id);
     this.guards.forget(run.id); // wave mac2 (guards)
+    this.engineRan.delete(run.id); // QA R1
     this.recordedSources.delete(run.id); // mac7/outside-resume
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
@@ -1916,15 +1969,17 @@ ${run.output.slice(0, 6000)}`;
    * uncertain outcome. The yes holds for those exact bytes only (a changed request is asked about again). A reply is the
    * person's newest message in the conversation.
    */
-  private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }): string {
+  private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }, engineRuns = false): string {
     const asked = this.store.events(run.id).filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
     const unknown = this.store.events(run.id).some((event) => event.kind === "policy.execution_unknown" && event.data.id === asked);
     if ((continuing.allowed || continuing.refused) && typeof asked === "string" && !unknown) {
       this.store.event(run.id, "run.call_not_run", { id: asked });
-      // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing.
-      this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
+      // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing. QA R1: after a
+      // yes the engine runs it, and its real result takes the placeholder's place (runApproved).
+      if (!engineRuns) this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
     }
     if (continuing.refused) return this.refusalNote(run, continuing.refused, unknown); // dogfood D5
+    if (continuing.allowed && engineRuns) return approvedRanNote; // QA R1
     if (continuing.allowed && unknown) return " The person allowed the blocked step. The outer call may already have changed something: check its actual state before repeating any action. The approval does not prove the outer call never ran." + this.resumeNote(run, run.id);
     return continuing.allowed
       ? " The person has now answered your question: they allowed the request, just this once. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again."
@@ -1942,6 +1997,62 @@ ${run.output.slice(0, 6000)}`;
     const unknown = unknownIds.size;
     this.store.event(run.id, "run.resumed", { from, unknownToolOutcomes: unknown });
     return " This task was interrupted and is now continuing from its saved transcript. A tool result marked outcome unknown may or may not have taken effect: check the actual state before repeating any action that changes something.";
+  }
+  /**
+   * QA R1: what the engine runs itself as this task carries on: after a yes to its exact request, the call that asked; after
+   * a restart cut off its question (Continue), the call that was never run, which the gate then asks about again or lets
+   * through on a yes still standing. Null when there is nothing (a reply, a No, a step asked from inside a tool after it
+   * started, or a call that has already run).
+   */
+  private approvedFor(run: Run, options: RunOptions): ApprovedWork | null {
+    if (!options.continuing?.allowed && !options.resumeFrom) return null;
+    const from = options.continuing?.runId ?? options.resumeFrom!;
+    const events = this.store.events(from);
+    const kind = options.continuing ? "attention.needed" : "run.call_not_run";
+    const last = events.filter((event) => event.kind === kind).at(-1)?.data;
+    const asked = options.continuing ? last?.callId : last?.id;
+    if (typeof asked !== "string") return null;
+    const work = approvedWork(events, this.store.messages(run.sessionId), asked);
+    return work.run.length || work.finished ? work : null;
+  }
+  /**
+   * QA R1: runs the approved call as the model asked for it (the same id and the very same bytes, so the yes still binds
+   * it), through oneCall: the journal, the loop guard, the gate with its rules and remembered answers, receipts and
+   * events. Its result replaces the "not run" placeholder. A gate that asks again stops the task on the same call.
+   */
+  private async runApproved(run: Run, context: ToolContext, work: ApprovedWork): Promise<void> {
+    if (work.finished) {
+      const { call, outcome } = work.finished;
+      this.store.event(run.id, "run.approved_call", { id: call.id, name: call.name, ranBefore: true });
+      this.store.setToolResult(run.sessionId, call.id, this.clipped(run, call, JSON.stringify(outcome)));
+    }
+    for (const [at, call] of work.run.entries()) {
+      // A later call of the same reply never started: until it runs, it is a call that has not run, not one that may have.
+      if (at > 0) this.store.setToolResult(run.sessionId, call.id, notRunResult);
+      this.store.event(run.id, "run.approved_call", { id: call.id, name: call.name, ...(at > 0 ? { sameReply: true } : {}) });
+      this.noteWork(run, call);
+      this.rememberToolWork(run.id, call.name, 0);
+      const outcome = await this.oneCall(run, context, call);
+      this.store.setToolResult(run.sessionId, call.id, this.clipped(run, call, JSON.stringify(outcome)));
+      const ran = this.engineRan.get(run.id) ?? [];
+      ran.push({ id: call.id, name: call.name, canon: canonicalArguments(call.arguments), outcome });
+      this.engineRan.set(run.id, ran);
+    }
+  }
+  /** QA R1: calls the engine ran itself after a yes, by task, so a model that makes one again is handed its result. */
+  private readonly engineRan = new Map<string, { id: string; name: string; canon: string; outcome: unknown }[]>();
+  /**
+   * QA R1: a model that makes the approved call again anyway (the same tool and the same arguments, in any key order) is
+   * handed the result of the one the engine ran, once, and nothing runs a second time.
+   */
+  private approvedRepeat(runId: string, call: ToolCall): Record<string, unknown> | null {
+    const ran = this.engineRan.get(runId);
+    const canon = canonicalArguments(call.arguments);
+    const at = ran?.findIndex((one) => one.name === call.name && one.canon === canon) ?? -1;
+    if (!ran || at < 0) return null;
+    const [first] = ran.splice(at, 1);
+    this.store.event(runId, "run.approved_repeat", { id: call.id, name: call.name, of: first!.id });
+    return alreadyRunResult(first!.outcome);
   }
   /**
    * Dogfood D5: what a task carrying on after the owner's No is told (like a yes, the request is not quoted back: its
@@ -2013,7 +2124,13 @@ ${run.output.slice(0, 6000)}`;
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
+      // selfdev (SELF-303): a helper's note that arrived as its lead finished is not lost: it goes to the lead's
+      // conversation as a new message, labelled as the helper's words. The owner's own late note is dropped as before.
+      const late = (this.steers.get(run.id) ?? []).filter((one) => one.from !== undefined && /^helper /.test(one.from));
       this.steers.delete(run.id);
+      if (late.length) queueMicrotask(() => {
+        for (const one of late) try { this.followUp(run.sessionId, fromHelper(one.from!, one.note), null, { originFrom: run.id }); } catch { /* the conversation is gone */ }
+      });
       this.recordToolWork(run, context, status);
       // What this conversation is carrying is written down at the end of every task, so closing the
       // app between one task and the next changes nothing about what the next one starts with. Only
@@ -2320,6 +2437,10 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
+      // workbench (SELF-307): the conversation's open work rides with the checklist, so folding never loses its numbers.
+      let open: string | null = null;
+      if (context.depth === 0) try { open = this.openWork?.(run.sessionId) ?? null; } catch { /* never breaks a round */ }
+      if (open) notes.every = { role: "system", content: [notes.every?.content, open].filter(Boolean).join("\n\n") };
       // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
@@ -2483,6 +2604,8 @@ ${run.output.slice(0, 6000)}`;
    * waited on at once. Nothing is shared between two calls but the clock.
    */
   private oneCall(run: Run, context: ToolContext, call: ToolCall): Promise<unknown> {
+    const repeat = this.approvedRepeat(run.id, call); // QA R1
+    if (repeat) return Promise.resolve(repeat);
     // mac3/never-break: each call is written to the task journal, flushed, before it runs.
     return this.journal.around({ runId: run.id, sessionId: run.sessionId, call, workspace: context.workspace, signal: context.signal,
       permission: this.registry.permissionOf(call.name) }, () => {
@@ -2854,7 +2977,48 @@ ${run.output.slice(0, 6000)}`;
     messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id))) });
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
+    this.groundInOwnerFacts(run, context, messages, ids); // QA R1 follow-up (recall)
     return { messages, ids };
+  }
+  /**
+   * QA R1 follow-up (recall): the saved facts that bear on the owner's newest message, in a short labelled block right
+   * before it (src/owner-facts.ts). For a personal question the engine looks them up itself. Only this computer's own
+   * memory is read, as the owner's (or the Trunk's) own scope sees it; nothing is written.
+   */
+  private groundInOwnerFacts(run: Run, context: ToolContext, messages: Message[], ids: (number | null)[]): void {
+    if (context.depth > 0 || !context.permissions.has("memory.read")) return;
+    // A group chat's message may be anybody's: "my" there is not the owner's, so a group is never grounded this way.
+    const chat = this.store.events(run.id).find((event) => event.kind === "channel.inbound")?.data;
+    if (chat && chat.chatKind !== "direct") return;
+    const at = ownersLastMessage(messages);
+    const question = at >= 0 ? String(messages[at]!.content ?? "") : "";
+    if (!question.trim()) return;
+    const scope = memoryScope(this.store, context), agent = memoryAgent(context);
+    const personal = personalQuestion(question);
+    const found = new Map<string, OwnerFact>();
+    const words = (question.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).filter((word) => word.length > 2);
+    for (const query of ["", ...new Set([...words, ...keyWords(question)])].slice(0, 12)) {
+      for (const record of this.store.searchMemory(scope, query, agent)) {
+        if (record.data.kind === "task-scratch" || found.has(record.id)) continue;
+        found.set(record.id, { id: record.id, text: String(record.data.text ?? ""), updatedAt: record.updatedAt });
+      }
+    }
+    const facts = relevantFacts(question, [...found.values()], personal);
+    if (!facts.length) return;
+    // For a personal question just asked, the engine's own lookup follows it as a memory.search step that already ran:
+    // a small model answers from a tool's result far more readily than from a note above the question. Shown to the
+    // model only; the conversation keeps no such call.
+    const lookedUp = personal && at === messages.length - 1 && this.registry.permissionOf("memory.search") === "memory.read";
+    messages.splice(at, 0, { role: "system", content: ownerFactsBlock(facts) });
+    ids.splice(at, 0, null);
+    if (lookedUp) {
+      const call = { id: `lookup-${run.id.slice(0, 8)}`, name: "memory.search", arguments: JSON.stringify({ query: question.slice(0, 200) }) };
+      messages.push({ role: "assistant", content: "", toolCalls: [call] },
+        { role: "tool", toolCallId: call.id, content: JSON.stringify({ ok: true, result: facts.map((fact) => ({ id: fact.id, data: { text: fact.text } })), // as memory.search returns them
+          note: "Branch looked up what the owner asked you to remember, for this question. Answer from these facts." }) });
+      ids.push(null, null);
+    }
+    this.store.event(run.id, "memory.lookup", { personal, step: lookedUp, facts: facts.map((fact) => fact.id) });
   }
   /**
    * Passages from the person's own documents, added before their task the way the memory snapshot
@@ -3024,7 +3188,8 @@ ${run.output.slice(0, 6000)}`;
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
-      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) ? coreMemoryTools : [])]
+      // QA R1 follow-up (recall): a personal question ("what's my…") is memory work too, so it is offered memory.search.
+      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) || personalQuestion(run.prompt) ? coreMemoryTools : [])]
         .filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
@@ -3043,6 +3208,9 @@ ${run.output.slice(0, 6000)}`;
       // nothing about the request ever leaves this computer.
       ...this.meaningOption(run.id),
     });
+    // selfdev (SELF-314): a task carried on after a restart has its tools loaded again, as it had named them.
+    const carried = carriedOnTools(this.store, run.id, messages, tools, switched.hidden).map((entry) => entry.name);
+    if (carried.length) catalog.describe(carried);
     this.catalogs.set(run.id, catalog);
     // Only the owner's own task, read from what the task recorded at its start, never from whoever is at the window
     // now: never a household person's (or one in a conversation lent from them), a short-lived key's, a chat app's or
@@ -4974,6 +5142,20 @@ const aloneTools = [expandToolName, toolSearchName, toolDescribeName, toolNoteNa
 function safeArguments(text: string): unknown {
   try { return JSON.parse(text); } catch { return {}; }
 }
+
+/** QA R1 follow-up: what a caller that carries a waiting task on (a chat app, an editor, the terminal, a room) may watch. */
+export interface CarryOnHooks {
+  onStarted?: (run: Run) => void;
+  onTextDelta?: (text: string) => void;
+  signal?: AbortSignal;
+}
+/** QA R1: what a task carrying on after a yes is told, once the engine has run the approved call itself. */
+const approvedRanNote = " The person has now answered your question: they allowed the request. Branch has now carried out that exact"
+  + " call itself (it had not run before), and what came of it is in the conversation as that call's result. Do not make that"
+  + " call again: carry on with the task from that result.";
+/** QA R1: added to the resume note when a call whose question was lost has been put through again by Branch itself. */
+const resumedAskNote = " A call that had stopped to ask the person was put through again by Branch itself; what came of it is in"
+  + " the conversation as that call's result. Do not make that call again.";
 
 /** mac7/speed: the room the one last question gets, its own, so a long task still gets an answer. */
 const lastWordTokens = 16000;

@@ -70,7 +70,10 @@ async function nativeResult(native: NativeProcess, signal: AbortSignal): Promise
   return { event: results[0]!, code, authenticationFailed };
 }
 function completed(relay: NativeAdmission, result: { event: NativeEvent; code: number | null; authenticationFailed: boolean }): Completion {
-  if (relay.status === 429) throw new ProgramLimitError("Claude subscription has reached its plan limit; wait or choose another account");
+  if (relay.status === 429) {
+    const until = relay.resetsAt ? ` until about ${relay.resetsAt.toISOString().slice(0, 16).replace("T", " ")} UTC` : "";
+    throw new ProgramLimitError(`Claude subscription has reached its plan limit${until}; wait or choose another account`);
+  }
   if (relay.status === 401 || relay.status === 403 || result.authenticationFailed) throw new Error("Claude subscription could not use its saved sign-in; open Settings → Accounts and sign in again");
   // selfdev: a busy or failing service (5xx, 529 overloaded) is tried again like any other provider's; the status is named.
   if (relay.status !== null && relay.status >= 500) throw new ProviderHttpError(relay.status);

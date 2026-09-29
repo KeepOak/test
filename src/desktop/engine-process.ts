@@ -16,6 +16,7 @@ import { startServer } from "../server.js";
 import { loadIntegrations } from "../integrations/bootstrap.js";
 import { ChatGPTAuth, type ChatGPTTokens, type TokenVault } from "../chatgpt-auth.js";
 import { diagnose } from "../diagnostic-log.js";
+import { noteStalledLooks } from "../comfort/auto-update.js";
 import { recordDesktopCrash } from "../tracing.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
 import { runningTaskCount } from "./quit-guard.js";
@@ -176,6 +177,12 @@ async function start(config: EngineConfig): Promise<void> {
     ...{ nativeCaptureLease: trustedCaptureLease(link, !config.gateway) },
     findComputers: realDeviceNetwork(), // find-computers: the same parts and rules as `branch start` (src/devices/network.ts)
   });
+  // Updating by itself is run by the app (its update loop asks this engine's plan): one that stopped asking is said as
+  // a problem in Settings › Updates and the activity log, never left silent (auto-update.ts noteStalledLooks).
+  if (config.packaged) {
+    const since = Date.now();
+    setInterval(() => { try { noteStalledLooks(branch.store, branch.runtime.owner, since); } catch { /* the next look tries again */ } }, 5 * 60_000).unref();
+  }
   let integrationClose: (() => Promise<void>) | undefined;
   let serverClose: (() => Promise<void>) | undefined;
   let stopping: Promise<void> | undefined;
