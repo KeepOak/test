@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { fetchSource, minutes, ownTemp, readyToCompile, stampDevVersion, type DevStage, type Run } from "../desktop/dev-build.js";
+import { compileChange, fetchSource, minutes, ownTemp, readyToCompile, stampDevVersion, type DevStage, type Run } from "../desktop/dev-build.js";
 import { classify, readCompiled, type Classified, type Part } from "./classify.js";
 import { stageLive } from "./live-folder.js";
 import type { LiveManifest } from "./manifest.js";
@@ -35,6 +35,9 @@ export interface LivePlan {
   platform?: NodeJS.Platform;
   arch?: string;
   otherLineConfirmed?: boolean;
+  /** See DevBuildPlan.builtOutput: GitHub's own build of the change, taken instead of compiling here. */
+  builtOutput?: { repo: string; waitMs?: number };
+  note?: (line: string) => void;
   onStage: (stage: DevStage, state: "running" | "skipped") => void;
   onVersion?: (version: string) => void;
 }
@@ -75,7 +78,7 @@ export async function buildLive(run: Run, plan: LivePlan): Promise<LiveOutcome> 
   plan.onStage("installing", reused ? "skipped" : "running");
   const env = ownTemp(plan.buildDir), timeoutMs = minutes(30);
   plan.onStage("building", "running");
-  if (compiles) await run("npm", ["run", "build"], { cwd: source, timeoutMs, env, pausable: true });
+  if (compiles) await compileChange(run, plan, source);
   else await run("node", ["scripts/copy-fonts.mjs"], { cwd: source, timeoutMs, env });
   const compiled = compiles ? await readCompiled(source) : new Map<string, string>();
   const read = (path: string) => compiled.get(path) ?? null;

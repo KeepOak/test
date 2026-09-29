@@ -136,6 +136,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   new RegExp(`^/api/trunks/${id}/files$`), // personal instructions and private notes outlive a script's key
   // models-ui: what a Trunk spent this month, and its limit, is the owner's to read.
   new RegExp(`^/api/trunks/${id}/spend$`),
+  new RegExp(`^/api/trunks/${id}/secrets$`), // RES-260: the names of a Trunk's own secrets
   // R17-S-A: the settings file outlives the key, and the owner's own files say who they are.
   /^\/api\/settings-kit\/(export|files)(\/.*)?$/,
   // mac7/r17-d: the shell snapshot holds the owner's PATH, aliases and functions.

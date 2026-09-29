@@ -261,7 +261,7 @@ async function automations(page) {
 }
 
 async function clicks() {
-  const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+  const { chromium } = require("playwright");
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
   const errors = [];

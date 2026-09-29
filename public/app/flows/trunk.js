@@ -231,8 +231,12 @@ function poolRow(tr, pool, keys) {
   const options = [["", none], ...pool.accounts.map((a) => [a.id, ready(a) ? accountName(pool.id, a) : t("window.flows.trunk.acc-not-ready", { name: accountName(pool.id, a) }), !ready(a) && a.id !== picked])];
   const label = t("window.flows.trunk.acc-pick-for", { name: pool.label });
   const pick = gsel({ sw: "tk-pool", label, options, value: known ? picked : "", attrs: `data-tk-pool="${esc(pool.id)}" data-id="${esc(tr.id)}"` });
+  /* Where it goes when its pick reaches its limit: one of the connection's other accounts, before the owner's own. */
+  const then = keys.next?.[pool.id]?.[0] ?? "", others = options.filter(([v]) => v && v !== picked);
+  const next = known && others.length ? `<span class="tk-then"><small>${t("window.flows.trunk.acc-then")}</small>${gsel({ sw: "tk-next", label: t("window.flows.trunk.acc-then-for", { name: pool.label }),
+    options: [["", keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-then-stop")], ...others], value: then, attrs: `data-tk-next="${esc(pool.id)}" data-id="${esc(tr.id)}"` })}</span>` : "";
   const using = usesPool(tr, pool) ? `<span class="pill ok tk-uses">${t("window.flows.trunk.acc-answers-with")}</span>` : "";
-  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)} ${using}</b><span class="right">${pick}</span><small></small></div>`;
+  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)} ${using}</b><span class="right">${pick}${next}</span><small></small></div>`;
 }
 function accountsTab(tr) {
   const view = ed.keys;
@@ -274,7 +278,7 @@ async function saveKeysNow(id, change) {
   try {
     const { trunk } = await api(`trunks/${encodeURIComponent(id)}`);
     const had = trunk?.keys ?? { copyFromOwner: true, accounts: {} };
-    await api(`trunks/${encodeURIComponent(id)}`, { keys: change({ copyFromOwner: had.copyFromOwner, accounts: { ...had.accounts } }) });
+    await api(`trunks/${encodeURIComponent(id)}`, { keys: change({ copyFromOwner: had.copyFromOwner, accounts: { ...had.accounts }, ...(had.next ? { next: { ...had.next } } : {}) }) });
     await refresh().catch((error) => console.warn(error.message));
   } catch (error) { toast(error.message); }
   await loadKeys(id); // what the engine keeps now, whether or not the change was taken
@@ -284,6 +288,14 @@ function pickAccount(el) {
   saveKeys(el.dataset.id, (keys) => {
     if (v) keys.accounts[pool] = v; else delete keys.accounts[pool];
     return keys;
+  });
+}
+function pickNext(el) {
+  const pool = el.dataset.tkNext, v = el.value;
+  saveKeys(el.dataset.id, (keys) => {
+    const next = { ...(keys.next ?? {}) };
+    if (v) next[pool] = [v]; else delete next[pool];
+    return { ...keys, next };
   });
 }
 function setCopy(el) {
@@ -625,8 +637,9 @@ export function init() {
     else if (e.target.id === "tk-copy") setCopy(e.target);
     else if (e.target.id === "tk-cap") setCap(e.target);
     else if (e.target.dataset?.tkPool) pickAccount(e.target);
+    else if (e.target.dataset?.tkNext) pickNext(e.target);
   });
-  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-cap"]);
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next", "sw:tk-cap"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));

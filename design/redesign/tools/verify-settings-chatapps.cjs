@@ -4,7 +4,7 @@
    engine, and each change is confirmed through GET /api/channels (`intake`). No chat app is connected, so nothing is
    sent anywhere (online status would change a bot's profile only on a connected app). The per-app watchdog line and
    what each setting does to real messages are covered by tests/chat-intake.test.mjs. */
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 
 const BASE = `http://127.0.0.1:${process.env.PORT}`, TOKEN = process.env.TOKEN;
