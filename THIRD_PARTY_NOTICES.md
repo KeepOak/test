@@ -3564,10 +3564,6 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
-### Codex (OpenAI) refresh-token handling and Gemini CLI (Google) credential merge, Apache-2.0
-
-When a ChatGPT sign-in cannot be renewed, `src/chatgpt-auth.ts` (`refreshEnded`, `ChatGPTAuth.refresh`) decides which refusals end it the way Codex's `codex-rs/login/src/auth/manager.rs` (`classify_refresh_token_failure`, `refresh_token`) does, and reads the saved sign-in again before renewing it (https://github.com/openai/codex). `OAuthConnections.token` in `src/oauth.ts` keeps the refresh token already held when a renewal sends none, as Gemini CLI's `packages/core/src/code_assist/oauth-credential-storage.ts` (`saveCredentials`) does (https://github.com/google-gemini/gemini-cli). Both projects are licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright 2025 OpenAI; Copyright 2025 Google LLC.
-
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
@@ -3660,3 +3656,7 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+### Codex (OpenAI) refresh-token handling and Gemini CLI (Google) credential merge, Apache-2.0
+
+When a ChatGPT sign-in cannot be renewed, `src/chatgpt-auth.ts` (`refreshEnded`, `ChatGPTAuth.refresh`) decides which refusals end it the way Codex's `codex-rs/login/src/auth/manager.rs` (`classify_refresh_token_failure`, `refresh_token`) does, and reads the saved sign-in again before renewing it (https://github.com/openai/codex). `OAuthConnections.token` in `src/oauth.ts` keeps the refresh token already held when a renewal sends none, as Gemini CLI's `packages/core/src/code_assist/oauth-credential-storage.ts` (`saveCredentials`) does (https://github.com/google-gemini/gemini-cli). Both projects are licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright 2025 OpenAI; Copyright 2025 Google LLC.
