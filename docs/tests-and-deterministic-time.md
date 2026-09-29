@@ -37,7 +37,9 @@ At most `prSlots` pull-request runs (`tests/test-impact.json`) hold runners at o
 labels its pull request `ci-waiting` and cancels itself: it is waiting, not red. Every run that finishes, a push to
 `redesign/window` included, starts the oldest waiting pull request again. A pull request whose newest run for its
 head was cancelled (held, or parked by hand) is waiting too; drafts and pull requests labelled `hold` are skipped.
-Pushes are never held. Do not rerun a cancelled run by hand: the queue does it.
+Pushes are never held. Only a rerun the queue itself started goes straight to its slot; a rerun started by a person
+(the Rerun button, or rerunning failed jobs) waits in line like any run. Label a pull request `ci-priority` to put
+it at the front of the line. Do not rerun a cancelled run by hand: the queue does it.
 
 Shared hosted-runner queue time is not controlled by repository code. Never run fork pull-request code on a personal
 NAS or runner with vault, LAN, or signing-secret access.
