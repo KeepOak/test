@@ -17,7 +17,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { Deliveries, TelegramAdapter, telegramInbox } from "../dist/index.js";
+import { mkdtemp } from "node:fs/promises";
+import { discardTemp } from "./temp-dir.mjs";
+import { createBranch, Deliveries, MemoryInbox, TelegramAdapter, keepDoneMs, telegramInbox } from "../dist/index.js";
 import { conflictReason } from "../dist/channels/telegram.js";
 
 async function until(check, what, ms = 5000) {
@@ -119,7 +121,7 @@ test("a restart after finished tasks runs none of them again; an unfinished one 
   const open = restartableDb(t);
   let saved = 0;
   const position = { load: () => saved, save: (offset) => { saved = offset; } };
-  const options = { position, inbox: telegramInbox(open(), "7") };
+  const options = { position, inbox: telegramInbox(open(), "7", "tg") };
   const first = adapterFor(t, state, options);
   const handled = [];
   let hold;
@@ -130,7 +132,7 @@ test("a restart after finished tasks runs none of them again; an unfinished one 
   await first.stop(); // Branch closes while "cut off" is still being answered
   // Telegram was told about all three the moment they were saved: nothing comes back from it after the restart.
   const replayed = [];
-  const second = adapterFor(t, state, { position, inbox: telegramInbox(open(), "7") });
+  const second = adapterFor(t, state, { position, inbox: telegramInbox(open(), "7", "tg") });
   await second.start(async (m) => { replayed.push(m); });
   await until(() => replayed.length === 1, "the unfinished one handed over");
   await delay(300);
@@ -142,7 +144,7 @@ test("a restart after finished tasks runs none of them again; an unfinished one 
 
 test("an inbox that could not save acknowledges nothing, and the update is taken in once it can", async (t) => {
   const state = await fakeTelegram(t);
-  const inner = telegramInbox({ sqlite: new DatabaseSync(":memory:") }, "7");
+  const inner = telegramInbox({ sqlite: new DatabaseSync(":memory:") }, "7", "tg");
   let broken = true;
   const inbox = { ...inner, add: (rows) => { if (broken) throw new Error("disk unavailable"); inner.add(rows); },
     pending: () => inner.pending(), done: (id) => inner.done(id), markCaughtUp: () => inner.markCaughtUp(), newest: () => inner.newest() };
@@ -270,11 +272,76 @@ test("delivery ledger: gone is never retried, flood waits retry_after without sp
 
 test("an inbox whose database was closed keeps the poll alive: nothing read, nothing confirmed", () => {
   const store = { sqlite: new DatabaseSync(":memory:"), isOpen: true };
-  const inbox = telegramInbox(store, "7");
+  const inbox = telegramInbox(store, "7", "tg");
   inbox.add([{ updateId: 1, update: { update_id: 1 }, caughtUp: false }]);
   store.isOpen = false;
   assert.deepEqual(inbox.pending(), [], "a closed database reads as empty instead of throwing out of the poll loop");
   assert.equal(inbox.newest(), 0);
   assert.throws(() => inbox.add([{ updateId: 2, update: { update_id: 2 }, caughtUp: false }]), /closed/, "a save that cannot happen stops the offset moving");
   assert.doesNotThrow(() => { inbox.done(1); inbox.markCaughtUp(); });
+});
+
+const row = (id) => ({ updateId: id, update: { update_id: id, message: { text: `words ${id}` } }, caughtUp: false });
+
+test("the in-memory inbox drops a handled update at once and remembers only a bounded window of numbers", () => {
+  const inbox = new MemoryInbox(50);
+  inbox.add(Array.from({ length: 200 }, (_, i) => row(i + 1)));
+  for (let id = 1; id <= 200; id++) inbox.done(id);
+  assert.deepEqual(inbox.pending(), [], "nothing handled is kept");
+  assert.equal(inbox.size, 50, "only the newest 50 handled numbers are remembered, and none of their words");
+  inbox.add([row(200)]);
+  assert.deepEqual(inbox.pending(), [], "an update handled recently is not taken in twice");
+  assert.equal(inbox.newest(), 200, "the newest number survives the handled rows being dropped");
+  inbox.add([row(201)]);
+  assert.deepEqual(inbox.pending().map((r) => r.updateId), [201]);
+});
+
+test("a replaced token drops what the old bot saved under that connection at once; other connections keep theirs", () => {
+  const store = { sqlite: new DatabaseSync(":memory:") };
+  const old = telegramInbox(store, "111", "telegram");
+  old.add([row(1), row(2)]);
+  old.done(1);
+  const elsewhere = telegramInbox(store, "333", "work-bot");
+  elsewhere.add([row(9)]);
+  telegramInbox(store, "222", "telegram"); // the card saved with a new token: another bot under the same connection
+  const left = store.sqlite.prepare("SELECT bot, update_id FROM telegram_inbox ORDER BY bot").all().map((r) => `${r.bot}:${r.update_id}`);
+  assert.deepEqual(left, ["333:9"], "the old bot's rows, handled or not, are gone with their words");
+});
+
+test("handled rows are kept only a day, then pruned for every bot", () => {
+  const store = { sqlite: new DatabaseSync(":memory:") };
+  const inbox = telegramInbox(store, "111", "telegram");
+  inbox.add([row(1), row(2), row(3)]);
+  inbox.done(1); inbox.done(2);
+  const longAgo = new Date(Date.now() - keepDoneMs - 60_000).toISOString();
+  store.sqlite.prepare("UPDATE telegram_inbox SET done_at=? WHERE update_id=1").run(longAgo);
+  assert.equal(keepDoneMs, 24 * 60 * 60 * 1000);
+  assert.equal(store.sqlite.prepare("SELECT body FROM telegram_inbox WHERE update_id=2").get().body, "{}", "a handled row keeps no words");
+  telegramInbox(store, "999", "another"); // any inbox opened tidies every bot's old handled rows
+  const ids = store.sqlite.prepare("SELECT update_id FROM telegram_inbox ORDER BY update_id").all().map((r) => r.update_id);
+  assert.deepEqual(ids, [2, 3], "the day-old handled row is gone; a recent one and the unhandled one stay");
+});
+
+test("disconnecting a bot deletes its saved inbox rows straight away, even one still being answered", async (t) => {
+  const state = await fakeTelegram(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-tg-forget-"));
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const provider = { name: "scripted", complete: async (request) => {
+    if (JSON.stringify(request.messages ?? request).includes("slow one")) await gate;
+    return { content: "ok", toolCalls: [] };
+  } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  t.after(async () => { release(); await app.channels.detachAll(); await app.close(); await discardTemp(root); });
+  const adapter = new TelegramAdapter({ id: "tg", token: "7:x", apiBase: state.base, pollTimeoutSeconds: 1, inbox: telegramInbox(app.store, "7", "tg") });
+  await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["42", "43"] });
+  await firstPollBack(state);
+  state.push(message(1, 42, "quick one"), message(2, 43, "slow one"));
+  const rows = () => app.store.sqlite.prepare("SELECT update_id, done_at FROM telegram_inbox WHERE bot='7' ORDER BY update_id").all();
+  await until(() => rows().length === 2 && rows()[0].done_at && !rows()[1].done_at, "one answered, one still being answered", 10000);
+  await app.channels.detach("tg");
+  assert.deepEqual(rows(), [], "nothing of the disconnected bot is kept, handled or not");
+  release();
+  await delay(200);
+  assert.deepEqual(rows(), [], "the answer finishing later writes nothing back");
 });

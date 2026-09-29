@@ -510,17 +510,17 @@ test("Telegram keeps a message still being handled in its inbox, so a crash read
   const release = {};
   const slowDone = new Promise((done) => { release.slow = done; });
   const handled = [];
-  const adapter = new TelegramAdapter({ id: "tg", token: "fake", fetch: service.fetch, position, pollTimeoutSeconds: 0, inbox: telegramInbox(app.store, "fake") });
+  const adapter = new TelegramAdapter({ id: "tg", token: "fake", fetch: service.fetch, position, pollTimeoutSeconds: 0, inbox: telegramInbox(app.store, "fake", "tg") });
   t.after(() => adapter.stop());
   await adapter.start(async (m) => { if (m.text === "slow") await slowDone; handled.push(m.text); });
   for (let i = 0; i < 100 && !handled.includes("quick"); i++) await delay(10);
   assert.deepEqual(handled, ["quick"]);
   assert.equal(saved.at(-1), 22, "Telegram is told both arrived as soon as they were saved");
-  assert.deepEqual(telegramInbox(app.store, "fake").pending().map((row) => row.updateId), [20], "the slow one waits in the inbox for a restart");
+  assert.deepEqual(telegramInbox(app.store, "fake", "tg").pending().map((row) => row.updateId), [20], "the slow one waits in the inbox for a restart");
   release.slow();
   for (let i = 0; i < 100 && !handled.includes("slow"); i++) await delay(10);
   await adapter.stop();
-  assert.deepEqual(telegramInbox(app.store, "fake").pending(), [], "once both are done nothing is left to read again");
+  assert.deepEqual(telegramInbox(app.store, "fake", "tg").pending(), [], "once both are done nothing is left to read again");
 });
 
 test("a repeating job cut off by a restart goes back on the list, and a missed turn runs once with a note", async (t) => {

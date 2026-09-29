@@ -184,6 +184,8 @@ export class TelegramAdapter implements ChannelAdapter {
     const me = userSchema.parse(await this.call("getMe", {}, false, stoppable));
     this.username = me.username ?? null;
   }
+  /** Disconnected for good (router.detach): the inbox rows this bot saved are dropped at once. */
+  forget(): void { this.inbox.forget(); }
   async stop(): Promise<void> {
     this.stopping.abort();
     await this.loop?.catch(() => undefined);

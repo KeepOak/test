@@ -34,7 +34,7 @@ test('Telegram is told an update arrived once the inbox saved it; a restart hand
     await delay(5);
     return { json: async () => ({ ok: true, result: [...pending] }) };
   };
-  const options = () => ({ id: 'telegram', token: 'fake', fetch: fakeFetch, position, inbox: telegramInbox(store(), 'fake'), pollTimeoutSeconds: 1 });
+  const options = () => ({ id: 'telegram', token: 'fake', fetch: fakeFetch, position, inbox: telegramInbox(store(), 'fake', 'telegram'), pollTimeoutSeconds: 1 });
   let finish10, finish11;
   const delivered = [];
   const first = new TelegramAdapter(options());
@@ -77,7 +77,7 @@ test('a failed position write does not stop intake: the inbox holds the update a
   };
   const received = [];
   const adapter = new TelegramAdapter({ id: 'telegram', token: 'fake', fetch: fakeFetch, position, pollTimeoutSeconds: 1,
-    inbox: telegramInbox({ sqlite: new DatabaseSync(':memory:') }, 'fake') });
+    inbox: telegramInbox({ sqlite: new DatabaseSync(':memory:') }, 'fake', 'telegram') });
   t.after(() => adapter.stop());
   await adapter.start(async (message) => { received.push(message.text); });
   await until(() => received.length === 1 && offsets.includes(31));

@@ -93,7 +93,7 @@ async function connectOnce(input: GuidedTelegramInput): Promise<string | null> {
   if (connected && mine?.token === token) return "Telegram is already connected with this bot token.";
   if (connected) await input.router.detach(connected.id);
   const position = channelPosition(input.store, "telegram", input.owner, telegramBotId(token)); // kept per bot
-  const inbox = telegramInbox(input.store, telegramBotId(token)); // each update saved before Telegram is told it arrived
+  const inbox = telegramInbox(input.store, telegramBotId(token), "telegram"); // each update saved before Telegram is told it arrived
   const adapter = new TelegramAdapter({ id: "telegram", token, fetch: input.fetch, keepTrying: true,
     ...(input.apiBase ? { apiBase: input.apiBase } : {}), ...(position ? { position } : {}), ...(inbox ? { inbox } : {}) });
   attachedByCard.set(input.router, { adapter, token });

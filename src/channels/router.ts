@@ -228,6 +228,11 @@ export interface ChannelAdapter {
    */
   miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
+  /**
+   * Taken out for good (removed, or replaced by a connection with another token), unlike stop() when Branch closes:
+   * drops what the app saved about its incoming messages (Telegram's inbox), so none of their words are kept.
+   */
+  forget?(): void;
 }
 /**
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
@@ -589,6 +594,7 @@ export class ChannelRouter {
     this.adapters.delete(id);
     this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
+    try { attached.adapter.forget?.(); } catch { /* the saved rows are tidied when this connection is next opened */ }
   }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
