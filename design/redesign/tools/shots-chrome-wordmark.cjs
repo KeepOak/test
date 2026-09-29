@@ -3,7 +3,7 @@
 // Lockdown row and the composer's mode chip with Lockdown on. Use a throwaway engine (it makes a Trunk and switches
 // Lockdown on and off). Records page errors and exits non-zero when there are any.
 // Run: PORT=<port> TOKEN=<session token> PREFIX=before|after [OUT=<folder>] node design/redesign/tools/shots-chrome-wordmark.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const fs = require("fs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, PREFIX = process.env.PREFIX || "shot";
