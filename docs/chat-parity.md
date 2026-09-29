@@ -58,7 +58,7 @@ node scripts/real-chat/servers.mjs down
 
 <!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
 
-11 of 56 apps are tested for real; every other one says why not.
+11 of 57 apps are tested for real; every other one says why not.
 
 | App | Result | Server, or why not |
 | --- | --- | --- |
@@ -118,6 +118,7 @@ node scripts/real-chat/servers.mjs down
 | KOOK | Skipped | needs a KOOK bot token; there is no local or sandbox server for it |
 | WeChat Official Account | Skipped | needs a WeChat Official Account; there is no local or sandbox server for it |
 | WeCom app | Skipped | needs a WeCom organisation and self-built app; there is no local or sandbox server for it |
+| WhatsApp (personal number) | Skipped | needs a phone with a WhatsApp account to link the bridge to; WhatsApp has no test server, and the harness never uses a real account |
 
 <!-- real-chat:end -->
 
