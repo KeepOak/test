@@ -115,21 +115,21 @@ function listeningMore() {
     ${ctl("f15-spoken-morning-brief", t("window.settings.voice.spoken-morning-brief"), t("window.settings.voice.the-written-brief-read-out"), !!V.brief && V.brief !== "off")}</div>`;
 }
 
-/* Answer aloud is the engine's read-aloud setting (autoReadAloud), which chat/aloud.js acts on: Always reads each new
-   reply aloud, Never none. The engine cannot tell a spoken message from a typed one, so "When I talk" has no setting
-   behind it (greyed). */
+/* Answer aloud is the engine's read-aloud setting (autoReadAloud, readAloudWhen), which chat/aloud.js acts on: Always
+   reads each new reply aloud, When I talk only a reply to a message dictated in the window, Never none. */
 function answerAloud() {
-  const cur = !V.settings ? null : V.settings.autoReadAloud ? "always" : "never";
+  const cur = !V.settings ? null : !V.settings.autoReadAloud ? "never" : V.settings.readAloudWhen === "spoken" ? "talk" : "always";
   const opt = (v, l, act) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}">${esc(l)}</button>`;
-  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "seg").replace("data-act=\"seg\"", "data-act=\"seg\" data-why=\"v-when-i-talk\"")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small></div>`;
+  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small></div>`;
 }
 /* Voice: a computer voice reads replies aloud in that voice; Off stops reading aloud. */
 async function saveVoice(v) {
   try { V.settings = await api("voice/settings", v === "off" ? { autoReadAloud: false } : { voiceId: v, autoReadAloud: true }); } catch (error) { toast(error.message); }
   render();
 }
-async function saveAloud(on) {
-  try { V.settings = await api("voice/settings", { autoReadAloud: on }); } catch (error) { toast(error.message); }
+async function saveAloud(v) {
+  const change = v === "never" ? { autoReadAloud: false } : { autoReadAloud: true, readAloudWhen: v === "talk" ? "spoken" : "always" };
+  try { V.settings = await api("voice/settings", change); } catch (error) { toast(error.message); }
   render();
 }
 
@@ -141,7 +141,7 @@ export function draw() {
 export function init() {
   loadVoice();
   on("ptt-key", () => captureKey());
-  on("aloud15", (el) => saveAloud(el.dataset.v === "always"));
+  on("aloud15", (el) => saveAloud(el.dataset.v));
   on("v-voice", (el) => saveVoice(el.dataset.v));
   document.addEventListener("change", (e) => {
     const t = e.target;

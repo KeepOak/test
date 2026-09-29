@@ -214,7 +214,9 @@ test("G2 a paused task asks in Telegram with buttons, and a pressed button answe
   await until(() => app.runtime.waitingApprovals(sessionId).length === 0, "the press answered the question");
   await until(() => state.calls.includes("answerCallbackQuery"), "Telegram is told the press landed");
   assert.equal(app.runtime.allowedNow(sessionId)[0].tool, "files.write", "the yes is remembered for this conversation");
-  await until(() => state.sent.some((sent) => /I will carry on/.test(sent.text ?? "")), "the chat is told the answer landed");
+  // QA R1 follow-up: the task that asked carries on, the engine writes the file, and its reply reaches the chat.
+  await until(() => state.sent.some((sent) => /^done/.test(sent.text ?? "")), "the carried task's reply reached the chat");
+  assert.equal(app.store.events(waiting.runId).filter((event) => event.kind === "run.approved_call").length, 1, "the engine ran the approved call");
 
   /* The record of what the assistant was allowed to do says which chat app answered. */
   const decided = app.store.audit.list(app.runtime.owner, { action: "approval.decided" });
@@ -626,6 +628,23 @@ test("D5 the metering export writes the month's spreadsheet on the scheduled bea
   assert.equal(await meteringTick(deps, now), null);
   /* A day later it is due again. */
   assert.equal(meteringDue(meteringSettings(app.store, app.runtime.owner), new Date(now.getTime() + 25 * 3600 * 1000)), true);
+});
+
+test("defaults audit: usage is counted without the schedule, and a report sheet is written only when asked", async (t) => {
+  const { app, api, root } = await served(t, answersTheQuestion);
+  await api("POST", "/api/run", { prompt: "apples" });
+  const { meteringSettings } = await import("../dist/metering.js");
+  assert.equal(meteringSettings(app.store, app.runtime.owner).enabled, false, "no file is written by itself");
+  const counted = await api("GET", "/api/usage?range=7d&by=day");
+  assert.ok(counted.body.data.some((day) => day.runs >= 1), "the task is counted in Branch's own data");
+  const saved = await api("POST", "/api/usage/metering/now", { range: "7d" });
+  assert.equal(saved.status, 200);
+  assert.match(saved.body.path.replaceAll("\\", "/"), /usage\/usage-report-7d-\d{4}-\d{2}-\d{2}\.csv$/);
+  assert.ok(saved.body.path.startsWith(join(root, "workspace")), "inside the workspace");
+  const [header, ...rows] = (await readFile(saved.body.path, "utf8")).trim().split("\n");
+  assert.match(header, /estimatedCostUsd/);
+  assert.ok(rows.length >= 1);
+  assert.equal((await api("POST", "/api/usage/metering/now", { range: "1y" })).status, 400);
 });
 
 test("D5 the folder has to be inside the workspace", async (t) => {

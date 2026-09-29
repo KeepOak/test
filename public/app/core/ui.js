@@ -297,7 +297,8 @@ function showTip(el) {
   const text = el && (el.dataset.tip || el.getAttribute("aria-label"));
   if (!text) return;
   tipTimer = setTimeout(() => {
-    if (!document.body.contains(el)) return;
+    /* QA retest 2026-09-28 (m9): a button whose menu is open says nothing, or its tip lands over the menu's last row. */
+    if (!document.body.contains(el) || el.getAttribute("aria-expanded") === "true") return;
     const root = app();
     tipEl = document.createElement("div");
     tipEl.className = "tipx";

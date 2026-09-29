@@ -204,9 +204,25 @@ test("the trust screen lists each folder, takes an answer, and refuses a short-l
   assert.match(refused.body.error, /cannot change which folders are trusted/);
   assert.equal(folderTrust(app.store, owner, workspace), "unknown");
 
-  const answered = await call("POST", { folder: "", decision: "trust" });
+  // Trusting a folder loosens what steers the owner's tasks: it needs the owner's yes, and never under Lockdown.
+  // Mutation: in src/run-guards.ts return null from folderTrustLooser, and the first two refusals go.
+  const unasked = await call("POST", { folder: "", decision: "trust" });
+  assert.equal(unasked.status, 409);
+  assert.match(unasked.body.error, /less careful: what your workspace carries for AI assistants would be used/);
+  assert.equal(folderTrust(app.store, owner, workspace), "unknown");
+  const lockCall = (on) => fetch(server.url + "/api/lockdown", { method: "POST", body: JSON.stringify({ on }),
+    headers: { authorization: `Bearer ${server.token}`, host: new URL(server.url).host, "content-type": "application/json" } });
+  assert.equal((await lockCall(true)).status, 200);
+  const locked = await call("POST", { folder: "", decision: "trust", confirmLoosening: true });
+  assert.equal(locked.status, 409);
+  assert.match(locked.body.error, /Lockdown is on/);
+  assert.equal((await call("POST", { mode: "off", confirmLoosening: true })).status, 409, "asking about fewer folders waits too");
+  assert.equal((await call("POST", { folder: "site", decision: "distrust" })).status, 200, "not trusting one only tightens");
+  assert.equal((await lockCall(false)).status, 200);
+  const answered = await call("POST", { folder: "", decision: "trust", confirmLoosening: true });
   assert.equal(answered.status, 200);
-  assert.deepEqual(answered.body.folders.map((folder) => folder.trust), ["trusted", "trusted"]);
+  assert.deepEqual(answered.body.folders.map((folder) => folder.trust), ["trusted", "untrusted"]);
+  assert.equal((await call("POST", { folder: "", decision: "trust" })).status, 200, "a folder already trusted asks nothing again");
   assert.equal((await call("POST", { folder: "../up", decision: "trust" })).status, 400);
   // Redesign: replaced by the new window (the old window's /folder-trust.js and its <script> tag are gone with it; the
   // prototype draws "Trusted folders" on Permissions, checked below). Was:
@@ -224,8 +240,8 @@ async function openSettings(page) {
 /* The new window: Settings › Permissions › Advanced draws the prototype's "Stop a Trunk that repeats itself" (the loop
    guard) and "Trusted folders". Folder trust ships off; the loop guard ships on (it only tightens) and its switch is
    drawn on with it, then off once the engine is switched off. Parity B5:
-   the switch is the settings kit's loop_guard, so turning it on reaches the engine; adding a trusted folder loosens what
-   Trunks may change, so it stays greyed. */
+   the switch is the settings kit's loop_guard, so turning it on reaches the engine; adding a trusted folder needs the
+   owner's yes to loosening in the engine (src/run-guards.ts), so its Add is live. */
 test("folder trust ships off and the loop guard on, and the new window's Permissions draws both as the engine says", async (t) => {
   const { loopGuardMode, saveLoopGuardSettings } = await import("../dist/index.js");
   const { settingsWindow, openSettingsPage, isSoon } = await import("./settings-window.mjs");
@@ -255,7 +271,7 @@ test("folder trust ships off and the loop guard on, and the new window's Permiss
   for (let tries = 0; tries < 50 && !(await drawn.isChecked()); tries++) await page.waitForTimeout(100);
   assert.equal(await drawn.isChecked(), true, "drawn again from the engine");
   const trusted = advanced.locator(".ctl", { hasText: "Trusted folders" }).getByRole("button", { name: "Add", exact: true });
-  assert.equal(await isSoon(trusted), true, "Trusted folders › Add waits, greyed out, until it is wired");
+  assert.equal(await isSoon(trusted), false, "Trusted folders › Add is live (tests/permissions-guards-window.test.mjs)");
   assert.deepEqual(errors, []);
 });
 
