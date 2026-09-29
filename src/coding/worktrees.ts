@@ -9,8 +9,8 @@ import type { Store } from "../store.js";
 import { codingOn, partSettings, requireCoding } from "./settings.js";
 
 /**
- * R17-036: a conversation forked into its own copy of the project (a Git worktree), and, when the
- * owner asks for it, a copy of its own for each helper a task hands work to. The copies live where
+ * R17-036: a conversation forked into its own copy of the project (a Git worktree), and by default
+ * a copy of its own for each helper a task hands work to. The owner can switch either behaviour off. The copies live where
  * every parallel copy already lives (`.branch-worktrees`, src/integrations/git.ts), are made with the
  * owner's own Git (hooks off, never asking for a password), and a helper's copy is removed afterwards
  * only when it provably holds nothing: no commits of its own and no unsaved change. Otherwise it is
@@ -27,7 +27,7 @@ export const inWorktree = <T>(scope: string, work: () => Promise<T>): Promise<T>
 
 export const WorktreeSettingsSchema = z.object({
   /** Give each helper a task hands work to a copy of its own. */
-  perHelper: z.boolean().default(false),
+  perHelper: z.boolean().default(true),
 }).strict();
 const ForksSchema = z.object({
   forks: z.array(z.object({ sessionId: z.string().uuid(), name: z.string(), branch: z.string(), folder: z.string(), createdAt: z.string() }).strict()).max(200).default([]),
@@ -97,7 +97,7 @@ export class WorktreePlaces {
     const { store, owner } = this.deps;
     if (worktreeScope()) return null;
     // workbench (SELF-302): a helper its lead asked to give a copy of its own gets one, whatever the switches say: the
-    // switches decide what happens by default (it ships off, a whole copy on disk each time), the lead decides per helper.
+    // switches decide what happens by default; the lead can explicitly request a copy for one helper.
     if (parent && context.ownCopy) return this.helperPlace(run, context);
     if (!codingOn(store, owner, "worktrees")) return null;
     if (!parent) return this.forkPlace(run);

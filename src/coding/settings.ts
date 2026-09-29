@@ -60,7 +60,8 @@ const codingShipsOn: Partial<Record<CodingPart, CodingMode>> = {
   "review-checks": "when-needed",
   // The owner's rule (ships on, 2026-09-27): the same tool calls in fewer rounds, and only calls that look run side by side; none of (a)–(f).
   "fewer-rounds": "when-needed",
-  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): worktrees puts a whole git worktree on disk for every forked conversation (heavy disk).
+  // Parallel coding helpers get a separate Git copy by default; an explicitly saved off choice still wins.
+  worktrees: "when-needed",
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
