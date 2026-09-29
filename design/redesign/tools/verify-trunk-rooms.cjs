@@ -9,7 +9,7 @@
    - in a room, the toggle by the message box: Everyone answers, Only <the lead>, Work together; each press is saved as
      the room's rule (GET /api/trunks rooms[].rule) and drawn pressed from it;
    - no page errors. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { join } = require("node:path");
 
 const { PORT = "3770", TOKEN, SHOTS } = process.env;

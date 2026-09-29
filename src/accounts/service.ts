@@ -12,6 +12,7 @@ import { pinnedFetch } from "../pinned-fetch.js";
 import { estimateCost, pricingSettings } from "../pricing.js";
 import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
+import { codexModelsFor } from "../codex-models.js";
 import { CliAgentProvider, accountHomeVariables, claudeDefaultEffort, claudeDefaultModel, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import { ClaudeSubscriptionProvider, type ClaudeSubscriptionDependencies } from "../providers/claude-subscription.js";
 import { claudeCodePool, claudeSubscriptionPreset } from "../providers/claude-models.js";
@@ -22,7 +23,7 @@ import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
 import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
 import { firstChoice, freshState, unavailable } from "./pool.js";
-import { pooled, unwrapProvider } from "./pool-provider.js";
+import { pooled, unwrapProvider, type TrunkMove } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
@@ -81,6 +82,8 @@ export class AccountsService {
   /** Extra ChatGPT accounts merged into another sign-in of the same account (src/accounts/dedupe.ts), so a window
    *  still waiting on one learns where it went. */
   readonly mergedInto = new Map<string, string>();
+  /** models-ui: the latest moves of a Trunk's work from one account to another, newest first, for the owner (GET /api/state). */
+  readonly trunkMoves: TrunkMove[] = [];
   readonly now: () => number;
   readonly primaryClaudeHome = resolve(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"));
 
@@ -301,6 +304,7 @@ export class AccountsService {
     const store = this.deps.store, owner = this.deps.owner;
     return {
       owner, pool, name: preset.name, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
+      moved: (move: TrunkMove) => { this.trunkMoves.unshift(move); this.trunkMoves.splice(20); },
       settings: () => this.usablePool(pool),
       providerFor: (account: string) => this.providerFor(pool, kind, preset, account),
       refresh: (account: string) => this.refreshSignIn(kind, account),
@@ -428,6 +432,7 @@ export class AccountsService {
     const made = account === primaryAccount ? new CliAgentProvider(rowFor({ id: rowId }), {}, spawn)
       : new CliAgentProvider(rowFor({ id: rowId }), {}, spawn, { name: accountHomeVariables[rowId]!, path: this.homeOf(pool, account) });
     if (account === primaryAccount) made.detectLimits = true;
+    if (rowId === "codex") made.codexModels = codexModelsFor(this.deps.models); // QA 2026-09-28: Codex's choice, read per call
     return made;
   }
   private claudeConnection(pool: string, account: string, model: string): Provider {

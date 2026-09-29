@@ -60,6 +60,7 @@ const reviewedComputedKeys = new Set([
   "src/channels/catch-up.ts: id",
   "src/channels/catch-up.ts: key",
   "src/channels/chat-commands.ts: usageKey",
+  "src/commands/steer-skill.ts: key", // CHAT-205: pinned-skill:<conversation>, the window's own skill pin
   "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
   "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
   "src/channels/router.ts: key",
@@ -80,6 +81,8 @@ const reviewedComputedKeys = new Set([
   "src/flows-boards/recipe-checks.ts: key",
   "src/flows-boards/settings.ts: boardKey",
   "src/flows-boards/settings.ts: key",
+  "src/gitlab-connection.ts: gitlabAccountKey", // RES-719: "gitlab-account" stays on this computer (its token is in the locker)
+  "src/gitlab-connection.ts: gitlabSwitchKey", // RES-719: "gitlab-connection" waits for the owner's yes
   "src/goal-mode.ts: key",
   "src/integrations/mcp-oauth.ts: settingsKey",
   "src/interop/settings.ts: interopKey",

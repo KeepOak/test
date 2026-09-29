@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   activeDiagnosticLog, DiagnosticLog, diagnose, diagnosticLogSettings, logLevels, redactForLog, saveDiagnosticLogSettings, setDiagnosticLog,
-  watchProcessCrashes, withoutQuotedText, componentOf, writeCrashCaptureMark, type Level, type LogFilter,
+  watchProcessCrashes, withoutQuotedText, componentOf, writeLogSettingsMark, type Level, type LogFilter,
 } from "./diagnostic-log.js";
 import { dnsResolve, gatherReport, issueUrl, keptItems, reportZip, type ReportItem, type ReportSources } from "./diagnostic-report.js";
 import { redactEvent, redactSpan } from "./diagnostics.js";
@@ -62,8 +62,9 @@ export function startDiagnosticLog(
   reporter = automaticProblemReporter({ app, dataDir, installType, startedAt }, log);
   void outbox.flush(reporter).catch(() => undefined);
   setDiagnosticLog(log);
-  // mac7/coding-next: the desktop app reads the crash-capture switch from this file at its next start.
-  writeCrashCaptureMark(dataDir, diagnosticLogSettings(app.store, app.runtime.owner).crashCapture === "on");
+  // mac7/coding-next: the desktop app reads the crash-capture switch from this file at its next start, and its main
+  // process the log settings each time it writes a line (src/desktop/main-log.ts).
+  writeLogSettingsMark(dataDir, diagnosticLogSettings(app.store, app.runtime.owner));
   log.prune();
   const stopCrashes = watchProcessCrashes(log, "engine");
   // Every stored task event, reduced to its shape exactly as the diagnostics folder does it.
@@ -136,7 +137,7 @@ export async function diagnosticApi(ctx: DiagnosticContext, method: string, path
   if (path === "/api/diagnostics/log/settings") {
     if (method !== "POST") return diagnosticLogSettings(app.store, app.runtime.owner);
     const saved = saveDiagnosticLogSettings(app.store, app.runtime.owner, await body());
-    writeCrashCaptureMark(ctx.dataDir, saved.crashCapture === "on"); // mac7/coding-next
+    writeLogSettingsMark(ctx.dataDir, saved); // mac7/coding-next; and the main process reads the log settings from it
     return saved;
   }
   // Reading your own log is never blocked by Lockdown: it reaches nothing outside this computer.
