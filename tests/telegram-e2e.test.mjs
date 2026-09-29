@@ -193,7 +193,8 @@ test("Telegram end to end: paste, check, pair, talk, approve by button, split, r
   assert.ok(yes && yes.callback_data.length <= 64, JSON.stringify(keyboard));
   const press = bot.press(yes.callback_data);
   await until(() => bot.state.answered.includes(press.callback_query.id), "the press acknowledged");
-  await until(() => texts().some((text) => /^Noted\. Send your next message/.test(text)), "the yes landed");
+  // QA R1 follow-up: the yes carries the waiting task on; the engine runs the tool and the task's reply comes back.
+  await until(() => texts().some((text) => /The tool ran\./.test(text)), "the yes landed and the task carried on");
   const decided = app.store.audit.list(app.runtime.owner, { action: "approval.decided" });
   assert.equal(decided.length, 1);
   assert.equal(decided[0].outcome, "allowed");

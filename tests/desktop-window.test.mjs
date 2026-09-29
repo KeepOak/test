@@ -88,7 +88,7 @@ const underControls = (page) => page.evaluate(() => {
     if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
     const box = el.getBoundingClientRect(), style = getComputedStyle(el);
     if (!box.width || !box.height || style.visibility === "hidden" || style.display === "none") continue;
-    const leaf = el.matches("button,a,input,select,textarea,[data-act],[tabindex],svg,img,video,canvas")
+    const leaf = el.matches("button,a,input,select,textarea,[data-act],[tabindex]:not([tabindex='-1']),svg,img,video,canvas")
       || [...el.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim());
     if (leaf && box.right > left + 0.5 && box.left < innerWidth && box.top < bottom && box.bottom > 0) hits.push(el.dataset.act ?? el.tagName);
   }

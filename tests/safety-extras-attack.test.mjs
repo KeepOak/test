@@ -16,6 +16,7 @@ import { takeCode } from "../dist/safety-extras/code-approvals.js";
 import { scanCommand } from "../dist/safety-extras/command-scan.js";
 import { ActivityChain } from "../dist/safety-extras/activity-chain.js";
 import { repairHistory } from "../dist/safety-extras/history-repair.js";
+import { saveLoopGuardSettings } from "../dist/loop-guard.js";
 import { classify } from "../dist/settings-kit/catalogue.js";
 import { applyChanges, changesFor } from "../dist/settings-kit/changes.js";
 import { DatabaseSync } from "node:sqlite";
@@ -374,10 +375,13 @@ test("progress: a stopped task leaves its conversation whole, so the next turn c
   const provider = async (request) => {
     if (request.messages.some((message) => message.role === "user" && message.content === "carry on")) { followUp = request.messages; return { content: "Carrying on.", toolCalls: [] }; }
     turn += 1;
-    return { content: "Let me look at that once more.", toolCalls: [{ id: `c${turn}`, name: "notes.find", arguments: JSON.stringify({ n: turn }) }] };
+    // QA 2026-09-28: stuck means the same call with the same arguments after the same result (a new step each round is
+    // progress, however it is worded; tests/safety-extras-progress.test.mjs).
+    return { content: "Let me look at that once more.", toolCalls: [{ id: `c${turn}`, name: "notes.find", arguments: JSON.stringify({ n: 1 }) }] };
   };
   const { app, api } = await served(t, [provider]);
   app.registry.register(lookup);
+  saveLoopGuardSettings(app.store, app.runtime.owner, { mode: "off" }); // the progress check alone ends it
   await api("POST", "/api/safety-extras/switch", { part: "progress-judge", mode: "on" });
   const stopped = (await api("POST", "/api/run", { prompt: "go" })).body;
   assert.match(stopped.output, /^Stopped: the assistant was not getting anywhere/, stopped.output);
