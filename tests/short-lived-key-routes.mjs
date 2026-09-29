@@ -282,6 +282,9 @@ export const ROUTES = {
   "/api/flows/check": "other POST",
   "/api/flows/runs/:id": "look",
   "/api/folder-trust": "owner POST",
+  "/api/gitlab": "owner POST", // RES-719: the GitLab switch
+  "/api/gitlab/connect": "owner POST", // RES-719: a token checked with GitLab, then kept in the locker
+  "/api/gitlab/disconnect": "owner POST", // RES-719: the token taken out of the locker
   "/api/goal-undo/settings": "owner POST",
   "/api/goals": "task POST",
   "/api/governance": "owner POST",
@@ -465,6 +468,7 @@ export const ROUTES = {
   "/api/trunks/:id/resume": "owner POST",
   // P17-D §9: the computers a Trunk may use and how many at once; reading names the owner's computers.
   "/api/trunks/:id/computers": "owner GET,POST",
+  "/api/trunks/:id/secrets": "owner GET,POST", // RES-260: a Trunk's own secrets, by name
   "/api/trunks/:id/default": "owner POST",
   "/api/trunks/:id/files": "other GET,POST", // personal files; scripts cannot read or change them, people only their own
   "/api/trunks/pause-all": "owner POST",
@@ -672,6 +676,8 @@ export const ROUTES = {
   "/api/vault-autofill/settings": "secret-read",
   "/api/knobs": "owner POST", // R17-S-B
   "/api/knobs/launch-file": "owner POST", // R17-S-B
+  "/api/miniapp/phone-access": "owner POST", // Settings › Chat apps: turn phone access through Tailscale on or off (window only)
+  "/api/miniapp/telegram/": "prefix", // the Mini App door's own API (src/miniapp/door.ts)
   "/api/model-savings": "owner POST", // R17-E
   "/api/model-savings/rounds": "look", // R17-E
   "/api/model-savings/companies": "owner POST", // OpenRouter picks › Only ones I list: asks OpenRouter for its companies
@@ -1078,6 +1084,8 @@ export const ROUTES = {
   // record is a wider window than any one of those alone, so it is refused like a secret read.
   "/api/search": "secret-read",
   "/api/second-opinion": "owner POST",
+  "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
+  "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
@@ -1285,6 +1293,7 @@ export const ROUTES = {
   // both are the owner's alone at the app window and neither is anything a key may do.
   "/api/voice/dictation": "secret-read",
   "/api/voice/dictation/listen": "secret-read",
+  "/api/voice/dictation/hear": "secret-read", // RES-709: what the window's microphone heard, written out on this computer
   "/api/webhooks": "secret-read",
   "/api/webhooks/:id": "secret-read",
   "/api/webhooks/:id/enable": "owner POST",

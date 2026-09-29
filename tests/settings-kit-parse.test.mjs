@@ -122,6 +122,7 @@ const refusingReaders = { voice: voiceSettings };
 const notStrict = {
   "sdk-kit": "read field by field (src/sdk-kit.ts, sdkKitMode)",
   "local-index": "read field by field (src/personal/local-index.ts, localIndexSettings)",
+  "gitlab-connection": "read field by field (src/gitlab-switch.ts, gitlabMode)",
   "local-runner-install": "a loose record, read field by field (src/local-one-button.ts)",
   "local-runner-place": "a loose record, read field by field (src/local-one-button.ts)",
   adapt: "a loose record, read field by field (src/adapt/settings.ts)",

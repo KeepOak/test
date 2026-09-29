@@ -570,6 +570,38 @@ test("A1278 a supervisor gives work to named workers and writes the one answer t
   assert.deepEqual(recorded.data.assignments.map((entry) => entry.specialist), [writer, checker]);
 });
 
+// RES-721: "Teams", small groups each with its own lead. The head splits the job between the owner's saved teams, each
+// team's lead (the member whose role says "lead") shares its part among its members, and the head writes the answer.
+// Mutation: in src/team-groups.ts shapeOf take the first member as lead whatever the roles say, and the wrong member
+// splits the design team's part: red.
+test("RES-721 teams: a head splits the job between saved teams, and each team's own lead shares its part", async (t) => {
+  const who = {};
+  const { app } = await fixture(t, ({ user }) => {
+    if (/splitting one job/.test(user)) {
+      if (/Design, Build/.test(user)) return say(JSON.stringify({ tasks: [{ specialist: "Design", prompt: "sketch the page" }, { specialist: "Build", prompt: "build the page" }] }));
+      if (/sketch/.test(user)) return say(JSON.stringify({ tasks: [{ specialist: who.painter, prompt: "paint the sketch" }] }));
+      return say(JSON.stringify({ tasks: [{ specialist: who.coder, prompt: "code it" }] }));
+    }
+    if (/split this job between teams/.test(user)) return say("The page is designed and built.");
+    if (/come back/.test(user)) return say(/sketch/.test(user) ? "design part done" : "build part done");
+    return say("done");
+  });
+  for (const name of ["head", "designlead", "painter", "buildlead", "coder"]) who[name] = await specialist(app, name);
+  app.teams.save({ name: "Design", members: [{ specialistId: who.painter, role: "painter" }, { specialistId: who.designlead, role: "Team lead" }] });
+  app.teams.save({ name: "Build", members: [{ specialistId: who.buildlead, role: "lead" }, { specialistId: who.coder, role: "coder" }] });
+  const { runTeams, shapeOf } = await import("../dist/team-groups.js");
+  assert.deepEqual(shapeOf(app.teams.list().find((team) => team.name === "Design")), { name: "Design", lead: who.designlead, helpers: [who.painter] }, "the lead is the member whose role says so");
+  const { run, context } = taskContext(app, "a job for two teams");
+  const outcome = await runTeams(app.runtime, app.knowledge, app.teams, context, { teams: ["Design", "Build"], goal: "make the page", head: who.head });
+  assert.equal(outcome.output, "The page is designed and built.");
+  assert.deepEqual(outcome.teams.map((team) => [team.team, team.lead, team.status, team.output]),
+    [["Design", who.designlead, "completed", "design part done"], ["Build", who.buildlead, "completed", "build part done"]]);
+  const recorded = app.store.events(run.id).find((event) => event.kind === "orchestration.teams");
+  assert.equal(recorded.data.head, who.head);
+  await assert.rejects(runTeams(app.runtime, app.knowledge, app.teams, context, { teams: ["Design", "Nobody"], goal: "x" }), /no saved team called Nobody/);
+  assert.equal(app.registry.permissionOf("delegate.teams"), "specialists.use");
+});
+
 test("A0317 a swarm works down one shared list, and an item nobody finished goes back on it", async (t) => {
   const { SharedWorkList, runSwarm } = await import("../dist/orchestration-modes.js");
 

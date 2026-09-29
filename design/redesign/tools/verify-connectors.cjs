@@ -6,7 +6,7 @@
    Test data it makes through the window: one server of your own that runs the example notes server shipped with Branch
    (node dist/examples/mcp-notes-server.js; it reads no files and opens no network connection), one allowed command-line
    tool, and one flagged reply. It removes the server and the tool again. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { resolve } = require("node:path");
 
 const { PORT, TOKEN, SESSION } = process.env;
