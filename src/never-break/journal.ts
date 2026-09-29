@@ -20,13 +20,20 @@ import { migrate, type Migration } from "./migrations.js";
 export type Effects = "none" | "idempotent" | "external";
 
 /** Steps that give the same result however often they run. Everything unlisted that can change something counts as external. */
-const idempotentTools = new Set(["files.write", "files.restore", "files.mkdir", "memory.forget", "todos.done", "git.branch"]);
+const idempotentTools = new Set(["files.write", "files.restore", "files.mkdir", "memory.forget", "todos.done", "git.branch",
+  // selfdev (SELF-314): sending the same commits again changes nothing, and a remote that moved refuses it (no force).
+  "git.push"]);
+/**
+ * selfdev (SELF-314): tools held by a permission that can change things, which themselves only look. A restart
+ * while one ran (a long github.wait_for_checks, say) looks again rather than asking the owner what happened.
+ */
+const lookOnlyTools = new Set(["github.checks", "github.wait_for_checks", "github.check_logs", "github.issues", "github.release"]);
 /** Tools whose effect on a file can be checked afterwards. */
 const fileTools = new Set(["files.write", "files.edit", "files.patch", "files.restore"]);
 const gitTools = /^git\.(commit|branch|worktree_add|worktree_remove)$/;
 
 export function effectsOf(tool: string, permission: string): Effects {
-  if (isReadOnlyPermission(permission) || /\.read$/.test(permission)) return "none";
+  if (isReadOnlyPermission(permission) || /\.read$/.test(permission) || lookOnlyTools.has(tool)) return "none";
   return idempotentTools.has(tool) ? "idempotent" : "external";
 }
 

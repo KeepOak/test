@@ -82,7 +82,9 @@ export const TrunkSchema = TrunkCreateSchema.extend({
   reach: z.object({
     channels: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
     commands: z.boolean().default(false),
-  }).strict().default({ channels: [], commands: false }),
+    /** RES-253: its commands run behind the system's own wall, held to the workspace with no network. Off by default. */
+    sandboxed: z.boolean().default(false),
+  }).strict().default({ channels: [], commands: false, sandboxed: false }),
   hidden: z.boolean().default(false),
   section: z.string().trim().max(40).default(""),
   pinned: z.boolean().default(false),

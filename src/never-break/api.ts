@@ -26,13 +26,18 @@ export class NeverBreakApiError extends Error {
 export const handlesNeverBreakPath = (path: string): boolean => path === "/api/never-break" || path.startsWith("/api/never-break/");
 
 type Read = (request: IncomingMessage) => Promise<unknown>;
+export interface GatewayPowerView { requested: boolean; active: boolean; suspended: boolean; error: string | null }
+type GatewayPowerReader = () => Promise<GatewayPowerView>;
 
-export async function neverBreakView(dataDir: string): Promise<Record<string, unknown>> {
+export async function neverBreakView(dataDir: string, gatewayPower?: GatewayPowerReader): Promise<Record<string, unknown>> {
   const loaded = await loadGatewayConfig(dataDir);
   const state = await readState(dataDir);
   return {
     mode: loaded.config.mode, config: loaded.config, problem: loaded.problem,
     underGateway: process.env.BRANCH_GATEWAY_CHILD === "1",
+    /** Only the retained desktop broker stops at once after an owner's OFF; another gateway runs until the next start. */
+    stopsWhenOff: process.env.BRANCH_DESKTOP_GATEWAY === "1",
+    keepAwakeRuntime: gatewayPower ? await gatewayPower().catch(() => null) : null,
     lastExit: state ? (state.phase === "exited" ? "clean" : "running") : "never",
     recentCrashes: state?.crashes.length ?? 0,
     proposal: await readProposal(dataDir),
@@ -45,6 +50,8 @@ export async function neverBreakView(dataDir: string): Promise<Record<string, un
 const thisStart = new Date(Date.now() - process.uptime() * 1000);
 
 export interface NeverBreakExtras {
+  /** Trusted desktop broker status; a saved preference does not establish an active blocker. */
+  gatewayPower?: GatewayPowerReader;
   /** Takes a copy of the saved work for an update's check (the process that holds the database). */
   snapshot?: () => Promise<string>;
   /** The Telegram setup card's state, and saving its switch and token. */
@@ -55,7 +62,7 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
   extras: NeverBreakExtras = {}): Promise<unknown> {
   if (path === "/api/never-break/telegram" && extras.telegram) return telegramApi(request, readBody, extras.telegram);
   const snapshot = extras.snapshot;
-  if (request.method === "GET" && path === "/api/never-break") return neverBreakView(dataDir);
+  if (request.method === "GET" && path === "/api/never-break") return neverBreakView(dataDir, extras.gatewayPower);
   // Q55: what the newest update did, so Settings can say what a failed one left running. The owner's
   // alone: a short-lived key is refused it (src/short-lived-keys.ts), and so is a household person
   // (src/household-routes.ts), before this is reached.
@@ -65,22 +72,27 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
   if (request.method === "GET" && path === "/api/never-break/journal") return { entries: recentActivations(dataDir) };
   if (request.method !== "POST") throw new NeverBreakApiError(405, "Use GET or POST here.");
   if (path === "/api/never-break") {
-    const body = z.object({ mode: FeatureModeSchema }).strict().safeParse(await readBody(request));
-    if (!body.success) throw new NeverBreakApiError(400, "Choose off, when needed or on.");
+    const body = z.object({ mode: FeatureModeSchema.optional(), keepAwake: z.boolean().optional() }).strict()
+      .refine((value) => value.mode !== undefined || value.keepAwake !== undefined).safeParse(await readBody(request));
+    if (!body.success) throw new NeverBreakApiError(400, "Choose off, when needed or on, or set keepAwake to true or false.");
     const { config } = await loadGatewayConfig(dataDir);
-    await saveGatewayConfig(dataDir, { ...config, mode: body.data.mode });
-    return { ...(await neverBreakView(dataDir)), note: "This takes effect the next time Branch starts." };
+    await saveGatewayConfig(dataDir, { ...config, mode: body.data.mode ?? config.mode,
+      keepAwake: body.data.keepAwake ?? config.keepAwake });
+    return { ...(await neverBreakView(dataDir, extras.gatewayPower)),
+      note: body.data.mode === undefined ? "Saved. The desktop gateway applies this choice while it is running."
+        : body.data.mode === "off" && process.env.BRANCH_DESKTOP_GATEWAY === "1" ? "Saved off. The running gateway will stop after this response."
+          : "Saved. The gateway will use this choice when Branch next starts." };
   }
   if (path === "/api/never-break/proposal/accept") {
     try { await acceptProposal(dataDir); } catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
-    return { ...(await neverBreakView(dataDir)), note: "Saved. It takes effect the next time Branch starts." };
+    return { ...(await neverBreakView(dataDir, extras.gatewayPower)), note: "Saved. It takes effect the next time Branch starts." };
   }
-  if (path === "/api/never-break/proposal/discard") { await discardProposal(dataDir); return neverBreakView(dataDir); }
+  if (path === "/api/never-break/proposal/discard") { await discardProposal(dataDir); return neverBreakView(dataDir, extras.gatewayPower); }
   // The owner rolls back the last change they accepted (the journal in gateway-config.ts); timings only.
   if (path === "/api/never-break/rollback") {
     if (!z.object({}).strict().safeParse(await readBody(request)).success) throw new NeverBreakApiError(400, "Send an empty body to roll back.");
     try { await rollbackAccepted(dataDir); } catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
-    return { ...(await neverBreakView(dataDir)), note: "Rolled back. It takes effect the next time Branch starts." };
+    return { ...(await neverBreakView(dataDir, extras.gatewayPower)), note: "Rolled back. It takes effect the next time Branch starts." };
   }
   // The window asks the engine that holds the database for a copy, before it tries an update on it.
   if (path === "/api/never-break/snapshot" && snapshot) return { folder: await snapshot() };
@@ -139,7 +151,7 @@ export function gatewayDryRun(script: string, env: NodeJS.ProcessEnv = process.e
 
 const cleanEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
   const copy = { ...env };
-  for (const name of ["BRANCH_GATEWAY_CHILD", "BRANCH_GATEWAY_CONTRACT", "BRANCH_INTEGRATIONS", "BRANCH_SELF_TEST", "BRANCH_RESUME", "NODE_TEST_CONTEXT"]) delete copy[name];
+  for (const name of ["BRANCH_GATEWAY_CHILD", "BRANCH_DESKTOP_GATEWAY", "BRANCH_GATEWAY_CONTRACT", "BRANCH_INTEGRATIONS", "BRANCH_SELF_TEST", "BRANCH_RESUME", "NODE_TEST_CONTEXT"]) delete copy[name];
   return copy;
 };
 

@@ -96,3 +96,29 @@ test("after an update, the sidebar lists every stray conversation under the defa
   }).length), 0, "no conversation is left loose");
   assert.deepEqual(errors, []);
 });
+
+test("QA Pass 2: the default Trunk's own conversation opens with its greeting, headed as the list, not by its name twice", async (t) => {
+  const { app, root } = await fixture(t);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  const server = await startServer(app, { dataDir: root, port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); });
+  const page = await browser.newPage({ serviceWorkers: "block" });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  const row = page.locator(`#side [data-act="chat"][data-id="${home.chatSessionId}"]`);
+  await row.waitFor({ state: "visible" });
+  const heading = await row.evaluate((node) => {
+    let previous = node.closest(".rw18").previousElementSibling;
+    while (previous && !previous.classList.contains("lh")) previous = previous.previousElementSibling;
+    return previous?.textContent?.trim() ?? null;
+  });
+  assert.equal(heading, "Conversations", "the heading says what the list is, not the Trunk's name above a row of the same name");
+  await row.click();
+  await page.locator("#main").getByText(`Hi, I'm ${home.name}.`, { exact: false }).first().waitFor();
+  assert.deepEqual(errors, []);
+});

@@ -24,7 +24,7 @@ import { t } from "../../i18n.js";
 const STAY_MS = 9000;
 const LONG_MS = 120000;
 const ENDED = new Set(["completed", "failed", "cancelled", "budget_exceeded", "interrupted"]);
-let seen = null, timer = null, runs = null;
+let seen = null, timer = null, runs = null, lastShown = { id: null, at: 0 };
 
 const sessionTitle = (id) => { const s = E.sessions.find((x) => (x.sessionId ?? x.id) === id); return s?.title || s?.opening || ""; };
 const quiet = () => E.state?.onboarding?.popups === false || !!document.querySelector(".tour-layer, .ob9, .first, .lockscreen");
@@ -84,6 +84,19 @@ function alertOwner(title, body) {
   if (CF.notify?.method === "system") systemNote(title, body);
 }
 
+/** The card for `w` ({ open or sessionId, who, question }) as a finished task's: a background conversation's
+    (chat/bgsend.js) is announced through it, under the same rules as a long task that finishes ("A long task finishes",
+    pop-ups, quiet hours for the sound). Once only: a card already showing for that conversation is not shown again.
+    Answers whether the person was told. */
+export function announce(w) {
+  const id = w.open || w.sessionId;
+  if (quiet() || onScreen(id) || CF.notify?.taskDone === false) return false;
+  if (lastShown.id === id && Date.now() - lastShown.at < STAY_MS) return true;
+  show(w);
+  alertOwner(w.who || ownName(id) || sessionTitle(id), w.question ?? "");
+  return true;
+}
+
 function show(w) {
   const id = w.open || w.sessionId;
   $(".notif")?.remove();
@@ -94,6 +107,7 @@ function show(w) {
   applyCss(el);
   greyOut(el);
   app().appendChild(el);
+  lastShown = { id, at: Date.now() };
   clearTimeout(timer);
   timer = setTimeout(() => el.remove(), STAY_MS);
 }
@@ -120,7 +134,7 @@ function watchDone() {
   if (before === null || CF.notify?.taskDone === false || quiet()) return; // what had ended before the window opened is not news
   const done = list.filter((r) => ENDED.has(r.status) && ["running", "needs_input"].includes(before.get(r.id)) && !r.aside
     && Date.parse(r.updatedAt) - Date.parse(r.createdAt) >= LONG_MS && !onScreen(r.sessionId)).at(-1);
-  if (!done) return;
+  if (!done || (lastShown.id === done.sessionId && Date.now() - lastShown.at < STAY_MS)) return; // already told (announce)
   const words = t(done.status === "completed" ? "window.shell.notify.done" : "window.shell.notify.stopped");
   const who = ownName(done.sessionId) || sessionTitle(done.sessionId) || done.title || "";
   show({ sessionId: done.sessionId, who, question: words });
