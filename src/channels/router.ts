@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Store } from "../store.js";
 import { heldReplay } from "../never-break/resume.js"; // mac3/never-break
 import type { Runtime } from "../runtime.js";
+import { carryable } from "../carry-on.js"; // QA R1 follow-up
 /** One question a task is waiting on, as the runtime lists them. */
 type WaitingQuestion = ReturnType<Runtime["waitingApprovals"]>[number];
 import type { PolicyRemember } from "../policy.js";
@@ -788,7 +789,7 @@ export class ChannelRouter {
     /** Who typed it and whether this is a one-to-one chat (mac7/chat-approvals); both are needed
      *  before a chat's own yes may answer a question about what one of the owner's lines granted. */
     from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined },
-  ): Promise<{ decision: string; tool: string; refusal?: string; sessionId?: string; show?: WaitingQuestion | undefined } | null> {
+  ): Promise<{ decision: string; tool: string; refusal?: string; sessionId?: string; show?: WaitingQuestion | undefined; runId?: string } | null> {
     const read = readApprovalAnswer(value);
     if (!read) return null;
     const sessionId = this.sessionFor(channel, chatId);
@@ -837,7 +838,7 @@ export class ChannelRouter {
     const remember = permission === commandPermission && read.decision === "allow" ? "never" : read.remember;
     const result = this.runtime.approve(sessionId, read.decision, remember, asked.fingerprint, channel);
     this.shownCommands.delete(`${channel}\u0000${chatId}\u0000${asked.fingerprint}`);
-    return { decision: result.decision, tool: result.tool };
+    return { decision: result.decision, tool: result.tool, runId: asked.runId };
   }
   /**
    * mac7/chat-approvals: what this person on this app may say yes to from the chat, out of what
@@ -880,7 +881,9 @@ export class ChannelRouter {
     const faithful = command !== null && checked.text === asked + command
       && checked.text.length + 16 <= (adapter.maxTextLength ?? 3500)
       && this.commandYesHere(message.channel, message.chatId, waiting.runId, waiting.fingerprint ?? "", message)
-      && !(adapter.kind === "discord" && command.includes("`"));
+      && !(adapter.kind === "discord" && command.includes("`"))
+      // Slack reads <…> as links and mentions and & as an escape even in code, and a backtick breaks the fence.
+      && !(adapter.kind === "slack" && /[<>&`]/.test(command));
     // In a group anybody paired may press the button, so a standing yes is only offered one to one.
     // mac7/chat-approvals (integration review): a chat is never offered "Yes always", because a chat
     // may never give one — offering it is offering a button whose only answer is a refusal.
@@ -954,6 +957,9 @@ export class ChannelRouter {
         if (waiting) await this.askInChat(message, answered.sessionId, waiting, "", `reshow:${message.channel}:${message.messageId}`);
         return "replied";
       }
+      // QA R1 follow-up: a yes carries the chat's own waiting task on, and the engine runs the approved call itself.
+      const waiting = answered.decision === "allow" && !answered.refusal ? carryable(this.runtime, answered.runId, "channel") : null;
+      if (waiting) return this.carryTurn(message, waiting.id);
       if (answered.decision === "allow" && this.runtime.registry.permissionOf(answered.tool) === commandPermission)
         return this.startTurn([{ ...message, text: "Continue with the exact command I just approved." }]);
       await this.deliver(message.channel, message.chatId,
@@ -1249,6 +1255,46 @@ export class ChannelRouter {
     return outcome;
   }
   /**
+   * QA R1 follow-up: after the chat's yes, the task that asked carries on as itself (the engine runs the approved call),
+   * shown and answered in the chat as a turn is: progress while it works, then its reply or its next question.
+   */
+  private async carryTurn(message: InboundMessage, runId: string): Promise<Outcome> {
+    const key = chatKey(message);
+    const turn: ChatTurnState = { phase: "running", runId, startedAt: Date.now(), passed: 0, dropped: false,
+      messages: [message], notes: [], waiters: [], live: null, reply: null, quote: this.quoteStateFor(message, () => turn.messages) };
+    turn.live = this.liveFor(message, () => turn.runId);
+    turn.reply = this.replyFor(message);
+    this.turns.set(key, turn);
+    turn.live?.start();
+    const off = this.store.onEvent((id, kind, data) => {
+      if (id !== turn.runId) return;
+      turn.live?.event(kind, data);
+      if (kind === "model.started") turn.reply?.round();
+    });
+    let outcome: Outcome = "failed";
+    try {
+      outcome = await this.withSlot(async () => {
+        const run = await this.runtime.continueAsked(runId, {
+          onStarted: () => { turn.startedAt = Date.now(); turn.live?.thinking(); this.passNotes(turn); },
+          onTextDelta: (delta) => turn.reply?.text(delta),
+        });
+        return this.finishTurn(turn, run, "");
+      });
+    } catch {
+      await turn.live?.finish("error");
+      await this.deliver(message.channel, message.chatId, "Something went wrong on my side; the owner can see the details in Activity.",
+        `carry-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
+    } finally {
+      off();
+      turn.reply?.cancel();
+      this.turns.delete(key);
+      for (const resolve of turn.waiters) resolve(outcome);
+    }
+    const unread = this.unreadNotes(turn);
+    if (unread.length) void this.startTurn(unread.map(withText), true).catch(() => undefined);
+    return outcome;
+  }
+  /**
    * How long a new turn gathers before it runs: the steering window ("on"), the owner's "Wait for messages split in
    * two", and at least `albumWaitMs` for a photo that came in an album while albums are joined. `mergeWindowMs` 0 turns
    * all gathering off (tests that want each message on its own).
@@ -1262,6 +1308,10 @@ export class ChannelRouter {
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
     const message = turn.messages[0]!, live = turn.live;
+    // Where a chat's answer spent its time, written on the task so "Look inside" can show it (src/inspect.ts timing):
+    // from the message being taken in (the turn opened; `startedAt` moves to the task's start once it starts).
+    const receivedAt = turn.startedAt;
+    let firstWords = false;
     const heard = await this.heardAll(turn.messages);
     if (typeof heard === "string") { live?.cancel(); return this.voiceFailed(message, heard); }
     // mac3/never-break: a message whose earlier task may already have reached the outside is not done twice.
@@ -1324,16 +1374,22 @@ export class ChannelRouter {
         onStarted: (started) => {
           // mac3/never-break: a task a chat started is left for the chat app to send again after a restart.
           this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
-            senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true });
+            senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true,
+            waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
           turn.runId = started.id;
           turn.startedAt = Date.now();
           live?.thinking();
           if (turn.dropped) this.runtime.cancel(started.id);
           this.passNotes(turn);
         },
-        onTextDelta: (delta) => turn.reply?.text(delta),
+        onTextDelta: (delta) => {
+          if (!firstWords && turn.runId) { firstWords = true; this.store.event(turn.runId, "channel.first_words", { ms: Date.now() - receivedAt }); }
+          turn.reply?.text(delta);
+        },
       });
-      return await this.finishTurn(turn, run, heard.quoted);
+      const outcome = await this.finishTurn(turn, run, heard.quoted);
+      this.store.event(run.id, "channel.sent", { ms: Date.now() - receivedAt });
+      return outcome;
     } catch (error) {
       await live?.finish("error");
       // Messages per conversation per hour: that refusal is said as it is, since no task started to show in Activity.

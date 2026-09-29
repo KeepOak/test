@@ -28,11 +28,10 @@ after(async () => { await browser?.close(); });
 
 const scripted = { name: "scripted", async complete(request) {
   const users = request.messages.filter((m) => m.role === "user").map((m) => String(m.content));
-  // Q050: after a yes the task that asked carries on itself, told that the call it asked about did not run.
-  const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(request.messages.at(-1)?.content ?? ""));
-  if (request.messages.at(-1)?.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
+  // Q050, QA R1: after a yes the task that asked carries on itself, and the engine makes the approved call.
+  if (request.messages.at(-1)?.role === "tool") return { content: "Written.", toolCalls: [] };
   const wanted = users.map((text) => /write (\w+)/.exec(text)?.[1]).find(Boolean);
-  if (wanted && (request.messages.at(-1)?.role === "user" || allowed))
+  if (wanted && request.messages.at(-1)?.role === "user")
     return { content: "", toolCalls: [{ id: "c1", name: "files.write", arguments: JSON.stringify({ path: `${wanted}.txt`, content: wanted }) }] };
   return { content: "ok", toolCalls: [] };
 } };
