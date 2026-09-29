@@ -44,14 +44,26 @@ export interface OwnClisDeps {
 export class OwnClis {
   /** The aliases the launch settings file (or the default programs) already gives commands; set when the shell starts. */
   private launch: string[] = [];
+  private launchPrograms: Record<string, { path: string; args: string[] }> = {};
+  private attached = false;
   constructor(private readonly deps: OwnClisDeps) {}
   private get env(): NodeJS.ProcessEnv { return this.deps.env ?? process.env; }
   private get platform(): NodeJS.Platform { return this.deps.platform ?? process.platform; }
 
   /** The shell the launch made: its own aliases are noted, and the owner's programs are handed to it for each command. */
-  attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[]): void {
+  attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[],
+    launchPrograms: Record<string, { path: string; args: string[] }> = {}): void {
     this.launch = [...launchNames];
+    this.launchPrograms = { ...launchPrograms };
+    this.attached = true;
     shell.extra = () => this.executables();
+  }
+  /**
+   * workbench (SELF-304): every program `shell.execute` may run, the launch file's first, so a command the assistant may
+   * run once it may also leave running (process.start) and be woken when it ends. Nothing while there is no shell.
+   */
+  commandPrograms(): Record<string, { path: string; args: string[] }> {
+    return this.attached ? { ...this.executables(), ...this.launchPrograms } : {};
   }
 
   saved(): OwnCli[] {

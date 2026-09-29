@@ -272,7 +272,7 @@ test("R17-S20: the settings route checks the proxy and certificates before keepi
   assert.equal(shown.status, 200);
   assert.equal(shown.body.values.mcp.startupTimeoutSeconds, 10);
   assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body,
-    { channel: "stable", busyTasks: 0, autoUpdate: "install" });
+    { channel: "stable", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   const outsideTask = branch.store.createRun("person:sam", "a long task");
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.busyTasks, 1,
     "work from another profile blocks the update");
