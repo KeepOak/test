@@ -242,7 +242,9 @@ jobs:
             ~/.cache/pip
             ~/.cache/huggingface/hub/models--Systran--faster-whisper-tiny.en
           key: faster-whisper-1.2.1-tiny.en-${{ runner.os }}-py3.12
-      - run: python -m pip install --disable-pip-version-check faster-whisper==1.2.1
+      # PyAV 19 (2026-09-29) dropped av.open's `metadata_errors`, which faster-whisper 1.2.1 passes, so every write-out
+      # failed; held at the last release that takes it until faster-whisper follows.
+      - run: python -m pip install --disable-pip-version-check faster-whisper==1.2.1 av==18.1.0
       - run: python -c "from faster_whisper import WhisperModel; WhisperModel('tiny.en', device='cpu', compute_type='int8')"
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
