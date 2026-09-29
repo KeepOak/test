@@ -69,6 +69,39 @@ const helperInstructions = "You are a helper working in the background for the t
   + "When you find something the lead must know before you finish (a blocker, a decision it must make, a result it can use now), send it with "
   + "helpers.tell_lead. Your final answer reaches the lead by itself when you finish, so end with a short report of what you did and found.";
 
+/** What a helper was allowed to reach when it started, as its run recorded it. */
+function helperPermissions(runtime: Runtime, runId: string): string[] {
+  const recorded = runtime.store.events(runId).find((event) => event.kind === "run.started")?.data.permissions;
+  return Array.isArray(recorded) ? recorded.map(String) : [];
+}
+
+/**
+ * workbench (SELF-303): a helper that finished or was stopped is carried on in its own conversation, so everything it
+ * already read and did is in front of it again, on the model and account it was pinned to, with no more than it had
+ * before and no more than this task has now. It works for this task from here on, so what it says reaches a lead that
+ * is still listening.
+ */
+async function resumeHelper(runtime: Runtime, helper: string, text: string, minutes: number, context: ToolContext) {
+  const run = runtime.store.run(helper)!;
+  const permissions = helperPermissions(runtime, helper).filter((permission) => context.permissions.has(permission));
+  const prompt = `Message from your lead (the task that started you). Carry on from where you stopped:
+${text}`;
+  const started = await runtime.delegateBackground(prompt, context, permissions, helperInstructions,
+    { timeoutMs: minutes * 60_000, sessionId: run.sessionId, tellsLead: true });
+  runtime.store.event(context.runId, "delegation.helper_resumed", { childRunId: started.childRunId, from: helper });
+  return { resumed: true, helper: started.childRunId, from: helper, note: "It carries on in its own conversation; you are told when it finishes." };
+}
+
+/** The helper an earlier one was carried on as, for the list. */
+function resumedFrom(runtime: Runtime, lead: string, helper: string): string | undefined {
+  const tasks = runtime.store.run(lead)?.sessionId ? runtime.store.sessionRuns(runtime.owner, runtime.store.run(lead)!.sessionId).map((one) => one.id) : [lead];
+  for (const id of tasks) {
+    const found = runtime.store.events(id).find((event) => event.kind === "delegation.helper_resumed" && event.data.childRunId === helper);
+    if (found) return String(found.data.from);
+  }
+  return undefined;
+}
+
 export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime): void {
   registry.register({
     name: "helpers.start", permission: "specialists.use", group: "agents",
@@ -85,13 +118,29 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
   });
   registry.register({
     name: "helpers.message", permission: "specialists.use", group: "agents",
-    description: "Send a note to a helper this conversation started while it is still working; it reads it before its next step.",
-    parameters: z.object({ helper: z.string().uuid(), text: z.string().trim().min(1).max(2000) }).strict(),
+    description: "Send a note to a helper this conversation started. One still working reads it before its next step. One that finished or was stopped carries on in its own conversation, with everything it already did in front of it, and you are told when it finishes (its new number is returned).",
+    parameters: z.object({ helper: z.string().uuid(), text: z.string().trim().min(1).max(2000),
+      /** For a helper that carries on: how long it may work, in minutes (1 to 120). */
+      minutes: z.number().int().min(1).max(120).default(30) }).strict(),
     execute: async (input, context: ToolContext) => {
       if (!startedBy(runtime, input.helper, context.runId)) throw new Error("There is no helper with that number started in this conversation.");
-      if (runtime.store.run(input.helper)?.status !== "running") throw new Error("That helper has already finished; start another one to carry on.");
-      runtime.steer(input.helper, input.text, "your lead (the task that started you)");
-      return { sent: true };
+      const status = runtime.store.run(input.helper)?.status;
+      if (status === "running") {
+        runtime.steer(input.helper, input.text, "your lead (the task that started you)");
+        return { sent: true };
+      }
+      if (status === "needs_input") throw new Error("That helper is waiting for the owner to answer a question; it carries on once they do.");
+      return resumeHelper(runtime, input.helper, input.text, input.minutes ?? 30, context);
+    },
+  });
+  registry.register({
+    name: "helpers.stop", permission: "specialists.use", group: "agents",
+    description: "Stop a helper this conversation started. What it did so far is kept; message it later with helpers.message to carry it on.",
+    parameters: z.object({ helper: z.string().uuid() }).strict(),
+    execute: async (input, context: ToolContext) => {
+      if (!startedBy(runtime, input.helper, context.runId)) throw new Error("There is no helper with that number started in this conversation.");
+      if (runtime.store.run(input.helper)?.status !== "running") return { stopped: false, note: "It is not working now." };
+      return { stopped: runtime.cancel(input.helper) };
     },
   });
   registry.register({
@@ -111,7 +160,9 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
     execute: async (_input, context: ToolContext) => ({
       helpers: helpersOf(runtime, context.runId).map((id) => {
           const run = runtime.store.run(id);
-          return { helper: id, name: helperName(runtime, id), status: run?.status ?? "gone", output: run && run.status !== "running" ? run.output.slice(0, 1500) : undefined };
+          const from = resumedFrom(runtime, context.runId, id);
+          return { helper: id, name: helperName(runtime, id), status: run?.status ?? "gone", ...(from ? { continues: from } : {}),
+            output: run && run.status !== "running" ? run.output.slice(0, 1500) : undefined };
         }),
     }),
   });
