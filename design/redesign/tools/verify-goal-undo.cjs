@@ -14,7 +14,7 @@
 const http = require("node:http");
 const { existsSync } = require("node:fs");
 const { join } = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT, TOKEN, WORKSPACE } = process.env;
 if (!PORT || !TOKEN || !WORKSPACE) { console.error("Set PORT, TOKEN and WORKSPACE (see the setup above)"); process.exit(2); }
