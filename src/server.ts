@@ -32,6 +32,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
@@ -185,6 +186,7 @@ import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { saveWakeWordSettings, wakeWordSettings, wakeWordView } from "./voice-wake.js"; // mac7/wake-pins
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48 review
 import { dictationOwnerOnlyRefusal, dictationSettings, dictationView, saveDictationSettings } from "./voice-dictation.js"; // mac7/live-voice
+import { HearRefused, hearInWindow } from "./voice-dictation-window.js"; // RES-709
 import { voiceSettings, saveVoiceSettings } from "./voice.js";
 import { voiceApi } from "./voice-api.js";
 // bucket-18: pull requests from changes (A0300), and which requests came with a short-lived key.
@@ -297,6 +299,9 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { MiniAppDoor } from "./miniapp/door.js";
+import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
+import { handlesMiniAppPath, MiniAppApi } from "./miniapp/api.js";
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -1250,12 +1255,20 @@ async function api(
   // a household profile, a Trunk and another computer all arrive here as something that is not the
   // owner at this window, and all five are refused by the two guards below and by the fail-closed
   // rule for short-lived keys in src/short-lived-keys.ts, which never lists this path.
+  // RES-709: a piece of what the window's own microphone heard, written out on this computer (hearInWindow below).
+  if (request.method === "POST" && path === "/api/voice/dictation/hear") {
+    const host = { store: app.store, owner: app.runtime.owner, isOwner: app.store.profiles.isOwner(),
+      locked: app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
+    try { return await hearInWindow(host, request); } catch (error) {
+      throw new HttpError(error instanceof HearRefused ? error.status : 400, errorText(error));
+    }
+  }
   if (path === "/api/voice/dictation" || path === "/api/voice/dictation/listen") {
     if (request.method === "GET") {
       // Whether the microphone is open comes from the listener itself, so the card cannot say one
       // thing while the microphone does another.
       const mine = app.store.profiles.isOwner();
-      const view = dictationView(app.store, app.runtime.owner, app.dictation.platform, mine, app.dictation.open, app.dictation.present);
+      const view = dictationView(app.store, app.runtime.owner, app.dictation.platform, mine, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner));
       // The words are screen state: they go to the window that is dictating and nowhere else. They
       // are never written to disk, never traced, never kept past the phrase, and never sent. Anybody
       // else on this computer is not shown them, because they are not shown any of this.
@@ -1271,14 +1284,14 @@ async function api(
       // — the switch, Lockdown, the lock, a missing speech program — says it must not.
       const refusal = body?.on === true ? app.dictation.start() : (app.dictation.stop(), null);
       return { open: app.dictation.open, refusal,
-        state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
+        state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
     }
     const dictation = await readBody(request);
     recordedWrite(app.store, app.runtime.owner, byCard("live-dictation"), ["live-dictation"],
       () => saveDictationSettings(app.store, app.runtime.owner, dictation));
     app.dictation.refresh(); // the switch going off stops it and lets go of the microphone at once
     return { settings: dictationSettings(app.store, app.runtime.owner),
-      state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
+      state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
   }
   // ── end mac7/live-voice ──
   if (request.method === "GET" && path === "/api/state") {
@@ -1704,6 +1717,10 @@ async function api(
     }
     return result;
   }
+  // QA 2026-09-28: which model Codex answers with, and which ones it takes (src/codex-models.ts).
+  if (request.method === "GET" && path === "/api/codex-models") return codexModelsView(app.runtime.models);
+  if (request.method === "POST" && path === "/api/codex-models") return chooseCodexModel(app.runtime.models, await readBody(request));
+  if (request.method === "POST" && path === "/api/codex-models/check") return checkCodexModels(app.runtime.models);
   // models-ui (MODEL-052): who spent what: the owner's own tasks and each Trunk's, with the accounts they used.
   if (request.method === "GET" && path === "/api/usage/by-trunk")
     return usageByTrunk({ store: app.store, owner: app.runtime.owner, trunkName: (id) => app.trunks.records.find(id)?.name ?? null,
@@ -3734,6 +3751,8 @@ export function listenOn(server: Server, port: number, address: string, anyPortI
 
 export { offLimitsToHousehold, offLimitsToShortLivedKeys };
 import { offLimitsToShortLivedKeys } from "./caller-policy.js";
+/** Settings › Chat apps: phone access through Tailscale for the Telegram Mini App (src/miniapp/phone-access.ts). */
+const phoneAccessPath = "/api/miniapp/phone-access";
 /** Tests only: see `policyProbe` below. */
 export const policyProbeHeader = "x-branch-policy-probe";
 /** selfdev: an engine the desktop app runs in a process of its own, whose engine host starts it again when it stops. */
@@ -3764,6 +3783,8 @@ export async function startServer(
     quit?: () => void;
     /** Trusted desktop broker status over the private engine Link; never supplied by a web request. */
     gatewayPower?: NeverBreakExtras["gatewayPower"];
+    /** How `tailscale` is run to learn the Mini App's HTTPS address (src/miniapp/phone-access.ts); tests stand in for it. */
+    tailscaleServe?: TailscaleRunner;
     /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
     onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
@@ -3838,6 +3859,8 @@ export async function startServer(
   /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
   const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
   const browserControls = new BrowserControlApi(app);
+  /** The Telegram Mini App's one way into a task's browser, with its own checks instead of a key (src/miniapp/api.ts). */
+  const miniApp = new MiniAppApi(app, browserControls);
   /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
   const socketPhoneKey = (request: IncomingMessage): boolean => {
     const offered = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((part) => part.trim());
@@ -3850,6 +3873,29 @@ export async function startServer(
   // Counted separately from the session key, so a chat service that is set up wrongly can slow
   // itself down without ever standing between the owner and their own app.
   const webhookLimiter = new AuthLimiter(options.authLimits);
+  /**
+   * The Telegram Mini App's API, on Branch's own port and on the Mini App's door (src/miniapp/door.ts). A place that
+   * keeps sending launch data that isn't Telegram's, or a token that isn't live, waits like any wrong key; through the
+   * door every phone arrives from 127.0.0.1 and so shares that wait, which only the owner's own tailnet can reach.
+   */
+  const miniAppAnswer = async (path: string, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const from = requestSource(request.socket?.remoteAddress, request.headers);
+    const waiting = authLimiter.refusal(from, "Telegram Mini App");
+    if (waiting) { send(response, 429, { error: waiting }); return; }
+    const stopped = new AbortController();
+    request.once("aborted", () => stopped.abort());
+    response.once("close", () => { if (!response.writableEnded) stopped.abort(); });
+    try {
+      send(response, 200, await miniApp.handle(path, { method: request.method ?? "GET", token: bearerOf(request),
+        body: () => readBody(request, 16_384), signal: stopped.signal }));
+    } catch (error) {
+      if (error instanceof z.ZodError) { send(response, 400, { error: "That request wasn't understood." }); return; }
+      const refused = miniApp.error(error);
+      if (!refused) { send(response, 500, { error: "Something went wrong." }); return; }
+      if (refused.status === 401) noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the Telegram Mini App's launch data");
+      send(response, refused.status, { error: refused.message });
+    }
+  };
 
 /**
  * The widget sits on a page of the owner's own, so its call to the paired listener is cross-origin
@@ -3986,6 +4032,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // network must not quietly widen a page whose whole secret is its address.
       if (!viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)
         && app.asks.surfaces.serve(request, response, path)) return;
+      // ---- The Telegram Mini App (src/miniapp/api.ts): no Branch key; Telegram's signed launch data and the App lock PIN
+      // open a session held to one task's browser, and its token is good for these routes only. A place that keeps
+      // sending launch data that isn't Telegram's, or a token that isn't live, waits like any wrong key. ----
+      if (handlesMiniAppPath(path)) { await miniAppAnswer(path, request, response); return; }
       const triggerFireMatch = /^\/api\/triggers\/([a-f0-9-]{36})\/fire$/.exec(path);
       if (triggerFireMatch && request.method === "POST") {
         // Counted on the webhook limiter, not the key's: a service set up with the wrong secret
@@ -4121,6 +4171,26 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const answer = await browserControls.handle(request.method ?? "GET", path, input, { authorize: authorizeBrowser, signal: stopped.signal })
             .catch((error: unknown) => { if (error instanceof z.ZodError) throw error; const refused = browserControls.error(error); throw new HttpError(refused.status, refused.message); });
           send(response, 200, answer); return;
+        }
+        // ---- The owner's phone through Tailscale (src/miniapp/phone-access.ts): what "Turn on phone access" and "Turn off"
+        // run, and running it once the owner has seen that exact command and said yes, in Branch's window on this computer. ----
+        if (path === phoneAccessPath) {
+          if (request.method === "GET") { send(response, 200, await phoneAccessView()); return; }
+          if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+          if (key !== "window" || throughDoor(request)) throw new HttpError(403, "Phone access is turned on and off in Branch's window on this computer.");
+          app.store.profiles.requireOwner("Phone access");
+          if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing phone access.");
+          if (lockdownActive(app.store, app.runtime.owner)) throw new HttpError(403, "Lockdown is on, so your phone can't be let in.");
+          const input = z.object({ turn: z.enum(["on", "off"]), command: z.array(z.string().max(300)).max(12) }).strict().parse(await readBody(request));
+          if (input.turn === "on" && !app.sessionLock.pinSet())
+            throw new HttpError(409, "Set an App lock PIN first. Your phone asks for it each time it takes a task's browser.");
+          const noted = (outcome: string) => audit(app.store, app.runtime.owner, { action: "phone.access", actor: "owner",
+            subject: "the Telegram Mini App through Tailscale", reason: input.command.join(" ").slice(0, 400), outcome });
+          try { await phoneAccess.turn(input.turn, input.command); }
+          catch (error) { noted("refused"); throw new HttpError(409, errorText(error)); }
+          noted(input.turn === "on" ? "turned on" : "turned off");
+          send(response, 200, await phoneAccessView());
+          return;
         }
         // ---- Wave mac3 (commands): the one slash-command table, for the window, the phone and the
         // dashboard (src/commands/api.ts). What the key may do is read the way the dashboard reads it,
@@ -4651,12 +4721,26 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     // CHAT-147: every other chat app set up in the window; each problem goes to the diagnostics.
     void app.channelSetup.connectSaved().catch((error: unknown) => console.error(`Chat apps did not connect: ${errorText(error)}`));
   }
+  // The Telegram Mini App's own door on this computer's loopback address, and where the owner's phone reaches it.
+  const miniAppDoor = new MiniAppDoor(app.store, app.runtime.owner, miniAppAnswer);
+  await miniAppDoor.open().catch((error: unknown) => console.error(`The Telegram Mini App's door did not open: ${errorText(error)}`));
+  const phoneAccess = new PhoneAccess(() => miniAppDoor.port, options.tailscaleServe);
+  /** Where the phone reaches the Mini App now, and the exact commands the window shows before turning it on or off. */
+  const phoneAccessView = async () => ({ phoneAccess: { url: await phoneAccess.refresh(), pinSet: app.sessionLock.pinSet(),
+    on: phoneAccess.command("on"), off: phoneAccess.command("off") } });
+  void phoneAccess.refresh(); // so a task's first picture already knows whether the phone can reach the Mini App
+  app.channels.miniAppUrl = (runId) => {
+    const base = app.sessionLock.pinSet() ? phoneAccess.address() : null;
+    return base ? `${base}?run=${encodeURIComponent(runId)}` : null;
+  };
   if (options.presence) {
     await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
     await noteFirstStart(app, options.dataDir).catch(() => undefined);
   }
   return {
     url,
+    /** The Telegram Mini App's door (src/miniapp/door.ts) and where the owner's phone reaches it. */
+    miniAppDoor, phoneAccess,
     /** The window's key as it is now; removing a phone that was handed it replaces it. */
     get token(): string { return token; },
     remote,
@@ -4677,6 +4761,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       browserControls.close();
+      miniApp.close();
+      app.channels.miniAppUrl = undefined;
+      await miniAppDoor.close();
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops

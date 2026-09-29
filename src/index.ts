@@ -1,4 +1,6 @@
 import { environmentTool } from "./environment.js";
+import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
+import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
@@ -56,6 +58,8 @@ import { pricingSettings } from "./pricing.js";
 import { registerSessions } from "./sessions.js";
 // Wave 8: conversations branched off other conversations, seen as a tree, and one answer carried back.
 import { SessionTree, registerSessionTree } from "./session-tree.js";
+import { holdTaskBrowser } from "./browser-hold.js";
+import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
 import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
@@ -117,6 +121,7 @@ import { NeedsInputError, type ToolContext } from "./contracts.js";
 import { defaultPreset } from "./providers.js";
 import { restoreConnections } from "./connections-preset.js";
 import { restoreSignIns } from "./accounts/saved-sign-ins.js"; // accounts-wizard-plans
+import { CodexModels, attachCodexModels } from "./codex-models.js";
 import { JevDecisions, registerJevDecisions, type JevRunner } from "./jev-decisions.js";
 import { DecisionModels } from "./decision-models.js"; // P17-D §4
 import { Workbooks, registerWorkbookTools } from "./workbooks.js"; // P17-D §3
@@ -132,6 +137,7 @@ import { VoiceService, registerVoice } from "./voice-service.js";
 import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRunner } from "./voice-wake.js"; // mac7/wake-mic
 import { startDictation, type SoundStreamRunner, type SpeechStreamRunner } from "./voice-dictation-run.js"; // mac7/live-voice
 import { soundStreamRunner, speechStreamRunner } from "./voice-dictation-host.js"; // mac7/live-voice
+import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
 import { wakeCaptureRunner, wakeRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
@@ -257,6 +263,7 @@ import { formatCopiesToPrune } from "./install/update-backup.js";
 import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
+import { commandHost } from "./commands/host.js"; // CHAT-185
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { liveChannels } from "./channel-setup/live.js"; // CHAT-147: every chat app set up in the window connects there and then
 import { buildChannelEntry, type ChannelHost } from "./integrations/bootstrap.js";
@@ -359,6 +366,11 @@ export async function createBranch(options: {
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
    */
   dictation?: { speech?: SpeechStreamRunner; sound?: SoundStreamRunner; present?: ProgramPresent; platform?: string };
+  /**
+   * RES-709: the free speech program on this computer (src/voice-whisper.ts). Left out, Branch looks for the real
+   * faster-whisper; a test hands in its own, or null for none.
+   */
+  localSpeech?: LocalWhisper | null;
   /** Test-only: clock function for deterministic rate limiting. Normal production uses Date.now. */
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
@@ -852,7 +864,8 @@ export async function createBranch(options: {
   registerMedia(registry, media);
   // Wave 7: one place that turns speech into words and words into speech, whichever service does
   // the work, plus switching model in one conversation. Voice notes on chat apps come through here.
-  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch));
+  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch),
+    options.localSpeech !== undefined ? { whisper: options.localSpeech } : {});
   // Wave 8: live conversations. Every connection that stays open leaves a span and a line in the
   // record of what the assistant was allowed to do — the host and the path only, never the whole
   // address, because a key can travel in the query string.
@@ -966,6 +979,7 @@ export async function createBranch(options: {
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
   // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
+  attachCodexModels(runtime.models, new CodexModels(store, runtime.owner)); // QA 2026-09-28: Codex's model, chosen in Branch
   await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
   const hooks = new Hooks(store, runtime.owner);
   const teams = new Teams(store, runtime.owner);
@@ -1627,6 +1641,7 @@ ${result.output || "(it said nothing)"}`;
   const launchFile = { leftOut: [] as readonly string[] };
   /** The chat apps' host, filled in once `branch` exists, for apps the Set up panel connects (src/channel-setup/live.ts). */
   const channelHostRef: { current?: ChannelHost } = {};
+  const miniAppSessions = new MiniAppSessions();
   const branch = {
     store,
     registry,
@@ -1806,19 +1821,30 @@ ${result.output || "(it said nothing)"}`;
     reach: { browserOrigins: [] as string[], browserAnyWebsite: false, commandsMayReachInternet: true },
     /** Secrets for host commands: only the active project's, never returned to the model. */
     secretsFor: async (context: ToolContext, names: string[]) => {
-      const project = store.projects.active(context.owner).id;
-      const values = await store.secrets.resolve(context.owner, project, names,
-        { runId: context.runId, purpose: "host command" });
-      // The names only; a value never leaves the locker, and never reaches this record.
-      for (const name of Object.keys(values))
-        audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (project ${project})`,
-          reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      // RES-260: a Trunk's own secrets reach only its own turns (src/trunks/secrets.ts).
+      const trunk = context.trunk ?? currentAccountCall()?.trunk?.id ?? null;
+      const keys = trunk ? (store.get("governance", context.owner, `trunk:${trunk}`)?.data as { keys?: { copyFromOwner?: unknown } } | undefined)?.keys : undefined;
+      const work = { trunk, helper: !!runOrigin(store, context.runId).parentRunId,
+        copyFromOwner: context.trunkKeys?.copyFromOwner ?? keys?.copyFromOwner !== false };
+      const own = trunk ? store.secrets.list(context.owner, trunkSecretsProject(trunk)).map((entry) => entry.name) : [];
+      const { plan, refused } = secretSources(work, names, own, store.projects.active(context.owner).id);
+      if (refused.length) throw new Error(trunkSecretRefusal(refused));
+      const values: Record<string, string> = {};
+      for (const [project, wanted] of Object.entries(plan)) {
+        Object.assign(values, await store.secrets.resolve(context.owner, project, wanted, { runId: context.runId, purpose: "host command" }));
+        // The names only; a value never leaves the locker, and never reaches this record.
+        for (const name of wanted)
+          audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (${project === trunkSecretsProject(trunk ?? "") ? "the Trunk's own" : `project ${project}`})`,
+            reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      }
       return values;
     },
     /** References, replacement dates, the use audit and the shared scrubber. */
     secrets: store.secrets,
     /** Locking the app, by hand or after a quiet spell. */
     sessionLock,
+    /** The phones holding a task's browser through the Telegram Mini App (src/miniapp/sessions.ts). */
+    miniAppSessions,
     /** Signing in to outside services with the standard authorization-code flow and PKCE. */
     oauth,
     /** Personal details and the optional content check, either side of the assistant. */
@@ -1962,6 +1988,7 @@ ${result.output || "(it said nothing)"}`;
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
+      voice.close(); // RES-709: the free speech worker ends with the app
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
       await autonomy.close(); // r17-b: nothing more starts by itself, and a turn that is working gets a moment
       await trunks.close(); // R17-A: rooms stop between turns
@@ -2001,6 +2028,7 @@ ${result.output || "(it said nothing)"}`;
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
   channelHostRef.current = branch.channelHost;
+  channels.ownerDmHost = () => commandHost(runtime, branch); // CHAT-185: the owner's commands from their own chat
   // Pictures of a chat task's own browser window, as the window's live view takes them: password and code boxes covered,
   // never a borrowed browser, never while Branch's own sign-in handling is showing.
   channels.browserPicture = async (runId) => {
@@ -2016,31 +2044,10 @@ ${result.output || "(it said nothing)"}`;
   };
   // Take over and Hand back from a chat (the live browser's buttons): the task's own window becomes the conversation's
   // kept browser with the chat's owner holding it, exactly as the window's Take over does; Hand back lets the task on.
-  channels.browserHold = async (runId, op) => {
-    const browser = branch.browser, run = store.run(runId);
-    if (!browser || !run?.sessionId) throw new Error("That task has no browser open.");
-    const clientId = `chat:${runId}`;
-    let control = browser.controls.forConversation(runtime.owner, run.sessionId);
-    const who = (): "owner" | "task" | "none" => {
-      const view = control?.view();
-      return !view || view.state === "stopped" ? "none" : view.writer?.kind === "owner" || view.paused ? "owner" : "task";
-    };
-    if (op === "held") return who();
-    if (lockedDown(store, runtime.owner) || sessionLock.locked()) throw new Error("Branch is locked, so its browser can't change hands now.");
-    if (op === "take") {
-      if (!runtime.activeRunSignal(runId)) throw new Error("That task has finished.");
-      control ??= await browser.adoptRun(runtime.owner, run.sessionId, runId, clientId);
-      const view = control.view();
-      if (view.writer?.kind !== "owner") await control.takeOver(view.epoch, clientId);
-      return who();
-    }
-    if (!control) return "none";
-    const view = control.view(), task = view.paused ?? view.waiting ?? runId;
-    if (view.writer?.kind === "owner" && view.writer.id !== clientId)
-      throw new Error("You're driving the browser in Branch's window; hand it back there.");
-    await control.handBack(view.epoch, clientId, task);
-    return who();
-  };
+  channels.browserHold = (runId, op) => holdTaskBrowser({ browser: branch.browser, store, owner: runtime.owner,
+    locked: () => sessionLock.locked(), running: (id) => !!runtime.activeRunSignal(id) }, runId, op, `chat:${runId}`,
+  // The chat's own hold, or the same person's phone through the Mini App, is theirs to hand back from the chat.
+  (holder) => holder === `chat:${runId}` || holder === miniAppSessions.clientFor(runId));
   return branch;
 }
 /** Runs one of the owner's own verified recipes by name, for a skill package's event hook. */
@@ -2345,6 +2352,7 @@ export * from "./voice-stt.js";
 export * from "./voice-tts.js";
 export * from "./voice-talk.js";
 export * from "./voice-service.js";
+export * from "./voice-whisper.js"; // RES-709
 export * from "./realtime.js";
 export * from "./realtime-openai.js";
 export * from "./realtime-gemini.js";

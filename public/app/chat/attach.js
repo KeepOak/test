@@ -7,7 +7,9 @@
    browser's own count of bytes sent. A chip can be taken off before sending (DELETE /api/attachments/upload). The
    message carries only the upload ids; the engine refuses one that is too big in its own words, shown on the chip.
    A folder comes as its files, each named "folder/inside/file", rather than as a zip: every file stays readable by the
-   model and previewable here, and nothing has to be packed on this computer first. */
+   model and previewable here, and nothing has to be packed on this computer first.
+   RES-701: each message box has its own tray of files: "main" (the conversation's box) and "home19" (the Home panel's,
+   shell/home.js). A paste or a drop goes to the box it lands in; moveFiles hands a tray's chips to another box. */
 
 import { $, esc, applyCss } from "../core/dom.js";
 import { ic, toast } from "../core/ui.js";
@@ -20,7 +22,9 @@ export const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 /** Pasted text longer than this becomes a text file, as in Claude, instead of flooding the box. */
 export const PASTE_CHARS = 4000;
 
-const A = { files: [], next: 1 };
+const A = { trays: { main: [], home19: [] }, next: 1 };
+const tray = (name = "main") => (A.trays[name] ??= []);
+const HOLDERS = { main: "#attached", home19: "#home19-attached" };
 const sizeOf = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const ending = (name) => (/\.([a-z0-9]{1,6})$/i.exec(name)?.[1] ?? "").toLowerCase();
@@ -37,9 +41,10 @@ function kindOf(file) {
 }
 
 /** Whatever is waiting to go with the next message, as chips; drawn in #attached above the box. */
-export function attachedChips() {
-  if (!A.files.length) return "";
-  return `<div class="att-row">${A.files.map(chip).join("")}</div>`;
+export function attachedChips(name = "main") {
+  const files = tray(name);
+  if (!files.length) return "";
+  return `<div class="att-row">${files.map(chip).join("")}</div>`;
 }
 function look(f) {
   const p = f.preview;
@@ -63,26 +68,28 @@ function chip(f) {
     + `<button class="att-x" type="button" data-act="unattach" data-k="${f.key}" aria-label="${t("window.chat.media.remove", { name: esc(f.name) })}">${ic("x", "s")}</button>${bar}</div>`;
 }
 function redraw() {
-  const box = $("#attached");
-  if (!box) return;
-  box.innerHTML = attachedChips();
-  applyCss(box);
+  for (const [name, holder] of Object.entries(HOLDERS)) {
+    const box = $(holder);
+    if (!box) continue;
+    box.innerHTML = attachedChips(name);
+    applyCss(box);
+  }
   /* Send turns copper once there is something to send: words, or files (a message may be only files). */
   const sendButton = $("#send");
   if (sendButton?.type === "submit") sendButton.classList.toggle("ready", !!$("#prompt")?.value.trim() || hasFiles());
 }
 
 /** Adds files (a FileList or an array of { file, name }) and starts sending each one at once. */
-export function addFiles(list) {
+export function addFiles(list, into = "main") {
   const incoming = [...list].map((one) => (one instanceof File ? { file: one, name: one.name } : one));
-  const room = MAX_FILES - A.files.length;
+  const room = MAX_FILES - tray(into).length;
   if (incoming.length > room) toast(t("window.chat.plus.left-out", { files: MAX_FILES, n: incoming.length - Math.max(0, room) }));
-  for (const { file, name } of incoming.slice(0, Math.max(0, room))) start(file, name);
+  for (const { file, name } of incoming.slice(0, Math.max(0, room))) start(file, name, into);
   redraw();
 }
-function start(file, name) {
+function start(file, name, into) {
   const f = { key: String(A.next++), name: name || file.name || "file", size: file.size, kind: kindOf(file), state: "sending", pct: 0, preview: {}, upload: null, error: "", file };
-  A.files.push(f);
+  tray(into).push(f);
   describe(f, file).then(redraw, () => {});
   if (file.size > MAX_FILE_BYTES) return fail(f, t("window.chat.plus.too-big", { name: f.name, size: sizeOf(MAX_FILE_BYTES) }));
   send(f);
@@ -101,7 +108,7 @@ function send(f) {
 function fail(f, why) { f.state = "failed"; f.error = why; redraw(); }
 /* Only the one chip's bar and words move while a file is sent; the rest of the row is left alone. */
 function paintProgress(f) {
-  const node = $(`#attached [data-k="${f.key}"]`);
+  const node = $(`.att[data-k="${f.key}"]`);
   if (!node) return;
   const holder = document.createElement("div");
   holder.innerHTML = chip(f);
@@ -149,9 +156,9 @@ async function pdfPages(file) {
 
 /** Takes a chip off: stops its sending, and has the engine drop what already arrived. */
 export function removeFile(key) {
-  const at = A.files.findIndex((f) => f.key === key);
-  if (at < 0) return;
-  const [f] = A.files.splice(at, 1);
+  const files = Object.values(A.trays).find((list) => list.some((f) => f.key === key));
+  if (!files) return;
+  const [f] = files.splice(files.findIndex((x) => x.key === key), 1);
   f.abort?.();
   if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
   if (f.upload) api(`attachments/upload?id=${encodeURIComponent(f.upload)}`, undefined, "DELETE").catch(() => {});
@@ -161,19 +168,20 @@ export function removeFile(key) {
 /* A chip whose file could not reach the engine (it was away) keeps its file, and is sent ahead again with the message. */
 const retryable = (f) => f.state === "failed" && f.offline && !!f.file;
 /** Whether anything is waiting to go (so a message can be only files). */
-export const hasFiles = () => A.files.some((f) => f.state !== "failed" || retryable(f));
+export const hasFiles = (name = "main") => tray(name).some((f) => f.state !== "failed" || retryable(f));
 
 /** The upload ids for the next message, once every file has finished sending. The chips stay until it is sent. */
-export async function readyUploads() {
-  for (const f of A.files) if (retryable(f)) send(f);
-  await Promise.all(A.files.filter((f) => f.state === "sending").map((f) => f.done));
-  return A.files.filter((f) => f.state === "ready" && f.upload).map((f) => f.upload);
+export async function readyUploads(name = "main") {
+  const files = tray(name);
+  for (const f of files) if (retryable(f)) send(f);
+  await Promise.all(files.filter((f) => f.state === "sending").map((f) => f.done));
+  return files.filter((f) => f.state === "ready" && f.upload).map((f) => f.upload);
 }
 /** The message went (POST /api/run answered): its chips go with it, and a file that could not be sent is named. */
-export function filesSent() {
-  const failed = A.files.filter((f) => f.state === "failed");
-  for (const f of A.files) if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
-  A.files = [];
+export function filesSent(name = "main") {
+  const failed = tray(name).filter((f) => f.state === "failed");
+  for (const f of tray(name)) if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
+  A.trays[name] = [];
   if (failed.length) toast(failed.map((f) => f.error).join(" "));
   redraw();
 }
@@ -182,7 +190,7 @@ export function filesSent() {
  * memory, src/attachments.ts), so each chip holding its file is sent ahead again, the earlier copy taken off.
  */
 export async function resendFiles() {
-  for (const f of A.files) {
+  for (const f of tray()) {
     if (!f.file || !(f.state === "ready" || f.offline)) continue;
     if (f.upload) api(`attachments/upload?id=${encodeURIComponent(f.upload)}`, undefined, "DELETE").catch(() => {});
     send(f);
@@ -191,20 +199,31 @@ export async function resendFiles() {
   await readyUploads();
 }
 
+/** Hands every chip of tray `from` to tray `to` (the Home panel opened as the page keeps its files). */
+export function moveFiles(from, to) {
+  if (from === to || !tray(from).length) return;
+  A.trays[to] = [...tray(to), ...tray(from)].slice(0, MAX_FILES);
+  A.trays[from] = [];
+  redraw();
+}
+
 /* ---------- paste and drop ---------- */
+/* The box a paste or a drop is for: the Home panel's when it lands in the panel, else the conversation's. */
+const trayAt = (el) => (el?.closest?.("#home19") ? "home19" : "main");
 function onPaste(e) {
-  if (e.target?.id !== "prompt") return;
+  if (e.target?.id !== "prompt" && e.target?.id !== "home19-prompt") return;
+  const into = trayAt(e.target);
   const data = e.clipboardData;
   const files = [...(data?.files ?? [])];
   if (files.length) {
     e.preventDefault();
-    addFiles(files.map((file, i) => ({ file, name: file.name && file.name !== "image.png" ? file.name : pastedName(file, i) })));
+    addFiles(files.map((file, i) => ({ file, name: file.name && file.name !== "image.png" ? file.name : pastedName(file, i) })), into);
     return;
   }
   const text = data?.getData("text/plain") ?? "";
   if (text.length > PASTE_CHARS) {
     e.preventDefault();
-    addFiles([{ file: new File([text], "pasted.txt", { type: "text/plain" }), name: `${t("window.chat.plus.pasted")}.txt` }]);
+    addFiles([{ file: new File([text], "pasted.txt", { type: "text/plain" }), name: `${t("window.chat.plus.pasted")}.txt` }], into);
     return;
   }
   /* Files copied in Explorer or Finder are not handed to a page; the desktop app reads the list itself and sends them. */
@@ -212,8 +231,8 @@ function onPaste(e) {
     /* The app answers the files it sent ahead, and the engine's own words when one was refused. */
     window.branchDesktop.clipboardFiles().then((answer) => {
       for (const view of answer?.sent ?? []) {
-        if (A.files.length >= MAX_FILES) break;
-        A.files.push({ key: String(A.next++), name: view.name, size: view.bytes, kind: { picture: "image", sound: "audio", document: "text" }[view.kind] ?? view.kind, state: "ready", pct: 100, preview: {}, upload: view.upload, error: "" });
+        if (tray(into).length >= MAX_FILES) break;
+        tray(into).push({ key: String(A.next++), name: view.name, size: view.bytes, kind: { picture: "image", sound: "audio", document: "text" }[view.kind] ?? view.kind, state: "ready", pct: 100, preview: {}, upload: view.upload, error: "" });
       }
       redraw();
       if (answer?.error) toast(answer.error);
@@ -223,25 +242,27 @@ function onPaste(e) {
 const pastedName = (file, i) => `${t("window.chat.plus.pasted")}${i ? ` ${i + 1}` : ""}.${(file.type.split("/")[1] || "bin").replace("jpeg", "jpg")}`;
 
 const carriesFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
-const dropZone = (e) => e.target?.closest?.("#conversation, .dock, .composer, .chat-empty, main");
+const dropZone = (e) => e.target?.closest?.("#conversation, .dock, .composer, .chat-empty, main, #home19");
+const boxAt = (el) => (trayAt(el) === "home19" ? $("#home19-form") : $("#composer"));
 function onDragOver(e) {
   if (!carriesFiles(e) || !dropZone(e)) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = "copy";
-  $("#composer")?.classList.add("drop-on");
+  boxAt(e.target)?.classList.add("drop-on");
 }
 function onDragLeave(e) {
-  if (!e.relatedTarget || !dropZone({ target: e.relatedTarget })) $("#composer")?.classList.remove("drop-on");
+  if (!e.relatedTarget || !dropZone({ target: e.relatedTarget })) for (const box of [$("#composer"), $("#home19-form")]) box?.classList.remove("drop-on");
 }
 async function onDrop(e) {
   if (!carriesFiles(e) || !dropZone(e)) return;
   e.preventDefault();
-  $("#composer")?.classList.remove("drop-on");
+  const into = trayAt(e.target);
+  for (const box of [$("#composer"), $("#home19-form")]) box?.classList.remove("drop-on");
   const entries = [...(e.dataTransfer.items ?? [])].map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
-  if (!entries.length) { addFiles(e.dataTransfer.files); return; }
+  if (!entries.length) { addFiles(e.dataTransfer.files, into); return; }
   const found = [];
   for (const entry of entries) await walk(entry, "", found);
-  addFiles(found);
+  addFiles(found, into);
 }
 /* A dropped folder, walked for its files; each keeps the folder's layout in its name. Stops once there are enough. */
 async function walk(entry, under, found) {
@@ -261,10 +282,10 @@ async function walk(entry, under, found) {
 }
 
 /** Picks files, or a whole folder, with the system's own picker. */
-export function pickFiles(folder = false) {
+export function pickFiles(folder = false, into = "main") {
   const input = Object.assign(document.createElement("input"), { type: "file", multiple: true });
   if (folder) input.webkitdirectory = true;
-  input.addEventListener("change", () => addFiles([...input.files].map((file) => ({ file, name: file.webkitRelativePath || file.name }))));
+  input.addEventListener("change", () => addFiles([...input.files].map((file) => ({ file, name: file.webkitRelativePath || file.name })), into));
   input.click();
 }
 

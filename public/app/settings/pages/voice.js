@@ -21,7 +21,7 @@ import { fact15 } from "../rows15.js";
 import { t } from "../../../i18n.js";
 import { calls17d } from "../../chat/calls17d.js"; // pass 17 part D §2 (greyed)
 
-const V = { settings: null, comfort: null, dictation: null, wake: null, voices: [], brief: null };
+const V = { settings: null, comfort: null, dictation: null, dictationHow: "", wake: null, voices: [], brief: null };
 
 async function loadVoice() {
   /* Q261: the speech settings, the push-to-talk key and the voices are the owner's; a household person reads only
@@ -43,6 +43,7 @@ async function loadVoice() {
     V.settings = settings;
     V.comfort = comfort.values?.voice ?? null;
     V.dictation = dictation.settings ?? null;
+    V.dictationHow = dictation.engine?.how ?? ""; // RES-709: what the microphone button would really use here
     V.wake = wake.mode ?? wake.settings?.mode ?? null;
     V.brief = personal?.modes?.["spoken-brief"] ?? null;
     V.voices = [...new Set([...(voices.windows ?? []), ...(voices.system ?? [])].filter((n) => typeof n === "string"))];
@@ -52,7 +53,7 @@ async function loadVoice() {
 
 /* Each save sends only the part it changes; the engine merges it and answers what is now in force. */
 async function saveDictation(part) {
-  try { V.dictation = (await api("voice/dictation", part)).settings; } catch (error) { toast(error.message); }
+  try { const r = await api("voice/dictation", part); V.dictation = r.settings; V.dictationHow = r.state?.engine?.how ?? V.dictationHow; } catch (error) { toast(error.message); }
   render();
 }
 async function saveWake(mode) {
@@ -104,7 +105,7 @@ function speakingBack() {
   const voices = [...V.voices.map((n) => [n, n, reads && s.voiceId === n]), ["off", t("accounts.switch.off"), !!V.settings && !reads]];
   const dict = !!V.dictation && V.dictation.mode !== "off";
   return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2><div class="ctl"><b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([v, l, p]) => `<button type="button" aria-pressed="${p}" data-act="v-voice" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small></div>
-    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), t("window.settings.voice.the-microphone-button-turns-speech-into"), dict)}</div>`;
+    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), [t("window.settings.voice.the-microphone-button-turns-speech-into"), V.dictationHow].filter(Boolean).join(" "), dict)}</div>`;
 }
 
 function listeningMore() {

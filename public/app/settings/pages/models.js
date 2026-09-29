@@ -5,13 +5,13 @@
    (flows/localpick.js): what Ollama and LM Studio have, the engine's pick for this hardware, its three sizes, and one
    click that installs, downloads with progress, connects and selects. */
 import { esc, renderNow } from "../../core/dom.js";
+import { gsel } from "../../core/gsel.js";
 import { level, E, ownerHere, refresh } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
-import { gsel } from "../../core/gsel.js";
 import { ctl } from "../parts.js";
 import { A, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { localPicker, freshPick, initLocalPick } from "../../flows/localpick.js";
@@ -23,12 +23,40 @@ import { decisions17d, initDecisions17d, loadDecisions17d } from "../decisions17
 const TABS = [["connections", "Connections"], ["defaults", "Defaults"], ["local", "On this computer"], ["second", "Second opinion"], ["media", "Media"]];
 let tab = "connections";
 
+/* QA 2026-09-28: the model Codex answers with (GET/POST /api/codex-models, src/codex-models.ts), named on every call so
+   the owner's own Codex settings never decide it. The list is the models Codex takes with this sign-in, most capable
+   first; "The best it takes" follows it as it changes. Check asks Codex now, one tiny request per model it takes;
+   a new Codex version is checked by itself. Saved at once. */
+let codex = null;
+async function loadCodex() {
+  if (!ownerHere()) { codex = null; renderNow(); return; }
+  try { codex = await api("codex-models"); } catch { codex = null; }
+  renderNow();
+}
+function codexRow() {
+  if (!codex) return "";
+  const title = t("window.settings.models.codex-model"), cur = codex.chosen ?? "";
+  const options = [["", t("window.settings.models.codex-best", { model: codex.offered[0] ?? codex.inUse })], ...codex.offered.map((m) => [m, m])];
+  const checked = codex.checkedAt ? t("window.settings.models.codex-checked", { when: new Date(codex.checkedAt).toLocaleString(), version: codex.version ?? "" }) : t("window.settings.models.codex-unchecked");
+  const select = ownerHere() ? gsel({ id: "m-codex", label: title, options, value: cur }) : "";
+  return `<div class="ctl codex-model"><b>${esc(title)}</b><span class="right">${select}<button class="btn sm ghost" type="button" data-act="m-codex-check" ${ownerOnly()}>${t("window.settings.models.codex-check")}</button></span><small>${esc(checked)}</small></div>`;
+}
+async function setCodexModel(el) {
+  try { codex = await api("codex-models", { chosen: el.value || null }); } catch (error) { toast(error.message); }
+  renderNow();
+}
+async function checkCodex(el) {
+  el.disabled = true;
+  try { codex = await api("codex-models/check", {}); if (codex.note) toast(codex.note); } catch (error) { toast(error.message); }
+  renderNow();
+}
+
 /* QA retest 2026-09-28 pass 2: "Answers first" and "Next in line" are said only of the list the next answer comes from
    (GET /api/accounts pools[].answering, #748); a Claude Code list said "Answers first" while qwen on this computer answered. */
 function group(p) {
   const n = p.accounts.length;
   const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, p.name ?? p.pool))}</small></span>${a.ready === true && p.answering === true ? p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
-  return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}
+  return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}${p.pool === "cli-codex" ? codexRow() : ""}
     <button class="add-row" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${ownerOnly()}>${ic("plus", "s")}${n ? t("window.settings.models.add-another-value-account", { value: esc(p.name ?? p.pool) }) : t("window.settings.models.sign-in-to-value", { value: esc(p.name ?? p.pool) })}</button></div>`;
 }
 
@@ -248,6 +276,10 @@ export function init() {
   on("m-orlist", () => { OR.open = true; if (OR.list) renderNow(); else loadCompanies(); });
   on("m-orco", (el) => toggleCompany(el.dataset.v));
   on("m-def", (el) => setDefault(el));
+  on("m-codex-check", (el) => checkCodex(el));
+  document.addEventListener("change", (e) => { if (e.target.id === "m-codex") setCodexModel(e.target); });
+  markLive(["m-codex-check", "sw:m-codex"]);
+  loadCodex();
   on("m-debate-rounds", (el) => setSecond({ debateExchanges: Number(el.dataset.v) }));
   on("m-img", (el) => setPictureModel(el.dataset.v));
   on("m-vid-svc", (el) => setVideoService(el.dataset.v));
@@ -255,9 +287,9 @@ export function init() {
   markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "m-orco", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
-export function load() { loadAccounts(); loadKnobs(); loadMore(); loadDecisions17d(); return freshPick(); }
+export function load() { loadAccounts(); loadKnobs(); loadMore(); loadCodex(); loadDecisions17d(); return freshPick(); }
 
-export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
+export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, "m-codex-check": true, "sw:m-codex": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
   "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "sw:m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
 
 /* Q002: the engine's other settings these rows keep, each the owner's: the R17-E cards (GET /api/model-savings: the
