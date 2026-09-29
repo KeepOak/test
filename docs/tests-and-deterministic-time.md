@@ -32,6 +32,13 @@ moves `mac/cross-platform` only to a commit the whole suite passed. The download
 for a release tag or by hand (`package.yml`, `mobile.yml`), and release publication still requires the exact
 commit's `Checks` success.
 
+At most `prSlots` pull-request runs (`tests/test-impact.json`) hold runners at once, oldest first
+(`scripts/ci-queue.mjs`). A run that must wait says "Waiting for a CI slot, position k of m" in its `plan` job,
+labels its pull request `ci-waiting` and cancels itself: it is waiting, not red. Every run that finishes, a push to
+`redesign/window` included, starts the oldest waiting pull request again. A pull request whose newest run for its
+head was cancelled (held, or parked by hand) is waiting too; drafts and pull requests labelled `hold` are skipped.
+Pushes are never held. Do not rerun a cancelled run by hand: the queue does it.
+
 Shared hosted-runner queue time is not controlled by repository code. Never run fork pull-request code on a personal
 NAS or runner with vault, LAN, or signing-secret access.
 
