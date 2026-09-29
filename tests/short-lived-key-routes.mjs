@@ -490,6 +490,7 @@ export const ROUTES = {
   "/api/trunks/:id/resume": "owner POST",
   // P17-D §9: the computers a Trunk may use and how many at once; reading names the owner's computers.
   "/api/trunks/:id/computers": "owner GET,POST",
+  "/api/trunks/:id/secrets": "owner GET,POST", // RES-260: a Trunk's own secrets, by name
   "/api/trunks/:id/default": "owner POST",
   "/api/trunks/:id/files": "other GET,POST", // personal files; scripts cannot read or change them, people only their own
   "/api/trunks/pause-all": "owner POST",
@@ -697,6 +698,8 @@ export const ROUTES = {
   "/api/vault-autofill/settings": "secret-read",
   "/api/knobs": "owner POST", // R17-S-B
   "/api/knobs/launch-file": "owner POST", // R17-S-B
+  "/api/miniapp/phone-access": "owner POST", // Settings › Chat apps: turn phone access through Tailscale on or off (window only)
+  "/api/miniapp/telegram/": "prefix", // the Mini App door's own API (src/miniapp/door.ts)
   "/api/model-savings": "owner POST", // R17-E
   "/api/model-savings/rounds": "look", // R17-E
   "/api/model-savings/companies": "owner POST", // OpenRouter picks › Only ones I list: asks OpenRouter for its companies

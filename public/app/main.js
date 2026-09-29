@@ -19,6 +19,7 @@ import { forgetChips } from "./chat/chips.js";
 import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
 import { splash, splashDone } from "./shell/inperson.js";
+import { initNotices } from "./shell/notices.js";
 import { initLanguage, t } from "../i18n.js";
 import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
 
@@ -170,6 +171,7 @@ async function boot() {
   listen();
   listenTips();
   initShell();
+  initNotices(); // UI-202: what the window saw that earns an achievement (shell/notices.js)
   initLock();
   onRender(drawShell);
   onRender(drawMain);
