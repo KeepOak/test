@@ -170,12 +170,13 @@ test("generation cancellation and the provider's own deadline close an active up
 
 test("provider-audit: a reply that keeps streaming past the idle deadline is not stopped; only the hard cap ends it", async (t) => {
   // Before, one deadline covered the whole reply (180 s in the product), so a long Opus reply was cut off mid-stream.
-  // Here the idle deadline is 1.5 s and the reply streams for about 3.6 s, more than twice over it.
-  const long = await fixture(t, { pace: 300, options: { timeoutMs: 1500 } });
+  // Here the idle deadline is 2.5 s (room for a busy machine to start the program) and the reply streams for about
+  // 6 s, more than twice over it.
+  const long = await fixture(t, { pace: 500, options: { timeoutMs: 2500 } });
   const started = Date.now(), answer = await scope(() => long.provider.complete(request()));
-  assert.ok(Date.now() - started > 3000, "the reply streamed for longer than the idle deadline");
+  assert.ok(Date.now() - started > 5000, "the reply streamed for longer than the idle deadline");
   assert.equal(answer.content, "Ready☘");
-  const capped = await fixture(t, { pace: 300, options: { timeoutMs: 1500, maxDurationMs: 2000 } });
+  const capped = await fixture(t, { pace: 500, options: { timeoutMs: 2500, maxDurationMs: 3500 } });
   await assert.rejects(scope(() => capped.provider.complete(request())), /longest allowed time/);
   // A reply that goes silent is still stopped by the idle deadline.
   const silent = await fixture(t, { hold: true, options: { timeoutMs: 1000 } });
