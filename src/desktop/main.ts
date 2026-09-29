@@ -501,6 +501,9 @@ async function start(): Promise<void> {
       ...(brokerLive ? { live: brokerLive.hooks } : {}),
     }, gate, client);
     window?.once("closed", () => brokerLive?.close());
+    // selfdev: joined to the background engine, the window is up; a Beta update waiting to see this keeps the new
+    // version. Without it, a Beta update with the background engine on was put back after 90 s every time.
+    void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
     return;
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
