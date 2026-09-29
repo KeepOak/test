@@ -11,7 +11,9 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBranch } from "../dist/index.js";
+import { z } from "zod";
+import { createBranch, savePolicy } from "../dist/index.js";
+import { startServer } from "../dist/server.js";
 import { BackgroundProcesses } from "../dist/processes.js";
 import { ContractBook } from "../dist/self-development-contract.js";
 import { wslProbe, wslReadiness } from "../dist/integrations/wsl-held.js";
@@ -62,6 +64,30 @@ test("a program held to one folder is walled by the shell before it starts, runs
   assert.equal(cleaned, 1, "its wall and scratch folder go once it ends");
   const event = app.store.events(context.runId).find((one) => one.kind === "process.started");
   assert.equal(event.data.heldTo, context.writesConfinedTo);
+});
+
+test("the owner's selected Full Access reaches a program left running as it reaches a command, and nothing else does", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-held-bg-full-"));
+  const call = { id: "bg", name: "process.start", arguments: JSON.stringify({ program: "npm", args: ["install"] }) };
+  let turn = 0;
+  const provider = { name: "scripted", async complete() { return ++turn % 2 ? { content: "", toolCalls: [call] } : { content: "Done.", toolCalls: [] }; } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  const seen = [];
+  app.registry.unregister("process.start");
+  app.registry.register({ name: "process.start", permission: "process.manage", description: "stand-in", parameters: z.object({}).passthrough(),
+    execute: async (_input, context) => { seen.push(context.ownerFullAccess); return { id: "x", status: "running" }; } });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const run = async (body) => (await fetch(new URL("/api/run", server.url), { method: "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+  const full = await run({ prompt: "Leave it running", mode: "full" });
+  assert.equal(full.status, "completed", full.output);
+  assert.deepEqual(seen, [true]);
+  savePolicy(app.store, app.runtime.owner, { preset: "off", rules: [], unmatchedCommands: "allow" });
+  app.store.save("settings", app.runtime.owner, "conversation-mode-settings", { newConversation: "follow" });
+  const loose = await run({ prompt: "Leave it running" });
+  assert.equal(loose.status, "completed", loose.output);
+  assert.deepEqual(seen, [true, undefined], "an owner's loose setting is not a selected Full Access conversation");
 });
 
 /** Windows holds a command inside WSL; macOS and Linux behind their own wall. Either must be there for the real run. */

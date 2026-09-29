@@ -5059,7 +5059,8 @@ ${run.output.slice(0, 6000)}`;
     // Q250: a model's own call is always held to read-before-edit, whatever context it was started from.
     const scoped: ToolContext = { ...unwalled, askable: true, readFirstExempt: false, signal: AbortSignal.any([context.signal, timeout]),
       // selfdev: the owner's selected Full Access reaches a held command too: the network, never wider writes.
-      ...(call.name === "shell.execute" && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
+      // SELF-304: and a held program left running (process.start), walled the same way.
+      ...((call.name === "shell.execute" || call.name === "process.start") && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
       ...(gated.sandbox ? { sandbox: gated.sandbox } : {}),
       ...(gated.backend ? { sandboxBackend: gated.backend } : {}),
       ...(gated.paths?.length ? { sandboxPaths: gated.paths } : {}),
