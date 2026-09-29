@@ -29,11 +29,11 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
 import { startServer, supersededAskNote } from "../dist/server.js";
 
-const allowedNote = /The call you asked about did not run/;
+const allowedNote = /Do not make that call again/; // QA R1: the engine ran the approved call itself
 const repliedNote = /their answer is their newest message/;
 const system = (request) => String(request.messages[0]?.content ?? "");
 
-/** Writes the file a message names; after a yes, writes it again (or, told to, a different one); asks where a trip goes. */
+/** Writes the file a message names; never makes a call again after a yes (told to, it then asks for a different one); asks where a trip goes. */
 function model(options = {}) {
   let file = "";
   return { name: "scripted", async complete(request) {
@@ -44,7 +44,10 @@ function model(options = {}) {
     const write = (path) => ({ content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path, content: "hello" }) }] });
     if (last?.role === "user" && named) return write(file);
     if (last?.role === "tool" && /Permission denied/.test(text)) return { content: "Done.", toolCalls: [] };
-    if (last?.role === "tool" && !/"ok":true/.test(text) && allowedNote.test(system(request))) return write(options.swap ?? file);
+    if (last?.role === "tool" && /"ok":true/.test(text) && options.swap && !options.swapped && allowedNote.test(system(request))) {
+      options.swapped = true;
+      return write(options.swap);
+    }
     if (last?.role === "user" && text === "plan my trip")
       return { content: "", toolCalls: [{ id: `a${Math.random()}`, name: "user.ask", arguments: JSON.stringify({ question: "Where would you like to go?" }) }] };
     if (last?.role === "user" && repliedNote.test(system(request))) return { content: `Booked: ${text}.`, toolCalls: [] };
@@ -102,6 +105,7 @@ test("the yes holds for the exact request only: a changed request is asked about
     "the same task stops again on the changed request");
   assert.notEqual(f.app.runtime.approvals.questionFor(first.sessionId).fingerprint, asked.fingerprint);
   assert.equal(existsSync(join(f.root, "workspace", "other.txt")), false, "the changed request did not run");
+  assert.ok(existsSync(join(f.root, "workspace", "b.txt")), "the approved request did, run by the engine");
   assert.deepEqual(f.runsIn(first.sessionId).map((run) => run.id), [first.id]);
   const wrong = await f.call("policy/approve", { sessionId: first.sessionId, decision: "allow", remember: "never", fingerprint: asked.fingerprint, carryOn: true });
   assert.equal(wrong.body.task, undefined, "the old fingerprint answers nothing");

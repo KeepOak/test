@@ -926,6 +926,9 @@ export const ROUTES = {
   "/api/pricing": "owner POST",
   "/api/privacy": "owner POST",
   "/api/processes": "task POST",
+  // workbench: what a conversation still has going (read), and cancelling one of its wake-ups: the owner's alone, never a short-lived key's.
+  "/api/open-work": "look",
+  "/api/open-work/wakeups/[0-9a-f-]{36}": "owner DELETE",
   "/api/profiles": "owner POST",
   "/api/profiles/:id/remove": "owner POST",
   "/api/profiles/:id/role": "owner POST",
@@ -1266,6 +1269,7 @@ export const ROUTES = {
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
   "/api/usage/glance": "look",
+  "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",
   "/api/usage/metering": "owner POST",

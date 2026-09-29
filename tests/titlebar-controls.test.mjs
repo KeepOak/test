@@ -25,14 +25,15 @@ const withOverlay = (controls) => (page) => page.addInitScript(({ width, height 
   Object.defineProperty(Navigator.prototype, "windowControlsOverlay", { configurable: true, get: () => overlay });
 }, controls);
 
-/* Every visible button, field, picture or run of words in the window that reaches into the controls' corner. */
+/* Every visible button, field, picture or run of words in the window that reaches into the controls' corner. A box
+   with tabindex -1 (the conversation, focusable by a click only) is a container, not a control. */
 function hitsUnder({ width, height }) {
   const left = innerWidth - width, hits = [];
   for (const el of document.querySelectorAll("body *")) {
     if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
     const box = el.getBoundingClientRect(), style = getComputedStyle(el);
     if (!box.width || !box.height || style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
-    const leaf = el.matches("button,a,input,select,textarea,[data-act],[tabindex],svg,img,video,canvas")
+    const leaf = el.matches("button,a,input,select,textarea,[data-act],[tabindex]:not([tabindex='-1']),svg,img,video,canvas")
       || [...el.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim());
     if (leaf && box.right > left + 0.5 && box.left < innerWidth && box.top < height && box.bottom > 0)
       hits.push(`${el.tagName.toLowerCase()}[${el.dataset.act ?? el.className?.baseVal ?? el.className}] ${Math.round(box.left)}–${Math.round(box.right)} × ${Math.round(box.top)}–${Math.round(box.bottom)}`);
