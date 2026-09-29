@@ -1261,7 +1261,7 @@ export class ChannelRouter {
   private async carryTurn(message: InboundMessage, runId: string): Promise<Outcome> {
     const key = chatKey(message);
     const turn: ChatTurnState = { phase: "running", runId, startedAt: Date.now(), passed: 0, dropped: false,
-      messages: [message], notes: [], waiters: [], live: null, reply: null };
+      messages: [message], notes: [], waiters: [], live: null, reply: null, quote: this.quoteStateFor(message, () => turn.messages) };
     turn.live = this.liveFor(message, () => turn.runId);
     turn.reply = this.replyFor(message);
     this.turns.set(key, turn);
