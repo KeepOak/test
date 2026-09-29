@@ -31,6 +31,8 @@ export const roomRules = ["mention", "lead", "all", "tag", "together"] as const;
 export type RoomRule = (typeof roomRules)[number];
 export interface RoomPlanOptions {
   rule?: RoomRule;
+  /** The member picked for a message that names nobody (RoomEvent.picked). */
+  picked?: string | null | undefined;
   /** Under "lead", "tag" and "together": the member who answers first. */
   lead?: string | undefined;
 }
@@ -69,6 +71,13 @@ export interface RoomEvent {
   byKey?: { keyId?: string; sessionId?: string };
   /** trunk-rooms-live: for "user", the room's rule when it was sent, which the discussion keeps. */
   rule?: RoomRule;
+  /**
+   * "Send each message to the right Trunk" (src/decision-models.ts pickTrunk): for "user" under "mention" or "tag" that
+   * names nobody, the member whose job fits it, who answers alone; null when it was asked and nobody was picked, so the
+   * rule answers as usual. Kept in the log, so a replay never asks again.
+   */
+  picked?: string | null;
+  pickedWhy?: string;
   /** trunk-rooms-live: under "together", the one reply the owner reads (the plan and the parts fold away). */
   final?: boolean;
 }
@@ -129,6 +138,27 @@ export function resolveMentions(texts: readonly string[], members: readonly Room
     }
   if (everyone || (defaultAll && named.size === 0)) return [...members];
   return members.filter((m) => named.has(m.handle.toLowerCase()));
+}
+
+/** True when a text calls everyone with `@all` or `@everyone`. */
+const everyoneCalled = (text: string): boolean =>
+  [...text.matchAll(mention)].some((m) => ["all", "everyone"].includes(m[1]!.toLowerCase().replace(/[.:]+$/, "")));
+
+/**
+ * "Send each message to the right Trunk": the owner's message a pick should be asked for, or undefined. Only under
+ * "mention" and "tag", only a message that names nobody (no @name, no @all), only before anyone answered it, only once
+ * (a message already asked has `picked`), and only with two or more Trunks here to choose between. `seats` is everyone
+ * seated, for reading tags; `candidates` the Trunks that may be picked (not paused).
+ */
+export function wantsPick(events: readonly RoomEvent[], seats: readonly RoomMember[], rule: RoomRule, candidates: readonly RoomMember[] = seats): RoomEvent | undefined {
+  const discussion = pendingDiscussion(events);
+  if (!discussion || discussion.picked !== undefined) return undefined;
+  if (!["mention", "tag"].includes(discussion.rule ?? rule)) return undefined;
+  if (events.some((e) => e.discussion === discussion.seq)) return undefined;
+  const here = candidates.filter((m) => !m.gone && !m.outside);
+  // A tag is read against every seat (a paused Trunk, an outside agent): a message that names any of them names somebody.
+  if (here.length < 2 || everyoneCalled(discussion.text) || resolveMentions([discussion.text], seats, false).length) return undefined;
+  return discussion;
 }
 
 /** True when a text calls for the owner: `@you`, `@owner` or `@user`. */
@@ -253,6 +283,8 @@ function firstResponders(text: string, members: readonly RoomMember[], options: 
   const missing = resolveMentions([text.replace(/@(all|everyone)(?![\w.:-])/gi, "")], members.filter((m) => m.gone), false);
   if (options.rule === "all") return [...here, ...missing];
   const named = [...resolveMentions([text], here, false), ...missing];
+  const chosen = options.picked ? here.find((m) => m.id === options.picked) : undefined;
+  if (chosen && !named.length && !everyoneCalled(text)) return [chosen];
   if (options.rule !== "lead" && options.rule !== "tag") return named.length ? named : resolveMentions([text], here);
   const lead = here.find((m) => m.id === options.lead);
   return named.length ? named : lead ? [lead] : [];
@@ -306,7 +338,7 @@ export function nextRoomTurn(roomName: string, members: readonly RoomMember[], e
   const sender = { ...(discussion.personId ? { personId: discussion.personId } : {}), ...(discussion.byKey ? { byKey: discussion.byKey } : {}), rule };
   if (rule === "together") return together(roomName, members, events, discussion, context, options, { history, done, seenThrough, byOwner, sender });
   for (let round = 0; round < maxRounds; round++) {
-    const responders = (round === 0 ? firstResponders(discussion.text, members, { rule, lead: options.lead })
+    const responders = (round === 0 ? firstResponders(discussion.text, members, { rule, lead: options.lead, picked: discussion.picked })
       : rule === "lead" && round === 1 ? broughtInByLead(spoken, members, options.lead) : [])
       .filter((m) => byOwner || !m.outside); // a2a-rooms: only the owner's message reaches an outside agent
     for (const member of rotate(responders, round)) {

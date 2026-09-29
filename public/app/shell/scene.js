@@ -6,7 +6,7 @@
    counts them when achievements are on). */
 
 import { $, esc, render } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, S, ownerHere, ownName } from "../core/state.js";
 import { api } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
@@ -18,10 +18,13 @@ import { windowRest, onRest } from "../core/sleep.js";
 import { play17 } from "../core/held.js";
 import { say as inWords } from "../core/words.js";
 import { binding, spoken } from "./keys.js";
+import { petLine, hintLine, hintDue } from "./pettalk.js";
+import { popupsOn } from "../flows/guides.js";
+import { DRAWN, drawDrawn, drawnKey, stopDrawn, drawScenery } from "./procbg.js";
 
 const KEY = "branch-scene";
-export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side" };
-export const D = { settings: null, earned: null, asked: false };
+export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side", scenery: true };
+export const D = { settings: null, earned: null, rank: null, asked: false };
 
 /* The painted scenes: the four groves and the night from /art, and the extra scenes in /art/bg. */
 export const SCENES = [["auto", "By the season", ""], ["spring", "Spring grove", "/art/grove-spring.webp"], ["autumn", "Autumn grove", "/art/grove-autumn.webp"],
@@ -45,10 +48,11 @@ export function saveWindow() {
 function loadWindow() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (error) { toast(error.message); }
-  if (["painted", "none", "own"].includes(saved?.bg)) W.bg = saved.bg;
+  if (["painted", "none", "own", ...DRAWN].includes(saved?.bg)) W.bg = saved.bg;
   if (SCENES.some((s) => s[0] === saved?.scene)) W.scene = saved.scene;
-  if (["auto", "spring", "autumn", "winter"].includes(saved?.season)) W.season = saved.season;
-  if (["side", "status"].includes(saved?.petWhere)) W.petWhere = saved.petWhere;
+  if (["auto", "spring", "summer", "autumn", "winter"].includes(saved?.season)) W.season = saved.season;
+  if (["side", "status", "dock"].includes(saved?.petWhere)) W.petWhere = saved.petWhere;
+  if (typeof saved?.scenery === "boolean") W.scenery = saved.scenery;
 }
 
 /* The engine's delight switches, read once the window is let in and after every change. */
@@ -58,7 +62,7 @@ export async function loadDelight() {
   D.asked = true;
   seenState = E.state;
   loadWindow();
-  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; } catch (error) { toast(error.message); }
+  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
   try { await loadOwn(); } catch (error) { toast(error.message); }
 }
 /* Read again after each refresh (the engine's events refresh the window), so a switch changed elsewhere, such as in
@@ -72,7 +76,7 @@ export function followDelight() {
 }
 async function rereadDelight() {
   const before = JSON.stringify(D.settings);
-  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; } catch (error) { toast(error.message); }
+  try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
   if (JSON.stringify(D.settings) !== before) render();
 }
 /* Changes only the parts named; the engine merges each part into what it has. */
@@ -116,9 +120,15 @@ export async function pickPet(v) {
   if (v !== "none" && D.settings?.pets?.on) setTimeout(() => say(t("window.shell.scene.hi-im-name-click-me-for-a", { name: D.settings.pets.name })), 200);
 }
 
-/* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove or your own. */
+/* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove, one of the drawn
+   ones (shell/procbg.js) or your own. */
 export const bgChoice = () => (D.settings?.background?.on ? W.bg : "none");
-export const showsBackground = () => bgChoice() === "painted" || (bgChoice() === "own" && !!OWN.url);
+/* The oak's season on screen: the painted grove by the season, or one season's grove, in daylight (Moonlight shows the
+   night grove). Null when no oak is shown. For the "The oak in …" achievements (shell/notices.js). */
+const OAK_SCENES = ["spring", "autumn", "winter"];
+export const oakSeason = () => (bgChoice() !== "painted" || effMode() === "dark" ? null
+  : W.scene === "auto" ? seasonNow() : OAK_SCENES.includes(W.scene) ? W.scene : null);
+export const showsBackground = () => bgChoice() === "painted" || DRAWN.includes(bgChoice()) || (bgChoice() === "own" && !!OWN.url);
 const calm = () => !!E.state?.preferences?.reduceMotion || matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* Your own file: a video plays muted in a loop (paused while things are kept still); a picture or an animation fills,
@@ -143,17 +153,24 @@ export function drawBackground() {
   let layer = $("#bgLayer");
   const on = showsBackground();
   app.classList.toggle("has-bg", on);
-  if (!on) { layer?.remove(); layerKey = ""; return; }
+  if (!on) { stopDrawn(); layer?.remove(); layerKey = ""; return; }
   if (!layer) { layer = Object.assign(document.createElement("div"), { id: "bgLayer" }); app.prepend(layer); layerKey = ""; }
   layer.style.setProperty("--scrim", (D.settings.background.scrim ?? 60) / 100);
-  const own = bgChoice() === "own", fit = D.settings.background.fit ?? "fill";
-  const key = own ? `own|${OWN.url}|${fit}|${calm()}` : paintFile() + "|" + calm();
+  const own = bgChoice() === "own", fit = D.settings.background.fit ?? "fill", drawn = DRAWN.includes(bgChoice());
+  const key = own ? `own|${OWN.url}|${fit}|${calm()}` : drawn ? drawnKey(bgChoice(), seasonNow(), effMode() === "dark", calm(), app.clientWidth > 700) : paintFile() + "|" + calm();
   if (key === layerKey) return;
   layerKey = key;
+  stopDrawn();
+  if (drawn) { layer.innerHTML = ""; drawDrawn(layer, bgChoice(), { season: seasonNow(), dark: effMode() === "dark", still: calm() }); layer.insertAdjacentHTML("beforeend", '<div class="bg-scrim"></div>'); return; }
   if (own) { layer.innerHTML = '<div class="bg-scrim"></div>'; drawOwn(layer, fit); return; }
   layer.innerHTML = `<div class="paint11 ${calm() ? "" : "drift11"}"></div><div class="bg-scrim"></div>`;
   layer.firstElementChild.style.backgroundImage = `url("${paintFile()}")`;
 }
+
+/* The scenery behind the list (Settings › Appearance › What's shown): a small pixel oak at the list's foot, painted by
+   shell/procbg.js drawScenery once its canvas is drawn. */
+export const sceneryHTML = () => (W.scenery ? '<canvas class="scenery" id="scenery" width="146" height="60" aria-hidden="true"></canvas>' : "");
+export const paintScenery = () => drawScenery($("#scenery"));
 
 /* ---------- the pet ---------- */
 /* Every kind the gallery offers (core/pets.js): a pixel pet on its canvas or a picture pet as its walk loop.
@@ -180,11 +197,13 @@ export function petMood(mood, ms, hop = 0) {
 }
 onRest(() => drawPet());
 
-/* The pet's markup, drawn inside the list's foot or the status bar by whichever region W.petWhere names. */
+/* The pet's markup, drawn in the owner row at the list's foot, the status bar or by the message box (the chat's dock
+   hook, chat/chat.js addDockItem) by whichever region W.petWhere names. */
 export function petHTML(where) {
   if (!petShown() || W.petWhere !== where) return "";
   const p = D.settings.pets, pet = petOf(p.kind), speaking = P.say && Date.now() < P.until;
-  const label = esc(t("window.shell.scene.name-the-kind-click-for-a", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
+  const tips = hintDue({ ...facts(), lastHint: 0 }); // "Click for a tip" only while this rank still gets them
+  const label = esc(t(tips ? "window.shell.scene.name-the-kind-click-for-a" : "window.shell.scene.name-the-kind", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
   const button = `role="button" tabindex="0" aria-label="${label}" data-act="pat"`;
   const body = pet.pixel ? pixelCanvas(pet.kind, `id="pet-cv" ${button}`)
     : `<span class="pet17" ${button}>${media17(pet.still, pet.walk, "pet-vid11 pet12")}</span>`;
@@ -205,6 +224,7 @@ export function drawPet() {
   const box = $(".petbox");
   if (box) placePet(box);
   document.body.classList.toggle("pet-status15", petShown() && W.petWhere === "status");
+  document.body.classList.toggle("pet-dock15", petShown() && W.petWhere === "dock" && S.view === "chat");
   applyMood();
   paintPixels();
 }
@@ -222,14 +242,26 @@ function applyMood() {
   if (v.paused && !v.dataset.off13 && !document.hidden) play17(v).catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
 }
 
-/* What the pet says: a Trunk that needs a yes first, else a tip that is true of this window. */
-function petWords() {
-  const waiting = (E.state?.attention ?? []).find((w) => !w.parentRunId); // a helper's question is not in the Inbox
-  if (waiting) return t("window.shell.scene.who-needs-a-yes-its-in", { who: waiting.who || "Branch" });
-  const key = binding("palette"); // the owner may have moved it, or taken it away (shell/keys.js)
-  const tips = [key ? t("window.shell.scene.find-anything", { key: spoken(key) }) : "", t("window.shell.scene.hover-anything-to-see-what-it")].filter(Boolean);
-  return tips[Math.floor(Date.now() / 60000) % tips.length];
+/* What is happening, for the pet's words (shell/pettalk.js): who waits for a yes (a helper's question is not in the Inbox),
+   Lockdown, whether a model can answer, the work going on, where the owner is, the owner's rank (GET /api/delight rank)
+   and when the last hint was said (kept in this browser, so an hour is an hour across reloads). */
+const HINT_KEY = "branch-pet-hint";
+const lastHint = () => { try { return Number(localStorage.getItem(HINT_KEY)) || 0; } catch { return 0; } };
+const hintSaid = () => { try { localStorage.setItem(HINT_KEY, String(Date.now())); } catch { /* storage refused: the hour is kept only while open */ } P.hintAt = Date.now(); };
+function facts() {
+  const runs = (E.state?.runs ?? []).filter((r) => r.status === "running" && !r.parentRunId);
+  const key = (action) => { const combo = binding(action); return combo ? spoken(combo) : ""; }; // the owner may move a key, or take it away
+  return {
+    waiting: (E.state?.attention ?? []).filter((w) => !w.parentRunId),
+    lockdown: !!document.getElementById("app")?.classList.contains("locked"),
+    noModel: !!E.state?.modelNeeded, // the engine's own "no model yet" (chat/nomodel.js reads the same)
+    running: runs.map((r) => ({ who: ownName(r.sessionId) || E.state?.identity?.name || "" })),
+    view: S.view, owner: ownerHere(),
+    keys: { palette: key("palette"), sideList: key("sideList") },
+    rank: D.rank ?? "Bronze", tipsOn: popupsOn(), lastHint: Math.max(lastHint(), P.hintAt ?? 0), at: Date.now(),
+  };
 }
+const words = (key, values) => t(key, values);
 export function say(text) {
   P.say = text;
   P.until = Date.now() + 6500;
@@ -250,18 +282,30 @@ export async function noticed(what) {
     if (answer?.kept && what.what === "flag") toldFlags.add(what.flag);
   } catch (error) { toast(error.message); }
 }
+/* A pat: the news of the moment, else a hint when one is due; with nothing to say it only hops. */
 export async function pat() {
-  say(petWords());
+  const line = petLine(facts(), words);
+  if (line) say(line.text);
+  if (line?.kind === "hint") hintSaid();
   await noticed({ what: "pat" });
 }
 
 /* It walks, unless things are kept still or it naps; it speaks up by itself when a Trunk needs you, at most every five
-   minutes. The timer runs only while the pet is shown. */
+   minutes, and with a hint when one is due (at most hourly, and never in its first two minutes on screen). The timer
+   runs only while the pet is shown. */
 let walker = null;
 function syncWalker() {
   const want = petShown() && windowRest() === "awake"; // asleep, it naps where it stands
   if (want && !walker) walker = setInterval(walk, 360);
   else if (!want && walker) { clearInterval(walker); walker = null; }
+}
+function speakUp() {
+  const now = facts();
+  if (Date.now() > P.cool && now.waiting.length) { P.cool = Date.now() + 300000; say(petLine(now, words).text); return; }
+  P.shownAt ??= Date.now();
+  if (Date.now() - P.shownAt < 120000) return;
+  const hint = hintLine(now, words);
+  if (hint) { say(hint.text); hintSaid(); }
 }
 function walk() {
   const box = $(".petbox");
@@ -269,7 +313,7 @@ function walk() {
   applyMood();
   const bubble = $("#pet-say");
   if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;
-  if (Date.now() > P.cool && bubble?.hidden && (E.state?.attention ?? []).some((w) => !w.parentRunId)) { P.cool = Date.now() + 300000; say(petWords()); }
+  if (bubble?.hidden) speakUp();
   if (calm() || P.mood === "sleep") return;
   const max = Math.max(8, (box.parentElement?.clientWidth ?? 120) - 56);
   P.x += P.dir * 6;

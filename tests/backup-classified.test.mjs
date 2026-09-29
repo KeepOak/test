@@ -42,6 +42,8 @@ const notSettings = new Set(["[page]", "crashes", "help.", "installed_skills", "
  */
 const reviewedComputedKeys = new Set([
   "src/a2a-client.ts: recordId",
+  "src/runtime.ts: marked",
+  "src/registry-install.ts: pinKey",
   "src/accounts/settings.ts: sessionKey",
   "src/add-ons/export.ts: this.key",
   "src/add-ons/lists.ts: this.key",
@@ -58,6 +60,8 @@ const reviewedComputedKeys = new Set([
   "src/channels/catch-up.ts: id",
   "src/channels/catch-up.ts: key",
   "src/channels/chat-commands.ts: usageKey",
+  "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
+  "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
   "src/channels/router.ts: key",
   "src/channels/webhook-address.ts: key",
   "src/coding/checklist.ts: key",
@@ -166,6 +170,7 @@ test("every place that works out a settings key in code has been read", () => {
 // NAS eba8bd8: a conversation's waiting line never travels, so a file cannot queue words to run as the owner's next task.
 test("a conversation's waiting line, a plan and a chat's link are never put in place from a file", () => {
   assert.equal(staysOnThisComputer("followups:any"), true);
+  assert.equal(staysOnThisComputer("wakeup:any"), true, "a wake-up's words never arrive from a file either");
   for (const id of ["plan:any", "channel-session:telegram:1", "project:any", "session-model:any", "slack-automations", "models"])
     assert.equal(heldForTheOwner(id) && !staysOnThisComputer(id), true, `${id} waits for the owner`);
 });
@@ -182,11 +187,11 @@ const computedExamples = {
     "channel-session:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",
     "conversation-mode:s", "goal:s", "interop-fleet", "interop-handoff", "knobs-compaction", "learning-more-providers-settings",
     "model-savings-mixtures", "handoffs:x", "openapi-service:w", "profile-role:p", "personal-email-settings", "plan-act:project:p",
-    "plan-act:session:s", "pinned-skill:s", "skill-package:k", "skill-candidate:k:1", "trunks-messages", "trunks-routines",
+    "plan-act:session:s", "pinned-skill:s", "skill-package:k", "registry-key:r", "skill-candidate:k:1", "trunks-messages", "trunks-routines",
     "flowboards-recipe-checks:p", "tool-meaning-search", "people-shares", "policy", "desktop-control", "wake-word",
     "live-dictation", "routing", "model-profiles", "models", "governance", "person-about:owner", "person-picture:owner"],
   travels: ["channel-usage:telegram:1", "delight-achievements", "prompt-library-items", "reflection-cursor:s",
-    "reflection-note:p", "skill-install-log", "tool_catalog_health", "ask-first"],
+    "reflection-note:p", "skill-install-log", "stays-here:s", "tool_catalog_health", "ask-first"],
 };
 const travels = (id) => id in travelsWithBackup || Object.keys(travelsWithBackup).some((key) => key.endsWith(":") && id.startsWith(key));
 

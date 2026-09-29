@@ -80,7 +80,9 @@ export const TrunkSchema = TrunkCreateSchema.extend({
   reach: z.object({
     channels: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
     commands: z.boolean().default(false),
-  }).strict().default({ channels: [], commands: false }),
+    /** RES-253: its commands run behind the system's own wall, held to the workspace with no network. Off by default. */
+    sandboxed: z.boolean().default(false),
+  }).strict().default({ channels: [], commands: false, sandboxed: false }),
   hidden: z.boolean().default(false),
   section: z.string().trim().max(40).default(""),
   pinned: z.boolean().default(false),
@@ -101,6 +103,13 @@ export interface Trunk extends TrunkFields {
   taught: { workflowId: string; name: string; runId: string }[];
   /** The specialist it was brought across from, when it was. */
   fromSpecialist?: string;
+  /** defaulttrunk: brought in from a file (Trunks.importFile), so never the default unless the owner picks it. */
+  fromFile?: boolean;
+  /**
+   * defaulttrunk: made by setup's own "Your first Trunk" step (Trunks.create inside setup's request), so it may become
+   * the default by being oldest. Kept off TrunkSchema so no edit, file or restore can claim it.
+   */
+  fromSetup?: boolean;
   /**
    * eng-trunk-controls: paused by the owner. A paused Trunk starts nothing new (src/trunks/pause.ts).
    * Kept off TrunkSchema so only the pause and resume routes change it, never the generic edit.

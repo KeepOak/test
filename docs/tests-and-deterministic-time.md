@@ -1,35 +1,48 @@
 # Common Rules and Patterns
 
-## Two CI lanes
+## One CI workflow
 
-Every pull request runs two workflows.
-
-`Checks / verify-suite` is the whole suite, in under fifteen minutes. `scripts/run-tests.mjs --lane=<system>`
-runs each test file once, on the system that can run it: Linux runs every file but the desktop app's; Windows
-runs the desktop app's, the Windows helpers, the uninstall and console files and every file with a Windows-only
-test; macOS every file with a macOS-only test. Each lane is split into shares by measured time
-(`tests/shard-weights.json`). Refresh them from a run's timings:
+Every pull request runs one workflow, `Checks`, and one required check, `Checks / verify-suite`.
+`scripts/run-tests.mjs --lane=<system>` runs each test file once, on the system that can run it: Linux runs every
+file but the desktop app's; Windows runs the desktop app's, the Windows helpers, the uninstall and console files and
+every file with a Windows-only test; macOS every file with a macOS-only test. Each lane is split into shares by
+measured time (`tests/shard-weights.json`). Refresh them from a run's timings:
 
 ```sh
 node scripts/test-weights.mjs <run-id>
 ```
 
-`PR Fast Checks / verify-fast` is capped at five minutes. `scripts/select-affected-tests.mjs` reads the exact
-base-to-head diff without shell interpolation and chooses one of three outcomes:
+The `plan` job (`scripts/select-affected-tests.mjs`) decides what a run tests. Every push, the nightly run, a run by
+hand and a pull request into anything but `redesign/window` run the whole suite on every system. A pull request into
+`redesign/window` runs what its change can reach, from the merge ref's own diff:
 
-- `docs-only`: check whitespace and documentation references.
-- `narrow`: build once and run the reviewed, budgeted tests in `tests/test-impact.json`.
-- `full-required`: nothing is selected; the change is left to `verify-suite`.
+- `docs`: documentation only. Whitespace and documentation references are checked; no test file runs.
+- `partial`: tests, test helpers and `public/` only. The changed tests, the tests that use a changed helper or page
+  file (`scripts/test-graph.mjs`: imports, quoted file names, folders listed), every browser test when `public/`
+  changed, the reviewed mappings in `tests/test-impact.json`, and `always`. The Linux shares split that selection;
+  verify-suite and the plan's summary say `PARTIAL`.
+- `full`: anything in `src/`, the build, the workflows, a rename or delete, a file nothing names, or a selection
+  above `partialCeiling` of the Linux lane's time. A static import graph cannot narrow a `src/` change: most test
+  files import `dist/index.js`, which imports nearly all of `src/`.
 
-Unknown product paths, stale mappings, renames, deletions, build or workflow changes, and selected
-tests above the Linux time budget are all `full-required`. The downloads and the phone apps are built only
+Windows and macOS run on a pull request only when it touches their own code (`platforms` in
+`tests/test-impact.json`), a `src/` file their own tests import directly, or their own test files. verify-suite is
+red unless the plan ran and every planned share passed, and on a push it also requires the whole suite, so promote
+moves `mac/cross-platform` only to a commit the whole suite passed. The downloads and the phone apps are built only
 for a release tag or by hand (`package.yml`, `mobile.yml`), and release publication still requires the exact
 commit's `Checks` success.
 
-The five-minute ceiling starts when GitHub assigns a runner. Shared hosted-runner queue time is not
-controlled by repository code and therefore is reported separately rather than promised as part of
-the ceiling. An end-to-end five-minute service objective requires a reserved isolated runner. Never
-run fork pull-request code on a personal NAS or runner with vault, LAN, or signing-secret access.
+At most `prSlots` pull-request runs (`tests/test-impact.json`) hold runners at once, oldest first
+(`scripts/ci-queue.mjs`). A run that must wait says "Waiting for a CI slot, position k of m" in its `plan` job,
+labels its pull request `ci-waiting` and cancels itself: it is waiting, not red. Every run that finishes, a push to
+`redesign/window` included, starts the oldest waiting pull request again. A pull request whose newest run for its
+head was cancelled (held, or parked by hand) is waiting too; drafts and pull requests labelled `hold` are skipped.
+Pushes are never held. Only a rerun the queue itself started goes straight to its slot; a rerun started by a person
+(the Rerun button, or rerunning failed jobs) waits in line like any run. Label a pull request `ci-priority` to put
+it at the front of the line. Do not rerun a cancelled run by hand: the queue does it.
+
+Shared hosted-runner queue time is not controlled by repository code. Never run fork pull-request code on a personal
+NAS or runner with vault, LAN, or signing-secret access.
 
 ## Testing Patterns
 

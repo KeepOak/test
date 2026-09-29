@@ -6,6 +6,7 @@
    A better version is tried, kept or thrown away through POST /api/skill-revisions/try|accept|reject; a suggested skill
    you have switched off is switched on through POST /api/skills/{id}/activate. */
 
+import { setupNeeds } from "../core/setup-needs.js";
 import { esc, renderNow, paint } from "../core/dom.js";
 import { S, E, refresh } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
@@ -21,6 +22,7 @@ import { dashTile, readDash } from "./dashsw.js"; // parity B6: Dashboard in the
 import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./learn17d.js"; // pass 17 part D §3
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
 import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
+import { lockdownOn } from "../chat/approvals.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -71,6 +73,7 @@ const ADD = { mcp: ["tool-add", "Add a server"], skills: ["tool-add", "Add a ski
 
 function trunksTab() {
   const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}</b><small>${esc(tr.title ?? "")}</small>${liveLine18(tr)}</span>
+    <button class="btn sm" type="button" data-act="trunk-default" data-id="${esc(tr.id)}" aria-pressed="${tr.id === E.defaultTrunkId}">${t("look.badge.default")}</button>
     <button class="btn sm" type="button" data-act="edit" data-id="${esc(tr.id)}">${t("prompts.action.edit")}</button>
     <button class="btn ghost sm" type="button" data-act="pausetrunk" data-id="${esc(tr.id)}">${tr.paused ? t("autonomy.resume") : t("autonomy.pause")}</button></div>`).join("");
   /* The jobs in the language in force (flows/trunk.js TEMPLATE_WORDS, the same jobs in the same order); the face keeps the job's own name. */
@@ -232,12 +235,12 @@ function specialistsTab() {
     <div class="pats15" role="radiogroup" aria-label="${t("window.places.customize.how-trunks-work-together")}">${pats}</div></div>${codingAgentsSection()}`;
 }
 
-const FAM_WORDS = { core: "Two minutes to set up", chat: "Text through a webhook" };
+const FAM_WORDS = { chat: "Text through a webhook" };
 function channelGrid() {
   const q = CH.q.trim().toLowerCase();
   const on = new Set(connected.map((c) => c.id ?? c.kind));
   const list = channelSetup.filter((c) => (CH.fam === "all" || c.family === CH.fam) && (!q || [c.name, say(c.name)].some((n) => String(n).toLowerCase().includes(q))));
-  return list.map((c) => `<button type="button" class="ch12 ${on.has(c.id) ? "on12" : ""}" data-act="ch-open" data-v="${esc(c.id)}">${logo(c.id, c.name, 32)}<span><b>${esc(say(c.name))}</b><small>${offlineIn(connected, c.id) ? t("window.p17d.offline-token-revoked") : on.has(c.id) ? t("window.places.customize.connected-reaches-branch") : say(FAM_WORDS[c.family]) ?? t("addons.switch.on")}</small></span>${on.has(c.id) ? `<i class="dot12${offlineIn(connected, c.id) ? " off17d" : ""}"></i>` : ""}</button>`).join("");
+  return list.map((c) => `<button type="button" class="ch12 ${on.has(c.id) ? "on12" : ""}" data-act="ch-open" data-v="${esc(c.id)}">${logo(c.id, c.name, 32)}<span><b>${esc(say(c.name))}</b><small>${offlineIn(connected, c.id) ? t("window.p17d.offline-token-revoked") : on.has(c.id) ? t("window.places.customize.connected-reaches-branch") : setupNeeds(c) ?? say(FAM_WORDS[c.family]) ?? t("addons.switch.on")}</small></span>${on.has(c.id) ? `<i class="dot12${offlineIn(connected, c.id) ? " off17d" : ""}"></i>` : ""}</button>`).join("");
 }
 
 function channelsTab() {
@@ -281,7 +284,7 @@ export function draw() {
   const tab = S.tabs.customize || "trunks";
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
   const tabs = [["trunks", t("settingsDirectory.trunks"), E.trunks.length], ["tools", t("dashboard.filter.tools"), 0], ["specialists", t("nav.specialists"), 0], ["channels", t("place.customize.channels"), 0], ["everywhere", t("window.places.customize.everywhere"), 0]];
-  const lockBanner = E.state.lock ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
+  const lockBanner = lockdownOn() ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
   return `<main class="main enter11" id="main">${lockBanner}<div class="scroll"><div class="place${tab === "tools" ? " t9-place" : ""}">
     <h1>${t("place.customize")}</h1><p class="lede">${t("window.places.customize.who-your-trunks-are-what-they")}</p>
     ${tabBar(tabs, "customize", tab)}${(DRAW[tab] ?? trunksTab)()}</div></div></main>`;

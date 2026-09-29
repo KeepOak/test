@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { Browser, Download, Locator, Page } from 'playwright';
+import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
+import { instructionsRemovedNote, withoutInstructions } from '../content-guard.js';
+import { carriedData } from '../egress-guard.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
 import type { RunArtifacts } from '../artifacts.js';
@@ -28,6 +30,7 @@ import { browserCare, browserCareDefaults, uploadsBlocked, type BrowserCare } fr
 import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) hook: import
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
 import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
+import { BrowserPinProxy, type PinRules } from './browser-pin-proxy.js';
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
 import { OwnerInputSchema, ownerPageInput, type OwnerInput } from './browser-owner-input.js';
 import { platformFetch } from '../pinned-fetch.js';
@@ -90,6 +93,8 @@ interface RunEntry {
   profile: string | null;
   /** The numbers handed out to the things on the pages this task has looked at. */
   marks: MarkRegistry;
+  /** The address the task itself asked `navigate` for, already judged (and asked about) as that tool call. */
+  asked?: string;
   /** The owner's own browser, while this task is borrowing it. */
   borrowed: AttachedBrowser | null;
   // w911 (A1726) hook: a benchmark window (see benchmarkWindow) — its one extra origin, and whether
@@ -176,8 +181,14 @@ export class BranchBrowser {
   }
   /** Any website the network rules allow, rather than a list. */
   get anyWebsite(): boolean { return this.config.anyWebsite === true; }
-  /** Shared network policy; when set, navigation is checked against it as well as the origin list. */
-  policy: { assertAllowed(target: URL, what?: string): Promise<void> } | undefined;
+  /**
+   * Shared network policy; when set, navigation is checked against it as well as the origin list. Any-website mode also
+   * needs `allowedAddresses`, which holds Chromium's connections to the addresses the check judged (browser-pin-proxy.ts).
+   */
+  policy: ({ assertAllowed(target: URL, what?: string): Promise<void> } & Partial<PinRules>) | undefined;
+  /** Any-website mode: the local door every connection of Branch's own Chromium goes through. */
+  private pinProxy: BrowserPinProxy | undefined;
+  private pinServer: Promise<string> | undefined;
   /** Saved sign-ins, encrypted beside the private database. */
   profiles: BrowserProfiles | undefined;
   /** Where screenshots and saved pages are kept. */
@@ -198,6 +209,11 @@ export class BranchBrowser {
    */
   siteSkills: ((owner: string) => SiteSkills) | undefined;
 
+  /**
+   * The secret values this launch has unlocked (src/egress-guard.ts). A page the browser is sent to whose address
+   * carries one, or a card or account number (a form sent by address, a link, a redirect), is not opened.
+   */
+  egressSecrets: (() => readonly string[]) | undefined;
   /** R17-S19: the owner's browser care (Settings › Computer & browser); defaults without a store. */
   private care(owner: string): BrowserCare {
     return this.store ? browserCare(this.store, owner) : browserCareDefaults;
@@ -216,9 +232,11 @@ export class BranchBrowser {
     const target = new URL(request.url);
     // With no list, nothing but the network rules keeps a page's pictures, scripts and fetches away from this computer
     // and the home network, so every request is held to them, not only the page itself.
-    if (this.anyWebsite && entry?.granted !== target.origin) await this.networkRules().assertAllowed(target, 'browser address');
+    if (this.anyWebsite && entry?.granted !== target.origin) await this.pinRules().allowedAddresses(target, 'browser address');
     // Playwright says 'document' and Chromium's pause says 'Document'; both are the same navigation.
     if (request.resourceType.toLowerCase() !== 'document') return;
+    const carried = this.egressSecrets && request.url !== entry?.asked ? carriedData(request.url, this.egressSecrets()) : null;
+    if (carried) throw new Error(`That page's address would carry ${carried} out of Branch, so it was not opened`);
     if (entry?.granted !== target.origin && !this.anyWebsite)
       await this.policy?.assertAllowed(target, 'browser address');
     // How many different websites a task may visit is charged here, where every real navigation
@@ -236,10 +254,32 @@ export class BranchBrowser {
     if (!this.policy) throw new Error('The browser opens any website only under the network rules, and none are set');
     return this.policy;
   }
+  /** The network rules as any-website mode uses them: every check, and every connection held to what it judged. */
+  private pinRules(): PinRules {
+    const rules = this.networkRules() as Partial<PinRules>;
+    if (typeof rules.allowedAddresses !== 'function')
+      throw new Error('The browser opens any website only under network rules that hold its connections to the addresses they checked');
+    return rules as PinRules;
+  }
+  /**
+   * Any-website mode: Chromium connects only through the local door, which dials the addresses the network rules judged
+   * for that name, so a site cannot pass the check with one answer and be reached at another (DNS rebinding).
+   * `<-loopback>` sends this computer's own addresses through the door too, and WebRTC is kept to proxied connections.
+   */
+  private async pinning(): Promise<Pick<LaunchOptions, 'proxy' | 'args'>> {
+    if (!this.anyWebsite) return {};
+    const rules = this.pinRules();
+    this.pinProxy ??= new BrowserPinProxy({ rules: () => rules,
+      granted: (host, port) => [...this.sessions.values()].some(entry => entry.granted === `http://${host}:${port}`) });
+    const server = await (this.pinServer ??= this.pinProxy.start().catch((error: unknown) => { this.pinServer = undefined; throw error; }));
+    return { proxy: { server, bypass: '<-loopback>' },
+      args: ['--force-webrtc-ip-handling-policy', '--webrtc-ip-handling-policy=disable_non_proxied_udp'] };
+  }
   private async launch(): Promise<Browser> {
     const env = Object.fromEntries(['PATH', 'SystemRoot', 'LOCALAPPDATA', 'TEMP', 'TMP', 'HOME']
       .flatMap(key => process.env[key] ? [[key, process.env[key]!]] : []));
-    const browser = await (await chromium()).launch({ headless: true, env,
+    const pinned = await this.pinning();
+    const browser = await (await chromium()).launch({ headless: true, env, ...pinned,
       ...(this.config.channel ? { channel: this.config.channel } : {}) }).catch((error: unknown) => {
       // Said the way `branch doctor` says it (src/doctor-fix.ts), not as Playwright's own instructions.
       if (!this.config.channel && /Executable doesn't exist/i.test(error instanceof Error ? error.message : String(error)))
@@ -538,7 +578,9 @@ export class BranchBrowser {
     const target = new URL(url);
     if (target.username || target.password) throw new Error('Browser destination is not an allowed origin');
     // w911 (A1726): the one loopback page Branch itself serves to this window skips the network policy.
-    if (known?.granted !== target.origin) await (this.anyWebsite ? this.networkRules() : this.policy)?.assertAllowed(new URL(url), 'browser address');
+    if (known?.granted === target.origin) return;
+    if (this.anyWebsite) await this.pinRules().allowedAddresses(target, 'browser address');
+    else await this.policy?.assertAllowed(target, 'browser address');
   }
   async navigate(url: string, context: ToolContext) {
     const entry = this.entry(context);
@@ -546,6 +588,7 @@ export class BranchBrowser {
     // password managers apply to website names too.
     const refused = entry.borrowed ? attachedAddressRefusal(url, '', this.extraRefusedHosts(context.owner)) : null;
     if (refused) throw new Error(refused);
+    entry.asked = URL.canParse(url) ? new URL(url).href : url;
     return this.operation(context, async (page, check) => {
       const origin = new URL(url).origin;
       if (!entry.origins.has(origin) && entry.origins.size >= this.config.maxOriginsPerRun)
@@ -596,7 +639,7 @@ export class BranchBrowser {
     return this.operation(context, async page => {
       const tree = await page.locator('body').ariaSnapshot();
       const { hidden, typed } = await this.pageSecrets(context, page);
-      return { url: page.url(), accessibility: scrubSnapshot(tree, hidden, typed).slice(0, 16000) };
+      return pageText({ url: page.url(), accessibility: scrubSnapshot(tree, hidden, typed).slice(0, 16000) });
     });
   }
   /**
@@ -655,11 +698,11 @@ export class BranchBrowser {
     return this.operation(context, page => waitFor(page, options));
   }
   async extract(options: z.infer<typeof ExtractSchema>, context: ToolContext) {
-    return this.operation(context, async page => extract(page, options, (await this.pageSecrets(context, page)).hidden));
+    return this.operation(context, async page => pageText(await extract(page, options, (await this.pageSecrets(context, page)).hidden)));
   }
   /** Data in the exact shape the assistant asked for, or a refusal naming the field that did not fit. */
   async extractShaped(options: z.infer<typeof ExtractSchemaSchema>, context: ToolContext) {
-    return this.operation(context, async page => extractSchema(page, options, (await this.pageSecrets(context, page)).hidden));
+    return this.operation(context, async page => pageText(await extractSchema(page, options, (await this.pageSecrets(context, page)).hidden)));
   }
   /**
    * Numbers everything on the page that can be pressed or typed into and hands back the list. The
@@ -1196,6 +1239,7 @@ export class BranchBrowser {
     await this.starting?.catch(() => undefined);
     await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
     await this.browser?.close();
+    await this.pinProxy?.close();
     this.sessions.clear();
     this.controlled.clear();
     const failures = results.filter(result => result.status === 'rejected');
@@ -1351,3 +1395,9 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
 }
 
 export { trunkProfileName, isTrunkProfile, trunkProfilePrefix } from './browser-profiles.js';
+
+/** What the browser read off a page, with lines that give the assistant orders taken out (src/content-guard.ts). */
+function pageText<T extends object>(result: T): T & { note?: string } {
+  const { value, removed } = withoutInstructions(result);
+  return removed ? { ...value, note: instructionsRemovedNote(removed) } : value;
+}

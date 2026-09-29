@@ -8,7 +8,7 @@
 
 import { $, esc, renderNow } from "../core/dom.js";
 import { ic, openPop, closePop, mi, toast } from "../core/ui.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -18,14 +18,15 @@ import { plus17d } from "./calls17d.js"; // pass 17 part D §2 (greyed)
 import { asksFirst } from "./askfirst.js"; // parity B1: Ask me questions first
 import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the Skills list
 import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
+import { initPractice, loadPractice, practiceMenu, practiceNext } from "./practice-next.js";
 
-const Q = { temporary: false, who: null, whoFor: null };
+const Q = { temporary: false, who: null, whoFor: null, pending: null, error: null };
 
 function menu() {
   return mi("attach", "clip", t("window.chat.plus.attach")) + mi("add-folder", "folder", t("window.chat.plus.folder")) + mi("shot", "camera", t("window.chat.plus.screenshot")) + "<hr>"
     + mi("insert", "at", t("rooms.mentionList"), "<kbd>@</kbd>", 'data-v="@"') + mi("skills15", "slash", t("window.chat.plus.skill"), "<kbd>/</kbd>") + "<hr>"
     + `<div class="row-in"><span class="ic-t">${ic("ghost", "s")}${t("window.chat.plus.temporary")}</span><input class="sw" type="checkbox" id="pm-temp" data-sw="temp" ${Q.temporary ? "checked" : ""} ${S.chat ? "disabled" : ""} aria-label="${t("window.chat.plus.temporary")}"></div><div class="row-in"><span class="ic-t">${ic("help", "s")}${t("more.askFirst")}</span><input class="sw" type="checkbox" id="pm-ask" data-sw="askqs" ${asksFirst() ? "checked" : ""} aria-label="${t("more.askFirst")}"></div>`
-    + whoRows() + "<hr>" + mi("goal-fill", "target", t("window.chat.plus.goal"), "<kbd>/goal</kbd>") // handled in goal.js
+    + practiceMenu() + whoRows() + "<hr>" + mi("goal-fill", "target", t("window.chat.plus.goal"), "<kbd>/goal</kbd>") // handled in goal.js
     + mi("prompts-fill", "star", t("settings-kit.name.prompts"), "<kbd>/</kbd>"); // handled in messages.js
 }
 
@@ -46,8 +47,9 @@ function whoRows() {
   if (S.chat && w?.kind === "room") return roomWho(w);
   if (!S.chat || !w || (w.kind !== "plain" && w.kind !== "trunk")) return "";
   const now = w.trunk?.id ?? "", off = (E.trunkModes?.conversations ?? "off") === "off";
-  return `<hr><div class="ph">${t("window.chat.plus.who")}</div>` + radio("", "Branch", t("window.chat.plus.assistant"), now === "")
-    + (w.trunks ?? []).filter((tr) => !off || now === tr.id).map((tr) => radio(tr.id, tr.name, "", now === tr.id, off)).join("");
+  const home = defaultTrunk();
+  return `<hr><div class="ph">${t("window.chat.plus.who")}</div>` + (home ? radio("", home.name, t("look.badge.default"), now === home.id || now === "") : "")
+    + (w.trunks ?? []).filter((tr) => tr.id !== home?.id && (!off || now === tr.id)).map((tr) => radio(tr.id, tr.name, "", now === tr.id, off)).join("");
 }
 
 /** Whether the next new conversation starts as a temporary one (the box shows its Temporary flag). */
@@ -58,16 +60,43 @@ export const whoHere = () => (Q.whoFor === (S.chat ?? null) ? Q.who : null);
 export function forgetWho() { Q.whoFor = undefined; }
 
 /* After the conversation is drawn: ask the engine who answers it, once per conversation. With Trunks off it has no answer. */
-export async function loadWho() {
+export function loadWho() {
   const sid = S.chat ?? null;
-  if (Q.whoFor === sid) return;
+  if (Q.whoFor === sid) return Q.pending ?? Promise.resolve();
   Q.whoFor = sid;
   Q.who = null;
-  const who = sid ? await api(`trunks/conversations/${encodeURIComponent(sid)}`).catch(() => null) : null;
-  if (Q.whoFor !== sid) return;
-  Q.who = who;
-  /* The replies are signed from it, so the conversation is drawn again once it is known. */
-  if (who && S.view === "chat") renderNow();
+  Q.error = null;
+  if (!sid) { Q.pending = null; return Promise.resolve(); }
+  const pending = (async () => {
+    const controller = new AbortController();
+    let timeout;
+    const expired = new Promise((_, reject) => {
+      timeout = setTimeout(() => { controller.abort(); reject(new Error("Conversation lookup timed out")); }, 15_000);
+    });
+    try {
+      const who = await Promise.race([api(`trunks/conversations/${encodeURIComponent(sid)}`, undefined, undefined, controller.signal), expired]);
+      if (Q.pending !== pending) return;
+      Q.who = who;
+      if (who && S.view === "chat") renderNow();
+    } catch (error) {
+      if (Q.pending === pending) Q.error = error;
+    } finally {
+      clearTimeout(timeout);
+      if (Q.pending === pending) Q.pending = null;
+    }
+  })();
+  Q.pending = pending;
+  return pending;
+}
+
+/** A send must know its destination; background drawing may still be reading it. */
+export async function readyWho() {
+  const sid = S.chat ?? null;
+  if (Q.whoFor === sid && Q.error) forgetWho();
+  await loadWho();
+  if (S.chat !== sid) throw new Error("The conversation changed. Your message was not sent.");
+  if (Q.error || (sid && !Q.who)) throw new Error("Couldn't load this conversation. Your message was not sent. Try sending again.");
+  return Q.who;
 }
 
 async function chooseWho(el) {
@@ -78,7 +107,7 @@ async function chooseWho(el) {
   Q.whoFor = sid;
   await refresh().catch((error) => toast(error.message));
   renderNow();
-  toast(t("window.chat.plus.answers", { name: Q.who.trunk?.name ?? "Branch" }));
+  toast(t("window.chat.plus.answers", { name: Q.who.trunk?.name ?? defaultTrunk()?.name ?? "" }));
 }
 
 /* The files waiting to go with the next message (chat/attach.js: sent ahead as soon as they are added, each a chip with
@@ -92,6 +121,7 @@ export async function takePending(isNew) {
   const out = {};
   const uploads = await readyUploads();
   if (uploads.length) out.uploads = uploads;
+  if (practiceNext()) out.dryRun = true;
   if (isNew && Q.temporary) out.temporary = true;
   Q.temporary = false;
   return out;
@@ -111,9 +141,11 @@ function insert(text) {
 export function initPlus() {
   markLive(["plusmenu", "attach", "add-folder", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
   initAttach();
+  initPractice();
   /* Use a skill: the Skills list over the box; with no skill switched on, "/" in the box as before (the engine's commands). */
   on("skills15", () => { closePop(); if (!openSkills()) insert("/"); });
-  on("plusmenu", (el) => openPop(el, menu() + plusMore() + plus17d()));
+  /* The menu opens (or closes, on its own button) at once; Practice's availability is refreshed behind it. */
+  on("plusmenu", (el) => { openPop(el, menu() + plusMore() + plus17d()); void loadPractice(); });
   on("attach", () => { closePop(); pickFiles(false); });
   on("add-folder", () => { closePop(); pickFiles(true); });
   on("unattach", (el) => removeFile(el.dataset.k));

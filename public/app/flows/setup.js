@@ -20,6 +20,8 @@ import { canSpeak, chooseLanguage } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
+import { gsel } from "../core/gsel.js";
+import { say } from "../core/words.js";
 
 /* The wizard's steps: each one's short name in the engine's record, and its name on the rail. */
 const WIZARD = ["welcome", "models", "trunks"];
@@ -52,8 +54,7 @@ const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animat
 
 function languageControl() {
   const now = language();
-  const opts = LANGUAGES.map(({ id }) => `<option value="${esc(id)}"${id === now ? " selected" : ""}>${esc(ownName(id))}</option>`).join("");
-  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right"><select class="inp" id="ob-lang" data-sw="ob-lang" aria-label="${t("appearance.language")}">${opts}</select></span></div>`;
+  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now })}</span></div>`;
 }
 
 function welcome(o) {
@@ -84,8 +85,10 @@ async function restoreFrom(file) {
 function modelRows(o) {
   const rows = [];
   for (const p of o.pools) for (const a of p.accounts ?? []) {
-    const sub = [p.pool, p.defaultAccount === a.id ? t("glance.usedNext") : "", p.signedIn?.[a.id] === false ? t("window.flows.first.sign-in") : ""].filter(Boolean).join(" · ");
-    rows.push([p.pool, a.label || p.pool, sub, a.disabled !== true, `data-sw="ob-brain" data-pool="${esc(p.pool)}" data-account="${esc(a.id)}"`]);
+    /* MODEL-045: the account by who it is (its verified email or name, #605) and the connection by its own name, never its id. */
+    const signedOut = p.signedIn?.[a.id] === false || (a.signIn !== false && a.ready === false && a.signedIn === false);
+    const sub = [p.name ?? p.pool, p.answering && p.defaultAccount === a.id ? t("glance.usedNext") : "", signedOut ? t("window.flows.first.sign-in") : ""].filter(Boolean).join(" · ");
+    rows.push([p.pool, a.label || p.name || p.pool, sub, a.disabled !== true, `data-sw="ob-brain" data-pool="${esc(p.pool)}" data-account="${esc(a.id)}"`]);
   }
   if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? "", true, 'data-sw="ob-brain-model"']);
   return rows.map(([id, name, sub, on, which]) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" ${which} data-on="${on ? 1 : 0}" aria-label="${esc(name)}"></div>`).join("");
@@ -309,7 +312,7 @@ async function propose() {
   o.life = what;
   if (!what || o.proposing) { $("#ob-life")?.focus(); return; }
   await refresh().catch(() => {});
-  if (E.state?.modelNeeded) { o.note = E.state.modelNeeded; draw(); return; }
+  if (E.state?.modelNeeded) { o.note = say(E.state.modelNeeded); draw(); return; } // the engine's English, in the window's language
   Object.assign(o, { proposing: true, note: "", error: "" });
   draw();
   try {

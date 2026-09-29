@@ -17,6 +17,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const PORT = process.env.PORT || "3393";
 const TOKEN = process.env.TOKEN || "";
@@ -214,19 +215,15 @@ async function automations(page, s) {
   await setLevel(page, "advanced");
   await act(page, "ptab", { place: "automations", v: "scheduled" });
   await page.waitForSelector('[data-act="pauseallb17"]', { timeout: 8000 });
-  const said = await refusal("POST", "dashboard/automations", { paused: true });
-  await page.click('[data-act="pauseallb17"]');
-  check("pauseallb17 with the dashboard off: the engine's refusal as it said it", said && await toastIs(page, said), said);
-  await post("dashboard/settings", { mode: "on" }).catch(() => null);
-  await act(page, "ptab", { place: "automations", v: "scheduled" });
-  await sleep(1000);
+  // Pause all is Scheduled's own row: it does not wait on the dashboard's switch (src/dashboard-api.ts), so it works with the dashboard off.
+  check("pauseallb17 with the dashboard off: still offered", ((await get("dashboard/settings").catch(() => ({}))).mode ?? "off") === "off");
   await page.click('[data-act="pauseallb17"][data-v="pause"]');
-  await until("paused", async () => (await get("dashboard")).paused);
-  check("pauseallb17 (Pause all): paused (GET /api/dashboard paused)", true);
+  await until("paused", async () => (await get("dashboard/automations")).paused);
+  check("pauseallb17 (Pause all): paused (GET /api/dashboard/automations paused)", true);
   await page.waitForSelector('[data-act="pauseallb17"][data-v="resume"]', { timeout: 8000 });
   await page.click('[data-act="pauseallb17"][data-v="resume"]');
-  await until("resumed", async () => !(await get("dashboard")).paused);
-  check("pauseallb17 (Resume all): resumed (GET /api/dashboard paused)", true);
+  await until("resumed", async () => !(await get("dashboard/automations")).paused);
+  check("pauseallb17 (Resume all): resumed (GET /api/dashboard/automations paused)", true);
 
   const demos = [["readiness", "autonomy/readiness", "skills"], ["holidays", "calendar", null], ["watches", "monitors", "monitors"], ["leads", "asks/leads", "top"], ["forecast", "asks/forecasts", "open"]];
   for (const [k, route, key] of demos) {
@@ -249,7 +246,11 @@ async function automations(page, s) {
   for (const [k, route, key] of [["outhook", "webhooks", "webhooks"], ["hooks", "hooks", "hooks"]]) {
     await page.click(`[data-act="demob17"][data-k="${k}"]`);
     await page.waitForSelector(".dlg .demo-b17", { timeout: 8000, state: "attached" });
-    check(`demob17 ${k}: one row per engine item (GET /api/${route}); its primary stays greyed`, (await page.locator(".dlg .demo-b17 .prow").count()) === (await get(route))[key].length && await greyed(page, '.dlg [data-act^="demodob17"]'));
+    const items = (await get(route))[key];
+    check(`demob17 ${k}: one row per engine item (GET /api/${route})`, (await page.locator(".dlg .demo-b17 .prow").count()) === items.length);
+    // Send a test is live once there is an address to send to (automations17.js sendTest); with none there is nothing to offer.
+    if (k === "outhook") check("demob17 outhook: with no address, no Send a test is offered", items.length > 0 || (await page.locator('.dlg [data-act^="demodob17"]').count()) === 0);
+    else check(`demob17 ${k}: its primary stays greyed`, await greyed(page, '.dlg [data-act^="demodob17"]'));
     await act(page, "dlg-close");
   }
   await setLevel(page, "regular");
@@ -299,20 +300,26 @@ async function documentsTools(page, s) {
   const cells = await page.locator(".dlg .tbl-b17 tbody td:first-child").allTextContents();
   check("sqlrunb17 (Run): the engine's rows (POST /api/data/ask)", JSON.stringify(cells) === JSON.stringify(engine.rows.map((r) => String(r[0]))), cells.join(", "));
   check("sqlrunb17: a chart drawn from those rows, one bar each", (await page.locator(".dlg .chart-b17 rect").count()) === engine.rows.length);
-  check("sqlsaveb17 stays greyed (the report route keeps nothing)", await greyed(page, '.dlg [data-act="sqlsaveb17"]'));
-  await act(page, "dlg-close");
+  await page.click('.dlg [data-act="sqlsaveb17"]');
+  const report = L.csv.name.replace(/.[a-z0-9]+$/i, "") + ".md";
+  check("sqlsaveb17 (Save as a report): a Markdown document of those rows in the library (POST /api/documents)", !!(await until("the report kept", async () => (await get("documents")).documents.map((d) => d.name).includes(report))), report);
+  if (await page.locator(".dlg").count()) await act(page, "dlg-close");
 
   await page.click('[data-act="doccmpb17"]');
   await page.waitForSelector(".dlg #doc-a-b17", { timeout: 8000 });
-  await page.selectOption("#doc-a-b17", L.older.id);
-  await page.selectOption("#doc-b-b17", L.newer.id);
+  await pickGsel(page.locator("#doc-a-b17"), L.older.id);
+  await pickGsel(page.locator("#doc-b-b17"), L.newer.id);
   await page.waitForSelector(".dlg .dif-b17", { timeout: 15000 });
   const compared = await post("action", { tool: "documents.compare", args: { file: "lease/lease-2025.md", against: "lease/lease-2026.md" } });
   check("doccmpb17 (Compare): one entry per change the engine found (documents.compare)", (await page.locator(".dlg .dif-b17").count()) === compared.changes.length, `${compared.changes.length} change(s)`);
-  check("doccmpb17: Save the comparison stays greyed", await greyed(page, '.dlg [data-act="docsaveb17"]'));
   await page.click('.dlg [data-act="docmodeb17"][data-v="edit"]');
-  check("docmodeb17 (Edit exactly): the mode changes; Make the edit stays greyed", (await page.locator(".dlg h2").textContent()) === "Edit exactly" && await greyed(page, '.dlg [data-act="docsaveb17"][data-v="edit"]'));
-  await act(page, "dlg-close");
+  check("docmodeb17 (Edit exactly): the mode changes; Make the edit stays greyed", (await page.locator(".dlg h2").textContent()) === "Edit exactly" && await greyed(page, '.dlg [data-act="docedit17"]'));
+  await page.click('.dlg [data-act="docmodeb17"][data-v="compare"]');
+  await page.waitForSelector(".dlg .dif-b17", { timeout: 15000 });
+  await page.click('.dlg [data-act="docsaveb17"]');
+  const kept = `${L.older.name} vs ${L.newer.name}.md`;
+  check("docsaveb17 (Save the comparison): a Markdown document in the library (POST /api/documents)", !!(await until("the comparison kept", async () => (await get("documents")).documents.map((d) => d.name).includes(kept))), kept);
+  if (await page.locator(".dlg").count()) await act(page, "dlg-close");
 
   await setLevel(page, "advanced");
   await act(page, "ptab", { place: "library", v: "documents" });
@@ -341,6 +348,7 @@ async function managing(page) {
     check(`demob17 ${k}: one row per engine item (GET /api/${route})`, (await rowsShown(page)) === (await get(route))[key].length);
     await act(page, "dlg-close");
   }
+  await post("learn/switch", { mode: "off" }); // it ships on (src/learn/settings.ts): switched off here to see the refusal
   const off = await refusal("POST", "learn/tour", { subject: "code", of: "" });
   await page.click('[data-act="demob17"][data-k="learnfolder"]');
   check("demob17 learnfolder, switched off: the engine's refusal as it said it", off && await toastIs(page, off), off);
@@ -489,7 +497,7 @@ async function customize(page, s) {
 const STEPS = [inbox, automations, library, customize];
 
 async function run() {
-  const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+  const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
   const model = await startModel();
   const s = await setup();
   const browser = await chromium.launch();

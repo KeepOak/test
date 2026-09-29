@@ -59,14 +59,19 @@ function photoOf(t) {
 }
 
 /* A Trunk's face, in the prototype's order: its photo, else its character if it has a look (moving, core/figures.js),
-   its emoji on a pebble, else the pebble with eyes. The pebble takes its eyes and how it moves.
-   Branch uses the logo; each Trunk's character acts out its own conversation. */
+   its emoji on a pebble, else the pebble with eyes. The pebble takes its eyes and how it moves. Each Trunk's character
+   acts out its own conversation. A conversation with no Trunk has no face of its own: the Branch mascot is the logo
+   only (never a row, a reply or quick-ask), so it gets a neutral chat tile, with the working ring or waiting dot of
+   its conversation, until the default Trunk (#594) takes such conversations in. */
 /* The prototype's list marks (app.css .av.working, .av.waiting): a moving copper ring while a task of its conversation
    works, a copper dot while one waits for you (core/doing.js agentState, from GET /api/state runs and attention). */
 const RING = { work: " working", wait: " waiting" };
 export function av(trunk, size = 40, sessionId) {
   if (!trunk) return "";
-  if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
+  if (trunk.kind === "main" || trunk.isBranch) {
+    const st = agentState({ chatSessionId: sessionId ?? trunk.chatSessionId });
+    return `<span class="av none18c${RING[st] ?? ""}" data-css="--s:${size}px" aria-hidden="true">${ic("chat", "s")}</span>`;
+  }
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
     const [a, b] = (trunk.members ?? []).map((m) => ({ ...m, paused: false }));
@@ -292,7 +297,8 @@ function showTip(el) {
   const text = el && (el.dataset.tip || el.getAttribute("aria-label"));
   if (!text) return;
   tipTimer = setTimeout(() => {
-    if (!document.body.contains(el)) return;
+    /* QA retest 2026-09-28 (m9): a button whose menu is open says nothing, or its tip lands over the menu's last row. */
+    if (!document.body.contains(el) || el.getAttribute("aria-expanded") === "true") return;
     const root = app();
     tipEl = document.createElement("div");
     tipEl.className = "tipx";

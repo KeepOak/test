@@ -9,7 +9,8 @@
    Screenshots go to SHOTS (default: the session folder). */
 const fs = require("node:fs");
 const path = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const { PORT, TOKEN, DATA, PHASE } = process.env;
 if (!PORT || !TOKEN || !["setup", "fresh"].includes(PHASE) || (PHASE === "setup" && !DATA)) { console.error("Set PHASE (setup or fresh), PORT, TOKEN, and DATA for setup."); process.exit(2); }
@@ -50,7 +51,7 @@ async function inboxNeeds(page) {
   await notes.waitFor({ timeout: 10000 });
   const requests = (await api("flows-boards/installs")).requests;
   const noteReq = requests.find((r) => r.ask.why === "keep notes"), diaryReq = requests.find((r) => r.ask.why === "keep a diary");
-  check("places-009 install rows draw Branch's face", (await notes.locator(".av.brand").count()) === 1);
+  check("places-009 install rows draw the request's own tile, no mascot or face (the mascot is the logo only)", (await notes.locator(".ico-tile").count()) === 1 && (await notes.locator(".av").count()) === 0);
   const allow = page.locator(`[data-act="xdo"][data-id="${diaryReq.id}"]`);
   check("places-009 xdo: Allow on an install request stays greyed (security tier)", await until(() => greyed(allow)));
   await shot(page, "inbox-needs-setup");
@@ -73,9 +74,9 @@ async function inboxFinished(page) {
   await place(page, "inbox", "finished");
   const row = page.locator("#main .prow", { hasText: "September expense report" });
   await row.waitFor({ timeout: 10000 });
-  check("places-014 Finished names the Trunk and draws its face", (await row.locator("small").textContent()).startsWith("Ledger · ") && (await row.locator(".av.brand").count()) === 0);
+  check("places-014 Finished names the Trunk and draws its face", (await row.locator("small").textContent()).startsWith("Ledger · ") && (await row.locator(".av.brand, .av.none18c").count()) === 0);
   const branchRow = page.locator("#main .prow", { hasText: "Tidy the Downloads folder" });
-  check("places-014 Branch's own task draws Branch's face", (await branchRow.locator(".av.brand").count()) === 1);
+  check("places-014 Branch's own task draws the neutral assistant tile, not a mascot", (await branchRow.locator(".av.none18c").count()) === 1 && (await branchRow.locator(".av.brand").count()) === 0);
   await shot(page, "inbox-finished-setup");
 }
 
@@ -152,9 +153,9 @@ async function libraryDocuments(page) {
   await page.locator('#main [data-act="doccmpb17"]').click();
   await page.locator(".dlg #doc-a-b17").waitFor({ timeout: 10000 });
   const docs = (await api("documents")).documents;
-  await page.selectOption(".dlg #doc-a-b17", docs.find((d) => d.name === "lease-2025.md").id);
+  await pickGsel(page.locator(".dlg #doc-a-b17"), docs.find((d) => d.name === "lease-2025.md").id);
   await sleep(600);
-  await page.selectOption(".dlg #doc-b-b17", docs.find((d) => d.name === "lease-2026.md").id);
+  await pickGsel(page.locator(".dlg #doc-b-b17"), docs.find((d) => d.name === "lease-2026.md").id);
   check("places-040 the engine's comparison is drawn", await until(async () => (await page.locator(".dlg .dif-b17").count()) >= 1));
   check("places-040 the Edit exactly tab is live", await live(page.locator(".dlg [data-act='docmodeb17'][data-v='edit']")));
   await shot(page, "library-compare-setup");
@@ -164,7 +165,11 @@ async function libraryDocuments(page) {
   await page.locator(".dlg [data-act='docmodeb17'][data-v='edit']").click();
   check("places-040 Make the edit stays greyed", await greyed(page.locator(".dlg [data-act='docedit17']")));
   await page.locator(".dlg [data-act='dlg-close']").first().click();
-  check("places-036 Write a new document and Open stay greyed (no engine route opens a document)", await greyed(page.locator('#main .docacts15 [data-act="toast"]')));
+  check("places-036 Write a new document is live", await live(page.locator('#main .docacts15 [data-act="doc-new"]')));
+  const firstDoc = (await api("documents")).documents[0];
+  await page.locator(`#main [data-act="doc-open"][data-id="${firstDoc.id}"]`).click();
+  check("places-036 Open shows the document's words in a dialog titled with its name (GET /api/documents/<id>)", await until(async () => (await page.locator(".dlg h2").first().textContent().catch(() => "")) === firstDoc.name && (await page.locator(".dlg .docread18, .dlg .made-b2, .dlg .hint").count()) > 0), firstDoc.name);
+  await page.locator(".dlg [data-act='dlg-close']").first().click();
   // The Map: the engine's map drawn as topics joined to the documents their links came from.
   await page.locator('#main [data-act="dv15"][data-v="map"]').click();
   const picture = page.locator("#main .kmap15 svg");
@@ -180,7 +185,9 @@ async function libraryDocuments(page) {
   const made = page.locator("#main .prow", { hasText: "chart.png" });
   await made.waitFor({ timeout: 10000 });
   check("places-041 Made for you says who made it and when", (await made.locator("small").textContent()).startsWith("Ledger · "));
-  check("places-041 Open stays greyed (no engine route opens a kept file in its own app)", await greyed(made.locator('[data-act="toast"]')));
+  await made.locator('[data-act="made-open"]').click();
+  check("places-041 Open shows the kept picture from its bytes, nothing run (GET /api/artifacts/read, /api/artifacts/file)", await until(async () => (await page.locator(".dlg h2").first().textContent().catch(() => "")) === "chart.png" && (await page.locator(".dlg img.docread18m").count()) === 1));
+  await page.locator(".dlg [data-act='dlg-close']").first().click();
   await shot(page, "library-made-setup");
 }
 
@@ -188,6 +195,9 @@ async function advanced(page) {
   await page.locator('#side [data-act="view"][data-v="settings"]').first().click();
   await page.locator('[data-act="setlevel"][data-v="advanced"]').first().click();
   await sleep(500);
+  // Settings is a window of its own over the sidebar: back to the places before the next step walks them.
+  if (await page.locator(".set-back").count()) await page.locator(".set-back").first().click();
+  await page.locator("#side .set-nav").waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
 }
 
 async function automationsMore(page) {
@@ -209,21 +219,27 @@ async function automationsMore(page) {
   check("places-032 Quiet on weekends is live", await live(wk));
   await wk.click();
   check("places-032 hb-wk: saved with the check-in (GET /api/heartbeat)", await until(async () => (await api("heartbeat")).heartbeat.settings.quietWeekends === true));
-  check("places-032 Work hours stays greyed (no working hours in the engine)", await greyed(page.locator('#main [data-act="seg"]')));
+  const hours = async () => (await api("heartbeat")).heartbeat.settings.activeHours ?? null;
+  await page.locator('#main [data-act="hb-hours"][data-v="work"]').click();
+  check("places-032 hb-hours Work hours: 9 to 5 kept with the check-in (GET /api/heartbeat activeHours)", await until(async () => { const h = await hours(); return h?.from === "09:00" && h?.to === "17:00"; }));
+  await page.locator('#main [data-act="hb-hours"][data-v="always"]').click();
+  check("places-032 hb-hours Always: no hours kept (GET)", await until(async () => (await hours()) === null));
   await shot(page, "automations-checkins-setup");
 }
 
-/* Library › Documents › Managing what it reads (Advanced): Sync now asks the engine to bring in what is new, and the
-   engine's own refusal is shown while that part is switched off (it is, for this user). */
+/* Library › Documents › Managing what it reads (Advanced): Sync now asks the engine to bring in what is new (the part
+   ships on, src/asks/settings.ts), then shows the engine's sources again. */
 async function librarySources(page) {
   await place(page, "library", "documents");
   await page.locator('#main [data-act="demob17"][data-k="sources"]').click();
   const go = page.locator(".dlg [data-act='demodob17'][data-k='sources']");
   check("places-024 sources: Sync now is live", await until(() => live(go)));
-  let refusal = "";
-  try { await api("asks/sources/sync", {}); } catch (error) { refusal = error.message.slice("asks/sources/sync: ".length); }
+  const synced = page.waitForResponse((r) => r.url().endsWith("/api/asks/sources/sync") && r.request().method() === "POST", { timeout: 15000 });
   await go.click();
-  check("places-024 sources: Sync now says the engine's answer (POST /api/asks/sources/sync)", refusal && await until(async () => (await page.locator(".toast", { hasText: refusal.slice(0, 40) }).count()) > 0, 4000), refusal);
+  const answer = await synced.catch(() => null);
+  check("places-024 sources: Sync now asks the engine (POST /api/asks/sources/sync answers ok)", answer?.ok() === true, String(answer?.status() ?? "no request"));
+  const listed = (await api("asks/sources")).status;
+  check("places-024 sources: then shows the engine's sources again, one row each (GET /api/asks/sources)", await until(async () => (await page.locator(".dlg .demo-b17 .prow").count()) === (Array.isArray(listed) ? listed.length : 0) && !(await go.isDisabled())));
   await page.locator(".dlg [data-act='dlg-close']").first().click().catch(() => {});
 }
 
@@ -234,7 +250,7 @@ async function automationsScheduled(page) {
   await sw.waitFor({ timeout: 10000 });
   const row = rowOf(sw);
   check("places-019 the row names the Trunk that made it", (await row.locator("small").first().textContent()).endsWith("· Ledger"));
-  check("places-019 health: 3 runs, 1 needed you, drawn from the engine's history", ((await row.locator(".health15 small").textContent()) ?? "").trim() === "3 runs · 1 needed you");
+  check("places-019 health: 3 runs, one failed says it hit a snag (not \"needed you\": nothing waits in Inbox), drawn from the engine's history", ((await row.locator(".health15 small").textContent()) ?? "").trim() === "3 runs · Hit a snag");
   await shot(page, "automations-scheduled-setup");
   await sw.click();
   check("places-019 the switch pauses it (GET /api/schedules)", await until(async () => (await api(`schedules/${NOTE.schedule}`)).data.status === "paused"));
@@ -312,7 +328,7 @@ async function open(browser, port, token, apiFn) {
     if (PHASE === "setup") {
       const setup = await open(browser, PORT, TOKEN, api);
       for (const step of [inboxNeeds, inboxFinished, inboxHistory, inboxLater, libraryMemory, libraryDocuments, automationsScheduled, automationsProcedures, automationsTriggers, automationsMore, librarySources]) {
-        try { await step(setup.page); } catch (error) { check(`${step.name} ran to the end`, false, error.message.split("\n")[0]); }
+        try { await step(setup.page); } catch (error) { check(`${step.name} ran to the end`, false, error.message.split("\n").slice(0, 3).join(" ")); }
       }
       check("set-up user: no page or console errors", setup.errors.length === 0, setup.errors.join("; "));
     } else {

@@ -1,28 +1,51 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import YAML from "yaml";
 
 const read = async (name) => YAML.parse(await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"));
 const workflow = await read("checks.yml");
-const fast = await read("pr-fast.yml");
 
-test("the whole suite runs on every pull request and keeps every integration-trunk result", () => {
-  assert.equal(workflow.concurrency.group, "checks-${{ github.ref }}");
-  assert.equal(workflow.concurrency["cancel-in-progress"],
-    "${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/mac/cross-platform' }}");
+/* A pull request's newer run cancels its older one. Pushes to a branch share one group per branch (never main or a
+   release branch, each of whose runs is kept) and are never cancelled
+   in progress: the running base run finishes and promote follows it, and a newer merge replaces only the pending run,
+   so a merge storm runs the whole suite once per batch. Everything else has a group of its own. */
+test("the whole suite runs on every pull request and once per batch of merges into redesign/window", () => {
+  assert.equal(workflow.concurrency.group,
+    "${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') && format('checks-base-{0}', github.ref) || format('checks-run-{0}', github.run_id) }}");
+  assert.equal(workflow.concurrency["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}");
+  assert.equal(workflow.jobs.promote.concurrency["cancel-in-progress"], false);
   assert.ok(Object.hasOwn(workflow.on, "pull_request"));
   assert.ok(workflow.on.push.branches.includes("mac/**"), "release and beta gates read push runs on mac/cross-platform");
   assert.equal(workflow.on.schedule[0].cron, "17 3 * * *");
 });
 
+/* verify-suite is red unless the plan ran and every planned share passed; on a push there is no plan, so the whole
+   suite ran, since promote follows it. Mutations: drop `test "$PLAN" = success` (a crashed plan skips every share and
+   would pass), let a push run a plan (promote could follow a partial run) → this test goes red. */
 test("the suite ends in one required job, and nothing in it can hold a run past fifteen minutes", () => {
-  assert.deepEqual(workflow.jobs.verify.needs, ["test"]);
+  assert.deepEqual(workflow.jobs.verify.needs, ["plan", "test"]);
   assert.equal(workflow.jobs.verify.name, "verify-suite");
-  assert.equal(workflow.jobs.verify.if, "always()");
+  // A cancelled run (replaced by a newer push, or waiting for a CI slot) stays cancelled rather than red.
+  assert.equal(workflow.jobs.verify.if, "${{ !cancelled() }}");
+  const verify = workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n");
+  assert.match(verify, /if \[ "\$EVENT" = pull_request \]; then test "\$PLAN" = success; else test "\$PLAN" = skipped; MODE=full; fi/);
+  assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push always runs the whole suite");
+  assert.match(verify, /test "\$TEST" = success/);
+  // One command per line: bash -e does not stop on the left side of `a && b`.
+  assert.match(verify, /test "\$EVENT" = pull_request\n\s*test "\$TEST" = skipped/, "no test is skipped outside a docs-only pull request");
+  assert.doesNotMatch(verify, /&&/);
+  assert.match(verify, /PARTIAL/);
+  assert.equal(workflow.jobs.verify.steps[0].env.PLAN, "${{ needs.plan.result }}");
   assert.ok(workflow.jobs.test["timeout-minutes"] <= 15);
+  assert.ok(workflow.jobs.plan["timeout-minutes"] <= 5);
   const run = workflow.jobs.test.steps.find((step) => /run-tests\.mjs/.test(step.run ?? ""));
   assert.ok(Number(run.env.BRANCH_TEST_FILE_TIMEOUT) > 0, "a file that never exits is ended and named");
+  // Compiled code is shared by every process of a share, and no share installs the browser's system packages.
+  assert.equal(run.env.NODE_COMPILE_CACHE, "${{ runner.temp }}/node-compile-cache");
+  const install = workflow.jobs.test.steps.find((step) => /playwright install/.test(step.run ?? ""));
+  assert.doesNotMatch(install.run, /--with-deps/);
 });
 
 test("the downloads and the phone apps are built for a release tag or by hand, never for a pull request or a landing", async () => {
@@ -35,17 +58,14 @@ test("the downloads and the phone apps are built for a release tag or by hand, n
   }
 });
 
-test("the fast pull-request gate has one job, a hard five-minute ceiling, and leaves broad changes to the suite", () => {
-  assert.deepEqual(Object.keys(fast.jobs), ["verify-fast"]);
-  assert.equal(fast.jobs["verify-fast"]["timeout-minutes"], 5);
-  assert.ok(Object.hasOwn(fast.on, "pull_request"));
-  assert.equal(fast.concurrency["cancel-in-progress"], true);
-  const serialized = JSON.stringify(fast.jobs["verify-fast"]);
-  assert.match(serialized, /select-affected-tests\.mjs/);
-  assert.match(serialized, /npm ci/);
-  assert.doesNotMatch(serialized, /actions\/workflows\/checks\.yml\/runs/, "the fast gate never waits on the suite");
-  const broad = fast.jobs["verify-fast"].steps.find((step) => /full-required/.test(step.if ?? ""));
-  assert.doesNotMatch(broad.run, /exit 1/);
+test("PR Fast Checks is folded into the plan job: one workflow per pull request", async () => {
+  await assert.rejects(readFile(new URL("../.github/workflows/pr-fast.yml", import.meta.url)), /ENOENT/);
+  const plan = workflow.jobs.plan.steps.map((step) => step.run ?? "").join("\n");
+  assert.match(plan, /select-affected-tests\.mjs --event="\$EVENT" --base-ref="\$BASE_REF"/);
+  assert.match(plan, /git diff --check HEAD\^1 HEAD/);
+  assert.match(plan, /check-docs\.mjs/);
+  assert.equal(workflow.jobs.plan.steps[0].with["fetch-depth"], 2, "the merge ref and the commit it merges onto");
+  assert.match(workflow.jobs.test.if, /needs\.plan\.result == 'skipped' \|\| \(needs\.plan\.result == 'success' && needs\.plan\.outputs\.mode != 'docs'\)/);
 });
 
 /* Every merge reaches the owner: a green push to redesign/window moves mac/cross-platform to that commit, fast-forward
@@ -64,7 +84,39 @@ test("a green push to redesign/window fast-forwards mac/cross-platform, and noth
   assert.match(script, /git push origin "\$SHA:refs\/heads\/mac\/cross-platform"/);
   assert.doesNotMatch(script, /--force|\s-f\s|\+\$SHA|git merge\s/, "never forced, never a merge commit");
   assert.equal(promote.env?.SHA ?? promote.steps.find((step) => step.env?.SHA).env.SHA, "${{ github.sha }}", "the commit this run tested");
-  // Only the promote job asks for more than reading.
-  for (const [name, job] of Object.entries(workflow.jobs)) if (name !== "promote") assert.equal(job.permissions, undefined, name);
+  // Only the promote job may write to the repository. The queue's two jobs may cancel and rerun runs and label pull
+  // requests, and nothing else; the test shares read.
+  const queue = { contents: "read", actions: "write", "pull-requests": "write" };
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name === "promote") continue;
+    assert.deepEqual(job.permissions, ["plan", "verify"].includes(name) ? queue : undefined, name);
+  }
   assert.deepEqual(workflow.permissions, { contents: "read" });
+});
+
+/* The queue: a pull-request run asks for a slot before it plans anything, and waits by cancelling itself (never by
+   holding a runner); every run that finishes hands its slot on, even when a share failed. */
+test("pull-request runs take a CI slot first, and every finished run hands its slot on", () => {
+  const plan = workflow.jobs.plan.steps;
+  const slot = plan.findIndex((step) => step.id === "slot");
+  assert.ok(slot >= 0 && slot < plan.findIndex((step) => step.id === "plan"), "the slot is taken before planning");
+  assert.match(plan[slot].run, /ci-queue\.mjs admit --run="\$RUN" --actor="\$ACTOR" --pr="\$PR"/);
+  assert.equal(plan.find((step) => step.id === "plan").if, "steps.slot.outputs.held != 'true'");
+  assert.equal(plan[slot].env.ACTOR, "${{ github.triggering_actor }}", "who started this attempt: the queue, or a person");
+  const hand = workflow.jobs.verify.steps.find((step) => /ci-queue\.mjs restart/.test(step.run ?? ""));
+  assert.equal(hand.if, "always()", "a failed share still hands its slot on");
+  assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push to redesign/window is never held");
+});
+
+/* The build starts from the newest earlier build: only what changed is compiled, outputs whose source is gone are
+   removed first (scripts/prune-dist.mjs), and the folders the copy steps fill are never taken from the cache. */
+test("each share builds on the newest earlier build, and never trusts it as done", () => {
+  const steps = workflow.jobs.test.steps;
+  const build = steps.findIndex((step) => step.run === "npm run build");
+  const cache = steps[build - 1];
+  assert.match(cache.uses ?? "", /^actions\/cache@/);
+  assert.deepEqual(cache.with.path.trim().split("\n"), ["dist", "!dist/handbook", "!dist/bundled-add-ons", "!dist/data", ".build-cache"]);
+  assert.match(cache.with.key, /hashFiles\('src\/\*\*', 'tsconfig\.json', 'package-lock\.json', 'scripts\/build-ts\.mjs', 'scripts\/prune-dist\.mjs'\)/);
+  assert.ok(cache.with.key.startsWith(cache.with["restore-keys"]), "the fallback is any earlier build of this system and Node");
+  assert.match(readFileSync(new URL("../scripts/build-ts.mjs", import.meta.url), "utf8"), /pruneDist\(dist, src\)/, "orphans go first");
 });

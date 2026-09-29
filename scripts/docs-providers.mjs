@@ -73,7 +73,9 @@ const catalog = JSON.parse(await readFile(resolve("data/providers.json"), "utf8"
 const rawBlock = [
   start,
   "",
-  `Branch knows ${catalog.services.length} model services. Every one of them has been tested against a fake of the`,
+  // The breakdown is read the same way tests/docs-counts.test.mjs reads it, so the two cannot disagree.
+  `Branch knows ${catalog.services.length} model services (${catalog.services.filter((s) => s.kind === "cloud" && s.id !== "custom").length} online, `
+    + `${catalog.services.filter((s) => s.kind === "local").length} that run on this computer, and one address of your own). Every one of them has been tested against a fake of the`,
   "service, not against the real one, so treat this as \"Branch speaks the right language\", not as",
   "\"this was tried on a live account\". Addresses and prices were last checked on " + catalog.pricedAt + ".",
   "",

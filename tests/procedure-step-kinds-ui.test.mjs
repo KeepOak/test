@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { pickGsel, gselChoices } from "./gsel.mjs";
 
 test("a person builds Repeat, If it says and Wait steps, approves them, and says yes to what it would repeat", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-step-kinds-ui-"));
@@ -43,15 +44,27 @@ test("a person builds Repeat, If it says and Wait steps, approves them, and says
   await page.locator(`[data-act="flow"][data-id="${procedure.id}"]`).click();
   const dlg = page.locator(".dlg");
   await dlg.locator("#fk-0").waitFor();
-  assert.deepEqual(await dlg.locator("#fk-0 option[disabled]").allInnerTexts(), [], "every kind can be picked");
+  assert.deepEqual((await gselChoices(dlg.locator("#fk-0"))).filter((c) => c.off), [], "every kind can be picked");
 
   const add = async (kind, text) => {
     const j = await dlg.locator("[id^='fk-']").count();
     await dlg.locator('[data-act="flow-add"]').click();
-    await dlg.locator(`#fk-${j}`).selectOption(kind);
+    await pickGsel(dlg.locator(`#fk-${j}`), kind);
     await dlg.locator(`#ft-${j}`).fill(text);
     return j;
   };
+  // A new step's deferred focus that lands late (a busy computer) never pulls typing out of the field the person moved to.
+  await page.evaluate(() => {
+    const real = window.setTimeout, held = [];
+    window.setTimeout = (fn, ms, ...args) => (ms === 0 ? held.push(() => fn(...args)) : real(fn, ms, ...args));
+    window.releaseHeld = () => { window.setTimeout = real; for (const run of held.splice(0)) run(); };
+  });
+  await dlg.locator('[data-act="flow-add"]').click();
+  await dlg.locator("#ft-0").click();
+  await page.evaluate(() => window.releaseHeld());
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "ft-0", "the late focus left the person's field alone");
+  await dlg.locator('[data-act="flow-rm"][data-j="1"]').click();
+  await page.waitForFunction(() => !document.getElementById("fk-1"));
   await add("loop", "Check the prices again.");
   const cond = await add("if", "cheaper");
   await dlg.locator(`#fy-${cond}`).fill("Draft an order.");

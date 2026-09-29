@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
+import { ownersOwnTask } from "./asked-task.js"; // SELF-202: the owner's own names and words, in the owner's own task only
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { memoryAgent, readsSharedFacts, writesSharedFacts } from "./trunks/memory-scope.js"; // R17-A (Trunks)
 import { isDeepStrictEqual } from "node:util";
@@ -88,10 +90,15 @@ export const UpdateMemorySchema = z.object({
 }).strict();
 export const PutMemorySchema = z.object({
   text: z.string().trim().min(1).max(4000),
-  source: z.string().trim().min(1).max(500),
+  /** SELF-202: when the model leaves it out, the task it came from says it (memory.put); a save is never refused for it. */
+  source: z.string().trim().min(1).max(500).optional(),
   entity: z.string().trim().min(1).max(120).optional(),
   attribute: z.string().trim().min(1).max(80).optional(),
-  validFrom: z.iso.datetime().optional(),
+  /**
+   * SELF-202: any short text, read by withSaidStart. qwen2.5:7b wrote days ("2026-09-28"), moments with an offset, and
+   * "now"; each was refused, and sometimes the model gave up, so nothing was remembered.
+   */
+  validFrom: z.string().trim().max(40).meta({ format: "date-time" }).optional(), // still described as a moment
   scope: z.enum(["private", "shared"]).optional(),
   /** What kind of thing this is. A task-scratch note is cleared when the job that made it ends. */
   kind: FactKindSchema.optional(),
@@ -357,7 +364,9 @@ export class MemoryFacts {
       if (!writableTo(record, agent)) continue;
       const d = record.data as MemoryData;
       if (d.entity !== entity || d.attribute !== attribute || (d.validTo ?? null) !== null) continue;
-      if ((d.validFrom ?? record.createdAt) >= validFrom) continue;
+      // A fact that starts after the new one is not ended by it. One that starts in the same instant was saved first, so the
+      // new one replaces it (two saves inside one millisecond left both current).
+      if ((d.validFrom ?? record.createdAt) > validFrom) continue;
       this.keepVersion(owner, record, "superseded");
       this.db.prepare("UPDATE memory SET data=?, updated_at=?, revision=revision+1 WHERE owner=? AND id=?")
         .run(JSON.stringify({ ...d, validTo: validFrom }), new Date().toISOString(), owner, record.id);
@@ -426,7 +435,7 @@ export class MemoryFacts {
     const binned = binnedRuns(this.db); // a fact a conversation in Recently Deleted taught is not recalled while it waits there
     let bytes = 2;
     for (const record of this.list(owner)) {
-      if (!visibleTo(record, agent) || learnedInBin(binned, record.data)) continue;
+      if (!visibleTo(record, agent) || learnedInBin(binned, record.data) || !isCurrentFact(record)) continue; // SELF-202
       if (!String(record.data.text).normalize("NFC").toLowerCase().includes(normalized)) continue;
       const size = Buffer.byteLength(JSON.stringify(record)) + 1;
       if (bytes + size > 48000 || results.length === 20) break;
@@ -501,6 +510,17 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
   registry.register({ name: "memory.put", description: "Save one clear fact with its source. Give entity and attribute when it may change later, so a newer fact ends the earlier one.",
     permission: "memory.write", parameters: PutMemorySchema,
     execute: async (value, context) => {
+      // SELF-202: what the fact and the owner's own words say fills in what the model left out (see withImpliedDetail).
+      // Only the owner's own task, saving into the owner's own memory, reads the owner's names and the owner's words: in a
+      // household person's task "me" is that person, and a room turn or routine (a titled run) frames other members' words.
+      const ownersOwn = memoryScope(store, context) === context.owner && (context.source ?? "owner") === "owner"
+        && ownersOwnTask(store, context.runId) && !store.events(context.runId).some((event) => event.kind === "run.titled");
+      const asked = ownersOwn ? store.run(context.runId)?.prompt : undefined;
+      value = canonicalDetail(withImpliedDetail(value, { ownerNames: ownersOwn ? ownerNames() : [], ...(asked ? { request: asked } : {}) }));
+      value = withSaidStart(value, store.run(context.runId)?.prompt);
+      // SELF-202: qwen2.5:7b often left the source out; the save was refused and it gave up, so nothing was remembered.
+      // Where the fact came from is known here: the task, and who started it.
+      const source = value.source ?? ((context.source ?? "owner") === "owner" ? "The owner said so" : `A ${context.source} message`);
       const owner = memoryScope(store, context);
       const sessionId = store.run(context.runId)?.sessionId;
       if (sessionId && store.memorySuppressed(owner, sessionId))
@@ -510,10 +530,10 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const { scope: _requested, ...rest } = value; void _requested;
       // A kind decides how long the fact lasts unless it says otherwise: only a scribble is short-lived.
       const layer = layerForKind(value.kind ?? "fact-about-world");
-      const data = { ...rest, ...(scope ? { scope } : {}), layer, sourceRunId: context.runId };
+      const data = { ...rest, source, ...(scope ? { scope } : {}), layer, sourceRunId: context.runId };
       // A suggestion carries whose the fact is and what it is about, so the owner's yes saves it as this would have.
       const { text: _text, source: _source, sourceRunId: _run, ...fact } = data; void _text; void _source; void _run;
-      const proposal = staged(store, context, { kind: "put", text: value.text, source: value.source }, fact);
+      const proposal = staged(store, context, { kind: "put", text: value.text, source }, fact);
       if (proposal) return proposal;
       if (!provider?.isOutside(owner)) return store.save("memory", owner, randomUUID(), data, agent);
       const id = randomUUID();
@@ -586,14 +606,23 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const owner = memoryScope(store, context);
       if (provider?.isOutside(owner)) return provider.search(owner, value.query, memoryAgent(context));
       if (!retrieval) return store.searchMemory(owner, value.query, memoryAgent(context));
-      const hits = await retrieval.search(owner, value.query, memoryAgent(context), 20, context.signal);
+      const hits = (await retrieval.search(owner, value.query, memoryAgent(context), 20, context.signal)).filter((hit) => isCurrentFact(hit.record));
       return hits.map((hit) => ({ ...hit.record, score: hit.score, importance: hit.importance, matched: hit.matched }));
     } });
-  registry.register({ name: "memory.delete", description: "Delete an owner-scoped memory.", permission: "memory.write",
-    parameters: z.object({ id: MemoryIdSchema }).strict(),
+  registry.register({ name: "memory.delete", description: "Delete an owner-scoped memory: its id, or words of the fact as you know it.", permission: "memory.write",
+    parameters: z.object({ id: MemoryIdSchema.describe("The fact's id, or words from the fact") }).strict(),
     execute: async (value, context) => {
       const owner = memoryScope(store, context);
       const outside = !!provider?.isOutside(owner);
+      // The facts a task is shown carry no ids, so a model names the fact by its words. On this computer's own memory,
+      // words that match exactly one current fact of this agent's reach delete that one; several are listed to choose from.
+      if (!outside && !store.get("memory", owner, value.id)) {
+        const found = factsByWords(store, owner, value.id, memoryAgent(context));
+        if (found.length !== 1) return found.length
+          ? { deleted: false, note: "Those words match more than one fact. Delete one by its id.", facts: found.map(summary) }
+          : { deleted: false, note: "No remembered fact has that id or those words. memory.search finds facts by their words." };
+        value = { id: found[0]!.id };
+      }
       // FQ-routing.isolated-agents: an id outside this agent's own scope is refused exactly as a
       // missing one is (returns false, nothing thrown) — an unauthorised Trunk learns nothing about
       // whether that id even exists.
@@ -612,4 +641,127 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
 
 function summary(record: MemoryRecord) {
   return { id: record.id, text: String(record.data.text), updatedAt: record.updatedAt };
+}
+
+/** The current facts (not ended) of this owner that contain these words, within what `agent` may change. */
+function factsByWords(store: Store, owner: string, words: string, agent?: string): MemoryRecord[] {
+  const wanted = words.trim().toLowerCase().replace(/\s+/g, " ");
+  if (wanted.length < 2) return [];
+  return (store.list("memory", owner) as MemoryRecord[]).filter((record) => {
+    const data = record.data as { text?: unknown; validTo?: unknown };
+    return (data.validTo ?? null) === null && writableTo(record, agent)
+      && String(data.text ?? "").toLowerCase().replace(/\s+/g, " ").includes(wanted);
+  });
+}
+
+/**
+ * A fact about the person that can only have one value at a time, said the plain way ("I live in Denver", "My dentist is
+ * Dr. Okafor"), names its own entity and detail. Saving it with them means a newer one ends the earlier one (closeEarlier),
+ * even when the model did not say which detail it was. Anything else is saved as it was given. Empty when nothing is implied.
+ */
+/**
+ * SELF-202 (mem-update-not-duplicate): a newer fact ends an earlier one only when both name the same entity and
+ * attribute, and qwen2.5:7b named them loosely: "Atlanta" about "Taofiks" (the owner's name, from the computer's name
+ * it is shown), "I live in Atlanta" about "owner" with no attribute, then "I moved to Denver" about "person"/"location".
+ * So Atlanta stayed current beside Denver in 6 of 10 tries. What the fact and the owner's own words say fills in what
+ * the model left out:
+ * - an entity that names the owner (an alias, or their own name) is the owner, and a fact in the owner's first person
+ *   ("I live in…", "my dentist is…") with no entity, or one naming the owner, is about the owner;
+ * - with no attribute, the detail those words name is kept; failing that, the detail the owner's own request names
+ *   ("Remember: I live in Atlanta.") when the fact shares a word with it. Only the owner's own request is read: in a
+ *   chat, "I" may be somebody else.
+ * An entity the model named that is not the owner ("Alice", "mom") is left as it is.
+ */
+export function withImpliedDetail<T extends { text: string; entity?: string | undefined; attribute?: string | undefined }>(
+  value: T, about: { ownerNames?: readonly string[]; request?: string } = {},
+): T {
+  const named = value.entity?.trim().toLowerCase();
+  const owners = new Set([...personAliases, ...(about.ownerNames ?? []).map((name) => name.toLowerCase())]);
+  const ownerOrNone = !named || owners.has(named);
+  if (!ownerOrNone) return value;
+  const implied = impliedDetail(value.text);
+  const fromRequest = implied.attribute ? {} : detailFromRequest(about.request, value.text);
+  const entity = implied.entity ?? fromRequest.entity ?? (named ? "me" : undefined);
+  const attribute = value.attribute ?? implied.attribute ?? fromRequest.attribute;
+  return { ...value, ...(entity ? { entity } : {}), ...(attribute ? { attribute } : {}) };
+}
+/**
+ * SELF-202: when a fact started, kept only when the words the task was given name that year. A date the model made up
+ * ("2023-10-01" for "I moved to Denver", said today) kept the move from ending "I live in Atlanta", which was saved
+ * later than that; the fact is kept either way, from now. A day is written as its start.
+ */
+export function withSaidStart<T extends { validFrom?: string | undefined }>(value: T, request: string | undefined): T {
+  if (!value.validFrom) return value;
+  const { validFrom: said, ...rest } = value;
+  const year = /^(\d{4})-/.exec(said)?.[1];
+  const when = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(said) ? `${said}T00:00:00.000Z` : said);
+  // Unreadable ("now"), or a year the task's words never named: the fact is kept, from now. A call from outside a task
+  // (no words to check against: a program, a test, the owner's own tool call) keeps a readable date as given.
+  if (!year || Number.isNaN(when) || (request !== undefined && !request.includes(year))) return rest as T;
+  return { ...rest, validFrom: new Date(when).toISOString() } as T;
+}
+/** The detail the owner's own request names, clause by clause ("Remember: I live in Atlanta."), when the fact shares a word with it. */
+function detailFromRequest(request: string | undefined, text: string): { entity?: string; attribute?: string } {
+  if (!request) return {};
+  const said = new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []));
+  for (const clause of request.split(/[.:;!?\n]+/)) {
+    const plain = clause.trim().replace(/^(?:please\s+)?(?:remember|note|save|keep in mind|update where i live)(?:\s+that)?\s*/i, "");
+    const detail = impliedDetail(plain);
+    if (!detail.attribute) continue;
+    const words = plain.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+    if (words.some((word) => said.has(word) && !["live", "moved", "work", "now"].includes(word))) return detail;
+  }
+  return {};
+}
+/**
+ * The names the owner goes by here, as a model may write them for the owner: this computer's name, which every task is
+ * shown as "the owner's own computer", and its first word ("Taofiks_Legion" gives both). qwen2.5:7b wrote each as the
+ * entity of the owner's own fact. A generic machine name ("DESKTOP-4KQ7") names nobody. Nothing else is read.
+ */
+export function ownerNames(host = hostname()): string[] {
+  const first = host.split(/[_\-. ]+/)[0] ?? "";
+  if (!/^[\p{L}]{3,}$/u.test(first) || /^(desktop|laptop|pc|computer|localhost|mac|macbook|windows|linux|ubuntu|runner|ip)$/i.test(first)) return [];
+  return [...new Set([host.trim(), first])];
+}
+/**
+ * SELF-202: whether a fact is still true. A fact a newer one ended (closeEarlier sets its `validTo`) stays in the record
+ * for memory.at and the timeline, but is never put in front of the model as if it were current: with "I live in
+ * Atlanta" and "I live in Denver" both in its snapshot, qwen2.5:7b answered "both".
+ */
+export function isCurrentFact(record: { data: { validTo?: unknown } }, now = Date.now()): boolean {
+  const ended = record.data.validTo;
+  return typeof ended !== "string" || !ended || Date.parse(ended) > now;
+}
+export function impliedDetail(text: string): { entity?: string; attribute?: string } {
+  const plain = text.trim().replace(/\s+/g, " ");
+  const mine = /^my ([a-z][a-z' -]{0,40}?) (?:is|are) \S/i.exec(plain);
+  if (mine) return { entity: "me", attribute: mine[1]!.toLowerCase() };
+  if (/^i(?:'ve| have)? (?:moved to|live in|now live in) \S/i.test(plain)) return { entity: "me", attribute: "home" };
+  const work = /^i (?:now )?work (?:at|for) \S/i.test(plain);
+  return work ? { entity: "me", attribute: "work" } : {};
+}
+
+const personAliases = new Set(["me", "i", "myself", "owner", "the owner", "person", "the person", "user", "the user", "self",
+  // SELF-202: the generic words qwen2.5:7b used for the owner's own facts.
+  "personal", "personal info", "personal information", "profile", "owner info", "user info", "user profile", "owner profile"]);
+const attributeAliases: Readonly<Record<string, string>> = {
+  location: "home", residence: "home", city: "home", "lives in": "home", "where i live": "home", "home city": "home", "hometown": "home",
+  // SELF-202: the other ways qwen2.5:7b named where the owner lives ("current residence" ended nothing saved as "home").
+  address: "home", "home address": "home", "place of residence": "home", "residence city": "home", "city of residence": "home",
+  lives: "home", living: "home", "living in": "home", "resides in": "home", "home location": "home", "home town": "home",
+  job: "work", employer: "work", workplace: "work", company: "work", "works at": "work", "place of work": "work", "work place": "work",
+};
+/** SELF-202: an attribute as it is compared: lower case, "_" and "-" as spaces, and a leading "current", "the" or "my" left off. */
+function plainAttribute(attribute: string): string {
+  return attribute.trim().replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").replace(/^(?:(?:current|present|the|my)\s+)+/, "");
+}
+/**
+ * The person is one entity however a model names them ("owner", "user", "me"), and a few details go by several names
+ * ("location" and "home"). Named one way, so a newer fact about the same detail ends the earlier one (closeEarlier).
+ */
+export function canonicalDetail<T extends { entity?: string | undefined; attribute?: string | undefined }>(value: T): T {
+  const entity = value.entity && personAliases.has(value.entity.trim().toLowerCase()) ? "me" : value.entity;
+  const said = value.attribute ? plainAttribute(value.attribute) : undefined;
+  const attribute = said && entity === "me" ? attributeAliases[said] ?? value.attribute : value.attribute;
+  return { ...value, ...(entity ? { entity } : {}), ...(attribute ? { attribute } : {}) };
 }
