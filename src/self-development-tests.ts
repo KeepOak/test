@@ -29,7 +29,7 @@ export async function runContractTests(book: ContractBook, merges: SelfDevelopme
     throw new Error(`The tests did not run (${error instanceof Error ? error.message : String(error)}). Run node ${args.join(" ")} with shell.execute in ${worktree} instead.`);
   }
   // Only a record this very run wrote counts (every run writes a new one): an older one says nothing about this commit.
-  const newest = merges.evidence.lastRun(worktree), run = newest && newest !== earlier ? newest : null;
+  const newest = merges.evidence.lastRun(worktree), run = newest && newest.id !== earlier?.id ? newest : null;
   const tail = typeof result.stdout === "string" ? result.stdout.split("\n").slice(-30).join("\n") : "";
   if (!run) return { worktree, command: ["node", ...args], recorded: false, exitCode: result.exitCode ?? null, output: tail,
     note: "No result was recorded: commit every change first, and keep scripts/review.mjs, scripts/build-ts.mjs and the package scripts as they are." };

@@ -252,3 +252,25 @@ test("SELF-014: the contract's tests run as evidence needs them, and a failed ru
   await assert.rejects(runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, context), /Commit all changes/);
   await assert.rejects(runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, "branch-agent-source/.branch-worktrees/self-none", context), /no self-development contract/);
 });
+
+test("SELF-014: passed tests survive an engine restart, for the exact commit and contract they name", async (t) => {
+  const { SelfDevelopmentEvidence } = await import("../dist/self-development-evidence.js");
+  const f = await fixture(t); await f.tested();
+  const kept = f.merges.evidence.get(worktree);
+  assert.equal(kept.sha, f.headSha);
+  // A new engine on the same data reads what the old one wrote.
+  const restarted = new SelfDevelopmentEvidence({ store: f.app.store, owner: f.app.runtime.owner, workspace: f.app.runtime.workspace });
+  assert.deepEqual(restarted.get(worktree), kept);
+  assert.equal(restarted.lastRun(worktree).passed, true);
+  const review = await f.merges.review(f.input);
+  assert.equal(review.tests.sha, f.headSha, "owner review needs no second test run after a restart");
+});
+
+test("the old repository name is asked for as KeepOak/Branch-Agent: GitHub only redirects it, and Branch refuses redirects", async () => {
+  const { canonicalRepo, officialRepo } = await import("../dist/desktop/repo-pair.js");
+  assert.equal(officialRepo("stabrea/Branch-Agent"), "KeepOak/Branch-Agent");
+  assert.equal(officialRepo("stabrea/branch-agent"), "KeepOak/Branch-Agent");
+  assert.equal(officialRepo("alice/Branch-Agent"), "alice/Branch-Agent", "a fork keeps its own name");
+  assert.equal(canonicalRepo("KeepOak/Branch-Agent"), canonicalRepo("stabrea/Branch-Agent"));
+  assert.notEqual(canonicalRepo("alice/Branch-Agent"), canonicalRepo("KeepOak/Branch-Agent"));
+});

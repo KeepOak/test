@@ -14,12 +14,13 @@ import { queuedNote, repositoryPath } from "./integrations/github.js";
 import { HttpError } from "./server-http.js";
 import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { currentCaller } from "./caller.js";
-import { canonicalRepo } from "./desktop/repo-pair.js";
+import { canonicalRepo, officialRepo } from "./desktop/repo-pair.js";
 import { throughPairedDoor } from "./people/context.js";
 import type { ToolContext } from "./contracts.js";
 
 const ReviewSchema = z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
-  repo: repositoryPath, number: z.number().int().positive() }).strict();
+  // The old stabrea/Branch-Agent name is asked for as KeepOak/Branch-Agent: GitHub only redirects it, and Branch refuses redirects.
+  repo: repositoryPath.transform(officialRepo), number: z.number().int().positive() }).strict();
 const GrantSchema = z.object({ id: z.string().uuid() }).strict();
 type ReviewInput = z.infer<typeof ReviewSchema>;
 const fingerprint = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -194,12 +195,15 @@ export class SelfDevelopmentMerges {
     return { ...merged, repository: input.repo, number: input.number, reviewedHead: ready.github.headSha, reviewerRunId: result.runId,
       ...(merged.merged ? {} : { note: queuedNote }) };
   }
-  /** GitHub works out a newly ready pull request's mergeability again; that short wait is pending, never passed. */
+  /**
+   * GitHub works out a newly ready pull request's mergeability again; that wait is pending, never passed. Up to two
+   * minutes: a merge-queue base can say "blocked" for a while after the draft turns ready.
+   */
   private async afterReady(input: ReviewInput, context: ToolContext): Promise<Snapshot> {
     for (let attempt = 1; ; attempt++) {
       try { return await this.checkedSnapshot(input, context, false); }
       catch (error) {
-        if (!(error instanceof ChecksPending) || attempt >= 20) throw error;
+        if (!(error instanceof ChecksPending) || attempt >= 40) throw error;
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
     }

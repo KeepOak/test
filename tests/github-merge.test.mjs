@@ -123,17 +123,20 @@ test("queued, running, not-yet-reported or partly registered checks are pending,
   }
 });
 
-test("a failed, cancelled or required-but-skipped check or run refuses; optional skipped and neutral are fine", async () => {
+test("a failed or cancelled check or run refuses; skipped and neutral are fine, required or not, as GitHub counts them", async () => {
   for (const change of [
     { changeCheck: (a) => { a.check_runs[0].conclusion = "failure"; } },
     { changeCheck: (a) => { a.check_runs[1].conclusion = "cancelled"; } },
-    { changeCheck: (a) => { a.check_runs[0].conclusion = "skipped"; } },
     { changeRuns: (r) => { r.workflow_runs[0].conclusion = "failure"; } },
     { changeRuns: (r) => { r.workflow_runs[0].head_sha = moved; } },
     { changeRuns: (r) => { r.total_count = 3; } },
   ]) await assert.rejects(fixture(change).github.mergeReview(repo, 7), (error) => !(error instanceof ChecksPending) && refused.test(error.message));
   const neutral = fixture({ changeCheck: (a) => { a.check_runs[1].conclusion = "neutral"; } });
   assert.equal((await neutral.github.mergeReview(repo, 7)).headSha, head);
+  // The required "tests" check skipped (a job whose `if` was false), with another check passing: GitHub counts it as met.
+  const skippedRequired = fixture({ changeCheck: (a) => { a.check_runs[0].conclusion = "skipped";
+    a.check_runs.push({ id: 3, head_sha: head, name: "lint", app: { id: 123 }, status: "completed", conclusion: "success" }); a.total_count = 3; } });
+  assert.equal((await skippedRequired.github.mergeReview(repo, 7)).headSha, head);
   // A rerun: the newest attempt of a workflow decides, not an older failed one.
   const rerun = fixture({ changeRuns: (r) => { r.total_count = 3; r.workflow_runs.push({ ...r.workflow_runs[0], id: 10, conclusion: "failure", run_attempt: 0 }); } });
   assert.equal((await rerun.github.mergeReview(repo, 7)).headSha, head);

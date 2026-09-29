@@ -146,7 +146,7 @@ async function workflowRuns(request: Request, repo: string, head: string): Promi
     status: String(row.status ?? ""), conclusion: String(row.conclusion ?? "") }));
 }
 
-/** Passed, skipped or neutral is fine for any check; a required one must pass. Anything unfinished is pending, never passed. */
+/** Passed, skipped or neutral is fine for any check, required or not (GitHub counts them so). Anything unfinished is pending, never passed. */
 const finished = new Set(["success", "skipped", "neutral"]);
 function judgeChecks(result: GitHubChecks, required: RequiredCheck[], workflows: WorkflowRun[], pin: MergePin): void {
   if (result.sha !== pin.headSha) fail("the checks were read for another commit.");
@@ -160,7 +160,8 @@ function judgeChecks(result: GitHubChecks, required: RequiredCheck[], workflows:
   for (const need of required) {
     // A check of that name from another app is not the required one: it is still awaited, never passed.
     const matched = result.checks.filter((item) => item.name === need.context && (need.appId === null || item.source === "check" && item.appId === need.appId));
-    if (matched.some((item) => item.result !== "success")) fail(`required check ${need.context} did not pass.`);
+    // As GitHub counts a required check: passed, skipped or neutral is met; anything else did not pass.
+    if (matched.some((item) => !finished.has(item.result))) fail(`required check ${need.context} did not pass.`);
     if (!matched.length) pending(`required check ${need.context} has not reported on this exact commit yet.`);
   }
   if (!result.checks.some((item) => item.result === "success")) pending("no check has passed on this exact commit yet.");
