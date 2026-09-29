@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { assertContinuitySession } from "./reach/continuity-store.js";
+import type { TasteLearning } from "./taste/learning.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
@@ -678,6 +680,7 @@ export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOw
 
 export class Runtime {
   private readonly controllers = new Map<string, AbortController>();
+  taste: TasteLearning | null = null;
   /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
   private readonly pausing = new Map<string, AbortController>();
   /**
@@ -1565,6 +1568,8 @@ ${run.output.slice(0, 6000)}`;
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
+    assertContinuitySession(this.store, this.owner,
+      options.sessionId ?? this.store.run(options.resumeFrom ?? options.continuing?.runId ?? "")?.sessionId, parent?.runId, options.continuing?.runId);
     // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
     if (options.resumeFrom && this.startedAsDryRun(options.resumeFrom)) options = { ...options, dryRun: true };
     if (!parent && !options.resumeFrom && !options.continuing && options.dryRun && !practiceRunsEnabled(this.store, this.owner))
@@ -2883,6 +2888,9 @@ ${run.output.slice(0, 6000)}`;
     // Read under whoever is using the app: with a household profile switched on, their task is
     // given their own remembered facts and never the owner's.
     const snapshot = this.store.review.sessionSnapshot(memoryScope(this.store, context), run.sessionId, memoryAgent(context));
+    const taste = this.taste?.context({ memoryOwner: memoryScope(this.store, context), agent: memoryAgent(context) ?? null,
+      project: run.project ?? null, temporary: this.store.sessionTemporary(run.sessionId) });
+    if (taste) messages.push(taste);
     if (snapshot.count) messages.push({ role: "system", content: `What you remember about the person (snapshot taken when this conversation started; use memory.search for anything newer):\n${snapshot.text}` });
     const aboutYou = knobs.aboutYouMessage(this.store, memoryScope(this.store, context)); // R17-S13
     if (aboutYou) messages.push(aboutYou);

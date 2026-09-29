@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { openWall, type WallDeps } from '../sandbox-backends.js';
 import { bwrapMissing, namespacesOff } from '../sandbox-bwrap.js';
 import { confinedWall } from './shell.js';
+import { pluginScratchWall } from '../plugin-scratch-wall.js';
 import { heldCover, wslHeldPrograms, wslNoBubblewrap, wslNoNamespaces, wslNoNode, type WslHeldPlan } from './wsl-held.js';
 
 /**
@@ -76,7 +77,8 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
     return 1;
   }
   try {
-    const result = await forward(wall.start, plan.timeoutMs, plan.interactive === true);
+    const start = plan.scratchOnly ? await pluginScratchWall(wall.start, program, plan.workspace, 'linux') : wall.start;
+    const result = await forward(start, plan.timeoutMs, plan.interactive === true);
     const note = await wall.finish(result).catch((error: unknown) => plainly(error));
     if (note) process.stderr.write(`${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${note}\n`);
     return result.exitCode ?? 1;

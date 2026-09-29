@@ -4,7 +4,7 @@ import { checkRunner, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslRea
 import { wslPath, type SandboxStart, type WallDeps } from "../sandbox-backends.js";
 
 /** The trusted Linux runner is outside the only folder generated code may write. */
-export async function scriptWslStart(staging: string, timeoutMs: number, unreadable: readonly string[], deps: WallDeps): Promise<SandboxStart> {
+export async function scriptWslStart(staging: string, timeoutMs: number, unreadable: readonly string[], deps: WallDeps, interactive = true, scratchOnly = false): Promise<SandboxStart> {
   const missing = await wslReadiness(deps.probe ?? wslProbe);
   if (missing) throw new Error(missing);
   const runner = wslHeldRunner();
@@ -13,6 +13,6 @@ export async function scriptWslStart(staging: string, timeoutMs: number, unreada
     args: ["--no-warnings", "--max-old-space-size=256", `${wslPath(staging)}/host.mjs`],
     cwd: staging, workspace: staging, env: {}, secrets: [], registry: false, timeoutMs });
   const planFile = join(staging, "held-plan.json");
-  await writeFile(planFile, JSON.stringify({ ...plan, interactive: true, unreadable: unreadable.map(wslPath) }), { mode: 0o600 });
+  await writeFile(planFile, JSON.stringify({ ...plan, interactive, scratchOnly, unreadable: unreadable.map(wslPath) }), { mode: 0o600 });
   return wslHeldStart({ runner, planFile, cwd: staging });
 }

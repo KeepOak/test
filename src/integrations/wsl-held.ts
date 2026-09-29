@@ -38,6 +38,8 @@ export interface WslHeldPlan {
   timeoutMs: number;
   /** Tool scripts use stdin replies and framed stdout requests, never Windows descriptor 3. */
   interactive?: boolean;
+  /** Untrusted plugin evaluations may read only scratch and interpreter/runtime files. */
+  scratchOnly?: boolean;
   unreadable?: string[];
 }
 
