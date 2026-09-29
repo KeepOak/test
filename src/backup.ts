@@ -10,7 +10,7 @@ import { neverTouched, settingsCatalogue } from "./settings-kit/catalogue.js";
 import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { settleForgotten } from "./conversation-residue.js";
-import { introPrompt, introSystem } from "./trunks/intro.js";
+import { defaultGreeting, introPrompt, introSystem } from "./trunks/intro.js";
 import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
 import { MemoryFileSchema, memoryFileName } from "./trunks/files.js"; // workbench (SELF-311)
 
@@ -518,9 +518,17 @@ function onlyIntroduction(db: DatabaseSync, sessionId: string, setup: readonly S
   if (!tasks.every(engines)) return false;
   if (markedByThePerson(db, sessionId, tasks.map((task) => task.id))) return false;
   const messages = db.prepare("SELECT body FROM messages WHERE session_id=?").all(sessionId) as { body: string }[];
-  // The default is created quietly, with no model introduction. Only its exact engine opening counts as setup.
-  if (!messages.length) return tasks.length === 1 && tasks[0]!.status === "completed" && tasks[0]!.output === "Opened"
+  // The default is created quietly, with no model introduction: its exact engine opening, and at most the greeting the
+  // engine writes for it (src/trunks/intro.ts defaultGreeting), count as setup.
+  const quiet = tasks.length === 1 && tasks[0]!.status === "completed" && tasks[0]!.output === "Opened"
     && setup.some((trunk) => tasks[0]!.owner === trunk.owner && tasks[0]!.prompt === `Trunk: ${trunk.name}`);
+  if (!messages.length) return quiet;
+  if (quiet && messages.length === 1) {
+    try {
+      const only = JSON.parse(messages[0]!.body) as { role?: unknown; content?: unknown; toolCalls?: unknown };
+      if (only.role === "assistant" && only.toolCalls === undefined && setup.some((trunk) => only.content === defaultGreeting(trunk.name))) return true;
+    } catch { return false; }
+  }
   let asks = 0;
   for (const row of messages) {
     let message: { role?: unknown; content?: unknown; system?: unknown; toolCalls?: unknown };

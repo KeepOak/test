@@ -26,6 +26,12 @@ const server = createServer((request, response) => {
     request.on("end", () => response.end(JSON.stringify({ body, origin: request.headers.origin ?? null })));
     return;
   }
+  // As Restart the engine does (src/dashboard-api.ts restartEngine): stop with exit code 75 to be started again.
+  if (request.url === "/api/dashboard/restart" && request.method === "POST") {
+    response.end(JSON.stringify({ restarting: true }));
+    setTimeout(() => process.exit(75), 50);
+    return;
+  }
   if (request.url === "/api/deployment/close" && request.method === "POST") {
     response.end("{}");
     setTimeout(() => process.exit(0), 50);
