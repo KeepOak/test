@@ -80,6 +80,8 @@ const reviewedComputedKeys = new Set([
   "src/flows-boards/recipe-checks.ts: key",
   "src/flows-boards/settings.ts: boardKey",
   "src/flows-boards/settings.ts: key",
+  "src/gitlab-connection.ts: gitlabAccountKey", // RES-719: "gitlab-account" stays on this computer (its token is in the locker)
+  "src/gitlab-connection.ts: gitlabSwitchKey", // RES-719: "gitlab-connection" waits for the owner's yes
   "src/goal-mode.ts: key",
   "src/integrations/mcp-oauth.ts: settingsKey",
   "src/interop/settings.ts: interopKey",

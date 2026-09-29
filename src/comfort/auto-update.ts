@@ -1,5 +1,6 @@
 import type { Store } from "../store.js";
 import { readComfort } from "./settings.js";
+import { lockdownActive } from "../lockdown.js";
 import { diagnose } from "../diagnostic-log.js";
 
 /**
@@ -19,7 +20,12 @@ export interface UpdatePlan {
 
 const lastKey = "comfort-update-last";
 export const checkEveryMs = 24 * 60 * 60 * 1000;
-export const betaCheckEveryMs = 5 * 60 * 1000;
+/**
+ * Beta looks once a minute: a look is one small git request (no rate-limited API), and GitHub has built the change in
+ * about two minutes (src/desktop/build-output.ts), so a merged change reaches the app in minutes, not the average of
+ * two and a half spent waiting for a five-minute look.
+ */
+export const betaCheckEveryMs = 60 * 1000;
 
 export function lastUpdateCheck(store: Pick<Store, "get">, owner: string): string | null {
   const at = store.get("settings", owner, lastKey)?.data?.at;
@@ -117,6 +123,31 @@ export function holdingTasks(store: Pick<Store, "sqlite">, owner: string, now = 
   return rows.map((row) => ({ id: row.id, sessionId: row.sessionId, state: row.status === "running" ? "working" : "asking" }));
 }
 
+/** What an update held by the plan is waiting on, for its line in the activity log. */
+export interface UpdateWaitFacts {
+  channel: string; version: string | null; busyTasks: number; workingTasks: number; askingTasks: number;
+  holding: HoldingTask[]; heldSince: string | null; overdueTasks: number;
+}
+/** The last wait written, per owner: the window asks every 30 s to 5 min, and the same wait is written once. */
+const lastWait = new Map<string, string>();
+/**
+ * Writes why the plan tells update by itself to wait with a ready update (a plan with `until`), only when that wait is
+ * new: another reason, another version or channel. At warn, so it is kept at the log's shipped "when needed" mode; a wait
+ * is never an error, so it never becomes an automatic problem report. Answers whether a line was written.
+ */
+export function noteUpdateWait(owner: string, plan: UpdatePlan, facts: UpdateWaitFacts): boolean {
+  if (!plan.until) { lastWait.delete(owner); return false; }
+  const key = JSON.stringify([plan.reason, plan.until, facts.version, facts.channel]);
+  if (lastWait.get(owner) === key) return false;
+  lastWait.set(owner, key);
+  diagnose("updater", "warn", `Update by itself waits: ${plan.reason}`, { fields: {
+    until: plan.until, version: facts.version, channel: facts.channel, busyTasks: facts.busyTasks, workingTasks: facts.workingTasks,
+    askingTasks: facts.askingTasks, tasks: facts.holding.map((task) => `${task.id} (${task.state})`).join(", "),
+    heldSince: facts.heldSince, overdueTasks: facts.overdueTasks,
+  } });
+  return true;
+}
+
 /**
  * The last thing that went wrong while Branch updated itself (a look, a build, an install, or asking the engine), in
  * the updater's or engine's own words. It is kept until a look goes through cleanly, so Settings › Updates can say it.
@@ -177,6 +208,10 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
     if (facts.updaterTag && failedInstall(store, owner) === facts.updaterTag)
       return due ? plan("check", "Looking past the version that did not install here for a newer one.")
         : plan("nothing", "The newest version did not install here last time, so it is not tried again by itself. The next one is, as soon as it lands; Update tries this one now.", "a newer version lands");
+    // Lockdown: nothing starts by itself, and swapping in new code is the most far-reaching of all. It waits; the owner's
+    // own Update button (which never asks this plan) still installs it.
+    if (lockdownActive(store, owner))
+      return plan("nothing", "A newer version is ready; while Lockdown is on it does not install by itself. Update installs it now.", "Lockdown is off");
     if (facts.busyTasks > 0) {
       const asking = facts.askingTasks ?? 0, working = facts.workingTasks ?? facts.busyTasks - asking;
       return working > 0 || asking === 0
@@ -191,7 +226,7 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
   if (install && facts.updaterPhase === "idle")
     return plan("check", "Checking for an update that may have waited through the last restart.");
   if (!due) return plan("nothing", settings.releaseChannel === "beta"
-    ? "Beta updates were looked for less than five minutes ago."
+    ? "Beta updates were looked for less than a minute ago."
     : "Updates were looked for less than a day ago.");
   return plan("check", install ? "Looking for a newer version to install." : "Looking for a newer version to tell you about.");
 }
