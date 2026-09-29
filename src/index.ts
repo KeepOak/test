@@ -1,4 +1,6 @@
 import { environmentTool } from "./environment.js";
+import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
+import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
@@ -35,7 +37,7 @@ import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
-import { memoryScope, registerMemory } from "./memory.js";
+import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
@@ -57,8 +59,12 @@ import { pricingSettings } from "./pricing.js";
 import { registerSessions } from "./sessions.js";
 // Wave 8: conversations branched off other conversations, seen as a tree, and one answer carried back.
 import { SessionTree, registerSessionTree } from "./session-tree.js";
+import { holdTaskBrowser } from "./browser-hold.js";
+import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
+import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
+import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
 import { startMcpServer } from "./mcp-server.js";
@@ -69,6 +75,7 @@ import { integrationsFileTrusted, recordWorktreeCopy } from "./folder-trust.js";
 import type { CachedMcpTool } from "./integrations/mcp.js";
 import type { BranchBrowser } from "./integrations/browser.js";
 import { registerMcpTools } from "./mcp-tools.js";
+import { signInShowing } from "./sign-in-showing.js";
 import { A2aServer } from "./a2a.js";
 import { RemoteAgents, registerRemoteAgents } from "./a2a-client.js";
 import { createRequire } from "node:module";
@@ -147,6 +154,11 @@ import { GitCheckpoints, GitWorkspaces, type GitRun } from "./git-checkpoint.js"
 import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/ssh-workspace.js";
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
+import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
+import { registerTrunkMemoryFiles } from "./trunks/memory-files.js"; // workbench (SELF-311)
+import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.js"; // selfdev (SELF-303)
+import { askForHandoffs, registerLeadUsage } from "./lead-usage.js"; // workbench (SELF-307)
+import { openWork } from "./open-work.js"; // workbench (SELF-307)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
 import { registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
@@ -263,7 +275,11 @@ import { computerPlatforms } from "./trunks/starts-in.js"; // Q44
 import { accountsSettings, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
 import { Coding } from "./coding/index.js"; // mac7/r17-d: coding polish
 import { worktreeScope } from "./coding/worktrees.js"; // mac7/r17-d
-import { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
+import type { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
+// PLAT-191: parts of Branch built the first time they are needed, with their tools listed from cards until then.
+import { personalMode, personalParts, personalTools } from "./personal/settings.js";
+import { loadNow } from "./load-now.js";
+import { listFromCards } from "./tool-cards.js";
 import { unsetConnectorTools } from "./personal/settings.js"; // ships-on sweep
 import { Reach } from "./reach/index.js"; // r17-i: reach and platform
 import { platformRunners } from "./reach/host.js"; // r17-i
@@ -652,7 +668,8 @@ export async function createBranch(options: {
   // is happening now, then the job in hand, then everything the assistant knows for good.
   // mac2/fly-core-2: with the learning core "on", the facts that helped in similar tasks go first.
   store.review.orderFacts = (factOwner, agent, sessionId) =>
-    chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)), knobSnapshotLimits(store, runtime.owner)).records;
+    chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)
+      .filter((record) => isCurrentFact(record))), knobSnapshotLimits(store, runtime.owner)).records; // SELF-202: only facts still true
   // ── R17-S-B: the owner's memory budget and the leak guard's sensitivity, read fresh each time. ──
   store.review.snapshotLimits = () => knobSnapshotLimits(store, runtime.owner);
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);
@@ -879,11 +896,22 @@ export async function createBranch(options: {
   const channels = new ChannelRouter(store, runtime);
   channels.appLocked = () => sessionLock.locked();
   const priorToolGuard = registry.beforeTool;
+  /** RES-253: the owner marked this Trunk "sandboxed" (Trunk › Reach), so its commands are walled like an outsider's. */
+  const trunkSandboxed = (id: string | undefined): boolean =>
+    !!id && (store.get("governance", runtime.owner, `trunk:${id}`)?.data as { reach?: { sandboxed?: unknown } } | undefined)?.reach?.sandboxed === true;
   registry.beforeTool = async (name, args, context) => {
     const held = await priorToolGuard?.(name, args, context);
     if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
       && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
-    return held;
+    // RES-253 (src/outside-commands.ts): a program started for someone other than the owner is held to the workspace
+    // behind the system's own wall, with no network, or refused where no wall can run.
+    const who = !(walledTools.includes(name) || remoteTools.includes(name)) || !context.runId ? null
+      : outsideCaller(runOrigin(store, context.runId)) ?? (trunkSandboxed(context.trunk) ? "a Trunk the owner set to run sandboxed" : null);
+    if (!who) return held;
+    if (remoteTools.includes(name)) throw new Error(outsideRemoteRefusal(who, name));
+    if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
+    store.event(context.runId, "sandbox.outside_caller", { tool: name, who });
+    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
@@ -1026,11 +1054,52 @@ export async function createBranch(options: {
     sessionLimiter.check({ scope: "sender", id: `${channel}:${senderId}` }, "stranger");
   const scheduler = new Scheduler(store, runtime, (channel, chatId, text, key) => channels.deliver(channel, chatId, text, key));
   registerSchedules(registry, scheduler);
+  // selfdev (SELF-303): helpers the lead starts talk to it while they work, and tell it when they finish.
+  registerHelperMessages(registry, runtime);
+  // workbench (SELF-307): what each account has left, and a handoff asked for only when every account is near its limit.
+  registerLeadUsage(registry, runtime);
+  scheduler.onTick.add(async (now) => { askForHandoffs(runtime, now.getTime()); });
+  // Only helpers started for the lead (helpers.start) wake it; other background work keeps its result for the parent, as before.
+  runtime.onBackgroundFinished = (result) => {
+    if (!result.parentRunId || !result.tellsLead) return;
+    const said = `finished (${result.status}). Its report:
+${result.output || "(it said nothing)"}`;
+    try { tellTask(runtime, result.parentRunId, `helper ${result.childRunId.slice(0, 8)}`, said, fromHelper); }
+    catch (error) { store.event(result.parentRunId, "delegation.tell_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
+  // selfdev (SELF-305): wake-ups set inside a conversation arrive in it as follow-ups; the scheduler's tick finds them.
+  // A wake-up is never more than the task that asked for it: it carries that task's own tools.
+  const askedWith = (runId: string): string[] | null => {
+    const recorded = store.events(runId).find((event) => event.kind === "run.started")?.data.permissions;
+    return Array.isArray(recorded) ? recorded.map(String) : null;
+  };
+  const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); });
+  registerWakeups(registry, store, wakeups);
+  // workbench (SELF-307): helpers, wake-ups and programs still open ride with every round, so compaction never loses them.
+  runtime.openWork = (sessionId) => openWork(store, runtime.owner, sessionId, wakeups, processes);
+  scheduler.onTick.add((now) => wakeups.tick(now));
   // wave mac2 (quiet-jobs follow-up): a program left running that finishes wakes the check-in; wake() does nothing while it is off.
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
+  // workbench (SELF-304): a command the assistant may run once it may also leave running, and be woken when it ends.
+  processes.commandPrograms = () => ownClis.commandPrograms();
+  // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
+  // of the task that started it, so the assistant is told instead of checking on it.
+  processes.waker = ({ sessionId, runId, text }) => {
+    try { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); }
+    catch (error) { store.event(runId, "process.wake_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
   // Figures, looking things up properly, watching pages, and the one message first thing.
   const deliverMessage = (channel: string, chatId: string, text: string, key: string) => channels.deliver(channel, chatId, text, key);
-  const dataTables = new DataTables(files, web, writeObserver);
+  // QA retest 2026-09-28 (m6): data.load opens a file attached to the task's own conversation, by id or exact name.
+  const dataTables = new DataTables(files, web, writeObserver, async (runId, key) => {
+    const sessionId = store.run(runId)?.sessionId;
+    if (!sessionId) return null;
+    const temporary = store.sessionTemporary(sessionId);
+    const ref = (await attachments.list(sessionId, { temporary })).find((one) => (key.id ? one.id === key.id : one.name === key.name));
+    if (!ref) return null;
+    const found = await attachments.locate(sessionId, ref.id, { temporary });
+    return { name: found.ref.name, size: found.size, read: async () => (await attachments.read(sessionId, ref.id, { temporary })).bytes };
+  });
   registerData(registry, dataTables, artifacts);
   // Writing Word, spreadsheet, slide, Markdown and web-page files, and changing Word and
   // spreadsheet files in place with every untouched part kept byte for byte.
@@ -1356,6 +1425,7 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  registerTrunkMemoryFiles(registry, store, trunks); // workbench (SELF-311): a Trunk's own memory files
   // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
   trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
@@ -1378,6 +1448,10 @@ export async function createBranch(options: {
   try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
   setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
+  channels.trunkName = (sessionId) => {
+    const owned = trunks.trunkForConversation(sessionId);
+    return (owned ? trunks.records.find(owned.trunkId)?.name : undefined) ?? null;
+  };
   // defaulttrunk: the default Trunk is the owner's own assistant, so it answers on every chat app, as Branch always did.
   const reachRefusal = (channel: string, trunkId: string): string | null => {
     const trunk = trunks.records.find(trunkId);
@@ -1407,7 +1481,14 @@ export async function createBranch(options: {
   // ── R17-C: files, voice, devices and personal connectors (src/personal/). Every part ships off. ──
   const personalSecret = async (name: string, purpose: string) =>
     (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!;
-  const personal = new Personal({ runtime, registry, files, oauth, fetch: web.policy.guard(globalThis.fetch), secret: personalSecret,
+  // PLAT-191: built the first time anything needs it (a call to one of its tools, Settings, the terminal); its tools are
+  // listed from their cards until then, exactly as the parts' switches say (src/tool-cards.ts).
+  let personalBuilt: Personal | undefined;
+  let localAddress = "";
+  const personal = (): Personal => personalBuilt ??= buildPersonal();
+  const buildPersonal = (): Personal => {
+    const { Personal } = loadNow<typeof import("./personal/index.js")>("./personal/index.js");
+    const built = new Personal({ runtime, registry, files, oauth, fetch: web.policy.guard(globalThis.fetch), secret: personalSecret,
     assertHost: (host, port) => web.policy.assertAllowed(new URL(`https://${host}:${port}/`), "mail server address"),
     channels: { adapter: (id) => channels.adapter(id), outboundGuard: (text) => channels.outboundGuard(text),
       reachable: (id, chatId) => channels.chats(runtime.owner).some((chat) => chat.channel === id && chat.chatId === chatId) },
@@ -1417,7 +1498,12 @@ export async function createBranch(options: {
     speak: async (text) => { const spoken = await voice.speak(runtime.owner, { text, voice: "", speed: 1 }); return { bytes: spoken.bytes, mediaType: spoken.mediaType }; },
     transcribe: async (clip) => (await voice.transcribe(runtime.owner, { ...clip, name: "spoken answer" })).text,
     lockdownRefusal: () => (lockedDown(store, runtime.owner) ? lockdownRefusal : null) });
-  releaseOnLock.push(() => personal.close()); // locking Branch stops the tunnel and forgets spoken answers
+    built.tunnel.localAddress = localAddress;
+    return built;
+  };
+  listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
+    () => void personal());
+  releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──
   // It runs only while the switch is on, a word is chosen, and this computer can really listen, and
@@ -1548,6 +1634,7 @@ export async function createBranch(options: {
   const launchFile = { leftOut: [] as readonly string[] };
   /** The chat apps' host, filled in once `branch` exists, for apps the Set up panel connects (src/channel-setup/live.ts). */
   const channelHostRef: { current?: ChannelHost } = {};
+  const miniAppSessions = new MiniAppSessions();
   const branch = {
     store,
     registry,
@@ -1568,8 +1655,10 @@ export async function createBranch(options: {
     trunks,
     /** mac7/r17-d: coding polish (src/coding/); every part ships off. */
     coding,
-    /** R17-C: files, voice, devices and personal connectors (src/personal/); every part ships off. */
-    personal,
+    /** R17-C: files, voice, devices and personal connectors (src/personal/); built the first time it is needed. */
+    get personal(): Personal { return personal(); },
+    /** Where Branch listens, for the personal part's webhook door; handed on when that part is built. */
+    set localAddress(address: string) { localAddress = address; if (personalBuilt) personalBuilt.tunnel.localAddress = address; },
     /** r17-i: other computers, Trunks across computers, background apps, videos, relay, send and pause, sharing, USB, notes, arena. */
     reachParts,
     /** mac7/r17-g: tool scripts, WebAssembly add-ons, codes, the emergency stop, scans, the activity chain. */
@@ -1725,19 +1814,30 @@ export async function createBranch(options: {
     reach: { browserOrigins: [] as string[], browserAnyWebsite: false, commandsMayReachInternet: true },
     /** Secrets for host commands: only the active project's, never returned to the model. */
     secretsFor: async (context: ToolContext, names: string[]) => {
-      const project = store.projects.active(context.owner).id;
-      const values = await store.secrets.resolve(context.owner, project, names,
-        { runId: context.runId, purpose: "host command" });
-      // The names only; a value never leaves the locker, and never reaches this record.
-      for (const name of Object.keys(values))
-        audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (project ${project})`,
-          reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      // RES-260: a Trunk's own secrets reach only its own turns (src/trunks/secrets.ts).
+      const trunk = context.trunk ?? currentAccountCall()?.trunk?.id ?? null;
+      const keys = trunk ? (store.get("governance", context.owner, `trunk:${trunk}`)?.data as { keys?: { copyFromOwner?: unknown } } | undefined)?.keys : undefined;
+      const work = { trunk, helper: !!runOrigin(store, context.runId).parentRunId,
+        copyFromOwner: context.trunkKeys?.copyFromOwner ?? keys?.copyFromOwner !== false };
+      const own = trunk ? store.secrets.list(context.owner, trunkSecretsProject(trunk)).map((entry) => entry.name) : [];
+      const { plan, refused } = secretSources(work, names, own, store.projects.active(context.owner).id);
+      if (refused.length) throw new Error(trunkSecretRefusal(refused));
+      const values: Record<string, string> = {};
+      for (const [project, wanted] of Object.entries(plan)) {
+        Object.assign(values, await store.secrets.resolve(context.owner, project, wanted, { runId: context.runId, purpose: "host command" }));
+        // The names only; a value never leaves the locker, and never reaches this record.
+        for (const name of wanted)
+          audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (${project === trunkSecretsProject(trunk ?? "") ? "the Trunk's own" : `project ${project}`})`,
+            reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      }
       return values;
     },
     /** References, replacement dates, the use audit and the shared scrubber. */
     secrets: store.secrets,
     /** Locking the app, by hand or after a quiet spell. */
     sessionLock,
+    /** The phones holding a task's browser through the Telegram Mini App (src/miniapp/sessions.ts). */
+    miniAppSessions,
     /** Signing in to outside services with the standard authorization-code flow and PKCE. */
     oauth,
     /** Personal details and the optional content check, either side of the assistant. */
@@ -1803,6 +1903,8 @@ export async function createBranch(options: {
     debugAdapters,
     /** Programs left running, and the switch that stops them all when the app closes. */
     processes,
+    /** workbench (SELF-305): wake-ups set inside conversations, for the window's open-work list. */
+    wakeups,
     /** What integrations need to host messaging channels: the router and default-project secrets. */
     channelHost: {
       router: channels,
@@ -1882,7 +1984,7 @@ export async function createBranch(options: {
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
       await autonomy.close(); // r17-b: nothing more starts by itself, and a turn that is working gets a moment
       await trunks.close(); // R17-A: rooms stop between turns
-      await personal.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
+      await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
@@ -1918,6 +2020,25 @@ export async function createBranch(options: {
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
   channelHostRef.current = branch.channelHost;
+  // Pictures of a chat task's own browser window, as the window's live view takes them: password and code boxes covered,
+  // never a borrowed browser, never while Branch's own sign-in handling is showing.
+  channels.browserPicture = async (runId) => {
+    if (signInShowing()) return null;
+    // A page between two addresses has no picture for a moment: tried again briefly before giving up.
+    for (let tries = 0; tries < 3; tries++) {
+      if (tries) await new Promise((done) => setTimeout(done, 400));
+      const seen = await branch.browser?.watch(runtime.owner, runId).catch(() => null);
+      if (!seen || seen.borrowed) return null;
+      if (seen.frame) return { frame: seen.frame, url: seen.url, title: seen.title };
+    }
+    return null;
+  };
+  // Take over and Hand back from a chat (the live browser's buttons): the task's own window becomes the conversation's
+  // kept browser with the chat's owner holding it, exactly as the window's Take over does; Hand back lets the task on.
+  channels.browserHold = (runId, op) => holdTaskBrowser({ browser: branch.browser, store, owner: runtime.owner,
+    locked: () => sessionLock.locked(), running: (id) => !!runtime.activeRunSignal(id) }, runId, op, `chat:${runId}`,
+  // The chat's own hold, or the same person's phone through the Mini App, is theirs to hand back from the chat.
+  (holder) => holder === `chat:${runId}` || holder === miniAppSessions.clientFor(runId));
   return branch;
 }
 /** Runs one of the owner's own verified recipes by name, for a skill package's event hook. */
