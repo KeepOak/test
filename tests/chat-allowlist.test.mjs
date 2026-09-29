@@ -53,6 +53,8 @@ async function fixture(t, script) {
       parameters: z.object({}).strict(), execute: async () => ({ ran: name }) });
   }
   app.channels.mergeWindowMs = 0;
+  // The steps line above a reply in an app without edits waits for a slow task; a busy test machine is not one.
+  app.channels.liveTiming = { ...app.channels.liveTiming, progressAfterMs: 60_000 };
   const chat = fakeChat();
   await app.channels.attach(chat.adapter, { activation: "always", pairing: true, allowlist: ["owner"] });
   return { app, chat, root };

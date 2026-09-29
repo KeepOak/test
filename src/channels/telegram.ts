@@ -92,6 +92,8 @@ const telegramTarget = (address: string): { chat_id: number; message_thread_id?:
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly kind = "telegram";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
   readonly listButtons = true;
   readonly id: string;
@@ -206,6 +208,36 @@ export class TelegramAdapter implements ChannelAdapter {
     return String(message.data.message_id);
   }
   // ---- end R17-C ----
+  /** The live browser in a chat: a photo with buttons, then the same message's photo replaced (editMessageMedia). */
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const form = new FormData(), target = telegramTarget(chatId);
+    form.append("chat_id", String(target.chat_id));
+    if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
+    form.append("photo", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    if (file.caption) form.append("caption", file.caption.slice(0, 1024));
+    if (buttons.length) form.append("reply_markup", JSON.stringify({ inline_keyboard: [buttons.map((b) => ({ text: b.label, callback_data: b.value }))] }));
+    form.append("disable_notification", "true");
+    if (replyToMessageId && /^\d+$/.test(replyToMessageId))
+      form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+    const response = await this.fetch(`${this.base}/sendPhoto`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const parsed = responseSchema.parse(await response.json());
+    if (!parsed.ok) throw Object.assign(new Error(`Telegram sendPhoto failed: ${parsed.description ?? response.status}`), retryOf(parsed));
+    const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
+    if (!message.success) throw new Error("Telegram sendPhoto failed: response missing message_id");
+    return String(message.data.message_id);
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string }[]): Promise<void> {
+    const form = new FormData();
+    form.append("chat_id", String(telegramTarget(chatId).chat_id));
+    form.append("message_id", messageId);
+    form.append("media", JSON.stringify({ type: "photo", media: "attach://picture", ...(file.caption ? { caption: file.caption.slice(0, 1024) } : {}) }));
+    form.append("picture", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    form.append("reply_markup", JSON.stringify({ inline_keyboard: buttons.length ? [buttons.map((b) => ({ text: b.label, callback_data: b.value }))] : [] }));
+    const response = await this.fetch(`${this.base}/editMessageMedia`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const parsed = responseSchema.parse(await response.json());
+    if (!parsed.ok && !/message is not modified/i.test(parsed.description ?? ""))
+      throw Object.assign(new Error(`Telegram editMessageMedia failed: ${parsed.description ?? response.status}`), retryOf(parsed));
+  }
   private async poll(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     while (!this.stopping.signal.aborted) {
       try {
@@ -454,4 +486,10 @@ export class TelegramAdapter implements ChannelAdapter {
 export function telegramPhoto(file: Pick<OutgoingFile, "mediaType" | "bytes">): boolean {
   const type = file.mediaType.split(";")[0]!.toLowerCase();
   return ["image/jpeg", "image/png", "image/webp"].includes(type) && file.bytes.byteLength <= 10 * 1024 * 1024;
+}
+
+/** Telegram's "wait this long" on a refusal, carried on the error so a live status can pause (live-status.ts retryAfterMs). */
+function retryOf(parsed: z.infer<typeof responseSchema>): { retryAfter?: number } {
+  const wait = parsed.parameters?.retry_after;
+  return typeof wait === "number" ? { retryAfter: wait } : {};
 }
