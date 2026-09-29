@@ -196,6 +196,23 @@
       "terms": { "route": "Your own API key", "url": "https://openrouter.ai/terms", "standing": "official" }
     },
     {
+      "id": "openrouter-free",
+      "name": "OpenRouter · Free models with tools",
+      "shape": "openai-chat",
+      "kind": "cloud",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "auth": "bearer",
+      "modelsPath": "/models",
+      "capabilities": ["chat", "vision", "tools", "json-mode", "streaming"],
+      "defaultModel": "openrouter/free",
+      "recommendedModels": ["openrouter/free"],
+      "pricingUrl": "https://openrouter.ai/docs/guides/routing/routers/free-router",
+      "prices": { "openrouter/free": { "input": 0, "output": 0, "cached": 0 } },
+      "note": "Uses your OpenRouter key to pick a free model that supports each request, including tools. The selected model can change between calls. Free availability and rate limits vary; choose a different connection if none is available.",
+      "signUp": "https://openrouter.ai/",
+      "terms": { "route": "Your own API key · free model router", "url": "https://openrouter.ai/terms", "standing": "official" }
+    },
+    {
       "id": "together",
       "name": "Together AI",
       "shape": "openai-chat",
