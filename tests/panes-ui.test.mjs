@@ -5,8 +5,10 @@
  * pane's own conversation and to no other, as the engine's records show. Panes are reordered from the keyboard, widened by
  * their handle, closed from their tab, and the layout (the main conversation too) comes back after a reload.
  * A real engine and window, a scripted model, a hidden browser.
- * Mutation: send the box to the main conversation whatever the active pane, or stop marking the hovered pane, and it
- * goes red.
+ * Simple (RES-704) leaves the main conversation alone and Advanced brings the panes back as they were; Ctrl+Enter
+ * (RES-702) while another pane is active writes to that pane, never to a new background conversation.
+ * Mutation: send the box to the main conversation whatever the active pane, stop marking the hovered pane, keep the
+ * panes under Simple, or let Ctrl+Enter start a background conversation over an active pane, and it goes red.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -153,5 +155,40 @@ test("with too little room for every pane, each keeps a readable width and the r
   assert.ok(await page.locator(".panes19").evaluate((el) => el.scrollWidth > el.clientWidth), "the row scrolls");
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.waitForFunction(() => !document.querySelector(".panes19.tight19"));
+  assert.deepEqual(errors, []);
+});
+
+test("Simple leaves the main conversation alone, and Advanced brings the panes back in their order", async (t) => {
+  const { page, errors, ids } = await fixture(t);
+  await threePanes(page, ids);
+  const before = await order(page);
+  const simple = page.locator('[data-act="simple19"]');
+  await simple.click();
+  await page.locator("#app.simple19").waitFor();
+  assert.equal(await page.locator(".pn19").count(), 0, "the main conversation alone");
+  await page.locator("#conversation").getByText("Here is what I know about plums.").waitFor();
+  await simple.click();
+  await page.waitForFunction(() => !document.getElementById("app").classList.contains("simple19"));
+  await pane(page, ids.apples).getByText("Here is what I know about apples.").waitFor();
+  assert.deepEqual(await order(page), before, "every pane is back where it was");
+  assert.deepEqual(errors, []);
+});
+
+test("Ctrl+Enter while another pane is active writes to that pane, not to a new background conversation", async (t) => {
+  const { app, page, errors, ids } = await fixture(t);
+  await page.locator(".empty-chat").waitFor();
+  await page.locator(`#side [data-act="chat"][data-id="${ids.pears}"]`).click({ button: "right" });
+  await page.locator(`.pop [data-act="pane-add"][data-id="${ids.pears}"]`).click();
+  await pane(page, ids.pears).getByText("Here is what I know about pears.").waitFor();
+  await pane(page, ids.pears).locator(".bs-body15").hover();
+  await page.locator(`.pn19.on19[data-pane="${ids.pears}"]`).waitFor();
+  const before = app.store.runs(app.runtime.owner).length;
+  await page.locator("#prompt").fill("Which pear first?");
+  await page.locator("#prompt").press("Control+Enter");
+  await pane(page, ids.pears).getByText("Heard: Which pear first?").waitFor({ timeout: 60000 });
+  const runs = app.store.runs(app.runtime.owner);
+  assert.equal(runs.length, before + 1, "one task, and no background conversation beside it");
+  assert.equal(runs.find((r) => r.prompt === "Which pear first?")?.sessionId, ids.pears, "it went to the pears conversation");
+  assert.ok(await page.locator(".empty-chat").isVisible(), "the main conversation is still the new one");
   assert.deepEqual(errors, []);
 });

@@ -24,6 +24,7 @@ import { text, plain } from "./markdown.js";
 import { mediaRows } from "./media.js";
 import { openConversation, conversationWho } from "./chat.js";
 import { liveFollower } from "./livesteps.js";
+import { simplePart } from "../shell/simple.js";
 import { t } from "../../i18n.js";
 import { waitRoom, holdWait, LONG_WAITS } from "../core/inflight.js"; // each send waits until its task ends
 
@@ -338,6 +339,9 @@ function followMain() {
   }
   if (panesOn() && S.chat && L.main !== S.chat) keep({ ...L, main: S.chat });
 }
+
+/* RES-704: Simple leaves the main conversation alone; Advanced brings the panes back as they were. */
+simplePart({ name: "panes19", take: () => S.panes19 ?? null, hide: () => { const L = layout(); if (L.ids.length > 1) S.panes19 = { ...L, ids: [MAIN], active: MAIN }; }, give: (value) => { S.panes19 = value; } });
 
 /* ---------- listening ---------- */
 let dwell = null;

@@ -924,11 +924,12 @@ export function init() {
   on("ask-always", (el) => answer(el, "allow", { remember: "always" }));
   on("side", () => document.getElementById("app").classList.toggle("side-open"));
   document.addEventListener("submit", (e) => { if (e.target.id === "composer") { e.preventDefault(); send(); } });
-  /* Enter sends; in a new conversation Ctrl+Enter (Cmd+Enter on a Mac) sends it to work in the background (RES-702). */
+  /* Enter sends; in a new conversation Ctrl+Enter (Cmd+Enter on a Mac) sends it to work in the background (RES-702).
+     While another pane is active the box writes to that pane (RES-703), so Ctrl+Enter sends there like Enter. */
   document.addEventListener("keydown", (e) => {
     if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
-    if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending) sendAway(); else send();
+    if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending && !paneTarget()) sendAway(); else send();
   });
   /* Page Up and Page Down with nothing focused move through the conversation, which scrolls inside its own box. */
   document.addEventListener("keydown", (e) => {
