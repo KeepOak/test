@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Updater, UpdateDeferredError, type LiveHooks } from "./updater.js";
 import { gatewayInstall } from "./gateway-install.js";
+import { newestGreen } from "./dev-build.js";
 import { versionedLayout } from "./app-folders.js";
 import { UpdateLoop, type LoopPlan } from "./update-loop.js";
 import { installedAppRoot } from "./install-root.js";
@@ -46,6 +47,8 @@ export async function gatewayUpdates(options: GatewayUpdatesOptions): Promise<{ 
     packageType: packageTypeOf(process.platform, installDir, (path) => readFileSync(path, "utf8")),
     scratchDir: options.scratchDir, currentCommit: await builtFrom(options.appRoot, app.isPackaged),
     devBuildDir: join(options.dataDir, "updates", "beta-build"),
+    // Beta takes the newest change whose whole suite passed on GitHub, not simply the newest (dev-build.ts).
+    greenCommit: newestGreen(),
     backup: options.backup,
     canary: updateCanary({ dataDir: options.dataDir, platform: process.platform, executableName, fromVersion: app.getVersion(),
       target: installDir, snapshot: options.snapshot }),

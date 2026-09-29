@@ -17,6 +17,7 @@ import { isOfferUrl } from "../usage-offers.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
 import { watchForOwner, type OwnerWindow } from "./quiet-build.js";
+import { newestGreen } from "./dev-build.js";
 
 /** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
 export const updateScratchDir = (): string => join(app.getPath("temp"), "branch-agent-update");
@@ -127,6 +128,8 @@ export function registerUpdaterIpc(
     packaged: app.isPackaged,
     packageType: packageTypeOf(process.platform, installDir, (path) => readFileSync(path, "utf8")),
     scratchDir: updateScratchDir(),
+    // Beta takes the newest change whose whole suite passed on GitHub, not simply the newest (dev-build.ts).
+    greenCommit: newestGreen(),
     // Beta channel: which change this copy was built from, and Branch's own clone of its source to build the next one.
     currentCommit: hooks?.currentCommit ?? null,
     ...(hooks ? { backup: hooks.backup } : {}),

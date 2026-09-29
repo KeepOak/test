@@ -542,6 +542,9 @@ async function start(): Promise<void> {
       ...(brokerLive ? { live: brokerLive.hooks } : {}),
     }, gate, client);
     window?.once("closed", () => brokerLive?.close());
+    // selfdev: joined to the background engine, the window is up; a Beta update waiting to see this keeps the new
+    // version. Without it, a Beta update with the background engine on was put back after 90 s every time.
+    void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
     return;
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
@@ -943,6 +946,9 @@ else {
 function startDetachedGateway(): void {
   const base = app.getPath("userData");
   app.setPath("userData", join(base, "gateway-desktop"));
+  // The gateway draws nothing but the small Stop notice, so it draws in software: its graphics process keeps about
+  // 35 MB less (48 -> 14 MB private) for as long as Branch runs in the background. Must come before the app is ready.
+  app.disableHardwareAcceleration();
   if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
   let gateway: Awaited<ReturnType<typeof runDesktopGateway>> = null, ending = false;
   app.on("window-all-closed", () => undefined);
