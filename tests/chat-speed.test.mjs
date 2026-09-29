@@ -170,3 +170,30 @@ test("chat-speed: a chat turn keeps the last turn's tool results and shrinks old
     ["rules", "look this up", "", "Here is what I found.", "and this", "", "Also found.", "Hi"]);
   assert.equal(shrinkEarlierTurns([{ role: "user", content: "Hi" }], 2), 0, "a first message has nothing earlier");
 });
+
+test("chat-speed: a chat turn's request leaves out older turns' tool results; the conversation and the window keep them", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-chat-speed-shrink-"));
+  const workspace = join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(join(workspace, "big.txt"), "b".repeat(5000), "utf8");
+  const requests = [];
+  const provider = { name: "scripted", async complete(request) {
+    requests.push(request.messages.map((m) => ({ ...m })));
+    const said = lastUser(request);
+    if (said === "read it" && !request.messages.some((m) => m.role === "tool"))
+      return { content: "", toolCalls: [{ id: "call-1", name: "files.read", arguments: JSON.stringify({ path: "big.txt" }) }] };
+    return { content: `ok: ${said}`, toolCalls: [] };
+  } };
+  const app = await createBranch({ workspace, dataDir: join(root, "data"), provider });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const first = await app.runtime.run({ prompt: "read it", permissions: ["files.read"] });
+  const toolIn = (messages) => messages.find((m) => m.role === "tool")?.content ?? "";
+  await app.runtime.run({ prompt: "second", sessionId: first.sessionId, permissions: [], source: "channel" });
+  assert.ok(toolIn(requests.at(-1)).length >= 5000, "the last turn's result is still sent");
+  const third = await app.runtime.run({ prompt: "third", sessionId: first.sessionId, permissions: [], source: "channel" });
+  assert.match(toolIn(requests.at(-1)), /Earlier result of \d+ characters removed/, "an older turn's result is not sent from a chat app");
+  assert.ok(app.store.events(third.id).some((e) => e.kind === "context.earlier_results_shrunk"));
+  assert.ok(toolIn(app.store.workingMessages(first.sessionId).rows.map((row) => row.message)).length >= 5000, "the conversation keeps it whole");
+  await app.runtime.run({ prompt: "fourth", sessionId: first.sessionId, permissions: [] });
+  assert.ok(toolIn(requests.at(-1)).length >= 5000, "the owner's own window still sends it");
+});

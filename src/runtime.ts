@@ -2285,6 +2285,7 @@ ${run.output.slice(0, 6000)}`;
   private finish(run: Run, status: Run["status"], output: string): Run {
     const finished = this.store.finish(run.id, status, output);
     this.egress.forget(run.id);
+    this.chatShrunk.delete(run.id);
     this.store.event(run.id, "run.finished", { status, output });
     // Live steps: a finished task's thoughts go a minute later (the window has folded its steps by then).
     if (this.thoughtsNow.has(run.id)) setTimeout(() => this.thoughtsNow.delete(run.id), 60_000).unref?.();
@@ -3000,12 +3001,6 @@ ${run.output.slice(0, 6000)}`;
     messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id))) });
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
-    // chat-speed: a chat app's turn carries what was said before, but not the bulky tool results of turns before the
-    // last one (src/reliability.ts); the owner's own window keeps them until the context runs short.
-    if (context.source === "channel" && !context.depth) {
-      const shrunk = shrinkEarlierTurns(messages, 2);
-      if (shrunk) this.store.event(run.id, "context.earlier_results_shrunk", { results: shrunk });
-    }
     this.groundInOwnerFacts(run, context, messages, ids); // QA R1 follow-up (recall)
     return { messages, ids };
   }
@@ -3454,7 +3449,7 @@ ${run.output.slice(0, 6000)}`;
   private async completeFitted(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute,
     every: Message | undefined, preview?: (text: string) => void): Promise<Completion> {
     try {
-      return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
+      return await this.completeWithRetries(run, this.chatSized(run, context, every ? [...messages, every] : messages), context, route, preview);
     } catch (error) {
       // Dogfood follow-up: an HTTP refusal or a failure mid-stream, in any service's words; the maximum it stated wins.
       const overflow = overflowOf(error);
@@ -3465,9 +3460,27 @@ ${run.output.slice(0, 6000)}`;
       this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room,
         ...(overflow.stated ? { stated: overflow.stated } : {}) });
       await this.fitContext(run, messages, ids, context, route);
-      return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
+      return await this.completeWithRetries(run, this.chatSized(run, context, every ? [...messages, every] : messages), context, route, preview);
     }
   }
+  /**
+   * chat-speed: what a chat app's turn sends: what was said before, but not the bulky tool results of turns before the
+   * last one (src/reliability.ts). A "Hi" carried 42,000 characters of them. Shrunk in a copy, only as the request is
+   * sent, so a summary of the conversation (maybeCompact) still reads them whole; the owner's window sends them all.
+   */
+  private chatSized(run: Run, context: ToolContext, messages: Message[]): Message[] {
+    if (context.source !== "channel" || context.depth) return messages;
+    const sent = messages.map((message) => ({ ...message }));
+    const shrunk = shrinkEarlierTurns(sent, 2);
+    if (!shrunk) return messages;
+    if (!this.chatShrunk.has(run.id)) {
+      this.chatShrunk.add(run.id);
+      this.store.event(run.id, "context.earlier_results_shrunk", { results: shrunk });
+    }
+    return sent;
+  }
+  /** Tasks whose `context.earlier_results_shrunk` is written (once each; cleared as the task settles). */
+  private readonly chatShrunk = new Set<string>();
   /**
    * dogfood D22: this task's own earlier work (its tool calls and what they gave back) folded into one note, so a long
    * turn of reading carries on instead of running out of room. The newest call and its results stay as they are, and

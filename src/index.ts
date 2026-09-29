@@ -697,7 +697,8 @@ export async function createBranch(options: {
     options.snapshotGit === undefined ? systemGit() : options.snapshotGit);
   const rewinds = new Rewinds(store.sqlite, runtime.owner, sessionTree, history, snapshots, files,
     () => goalUndoSettings(store, runtime.owner).snapshots,
-    (tool) => { const permission = registry.permissionOf(tool); return permission !== "" && !isReadOnlyPermission(permission); });
+    // A tool not known to only read counts as a change: with snapshots "on" it waits for the one begun as its task started.
+    (tool) => !isReadOnlyPermission(registry.permissionOf(tool)));
   runtime.turnStarted = (run) => rewinds.turnStarted(run);
   const goals = new GoalMode(runtime, store);
   registerSkills(registry, store);
@@ -2027,7 +2028,8 @@ ${result.output || "(it said nothing)"}`;
       await debugAdapters.stopAll().catch(() => undefined);
       // mac3/reflection-skills: a draft or a look back still being written gets a moment to finish.
       await Promise.race([learningLoop.idle(), new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
-      await rewinds.settled(); // chat-speed: a task's workspace snapshot, taken beside its first model call, is written down
+      // chat-speed: a task's workspace snapshot, taken beside its first model call, is written down; git never holds up a close.
+      await Promise.race([rewinds.settled(), new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
       try {
         await closeBranch(scheduler, runtime, store, channels, desktop);
       } finally {
