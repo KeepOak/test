@@ -61,6 +61,8 @@ class SqliteInbox implements TelegramInbox {
   }
   add(rows: InboxRow[]): void {
     if (!rows.length) return;
+    // Closed: throws, so the poll does not move Telegram's position past updates it could not keep.
+    if (!this.isOpen()) throw new Error("Branch's saved-work database is closed");
     const now = new Date().toISOString();
     const insert = this.db.prepare("INSERT OR IGNORE INTO telegram_inbox(bot, update_id, body, caught_up, received_at) VALUES(?,?,?,?,?)");
     this.atomically(() => {
@@ -70,18 +72,22 @@ class SqliteInbox implements TelegramInbox {
     });
   }
   pending(): InboxRow[] {
+    if (!this.isOpen()) return [];
     return this.db.prepare("SELECT update_id, body, caught_up FROM telegram_inbox WHERE bot=? AND done_at IS NULL ORDER BY update_id")
       .all(this.bot).map((row) => ({ updateId: Number(row.update_id), update: JSON.parse(String(row.body)), caughtUp: Number(row.caught_up) === 1 }));
   }
   done(updateId: number): void {
-    // A task can settle after Branch closed its database; the row then stays waiting and is handled after the restart.
+    // A task can settle after Branch closed its database (or a poll outlives it): the row then stays waiting and is
+    // handled after the restart.
     if (!this.isOpen()) return;
     this.db.prepare("UPDATE telegram_inbox SET done_at=?, body='{}' WHERE bot=? AND update_id=?").run(new Date().toISOString(), this.bot, updateId);
   }
   markCaughtUp(): void {
+    if (!this.isOpen()) return;
     this.db.prepare("UPDATE telegram_inbox SET caught_up=1 WHERE bot=? AND done_at IS NULL").run(this.bot);
   }
   newest(): number {
+    if (!this.isOpen()) return 0;
     return Number(this.db.prepare("SELECT COALESCE(MAX(update_id), 0) AS id FROM telegram_inbox WHERE bot=?").get(this.bot)?.id ?? 0);
   }
   private atomically(work: () => void): void {

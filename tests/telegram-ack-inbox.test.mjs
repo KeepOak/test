@@ -267,3 +267,14 @@ test("delivery ledger: gone is never retried, flood waits retry_after without sp
   assert.equal(ledger.list().find((d) => d.key === "k2").resent, undefined, "an ordinary send is not");
   assert.deepEqual(sent.sort(), ["busy", "cut off"]);
 });
+
+test("an inbox whose database was closed keeps the poll alive: nothing read, nothing confirmed", () => {
+  const store = { sqlite: new DatabaseSync(":memory:"), isOpen: true };
+  const inbox = telegramInbox(store, "7");
+  inbox.add([{ updateId: 1, update: { update_id: 1 }, caughtUp: false }]);
+  store.isOpen = false;
+  assert.deepEqual(inbox.pending(), [], "a closed database reads as empty instead of throwing out of the poll loop");
+  assert.equal(inbox.newest(), 0);
+  assert.throws(() => inbox.add([{ updateId: 2, update: { update_id: 2 }, caughtUp: false }]), /closed/, "a save that cannot happen stops the offset moving");
+  assert.doesNotThrow(() => { inbox.done(1); inbox.markCaughtUp(); });
+});

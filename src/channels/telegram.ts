@@ -177,7 +177,7 @@ export class TelegramAdapter implements ChannelAdapter {
       this.backlog = { startedAt: Date.now(), oldThrough: 0 };
     }
     this.onMessage = onMessage;
-    this.loop = this.poll();
+    this.loop = this.poll().catch(() => undefined); // never an unhandled rejection, even if the loop itself fails
   }
   /** `stoppable`: asked from the poll, so stop() cuts it short instead of waiting up to twenty seconds for it. */
   private async learnName(stoppable = false): Promise<void> {
@@ -295,7 +295,9 @@ export class TelegramAdapter implements ChannelAdapter {
         this.take(updates, renumbered, Date.now() - asked >= heldOpenMs);
       } catch (error) {
         if (this.stopping.signal.aborted) return;
-        await this.pause(await this.afterFailure(error as TelegramFailure));
+        // Deciding the wait reads the inbox; if even that fails, the plain backoff still keeps the loop alive.
+        const wait = await this.afterFailure(error as TelegramFailure).catch(() => backoffDelay(pollBackoff, ++this.failures));
+        await this.pause(wait);
       }
     }
   }
