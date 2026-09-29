@@ -18,7 +18,7 @@ test("Canopy shows current work and controls its exact task, Trunk and board", a
   assert.equal(await task.locator('[data-act="cn-pause"]').count(), 0, "a waiting task has no ineffective Pause");
   const tr = place.locator(`[data-cn-trunk="${trunk.id}"]`);
   await tr.locator('[data-act="cn-trunk-pause"]').click();
-  await page.waitForFunction(async (id) => {
+  await page.waitForFunction((id) => {
     return document.querySelector(`[data-cn-trunk="${id}"] [data-act="cn-trunk-resume"]`) !== null;
   }, trunk.id);
   assert.equal(app.trunks.records.get(trunk.id).paused, true);
