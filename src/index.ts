@@ -261,6 +261,7 @@ import { formatCopiesToPrune } from "./install/update-backup.js";
 import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
+import { commandHost } from "./commands/host.js"; // CHAT-185
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { liveChannels } from "./channel-setup/live.js"; // CHAT-147: every chat app set up in the window connects there and then
 import { buildChannelEntry, type ChannelHost } from "./integrations/bootstrap.js";
@@ -2017,6 +2018,7 @@ ${result.output || "(it said nothing)"}`;
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
   channelHostRef.current = branch.channelHost;
+  channels.ownerDmHost = () => commandHost(runtime, branch); // CHAT-185: the owner's commands from their own chat
   // Pictures of a chat task's own browser window, as the window's live view takes them: password and code boxes covered,
   // never a borrowed browser, never while Branch's own sign-in handling is showing.
   channels.browserPicture = async (runId) => {
