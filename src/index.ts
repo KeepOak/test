@@ -1,4 +1,6 @@
 import { environmentTool } from "./environment.js";
+import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
+import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
@@ -56,6 +58,8 @@ import { pricingSettings } from "./pricing.js";
 import { registerSessions } from "./sessions.js";
 // Wave 8: conversations branched off other conversations, seen as a tree, and one answer carried back.
 import { SessionTree, registerSessionTree } from "./session-tree.js";
+import { holdTaskBrowser } from "./browser-hold.js";
+import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
 import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
@@ -1627,6 +1631,7 @@ ${result.output || "(it said nothing)"}`;
   const launchFile = { leftOut: [] as readonly string[] };
   /** The chat apps' host, filled in once `branch` exists, for apps the Set up panel connects (src/channel-setup/live.ts). */
   const channelHostRef: { current?: ChannelHost } = {};
+  const miniAppSessions = new MiniAppSessions();
   const branch = {
     store,
     registry,
@@ -1806,19 +1811,30 @@ ${result.output || "(it said nothing)"}`;
     reach: { browserOrigins: [] as string[], browserAnyWebsite: false, commandsMayReachInternet: true },
     /** Secrets for host commands: only the active project's, never returned to the model. */
     secretsFor: async (context: ToolContext, names: string[]) => {
-      const project = store.projects.active(context.owner).id;
-      const values = await store.secrets.resolve(context.owner, project, names,
-        { runId: context.runId, purpose: "host command" });
-      // The names only; a value never leaves the locker, and never reaches this record.
-      for (const name of Object.keys(values))
-        audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (project ${project})`,
-          reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      // RES-260: a Trunk's own secrets reach only its own turns (src/trunks/secrets.ts).
+      const trunk = context.trunk ?? currentAccountCall()?.trunk?.id ?? null;
+      const keys = trunk ? (store.get("governance", context.owner, `trunk:${trunk}`)?.data as { keys?: { copyFromOwner?: unknown } } | undefined)?.keys : undefined;
+      const work = { trunk, helper: !!runOrigin(store, context.runId).parentRunId,
+        copyFromOwner: context.trunkKeys?.copyFromOwner ?? keys?.copyFromOwner !== false };
+      const own = trunk ? store.secrets.list(context.owner, trunkSecretsProject(trunk)).map((entry) => entry.name) : [];
+      const { plan, refused } = secretSources(work, names, own, store.projects.active(context.owner).id);
+      if (refused.length) throw new Error(trunkSecretRefusal(refused));
+      const values: Record<string, string> = {};
+      for (const [project, wanted] of Object.entries(plan)) {
+        Object.assign(values, await store.secrets.resolve(context.owner, project, wanted, { runId: context.runId, purpose: "host command" }));
+        // The names only; a value never leaves the locker, and never reaches this record.
+        for (const name of wanted)
+          audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (${project === trunkSecretsProject(trunk ?? "") ? "the Trunk's own" : `project ${project}`})`,
+            reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      }
       return values;
     },
     /** References, replacement dates, the use audit and the shared scrubber. */
     secrets: store.secrets,
     /** Locking the app, by hand or after a quiet spell. */
     sessionLock,
+    /** The phones holding a task's browser through the Telegram Mini App (src/miniapp/sessions.ts). */
+    miniAppSessions,
     /** Signing in to outside services with the standard authorization-code flow and PKCE. */
     oauth,
     /** Personal details and the optional content check, either side of the assistant. */
@@ -2016,31 +2032,10 @@ ${result.output || "(it said nothing)"}`;
   };
   // Take over and Hand back from a chat (the live browser's buttons): the task's own window becomes the conversation's
   // kept browser with the chat's owner holding it, exactly as the window's Take over does; Hand back lets the task on.
-  channels.browserHold = async (runId, op) => {
-    const browser = branch.browser, run = store.run(runId);
-    if (!browser || !run?.sessionId) throw new Error("That task has no browser open.");
-    const clientId = `chat:${runId}`;
-    let control = browser.controls.forConversation(runtime.owner, run.sessionId);
-    const who = (): "owner" | "task" | "none" => {
-      const view = control?.view();
-      return !view || view.state === "stopped" ? "none" : view.writer?.kind === "owner" || view.paused ? "owner" : "task";
-    };
-    if (op === "held") return who();
-    if (lockedDown(store, runtime.owner) || sessionLock.locked()) throw new Error("Branch is locked, so its browser can't change hands now.");
-    if (op === "take") {
-      if (!runtime.activeRunSignal(runId)) throw new Error("That task has finished.");
-      control ??= await browser.adoptRun(runtime.owner, run.sessionId, runId, clientId);
-      const view = control.view();
-      if (view.writer?.kind !== "owner") await control.takeOver(view.epoch, clientId);
-      return who();
-    }
-    if (!control) return "none";
-    const view = control.view(), task = view.paused ?? view.waiting ?? runId;
-    if (view.writer?.kind === "owner" && view.writer.id !== clientId)
-      throw new Error("You're driving the browser in Branch's window; hand it back there.");
-    await control.handBack(view.epoch, clientId, task);
-    return who();
-  };
+  channels.browserHold = (runId, op) => holdTaskBrowser({ browser: branch.browser, store, owner: runtime.owner,
+    locked: () => sessionLock.locked(), running: (id) => !!runtime.activeRunSignal(id) }, runId, op, `chat:${runId}`,
+  // The chat's own hold, or the same person's phone through the Mini App, is theirs to hand back from the chat.
+  (holder) => holder === `chat:${runId}` || holder === miniAppSessions.clientFor(runId));
   return branch;
 }
 /** Runs one of the owner's own verified recipes by name, for a skill package's event hook. */

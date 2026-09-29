@@ -8585,6 +8585,12 @@ With several accounts per connection switched on (`src/accounts/`), the account 
 the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
 connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to
 your Claude Code or Codex (`refuseAnyTrunk`).
+**A Trunk's own secrets (RES-260).** A Trunk can keep secrets of its own (`GET/POST /api/trunks/<id>/secrets`,
+`{ name, value }` or `{ name, remove: true }`; names and dates come back, never a value). When a command it runs asks
+for a secret by name, its own turns get its own first; a name it does not keep comes from your active project only
+while it copies your keys, and is refused by name otherwise. A helper it sets going, another Trunk and your own
+conversations never read them, a short-lived key cannot reach them, and they are removed with the Trunk
+(`src/trunks/secrets.ts`).
 The same holds for everything a Trunk's turn sets going: a summary or document read one of its tools asks
 for, a workflow or flow it starts, a mixture of models and the keep-alive ping. Each sign-in connection
 refuses work marked as a Trunk's that somebody else is behind, whichever way the call arrives
