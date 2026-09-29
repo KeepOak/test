@@ -128,7 +128,7 @@ export class SkillGovernance {
     const results: { task: number; side: "baseline" | "candidate"; runId: string; status: string; passed: boolean; problem: string | null; ms: number; tokens: number }[] = [];
     for (const [index, task] of spec.tasks.entries()) for (const side of ["baseline", "candidate"] as const) {
       const started = Date.now();
-      const run = await runtime.delegate(task.prompt, context, [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage"].includes(p)), `Skill under test (${side}, seed ${spec.seed}):\n${documents[side]}`, { timeoutMs: 120000 });
+      const run = await runtime.delegate(task.prompt, context, [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage", "gitlab.manage"].includes(p)), `Skill under test (${side}, seed ${spec.seed}):\n${documents[side]}`, { timeoutMs: 120000 });
       const usage = this.store.usage(run.id) as { estimatedInput?: number; estimatedOutput?: number };
       const problem = task.checks && run.status === "completed" ? await evaluateChecks(run.output, task.checks, runtime.workspace) : null;
       results.push({ task: index, side, runId: run.id, status: run.status, passed: run.status === "completed" && !problem, problem, ms: Date.now() - started, tokens: (usage.estimatedInput ?? 0) + (usage.estimatedOutput ?? 0) });

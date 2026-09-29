@@ -178,8 +178,14 @@ function argument(name) {
 
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
-/** A pull request into redesign/window: its plan from the merge ref's own diff. Anything else: the whole suite. */
-export function plan(event, baseRef, from = "HEAD^1", to = "HEAD") {
+/** The label that asks a pull request for the whole suite: the merge bot adds it once a push of that PR failed for real. */
+export const FULL_LABEL = "ci-full";
+
+/**
+ * A pull request into redesign/window: its plan from the merge ref's own diff. Anything else, or a pull request labelled
+ * ci-full, the whole suite: a PR that failed a test once must pass that test again, not merely skip it on a later push.
+ */
+export function plan(event, baseRef, from = "HEAD^1", to = "HEAD", labels = []) {
   const config = JSON.parse(readFileSync(join(root, "tests", "test-impact.json"), "utf8"));
   const weights = JSON.parse(readFileSync(join(root, "tests", "shard-weights.json"), "utf8")).linux ?? {};
   const all = lanes(testGroups());
@@ -187,6 +193,10 @@ export function plan(event, baseRef, from = "HEAD^1", to = "HEAD") {
   const wholeSeconds = [...flat(all.linux)].reduce((total, file) => total + (weights[file] ?? 0), 0);
   if (event !== "pull_request" || !config.partialBases.includes(baseRef)) {
     return { mode: "full", reasons: [`A ${event} run${baseRef ? ` into ${baseRef}` : ""} runs the whole suite.`], tests: [],
+      platforms: { windows: true, macos: true }, wholeSeconds, predictedSeconds: wholeSeconds };
+  }
+  if (labels.includes(FULL_LABEL)) {
+    return { mode: "full", reasons: [`Labelled ${FULL_LABEL}: an earlier push of this pull request failed a test, so the whole suite runs.`], tests: [],
       platforms: { windows: true, macos: true }, wholeSeconds, predictedSeconds: wholeSeconds };
   }
   const changes = parseNameStatus(git("diff", "--name-status", "-z", "--find-renames", from, to));
@@ -211,7 +221,8 @@ export function describe(result, total) {
 }
 
 function runCli() {
-  const result = plan(argument("event") ?? "", argument("base-ref") ?? "");
+  const labels = (argument("labels") ?? "").split(",").map((label) => label.trim()).filter(Boolean);
+  const result = plan(argument("event") ?? "", argument("base-ref") ?? "", "HEAD^1", "HEAD", labels);
   const total = lanes(testGroups()).linux;
   const lines = describe(result, total.shared.length + total.browser.length);
   const matrix = planMatrix(result.mode, result);
