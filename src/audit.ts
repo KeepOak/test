@@ -26,6 +26,8 @@ export const auditActions = [
   // short-lived key made or taken back, a connection added or removed, everything locked down, and
   // a browser borrowed from the owner's own window.
   "token.issued", "connection.changed", "lockdown.changed", "browser.borrowed",
+  // The owner's phone let in through Tailscale to drive a task's browser (src/miniapp/phone-access.ts), or shut out.
+  "phone.access",
   // Wave 8: a connection that stays open — a live voice conversation — reaches outside this
   // computer for as long as it lasts, so every one is written down: which host, and how it ended.
   "network.connected",
@@ -122,6 +124,7 @@ const actionLabels: Record<AuditAction, string> = {
   "connection.changed": "A connection to a model service was added or removed",
   "lockdown.changed": "Everything was locked down, or let go again",
   "browser.borrowed": "Branch borrowed your own browser window, or gave it back",
+  "phone.access": "Your phone was let in through Tailscale to drive a task's browser, or shut out again",
   "network.connected": "A connection that stays open was made to a service outside this computer",
   "limit.reached": "Something reached the limit you set for a minute or an hour",
   "history.pruned": "Old conversations were offered for deletion, exported, or deleted",

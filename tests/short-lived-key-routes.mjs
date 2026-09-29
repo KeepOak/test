@@ -30,6 +30,7 @@ export const ROUTES = {
   "/v1/models": "look",
 
   // mac6/accounts: reading the lists is looking; every change is the owner's.
+  "/api/": "prefix",
   "/api/accounts": "look",
   "/api/accounts/": "prefix",
   "/api/accounts/add": "owner POST",
@@ -73,6 +74,7 @@ export const ROUTES = {
   "/api/agents/remote": "owner POST",
   "/api/agents/remote/remove": "owner POST",
   "/api/approval-reviewer": "owner POST",
+  "/api/engine-proof": "pre-auth GET",
   "/api/jev": "secret-read",
   // P17-D §4: decision models. Reading names the connections (as /api/models does); changing them and deciding,
   // which asks a model, are the owner's.
@@ -152,6 +154,7 @@ export const ROUTES = {
   "/api/channels/steps": "owner POST", // Settings › Chat apps › Show steps in chats: the steps knobs
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
+  "/api/channels/reply-style": "owner POST", // Per-app quoting of the person's message and the reaction on it
   "/api/channels/pairings/": "prefix",
   "/api/channels/pairings/approve": "owner POST",
   "/api/channels/pairings/remove": "owner POST",
@@ -462,6 +465,7 @@ export const ROUTES = {
   "/api/trunks/:id/resume": "owner POST",
   // P17-D §9: the computers a Trunk may use and how many at once; reading names the owner's computers.
   "/api/trunks/:id/computers": "owner GET,POST",
+  "/api/trunks/:id/secrets": "owner GET,POST", // RES-260: a Trunk's own secrets, by name
   "/api/trunks/:id/default": "owner POST",
   "/api/trunks/:id/files": "other GET,POST", // personal files; scripts cannot read or change them, people only their own
   "/api/trunks/pause-all": "owner POST",
@@ -669,6 +673,8 @@ export const ROUTES = {
   "/api/vault-autofill/settings": "secret-read",
   "/api/knobs": "owner POST", // R17-S-B
   "/api/knobs/launch-file": "owner POST", // R17-S-B
+  "/api/miniapp/phone-access": "owner POST", // Settings › Chat apps: turn phone access through Tailscale on or off (window only)
+  "/api/miniapp/telegram/": "prefix", // the Mini App door's own API (src/miniapp/door.ts)
   "/api/model-savings": "owner POST", // R17-E
   "/api/model-savings/rounds": "look", // R17-E
   "/api/model-savings/companies": "owner POST", // OpenRouter picks › Only ones I list: asks OpenRouter for its companies
@@ -922,6 +928,9 @@ export const ROUTES = {
   "/api/pricing": "owner POST",
   "/api/privacy": "owner POST",
   "/api/processes": "task POST",
+  // workbench: what a conversation still has going (read), and cancelling one of its wake-ups: the owner's alone, never a short-lived key's.
+  "/api/open-work": "look",
+  "/api/open-work/wakeups/[0-9a-f-]{36}": "owner DELETE",
   "/api/profiles": "owner POST",
   "/api/profiles/:id/remove": "owner POST",
   "/api/profiles/:id/role": "owner POST",
@@ -1017,6 +1026,7 @@ export const ROUTES = {
   "/api/retrieval/search": "task POST",
   "/api/rules": "look",
   "/api/rules/add": "owner POST",
+  "/api/self-rules": "owner POST", // selfdev: Settings › Branch itself (src/self-rules.ts)
   "/api/rules/allowed": "look",
   "/api/rules/allowed/revoke": "owner POST",
   "/api/rules/remove": "owner POST",
@@ -1251,6 +1261,7 @@ export const ROUTES = {
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
   "/api/usage/glance": "look",
+  "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",
   "/api/usage/metering": "owner POST",

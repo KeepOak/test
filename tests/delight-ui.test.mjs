@@ -14,6 +14,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { closeSettings, openSettingFor } from "./places.mjs"; // the old window's helpers, for the skipped bodies only
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 /** A model that answers at once, or waits for `release()` when asked to sort the Downloads folder. */
 function slowModel() {
@@ -445,7 +446,7 @@ test("your own background: a full disk keeps nothing half-kept; choosing None ke
   await f.page.getByRole("button", { name: "Remove", exact: true }).click();
   await ask.getByRole("button", { name: "Remove", exact: true }).click();
   await f.page.locator("#bgLayer .bg-media").waitFor({ state: "detached" });
-  await f.page.waitForFunction(async () => !(await indexedDB.databases()).some((db) => db.name === "branch-delight"));
+  await waitInPage(f.page, async () => !(await indexedDB.databases()).some((db) => db.name === "branch-delight"));
   await status(f.page, "Removed. Nothing is kept.");
   assert.deepEqual(f.errors, []);
 });
