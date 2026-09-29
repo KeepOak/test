@@ -7929,7 +7929,12 @@ the "ask before changes" rules ask about it every time whatever the rule for com
 `GET /api/remotes` lists them, `POST /api/remotes` adds one, `POST /api/remotes/remove` takes one
 off. Each computer is `RemoteComputerSchema` (`src/remote/ssh-workspace.ts`): `alias` the short name
 from your SSH config, `root` the folder on that computer everything is kept inside, `label` a name
-you will recognise, `executables` the programs it may run, and `addedAt` when you added it.
+you will recognise, `executables` the programs it may run, `trunks` the Trunks you lent it to, and `addedAt`
+when you added it.
+
+Your own conversations may use every computer you added. A Trunk may use one only once you lend it to
+that Trunk (`trunks`); `remote.list` shows a Trunk only what it was lent, and the other tools refuse the
+rest by name.
 
 ## A way back to before a change (batch 26, wave 8)
 
