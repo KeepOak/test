@@ -10,9 +10,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import { createBranch } from "../dist/index.js";
-import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
 import { AccountPoolProvider } from "../dist/accounts/pool-provider.js";
 import { withAccountCall } from "../dist/accounts/context.js";
@@ -97,29 +95,30 @@ test("usage_not_included benches that model only; a short Retry-After is waited 
   assert.equal(state.models.get("m"), at + 30_000, "a rest already running is never pushed further out");
 });
 
-test("rests survive a restart", async (t) => {
+test("rests survive a restart: a billing bench is still there after Branch starts again", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-rests-"));
   const options = { workspace: join(root, "workspace"), dataDir: join(root, "data") };
   let again = null;
   t.after(async () => { await again?.close(); await discardTemp(root); });
   const app = await createBranch(options);
-  const service = accountsServiceFor(app.runtime.models);
-  await fakeClaudeAccounts(t, service);
-  const spawn = async (_row, _prompt, _signal, _limits, home) => home
-    ? { code: 0, stdout: JSON.stringify({ result: "from the second plan" }), stderr: "" }
-    : { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." };
-  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
-  app.runtime.models.configure(app.runtime.owner, { activePreset: "cli-claude-code" });
-  service.deps.spawnAgent = spawn;
+  const service = accountsServiceFor(app.runtime.models), owner = app.runtime.owner, POOL = "openai-test";
+  delete service.deps.policy; // the stand-in fetch below is the whole network
+  app.store.save("settings", owner, "model-connections", { connections: [{ id: POOL, name: "OpenAI test", catalogId: "openai", model: "gpt-4o-mini", extras: {} }] });
+  app.runtime.models.register({ id: POOL, name: "OpenAI test", model: "gpt-4o-mini", catalogId: "openai",
+    provider: { name: "openai-chat", complete: async () => { throw new ProviderHttpError(402, undefined, "insufficient_quota"); } } });
+  app.runtime.models.configure(owner, { activePreset: POOL });
+  service.deps.fetchImpl = async () => new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "from the second key" } }] }),
+    { status: 200, headers: { "content-type": "application/json" } });
   setMode(service, { mode: "on" });
-  await addAccount(service, { pool: "cli-claude-code", label: "Second" });
+  await addAccount(service, { pool: POOL, label: "Second", key: "sk-second-key-value-000000" }); // not-a-real-secret
   const run = await app.runtime.run({ prompt: "hello" });
-  assert.equal(run.output, "from the second plan");
-  const until = service.statesOf("cli-claude-code").get("primary").limitedUntil;
-  assert.ok(until > Date.now(), "the first plan is benched");
+  assert.equal(run.output, "from the second key");
+  const until = service.statesOf(POOL).get("primary").restUntil;
+  assert.ok(until > Date.now(), "the first key is benched for being out of credit");
   await app.close();
 
   again = await createBranch(options);
-  const restored = accountsServiceFor(again.runtime.models).statesOf("cli-claude-code").get("primary");
-  assert.equal(restored?.limitedUntil, until, "the bench is still there after the restart");
+  const restored = accountsServiceFor(again.runtime.models).statesOf(POOL).get("primary");
+  assert.equal(restored?.restUntil, until, "the bench is still there after the restart");
+  assert.match(restored.lastError, /billing/);
 });

@@ -23,13 +23,14 @@ import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
 import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
 import { firstChoice, freshState, unavailable } from "./pool.js";
-import { pooled, unwrapProvider, type TrunkMove } from "./pool-provider.js";
+import { pooled, trunkOrder, unwrapProvider, type TrunkMove } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
 } from "./settings.js";
 import { AccountUsageLedger } from "./usage.js";
 import { AccountRestStore } from "./rests.js";
+import { AccountLeases, defaultJobsPerAccount } from "./leases.js";
 import { mergeChatGPTDuplicates } from "./dedupe.js";
 import { checkProgram, type RunStatus } from "./sign-ins.js";
 import { accountPresentation, identityKey, type AccountIdentity, type AccountSignIn } from "./identity.js";
@@ -57,7 +58,7 @@ export interface AccountsDeps {
   now?: () => number;
 }
 export interface HelperAccountRef { pool: string; account: string }
-export interface HelperConnection { preset: ModelPreset; accountRef?: Readonly<HelperAccountRef> }
+export interface HelperConnection { preset: ModelPreset; accountRef?: Readonly<HelperAccountRef>; release?: () => void }
 
 /** The lists whose plan can be read from the service itself, without a message; and how often, per account. */
 export const planReadEveryMs: Readonly<Record<string, number>> = {
@@ -74,6 +75,8 @@ export class AccountsService {
   readonly ledger: AccountUsageLedger;
   /** Each account's rest, kept on disk so a restart does not undo it (src/accounts/rests.ts). */
   readonly rests: AccountRestStore;
+  /** MODEL-050: which accounts helpers are working through now, so parallel helpers spread out (src/accounts/leases.ts). */
+  readonly leases = new AccountLeases();
   readonly chatgptAccounts: ChatGPTAccounts;
   /** What each sign-in's plan windows were last measured at, per account, kept across restarts. */
   readonly planWindows: PlanWindowStore;
@@ -481,16 +484,38 @@ export class AccountsService {
     if (found.kind !== "api-key") await this.readIdentities();
     this.authorizeHelper();
     const pool = this.usablePool(found.pool);
-    const account = asked?.account ?? sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool]
-      ?? pool?.defaultAccount ?? primaryAccount;
-    this.requireHelperAccount(found.pool, found.kind, account);
-    const address = this.addressOf(preset.id);
-    const chosen = await this.providerFor(found.pool, found.kind, preset, account);
-    if (!chosen && account !== primaryAccount) throw new Error("The helper's exact account could not be bound");
-    const bound = chosen ?? unwrapProvider(preset.provider); // only the connection's own primary provider
-    this.authorizeHelper();
-    const ref = Object.freeze({ pool: found.pool, account });
-    return { preset: Object.freeze({ ...preset, provider: this.helperProvider(bound, preset, ref, found.kind, address) }), accountRef: ref };
+    const preferred = sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool] ?? pool?.defaultAccount ?? primaryAccount;
+    // MODEL-050: a helper no account was named for takes the least-leased ready account, so helpers side by side spread.
+    const lease = asked ? null : this.leaseHelperAccount(pool, found.kind, preset.model, preferred);
+    const account = asked?.account ?? lease?.account ?? preferred;
+    try {
+      this.requireHelperAccount(found.pool, found.kind, account);
+      const address = this.addressOf(preset.id);
+      const chosen = await this.providerFor(found.pool, found.kind, preset, account);
+      if (!chosen && account !== primaryAccount) throw new Error("The helper's exact account could not be bound");
+      const bound = chosen ?? unwrapProvider(preset.provider); // only the connection's own primary provider
+      this.authorizeHelper();
+      const ref = Object.freeze({ pool: found.pool, account });
+      return { preset: Object.freeze({ ...preset, provider: this.helperProvider(bound, preset, ref, found.kind, address) }), accountRef: ref,
+        ...(lease ? { release: lease.release } : {}) };
+    } catch (error) { lease?.release(); throw error; }
+  }
+  /**
+   * MODEL-050 (Hermes Agent's acquire_lease, see src/accounts/leases.ts): the ready accounts of a list that moves on by
+   * itself, the conversation's own first, and the one fewest helpers hold. Null when there is nothing to spread over.
+   * Only accounts this call may use: switched on, signed in, not resting or capped, and a Trunk's own unless it copies.
+   */
+  private leaseHelperAccount(pool: Pool | null, kind: AccountKind, model: string, preferred: string): { account: string; release: () => void } | null {
+    if (!pool?.autoSwitch || pool.accounts.filter((one) => !one.disabled).length < 2) return null;
+    const trunk = currentAccountCall()?.trunk, own = trunk ? trunkOrder(trunk.keys, pool.pool) : [];
+    const ready = pool.accounts.filter((one) => !one.disabled && (!trunk || trunk.keys.copyFromOwner || own.includes(one.id))
+      && unavailable(one, this.stateOf(pool.pool, one.id), model, this.now(), this.capReached(pool.pool, one)) === null
+      && this.helperAccountReady(pool.pool, kind, one.id));
+    const ordered = [...ready].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred) || Number(b.pinned) - Number(a.pinned));
+    return this.leases.acquire(pool.pool, ordered.map((one) => one.id), pool.jobsPerAccount ?? defaultJobsPerAccount);
+  }
+  private helperAccountReady(pool: string, kind: AccountKind, id: string): boolean {
+    try { this.requireHelperAccount(pool, kind, id); return true; } catch { return false; }
   }
   private helperProvider(bound: Provider, preset: ModelPreset, ref: HelperAccountRef, kind: AccountKind, address: string | null): Provider {
     const authorize = (): void => {

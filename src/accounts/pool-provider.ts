@@ -253,8 +253,8 @@ export class AccountPoolProvider {
     if (failure.kind === "rate") failure = this.rateRest(state, failure, error);
     rest(state, failure, this.hooks.model, this.hooks.now());
     if (failure.kind === "rate") failure = { ...failure, untilMs: state.models.get(this.hooks.model) ?? failure.untilMs };
-    this.hooks.saveRest?.(account.id, state);
     state.lastError = `${failure.reason} (${new Date(failure.untilMs).toISOString()})`;
+    this.hooks.saveRest?.(account.id, state);
     call?.note?.("model.account_resting", { pool: this.hooks.pool, account: account.id, label: account.label, reason: failure.reason, until: new Date(failure.untilMs).toISOString() });
     return false;
   }

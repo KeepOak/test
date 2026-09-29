@@ -1366,11 +1366,14 @@ export class Runtime {
       depth: parent.depth + 1,
       ...(options.agent ? { agent: options.agent } : {}),
     };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, options);
+      connection = await this.helperConnection(parent, options);
       context.signal.throwIfAborted();
-      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+      const chosen = connection;
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: chosen.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, chosen));
     } finally {
+      connection?.release?.(); // MODEL-050: the helper's account lease, also when it never started
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
@@ -1773,6 +1776,7 @@ ${run.output.slice(0, 6000)}`;
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
@@ -1780,6 +1784,7 @@ ${run.output.slice(0, 6000)}`;
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        pinnedHelper = connection;
         context.signal.throwIfAborted();
         keepHelperRoute(this.store, run.owner, run.sessionId, connection);
         this.helperModels.set(run.id, connection.preset);
@@ -1839,6 +1844,7 @@ ${run.output.slice(0, 6000)}`;
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
+    pinnedHelper?.release?.(); helper?.release?.(); // MODEL-050: the helper's account is free for the next one
     if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is

@@ -3304,7 +3304,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### Hermes Agent credential pool (Nous Research), MIT
 
-`src/accounts/pool.ts` and `src/accounts/pool-provider.ts` follow the shape of Hermes Agent's credential pool, `agent/credential_pool.py` and `agent/credential_pool_model_cooldowns.py` (https://github.com/NousResearch/hermes-agent): the fill-first, round-robin and least-used strategies, resting a whole credential after an authentication or billing failure, resting one model only after a plain rate limit, and taking the rest's length from the service's own reset time. The code was written again for Branch. Used under the MIT licence:
+`src/accounts/pool.ts` and `src/accounts/pool-provider.ts` follow the shape of Hermes Agent's credential pool, `agent/credential_pool.py` and `agent/credential_pool_model_cooldowns.py` (https://github.com/NousResearch/hermes-agent): the fill-first, round-robin and least-used strategies, resting a whole credential after an authentication or billing failure, resting one model only after a plain rate limit, and taking the rest's length from the service's own reset time. The code was written again for Branch. `src/accounts/leases.ts` adapts its per-credential leases (`acquire_lease` and `release_lease` in `agent/credential_pool.py`, with `DEFAULT_MAX_CONCURRENT_PER_CREDENTIAL` = 1) and the lease each delegated child takes for its run (`_lease_child_credential` in `tools/delegate_tool_child_run.py`), so helpers working side by side spread over a connection's accounts; `src/accounts/rests.ts` keeps each account's rest on disk the way the pool saves `last_status`, `last_status_at` and `last_error_reset_at`. Used under the MIT licence:
 
 Copyright (c) 2025 Nous Research
 
@@ -3313,6 +3313,46 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### LiteLLM (BerriAI), MIT
+
+The prompt-cache pricing in `src/pricing.ts` (`promptCost`) follows LiteLLM's `litellm/litellm_core_utils/llm_cost_calc/utils.py` (https://github.com/BerriAI/litellm, commit 3a6744cd): a missing cache-read or cache-write rate falls back to the input rate and a missing one-hour write rate to the five-minute one (lines 382-394), and five-minute and one-hour cache writes are charged apart (`calculate_cache_writing_cost`). The Claude cache-read and cache-write rates in the same file were copied from LiteLLM's `model_prices_and_context_window.json` (commit 27c110cb); the Claude 3.x and 4.0/4.1 rates are its Bedrock entries for those models. Only the file outside LiteLLM's `enterprise/` directory was used, which is under the MIT licence:
+
+Copyright (c) 2023 Berri AI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### models.dev, MIT
+
+The prices of `claude-opus-5-5` and `claude-sonnet-5-5` in `src/pricing.ts` were checked against models.dev's `providers/anthropic/models/*.toml` (https://github.com/anomalyco/models.dev, commit 1ba7a9df). Used under the MIT licence:
+
+Copyright (c) 2025 models.dev
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### OpenClaw rate-limit backoff, MIT
+
+The rest after a plain rate limit in `src/accounts/pool.ts` (`rateBackoffMs`, and `rest` never moving a running rest further out) is adapted from OpenClaw's `src/agents/auth-profiles/usage-failure-state.ts` (https://github.com/openclaw/openclaw, commit dc6e5cd2): 30 seconds doubling to at most a day (`RATE_LIMIT_BACKOFF_BASE_MS`, `RATE_LIMIT_BACKOFF_MAX_MS`, `calculateCappedExponentialBackoffMs`) and `keepActiveWindowOrRecompute`. The repository's LICENSE file is the MIT licence:
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### OpenAI Codex usage-limit refusals, Apache-2.0
+
+How a ChatGPT sign-in's 429 is read in `src/provider-retry.ts` and `src/accounts/pool.ts` is adapted from Codex's `codex-rs/codex-api/src/api_bridge.rs` (https://github.com/openai/codex, commit 8bd5a136, Copyright 2025 OpenAI): only an `error.type` of `usage_limit_reached` is a plan limit, lasting until the body's `resets_at` (seconds since the epoch); `usage_not_included` means the plan does not include that use; any other 429 is a passing rate limit. The code was rewritten in TypeScript for Branch. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 
 ### PicoClaw, MIT
 

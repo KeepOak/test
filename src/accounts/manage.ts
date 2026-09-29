@@ -42,6 +42,8 @@ export const PoolUpdateSchema = z.object({
   strategy: z.enum(strategies).optional(),
   autoSwitch: z.boolean().optional(),
   defaultAccount: accountName.nullable().optional(),
+  /** MODEL-050: helpers per account at once before the next helper takes another account. */
+  jobsPerAccount: z.number().int().min(1).max(16).optional(),
 }).strict();
 export const NoticeSchema = z.object({ pool: poolName }).strict();
 export const RemoveSchema = z.object({ pool: poolName, account: accountName }).strict();
@@ -155,6 +157,7 @@ export function updatePool(service: AccountsService, input: unknown) {
     if (asked.defaultAccount) accountIn(pool, asked.defaultAccount);
     pool.defaultAccount = asked.defaultAccount;
   }
+  if (asked.jobsPerAccount !== undefined) pool.jobsPerAccount = asked.jobsPerAccount;
   save(service, settings);
   return viewPool(service, pool);
 }
