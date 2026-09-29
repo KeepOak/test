@@ -23,6 +23,9 @@ name: Checks
 # in here.)
 on:
   pull_request:
+  # GitHub's merge queue (KeepOak/Branch-Agent ruleset): each queued group is tested as it will land, whole suite,
+  # on the newest redesign/window, so a PR that was green on an older base cannot turn the base red.
+  merge_group:
   push:
     branches: [main, wave2/integration, 'release/**', 'redesign/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
   workflow_dispatch:
@@ -85,7 +88,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: node scripts/select-affected-tests.mjs --event="$EVENT" --base-ref="$BASE_REF"
+          # ci-full (added by the merge bot after a real failure) asks for the whole suite; see select-affected-tests.mjs.
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node scripts/select-affected-tests.mjs --event="$EVENT" --base-ref="$BASE_REF" --labels="$LABELS"
       - name: Check documentation-only changes
         if: steps.plan.outputs.mode == 'docs'
         run: |
@@ -206,6 +211,52 @@ jobs:
           path: ${{ runner.temp }}/test-timings.json
           if-no-files-found: ignore
           retention-days: 14
+  # RES-709: free speech on this computer, proved for real. faster-whisper (MIT) and its smallest English model are
+  # installed here, on the build machine only, so tests/voice-local-whisper.test.mjs writes out a fixture WAV and
+  # fills the window's message box from a fake microphone, offline (HF_HUB_OFFLINE), instead of skipping. The package
+  # and the model are kept between runs; Branch itself installs and downloads neither.
+  local-voice:
+    name: local voice (faster-whisper, offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - id: modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules
+          key: modules-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/huggingface/hub/models--Systran--faster-whisper-tiny.en
+          key: faster-whisper-1.2.1-tiny.en-${{ runner.os }}-py3.12
+      - run: python -m pip install --disable-pip-version-check faster-whisper==1.2.1
+      - run: python -c "from faster_whisper import WhisperModel; WhisperModel('tiny.en', device='cpu', compute_type='int8')"
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-headless-shell
+      - run: npx playwright install --with-deps chromium --only-shell
+      - run: npm run build
+      - run: xvfb-run -a node --test --test-concurrency=1 tests/voice-local-whisper.test.mjs
+        env:
+          BRANCH_REQUIRE_WHISPER: '1'
+          BRANCH_WHISPER_PYTHON: ${{ steps.python.outputs.python-path }}
+          HF_HUB_OFFLINE: '1'
   # The one check to require. It runs even when a share fails, so the check is red rather than skipped. On a pull
   # request it is green only when the plan ran and every share it planned passed (a documentation-only one plans
   # none); anywhere else only when there was no plan, so the whole suite ran and passed, since promote follows it.
@@ -213,7 +264,7 @@ jobs:
   # not red. At the end, the run hands its CI slot on: the oldest waiting pull request is started again.
   verify:
     name: verify-suite
-    needs: [plan, test]
+    needs: [plan, test, local-voice]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -229,9 +280,11 @@ jobs:
           TEST: ${{ needs.test.result }}
           EVENT: ${{ github.event_name }}
           SUMMARY: ${{ needs.plan.outputs.summary }}
+          VOICE: ${{ needs.local-voice.result }}
         run: |
           if [ "$EVENT" = pull_request ]; then test "$PLAN" = success; else test "$PLAN" = skipped; MODE=full; fi
-          echo "plan: $PLAN, mode: $MODE, tests: $TEST"
+          echo "plan: $PLAN, mode: $MODE, tests: $TEST, local voice: $VOICE"
+          test "$VOICE" = success # RES-709: the real, offline speech proof
           if [ "$MODE" = docs ]; then
             test "$EVENT" = pull_request
             test "$TEST" = skipped
@@ -264,7 +317,9 @@ jobs:
   promote:
     name: promote to mac/cross-platform
     needs: [verify]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && github.repository == 'stabrea/Branch-Agent'
+    # On a push, plan is skipped (it only queues pull-request runs), and a skipped job anywhere upstream skips this one
+    # unless the condition says otherwise; so it asks for verify's own success instead.
+    if: ${{ !cancelled() && needs.verify.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && (github.repository == 'KeepOak/Branch-Agent' || github.repository == 'stabrea/Branch-Agent') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:

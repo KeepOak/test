@@ -11,6 +11,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { panelsWork } from "../dist/panels-work.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const ROOT = join(import.meta.dirname, "..");
 const quiet = { name: "scripted", async complete() { return { content: "Here is a short answer.", toolCalls: [] }; } };
@@ -201,7 +202,7 @@ async function newWindow(t, { width = 1440, height = 950 } = {}) {
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   const conversation = async () => {
-    await page.locator(`.list [data-act="chat"][data-id="${seeded.session}"]`).click();
+    await openChat(page, seeded.session);
     await page.locator("#conversation .b").first().waitFor({ timeout: 30000 });
   };
   const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
