@@ -12,7 +12,7 @@ import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { liveWindowCommit, liveWindowFile, liveWindowNames, ownBuild } from "./hot-update/window-files.js"; // hot-update
-import { readFile, writeFile, lstat } from "node:fs/promises";
+import { readFile, writeFile, lstat, rename } from "node:fs/promises";
 import { dirname, extname, join, resolve as resolvePath } from "node:path"; // R17-S-B: resolvePath
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -409,9 +409,13 @@ async function sessionToken(dataDir: string): Promise<string> {
     if ((await lstat(path)).isSymbolicLink())
       throw new Error("Session token must not be a link");
     const token = (await readFile(path, "utf8")).trim();
-    if (!/^[a-f0-9]{64}$/.test(token))
-      throw new Error("Invalid saved session token");
-    return token;
+    if (/^[a-f0-9]{64}$/.test(token)) return token;
+    // QA retest 2026-09-28 (TRUNK-180): a damaged token file used to stop every start ("Invalid saved session token"),
+    // and `branch quit` could not ask the gateway to close either. A damaged token matches no window, so a new one is
+    // made; the window asks for the new one (`branch token` shows it), as after a first start.
+    const aside = `${path}.unreadable-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await rename(path, aside);
+    console.error(`The saved session token was damaged; it was put aside as ${aside} and a new one made.`);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
