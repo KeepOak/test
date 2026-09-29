@@ -3646,14 +3646,22 @@ async function handleMcpRequest(
       const JsonRpcSchema = z
         .object({
           jsonrpc: z.literal("2.0"),
-          id: z.union([z.string(), z.number()]),
+          id: z.union([z.string(), z.number()]).optional(),
           method: z.string(),
           params: z.record(z.string(), z.unknown()).optional().default({}),
         })
         .strict();
-      const jsonRpcRequest = JsonRpcSchema.parse(body) as { jsonrpc: "2.0"; id: string | number; method: string; params?: Record<string, unknown> };
-      if (unknownSession && jsonRpcRequest.method !== "initialize")
+      const message = JsonRpcSchema.parse(body);
+      if (unknownSession && message.method !== "initialize")
         throw new HttpError(404, "That conversation is not open. Send initialize first.");
+      // A notification (no id) expects no answer; the spec's reply is 202 Accepted with no body, as
+      // the SDK's own server gives (https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/streamableHttp.ts#L893-L900, MIT).
+      if (message.id === undefined) {
+        response.writeHead(202);
+        response.end();
+        return true;
+      }
+      const jsonRpcRequest = { ...message, id: message.id };
       // A client that did not bring a conversation of its own is given one, named in the reply to
       // its first message, so everything it does afterwards is kept together.
       const opened = !sessionId && jsonRpcRequest.method === "initialize" ? mcp.getSession().id : undefined;
