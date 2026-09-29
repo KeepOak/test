@@ -82,6 +82,7 @@ export class ChannelConnectors {
       throw new Error(`${value.connector} did not return something that can carry messages`);
     await this.router.attach(adapter, ChannelPolicySchema.parse({
       activation: value.activation ?? "mention", pairing: value.pairing ?? true, allowlist: value.allowlist ?? [],
+      ...(value.groupAllowlist !== undefined ? { groupAllowlist: value.groupAllowlist } : {}),
     }));
     const made = this.connected.get(value.connector) ?? [];
     if (!made.includes(value.id)) made.push(value.id);

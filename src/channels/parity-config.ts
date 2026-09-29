@@ -51,7 +51,7 @@ export interface ParityHost {
 
 /** The settings the owner wrote, without the fields every channel shares. */
 function ownSettings(config: ParityChannelConfig): Record<string, unknown> {
-  const { id: _id, type: _type, activation: _a, pairing: _p, allowlist: _l, ...rest } = config;
+  const { id: _id, type: _type, activation: _a, pairing: _p, allowlist: _l, groupAllowlist: _g, ...rest } = config;
   return rest;
 }
 
