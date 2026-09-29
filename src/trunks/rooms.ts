@@ -112,7 +112,7 @@ export interface Room {
 
 export type RoomRuntime = Pick<Runtime, "run" | "approve" | "waitingApprovals" | "cancel">
   // phase2/rooms (integration review): the yeses a member holds in a room, shown with Revoke and ended with the seat.
-  & Partial<Pick<Runtime, "allowedNow" | "revokeGrant" | "endGrants">>;
+  & Partial<Pick<Runtime, "allowedNow" | "revokeGrant" | "endGrants" | "continueAsked">>;
 export interface RoomDeps {
   store: Store;
   owner: string;
@@ -470,7 +470,12 @@ export class TrunkRooms {
     // DESIGN-DIRECTION PR 2: listed by the room and the message the turn answers, never by the room's framing.
     const opened = room.events.find((e) => e.seq === task.discussion)?.text.trim().split(/\r?\n/)[0] ?? "";
     const title = opened ? `${room.name}: ${opened}` : room.name;
-    const start = () => this.deps.runtime.run({ prompt, sessionId, title, onStarted: (started) => this.running.set(room.id, started.id), onTextDelta: () => undefined });
+    const carried = this.carrying.get(`${room.id}\u0000${member.id}`);
+    this.carrying.delete(`${room.id}\u0000${member.id}`);
+    const onStarted = (started: Run) => this.running.set(room.id, started.id);
+    const start = () => carried && this.deps.runtime.continueAsked && this.carryable(sessionId, carried)
+      ? this.deps.runtime.continueAsked(carried, { onStarted }) // QA R1 follow-up
+      : this.deps.runtime.run({ prompt, sessionId, title, onStarted, onTextDelta: () => undefined });
     const asSender = () => task.personId
       ? asPerson({ profileId: task.personId, keyId: `room:${room.id}` }, start)
       : start();
@@ -599,12 +604,26 @@ export class TrunkRooms {
       throw Object.assign(new Error(unnamedAnswerRefusal), { status: 409 });
     const remember: PolicyRemember = asked?.onceOnly ? "never" : value.remember;
     const answered = this.deps.runtime.approve(sessionId, value.decision, remember, value.fingerprint);
+    // QA R1 follow-up: after a yes the member's waiting task carries on as itself when its turn comes round again, so the
+    // engine runs the approved call rather than a new turn asking the model to make it again.
+    if (value.decision === "allow" && asked && this.carryable(sessionId, asked.runId)) this.carrying.set(`${id}\u0000${value.memberId}`, asked.runId);
     const fresh = this.get(id);
     fresh.events = fresh.events.map((e) => (e.kind === "waiting" && e.memberId === value.memberId ? { ...e, answered: true } : e));
     this.put({ ...fresh, needsYou: this.waiting(id).length > 0 });
     this.kick(id);
     return answered;
   }
+  /** QA R1 follow-up: a member's task that asked, still waiting and the newest in its conversation, with nothing else waiting there. */
+  private carryable(sessionId: string, runId: string): boolean {
+    const run = this.deps.store.run(runId);
+    // As the window's carry-on (src/server.ts carryOnAllowed): nothing written in its conversation since it stopped.
+    const stopped = this.deps.store.events(runId).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
+    return run?.status === "needs_input" && run.sessionId === sessionId && !this.deps.runtime.waitingApprovals(sessionId).length
+      && this.deps.store.newestIn(this.deps.owner, sessionId)?.id === runId
+      && typeof stopped === "number" && this.deps.store.lastMessageId(sessionId) === stopped;
+  }
+  /** QA R1 follow-up: a member's waiting task to carry on at its next turn, by room and member, after the owner's yes. */
+  private readonly carrying = new Map<string, string>();
   /**
    * phase2/rooms (integration review): the yeses each member holds in this room right now: that
    * Trunk, that kind of action, that exact thing, in this room only, for at most an hour.
