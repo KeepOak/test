@@ -57,12 +57,16 @@ test("DG-192 Updates & about has the prototype's sections at every width and lev
         const shown = await page.evaluate(async () => { const { S } = await import("/app/core/state.js"); return { view: S.view, setPage: S.setPage, cols: document.querySelectorAll(".set-col").length }; });
         throw new Error(`${width} px, ${one}: no Updates & about title (${JSON.stringify(shown)}): ${error.message}`);
       });
-      const heads = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
-        all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // Pass 17 adds "Help and updates, more" from Advanced up (whereB17("updates", 1, ...)).
       // #455's page: the status card, then Updating; the channel ("Update channel", public/app/settings/updates-channel.js),
       // which the prototype does not show, is folded under the quieter More.
-      assert.deepEqual(heads, ["Updates & about", "Updating", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])], `${width} px, ${one}`);
+      const want = ["Updates & about", "Updating", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])];
+      const read = () => page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
+        all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+      // A redraw between the title and its sections read them as none; wait (in the page) for the sections, then check.
+      await page.waitForFunction((list) => JSON.stringify([...document.querySelectorAll(".set-col :is(h1, h2, h3, h4)")]
+        .filter((node) => node.checkVisibility()).map((node) => node.textContent.trim())) === list, JSON.stringify(want), { timeout: 15000 }).catch(() => {});
+      assert.deepEqual(await read(), want, `${width} px, ${one}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), true, "no sideways scroll");
     }
   }

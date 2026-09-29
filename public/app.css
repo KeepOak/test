@@ -4107,6 +4107,8 @@ html.still18 .zz11::after{animation-play-state:paused!important}
 .hf18a.open .hfb18a{grid-template-rows:1fr}
 .hfb18a > div{overflow:hidden;min-height:0}
 .hf18a.open .hfr18a{display:none}
+/* The lead's workbench: wake-ups and programs left running are listed in the opened roster too, as rows. */
+.hf18a.open .roster18a .hfr18a{display:grid;border:1px solid var(--line);border-radius:10px}
 .roster18a{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg);max-height:340px;overflow:auto}
 .card18a{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:rise18 .16s ease-out}
 .card18a.wait18{border-color:var(--accent)}
