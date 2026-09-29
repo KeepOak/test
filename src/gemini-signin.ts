@@ -45,10 +45,13 @@ export const geminiSignInNote =
 
 /**
  * A Gemini connection that uses a signed-in person's token rather than a key. The token goes in the
- * Authorization header, never in the address. The caller renews it through `OAuthConnections`.
+ * Authorization header, never in the address. With `credential`, the connection asks for the token on
+ * every call (`OAuthConnections.accessToken`, which renews it when it has run out); `accessToken` is then
+ * only the first one.
  */
-export function geminiPresetFromToken(id: string, name: string, model: string, accessToken: string): ModelPreset {
-  return { id, name, provider: new GeminiProvider({ endpoint: geminiEndpoint, model, apiKey: accessToken, bearer: true }), model };
+export function geminiPresetFromToken(id: string, name: string, model: string, accessToken: string,
+  credential?: () => Promise<string>): ModelPreset {
+  return { id, name, provider: new GeminiProvider({ endpoint: geminiEndpoint, model, apiKey: accessToken, bearer: true, credential }), model };
 }
 
 /**
@@ -59,8 +62,11 @@ export async function registerSignedInGemini(
   oauth: OAuthConnections, settings: GeminiSignInSettings, register: (preset: ModelPreset) => void,
 ): Promise<ModelPreset> {
   if (!settings.clientId) throw new Error(`No Google sign-in is set up. ${geminiSignInNote}`);
-  const token = await oauth.accessToken(googleGeminiSignIn(settings.clientId));
-  const preset = geminiPresetFromToken("google-gemini", "Gemini (signed in with Google)", settings.model, token);
+  const signIn = googleGeminiSignIn(settings.clientId);
+  const token = await oauth.accessToken(signIn);
+  // provider-audit: the token is asked for on each call, not fixed here, so the connection outlives its first hour.
+  const preset = geminiPresetFromToken("google-gemini", "Gemini (signed in with Google)", settings.model, token,
+    () => oauth.accessToken(signIn));
   register(preset);
   return preset;
 }

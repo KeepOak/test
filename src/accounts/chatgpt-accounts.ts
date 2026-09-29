@@ -31,11 +31,11 @@ export class LockerTokenVault implements TokenVault {
     const values = [tokens.accessToken, tokens.refreshToken, tokens.expiresAt, tokens.idToken ?? ""];
     if (values.some((value) => value.length > lockerValueLimit))
       throw new Error(`This ChatGPT sign-in is longer than the locker can hold (${lockerValueLimit} characters per part), so it was not kept. The first ChatGPT account can still sign in.`);
-    await this.locker.set(this.owner, this.project, parts.accessToken, tokens.accessToken);
-    await this.locker.set(this.owner, this.project, parts.refreshToken, tokens.refreshToken);
-    await this.locker.set(this.owner, this.project, parts.expiresAt, tokens.expiresAt);
-    if (tokens.idToken) await this.locker.set(this.owner, this.project, parts.idToken, tokens.idToken);
-    else this.locker.remove(this.owner, this.project, parts.idToken);
+    // provider-audit: one transaction, so a failure part way never pairs a new access token with an old refresh token.
+    await this.locker.setAll(this.owner, this.project, {
+      [parts.accessToken]: tokens.accessToken, [parts.refreshToken]: tokens.refreshToken, [parts.expiresAt]: tokens.expiresAt,
+      ...(tokens.idToken ? { [parts.idToken]: tokens.idToken } : {}),
+    }, tokens.idToken ? [] : [parts.idToken]);
   }
   async clear(): Promise<void> {
     this.locker.removeProject(this.owner, this.project);
