@@ -1,4 +1,6 @@
 import { environmentTool } from "./environment.js";
+import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
+import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
@@ -1809,13 +1811,22 @@ ${result.output || "(it said nothing)"}`;
     reach: { browserOrigins: [] as string[], browserAnyWebsite: false, commandsMayReachInternet: true },
     /** Secrets for host commands: only the active project's, never returned to the model. */
     secretsFor: async (context: ToolContext, names: string[]) => {
-      const project = store.projects.active(context.owner).id;
-      const values = await store.secrets.resolve(context.owner, project, names,
-        { runId: context.runId, purpose: "host command" });
-      // The names only; a value never leaves the locker, and never reaches this record.
-      for (const name of Object.keys(values))
-        audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (project ${project})`,
-          reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      // RES-260: a Trunk's own secrets reach only its own turns (src/trunks/secrets.ts).
+      const trunk = context.trunk ?? currentAccountCall()?.trunk?.id ?? null;
+      const keys = trunk ? (store.get("governance", context.owner, `trunk:${trunk}`)?.data as { keys?: { copyFromOwner?: unknown } } | undefined)?.keys : undefined;
+      const work = { trunk, helper: !!runOrigin(store, context.runId).parentRunId,
+        copyFromOwner: context.trunkKeys?.copyFromOwner ?? keys?.copyFromOwner !== false };
+      const own = trunk ? store.secrets.list(context.owner, trunkSecretsProject(trunk)).map((entry) => entry.name) : [];
+      const { plan, refused } = secretSources(work, names, own, store.projects.active(context.owner).id);
+      if (refused.length) throw new Error(trunkSecretRefusal(refused));
+      const values: Record<string, string> = {};
+      for (const [project, wanted] of Object.entries(plan)) {
+        Object.assign(values, await store.secrets.resolve(context.owner, project, wanted, { runId: context.runId, purpose: "host command" }));
+        // The names only; a value never leaves the locker, and never reaches this record.
+        for (const name of wanted)
+          audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (${project === trunkSecretsProject(trunk ?? "") ? "the Trunk's own" : `project ${project}`})`,
+            reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      }
       return values;
     },
     /** References, replacement dates, the use audit and the shared scrubber. */
