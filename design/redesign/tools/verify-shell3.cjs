@@ -6,7 +6,7 @@
 //   BRANCH_DATA_DIR=<fresh dir> BRANCH_WORKSPACE=<fresh dir> node design/redesign/tools/seed-shell.mjs
 //   BRANCH_DATA_DIR=<same> BRANCH_WORKSPACE=<same> BRANCH_PORT=<port> node dist/cli.js start
 // Run: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-shell3.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { crc32, deflateSync } = require("node:zlib");
 
 const PORT = process.env.PORT || "3342", TOKEN = process.env.TOKEN;
