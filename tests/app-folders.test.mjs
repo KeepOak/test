@@ -15,6 +15,9 @@ import { shortcutChanges } from "../dist/install/windows-identity.js";
 import { Updater } from "../dist/desktop/updater.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
 
+/* Versioned app folders are Windows-only (versionedLayout is null elsewhere): these write Windows paths and scripts. */
+const windowsOnly = process.platform !== "win32" ? "versioned app folders are Windows-only" : false;
+
 const exe = "Branch Agent.exe";
 const exists = (path) => access(path).then(() => true, () => false);
 async function temp(t) {
@@ -91,7 +94,7 @@ const plan = (root, extra = {}) => ({ root, next: join(root, "current.next.json"
   newExe: join(root, "app-2.0.0", exe), oldExe: join(root, "app-1.0.0", exe), marker: join(root, "scratch", "shell-up-2.0.0"),
   failureDraft: join(root, "scratch", "f.draft"), failure: join(root, "scratch", "f.json"), log: join(root, "scratch", "log"), minimized: false, ...extra });
 
-test("the switch script waits for this window, switches in one rename, starts the new version and watches for its window", () => {
+test("the switch script waits for this window, switches in one rename, starts the new version and watches for its window", { skip: windowsOnly }, () => {
   const text = windowsSwitchScript(plan("C:\\P\\Branch 100%"));
   const lines = text.split("\r\n");
   const at = (pattern) => lines.findIndex((line) => pattern.test(line));
@@ -160,7 +163,7 @@ test("a version that did not come up is reported once, by the version it went ba
   assert.deepEqual({ ...JSON.parse(await readFile(shellUpMarker(dir, "2.0.0"), "utf8")), at: "t" }, { pid: 42, at: "t", restored: true });
 });
 
-test("shortcuts, start with Windows and the background engine's launcher follow the version in use, and nothing else's", async (t) => {
+test("shortcuts, start with Windows and the background engine's launcher follow the version in use, and nothing else's", { skip: windowsOnly }, async (t) => {
   const root = "C:\\Users\\o\\AppData\\Local\\Programs\\Branch Agent";
   assert.equal(sameInstall(root, `${root}\\Branch Agent.exe`), true);
   assert.equal(sameInstall(root, `${root}\\app-1.0.0\\Branch Agent.exe`), true);
@@ -219,7 +222,7 @@ function tools(sourceDir) {
   return { run, calls };
 }
 
-test("a Beta change becomes a folder of its own beside the running version, is switched to, and nothing is packaged or stopped", async (t) => {
+test("a Beta change becomes a folder of its own beside the running version, is switched to, and nothing is packaged or stopped", { skip: windowsOnly }, async (t) => {
   const root = await temp(t), running = join(root, "app-0.19.3");
   await programFolder(running, { version: "0.19.3" });
   const buildDir = join(root, "data", "updates", "beta-build"), scratchDir = join(root, "scratch"), sourceDir = join(buildDir, "source");
