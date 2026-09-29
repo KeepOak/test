@@ -16,11 +16,12 @@ export interface MailServer {
   user: string;
   password: string;
   /**
-   * true (the default) connects with TLS from the start, which is what a hosted mailbox needs.
-   * false connects in the clear and upgrades with STARTTLS when the server offers it, which is
-   * only sensible for a mail server on this computer or on the same network.
+   * true connects with TLS from the start, which is what a hosted mailbox needs. false connects in the clear and must
+   * switch to TLS with STARTTLS before the password is sent; a server that does not offer it is refused, unless it is
+   * on this computer. Unset, the standard STARTTLS ports (25, 143 and 587) use STARTTLS and every other port uses TLS
+   * from the start. (The same rule as nodemailer's `requireTLS` and imapflow's `doSTARTTLS: true`, both MIT.)
    */
-  tls?: boolean;
+  tls?: boolean | undefined;
   /** Set only in tests, where the fake server has a self-signed certificate. */
   rejectUnauthorized?: boolean;
   timeoutMs?: number;
@@ -73,16 +74,39 @@ class LineSocket {
   }
   /** Swaps the plain socket for an encrypted one after STARTTLS. */
   async upgrade(server: MailServer): Promise<void> {
+    // Anything already waiting was sent in the clear after the server agreed to encrypt, so it could have been put
+    // there by someone on the way; it is never read as if it came over TLS (imapflow guards the same way).
+    if (this.buffer) this.fail(new Error(`${server.host} sent more before encryption began, so Branch hung up`));
     this.socket.removeAllListeners("data");
     this.socket.removeAllListeners("close");
     const secure = tlsConnect({ socket: this.socket, servername: server.host, rejectUnauthorized: server.rejectUnauthorized ?? true });
-    await new Promise<void>((resolve, reject) => { secure.once("secureConnect", resolve); secure.once("error", reject); });
+    try {
+      await new Promise<void>((resolve, reject) => { secure.once("secureConnect", resolve); secure.once("error", reject); });
+    } catch (error) { secure.destroy(); this.fail(error instanceof Error ? error : new Error(String(error))); }
     this.socket = secure;
     this.buffer = "";
     this.listen();
   }
+  /** Ends the connection for good: nothing more is sent on it, and anything still waiting on it gets this error. */
+  private fail(error: Error): never {
+    this.failure = error;
+    this.socket.destroy();
+    throw error;
+  }
   close(): void { this.socket.destroy(); }
 }
+/** Whether the connection is TLS from the first byte; otherwise it must switch with STARTTLS. */
+export function implicitTls(server: Pick<MailServer, "tls" | "port">): boolean {
+  return server.tls ?? ![25, 143, 587].includes(server.port);
+}
+/** A server on this computer: the password never leaves it, so a plain connection is allowed there. */
+const onThisComputer = (host: string) => /^(localhost|127(?:\.\d{1,3}){3}|::1|\[::1\])$/i.test(host);
+/** Refuses to go on in the clear, in words the owner can act on. */
+function noEncryption(server: MailServer, what: string): Error {
+  return new Error(`${server.host} did not offer to encrypt the connection (STARTTLS) for ${what}, so Branch did not send `
+    + "your password to it. Use the server's encrypted port with TLS on (usually 993 for reading mail and 465 for sending).");
+}
+
 /**
  * Opens the connection, giving up on a server that never answers. Without this bound a mail host
  * that swallows the connection would hold up every later look at the inbox for good.
@@ -124,10 +148,22 @@ export class ImapClient {
   constructor(private readonly server: MailServer) {}
   private get timeout(): number { return this.server.timeoutMs ?? 20000; }
   async connect(): Promise<void> {
-    this.socket = await open(this.server, this.server.tls !== false);
+    const implicit = implicitTls(this.server);
+    this.socket = await open(this.server, implicit);
     await this.socket.until((text) => (text.includes("\r\n") ? text.indexOf("\r\n") + 2 : null), this.timeout);
+    if (!implicit) await this.startTls();
     await this.command(`LOGIN ${quote(this.server.user)} ${quote(this.server.password)}`);
     await this.command("SELECT INBOX");
+  }
+  /** Switches a plain connection to TLS before anything secret is sent, or refuses unless the server is on this computer. */
+  private async startTls(): Promise<void> {
+    const offered = await this.command("CAPABILITY").then((answer) => /^\* CAPABILITY .*\bSTARTTLS\b/im.test(answer), () => false);
+    if (!offered) {
+      if (onThisComputer(this.server.host)) return;
+      throw noEncryption(this.server, "reading mail");
+    }
+    await this.command("STARTTLS");
+    await this.socket!.upgrade(this.server);
   }
   /** Reads every unread message, marks each read, and returns what was found. */
   async unread(limit = 10): Promise<MailMessage[]> {
@@ -244,7 +280,7 @@ export interface OutgoingMail {
 }
 /** Sends one message and hangs up. */
 export async function sendMail(server: MailServer, mail: OutgoingMail): Promise<void> {
-  const implicit = server.tls !== false;
+  const implicit = implicitTls(server);
   const socket = await open(server, implicit);
   const timeout = server.timeoutMs ?? 20000;
   const expect = async (codes: string[]) => {
@@ -256,14 +292,14 @@ export async function sendMail(server: MailServer, mail: OutgoingMail): Promise<
     await expect(["220"]);
     socket.send("EHLO branch-agent");
     const greeting = await expect(["250"]);
-    // On a plain connection, encrypt as soon as the server says it can.
-    if (!implicit && /STARTTLS/i.test(greeting)) {
+    // On a plain connection, encrypt before the password goes; a server that cannot is refused unless it is on this computer.
+    if (!implicit && /^250[ -]STARTTLS\s*$/im.test(greeting)) {
       socket.send("STARTTLS");
       await expect(["220"]);
       await socket.upgrade(server);
       socket.send("EHLO branch-agent");
       await expect(["250"]);
-    }
+    } else if (!implicit && !onThisComputer(server.host)) throw noEncryption(server, "sending mail");
     await authenticate(socket, server, expect);
     socket.send(`MAIL FROM:<${mail.from}> BODY=8BITMIME`);
     await expect(["250"]);
