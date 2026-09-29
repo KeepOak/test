@@ -1,5 +1,6 @@
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
+import { EditedWords } from "./edited-words.js";
 import { lookup } from "../commands/catalog.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
@@ -96,6 +97,8 @@ export class SlackAdapter implements ChannelAdapter {
   private state: ChannelHealth = { state: "reconnecting", reason: "Connecting to Slack" };
   private user: { id: string; name: string } | null = null;
   private readonly seen = new Set<string>();
+  /** The words each recent message had, so an edit that changed none is not one. */
+  private readonly edits = new EditedWords();
   private stopping = false;
   private loop: Promise<void> | null = null;
   constructor(private readonly options: SlackOptions) {
@@ -174,8 +177,23 @@ export class SlackAdapter implements ChannelAdapter {
     if (!payload?.event || (eventId && this.seen.has(eventId))) return;
     if (eventId) { this.seen.add(eventId); if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!); }
     try { this.options.onEvent?.(payload.event, this.user?.id ?? null); } catch { /* an automation never stops a reply */ } // mac6/bucket-16
+    const changed = payload.event.type === "message" && payload.event.subtype === "message_changed" ? this.changed(payload.event) : undefined;
+    if (changed !== undefined) { if (changed) void onMessage(changed).catch(() => undefined); return; }
     const inbound = this.inbound(payload.event);
-    if (inbound) void onMessage(inbound).catch(() => undefined);
+    if (inbound) { this.edits.changed(`${inbound.chatId}:${payload.event.ts ?? ""}`, payload.event.text ?? ""); void onMessage(inbound).catch(() => undefined); }
+  }
+  /**
+   * Settings › Chat apps › Edited messages: Slack says a message changed as a `message_changed` event holding the new
+   * message. Only a person's own edit that changed the words counts (a link unfolding changes none); it is read as that
+   * message again, marked edited, for the router to answer or leave as the owner chose.
+   */
+  private changed(event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const message = eventSchema.safeParse((event as Record<string, unknown>).message);
+    if (!message.success || !message.data.ts || !event.channel || !message.data.text) return null;
+    if (!this.edits.changed(`${event.channel}:${message.data.ts}`, message.data.text)) return null;
+    const inbound = this.inbound({ ...message.data, type: "message", channel: event.channel, channel_type: event.channel_type,
+      subtype: undefined });
+    return inbound ? { ...inbound, edited: true, messageId: message.data.thread_ts ?? message.data.ts } : null;
   }
   private inbound(event: z.infer<typeof eventSchema>): InboundMessage | null {
     if (!["message", "app_mention"].includes(event.type)) return null;
