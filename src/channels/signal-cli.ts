@@ -4,7 +4,8 @@ import { createInterface, type Interface } from "node:readline";
 import { z } from "zod";
 import { ReactionAnswers } from "./reaction-answers.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
+import { signalMonospace } from "./signal-format.js";
 
 /**
  * Signal, through the `signal-cli` program the owner installed themselves. Signal has no bot API:
@@ -237,11 +238,13 @@ export class SignalAdapter implements ChannelAdapter {
       senderId: envelope.source, senderName: envelope.sourceName ?? envelope.source, text: said, addressed: true,
       messageId: String(envelope.timestamp ?? Date.now()) } : null;
   }
-  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     // CHAT-116: a reply quotes the person's own message (signal-cli's quoteTimestamp and quoteAuthor).
     const author = replyToMessageId ? this.authors.get(replyToMessageId) : undefined;
     const quote = author ? { quoteTimestamp: Number(replyToMessageId), quoteAuthor: author } : {};
-    return this.request("send", { ...this.target(chatId), message: text.slice(0, this.maxTextLength), ...quote });
+    const styled = signalMonospace(text.slice(0, this.maxTextLength), format);
+    return this.request("send", { ...this.target(chatId), message: styled.text,
+      ...(styled.textStyle.length ? { textStyle: styled.textStyle } : {}), ...quote });
   }
   /** CHAT-109: Signal's typing indicator (it lasts about 15 seconds; the live status asks again while the task works). */
   async sendTyping(chatId: string): Promise<void> {
