@@ -85,7 +85,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: node scripts/select-affected-tests.mjs --event="$EVENT" --base-ref="$BASE_REF"
+          # ci-full (added by the merge bot after a real failure) asks for the whole suite; see select-affected-tests.mjs.
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node scripts/select-affected-tests.mjs --event="$EVENT" --base-ref="$BASE_REF" --labels="$LABELS"
       - name: Check documentation-only changes
         if: steps.plan.outputs.mode == 'docs'
         run: |
