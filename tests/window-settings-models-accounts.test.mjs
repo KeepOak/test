@@ -172,7 +172,7 @@ test("Settings › Models › Second opinion is live: the switch, who checks and
   assert.equal(await sw.getAttribute("aria-disabled"), null, "not greyed");
   await sw.click();
   await waitFor(async () => (await call("/api/second-opinion")).advisor === true);
-  await page.locator(`[data-act="m-second-by"][data-v="${POOL}"]`).click();
+  await pickGsel(page.locator("#m-second-by"), POOL); // a glass list: one choice per connection (QA pass 2)
   await waitFor(async () => (await call("/api/second-opinion")).advisorPreset === POOL);
   await page.locator("#m-second-max").fill("9000");
   await page.locator("#m-second-max").press("Tab");
@@ -192,7 +192,7 @@ test("Settings › Models › Second opinion is live: the switch, who checks and
   await reload(page);
   await openModels(page, "second");
   assert.ok(await page.locator("#m-second").isChecked());
-  assert.equal(await page.locator(`[data-act="m-second-by"][data-v="${POOL}"]`).getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator("#m-second-by").getAttribute("value"), POOL);
   assert.equal(await page.locator("#m-second-max").inputValue(), "9000");
   /* The note the switch promises: Look inside reads it from the task's own record (chat/messages.js inspect). */
   const run = await app.runtime.run({ prompt: "hello" });

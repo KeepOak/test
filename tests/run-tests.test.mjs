@@ -22,7 +22,16 @@ test("npm test isolates browser and desktop files while keeping ordinary tests t
   // The real folders: the desktop app's files, and none of them among the rest.
   const real = testGroups();
   assert.deepEqual(real.desktop.map((file) => file.replace(/\\/g, "/")),
-    ["tests/desktop-beta-smoke.test.mjs", "tests/desktop-export.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs", "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
+    ["tests/desktop-beta-smoke.test.mjs", "tests/desktop-close.test.mjs", "tests/desktop-detached-gateway.test.mjs",
+     "tests/desktop-engine-power.test.mjs", "tests/desktop-export.test.mjs",
+     "tests/desktop-gateway-control.test.mjs", "tests/desktop-gateway-hot.test.mjs",
+     "tests/desktop-gateway-launch.test.mjs", "tests/desktop-gateway-live.test.mjs",
+     "tests/desktop-gateway-mode.test.mjs", "tests/desktop-gateway-power.test.mjs",
+     "tests/desktop-gateway-presence.test.mjs", "tests/desktop-gateway-preview.test.mjs",
+     "tests/desktop-gateway-runtime.test.mjs", "tests/desktop-gateway-worker.test.mjs",
+     "tests/desktop-hot-update.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-joined-engine.test.mjs",
+     "tests/desktop-old-engine.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs",
+     "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
   assert.equal(real.shared.some((file) => /^tests[\\/]desktop/.test(file)), false);
   assert.ok(real.browser.includes(join("tests", "glass-select.test.mjs")));
   assert.ok(real.browser.includes(join("tests", "settings-grown-1.test.mjs")));
