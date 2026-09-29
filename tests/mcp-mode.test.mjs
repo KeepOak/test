@@ -180,6 +180,7 @@ test("C2: prompts carry their blanks, and a resource the settings refuse is invi
   }, sessionId);
   assert.match(filled.data.result.messages[0].content.text, /Invoices/);
 
+  await share(url, token, ["memory.search"]);
   const before = await rpc(url, token, { jsonrpc: "2.0", id: 5, method: "resources/list", params: {} }, sessionId);
   assert.ok(before.data.result.resources.some((r) => r.uri === "memory://facts"));
 

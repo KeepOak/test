@@ -191,7 +191,7 @@ interface McpVerdict {
   tooMany: string;
 }
 
-/** A resource only shows up when the owner's approval settings would allow the matching tool. */
+/** A resource only shows up when the owner shares the matching tool and the approval settings allow it. */
 interface ResourceScope { uri: string; name: string; description: string; mimeType: string; tool: string; permission: string }
 const scopedResources: readonly ResourceScope[] = [
   { uri: 'memory://facts', name: 'Memory facts', description: 'What Branch remembers', mimeType: 'application/json',
@@ -679,12 +679,17 @@ export class McpServer {
     };
   }
 
-  /** Whether the owner's settings would let this connection read a resource of that kind. */
+  /**
+   * Whether this connection may read a resource of that kind: only when the owner shares the
+   * matching tool and the approval settings let it run without asking. A read has no place to wait
+   * for the owner's yes, so "ask" does not count.
+   */
   private mayRead(scope: { tool: string; permission: string }): boolean {
+    if (!this.exposed().has(scope.tool)) return false;
     const policy = cappedPolicy(readPolicy(this.store, this.runtime.owner), 'mcp');
     const { decision } = evaluatePolicy(policy,
       { tool: scope.tool, target: '', readOnly: isReadOnlyPermission(scope.permission) });
-    return decision !== 'deny';
+    return decision === 'allow';
   }
 
   private listResources(): unknown[] {
