@@ -219,7 +219,7 @@ async function fetchExternalBundle(fetchImpl: typeof fetch, url: string, userAge
 }
 
 /** DSSE's Pre-Authentication Encoding: the exact bytes a bundle's signature is taken over. */
-function dssePae(payloadType: string, payload: Buffer): Buffer {
+export function dssePae(payloadType: string, payload: Buffer): Buffer {
   const type = Buffer.from(payloadType, "utf8");
   return Buffer.concat([
     Buffer.from(`DSSEv1 ${type.length} `, "utf8"), type,
