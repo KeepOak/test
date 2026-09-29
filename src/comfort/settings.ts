@@ -26,9 +26,10 @@ export const shortcutDefaults = {
   sidePane: "Ctrl+Shift+K",
   sideList: "Ctrl+B",
   newTrunk: "",
-  focusPrompt: "",
+  /** UI-106: the message box, and the list's own search (Telegram-style), each one key away. */
+  focusPrompt: "Ctrl+L",
   stopTask: "Ctrl+Shift+S",
-  searchHistory: "",
+  searchHistory: "Ctrl+Shift+F",
   lookInside: "",
   /** Pass 17: the small ask box from any app. The desktop app registers it system-wide; ⌥ Space on a Mac. */
   quickAsk: "Ctrl+Shift+Space",
@@ -37,6 +38,9 @@ export const shortcutDefaults = {
   talkLive: "Ctrl+Shift+V",
   openInbox: "Ctrl+I",
   nextConversation: "Ctrl+Tab",
+  /** UI-106: the conversation before the one open, and "Who is using Branch" (the person menu). */
+  previousConversation: "Ctrl+Shift+Tab",
+  switchPerson: "",
 } as const;
 export type ShortcutAction = keyof typeof shortcutDefaults;
 export const shortcutActions = Object.keys(shortcutDefaults) as ShortcutAction[];
@@ -73,6 +77,8 @@ export const ComfortKeysSchema = z.preprocess(defaultsGiveWay, z.object({
   talkLive: keyCombo.default(shortcutDefaults.talkLive),
   openInbox: keyCombo.default(shortcutDefaults.openInbox),
   nextConversation: keyCombo.default(shortcutDefaults.nextConversation),
+  previousConversation: keyCombo.default(shortcutDefaults.previousConversation),
+  switchPerson: keyCombo.default(shortcutDefaults.switchPerson),
   /** Esc leaves typing for moving (h j k l, w b, 0 $, x, dd, i a o), as in vim. */
   vim: z.boolean().default(false),
 }).strict().superRefine((value, context) => {
