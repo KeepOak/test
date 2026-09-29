@@ -480,7 +480,7 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .mi .ico{color:var(--ink-3);display:grid}
 .mi .r{margin-left:auto;color:var(--ink-3);font-size:12px;display:flex;align-items:center;gap:6px}
 .mi.danger{color:var(--bad)}
-.mi[aria-checked="true"] .tick{visibility:visible}
+.mi[aria-checked="true"] .tick,.gsel-pop .mi[aria-selected="true"] .tick{visibility:visible}
 .mi .tick{visibility:hidden;color:var(--ink)}
 .mi .mi-t{display:block}
 .mi .mi-s{display:block;font-size:12px;color:var(--ink-3)}
