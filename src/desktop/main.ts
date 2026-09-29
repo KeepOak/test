@@ -26,6 +26,7 @@ import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
 import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from "./updater.js";
 import { updatePlanFrom, updateReadiness } from "./update-readiness.js";
+import { logoShare, readTrayUsage, trayBitmap, trayTip, type TrayUsage } from "./tray-ring.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
 import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
 import type { DesktopSettings } from "./settings.js";
@@ -94,6 +95,7 @@ import { portableMarker } from "../install/layout.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
+let trayTimer: NodeJS.Timeout | undefined;
 let stop: (() => Promise<void>) | undefined;
 let quitting = false;
 /* Redesign phase 1: why Branch is quitting, how many tasks are working, and whether an engine in the
@@ -176,6 +178,41 @@ function trayIcon(): NativeImage {
   }
   if (isTemplateTrayIcon(process.platform)) image.setTemplateImage(true);
   return image;
+}
+
+/** The tray icon with its usage ring (./tray-ring.ts), at every size trayIcon() draws; the logo alone without a share. */
+function trayImageFor(usage: TrayUsage | null): NativeImage {
+  if (!usage) return trayIcon();
+  const template = isTemplateTrayIcon(process.platform);
+  const source = nativeImage.createFromPath(markPath(!template));
+  const draw = (side: number): Buffer => {
+    const logoSide = Math.round(side * logoShare);
+    return trayBitmap(side, source.resize({ width: logoSide, height: logoSide, quality: "best" }).toBitmap(), logoSide, usage.percentLeft, template);
+  };
+  const side = trayIconSize(process.platform);
+  const image = nativeImage.createFromBitmap(draw(side), { width: side, height: side });
+  for (const scale of trayIconScales(process.platform))
+    if (scale !== 1) image.addRepresentation({ scaleFactor: scale, width: side * scale, height: side * scale, buffer: draw(side * scale) });
+  if (template) image.setTemplateImage(true);
+  return image;
+}
+
+/** Reads what the connection in use has left once a minute, and redraws the tray only when that changed. Nothing (above
+    all not the key) is sent while the engine is not answering at the window's address. */
+function watchTrayUsage(url: string, key: () => string, reachable: () => boolean): void {
+  let shown = "";
+  const look = async () => {
+    if (!reachable()) return;
+    const usage = await readTrayUsage(url, key()).catch(() => null);
+    const mark = usage ? `${usage.percentLeft}|${usage.label}` : "";
+    if (!tray || tray.isDestroyed() || mark === shown) return;
+    shown = mark;
+    tray.setImage(trayImageFor(usage));
+    tray.setToolTip(trayTip(usage));
+  };
+  void look();
+  trayTimer = setInterval(() => void look(), 60_000);
+  trayTimer.unref();
 }
 
 function protectWindow(
@@ -400,6 +437,7 @@ async function createWindow(
     pageRecovery.failed();
   });
   createTray();
+  watchTrayUsage(url, key, () => access.ready());
   void windowUp().then(() => settleVersions(), (error: Error) => console.error("Window up:", error.message));
 }
 
@@ -813,6 +851,7 @@ function shutDown(): void {
     // ended first and this waits (briefly) until it has really gone.
     .finally(() => (engine?.end(2000) ?? Promise.resolve()))
     .finally(() => {
+      if (trayTimer) clearInterval(trayTimer);
       tray?.destroy();
       app.exit(0);
     });
