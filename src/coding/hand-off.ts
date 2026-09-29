@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -15,6 +15,8 @@ import { globFits, worktreeOf, type ContractBook } from "../self-development-con
 import type { Store } from "../store.js";
 import type { GitOutcome, GitRunOptions } from "../integrations/git-run.js";
 import { startCall } from "../windows-command.js";
+import { codexBinary } from "../asks/codex-app-server.js";
+import { killProcessGroup, killWindowsTree } from "../integrations/shell-process.js";
 
 /**
  * Handing a coding job to Claude Code or Codex, the programs the owner signed in to with their own plans, so the
@@ -92,11 +94,36 @@ export interface ProgramRun { code: number | null; lines: string[]; stderr: stri
 export type RunProgram = (call: ProgramCall, prompt: string, env: NodeJS.ProcessEnv, signal: AbortSignal,
   timeoutMs: number, onLine: (line: string) => void) => Promise<ProgramRun>;
 
+/**
+ * How a handed-off program is started. P0 (self-build): npm's Codex launcher (`bin/codex.js`) starts `codex.exe` with its
+ * own standard streams and only passes signals on, and on Windows ending Node passes nothing on: a stopped or timed-out
+ * job left what `codex.exe` had started (a command, its tool servers) running on in the folder after Branch had checked
+ * it. Codex is started as its own program instead, the way the app-server is (src/asks/codex-app-server.ts codexBinary),
+ * with what the launcher adds to its environment, and a stop ends its whole tree (`endProgram`).
+ */
+export function programStart(call: ProgramCall, env: NodeJS.ProcessEnv): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const binary = call.command === "codex" ? codexBinary(call.command, env) : null;
+  if (binary) return { command: binary.path, args: call.args, env: { ...env, CODEX_MANAGED_PACKAGE_ROOT: binary.packageRoot, CODEX_MANAGED_BY_NPM: "1" } };
+  return { ...startCall(call.command, call.args, env), env };
+}
+
+/** Ends a handed-off program and everything it started: the whole tree on Windows, its own process group elsewhere. */
+async function endProgram(child: ChildProcess): Promise<void> {
+  const pid = child.pid;
+  try {
+    if (pid && process.platform === "win32") { if (await killWindowsTree(pid)) return; }
+    else if (pid) { await killProcessGroup(pid); return; }
+  } catch { /* the plain kill below */ }
+  child.kill("SIGKILL");
+}
+
 export const runProgram: RunProgram = (call, prompt, env, signal, timeoutMs, onLine) => new Promise((done) => {
-  const start = startCall(call.command, call.args, env);
-  const child = spawn(start.command, start.args, { cwd: call.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
+  const start = programStart(call, env);
+  // Its own process group on macOS and Linux, so a stop reaches whatever it started.
+  const child = spawn(start.command, start.args, { cwd: call.cwd, env: start.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false,
+    detached: process.platform !== "win32" });
   const lines: string[] = [];
-  let pending = "", stderr = "", timedOut = false, settled = false;
+  let pending = "", stderr = "", timedOut = false, settled = false, stopping = false;
   const finish = (code: number | null, missing = false): void => {
     if (settled) return;
     settled = true;
@@ -105,9 +132,19 @@ export const runProgram: RunProgram = (call, prompt, env, signal, timeoutMs, onL
     if (pending.trim()) { lines.push(pending); onLine(pending); }
     done({ code, lines, stderr, timedOut, missing });
   };
-  const stop = (): void => { child.kill(); finish(null); };
+  // P0 (self-build): the job is over only once the program and everything it started have ended, so the after-check
+  // never runs while something is still editing the folder. Its streams closing says so; a bounded wait covers a stray.
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+  const stop = (): void => {
+    if (stopping || settled) return;
+    stopping = true;
+    void endProgram(child)
+      .then(() => Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1500).unref())]))
+      .finally(() => finish(null));
+  };
   const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
   signal.addEventListener("abort", stop, { once: true });
+  if (signal.aborted) stop();
   child.stdout.on("data", (chunk: Buffer) => {
     pending += chunk.toString("utf8");
     const parts = pending.split("\n");
@@ -115,8 +152,8 @@ export const runProgram: RunProgram = (call, prompt, env, signal, timeoutMs, onL
     for (const line of parts) if (line.trim() && lines.length < 20_000) { lines.push(line); onLine(line); }
   });
   child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4000) stderr += chunk.toString("utf8"); });
-  child.on("error", (error: NodeJS.ErrnoException) => finish(1, error.code === "ENOENT"));
-  child.on("close", (code) => finish(code));
+  child.on("error", (error: NodeJS.ErrnoException) => { if (!stopping) finish(1, error.code === "ENOENT"); });
+  child.on("close", (code) => { if (!stopping) finish(code); });
   child.stdin.on("error", () => undefined);
   child.stdin.end(prompt);
 });
