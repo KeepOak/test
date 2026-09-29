@@ -12,6 +12,7 @@ import { pinnedFetch } from "../pinned-fetch.js";
 import { estimateCost, pricingSettings } from "../pricing.js";
 import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
+import { codexModelsFor } from "../codex-models.js";
 import { CliAgentProvider, accountHomeVariables, claudeDefaultEffort, claudeDefaultModel, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import { ClaudeSubscriptionProvider, type ClaudeSubscriptionDependencies } from "../providers/claude-subscription.js";
 import { claudeCodePool, claudeSubscriptionPreset } from "../providers/claude-models.js";
@@ -428,6 +429,7 @@ export class AccountsService {
     const made = account === primaryAccount ? new CliAgentProvider(rowFor({ id: rowId }), {}, spawn)
       : new CliAgentProvider(rowFor({ id: rowId }), {}, spawn, { name: accountHomeVariables[rowId]!, path: this.homeOf(pool, account) });
     if (account === primaryAccount) made.detectLimits = true;
+    if (rowId === "codex") made.codexModels = codexModelsFor(this.deps.models); // QA 2026-09-28: Codex's choice, read per call
     return made;
   }
   private claudeConnection(pool: string, account: string, model: string): Provider {
