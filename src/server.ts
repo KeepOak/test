@@ -935,6 +935,14 @@ function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySe
   for (const run of runs) if (setup.has(run.id)) found.add(run.id);
   return found;
 }
+/** models-ui: the latest moves of Trunks' work between accounts (the last ten minutes), each named by its Trunk. */
+function trunkMoves(app: Branch) {
+  const since = Date.now() - 10 * 60_000;
+  return (accountsServiceFor(app.runtime.models)?.trunkMoves ?? []).filter((move) => Date.parse(move.at) >= since).map((move) => {
+    const by = app.trunks.conversations.answerer(move.sessionId);
+    return { ...move, ...(by ? { who: by.name, open: by.sessionId } : {}) };
+  });
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
@@ -953,6 +961,8 @@ function state(app: Branch): unknown {
     needsYou: needsYou(app), // Q050: the one count every "needs you" in the window reads
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
+    // models-ui: a Trunk's work moved to another account at a limit; the window tells the owner which (shell/notify.js).
+    trunkMoves: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? trunkMoves(app) : [],
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
