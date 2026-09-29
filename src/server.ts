@@ -32,6 +32,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
@@ -128,6 +129,7 @@ import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from 
 import { handleA2a, remoteAgentsApi } from "./a2a-routes.js";
 import type { createBranch } from "./index.js";
 import { goalApi } from "./goal-mode.js";
+import { diagramFrameRoute } from "./diagram-frame.js";
 import { rewindApi } from "./rewind.js";
 import { PreferencesSchema, preferences } from "./preferences.js";
 import { asksApi, AsksHttpError, handlesAsksPath } from "./asks/api.js"; // mac6/bucket-23: the smaller asks
@@ -279,7 +281,7 @@ import { handlesHostBridgePath, hostBridgeApi, HostBridgeApiError } from "./host
 // Wave mac2 (move-in): bringing chats and memory over from another assistant.
 import { contextFileSinkFor, defaultMoveInOptions, handlesMoveInPath, moveInApi, MoveInApiError } from "./migrate-api.js";
 // Wave mac2 (guards): which workspace folders are trusted, and the loop guard switch.
-import { guardsApi, handlesGuardsPath } from "./run-guards.js";
+import { guardsApi, GuardsApiError, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
@@ -1093,7 +1095,8 @@ async function api(
       throw error instanceof MoveInApiError ? new HttpError(error.status, error.message) : error;
     });
   // Wave mac2 (guards): which workspace folders are trusted, what each carries, and both switches.
-  if (handlesGuardsPath(path)) return guardsApi(app, request, path, readBody);
+  if (handlesGuardsPath(path))
+    return guardsApi(app, request, path, readBody).catch((error: unknown) => { throw error instanceof GuardsApiError ? new HttpError(error.status, error.message) : error; });
   // R17-S-B: the hidden knobs. Every change is the owner's (see offLimitsToShortLivedKeys).
   if (handlesKnobsPath(path))
     return knobsApi(app, request, path, readBody, () => (process.env.BRANCH_INTEGRATIONS ? resolvePath(process.env.BRANCH_INTEGRATIONS) : null))
@@ -1701,6 +1704,10 @@ async function api(
     }
     return result;
   }
+  // models-ui (MODEL-052): who spent what: the owner's own tasks and each Trunk's, with the accounts they used.
+  if (request.method === "GET" && path === "/api/usage/by-trunk")
+    return usageByTrunk({ store: app.store, owner: app.runtime.owner, trunkName: (id) => app.trunks.records.find(id)?.name ?? null,
+      costOf: (runId) => runCost(app, runId).amount ?? null }, Object.fromEntries(new URL(request.url ?? "/", "http://local").searchParams));
   if (request.method === "GET" && path === "/api/second-opinion")
     return secondOpinionSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/second-opinion")
@@ -3887,6 +3894,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         throw new HttpError(404, "Not found");
       if (request.method === "GET" && (await staticFile(path, response, request)))
         return;
+      // A ```mermaid block's sealed frame and its two scripts (src/diagram-frame.ts): its own policy, nothing private in it.
+      if (await diagramFrameRoute(request, response, path)) return;
       if (path.startsWith("/hooks/")) {
         send(response, 200, await hook(app, request, path));
         return;
