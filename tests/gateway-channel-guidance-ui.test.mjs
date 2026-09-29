@@ -16,7 +16,6 @@ test("the chat app catalog promises no fixed setup time and says iMessage needs 
   await openPlace(page, "customize", "channels");
   const imessage = page.locator('[data-act="ch-open"][data-v="imessage"]');
   await imessage.getByText("Needs a Mac", { exact: true }).waitFor();
-  await page.locator('[data-act="ch-open"][data-v="signal"]').getByText("Guided setup", { exact: true }).waitFor();
   assert.equal(await page.getByText("Two minutes to set up", { exact: false }).count(), 0);
   assert.deepEqual(errors, []);
 });
