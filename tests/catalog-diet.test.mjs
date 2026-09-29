@@ -163,7 +163,8 @@ test("the schema diet makes the catalog at least a third smaller and still descr
   assert.ok(!after.includes("maxLength"));
   const memory = app.registry.descriptions(permissions).find((t) => t.name === "memory.put");
   assert.deepEqual(memory.parameters.properties.scope.enum, ["private", "shared"], "enum values are kept");
-  assert.deepEqual(memory.parameters.required, ["text", "source"], "the required list is kept");
+  // SELF-202: a fact's source is filled from its task when the model leaves it out, so only the text is required.
+  assert.deepEqual(memory.parameters.required, ["text"], "the required list is kept");
   assert.equal(memory.parameters.properties.validFrom.format, "date-time", "the shape of a value is still explained");
   assert.ok(!("pattern" in memory.parameters.properties.validFrom), "its generated regular expression is not");
   for (const tool of app.registry.descriptions(permissions)) assert.ok(tool.description.length <= 200, tool.name);

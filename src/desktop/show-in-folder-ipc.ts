@@ -12,9 +12,9 @@ import { keptPath, type KeptFile, type KeptFiles } from "./show-in-folder.js";
  */
 
 export function registerShowInFolderIpc(window: BrowserWindow, origin: string, key: () => string,
-  reveal: (path: string) => void = (path) => shell.showItemInFolder(path)): void {
+  reveal: (path: string) => void = (path) => shell.showItemInFolder(path), call: typeof fetch = fetch): void {
   const kept: KeptFiles = async () => {
-    const answer = await fetch(`${origin}/api/artifacts`, { headers: { authorization: `Bearer ${key()}`, "x-branch-origin": "window" } });
+    const answer = await call(`${origin}/api/artifacts`, { headers: { authorization: `Bearer ${key()}`, "x-branch-origin": "window" } });
     if (!answer.ok) throw new Error(`The files Branch kept could not be read (${answer.status})`);
     return ((await answer.json()) as { artifacts?: KeptFile[] }).artifacts ?? [];
   };

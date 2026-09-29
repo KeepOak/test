@@ -4,6 +4,7 @@ import type { ModelPreset, ModelRouter, RunModelOverride } from "../models.js";
 import type { Store } from "../store.js";
 import { estimateCost, pricingSettings } from "../pricing.js";
 import { routeByProfile } from "../model-profiles.js";
+import { pickLocalPreset, routingSettings } from "../local-routing.js";
 import { withAccountCall, type AccountCall } from "../accounts/context.js";
 import { chooseByDifficulty, type DifficultyAsk } from "./difficulty.js";
 import { KeepAlive } from "./keep-alive.js";
@@ -71,7 +72,8 @@ export async function byDifficulty(
   if (routeByProfile(store, models, owner, "chat", store.projects.defaults(owner).profile).preset) return override;
   const toolCount = store.messages(run.sessionId).filter((message) => message.role === "tool").length;
   try {
-    const choice = await chooseByDifficulty(store, owner, { prompt: run.prompt, toolCount, known: (id) => models.presets.has(id), ask });
+    const localPreset = pickLocalPreset(models, routingSettings(store, owner).localPreset);
+    const choice = await chooseByDifficulty(store, owner, { prompt: run.prompt, toolCount, known: (id) => models.presets.has(id), ask, localPreset });
     if (!choice) return override;
     store.event(run.id, "model.routed", { preset: choice.preset, kind: `difficulty-${choice.difficulty}`, by: choice.by, reason: choice.reason });
     return { ...override, preset: choice.preset };
