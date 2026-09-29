@@ -439,7 +439,10 @@ async function createWindow(
   });
   createTray();
   watchTrayUsage(url, key, () => access.ready());
-  void windowUp().then(() => settleVersions(), (error: Error) => console.error("Window up:", error.message));
+  void windowUp().then(() => settleVersions(), (error: Error) => {
+    console.error("Window up:", error.message);
+    diagnose("updater", "warn", `This version's window could not say it is up: ${error.message}`);
+  });
 }
 
 /**
@@ -451,8 +454,15 @@ function settleVersions(): void {
   if (!layout?.folder) return;
   setTimeout(() => {
     void folders(app.getPath("userData")).then(({ dataDir }) => settleLayout(layout, appEntryName(process.platform), dataDir))
-      .then((done) => { if (done.pruned.length) console.log(`Removed older versions: ${done.pruned.join(", ")}`); })
-      .catch((error: Error) => console.error("Versions:", error.message));
+      .then((done) => {
+        if (!done.pruned.length) return;
+        console.log(`Removed older versions: ${done.pruned.join(", ")}`);
+        diagnose("updater", "info", "Removed versions nothing runs from any more", { fields: { versions: done.pruned.join(", ") } });
+      })
+      .catch((error: Error) => {
+        console.error("Versions:", error.message);
+        diagnose("updater", "warn", `Settling the version folders failed: ${error.message}`);
+      });
   }, 120_000).unref();
 }
 
