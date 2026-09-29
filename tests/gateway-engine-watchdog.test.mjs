@@ -170,3 +170,21 @@ test("a failed live engine update wakes the gateway again even when the window c
   await assert.rejects(hooks.apply(outcome, { onStage: () => {} }), /did not restore/);
   assert.deepEqual(readies, [["1.0.0", true], ["1.0.0", false]], "the gateway is told the previous engine is ready, not left holding");
 });
+
+test("the watchdog's keyless probe gets an answer from the real engine and never counts as a wrong key", async (t) => {
+  const { createBranch } = await import("../dist/index.js");
+  const { startServer } = await import("../dist/server.js");
+  const { engineAnswers } = await import("../dist/never-break/engine-watchdog.js");
+  const root = await mkdtemp(join(tmpdir(), "branch-gw-probe-real-"));
+  const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  // A tight limit: were keyless probes counted as guesses, the third would already be made to wait.
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, authLimits: { attempts: 2, lockoutMs: 60_000, windowMs: 60_000 } });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const port = Number(new URL(server.url).port);
+  for (let probe = 0; probe < 8; probe++) assert.equal(await engineAnswers(port, 5000), true, `probe ${probe} was answered`);
+  const keyless = await get(server.url, "/api/alive");
+  assert.equal(keyless.status, 401, "keyless is refused, not made to wait");
+  const owner = await fetch(`${server.url}/api/alive`, { headers: { authorization: `Bearer ${server.token}` } });
+  assert.equal(owner.status, 200, "the owner's own requests from this address are never shut out by the probes");
+});
