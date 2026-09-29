@@ -617,12 +617,18 @@ const HOOKS = {
   readAloud: (before) => readNewReply(before, C.messages),
 };
 
+/* A new conversation's box, typed in while its first message was answered, becomes the conversation's own. The caret it
+   had is put back once, on the redraw that follows; a later call does nothing, so a caret the person moves after the
+   answer shows is never taken back to where it was when the conversation got its id (desktop-hot-update on CI). */
 function adoptDraft(sessionId) {
   if (C.sessionId) return () => undefined;
   const box = $("#prompt"), words = S.drafts.new;
   const caret = box ? [box.selectionStart, box.selectionEnd] : null;
   if (typeof words === "string") { S.drafts[sessionId] = words; delete S.drafts.new; }
+  let done = false;
   return () => {
+    if (done) return;
+    done = true;
     const after = $("#prompt");
     if (S.chat === sessionId && after && caret) after.setSelectionRange(...caret);
   };
@@ -662,6 +668,7 @@ async function sendPlain(said, withLead = false) {
     C.sending = false;
     watchThinking(false);
     renderNow();
+    restoreDraft(); // on this redraw, before the person can type in the box that now shows the answer
     await loadWaiting();
   } catch (error) {
     if (error.offline && !started) keepForLater(prompt);

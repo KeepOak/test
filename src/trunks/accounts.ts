@@ -40,7 +40,7 @@ export interface KeyPlan {
  * uses the owner's accounts (a sign-in only for work the owner is behind). With it off, only what
  * the owner picked is used.
  */
-export function keyPlan(keys: { copyFromOwner: boolean; accounts: Record<string, string> }, pools: TrunkAccountPool[]): KeyPlan {
+export function keyPlan(keys: { copyFromOwner: boolean; accounts: Record<string, string>; next?: Record<string, string[]> | undefined }, pools: TrunkAccountPool[]): KeyPlan {
   const choices: Record<string, string | null> = {};
   const notes: string[] = [];
   for (const pool of pools) {
