@@ -20,10 +20,11 @@ import { attachToRunning } from "../install/running.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
+import { takeShellLock } from "./shell-lock.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
-import { markStarted, UpdateDeferredError } from "./updater.js";
+import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
 import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
@@ -108,6 +109,14 @@ function tellWindowShown(): void {
   if (window && !window.isDestroyed()) engine?.tell("window", { shown: window.isVisible() && !window.isMinimized() });
 }
 let joinedBackground = false;
+/**
+ * The update closed (or is closing) the background engine the window joined, to swap the program files. Until the
+ * hand-over has this process quit, that engine being gone is the update, not a reason to start Branch again: a restart
+ * would run the old program from the folder being swapped. An install that fails gives the updater back, and then it is.
+ */
+let closingForUpdate = false;
+let updater: Updater | undefined;
+const handingOver = (): boolean => closingForUpdate && updater?.inProgress === true;
 let askingToQuit = false;
 let countingToQuit = false;
 /** Whether the app's own engine has proved itself at the window's address (src/desktop/engine-gate.ts). */
@@ -334,7 +343,7 @@ async function createWindow(
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
-  registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
+  updater = registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key(), client.fetch) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
@@ -457,6 +466,15 @@ async function start(): Promise<void> {
   const base = app.getPath("userData");
   const settings = await loadDesktopSettings(join(base, "model-settings.json"));
   const { dataDir, workspace } = await folders(base);
+  // One window per data folder, whichever copy of Branch it is (shell-lock.ts): a second leaves before touching it.
+  const lock = await takeShellLock(dataDir);
+  if (!lock.held) {
+    console.error(`Branch is already open on this data folder (process ${lock.by}), so this copy leaves without touching it.`);
+    quitReason = "command";
+    app.exit(0);
+    return;
+  }
+  app.once("will-quit", () => { void lock.release(); });
   startCrashReporter(dataDir);
   // An engine already working in the background is joined rather than started a second time; one from a version
   // before the engine's proof is moved to this version first.
@@ -488,9 +506,11 @@ async function start(): Promise<void> {
     await createWindow(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
       stopDaemon: async () => {
+        closingForUpdate = true;
         // Its close goes through the proved connection too: the window key is never sent to its address.
-        const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true, fetch: client.fetch });
-        if (report.pid !== null && !report.stopped) throw new UpdateDeferredError(report.message);
+        const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true, fetch: client.fetch })
+          .catch((error: unknown) => { closingForUpdate = false; throw error; });
+        if (report.pid !== null && !report.stopped) { closingForUpdate = false; throw new UpdateStuckError(report.message); }
         return report.pid;
       },
       canary: desktopCanary(dataDir, async () => engineSnapshot(running.url, key(), client.fetch)), // mac3/never-break
@@ -501,6 +521,9 @@ async function start(): Promise<void> {
       ...(brokerLive ? { live: brokerLive.hooks } : {}),
     }, gate, client);
     window?.once("closed", () => brokerLive?.close());
+    // selfdev: joined to the background engine, the window is up; a Beta update waiting to see this keeps the new
+    // version. Without it, a Beta update with the background engine on was put back after 90 s every time.
+    void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
     return;
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
@@ -715,7 +738,7 @@ function joinedGate(dataDir: string, url: string, key: () => string): EngineGate
   if (testHooksOn()) (globalThis as { branchEngineGateForTests?: EngineGate }).branchEngineGateForTests = gate;
   let looking = false, leaving = false;
   const moved = setInterval(() => {
-    if (gate.ready() || looking || leaving || quitting) return;
+    if (gate.ready() || looking || leaving || quitting || handingOver()) return;
     looking = true;
     void readRunning(dataDir)
       .then(async (note) => {
