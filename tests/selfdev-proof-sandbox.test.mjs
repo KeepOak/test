@@ -72,3 +72,30 @@ test("the scripted stand-in merges only after checks passed, then waits for the 
   assert.equal(stop.toolCalls.length, 0);
   assert.match(stop.content, /nothing was merged/);
 });
+
+test("Branch's own path in the proof: contract tests before the draft, finish only after checks passed, done only when merged", async () => {
+  const { scriptedSelfCoder, selfBase } = await import("../scripts/selfdev-proof-sandbox-self.mjs");
+  const worktree = "branch-agent-source/.branch-worktrees/self-k";
+  const { provider, state } = scriptedSelfCoder({ worktree, branch: "branch/self-k", change: { settings: "s", tests: "t" }, message: "feat: k" });
+  const tool = (content) => ({ messages: [{ role: "user", content: "go" }, { role: "tool", content }] });
+  const names = [];
+  for (let step = 0; step < 8; step++) names.push((await provider.complete(tool('{"ok":true}'))).toolCalls[0]);
+  assert.deepEqual(names.map((one) => one.name), ["files.read", "files.write", "files.read", "files.write", "git.commit",
+    "branch.run_contract_tests", "git.push", "github.open_pull_request"]);
+  assert.deepEqual(JSON.parse(names[7].arguments).draft, true, "Branch's own change is proposed only as a draft");
+  assert.equal(JSON.parse(names[7].arguments).base, selfBase);
+  const next = async (content) => (await provider.complete(tool(content))).toolCalls?.[0] ?? null;
+  assert.equal((await next('{"number":10}')).name, "github.wait_for_checks");
+  assert.equal((await next('{"state":"pending"}')).name, "github.wait_for_checks");
+  assert.equal((await next('{"state":"passed"}')).name, "branch.finish_source_change");
+  const review = await provider.complete({ messages: [{ role: "user", content: "Review this proposed Branch source change independently. {}" }] });
+  assert.deepEqual(JSON.parse(review.content), { passed: true, findings: [] });
+  assert.equal(state.reviews, 1);
+  assert.equal((await next('{"merged":false,"queued":true}')).name, "github.wait_for_checks");
+  const finished = await provider.complete(tool('{"state":"merged"}'));
+  assert.match(finished.content, /#10 is merged/);
+  const refused = scriptedSelfCoder({ worktree, branch: "branch/self-k", change: { settings: "s", tests: "t" }, message: "m" });
+  await refused.provider.complete(tool(""));
+  const stop = await refused.provider.complete(tool('{"ok":false,"error":"refused by the contract"}'));
+  assert.match(stop.content, /A step was refused/, "a refused step stops the run rather than carrying on");
+});
