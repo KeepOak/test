@@ -685,6 +685,12 @@ async function sendPlain(prompt) {
     C.messages = got.messages ?? C.messages;
     C.project = got.project ?? C.project;
     readNewReply(before, C.messages);
+    /* The task is over once its answer is read back: from here the window only reads what it left (its questions, the
+       picture, the extras). Still "sending" meanwhile, a message sent after the answer showed went to the waiting line of
+       a task that had ended, and in a new conversation, which has no line, it was left unsent in the box (D1 on CI). */
+    C.sending = false;
+    watchThinking(false);
+    renderNow();
     await loadWaiting();
   } catch (error) {
     if (error.offline && !started) keepForLater(prompt);
