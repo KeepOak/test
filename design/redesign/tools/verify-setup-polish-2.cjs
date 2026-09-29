@@ -19,7 +19,7 @@
 const http = require("node:http");
 const { generateKeyPairSync } = require("node:crypto");
 let playwright;
-try { playwright = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright"); }
+try { playwright = require("playwright"); }
 catch { playwright = require("playwright"); }
 const { chromium } = playwright;
 

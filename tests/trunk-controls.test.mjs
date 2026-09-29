@@ -197,7 +197,10 @@ test("how Trunks work together: Branch picks until the owner chooses, a room may
   await ask("/api/orchestration", { verify: true });
   const saved = (await ask("/api/orchestration", { pattern: "super" })).body;
   assert.deepEqual([saved.verify, saved.pattern], [true, "super"]);
-  assert.equal((await ask("/api/orchestration", { pattern: "teams" })).status, 400, "teams has no engine form");
+  assert.equal((await ask("/api/orchestration", { pattern: "teams" })).status, 200, "Teams runs over the saved teams (RES-721)");
+  await ask("/api/orchestration", { pattern: "super" });
+  assert.match(patternQuestion("teams", "delegate.supervise"), /You chose "Teams".+"A lead and helpers"/);
+  assert.equal(patternQuestion("teams", "delegate.teams"), null);
   assert.match(patternQuestion("super", "delegate.swarm"), /You chose "A lead and helpers".+"Swarm"/);
   assert.equal(patternQuestion("super", "delegate.supervise"), null);
   assert.equal(patternQuestion("one", "specialists.delegate"), null, "one specialist at a time fits every way");

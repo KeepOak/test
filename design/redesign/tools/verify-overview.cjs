@@ -11,7 +11,7 @@
 //   @supports rule, and the list's resize edge still grabbable along its whole width (#389).
 // - Zero page errors and zero console errors.
 // Run: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-overview.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT || "3743", TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;
