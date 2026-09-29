@@ -80,10 +80,49 @@ test("each Trunk is one row, and its conversations are one timeline, oldest firs
   await page.waitForFunction((id) => document.querySelector('#side .row[aria-current="true"]')?.dataset.id === id, first.sessionId);
   await page.locator(`#side .row[data-line="${home.id}"]`).click();
   await page.waitForFunction((id) => document.querySelector('#side .row[aria-current="true"]')?.dataset.id === id, third.sessionId);
+  // A slow engine may still be answering "fourth words": until it has, the next words join its waiting line instead.
+  await page.locator("#send:not(.stop)").waitFor();
   const again = runBody(page);
   await page.locator("#prompt").fill("fifth words");
   await page.keyboard.press("Enter");
   assert.equal((await again).sessionId, third.sessionId);
+  assert.deepEqual(errors, []);
+});
+
+/* A slow engine (CI under load) answered the fourth message after the first conversation had been opened, and the window
+   drew the answered one over it (#900, #901). Here the answer is held until the other conversation is open. */
+test("an answer that comes back after another conversation was opened leaves that one on screen", async (t) => {
+  const { app, root } = await fixture(t);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  const older = await app.runtime.run({ prompt: "older talk", trunkId: home.id });
+  age(app, older.sessionId, 3600000);
+  const newer = await app.runtime.run({ prompt: "newer talk", trunkId: home.id });
+  const { page, errors } = await open(t, app, root);
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  await page.locator("#scroll .u", { hasText: "newer talk" }).waitFor();
+
+  let release;
+  const held = new Promise((done) => { release = done; });
+  await page.route("**/api/run", async (route) => { const response = await route.fetch(); await held; await route.fulfill({ response }); });
+  const sent = runBody(page);
+  await page.locator("#prompt").fill("slow words");
+  await page.keyboard.press("Enter");
+  assert.equal((await sent).sessionId, newer.sessionId);
+  await page.evaluate((id) => import("/app/chat/chat.js").then((chat) => chat.openConversation(id)), older.sessionId);
+  const answered = page.waitForResponse((r) => r.url().endsWith("/api/run"));
+  release();
+  await answered;
+  // The send's last reads (its conversation's cost) come after anything it would have drawn.
+  await page.waitForRequest((r) => /^\/api\/sessions\/[^/]+\/cost$/.test(new URL(r.url()).pathname));
+  const shown = await page.evaluate(() => ({ open: document.querySelector('#side .row[aria-current="true"]')?.dataset.id, words: [...document.querySelectorAll("#scroll .u")].map((u) => u.textContent) }));
+  assert.equal(shown.open, older.sessionId, "the conversation opened meanwhile stays open");
+  assert.ok(shown.words.some((w) => w.includes("older talk")), shown.words.join(" | "));
+
+  // The answer is not lost: the Trunk's row goes back to the newest conversation, which has it.
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  await page.locator("#scroll .u", { hasText: "slow words" }).waitFor();
   assert.deepEqual(errors, []);
 });
 
