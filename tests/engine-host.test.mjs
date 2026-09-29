@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 /**
  * The desktop engine runs in a process of its own so nothing it does can freeze the window. These check the boundary
  * between the two without Electron: what main accepts from the engine (only the expected shapes, only a loopback
@@ -172,7 +173,8 @@ test("ending the engine waits until it has gone, but never longer than asked", a
 const engineEntry = fileURLToPath(new URL("./fixtures/engine-in-node.mjs", import.meta.url));
 
 /** Main's part, played by the test: `home` (kept by the caller) lets a second engine start on the same data. */
-async function realEngine(t, overrides = {}, answers = {}, { home: kept, env = { BRANCH_PROVIDER: "demo" } } = {}) {
+async function realEngine(t, overrides = {}, answers = {}, { home: kept, env } = {}) {
+  env ??= await fixtureProviderEnv();
   const home = kept ?? await mkdtemp(join(tmpdir(), "branch-engine-host-"));
   const child = fork(engineEntry, [], {
     stdio: ["ignore", "ignore", "inherit", "ipc"],

@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -292,7 +293,7 @@ test("the command line prints a suite as a table and as JSON", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-eval-cli-"));
   t.after(async () => { await discardTemp(root); });
   const cli = resolve("dist/cli.js");
-  const env = { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data") };
+  const env = { ...process.env, ...(await fixtureProviderEnv()), BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data") };
 
   const table = await run(process.execPath, [cli, "eval", "--suite", "cost"], { env }).catch((error) => error);
   assert.match(table.stdout, /^task\tresult\tscore\tms\ttokens\twhy$/m);
@@ -311,12 +312,14 @@ test("the command line prints a suite as a table and as JSON", async (t) => {
 test("the command line compares one suite across two model choices", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-eval-cli-compare-"));
   t.after(async () => { await discardTemp(root); });
+  const fixture = await fixtureProviderEnv();
   const env = {
     ...process.env, BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data"),
     BRANCH_MODEL_PRESETS: JSON.stringify([
-      { id: "a", name: "Quick", provider: "demo", model: "gpt-4o-mini" },
-      { id: "b", name: "Careful", provider: "demo", model: "gpt-4o" },
+      { id: "a", name: "Quick", provider: "openai", endpoint: fixture.BRANCH_ENDPOINT, model: "gpt-4o-mini", apiKeyEnv: "FIXTURE_KEY" },
+      { id: "b", name: "Careful", provider: "openai", endpoint: fixture.BRANCH_ENDPOINT, model: "gpt-4o", apiKeyEnv: "FIXTURE_KEY" },
     ]),
+    FIXTURE_KEY: fixture.BRANCH_API_KEY,
   };
   const cli = resolve("dist/cli.js");
   const { stdout } = await run(process.execPath, [cli, "eval", "--suite", "cost", "--compare", "a,b"], { env });

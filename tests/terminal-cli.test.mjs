@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -17,8 +18,8 @@ const run = promisify(execFile);
 async function workspace(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-term-cli-"));
   t.after(() => discardTemp(root));
-  // BRANCH_PROVIDER=demo names the scripted test fixture: without a model named, Branch has none and refuses every task.
-  return { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), FORCE_TTY: "0", NO_COLOR: undefined, BRANCH_PORT: "0" };
+  // The scripted provider is explicitly injected into a controlled loopback service.
+  return { ...process.env, ...(await fixtureProviderEnv()), BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), FORCE_TTY: "0", NO_COLOR: undefined, BRANCH_PORT: "0" };
 }
 
 test("with no model set up, branch run is refused in plain words and no model is listed", async (t) => {
@@ -133,7 +134,7 @@ test("theme, version, lockdown, permissions and model work from the command line
   assert.match((await branch(env, "lockdown", "off")).out, /^Lockdown is off\./);
   assert.match((await branch(env, "permissions", "read-only")).out, /When to check with me: Read only/);
   assert.match((await branch(env, "approvals")).out, /\* read-only/);
-  assert.match((await branch(env, "models")).out, /^\* default\tTest fixture/m);
+  assert.match((await branch(env, "models")).out, /^\* default\tDefault connection/m);
   const wrong = await branch(env, "model", "use", "nope");
   assert.match(wrong.err, /no model called nope/);
 });

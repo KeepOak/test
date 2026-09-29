@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -32,8 +33,8 @@ async function workspace(t) {
   });
   return {
     root,
-    // BRANCH_PROVIDER=demo names the scripted test fixture: without a model named, Branch has none and refuses every task.
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), NO_COLOR: undefined },
+    // The scripted provider is explicitly injected into a controlled loopback service.
+    env: { ...process.env, ...(await fixtureProviderEnv()), BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), NO_COLOR: undefined },
   };
 }
 /**

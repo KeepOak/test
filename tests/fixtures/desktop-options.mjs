@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./model-service.mjs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -53,7 +54,7 @@ export async function desktopOptions({ hidden = !process.env.CI, gateway = false
       chromiumSandbox: true,
       env: {
         ...env,
-        BRANCH_PROVIDER: "demo",
+        ...(await fixtureProviderEnv()),
         BRANCH_DESKTOP_HOME: home,
         BRANCH_DATA_DIR: join(home, "state"),
         BRANCH_WORKSPACE: join(home, "workspace"),

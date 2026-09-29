@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -525,7 +526,7 @@ test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) 
     cwd: projectRoot,
     env: {
       ...process.env,
-      BRANCH_PROVIDER: "demo",
+      ...(await fixtureProviderEnv()),
       BRANCH_DATA_DIR: join(root, "data"),
       BRANCH_WORKSPACE: join(root, "workspace"),
     },
@@ -568,7 +569,7 @@ test("branch mcp-serve reports a line that is not JSON and keeps going", async (
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const child = spawn(process.execPath, ["dist/cli.js", "mcp-serve"], {
     cwd: projectRoot,
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
+    env: { ...process.env, ...(await fixtureProviderEnv()), BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
     stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(() => child.kill());

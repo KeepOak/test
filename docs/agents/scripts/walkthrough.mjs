@@ -5,11 +5,12 @@ import { spawn, execSync } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fixtureProviderEnv } from "../../../tests/fixtures/model-service.mjs";
 
 const [install, outDir] = process.argv.slice(2);
 const home = join(outDir, "home"), port = 9411;
 await rm(home, { recursive: true, force: true }); await mkdir(home, { recursive: true });
-const child = spawn(join(install, "Branch Agent.exe"), [`--remote-debugging-port=${port}`], { detached: true, stdio: "ignore", env: { ...process.env, BRANCH_DESKTOP_HOME: home, BRANCH_PROVIDER: "demo" } });
+const child = spawn(join(install, "Branch Agent.exe"), [`--remote-debugging-port=${port}`], { detached: true, stdio: "ignore", env: { ...process.env, BRANCH_DESKTOP_HOME: home, ...(await fixtureProviderEnv()) } });
 child.unref();
 let browser;
 for (let i = 0; i < 60 && !browser; i++) { try { browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`); } catch { await delay(1000); } }

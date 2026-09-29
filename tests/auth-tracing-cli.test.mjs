@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -230,7 +231,7 @@ test("T3 `branch trace` prints the trace number and whether it was sent anywhere
   const traceId = app.store.spans.forRun(task.id).find((span) => !span.parentSpanId).traceId;
   await app.close();
   const { stdout } = await run(process.execPath, ["dist/cli.js", "trace", task.id, "--json"], {
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: dataDir },
+    env: { ...process.env, ...(await fixtureProviderEnv()), BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: dataDir },
   });
   const report = JSON.parse(stdout);
   assert.equal(report.traceId, traceId);
@@ -487,7 +488,7 @@ test("C1 every command Branch knows has help of its own, and asking never does t
   const root = await mkdtemp(join(tmpdir(), "branch-help-"));
   t.after(() => discardTemp(root));
   const env = {
-    ...process.env, BRANCH_PROVIDER: "demo",
+    ...process.env, ...(await fixtureProviderEnv()),
     BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data"),
   };
   assert.ok(cliCommands.length >= 25);

@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -50,7 +51,7 @@ test("the background engine keeps handling tasks after the launcher that started
 const child = spawn(process.execPath, [${JSON.stringify(join(process.cwd(), "dist", "cli.js"))}, "start"], {
   detached: true, stdio: "ignore",
   env: { ...process.env, BRANCH_DATA_DIR: ${JSON.stringify(dataDir)},
-    BRANCH_WORKSPACE: ${JSON.stringify(workspace)}, BRANCH_PORT: "0", BRANCH_PROVIDER: "demo" },
+    BRANCH_WORKSPACE: ${JSON.stringify(workspace)}, BRANCH_PORT: "0", ...${JSON.stringify(await fixtureProviderEnv())} },
 });
 child.unref();
 process.exit(0);

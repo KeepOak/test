@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -21,7 +22,7 @@ test("CLI loads explicitly configured integrations before doctor", async (t) => 
     {
       env: {
         ...process.env,
-        BRANCH_PROVIDER: "demo",
+        ...(await fixtureProviderEnv()),
         BRANCH_WORKSPACE: join(root, "workspace"),
         BRANCH_DATA_DIR: join(root, "data"),
         BRANCH_INTEGRATIONS: config,

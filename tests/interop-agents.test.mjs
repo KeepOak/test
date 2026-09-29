@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -384,7 +385,7 @@ test("branch acp-serve speaks the protocol on standard input and output", async 
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const child = spawn(process.execPath, ["dist/cli.js", "acp-serve"], {
     cwd: projectRoot,
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
+    env: { ...process.env, ...(await fixtureProviderEnv()), BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
     stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(() => child.kill());

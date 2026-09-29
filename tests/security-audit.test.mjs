@@ -1,3 +1,4 @@
+import { fixtureProviderEnv } from "./fixtures/model-service.mjs";
 /**
  * mac3/security-check: the security self-check.
  *
@@ -461,7 +462,7 @@ test("branch security audit prints the report, and --fix repairs", { skip: proce
   const dataDir = join(root, "data"), settings = join(root, "integrations.json");
   await writeFile(settings, JSON.stringify({ web: { allowPrivateAddresses: true } }));
   await chmod(settings, 0o666);
-  const env = { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: dataDir, BRANCH_INTEGRATIONS: settings };
+  const env = { ...process.env, ...(await fixtureProviderEnv()), BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: dataDir, BRANCH_INTEGRATIONS: settings };
   const cli = join(import.meta.dirname, "..", "dist", "cli.js");
   const first = await run(process.execPath, [cli, "security", "audit", "--json"], { env }).catch((error) => error);
   const report = JSON.parse(first.stdout).report;
