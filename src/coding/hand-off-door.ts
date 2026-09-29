@@ -38,7 +38,8 @@ export type DoorCommand = z.infer<typeof DoorCommandSchema>;
 
 /** What a command came to, in the words Claude Code reads back. */
 export interface DoorAnswer { text: string; isError: boolean }
-export type DoorRunner = (command: DoorCommand) => Promise<DoorAnswer>;
+/** `stop`: aborted when the door closes, so a command still running when the job ends is stopped, not left behind. */
+export type DoorRunner = (command: DoorCommand, stop: AbortSignal) => Promise<DoorAnswer>;
 
 const description = "Run a command-line program in the folder you are working in, through Branch's own held shell. "
   + "Use it for builds, tests and read-only Git (for example program \"npm\" with args [\"test\"], or \"node\" with "
@@ -55,6 +56,7 @@ const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.
 export class CommandDoor {
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
+  private readonly stopping = new AbortController();
   private constructor(
     private readonly server: Server, private readonly key: Buffer, private readonly folder: string,
     readonly url: string, readonly configFile: string,
@@ -88,11 +90,17 @@ export class CommandDoor {
     return ["--mcp-config", this.configFile, "--allowedTools", doorToolName];
   }
 
+  /**
+   * Closes the door. A command still running (Claude Code gave up on it, or ended first) is stopped, and this returns
+   * only once it has settled, so nothing is still writing in the folder when Branch looks at what the job changed.
+   */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.stopping.abort(new Error("The job is over"));
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await this.queue;
     await rm(this.folder, { recursive: true, force: true }).catch(() => undefined);
   }
 
@@ -143,7 +151,7 @@ export class CommandDoor {
     if (!parsed.success) return failure(`That command was not run: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
     if (this.closed) return failure("The job is over, so no more commands run.");
     // One at a time, in the order they came: Branch's shell runs one command at once.
-    const mine = this.queue.then(() => run(parsed.data));
+    const mine = this.queue.then(() => (this.closed ? { text: "The job is over, so no more commands run.", isError: true } : run(parsed.data, this.stopping.signal)));
     this.queue = mine.catch(() => undefined);
     try {
       const answer = await mine;

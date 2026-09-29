@@ -438,6 +438,8 @@ export class HandOff {
     // QA 2026-09-28: with no model named, Codex gets the one chosen in Settings › Models, never its own settings' pick.
     const model = input.model ?? (input.program === "codex" ? codexChosen(codexModelSettings(this.deps.store, this.deps.owner)) : undefined);
     const door = await this.doorFor(input.program, folder, context);
+    // SELF-083: one command through the door may take as long as the whole job, so Claude Code does not give up on it sooner.
+    if (door) env.MCP_TOOL_TIMEOUT = String(input.minutes * 60_000);
     let ran: ProgramRun;
     try {
       ran = await (this.deps.run ?? runProgram)(programCall(input.program, folder.absolute, model, input.effort, door?.claudeArgs()),
@@ -468,8 +470,9 @@ export class HandOff {
   private async doorFor(program: HandOffProgram, folder: { absolute: string; fromWorkspace: string }, context: ToolContext): Promise<CommandDoor | null> {
     const commands = this.deps.commands;
     if (program !== "claude-code" || !commands || !context.permissions?.has("shell.execute")) return null;
-    return CommandDoor.open(async (command) => {
-      const answer = await commands(command, folder, context);
+    return CommandDoor.open(async (command, stop) => {
+      // A command still running when the job ends is stopped with the door (CommandDoor.close).
+      const answer = await commands(command, folder, { ...context, signal: AbortSignal.any([context.signal, stop]) });
       this.deps.store.event(context.runId, "code.hand_off.command", { program: command.program, args: command.args.slice(0, 20).map((arg) => arg.slice(0, 200)),
         cwd: command.cwd, ok: !answer.isError });
       return answer;
@@ -523,7 +526,9 @@ export function registerHandOff(registry: ToolRegistry, handOff: HandOff): void 
     name: "code.hand_off", permission: "code.handoff", group: "code",
     description: "Give a coding job to the owner's Claude Code or Codex, signed in with the owner's own plan, to do inside one "
       + "folder of the workspace that is a Git repository: the program reads and edits there, and this answers "
-      + "with what it did and which files changed. Choose the account from Settings › Accounts, or leave it out for the usual one. "
+      + "with what it did and which files changed. When this task may run commands, Claude Code also runs builds, tests "
+      + "and read-only Git there, each through Branch's own held shell and your rules for commands, with its writes held to "
+      + "the folder; a command your rules would ask about does not run. Choose the account from Settings › Accounts, or leave it out for the usual one. "
       + "When the answer says the plan's limit was reached, try another account. Inside Branch's own source, anything the job "
       + "changed outside the contract's allowed paths is put back and named. A job that makes a link out of its folder, or "
       + "writes next to it, ends as \"left its folder\" and nothing from it is kept.",

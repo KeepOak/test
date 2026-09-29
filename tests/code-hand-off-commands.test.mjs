@@ -94,11 +94,13 @@ async function fixture(t) {
     provider: { name: "scripted", async complete() { return { content: "Noted.", toolCalls: [] }; } } });
   t.after(async () => { await app.close(); await discardTemp(root); });
   await repository(join(workspace, "site"));
+  const envs = [];
   const handOff = (run, commands) => new HandOff({ store: app.store, owner, workspace, dataDir: join(root, "data"),
-    book: new ContractBook(app.store.sqlite), git: gitRunner, run: (call, _prompt, _env, _signal, _timeout, onLine) => run(call, onLine), commands });
+    book: new ContractBook(app.store.sqlite), git: gitRunner, commands,
+    run: (call, _prompt, env, _signal, _timeout, onLine) => { envs.push(env); return run(call, onLine); } });
   const context = (permissions = ["code.handoff", "shell.execute"]) =>
     app.runtime.context({ runId: app.store.createRun(owner, "a job for Claude Code").id, permissions });
-  return { app, root, workspace, handOff, context };
+  return { app, root, workspace, handOff, context, envs };
 }
 
 test("Claude Code is given Branch's door as its one MCP server and one extra tool, and its own Bash stays refused", () => {
@@ -205,6 +207,7 @@ test("a handed-off Claude Code's commands reach Branch with the job's folder, ar
   assert.deepEqual(seen.results, [{ content: [{ type: "text", text: "exit code 0\n\nstdout:\n1 passing" }], isError: false }]);
   assert.deepEqual(received.map(({ command, folder }) => [command.program, command.args, command.cwd, folder.fromWorkspace]), [["npm", ["test"], "src", "site"]]);
   assert.deepEqual(result.steps, [doorToolName]);
+  assert.equal(f.envs[0].MCP_TOOL_TIMEOUT, "60000", "Claude Code waits for a command as long as the job may take");
   const shown = f.app.store.events(job.runId).filter((event) => event.kind === "code.hand_off.command").map((event) => event.data);
   assert.deepEqual(shown, [{ program: "npm", args: ["test"], cwd: "src", ok: true }]);
   assert.equal(existsSync(seen.door.file), false, "the key's file is gone");
@@ -229,6 +232,33 @@ async function engineFixture(t) {
   };
   return { engine, ran, commands, job, folder: { absolute: join(engine.workspace, "site"), fromWorkspace: "site" } };
 }
+
+test("a command still running when Claude Code ends is stopped, and has settled before Branch looks at what changed", async (t) => {
+  const f = await fixture(t);
+  let started, stopped = false, settled = false;
+  const begun = new Promise((done) => { started = done; });
+  const commands = async (_command, folder, context) => {
+    started();
+    try {
+      await new Promise((done) => { const timer = setTimeout(done, 5000); context.signal.addEventListener("abort", () => { clearTimeout(timer); stopped = true; done(); }, { once: true }); });
+      if (!stopped) await writeFile(join(folder.absolute, "late.txt"), "written after the job");
+      return { text: stopped ? "stopped" : "exit code 0", isError: stopped };
+    } finally { settled = true; }
+  };
+  // The stand-in sends a slow command and ends without waiting for it, as Claude Code does when it gives up on a call.
+  const result = await f.handOff(async (call, onLine) => {
+    const door = await doorFrom(call.args);
+    void rpc(door, "tools/call", { name: "run_command", arguments: { program: "npm", args: ["test"] } }).catch(() => undefined);
+    await begun;
+    const lines = [JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Gave up." })];
+    lines.forEach(onLine);
+    return { code: 0, lines, stderr: "", timedOut: false, missing: false };
+  }, commands).run({ program: "claude-code", folder: "site", task: "run the tests", minutes: 1 }, f.context());
+  assert.equal(stopped, true, "the command was stopped with the door");
+  assert.equal(settled, true, "and had settled before the hand-off answered");
+  assert.equal(existsSync(join(f.workspace, "site", "late.txt")), false);
+  assert.deepEqual(result.changed, []);
+});
 
 test("each command is weighed as the task's own shell.execute: in Full Access it runs held to the job's folder, and the owner's refusals and questions stand", async (t) => {
   const f = await engineFixture(t);
