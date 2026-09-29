@@ -21,6 +21,7 @@ import { join, relative } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { VaultAutofill, registerVaultAutofill } from "../dist/vault-autofill.js";
+import { registerRestartTool } from "../dist/dashboard-api.js";
 
 const ownersOnly = /belongs to the owner|Only the owner's own work|only the owner/i;
 
@@ -37,6 +38,9 @@ const notBranch = { name: "guard-probe", repository: "https://github.com/alice/u
 const GUARDS = [
   // Q187: preparing or widening a change to Branch's own source is the owner's own work.
   { file: "src/self-development.ts", tool: "branch.prepare_source_change", args: notBranch, setup: remoteGitOn },
+  // selfdev: Branch restarting its own engine is the owner's own work; here nothing could start it again, so it never stops.
+  { file: "src/dashboard-api.ts", tool: "branch.restart_engine", args: { why: "probe" },
+    setup: (app) => registerRestartTool(app, "unused", { platform: "linux", env: {}, pid: 1, running: async () => null }) },
   { file: "src/self-development.ts", tool: "branch.widen_source_contract", args: { name: "guard-probe", reason: "probe", changes: { allowedPaths: ["docs/**"] } }, setup: remoteGitOn },
   // All six settings tools enter ownerHere before reading or planning a change.
   { file: "src/settings-kit/tools.ts", tool: "settings.find", args: { request: "turn on the learning" } },

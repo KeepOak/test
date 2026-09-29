@@ -116,6 +116,15 @@ export class PausedError extends Error {
   override name = "PausedError";
   constructor() { super("Paused after this step. Nothing is lost."); }
 }
+/**
+ * hot-update: Branch's engine is being replaced by a newer one while this task works. Like a Pause it takes effect after
+ * the step the task is on, so no step is cut off half-way and none is ever done twice; unlike a Pause nobody has to
+ * press Resume: the new engine carries the task on by itself (`run.handed_over`, src/hot-update/engine-handover.ts).
+ */
+export class HandedOverError extends PausedError {
+  override name = "HandedOverError";
+  constructor() { super(); this.message = "Branch updated its engine after this step; the task carries on in the new one."; }
+}
 /** True when the owner paused this task (Resume carries it on as a new task, which starts with `run.resumed`). */
 export function pausedByOwner(store: Pick<Store, "sqlite">, runId: string): boolean {
   return !!store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.paused' LIMIT 1").get(runId);

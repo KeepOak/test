@@ -53,10 +53,12 @@ export const petNames: Record<(typeof petKinds)[number], string> = {
 export const seasons = ["spring", "summer", "autumn", "winter"] as const;
 export const backgroundKinds = ["picture", "video", "animation", "3d"] as const;
 export const noticedFlags: Record<string, [string, string, string]> = {
-  "acorn-shown": ["Keeper of the acorn", "Show the acorn in the corner.", "Looks"],
-  "acorn-turned": ["Acorn spinner", "Turn the acorn by dragging it.", "Looks"],
+  // The old window's acorn, re-mapped to the new window's moments (the ids are kept, so what was earned stays earned):
+  // the tree at the foot of the list, and turning the season behind the glass yourself.
+  "acorn-shown": ["Keeper of the tree", "Keep the tree at the foot of the list.", "Looks"],
+  "acorn-turned": ["Turn of the season", "Change the season behind the glass yourself.", "Looks"],
   still: ["Still life", "Turn on Keep things still.", "Looks"],
-  everything: ["Everything, everywhere", "Turn on Show everything.", "Explorer"],
+  everything: ["Everything, everywhere", "Choose Technical under How much to show.", "Explorer"], // was Show everything
   "follow-system": ["Follow the sun", "Let Branch follow your computer's light or dark.", "Looks"],
   language: ["Multilingual", "Change the language.", "Explorer"],
   "pet-named": ["Name tag", "Give your pet a name.", "Pets"],

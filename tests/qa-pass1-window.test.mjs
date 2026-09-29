@@ -10,6 +10,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { validationText } from "../dist/request-errors.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const HELLO = "Hello, I am the new Trunk and I help with research.";
 /* A model that answers after a moment, so a new Trunk's hello lands after its conversation has opened. */
@@ -174,7 +175,7 @@ test("offline anywhere: a stopped engine never shows the browser's words; back, 
   await page.waitForTimeout(4000);
   assert.equal(await page.locator("#offline18").count(), 0, "no offline notice during an install");
   await start();
-  await page.waitForFunction(async () => (await import("/app/core/api.js")).link.up && !(await import("/app/core/api.js")).link.quiet, null, { timeout: 40000 });
+  await waitInPage(page, async () => (await import("/app/core/api.js")).link.up && !(await import("/app/core/api.js")).link.quiet, null, { timeout: 40000 });
   const after = await page.evaluate(() => window.toastsSeen);
   assert.equal(after.slice(before).filter((words) => /fetch|NetworkError|Load failed|abort|isn't running/i.test(words)).length, 0, after.join(" | "));
   assert.equal(await page.evaluate(() => window.samePage), true);
