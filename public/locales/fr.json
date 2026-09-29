@@ -4658,7 +4658,7 @@
   "savings.mixtures.title": "Mélanges de modèles",
   "savings.note.aggregator": "Cette connexion lit les réponses des autres et écrit celle que vous voyez, avec les outils habituels.",
   "savings.note.allowFallbacks": "Désactivé, une demande échoue plutôt que d'aller à une entreprise absente de la liste.",
-  "savings.note.classifierModel": "Choisissez un petit modèle bon marché. Sinon, la connexion des tâches faciles est interrogée.",
+  "savings.note.classifierModel": "Choisissez un petit modèle bon marché. Sinon, un modèle sur cet ordinateur est interrogé s'il y en a un, et à défaut la connexion des tâches faciles.",
   "savings.note.dataCollection": "Le choix le plus strict écarte les entreprises susceptibles de garder les demandes ou d'apprendre dessus.",
   "savings.note.difficultyMode": "Au besoin : il regarde d'abord la longueur et les outils de la tâche, ce qui est gratuit, et ne demande au modèle que si cela ne suffit pas.",
   "savings.note.easyModel": "Rien n'est orienté tant qu'une connexion facile et une difficile ne sont pas choisies.",

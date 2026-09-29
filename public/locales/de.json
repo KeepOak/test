@@ -4657,7 +4657,7 @@
   "savings.mixtures.title": "Modellmischungen",
   "savings.note.aggregator": "Diese Verbindung liest die Antworten der anderen und schreibt die, die du siehst, wie üblich mit Werkzeugen.",
   "savings.note.allowFallbacks": "Aus heißt, eine Anfrage scheitert, statt an eine Firma zu gehen, die du nicht aufgeführt hast.",
-  "savings.note.classifierModel": "Wähle ein kleines, günstiges Modell. So gelassen, wird die Verbindung für leichte Aufgaben gefragt.",
+  "savings.note.classifierModel": "Wähle ein kleines, günstiges Modell. So gelassen, wird ein Modell auf diesem Computer gefragt, wenn es eines gibt, sonst die Verbindung für leichte Aufgaben.",
   "savings.note.dataCollection": "Die strengere Wahl hält Anfragen von Firmen fern, die sie speichern oder damit trainieren könnten.",
   "savings.note.difficultyMode": "Bei Bedarf: Es schaut zuerst auf Länge und Werkzeuge der Aufgabe, was kostenlos ist, und fragt das Modell nur, wenn das nicht reicht.",
   "savings.note.easyModel": "Nichts wird verteilt, bis sowohl eine leichte als auch eine schwere Verbindung gewählt ist.",

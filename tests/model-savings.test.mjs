@@ -435,6 +435,31 @@ test("review: difficulty.ts holds no raw NUL bytes, and its kept answers are per
   assert.equal(asked, 1, "the oldest are dropped, so memory stays bounded");
 });
 
+test("R17-047 the easy-or-hard question goes to the owner's pick, else a model on this computer, else the easy connection", async () => {
+  const cardWith = (classifierModel) => ({ get: () => ({ data: { mode: "on", easyModel: "e", hardModel: "h", classifierModel } }) });
+  const askedOf = async (store, prompt, localPreset) => {
+    const asked = [];
+    const choice = await chooseByDifficulty(store, owner, { prompt, toolCount: 3, known: () => true, localPreset,
+      ask: async (preset) => { asked.push(preset); return "EASY"; } });
+    return { asked, reason: choice.reason };
+  };
+  const explicit = await askedOf(cardWith("small"), "explicit pick", "here");
+  assert.deepEqual(explicit.asked, ["small"], "the owner's own pick always wins, even with a model on this computer");
+  assert.match(explicit.reason, /^small called this task easy/);
+
+  const local = await askedOf(cardWith(null), "local model", "here");
+  assert.deepEqual(local.asked, ["here"], "with no pick, the free model on this computer is asked");
+  assert.match(local.reason, /^here called this task easy/);
+
+  const none = await askedOf(cardWith(null), "no local model", null);
+  assert.deepEqual(none.asked, ["e"], "with no model on this computer, the easy connection is asked, as before");
+  assert.match(none.reason, /^e called this task easy/);
+
+  const missing = await chooseByDifficulty(cardWith(null), owner, { prompt: "local not in picker", toolCount: 3,
+    known: (id) => id !== "here", localPreset: "here", ask: async (preset) => { assert.equal(preset, "e"); return "HARD"; } });
+  assert.equal(missing.reason, "e called this task hard", "a local connection missing from the model picker is not asked");
+});
+
 test("review: reported counts are per app, ignore nonsense, and stay capped at four", () => {
   const on = { get: () => ({ data: { mode: "on" } }) };
   const other = { get: () => ({ data: { mode: "on" } }) };
