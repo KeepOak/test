@@ -2,7 +2,7 @@
 // page asks Branch for the key that lets the app work, and this phone's own secret when Branch hands
 // one back. Nothing is stored beyond this browser tab. The words follow the phone's own language
 // (en, fr, es or de, from public/locales through /i18n.js), or English.
-import { LANGUAGES, initLanguage, setLanguage, t } from "/i18n.js";
+import { initLanguage, t } from "/i18n.js";
 
 const form = document.getElementById("pair-form");
 const field = document.getElementById("code");
@@ -17,8 +17,6 @@ function say(text, bad) {
 /** This phone's language when Branch speaks it; the page has no picker of its own. */
 async function startWords() {
   await initLanguage();
-  const own = String(navigator.language || "en").slice(0, 2).toLowerCase();
-  await setLanguage(LANGUAGES.some((l) => l.id === own) ? own : "en");
 }
 
 form.addEventListener("submit", (event) => {
