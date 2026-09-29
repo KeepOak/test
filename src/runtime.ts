@@ -226,7 +226,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -1091,12 +1091,16 @@ export class Runtime {
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
     const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
-    const connection = await this.helperConnection(parent, options);
+    // workbench (SELF-303): only a helper's own conversation (one with a pinned helper route) is carried on in, and only
+    // on the model and account it was pinned to, so a lead cannot pour a helper into any other conversation.
+    const resumed = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
+    if (options.sessionId && !resumed) throw new Error("That conversation is not a helper's own, so it cannot be carried on as one.");
+    const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
     context.signal.throwIfAborted();
     let started: Run | undefined;
     const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
     void startedAt;
-    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.sessionId ? { sessionId: options.sessionId } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     void child.then((run) => {
       const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
         ...(options.tellsLead ? { tellsLead: true } : {}) };
@@ -1106,7 +1110,7 @@ export class Runtime {
     }, () => undefined);
     for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
     if (!started) throw new Error("The background specialist did not start");
-    if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200) });
+    if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200), sessionId: started.sessionId });
     return { childRunId: started.id, sessionId: started.sessionId };
   }
   /**
