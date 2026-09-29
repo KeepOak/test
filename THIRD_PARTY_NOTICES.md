@@ -1,5 +1,9 @@
 # Third-party notices
 
+### OpenClaw Telegram reaction subscriptions
+
+The explicit `message_reaction` subscription in `src/channels/telegram.ts` is adapted from `extensions/telegram/src/allowed-updates.ts` in [OpenClaw](https://github.com/openclaw/openclaw), Copyright (c) 2026 OpenClaw Foundation, under the MIT License reproduced elsewhere in this document. Branch's reaction-to-turn handling is original code; OpenClaw's `reaction-level.ts` was reviewed as an approach reference.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
