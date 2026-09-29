@@ -122,12 +122,23 @@ test("account home is immutable; inherited endpoint, API-key and native settings
   assert.match(f.launches[0].env.ANTHROPIC_BASE_URL, /^http:\/\/127\.0\.0\.1:\d+\/admit\/[a-f0-9]+$/);
 });
 
+test("provider-audit: the 1M route is asked for on each call and named to the native program only when included", async (t) => {
+  let included = true;
+  const f = await fixture(t, { options: { model: "claude-opus-5-5", longContext: () => included } });
+  await scope(() => f.provider.complete(request()));
+  included = false;
+  await scope(() => f.provider.complete(request()));
+  const models = f.launches.map((launch) => launch.args[launch.args.indexOf("--model") + 1]);
+  assert.deepEqual(models, ["claude-opus-5-5[1m]", "claude-opus-5-5"]);
+  assert.equal(f.provider.model, "claude-opus-5-5", "the connection keeps the model's own id");
+});
+
 test("bad replay acknowledgments and explicit request limits fail without silent history cuts", async (t) => {
   const f = await fixture(t, { mode: "bad-ack" });
   await assert.rejects(scope(() => f.provider.complete(request([{ role: "user", content: "Old" }, { role: "assistant", content: "Then" }, { role: "user", content: "Now" }]))), /zero-turn/);
   assert.equal(f.seen.length, 0);
   const limited = await fixture(t);
-  await assert.rejects(scope(() => limited.provider.complete(request([{ role: "user", content: "x".repeat(8 * 1024 * 1024) }]))), /8 MiB/);
+  await assert.rejects(scope(() => limited.provider.complete(request([{ role: "user", content: "x".repeat(30 * 1024 * 1024) }]))), /30 MiB/);
   assert.equal(limited.launches.length, 0);
 });
 

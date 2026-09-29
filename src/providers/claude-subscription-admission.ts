@@ -37,7 +37,7 @@ async function boundedBody(request: IncomingMessage, signal: AbortSignal): Promi
   const chunks: Buffer[] = []; let size = 0;
   for await (const value of request) {
     signal.throwIfAborted(); const chunk = Buffer.from(value as Uint8Array); size += chunk.length;
-    if (size > maximumNativeRequestBytes) throw new Error("Claude subscription native request exceeds 8 MiB");
+    if (size > maximumNativeRequestBytes) throw new Error("Claude subscription native request exceeds 30 MiB");
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);

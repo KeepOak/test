@@ -8,6 +8,7 @@ import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js";
 import { strippedEnvironment, ProgramLimitError, claudeDefaultModel, type AccountHome } from "./cli-agent.js";
 import { NativeAdmission, type NativeConnector } from "./claude-subscription-admission.js";
+import { claudeNativeRoute } from "./claude-models.js";
 import { ProviderHttpError } from "../provider-retry.js";
 import { isOutOfRoomThinking } from "../provider-stream.js";
 import { NativeProcess, type NativeInvocation, type NativeSpawn, type NativeEvent } from "./claude-subscription-process.js";
@@ -26,6 +27,8 @@ export interface ClaudeSubscriptionOptions {
   timeoutMs?: number;
   /** The longest one reply may run in all, however steadily it streams. */
   maxDurationMs?: number;
+  /** provider-audit: asked on each call; true starts the model's 1M route (`[1m]`), which this account's plan includes. */
+  longContext?: () => boolean;
 }
 /** A long Opus reply streams for many minutes; only silence this long stops it (Hermes uses the same 180 s). */
 export const claudeSubscriptionIdleMs = 180_000;
@@ -53,7 +56,8 @@ async function invocation(root: string, options: Readonly<ClaudeSubscriptionOpti
   const mcp = { mcpServers: { branch: { command: process.execPath,
     args: [fileURLToPath(new URL("./claude-subscription-inert.cjs", import.meta.url)), join(root, "tools.json")],
     env: runAsNode(process.execPath) } } };
-  const args = ["-p", "--model", options.model ?? claudeDefaultModel, "--input-format", "stream-json", "--output-format", "stream-json",
+  const route = claudeNativeRoute(options.model ?? claudeDefaultModel, options.longContext?.() === true);
+  const args = ["-p", "--model", route, "--input-format", "stream-json", "--output-format", "stream-json",
     "--verbose", "--include-partial-messages", "--tools", "", "--system-prompt-file", join(root, "system.md"), "--settings", join(root, "settings.json"),
     "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--max-turns", "1", "--permission-mode", "dontAsk",
     "--no-session-persistence", "--mcp-config", JSON.stringify(mcp), ...(request.reasoning ? ["--effort", request.reasoning] : [])];
