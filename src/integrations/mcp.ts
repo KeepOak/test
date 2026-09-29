@@ -9,6 +9,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolContext } from '../contracts.js';
 import { McpConfigSchema, makeTransport, type McpConfig } from './mcp-config.js';
+import { remoteMcpError, RemoteMcpError } from './mcp-errors.js';
 
 export const mcpToolName = (id: string, tool: string): string =>
   `mcp.${id}.${createHash('sha256').update(tool).digest('hex').slice(0, 16)}`;
@@ -73,10 +74,12 @@ function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: s
       if (!validate(args).valid) throw new Error('MCP arguments do not match the configured tool schema');
       try {
         const result = await call(tool.name, args as Record<string, unknown>, context) as { isError?: boolean };
-        if (result.isError) throw new Error('Remote tool reported failure');
-        return redact(result, secrets);
-      } catch {
+        const safe = redact(result, secrets);
+        if (result.isError) throw remoteMcpError(safe);
+        return safe;
+      } catch (error) {
         context.signal.throwIfAborted();
+        if (error instanceof RemoteMcpError) throw error;
         throw new Error('MCP tool failed; inspect the configured server locally');
       }
     } };
