@@ -10,6 +10,7 @@ import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
 import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
+import { claudeSubscriptionModels } from "./providers/claude-models.js";
 import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008, trunks-use-subscriptions
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentPerson } from "./people/context.js";
@@ -107,6 +108,7 @@ function isRetiredConnection(preset: ModelPreset | undefined): boolean {
 /** A model's own display name where Branch has a catalogue of them (the ChatGPT route's list), or null for its id. */
 export function modelDisplayName(provider: string, model: string): string | null {
   if (provider === "chatgpt") return chatgptModels.find((one) => one.id === model)?.label ?? null;
+  if (provider === "claude-subscription") return claudeSubscriptionModels.find((one) => one.id === model)?.label ?? null;
   // QA Q071: a model on this computer is named as itself, not as the copy Branch sized for it.
   if (provider === "ollama" && unsizedModelName(model) !== model) return unsizedModelName(model);
   return null;

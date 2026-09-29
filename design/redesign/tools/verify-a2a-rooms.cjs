@@ -9,7 +9,8 @@
      and the room shows the engine's own words, "<agent> didn't answer: …";
    - the room's member picker (New › New room): the agent's chip, "name · where it runs"; picking it seats it
      (POST /api/trunks/rooms {agents}), which GET /api/trunks/rooms/<id> confirms. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { waitInPage } = require("./wait-in-page.cjs");
 const { join } = require("node:path");
 
 const { PORT = "3763", TOKEN, ROOM, SID, AGENT, SHOTS } = process.env;
@@ -56,7 +57,7 @@ const api = async (path, body) => {
   const before = view.events.length;
   await page.locator("#prompt").fill(`@${view.outside[0].handle} one more look please`);
   await page.locator("#send").click();
-  await page.waitForFunction(async ({ room, token, n }) => {
+  await waitInPage(page, async ({ room, token, n }) => {
     const got = await (await fetch(`/api/trunks/rooms/${room}`, { headers: { authorization: `Bearer ${token}` } })).json();
     return got.events.length > n + 1 && !got.speaking;
   }, { room: ROOM, token: TOKEN, n: before }, { timeout: 30000, polling: 500 });
