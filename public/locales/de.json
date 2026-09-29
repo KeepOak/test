@@ -10417,5 +10417,15 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "place.seasons": "Seasons",
+  "seasons.intro": "Was Branch nachts gelernt hat, die gemessenen Verbesserungen und Änderungen, die du behalten oder rückgängig machen kannst.",
+  "seasons.loading": "Dein Lernverlauf wird geladen…",
+  "seasons.load-failed": "Der Lernverlauf konnte nicht geladen werden. Öffne Seasons erneut.",
+  "seasons.candidates": "Lernvorschläge",
+  "seasons.candidate-proof": "Wertung {score}% · {mentions} Erwähnungen · {conversations} Gespräche",
+  "seasons.keep": "Wieder behalten",
+  "seasons.veto": "Ablehnen",
+  "seasons.pin": "Fähigkeit anheften",
+  "seasons.unpin": "Fähigkeit lösen"
 }

@@ -10417,5 +10417,15 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "place.seasons": "Seasons",
+  "seasons.intro": "Lo que Branch aprendió de noche, las mejoras medidas y los cambios que puedes conservar o deshacer.",
+  "seasons.loading": "Cargando tu historial de aprendizaje…",
+  "seasons.load-failed": "No se pudo cargar el historial. Abre Seasons de nuevo.",
+  "seasons.candidates": "Propuestas de aprendizaje",
+  "seasons.candidate-proof": "Puntuación {score}% · {mentions} menciones · {conversations} conversaciones",
+  "seasons.keep": "Conservar de nuevo",
+  "seasons.veto": "Rechazar",
+  "seasons.pin": "Fijar habilidad",
+  "seasons.unpin": "Desfijar habilidad"
 }

@@ -9,7 +9,7 @@ import type { Words } from "./terminal-words.js";
  * surfaces say the same words, and `tests/terminal-view.test.mjs` checks this list against
  * `docs/places.md` and the window's own lists.
  */
-export type PlaceId = "chat" | "inbox" | "automations" | "library" | "customize" | "team" | "overview";
+export type PlaceId = "chat" | "inbox" | "automations" | "library" | "seasons" | "customize" | "team" | "overview";
 export interface Named { id: string; key: string; english: string }
 export interface Place extends Named { intro: [string, string]; tabs: Named[] }
 export interface SettingsPage extends Named { intro: [string, string] }
@@ -29,6 +29,8 @@ export const PLACES: Place[] = [
     intro: ["window.places.library.what-your-trunks-remember-the-documents", "What your Trunks remember, the documents they read, and everything they made."],
     tabs: [tab("memory", "place.library.memory", "Memory"), tab("documents", "place.library.documents", "Documents"),
       tab("made", "place.library.made", "Made for you")] },
+  { id: "seasons", key: "place.seasons", english: "Seasons",
+    intro: ["seasons.intro", "What Branch learned overnight, its measured gains, and the changes you can keep or undo."], tabs: [] },
   { id: "customize", key: "place.customize", english: "Customize",
     intro: ["window.places.customize.who-your-trunks-are-what-they", "Who your Trunks are, what they can do, and where you can reach them."],
     tabs: [tab("trunks", "settingsDirectory.trunks", "Trunks"), tab("tools", "dashboard.filter.tools", "Tools"),

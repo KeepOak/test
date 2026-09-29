@@ -10417,5 +10417,15 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "place.seasons": "Seasons",
+  "seasons.intro": "What Branch learned overnight, its measured gains, and the changes you can keep or undo.",
+  "seasons.loading": "Loading your learning history…",
+  "seasons.load-failed": "Learning history could not be loaded. Open Seasons again to retry.",
+  "seasons.candidates": "Learning candidates",
+  "seasons.candidate-proof": "Score {score}% · {mentions} mentions · {conversations} conversations",
+  "seasons.keep": "Keep again",
+  "seasons.veto": "Veto",
+  "seasons.pin": "Pin skill",
+  "seasons.unpin": "Unpin skill"
 }

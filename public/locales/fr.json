@@ -10418,5 +10418,15 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "place.seasons": "Seasons",
+  "seasons.intro": "Ce que Branch a appris pendant la nuit, les gains mesurés et les changements à conserver ou annuler.",
+  "seasons.loading": "Chargement de votre historique d’apprentissage…",
+  "seasons.load-failed": "L’historique n’a pas pu être chargé. Rouvrez Seasons.",
+  "seasons.candidates": "Propositions d’apprentissage",
+  "seasons.candidate-proof": "Score {score}% · {mentions} mentions · {conversations} conversations",
+  "seasons.keep": "Conserver à nouveau",
+  "seasons.veto": "Refuser",
+  "seasons.pin": "Épingler la compétence",
+  "seasons.unpin": "Désépingler la compétence"
 }
