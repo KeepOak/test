@@ -3,6 +3,7 @@ import type { Readable, Writable } from "node:stream";
 import { z } from "zod";
 import { errorText, type Run } from "./contracts.js";
 import type { Runtime } from "./runtime.js";
+import { carryable } from "./carry-on.js"; // QA R1 follow-up
 import type { Store } from "./store.js";
 import { conversationBegunBy, notYourConversation } from "./outside-origin.js";
 
@@ -147,18 +148,27 @@ export class AcpConnection {
     // mac7/residuals: only a conversation an editor opened here (session/new); never the owner's own.
     if (conversationBegunBy(this.store, sessionId) !== "acp") throw new Error(notYourConversation);
     let prompt = promptText(params.prompt);
+    let carry: string | null = null;
     for (let round = 0; round <= MAX_APPROVALS; round++) {
-      const run = await this.turn(sessionId, prompt);
+      // QA R1 follow-up: after the editor's yes, the task that asked carries on and the engine runs the approved call.
+      const run: Run = carry ? await this.carried(sessionId, carry) : await this.turn(sessionId, prompt);
       if (run.status === "cancelled") return { stopReason: "cancelled" };
       if (run.status !== "needs_input") return { stopReason: run.status === "completed" ? "end_turn" : "refusal" };
       const allowed = await this.askPermission(sessionId);
       if (allowed === null) return { stopReason: "end_turn" };
       if (!allowed) return { stopReason: "refusal" };
-      prompt = "Go ahead with the step you were waiting on.";
+      carry = carryable(this.runtime, run.id, "acp")?.id ?? null;
+      if (!carry) prompt = "Go ahead with the step you were waiting on."; // a task that can no longer be carried on
     }
     return { stopReason: "max_turn_requests" };
   }
 
+  private async carried(sessionId: string, runId: string): Promise<Run> {
+    return this.runtime.continueAsked(runId, {
+      onStarted: (run) => { this.runs.set(sessionId, run.id); },
+      onTextDelta: (text) => { if (text) this.notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } }); },
+    });
+  }
   private async turn(sessionId: string, prompt: string): Promise<Run> {
     return this.runtime.run({
       prompt, sessionId, source: "acp",
