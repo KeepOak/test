@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -18,35 +19,58 @@ const MIN = 60 * 1000;
    for, instead of holding the file until the test runner ends it at 360 s with nothing said (seen on CI, on the base too). */
 async function bounded(what, promise, ms = 60000) {
   let timer;
-  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1000} s`)), ms); });
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${typeof what === "function" ? what() : what} did not finish within ${ms / 1000} s`)), ms); });
   try { return await Promise.race([promise, late]); } finally { clearTimeout(timer); }
 }
 
+/* The engine's picture read and drawn once more before the clock is moved: the last coherent snapshot, with nothing of
+   the setup left to arrive after the jump. The page's clock is Playwright's and does not move by itself here, so nothing
+   in this may wait on a page timer: a read that failed on the network would wait for one that never fires (api.js
+   backAgain, CI #664: "the setup's refresh and draw in the page did not finish within 60 s"). Quiet, a failed read fails
+   at once and the refresh is asked again. Every request is answered by the held route, whatever happens to its own
+   fetch, and a step that runs past its limit names the reads still in flight. */
 async function syncSetup(page, delayRefresh) {
-  let release = () => {}, received = () => {}, finished = false;
+  let release = () => {}, received = () => {}, finished = false, routeError = null;
   const held = new Promise((resolve) => { release = resolve; });
   const captured = new Promise((resolve) => { received = resolve; });
+  const pending = new Map();
+  const track = (request) => { const path = new URL(request.url()).pathname; if (path.startsWith("/api/") && path !== "/api/events/stream") pending.set(request, `${request.method()} ${path}`); };
+  const done = (request) => pending.delete(request);
+  page.on("request", track); page.on("requestfinished", done); page.on("requestfailed", done);
+  const inFlight = () => `in flight: ${[...pending.values()].join(", ") || "nothing"}${routeError ? `; the held route failed: ${routeError.message}` : ""}`;
   const delayed = async (route) => {
-    const response = await bounded("the held engine refresh's own answer", route.fetch());
-    received(); await held; await route.fulfill({ response });
+    try {
+      const response = await bounded("the held engine refresh's own answer", route.fetch());
+      received(); await held; await route.fulfill({ response });
+    } catch (error) { routeError = error; await route.continue().catch(() => {}); }
   };
   if (delayRefresh) await page.route("**/api/state", delayed, { times: 1 });
   const ready = page.evaluate(async () => {
-    const { refresh, E } = await import("/app/core/state.js"), { renderNow } = await import("/app/core/dom.js");
-    await refresh();
+    const [{ refresh, E }, { renderNow }, { link }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js"), import("/app/core/api.js")]);
+    const quiet = link.quiet;
+    link.quiet = true;
+    try {
+      for (let tries = 1; ; tries++) {
+        try { await refresh(); break; } catch (error) { if (tries >= 5) throw error; }
+      }
+    } finally { link.quiet = quiet; }
     renderNow();
     if ((E.state?.runs ?? []).some((run) => ["running", "queued"].includes(run.status))) throw new Error("Sleep fixture still has setup tasks running");
   }).then(() => { finished = true; });
   try {
     if (delayRefresh) {
       let timeout;
-      try { await Promise.race([captured, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Setup refresh was never captured")), 30000); })]); }
+      try { await Promise.race([captured, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`Setup refresh was never captured; ${inFlight()}`)), 30000); })]); }
       finally { clearTimeout(timeout); }
       assert.equal(finished, false, "clock readiness waits for the deliberately held engine refresh");
       release();
     }
-    await bounded("the setup's refresh and draw in the page", ready);
-  } finally { release(); if (delayRefresh) await bounded("letting go of the held engine refresh", page.unroute("**/api/state", delayed)); }
+    await bounded(() => `the setup's refresh and draw in the page (${inFlight()})`, ready);
+  } finally {
+    release();
+    if (delayRefresh) await bounded("letting go of the held engine refresh", page.unroute("**/api/state", delayed));
+    page.off("request", track); page.off("requestfinished", done); page.off("requestfailed", done);
+  }
 }
 
 async function fixture(t, { delayRefresh = false } = {}) {
@@ -223,7 +247,7 @@ test("the first press wakes the window and still opens the conversation it press
   await page.mouse.down();
   assert.equal(await page.evaluate(() => window.sleepPressedTarget?.isConnected), true, "waking keeps the pressed row until its click");
   await page.mouse.up();
-  await page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id,
+  await waitInPage(page, async (id) => (await import("/app/core/state.js")).S.chat === id,
     trunks.Ledger.chatSessionId, { timeout: 5000 });
   assert.deepEqual(errors, []);
 });
