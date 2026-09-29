@@ -21,6 +21,8 @@ export interface TelegramOptions {
   refusedRetryMs?: number;
   /** Milliseconds without an update before asking from Telegram's earliest unconfirmed update (a day; tests shorten it). */
   renumberAfterMs?: number;
+  /** chat-speed: milliseconds a poll that brought nothing new waits while a message is being answered (250). */
+  busyPollMs?: number;
   /**
    * Starts even when Telegram cannot be reached yet (the card's bot, connected in the background after
    * its token was checked): the name is learned by the first poll that gets through. Left out, any
@@ -111,6 +113,8 @@ export class TelegramAdapter implements ChannelAdapter {
   private readonly renumberAfterMs: number;
   /** When an update last arrived (or, at start, when the saved position was last moved on). */
   private lastUpdateAt = Date.now();
+  /** chat-speed: how long a poll that brought nothing new waits while a message is still being answered. */
+  private readonly busyPollMs: number;
   /** Messages handed over but not settled; the oldest bounds Telegram's next offset. */
   private readonly inFlight = new Set<number>();
   private loop: Promise<void> | null = null;
@@ -125,6 +129,7 @@ export class TelegramAdapter implements ChannelAdapter {
     this.pollTimeout = options.pollTimeoutSeconds ?? 25;
     this.refusedRetryMs = options.refusedRetryMs ?? 30_000;
     this.renumberAfterMs = options.renumberAfterMs ?? 24 * 60 * 60 * 1000;
+    this.busyPollMs = options.busyPollMs ?? 250;
   }
   botName(): string | null { return this.username; }
   /** P17-D §8: a refused token stops every message arriving, so it is said, not retried in silence. */
@@ -256,6 +261,7 @@ export class TelegramAdapter implements ChannelAdapter {
           this.refused = null;
           await this.learnName(true).then(() => { this.nameUnknown = false; }, () => undefined);
         }
+        const seenBefore = this.seenThrough;
         for (const update of updates.sort((a, b) => a.update_id - b.update_id)) {
           // Telegram irrevocably acknowledges every lower id when getUpdates receives offset.
           // Repeated polls at the oldest unfinished id must not hand that id to the router twice.
@@ -269,6 +275,10 @@ export class TelegramAdapter implements ChannelAdapter {
           const message = update.message ? this.inbound(update.message) : edited ? { ...edited, edited: true } : null;
           this.handOver(update.update_id, message || null, onMessage);
         }
+        // chat-speed: while a message is still being answered its update stays unconfirmed (never-break, below), so
+        // Telegram hands it back at once instead of holding the poll open: without a pause this asked several times a
+        // second for the whole turn. Nothing new: wait a moment, or until that message is settled, whichever is first.
+        if (this.seenThrough === seenBefore && this.inFlight.size) await this.pause(this.busyPollMs, true);
       } catch (error) {
         if (this.stopping.signal.aborted) return;
         // P17-D §8: 401 is Telegram refusing the token itself. Nothing arrives until it is replaced, so it is
@@ -304,14 +314,17 @@ export class TelegramAdapter implements ChannelAdapter {
    * Waits before asking again, cut short by stop(): replacing a refused token on its card stops this bot, and the
    * owner's save must not wait out the half minute before the next attempt.
    */
-  private pause(ms: number): Promise<void> {
+  private pause(ms: number, untilSettled = false): Promise<void> {
     const signal = this.stopping.signal;
     return new Promise((resolve) => {
-      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); };
+      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); if (this.wake === done) this.wake = null; resolve(); };
       const timer = setTimeout(done, ms);
       signal.addEventListener("abort", done, { once: true });
+      if (untilSettled) this.wake = done;
     });
   }
+  /** Ends a busy pause as soon as a handed-over message is settled, so the next one is asked for at once. */
+  private wake: (() => void) | null = null;
   /**
    * mac3/never-break: hands one update to the router without waiting for it, and saves the read
    * position only up to the oldest message still being handled, so a crash never skips one.
@@ -329,6 +342,7 @@ export class TelegramAdapter implements ChannelAdapter {
     const settle = () => {
       this.inFlight.delete(id);
       this.advance();
+      this.wake?.();
     };
     if (!message) { settle(); return; }
     this.inFlight.add(id);

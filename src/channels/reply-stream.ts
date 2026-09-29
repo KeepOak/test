@@ -29,6 +29,7 @@ export class ReplyStream {
       const id = this.messageId;
       if (!id) return null;
       this.messageId = null;
+      this.placing = false; // the reply's next words open its new message at once
       this.shown = "";
       this.words = ""; // those words came before a step; the next model round writes the reply afresh
       return id;
@@ -39,14 +40,31 @@ export class ReplyStream {
     // The final output comes from the runtime. Keep only enough preview for the first message.
     this.words = (this.words + delta).slice(0, this.limit * 2);
     if (this.timer) return;
+    // chat-speed: the reply's first words go out as soon as there is one whole word, not an edit interval later
+    // (Hermes' gateway/stream_consumer.py sends its first message at once too); after that, one edit per interval.
+    if (!this.messageId && !this.placing && Date.now() >= this.pausedUntil) {
+      const whole = this.wholeWords();
+      if (!whole) return; // not one whole word yet: the next piece decides
+      this.placing = true;
+      void this.enqueue(() => this.put(whole));
+      return;
+    }
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      // Hold the unfinished last word: a credential split across deltas must reach the scrub whole.
-      const boundary = this.words.search(/\S+\s*$/);
-      const words = boundary < 0 ? "" : this.words.slice(0, boundary).trimEnd();
+      const words = this.wholeWords();
       void this.enqueue(() => this.put(words));
     }, Math.max(this.intervalMs, this.pausedUntil - Date.now()));
     this.timer.unref();
+  }
+  /** Whether the first words were already sent for (the message may not be back yet). */
+  private placing = false;
+  private shownOnce = false;
+  /** Called once, when the reply's first words are in the chat (the router times it: `channel.first_shown`). */
+  onFirstShown: (() => void) | null = null;
+  /** Hold the unfinished last word: a credential split across deltas must reach the scrub whole. */
+  private wholeWords(): string {
+    const boundary = this.words.search(/\S+\s*$/);
+    return boundary < 0 ? "" : this.words.slice(0, boundary).trimEnd();
   }
   cancel(): void {
     this.closed = true;
@@ -83,7 +101,10 @@ export class ReplyStream {
     try {
       if (!(this.target.allowed?.() ?? true) || !this.target.adapter.edit || Date.now() < this.pausedUntil) return false;
       if (this.messageId) await this.target.adapter.edit(this.target.chatId, this.messageId, text);
-      else this.messageId = await this.target.adapter.send(this.target.chatId, text, this.target.quote ? this.target.quote() : this.target.messageId) ?? null;
+      else {
+        this.messageId = await this.target.adapter.send(this.target.chatId, text, this.target.quote ? this.target.quote() : this.target.messageId) ?? null;
+        if (this.messageId && !this.shownOnce) { this.shownOnce = true; this.onFirstShown?.(); }
+      }
       if (!this.messageId) { this.failures = 2; return false; }
       this.shown = text;
       this.failures = 0;

@@ -2027,6 +2027,7 @@ ${result.output || "(it said nothing)"}`;
       await debugAdapters.stopAll().catch(() => undefined);
       // mac3/reflection-skills: a draft or a look back still being written gets a moment to finish.
       await Promise.race([learningLoop.idle(), new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
+      await rewinds.settled(); // chat-speed: a task's workspace snapshot, taken beside its first model call, is written down
       try {
         await closeBranch(scheduler, runtime, store, channels, desktop);
       } finally {

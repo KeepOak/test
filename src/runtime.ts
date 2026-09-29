@@ -103,7 +103,7 @@ import { keyWords, ownerFactsBlock, ownersLastMessage, personalQuestion, relevan
 import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
 import {
-  CheckError, StallError, LocalModelSilentError, localFirstReplyGraceMs, ReliabilityOptionsSchema, CompletionCheckSchema, clipToolResult, evaluateChecks, shrinkToolResults, withStallWatchdog,
+  CheckError, StallError, LocalModelSilentError, localFirstReplyGraceMs, ReliabilityOptionsSchema, CompletionCheckSchema, clipToolResult, evaluateChecks, shrinkToolResults, shrinkEarlierTurns, withStallWatchdog,
   type FirstReplyWait,
   thinkingKeepsAlive, thinkingCharsPerToken, thinkingStallWindows,
   type CompletionCheck, type ReliabilityInput, type ReliabilityOptions,
@@ -233,6 +233,8 @@ export interface FollowUp { id: string; prompt: string; createdAt: string; short
   /** mac7/outside-review: the tools the task that queued it had; the task reading it gets no more. */
   permissions?: string[] }
 /** mac7/outside-review: what a queued message keeps of the task that queued it (see FollowUp). */
+/** chat-speed: how long a chat app's turn waits for the meaning half of the automatic document lookup (addDocuments). */
+export const chatLookupMs = 300;
 /** mac7/residuals (4b): why a script in an Ask first conversation is asked about every time. */
 export const scriptAskFirstHold = "In Ask first, every script is asked about on its own";
 /** P17-D §3: a learning task asks about every step it takes in the browser, each time, whatever was said before. */
@@ -2998,6 +3000,12 @@ ${run.output.slice(0, 6000)}`;
     messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id))) });
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
+    // chat-speed: a chat app's turn carries what was said before, but not the bulky tool results of turns before the
+    // last one (src/reliability.ts); the owner's own window keeps them until the context runs short.
+    if (context.source === "channel" && !context.depth) {
+      const shrunk = shrinkEarlierTurns(messages, 2);
+      if (shrunk) this.store.event(run.id, "context.earlier_results_shrunk", { results: shrunk });
+    }
     this.groundInOwnerFacts(run, context, messages, ids); // QA R1 follow-up (recall)
     return { messages, ids };
   }
@@ -3055,7 +3063,10 @@ ${run.output.slice(0, 6000)}`;
     try {
       const question = await this.searchQuestion(run, context, messages);
       // mac7/walk-rules: looked up as part of this task, so its rules decide which files' passages may come in.
-      const found = await underTask(run.id, () => this.documents!.contextFor(context.owner, question, context.signal)); // w911 (A0847) hook
+      // chat-speed: a chat app's turn looks things up by meaning only while that is quick. Asking the embedding service
+      // took 0.6 to 1.1 seconds before a Telegram "Hi" (2026-09-29); past `chatLookupMs` the words-only matches stand.
+      const signal = context.source === "channel" ? AbortSignal.any([context.signal, AbortSignal.timeout(chatLookupMs)]) : context.signal;
+      const found = await underTask(run.id, () => this.documents!.contextFor(context.owner, question, signal)); // w911 (A0847) hook
       if (!found) { span?.end("ok", "", { "branch.retrieval.passages": 0 }); return; }
       const at = ids.findIndex((id) => id !== null), position = at < 0 ? messages.length : at;
       messages.splice(position, 0, { role: "system", content:
