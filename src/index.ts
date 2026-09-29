@@ -1615,6 +1615,7 @@ ${result.output || "(it said nothing)"}`;
     },
     connections: mcpConnections,
     startupTimeoutMs: () => readComfort(store, runtime.owner, "mcp").startupTimeoutSeconds * 1000, // R17-S20
+    injection: () => web.injectionPolicy,
     // mac3/security-check: a server fetched from a package registry is looked up first.
     vetLaunch: (command: string, args: readonly string[]) => security.malware.vet(command, args),
   };
