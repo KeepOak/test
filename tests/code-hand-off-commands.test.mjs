@@ -22,6 +22,7 @@ import { HandOff, programCall } from "../dist/coding/hand-off.js";
 import { CommandDoor, doorToolName, commandAnswer } from "../dist/coding/hand-off-door.js";
 import { folderCwd, heldHandOffCommands } from "../dist/coding/hand-off-commands.js";
 import { wslProbe, wslReadiness } from "../dist/integrations/wsl-held.js";
+import { wallReport } from "../dist/sandbox-backends.js";
 import { startEngine } from "./fixtures/selfdev-harness.mjs";
 import { discardTemp } from "./temp-dir.mjs";
 
@@ -264,9 +265,12 @@ test("outside Full Access a command nobody has decided on is a question, so it d
   assert.equal(f.ran.length, 0);
 });
 
-const ready = process.platform === "win32" && (await wslReadiness(wslProbe)) === null;
+/** Windows holds a command inside WSL; macOS and Linux behind their own wall. Either must be there for the real run. */
+const ready = process.platform === "win32" ? (await wslReadiness(wslProbe)) === null : (await wallReport()).available;
+/** What the held command reports as its platform: Linux inside WSL, the computer's own elsewhere. */
+const heldPlatform = process.platform === "win32" ? "linux" : process.platform;
 
-test("in Branch's own worktree, a handed-off Claude Code's command really runs held to the folder, under the contract", { skip: !ready && "needs Windows with WSL, Node.js and bubblewrap" }, async (t) => {
+test("in Branch's own worktree, a handed-off Claude Code's command really runs held to the folder, under the contract", { skip: !ready && "needs the OS wall (WSL with Node.js and bubblewrap on Windows)" }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-hand-off-held-"));
   const engine = await startEngine(root, { token: "x", npm: true, githubApiBase: "http://127.0.0.1:9/", privateAddresses: true,
     provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
@@ -294,9 +298,10 @@ test("in Branch's own worktree, a handed-off Claude Code's command really runs h
     ], seen)(call, onLine) });
   const result = await handOff.run({ program: "claude-code", folder: worktree, task: "run it", minutes: 5 }, context);
   assert.equal(seen.results[0].isError, false, seen.results[0].content[0].text);
-  assert.match(seen.results[0].content[0].text, /stdout:\nlinux/, "it ran inside WSL, behind the wall");
+  assert.match(seen.results[0].content[0].text, new RegExp(`stdout:\\n${heldPlatform}`), "it ran behind the wall");
   assert.equal(await readFile(join(engine.workspace, worktree, "src", "inside.txt"), "utf8"), "ok", "a write inside the folder lands");
-  assert.match(seen.results[1].content[0].text, /EROFS|EACCES|ENOENT/, "a write outside the folder is refused");
-  assert.equal(await readFile(join(source, "a.txt"), "utf8"), "original\n");
+  // Outside its folder a write is refused (read-only under WSL), or lands only in the wall's own throwaway view (a
+  // temporary folder bubblewrap covers on Linux). Either way the real file is untouched.
+  assert.equal(await readFile(join(source, "a.txt"), "utf8"), "original\n", "a write outside the folder never reaches the real file");
   assert.deepEqual(result.changed, ["src/inside.txt"]);
 });
