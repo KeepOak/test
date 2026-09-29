@@ -342,11 +342,14 @@ export const sendingWithoutSession = () => C.sending && !C.sessionId;
 /** Whether the open conversation's message is being answered now. */
 export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S.chat;
 
+/* The conversation's box takes focus when it is clicked (tabindex -1: never a Tab stop), so Space, Shift+Space and
+   the arrows keep scrolling it after a redraw: a click in it makes its part draw anew (main.js touched), and the box the
+   browser's keys scrolled was the one taken away. Focused, it is found again by its id (core/dom.js keepFocus). */
 export function draw() {
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
      in the composer's place */
-  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
-  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll" tabindex="-1">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */

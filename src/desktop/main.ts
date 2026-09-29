@@ -20,6 +20,7 @@ import { attachToRunning } from "../install/running.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
+import { takeShellLock } from "./shell-lock.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
@@ -498,6 +499,15 @@ async function start(): Promise<void> {
   const base = app.getPath("userData");
   const settings = await loadDesktopSettings(join(base, "model-settings.json"));
   const { dataDir, workspace } = await folders(base);
+  // One window per data folder, whichever copy of Branch it is (shell-lock.ts): a second leaves before touching it.
+  const lock = await takeShellLock(dataDir);
+  if (!lock.held) {
+    console.error(`Branch is already open on this data folder (process ${lock.by}), so this copy leaves without touching it.`);
+    quitReason = "command";
+    app.exit(0);
+    return;
+  }
+  app.once("will-quit", () => { void lock.release(); });
   startCrashReporter(dataDir);
   // An engine already working in the background is joined rather than started a second time; one from a version
   // before the engine's proof is moved to this version first.

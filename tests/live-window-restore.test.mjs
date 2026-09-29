@@ -60,3 +60,23 @@ test("active recovery restores a retained snapshot older than a minute before ac
   assert.equal(state.chat, "kept-session"); assert.equal(box.value, "slow rollback draft"); assert.deepEqual(caret, [2, 7]);
   assert.equal(scroll.scrollTop, 12); assert.equal(acknowledged, "current-recovery"); assert.equal(removed, true);
 });
+
+const framesSource = source.slice(source.indexOf("const frames ="), source.indexOf("export async function restoreOpen("));
+test("a page started in the tray, never painted, finishes its first load and tells the app without waiting for a frame", async () => {
+  // requestAnimationFrame never fires in an unpainted page (main.ts paintWhenInitiallyHidden: false for a tray start).
+  let told = null, asked = 0;
+  const context = vm.createContext({ KEY: "restore", document: { visibilityState: "hidden" }, requestAnimationFrame: () => { asked++; },
+    bridge: () => ({ windowRestored: async (nonce) => { told = nonce ?? "ordinary start"; return true; } }),
+    location: { href: "http://localhost:45001/?desktop=1" }, URL, S: { chat: null, tabs: {}, drafts: {} }, renderNow: () => {}, $: () => null,
+    sessionStorage: { getItem: () => null, removeItem: () => {} } });
+  vm.runInContext(framesSource + restore, context);
+  const done = await Promise.race([vm.runInContext("restoreOpen(async () => {})", context), new Promise((resolve) => setTimeout(() => resolve("stalled"), 1000))]);
+  assert.equal(done, false, "the first load ended instead of waiting for the window to be shown");
+  assert.equal(told, "ordinary start");
+  assert.equal(asked, 0, "no frame was waited for");
+  // Shown (painted), it still waits for two frames before telling the app.
+  context.document.visibilityState = "visible";
+  let frames = 0; context.requestAnimationFrame = (next) => { frames++; setImmediate(next); };
+  await vm.runInContext("restoreOpen(async () => {})", context);
+  assert.equal(frames, 2);
+});
