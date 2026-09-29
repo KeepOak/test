@@ -1,5 +1,34 @@
 # Third-party notices
 
+## Hermes memory tool approval snapshot adaptation
+
+The whole-file proposal snapshot guard in `src/trunks/files.ts` adapts the pinned-entry approval pattern in
+[`tools/memory_tool.py`](https://github.com/NousResearch/hermes-agent/blob/94a57ead919dddfe54f7945cab5c829e907e5c26/tools/memory_tool.py),
+specifically `_pin_matched_entries` and `_gate_or_stage`. Branch captures the entire original file at staging,
+then refuses acceptance if that content changed. The integration always requires a person to review the proposal.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.

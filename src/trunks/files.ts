@@ -1,10 +1,15 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import type { Store } from "../store.js";
 import type { TrunkRecords } from "./record.js";
 
 export const personalityNames = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "MEMORY.md", "TOOLS.md", "HEARTBEAT.md"] as const;
 export type PersonalityName = typeof personalityNames[number];
 const EditSchema = z.object({ name: z.enum(personalityNames), text: z.string().max(8000) }).strict();
+export const FileProposalInput = EditSchema.extend({ reason: z.string().trim().min(1).max(500) }).strict();
+const FileProposalSchema = FileProposalInput.extend({ id: z.string().uuid(), before: z.string().max(8000), createdAt: z.string().max(40) }).strict();
+export type FileProposal = z.infer<typeof FileProposalSchema>;
+const FileDecisionSchema = z.object({ proposalId: z.string().uuid(), decision: z.enum(["accept", "reject"]) }).strict();
 
 /**
  * workbench (SELF-311): memory files, one fact or rule each, beside MEMORY.md, like Claude Code's memory folder: a
@@ -52,7 +57,7 @@ export class TrunkFiles {
   private write(id: string, change: Saved): void { this.store.save("governance", this.owner, this.key(id), { ...this.row(id), ...change }); }
   view(id: string) {
     const trunk = this.records.get(id), saved = this.saved(id);
-    return { files: personalityNames.map((name) => ({ name, hint: hints[name], text: name === "SOUL.md" ? trunk.instructions : saved[name] ?? "" })) };
+    return { files: personalityNames.map((name) => ({ name, hint: hints[name], text: name === "SOUL.md" ? trunk.instructions : saved[name] ?? "" })), proposals: this.proposals(id) };
   }
   seedDefault(id: string): void {
     if (this.store.get("governance", this.owner, this.key(id))) return;
@@ -62,13 +67,54 @@ export class TrunkFiles {
       if (!trunk.instructions) this.records.edit(id, { instructions: defaults["SOUL.md"] });
     });
   }
-  edit(id: string, input: unknown) {
+  edit(id: string, input: unknown): ReturnType<TrunkFiles["view"]> {
     this.records.get(id);
+    if (input && typeof input === "object" && "decision" in input) return this.decide(id, input);
     const { name, text } = EditSchema.parse(input);
     this.store.atomically(() => {
       this.write(id, { files: { ...this.saved(id), [name]: text } });
       if (name === "SOUL.md") this.records.edit(id, { instructions: text });
       this.store.audit.record(this.owner, { action: "trunk.files", actor: this.owner, subject: name, reason: "Personality file updated", outcome: "saved" });
+    });
+    return this.view(id);
+  }
+  /** Pending drafts stay out of backups; restored file content never imports an approval request. */
+  proposals(id: string): FileProposal[] {
+    this.records.get(id);
+    const row = this.store.get("governance", this.owner, `trunk-file-proposals:${id}`)?.data;
+    const parsed = z.array(FileProposalSchema).max(personalityNames.length).safeParse(row?.proposals ?? []);
+    return parsed.success ? parsed.data : [];
+  }
+  propose(id: string, input: unknown): FileProposal {
+    const value = FileProposalInput.parse(input);
+    const before = this.view(id).files.find((file) => file.name === value.name)!.text;
+    if (value.text === before) throw new Error("That file already has these words; there is no change to review.");
+    // Adapted from Hermes memory_tool.py _pin_matched_entries (Nous Research, MIT): pin the complete reviewed content.
+    const proposal: FileProposal = { ...value, before, id: randomUUID(), createdAt: new Date().toISOString() };
+    this.store.atomically(() => {
+      this.saveProposals(id, [...this.proposals(id).filter((one) => one.name !== value.name), proposal]);
+      this.store.audit.record(this.owner, { action: "trunk.files", actor: `trunk:${id}`, subject: value.name, reason: "Personality file suggestion staged", outcome: "proposed" });
+    });
+    return proposal;
+  }
+  private saveProposals(id: string, proposals: FileProposal[]): void {
+    const key = `trunk-file-proposals:${id}`;
+    if (proposals.length) this.store.save("governance", this.owner, key, { proposals });
+    else this.store.delete("governance", this.owner, key);
+  }
+  private decide(id: string, input: unknown): ReturnType<TrunkFiles["view"]> {
+    const { proposalId, decision } = FileDecisionSchema.parse(input);
+    this.store.atomically(() => {
+      const pending = this.proposals(id), proposal = pending.find((one) => one.id === proposalId);
+      if (!proposal) throw new Error("That file suggestion is no longer waiting for review.");
+      if (decision === "accept") {
+        const current = this.view(id).files.find((file) => file.name === proposal.name)!.text;
+        if (current !== proposal.before) throw new Error("That file changed after this suggestion. Reject it and ask for a new suggestion.");
+        this.edit(id, { name: proposal.name, text: proposal.text });
+      } else {
+        this.store.audit.record(this.owner, { action: "trunk.files", actor: this.owner, subject: proposal.name, reason: "Personality file suggestion rejected", outcome: "rejected" });
+      }
+      this.saveProposals(id, pending.filter((one) => one.id !== proposalId));
     });
     return this.view(id);
   }
