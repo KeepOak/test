@@ -33,6 +33,7 @@ import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usa
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
 import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
@@ -97,6 +98,8 @@ export interface ChannelHealth {
 }
 /** mac3/never-break: how long a pairing code can be used; the sender gets a new one after that. */
 const pairingCodeMs = 60 * 60_000;
+/** owner-dm-signin: the task sources a chat's chain may hold and still be the owner's own (never MCP, ACP or A2A). */
+const ownersOrChat = new Set(["owner", "channel", "schedule", "trigger"]);
 const pairingCodeFresh = (pair: { requestedAt?: string }): boolean => Date.now() - Date.parse(pair.requestedAt ?? "") <= pairingCodeMs;
 export interface ChannelAdapter {
   readonly id: string;
@@ -1089,6 +1092,37 @@ export class ChannelRouter {
     return false;
   }
   /**
+   * owner-dm-signin: whether a chat's task came only from the owner's own account, so the owner's sign-in accounts may
+   * answer it (Runtime.trunkSignIns). Every chat message along the task's chain (parent, resumed, carried on) must pass
+   * `ownerDmHere` (an account the owner named as their own, in a direct chat, on an app whose servers vouch for the
+   * sender) and still be allowed to talk to Branch; nothing along it may come from another program. A message fetched
+   * after a restart is the same person's (the app still vouched for it), so its freshness is not asked, as `ownerDmLine`
+   * does. Pairing alone is never enough: a friend or a household member pairs the same way. Anything unread: no.
+   */
+  ownerDmRun(runId: string): boolean {
+    const queue = [runId], seen = new Set<string>();
+    let chats = 0;
+    while (queue.length && seen.size < 100) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const events = this.store.events(id);
+      for (const event of events) {
+        if (event.kind !== "channel.inbound") continue;
+        const came = event.data;
+        if (typeof came.channel !== "string" || typeof came.senderId !== "string" || came.chatKind !== "direct") return false;
+        const kind = this.adapters.get(came.channel)?.adapter.kind ?? "";
+        if (!ownerDmHere(this.store, this.runtime.owner, kind, { channel: came.channel, senderId: came.senderId, chatKind: "direct", caughtUp: false })
+          || !this.senderAllowed(came.channel, came.senderId)) return false;
+        chats++;
+      }
+      const started = events.find((event) => event.kind === "run.started")?.data;
+      if (typeof started?.source === "string" && !ownersOrChat.has(started.source)) return false;
+      for (const next of [started?.parentRunId, started?.resumedFrom, started?.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return chats > 0 && !queue.length;
+  }
+  /**
    * A command is approved in a chat only with its own Yes button (the exact request's fingerprint), pressed by the
    * owner's own account, in the very chat the task came from. A typed "y" is not enough: it answers whatever this chat
    * was last shown. Another chat pointed at the same conversation (a linked group) can never say yes to it.
@@ -1477,7 +1511,9 @@ export class ChannelRouter {
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
-      : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
+      : run.status === "cancelled" ? "Stopped."
+      // owner-dm-signin: the task's own reason, scrubbed and kept short, rather than the bare status.
+      : chatFailureLine(run.status, run.output ?? "", message.chatKind, (text) => this.hideLeaks(this.runtime.hideSecrets(text)));
     // A task that stopped to ask goes out as a question with buttons, not as words to read.
     // PR #289 review 2: its own question, not whichever one is newest in the conversation.
     const own = run.status === "needs_input" ? this.runtime.waitingApprovals(run.sessionId).find((one) => one.runId === run.id) : undefined;
