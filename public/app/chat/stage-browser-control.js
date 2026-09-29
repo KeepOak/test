@@ -20,7 +20,7 @@ import { t } from "../../i18n.js";
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, composition: null, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -92,6 +92,8 @@ function applyView(answer) {
 }
 function disconnect() {
   clearTimeout(B.timer); B.timer = 0;
+  if (B.composition) B.composition.target.value = "";
+  B.composition = null;
   B.reading?.abort(); B.reading = null; clearFrame();
   if (B.pending) { B.pending = null; closeDlg(); }
   if (hasOwnerBrowser() && owned() && B.sid) void api("panels/browser/disconnect", bound()).catch(() => undefined);
@@ -138,6 +140,15 @@ export function ownerBrowserHolder(name) {
 }
 
 const canDrive = () => visible() && (owned() || free() || !hasOwnerBrowser()) && !B.pending;
+// Composition grant capture adapted from OpenClaw browser-panel-controller-input.ts (MIT).
+function captureInputCurrent() {
+  const sid = B.sid, id = B.control?.id, epoch = B.control?.epoch, tabId = B.tabId, url = B.page?.url;
+  return () => canDrive() && B.sid === sid && B.control?.id === id && B.control?.epoch === epoch
+    && B.tabId === tabId && B.page?.url === url;
+}
+/** Preserve the native IME node only while this conversation and input grant remain current. */
+export const ownerBrowserComposing = (sid) => sid === B.sid && B.composition?.target.isConnected
+  && B.composition.target === document.activeElement && B.composition.current();
 /* The owner's input is sent in the order it was given, one request at a time: nothing typed or clicked while an earlier
    request is still going is dropped. */
 let chain = Promise.resolve();
@@ -271,13 +282,14 @@ function point(event, img) {
    still waiting its turn, so fast typing is a few inputs rather than one per letter, and nothing waits on a timer.
    Any other input (a key, click, scroll or address) seals it first, so the page gets everything in the order it was made. */
 function flushText() { B.textJob = null; }
-function typeText(text) {
-  if (!text) return;
-  if (B.textJob) { B.textJob.text += text; return; }
-  const job = { text };
+function typeText(text, current = null) {
+  if (!text || (current && !current())) return;
+  if (B.textJob && B.textJob.current === current) { B.textJob.text += text; return; }
+  const job = { text, current };
   void inOrder(async () => {
     if (B.textJob === job) B.textJob = null;
     while (B.pending && visible()) await pause(100);
+    if (job.current && !job.current()) return;
     if (job.text.length > 8192) { toast(t("window.chat.stage.ob.paste-long")); return; }
     await action("browser.owner_input", { kind: "text", text: job.text });
   });
@@ -294,7 +306,7 @@ function flushWheel() {
 }
 const KEYS = ["Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"];
 function key(event) {
-  if (!visible() || !(owned() || free()) || B.pending || event.isComposing) return;
+  if (!visible() || !(owned() || free()) || B.pending || event.isComposing || event.keyCode === 229 || B.composition) return;
   const modifiers = [event.ctrlKey && "Control", event.metaKey && "Meta", event.altKey && "Alt", event.shiftKey && "Shift"].filter(Boolean);
   const name = event.key === " " ? "Space" : event.key;
   if (modifiers.some((m) => m !== "Shift") && /^[a-zA-Z0-9]$/.test(name)) {
@@ -362,13 +374,22 @@ export function initOwnerBrowser() {
     event.preventDefault(); typeText(event.clipboardData?.getData("text/plain") ?? "");
   }, true);
   // Words put together with an input method (Chinese, Japanese, Korean, accents) arrive whole when composing ends.
+  document.addEventListener("compositionstart", (event) => {
+    if (event.target.id === "ob7-keys" && canDrive()) B.composition = { target: event.target, current: captureInputCurrent() };
+  }, true);
   document.addEventListener("compositionend", (event) => {
     if (event.target.id !== "ob7-keys") return;
-    if (canDrive()) typeText(event.data ?? "");
+    const composition = B.composition; B.composition = null;
+    if (composition?.target === event.target && composition.target.isConnected && composition.current()) typeText(event.data ?? "", composition.current);
     event.target.value = "";
+    queueMicrotask(() => changed(true));
+  }, true);
+  document.addEventListener("focusout", (event) => {
+    if (B.composition?.target !== event.target) return;
+    B.composition = null; event.target.value = ""; queueMicrotask(() => changed(true));
   }, true);
   document.addEventListener("input", (event) => {
-    if (event.target.id !== "ob7-keys" || event.isComposing) return;
+    if (event.target.id !== "ob7-keys" || event.isComposing || B.composition) return;
     if (event.inputType === "insertText" && canDrive()) typeText(event.data ?? "");
     if (!event.isComposing) event.target.value = "";
   }, true);
