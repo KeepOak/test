@@ -25,12 +25,13 @@ export function saveWindowLanguage(dir: string, language: unknown): boolean {
 /** Only the window's own page, at the app's own address, may say which language it speaks. */
 export function registerWindowLanguageIpc(ipcMain: Pick<IpcMain, "handle" | "removeHandler">, window: BrowserWindow, origin: string, dir: string): void {
   const authorized = (event: IpcMainInvokeEvent) => {
-    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
+    if (window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
       || new URL(event.senderFrame?.url ?? "about:blank").origin !== origin)
       throw new Error("Window language access denied");
   };
+  // Replaced by the next window's own; the window already holds as many "closed" listeners as Node allows unwarned.
+  ipcMain.removeHandler("branch:window-language");
   ipcMain.handle("branch:window-language", (event, language: unknown) => { authorized(event); return saveWindowLanguage(dir, language); });
-  window.on("closed", () => ipcMain.removeHandler("branch:window-language"));
 }
 
 /**

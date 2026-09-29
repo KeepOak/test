@@ -125,6 +125,8 @@ export class TrayNotifier {
           { headers: { authorization: `Bearer ${this.deps.key()}` }, signal: this.controller.signal });
         if (!response.ok || !response.body) throw new Error(`events: ${response.status}`);
         wait = 500;
+        // Look as soon as the engine answers: the first look is what already waited, so it must not wait for an event.
+        void this.check();
         const reader = response.body.getReader();
         for (;;) {
           const { done } = await reader.read();

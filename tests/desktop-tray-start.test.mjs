@@ -28,8 +28,9 @@ async function trayStart(t) {
   });
   const engine = await until(() => electron.evaluate(() => {
     const host = globalThis.branchEngineForTests;
-    return host?.servingAt && Array.isArray(globalThis.branchTrayNotesForTests) ? { url: host.servingAt, token: host.token } : null;
-  }), "the engine and the tray's notifications are up");
+    return host?.servingAt && Array.isArray(globalThis.branchTrayNotesForTests) && globalThis.branchTrayNotifierForTests?.looks > 0
+      ? { url: host.servingAt, token: host.token } : null;
+  }), "the engine is up and the tray's notifications have taken their first look");
   const call = async (path, body) => {
     const response = await fetch(`${engine.url}/api/${path}`, { method: body ? "POST" : "GET",
       headers: { authorization: `Bearer ${engine.token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });

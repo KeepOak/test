@@ -426,7 +426,8 @@ async function buildWindow(
   const soon = () => { clearTimeout(settle); settle = setTimeout(remember, 250); };
   window.on("resize", soon);
   window.on("move", soon);
-  window.on("closed", () => clearTimeout(settle));
+  let hiddenFor: NodeJS.Timeout | undefined; // the drop after a long hide (below)
+  window.on("closed", () => { clearTimeout(settle); clearTimeout(hiddenFor); });
   // The engine tells the model whether Branch's window is open or hidden in the tray (src/environment.ts).
   for (const change of ["show", "hide", "minimize", "restore"] as const) window.on(change as "show", tellWindowShown);
   window.on("closed", () => engine?.tell("window", { shown: false }));
@@ -499,10 +500,8 @@ async function buildWindow(
   });
   const loaded = new Promise<void>((done) => window?.webContents.once("did-finish-load", () => done()));
   pageLoaded = loaded;
-  let hiddenFor: NodeJS.Timeout | undefined;
   window.on("hide", () => { clearTimeout(hiddenFor); hiddenFor = setTimeout(() => dropWhenHidden(), dropHiddenMs()); });
   window.on("show", () => clearTimeout(hiddenFor));
-  window.on("closed", () => clearTimeout(hiddenFor));
   // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the
   // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
   // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
