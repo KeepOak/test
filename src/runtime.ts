@@ -18,7 +18,7 @@ import { ownersOwnTask, waitsForReply } from "./asked-task.js"; // Q050
 import { practiceRunsEnabled } from "./practice-runs.js";
 import { CliAgentProvider } from "./providers/cli-agent.js";
 import { unwrapProvider } from "./accounts/pool-provider.js";
-import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
+import { askerOf, fromGroupChat, runOrigin, shortLivedKeyMark, startedFromChat, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
@@ -98,7 +98,8 @@ import { reviewCall } from "./approval-reviewer.js";
 import { privateConversationRoute, routeForTask, routingSettings } from "./local-routing.js";
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
-import { memoryScope } from "./memory.js";
+import { inOpeningContext, memoryScope } from "./memory.js";
+import { blockedMemoryText } from "./content-guard.js";
 import { keyWords, ownerFactsBlock, ownersLastMessage, personalQuestion, relevantFacts, type OwnerFact } from "./owner-facts.js"; // QA R1 follow-up (recall)
 import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
@@ -1895,6 +1896,10 @@ ${run.output.slice(0, 6000)}`;
     const transcript = this.store.messages(run.sessionId).filter((m) => m.role !== "system").slice(-8)
       .map((m) => `${m.role}: ${m.content.slice(0, 1500)}`).join("\n").slice(0, 8000);
     const preset = this.sideJobPreset(this.owner, run.sessionId); // R17-S11
+    // Suggested where memory.put would have saved it: under whoever is using the app, and a Trunk's as the Trunk's own.
+    // Taken before the model is asked, so a profile switched while it answers does not move them.
+    const scope = memoryScope(this.store, context), agent = memoryAgent(context);
+    const fact = agent ? { scope: `agent:${agent}` } : null;
     const scoped: ToolContext = { ...context, permissions: new Set(), budget: new Budget({ maxSteps: 2, maxTokens: 8000 }), signal: AbortSignal.timeout(60000) };
     const completion = await this.complete(run, [
       { role: "system", content: reviewInstructions },
@@ -1904,7 +1909,7 @@ ${run.output.slice(0, 6000)}`;
     if (parsed.status !== "resolved") { this.store.event(run.id, "learning.reviewed", { memories: 0, skills: 0, unreadable: true }); return; }
     const value = parsed.value as { memories?: { text?: string; source?: string }[]; skills?: { skillId?: string; note?: string }[] };
     const memories = (value.memories ?? []).filter((m) => m?.text).slice(0, 5), skills = (value.skills ?? []).filter((s) => s?.skillId && s.note).slice(0, 3);
-    for (const m of memories) this.store.review.propose(context.owner, { kind: "put", text: String(m.text).slice(0, 4000), source: String(m.source ?? "Suggested after a task").slice(0, 500), runId: run.id });
+    for (const m of memories) this.store.review.propose(scope, { kind: "put", text: String(m.text).slice(0, 4000), source: String(m.source ?? "Suggested after a task").slice(0, 500), runId: run.id }, fact);
     for (const s of skills) this.store.review.propose(context.owner, { kind: "skill-note", skillId: String(s.skillId).slice(0, 200), text: String(s.note).slice(0, 4000), runId: run.id });
     this.store.event(run.id, "learning.reviewed", { memories: memories.length, skills: skills.length });
   }
@@ -2409,7 +2414,8 @@ ${run.output.slice(0, 6000)}`;
     // answer, so it is not one of them (nobodyToAskAboutPlan in src/coding/project-tests.ts).
     const conductor = this.orchestration.conductor(run,
       { ...conduct, ...planned, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
-        memory: { scope: memoryScope(this.store, context), agent: memoryAgent(context) } },
+        // A reviewer reads the same remembered facts the task opened with, and none where it opened with none.
+        memory: this.opensWithRemembered(run, context) ? { scope: memoryScope(this.store, context), agent: memoryAgent(context) } : null },
       (aside) => this.aside(run, context, route, aside));
     const opening = await this.openConductor(run, conductor);
     // mac7/smoke-fixes (B5): "Show me the plan first" with nobody to ask finishes with the plan.
@@ -2983,14 +2989,7 @@ ${run.output.slice(0, 6000)}`;
           patternNote(this.teamPattern(run.sessionId)), // eng-trunk-controls: how Trunks work together, when the owner chose
       },
     ];
-    // Read under whoever is using the app: with a household profile switched on, their task is
-    // given their own remembered facts and never the owner's.
-    const snapshot = this.store.review.sessionSnapshot(memoryScope(this.store, context), run.sessionId, memoryAgent(context));
-    if (snapshot.count) messages.push({ role: "system", content: `What you remember about the person (snapshot taken when this conversation started; use memory.search for anything newer):\n${snapshot.text}` });
-    const aboutYou = knobs.aboutYouMessage(this.store, memoryScope(this.store, context)); // R17-S13
-    if (aboutYou) messages.push(aboutYou);
-    this.store.event(run.id, "memory.snapshot", { count: snapshot.count, reused: snapshot.reused, takenAt: snapshot.takenAt });
-    messages.push(...learningOpening(this.store, run, context)); // R17-F (src/learning-more/hook.ts); adds nothing while its parts are off
+    this.addRemembered(run, context, messages);
     const working = this.store.workingMessages(run.sessionId);
     if (working.summary) messages.push(summaryMessage(working.summary));
     // Where Branch is running, where the message came from and the local time: last of the system text, after
@@ -3002,6 +3001,32 @@ ${run.output.slice(0, 6000)}`;
     return { messages, ids };
   }
   /**
+   * What is remembered about the person, at the start of a conversation: the memory snapshot, the "about you" note and
+   * the memory blocks. Read under whoever is using the app: with a household profile switched on, their task is given
+   * their own remembered facts and never the owner's.
+   */
+  private addRemembered(run: Run, context: ToolContext, messages: Message[]): void {
+    if (!this.opensWithRemembered(run, context)) {
+      this.store.event(run.id, "memory.snapshot", { count: 0, reused: false, takenAt: "", withheld: true });
+      return;
+    }
+    const snapshot = this.store.review.sessionSnapshot(memoryScope(this.store, context), run.sessionId, memoryAgent(context));
+    if (snapshot.count) messages.push({ role: "system", content: `What you remember about the person (snapshot taken when this conversation started; use memory.search for anything newer):\n${snapshot.text}` });
+    const aboutYou = knobs.aboutYouMessage(this.store, memoryScope(this.store, context)); // R17-S13
+    if (aboutYou) messages.push(aboutYou);
+    this.store.event(run.id, "memory.snapshot", { count: snapshot.count, reused: snapshot.reused, takenAt: snapshot.takenAt });
+    messages.push(...learningOpening(this.store, run, context)); // R17-F (src/learning-more/hook.ts); adds nothing while its parts are off
+  }
+  /**
+   * Whether what is remembered about the person may be put in front of this task unasked. Never in a group chat, or
+   * in a task one started, because a message there may be anybody's and the facts are the owner's; never in a chat's
+   * task that may not read memory either, since it could not have looked them up itself.
+   */
+  private opensWithRemembered(run: Run, context: ToolContext): boolean {
+    if (fromGroupChat(this.store, run.id)) return false;
+    return context.permissions.has("memory.read") || !startedFromChat({ source: context.source, runId: run.id }, this.store);
+  }
+  /**
    * QA R1 follow-up (recall): the saved facts that bear on the owner's newest message, in a short labelled block right
    * before it (src/owner-facts.ts). For a personal question the engine looks them up itself. Only this computer's own
    * memory is read, as the owner's (or the Trunk's) own scope sees it; nothing is written.
@@ -3009,8 +3034,7 @@ ${run.output.slice(0, 6000)}`;
   private groundInOwnerFacts(run: Run, context: ToolContext, messages: Message[], ids: (number | null)[]): void {
     if (context.depth > 0 || !context.permissions.has("memory.read")) return;
     // A group chat's message may be anybody's: "my" there is not the owner's, so a group is never grounded this way.
-    const chat = this.store.events(run.id).find((event) => event.kind === "channel.inbound")?.data;
-    if (chat && chat.chatKind !== "direct") return;
+    if (fromGroupChat(this.store, run.id)) return;
     const at = ownersLastMessage(messages);
     const question = at >= 0 ? String(messages[at]!.content ?? "") : "";
     if (!question.trim()) return;
@@ -3020,11 +3044,13 @@ ${run.output.slice(0, 6000)}`;
     const words = (question.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).filter((word) => word.length > 2);
     for (const query of ["", ...new Set([...words, ...keyWords(question)])].slice(0, 12)) {
       for (const record of this.store.searchMemory(scope, query, agent)) {
-        if (record.data.kind === "task-scratch" || found.has(record.id)) continue;
+        // Only what the snapshot may carry: the owner's own and shared facts, never a Trunk's own (inOpeningContext).
+        if (record.data.kind === "task-scratch" || found.has(record.id) || !inOpeningContext(record, agent)) continue;
         found.set(record.id, { id: record.id, text: String(record.data.text ?? ""), updatedAt: record.updatedAt });
       }
     }
-    const facts = relevantFacts(question, [...found.values()], personal);
+    // A fact that reads like orders to the assistant is shown as the snapshot shows it: a placeholder, never its words.
+    const facts = relevantFacts(question, [...found.values()], personal).map((fact) => ({ ...fact, text: blockedMemoryText(fact.text) ?? fact.text }));
     if (!facts.length) return;
     // For a personal question just asked, the engine's own lookup follows it as a memory.search step that already ran:
     // a small model answers from a tool's result far more readily than from a note above the question. Shown to the

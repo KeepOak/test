@@ -3314,6 +3314,18 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+### Hermes Agent memory checks (Nous Research), MIT; Codex memory writing (OpenAI), Apache-2.0
+
+`strictPatterns` in `src/content-guard.ts`, used for text Branch remembers, is ported from the `exfil_curl`, `exfil_wget`, `read_secrets`, `send_to_url` and `context_exfil` patterns in Hermes Agent's `tools/threat_patterns.py` (https://github.com/NousResearch/hermes-agent, commit a9a5424), and checking remembered text when it is saved and again when a conversation's memory snapshot is read, with a placeholder in place of a failing entry, follows its `tools/memory_tool_store.py`. Passing the words of every memory suggestion through the secret scrubber before they are stored (`MemoryReview.hideSecrets` in `src/memory-review.ts`) follows Codex's `codex-rs/memories/write/src/phase1_output.rs` (https://github.com/openai/codex, commit bd4204e, Copyright 2025 OpenAI), licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); no Codex code was copied. Hermes Agent is used under the MIT licence:
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 ### PicoClaw, MIT
 
 `src/channels/deltachat.ts` follows the JSON-RPC call sequence and message fields in PicoClaw's `pkg/channels/deltachat` (https://github.com/sipeed/picoclaw). Used under the MIT licence:

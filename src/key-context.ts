@@ -142,6 +142,23 @@ export function startedFromChat(context: { source?: string | undefined; runId?: 
   if (context.source === "channel") return true;
   return !!context.runId && runOrigin(store, context.runId).source === "channel";
 }
+/**
+ * Whether the chat this task, or the task that started it, came from is one with several people in it, where a
+ * message may be anybody's. Read along the same chain as runOrigin, since a helper's own task carries no chat mark.
+ */
+export function fromGroupChat(store: EventReader, runId: string): boolean {
+  const seen = new Set<string>(), queue = [runId];
+  while (queue.length && seen.size < 20) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const chat = store.events(id).find((event) => event.kind === "channel.inbound")?.data;
+    if (chat) return chat.chatKind !== "direct";
+    const data = startOf(store, id);
+    for (const next of [data?.parentRunId, data?.resumedFrom, data?.originFrom]) if (typeof next === "string") queue.push(next);
+  }
+  return false;
+}
 /** The refusal a chat message's task gets for something only the owner may do. */
 export function chatOwnerOnly(what: string): Error {
   return new Error(`${what} is for the owner only, and a message from a chat app cannot prove who is typing. Do it in the Branch app.`);

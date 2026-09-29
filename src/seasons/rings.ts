@@ -1,6 +1,7 @@
 import type { ToolContext } from "../contracts.js";
 import { binnedRuns } from "../conversation-actions.js";
 import { detectInjection } from "../content-guard.js";
+import { secretPatterns } from "../skill-scan.js";
 import { checkResult } from "../delegation.js";
 import { runOrigin } from "../key-context.js";
 import { jaccard, wordsOf } from "../learning-more/curator.js";
@@ -188,11 +189,12 @@ export class Rings {
     return requests.at(-1)!;
   }
   private keepGrounded(scope: string, fact: Found, requests: Request[], record: Night): void {
-    if (detectInjection(fact.text).length) { record.data.rem.refused++; return; }
+    // Nothing secret-shaped is kept for good, in the fact or in a quote kept as its evidence (unsafeToKeep).
+    if (unsafeToKeep(fact.text)) { record.data.rem.refused++; return; }
     const grounded = fact.quotes.filter((quote) => {
       const request = requests[quote.n - 1];
       const words = plain(quote.words);
-      return request && words.length >= 3 && plain(request.prompt).includes(words) && !detectInjection(quote.words).length;
+      return request && words.length >= 3 && plain(request.prompt).includes(words) && !unsafeToKeep(quote.words);
     });
     // The fact must be about what was quoted: it shares a word with the person's own words, or it is not kept.
     const quoted = wordsOf(grounded.map((quote) => quote.words).join(" "));
@@ -210,6 +212,8 @@ export class Rings {
     const known = this.store.list("memory", scope).map((fact) => wordsOf(String(fact.data.text ?? "")));
     for (const entry of this.book.candidates(scope).filter((candidate) => candidate.status === "pending")) {
       if (!stillQuiet()) return false;
+      // A thought kept before the checks above existed still meets them before it can become a suggestion.
+      if (unsafeToKeep(entry.text) || entry.evidence.some((seen) => unsafeToKeep(seen.quote))) continue;
       const settings = seasonsSettings(this.store, this.runtime.owner);
       if (known.some((words) => jaccard(words, wordsOf(entry.text)) >= sameThought)) {
         this.book.saveCandidate({ ...entry, status: "known" }); record.data.deep.known++; continue;
@@ -255,4 +259,12 @@ export function foundFacts(value: unknown): Found[] {
     const confidence = typeof fact.confidence === "number" && Number.isFinite(fact.confidence) ? Math.min(1, Math.max(0, fact.confidence)) : 0.5;
     return text && text.length <= maxFactChars ? [{ text, kind, confidence, quotes }] : [];
   });
+}
+/**
+ * What the night never keeps: words that read like orders to the assistant (the strict checks remembered text meets)
+ * or that hold something shaped like a key, token or password (src/skill-scan.ts). A person may paste a key into a
+ * request; the night reads requests, and a fact kept for good is shown to the assistant in every conversation.
+ */
+function unsafeToKeep(text: string): boolean {
+  return detectInjection(text, { strict: true }).length > 0 || secretPatterns.some(([pattern]) => pattern.test(text));
 }

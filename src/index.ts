@@ -37,7 +37,7 @@ import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
-import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
+import { inOpeningContext, isCurrentFact, memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
@@ -680,7 +680,7 @@ export async function createBranch(options: {
   // mac2/fly-core-2: with the learning core "on", the facts that helped in similar tasks go first.
   store.review.orderFacts = (factOwner, agent, sessionId) =>
     chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)
-      .filter((record) => isCurrentFact(record))), knobSnapshotLimits(store, runtime.owner)).records; // SELF-202: only facts still true
+      .filter((record) => isCurrentFact(record) && inOpeningContext(record, agent))), knobSnapshotLimits(store, runtime.owner)).records; // SELF-202: only facts still true
   // ── R17-S-B: the owner's memory budget and the leak guard's sensitivity, read fresh each time. ──
   store.review.snapshotLimits = () => knobSnapshotLimits(store, runtime.owner);
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);
@@ -961,6 +961,7 @@ export async function createBranch(options: {
   // Spans are written straight to their own table rather than through the event log, so the same
   // scrubber is put in front of them explicitly: no attribute can carry a saved password or key.
   runtime.tracer.scrub = (value) => runtime.hideSecrets(value);
+  store.review.hideSecrets = (value) => runtime.hideSecrets(value); // every memory suggestion's words, before they are stored
   // Locking Branch ends every "yes, for this conversation" as well as closing the secrets locker,
   // and lets go of anything an integration was holding on the owner's behalf — above all a browser
   // of theirs a task had borrowed.

@@ -24,18 +24,57 @@ const patterns: [RegExp, string][] = [
   [/<!--[^\n]{0,200}\b(?:system|assistant|ai|agent|model)\b[^\n]{0,120}\b(?:ignore|disregard|forget|reply only|respond only|answer only|say only|instead)\b[^\n]{0,200}-->/i, "hidden comment giving the assistant orders"],
   [/^\s*(?:<!--\s*)?\[?\s*(?:system|assistant|developer)(?:\s+(?:message|prompt|note|override))?\s*\]?\s*:[^\n]{0,160}\b(?:ignore|disregard|forget|reply|respond|answer only|say only|output only|instead|you must)\b/i, "poses as a message to the assistant"],
 ];
+/**
+ * The stricter checks for text that is saved and later put in front of conversations (remembered facts, a Trunk's
+ * memory files, memory blocks). Web pages say "send your form to https://..." all the time, so these are used only
+ * where the person saving the text can resolve a refusal. Ported from Hermes Agent's `tools/threat_patterns.py`
+ * (https://github.com/NousResearch/hermes-agent, commit a9a5424, lines 24-80, MIT; see THIRD_PARTY_NOTICES.md): its
+ * `exfil_curl`, `exfil_wget`, `read_secrets`, `send_to_url` and `context_exfil` patterns, matched case-insensitively
+ * after NFKC folding, as there.
+ */
+const strictPatterns: [RegExp, string][] = [
+  [/curl\s+[^\n]{0,2048}\$\{?\w*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)S?\b/i, "sends a secret with curl"],
+  [/wget\s+[^\n]{0,2048}\$\{?\w*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)S?\b/i, "sends a secret with wget"],
+  [/cat\s+[^\n]{0,2048}(?:\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)/i, "reads a secrets file"],
+  [/(?:send|post|upload|transmit)\s+[^\n]{0,2048}\s+(?:to|at)\s+https?:\/\//i, "sends something to an outside address"],
+  [/(?:include|output|print|share)\s+(?:\w+\s+){0,8}(?:conversation|chat\s+history|previous\s+messages|full\s+context|entire\s+context)/i,
+    "asks for the conversation to be handed over"],
+];
 
 /** What stands in a guarded text for a line that was taken out; never written back into a file (src/files.ts). */
 export const removedLine = "[removed: this line looked like instructions to the assistant]";
-export function detectInjection(text: string): ContentWarning[] {
+/**
+ * Lines that read like orders to the assistant. `strict` adds the checks for remembered text (above) and also reads
+ * the text with its lines joined: a remembered fact is shown on one line, so an order split over two would pass a
+ * line-by-line reading and still arrive whole.
+ */
+export function detectInjection(text: string, options: { strict?: boolean } = {}): ContentWarning[] {
   const warnings: ContentWarning[] = [];
-  for (const [index, line] of text.split(/\r?\n/).entries()) {
-    const hit = patterns.find(([pattern]) => pattern.test(line));
+  const checks = options.strict ? [...patterns, ...strictPatterns] : patterns;
+  const source = options.strict ? text.slice(0, 65536).normalize("NFKC") : text;
+  const lines = source.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    const hit = checks.find(([pattern]) => pattern.test(line));
     if (!hit) continue;
     warnings.push({ line: index + 1, excerpt: line.trim().slice(0, 140), reason: hit[1] });
     if (warnings.length >= 20) break;
   }
+  if (options.strict && !warnings.length && lines.length > 1) {
+    const joined = source.replace(/\s+/g, " ");
+    const hit = checks.find(([pattern]) => pattern.test(joined));
+    if (hit) warnings.push({ line: 1, excerpt: joined.trim().slice(0, 140), reason: hit[1] });
+  }
   return warnings;
+}
+/** Why a text may not be remembered (it fails the strict checks), or null when it may. */
+export function memoryWriteRefusal(...texts: (string | undefined)[]): string | null {
+  const hit = detectInjection(texts.filter(Boolean).join("\n"), { strict: true })[0];
+  return hit ? `Not saved: it ${hit.reason}, and what is remembered is put in front of the assistant.` : null;
+}
+/** What a remembered text that fails the strict checks is shown to the model as: the reason only, never its words. */
+export function blockedMemoryText(text: string): string | null {
+  const hit = detectInjection(text, { strict: true })[0];
+  return hit ? `[blocked: a remembered note ${hit.reason}; it is left out here and can be removed in the Memory view]` : null;
 }
 
 /** Applies the owner's policy: the text to hand to the model, or a plain refusal. */
