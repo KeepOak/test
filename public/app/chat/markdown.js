@@ -6,6 +6,7 @@
 import { esc } from "../core/dom.js";
 import { chartCard } from "./chart.js";
 import { diagramCard } from "./diagram.js";
+import { cachedMarkdown } from "./markdown-cache.js";
 
 const inline = (s) => {
   if (!s) return "";
@@ -80,9 +81,9 @@ function fenced(part) {
 export const inlineText = (words) => inline(esc(words));
 
 export function text(markdown) {
-  return String(markdown ?? "").split(/```/).map((part, i) => (i % 2
+  return cachedMarkdown(markdown, (source) => source.split(/```/).map((part, i) => (i % 2
     ? fenced(part)
-    : esc(part).split(/\n{2,}/).map((c) => c.trim()).filter(Boolean).map(block).join(""))).join("");
+    : esc(part).split(/\n{2,}/).map((c) => c.trim()).filter(Boolean).map(block).join(""))).join(""));
 }
 
 /* Markdown as the plain words a one-line preview shows (a sidebar row, a search hit): no "#", "**", "`", "|" or list
