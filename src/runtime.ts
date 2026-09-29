@@ -1774,6 +1774,9 @@ ${run.output.slice(0, 6000)}`;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
     try {
+      // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
+      // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
+      options.onStarted?.(run);
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
@@ -1782,7 +1785,6 @@ ${run.output.slice(0, 6000)}`;
         this.helperModels.set(run.id, connection.preset);
         this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
       }
-      options.onStarted?.(run);
       const work = async (working: ToolContext) => {
         if (approved) await this.runApproved(run, working, approved); // QA R1
         return this.loop(run, working, instructions, options.onTextDelta, {

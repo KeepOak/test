@@ -20,6 +20,7 @@ import { ownerCommands, saveOwnerCommands } from "../dist/channels/owner-command
 import { chatThread } from "../dist/channels/threads.js";
 import { chatFailureLine, chatSignInRefusal, reasonAtMost } from "../dist/channels/failure-reason.js";
 import { trunkSignInRefusal } from "../dist/accounts/context.js";
+import { primaryAccount } from "../dist/accounts/settings.js";
 import { setupTrunk } from "./trunks-helpers.mjs";
 
 const OWNER = "5660235788", FRIEND = "friend-2";
@@ -55,11 +56,12 @@ async function fixture(t, { kind = "telegram", named = true } = {}) {
   let n = 0;
   const say = async (senderId, text, chatKind = "direct", extra = {}) => {
     const chatId = chatKind === "direct" ? senderId : "group-1";
-    const before = seen.length;
+    const before = seen.length, earlier = new Set(app.store.runs(app.runtime.owner).map((r) => r.id));
     await app.channels.handle({ channel: "tg", chatId, chatKind, senderId, senderName: senderId, chatTitle: "Group",
       text, addressed: true, messageId: `m${++n}`, ...extra });
     const thread = chatThread(app.store, app.runtime.owner, "tg", chatId);
-    const run = app.store.runs(app.runtime.owner).filter((r) => r.sessionId === thread?.sessionId).at(-1);
+    // The task this message started: the one run in the chat's conversation that was not there before it.
+    const run = app.store.runs(app.runtime.owner).find((r) => r.sessionId === thread?.sessionId && !earlier.has(r.id));
     return { run, reply: sent.at(-1)?.text ?? "", programRan: seen.length > before, thread };
   };
   return { app, say, home };
@@ -80,6 +82,26 @@ test("the owner's message fetched after a restart is still the owner's (the app 
   const { run, programRan } = await say(OWNER, "Hola", "direct", { caughtUp: true });
   assert.equal(run.status, "completed", run.output);
   assert.equal(programRan, true);
+});
+
+test("a conversation with a pinned helper model: the owner's DM still reaches the sign-in, a friend's still does not", async (t) => {
+  for (const [who, allowed] of [[OWNER, true], [FRIEND, false]]) {
+    await t.test(who === OWNER ? "the owner" : "a paired friend", async (t) => {
+      const { app, say } = await fixture(t);
+      const first = await say(who, "Hola");
+      // The conversation's helper model and account are pinned (src/delegation.ts keepHelperRoute), so the next turn picks
+      // its connection before anything else: before the chat's message was ever written down.
+      app.store.save("settings", app.runtime.owner, `helper-route:${first.thread.sessionId}`,
+        { model: "cli-claude-code", accountRef: { pool: "cli-claude-code", account: primaryAccount } });
+      const { run, programRan } = await say(who, "Otra vez");
+      assert.equal(run.sessionId, first.thread.sessionId);
+      assert.ok(app.store.events(run.id).some((e) => e.kind === "channel.inbound"), "the chat's message is written down first");
+      if (allowed) assert.ok(app.store.events(run.id).some((e) => e.kind === "helper.selected"), "the pinned route was taken");
+      assert.equal(run.status, allowed ? "completed" : "failed", run.output);
+      assert.equal(programRan, allowed);
+      if (!allowed) assert.match(run.output, /only for your own work/);
+    });
+  }
 });
 
 test("a Trunk the owner's own chat is bound to answers through the sign-in too", async (t) => {
