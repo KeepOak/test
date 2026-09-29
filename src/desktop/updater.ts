@@ -41,6 +41,8 @@ export interface UpdaterOptions {
   /** Which system the update is for; defaults to this computer's. */
   platform?: NodeJS.Platform;
   fetch?: typeof fetch;
+  /** Beta: the newest change on the line whose whole suite passed (dev-build.ts newestGreen); without it, the tip. */
+  greenCommit?: (repo: string, tip: string) => Promise<string | null>;
   extract?: (archive: string, into: string) => Promise<void>;
   /**
    * Takes a safety copy of the person's saved work before the new files are put in place. When it
@@ -99,6 +101,12 @@ export interface LiveApplied { tier: "window" | "engine" | "gateway"; ms: number
 export type UpdateChannel = "stable" | "beta";
 /** Named, so the window hears a wait across IPC ("…: UpdateDeferredError: <why>") and does not report it as a failure. */
 export class UpdateDeferredError extends Error { override name = "UpdateDeferredError"; }
+/**
+ * A wait the owner has to hear about: nothing was changed and the next look tries again, but it will not clear by itself
+ * while tasks finish (a background engine that would not close, 2026-09-29). Its own name, so the window reports it (kept,
+ * written to the activity log and said once) instead of only showing it as the reason the update waits.
+ */
+export class UpdateStuckError extends UpdateDeferredError { override name = "UpdateStuckError"; }
 export interface ReleaseInfo {
   currentVersion: string;
   latestVersion: string;
@@ -661,7 +669,9 @@ export class Updater {
     const run = this.options.devRun ?? realRun(this.platform);
     const missing = await devToolsMissing(run);
     if (missing) throw new Error(missing);
-    const commit = await remoteHead(run, this.devRepo());
+    const tip = await remoteHead(run, this.devRepo());
+    // The newest change whose whole suite passed, not simply the newest (dev-build.ts newestGreen).
+    const commit = (await this.options.greenCommit?.(this.devRepo(), tip).catch(() => null)) ?? tip;
     const short = commit.slice(0, 7), running = this.installed.commit;
     // Dogfood F5: a copy built ahead of the line is not offered the line's older head as "newer".
     const standing = running && running !== commit ? await this.devHistoryStanding(run, running, commit) : undefined;

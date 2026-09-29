@@ -45,6 +45,8 @@ type KookEvent = z.infer<typeof eventSchema>;
 
 export class KookChannel implements ChannelAdapter {
   readonly kind = "kook";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   readonly id: string;
   readonly maxTextLength = 4000;
   /** Where the stream was read up to (`session:sn`), kept across restarts. */

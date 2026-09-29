@@ -79,7 +79,11 @@ async function keepOpen(commit) {
   catch { throw new Error("The window could not keep your draft, so the update is waiting."); }
 }
 
-const frames = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+/* Two painted frames, so what was put back is drawn before the app is told. A page that is not drawn (a start in the
+   tray keeps the window unpainted until it is first shown, main.ts paintWhenInitiallyHidden) never gets a frame, so
+   waiting would hold the first load, and the app's "restored", until the owner opened the window. */
+const frames = () => document.visibilityState === "hidden" ? Promise.resolve()
+  : new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
 
 /* After a live reload: everything kept is put back and drawn, then the app is told, and only then does its picture of the
    old page come away. `open` opens a conversation (chat/chat.js openConversation). Answers whether anything was kept. */
