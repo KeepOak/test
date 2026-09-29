@@ -329,13 +329,14 @@ test("the folder question names the call that asked, so after a yes the task is 
 test("the call a task stopped on to ask is recorded as not run, never as 'side effects may have occurred'", async (t) => {
   // QA (first task): qwen3:14b was told both "side effects may have occurred" and, after the yes, "the call did not run",
   // and asked the person again whether to start. Mutation: drop the known result in Store.finish → red.
-  const { app, requests } = await fixture(t, [call("files.list", { path: "~/Downloads" }), call("files.list", { path: "~/Downloads" }), say("Listed."),
+  // QA R1: the model never makes the call again; after the yes the engine runs it and hands the model its result.
+  const { app, requests } = await fixture(t, [call("files.list", { path: "~/Downloads" }), say("Listed."),
     call("user.ask", { question: "Which folder next?" }), say("Thanks.")]);
   const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
   const asked = events(app, first, "policy.ask")[0];
   const result = app.store.messages(first.sessionId).find((message) => message.role === "tool" && message.toolCallId === asked.id);
   assert.match(result.content, /"outcome":"not_run"/);
-  assert.match(result.content, /after a yes \(or after a restart\), make this same call again/);
+  assert.match(result.content, /After a yes, Branch runs this exact call itself/);
   assert.doesNotMatch(result.content, /Side effects may have occurred/);
   app.runtime.approve(first.sessionId, "allow", "session");
   // As the window's yes does (POST /api/policy/approve with carryOn): the same task carries on.
@@ -343,9 +344,10 @@ test("the call a task stopped on to ask is recorded as not run, never as 'side e
   assert.equal(second.status, "completed", second.output);
   const sent = requests.slice(1).flatMap((request) => request.messages).filter((message) => message.role === "tool");
   assert.ok(!sent.some((message) => /Side effects may have occurred/.test(message.content)), "the model is told one thing");
-  // Mutation: drop Store.answerAskedCall from continueNote → the result still only says it waits, red.
+  // QA R1. Mutation: drop runApproved from Runtime.started → the result still only says it has not run, red.
   const answered = sent.find((message) => message.toolCallId === asked.id);
-  assert.match(answered.content, /The person said yes to this call\. It has not run yet: make this same call again now/);
+  assert.match(answered.content, /"ok":true/, "the engine ran the approved call and its real result took the placeholder's place");
+  assert.equal(events(app, first, "run.approved_call")[0]?.id, asked.id);
   // A question the model put itself: the result says it was asked, and the answer is the person's next message.
   const third = await app.runtime.run({ prompt: "and the next one?", sessionId: first.sessionId });
   assert.equal(third.status, "needs_input");
