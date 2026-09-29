@@ -10,7 +10,7 @@ import { setLockdown } from "../chat/approvals.js";
 import { on, run, has } from "../core/actions.js";
 import { markLive, isLive } from "../core/features.js";
 import { app, ic, closePop, closeDlg, toast } from "../core/ui.js";
-import { openConversation, startConversation } from "../chat/chat.js";
+import { openConversation, startFresh } from "../chat/chat.js";
 import { api } from "../core/api.js";
 import { FIND } from "../chat/find.js";
 import { plain } from "../chat/markdown.js";
@@ -74,7 +74,7 @@ function askEngine(value) {
 
 function all(searching, q = "") {
   const [messages, docs] = engineHits(q);
-  const actions = [go(t("comfort.field.newConversation"), spoken(binding("newConversation")), "chat", () => startConversation()),
+  const actions = [go(t("comfort.field.newConversation"), spoken(binding("newConversation")), "chat", () => startFresh()),
     ...(has("new-trunk") && isLive("new-trunk") ? [go(t("studio.newName"), "", "plus", () => run("new-trunk"))] : []), ...lockdownOn(),
     ...ACTIONS.filter(([, , , a]) => has(a) && isLive(a)).map(([l, sub, i, a]) => go(say(l), sub, i, () => run(a)))];
   return [

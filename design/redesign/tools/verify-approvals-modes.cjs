@@ -16,7 +16,7 @@
 // answered before, and prints each check.
 const https = require("node:https");
 const { readFileSync } = require("node:fs");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT, TOKEN, CERT, KEY } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN"); process.exit(2); }

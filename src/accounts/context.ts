@@ -14,7 +14,7 @@ export interface AccountCall {
    * work under them). A sign-in account never answers it, and a key is chosen by the Trunk's own pick.
    */
   trunk?: {
-    keys: { copyFromOwner: boolean; accounts: Record<string, string> };
+    keys: { copyFromOwner: boolean; accounts: Record<string, string>; next?: Record<string, string[]> | undefined };
     /**
      * trunks-use-subscriptions: true only when the owner is behind this work (the owner's own window, a
      * routine or trigger the owner set up), worked out once where the mark is made (Runtime.trunkSignIns).

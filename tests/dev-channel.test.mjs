@@ -504,7 +504,7 @@ test("without the running change on record, its version decides whether the buil
   await control.install();
 });
 
-test("Beta looks every five minutes and, with update by itself on, installs each change once nothing is working", () => {
+test("Beta looks every minute and, with update by itself on, installs each change once nothing is working", () => {
   const saved = (releaseChannel) => ({ get: (table, _owner, key) =>
     (table === "settings" && key === "comfort-notify" ? { data: { autoUpdate: "install", releaseChannel } } : undefined) });
   const facts = { busyTasks: 0, updaterPhase: "available", now: new Date() };
@@ -514,8 +514,8 @@ test("Beta looks every five minutes and, with update by itself on, installs each
   assert.equal(updatePlan(saved("beta"), "local", { ...facts, busyTasks: 1 }).step, "nothing", "but never while a task is working");
   const looked = { get: (table, _owner, key) => (table === "settings" && key === "comfort-notify" ? { data: { autoUpdate: "check", releaseChannel: "dev" } }
     : table === "settings" && key === "comfort-update-last" ? { data: { at: new Date().toISOString() } } : undefined) };
-  assert.equal(updatePlan(looked, "local", { busyTasks: 0, updaterPhase: "current", now: new Date() }).reason, "Beta updates were looked for less than five minutes ago.");
-  assert.equal(betaCheckEveryMs, 5 * 60 * 1000);
+  assert.equal(updatePlan(looked, "local", { busyTasks: 0, updaterPhase: "current", now: new Date() }).reason, "Beta updates were looked for less than a minute ago.");
+  assert.equal(betaCheckEveryMs, 60 * 1000);
 });
 
 test("every packaged build records the change it was made from", () => {
