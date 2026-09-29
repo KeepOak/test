@@ -41,7 +41,7 @@ const BASE_SWITCHES = () => `@@STATUS@@
     <details class="adv" @@ADVOPEN@@><summary><svg class="i s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>${t("settings.page.advanced")}</summary>
       ${fact15(t("window.settings.permissions.when-tools-are-loaded"), "when-tools-are-loaded")}
       <div class="ctl"><b>${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}</b><input class="sw" type="checkbox" id="p-loop" @@loop@@ aria-label="${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}" data-sw="set"><small>${t("window.settings.permissions.after-5-identical-steps-it-pauses")}</small></div>
-      <div class="ctl"><b>${t("settings-kit.name.folder-trust")}</b><span class="right"><button class="btn sm" type="button" data-act="ft-add8">${t("asks.runtimes.add")}</button></span><small></small></div>
+      <div class="ctl"><b>${t("settings-kit.name.folder-trust")}</b><span class="right"><button class="btn sm" type="button" data-act="ft-add8">${t("asks.runtimes.add")}</button></span><small>${t("folder-trust.lead")}</small></div>
     </details>
     <div class="danger"><div><b>${t("lockdown.label")}</b><p>${t("window.settings.permissions.one-switch-that-stops-every-trunk")}</p></div><button class="btn bad" type="button" data-act="perm-lock">@@LOCK@@</button></div>`;
 
