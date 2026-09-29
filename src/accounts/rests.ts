@@ -15,6 +15,7 @@ interface Saved {
   models: [string, number][];
   lastError: string | null;
   rateFailures?: number;
+  lastRateAt?: number;
   savedAt: number;
 }
 
@@ -33,6 +34,7 @@ export class AccountRestStore {
       lastError: state.lastError, savedAt: now,
       ...(state.limitKnown !== undefined ? { limitKnown: state.limitKnown } : {}),
       ...(state.rateFailures ? { rateFailures: state.rateFailures } : {}),
+      ...(state.lastRateAt !== undefined ? { lastRateAt: state.lastRateAt } : {}),
     };
     this.db.prepare(`INSERT INTO account_rests VALUES(?,?,?,?) ON CONFLICT(owner,pool,account) DO UPDATE SET data=excluded.data`)
       .run(owner, pool, account, JSON.stringify(saved));
@@ -66,8 +68,12 @@ function restored(data: string, now: number): AccountState | null {
   for (const [model, until] of Array.isArray(saved.models) ? saved.models : [])
     if (typeof model === "string" && time(until)) state.models.set(model, until);
   const resting = state.restUntil > 0 || state.limitedUntil > 0 || state.models.size > 0;
-  const recent = typeof saved.savedAt === "number" && now - saved.savedAt < rateMemoryMs;
-  if (recent && typeof saved.rateFailures === "number" && saved.rateFailures > 0) state.rateFailures = Math.min(64, Math.trunc(saved.rateFailures));
+  const lastRate = typeof saved.lastRateAt === "number" ? saved.lastRateAt : saved.savedAt;
+  const recent = typeof lastRate === "number" && now - lastRate < rateMemoryMs;
+  if (recent && typeof saved.rateFailures === "number" && saved.rateFailures > 0) {
+    state.rateFailures = Math.min(64, Math.trunc(saved.rateFailures));
+    state.lastRateAt = lastRate;
+  }
   if (!resting && !state.rateFailures) return null;
   if (resting && typeof saved.lastError === "string") state.lastError = saved.lastError.slice(0, 300);
   return state;

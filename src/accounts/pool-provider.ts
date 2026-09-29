@@ -57,6 +57,8 @@ export interface PoolHooks {
 export const sameAccountWaitMs = 5_000;
 /** A plan window with less than this share left (percent) is spent: a 429 from it is its plan limit. */
 const spentShare = 1;
+/** A run of rate limits is forgotten a day after the last one (openclaw usage-failure-state's FAILURE_WINDOW_MS). */
+const rateMemoryMs = 24 * 60 * 60_000;
 
 /** mac7/lockdown-fix: what a Trunk's call is told when no key may answer it (see trunk-guard.ts). */
 export { trunkSignInRefusal };
@@ -86,9 +88,9 @@ export class AccountLimitError extends Error {
  * the model list rests the whole connection and the task moves to the next one in the fallback order.
  */
 export class EveryKeyRestingError extends ProviderHttpError {
-  constructor(waitMs: number, reasons: string) {
+  constructor(waitMs: number, reasons: string, what: "key" | "account" = "key") {
     super(429, Math.max(0, waitMs), "rate_limit_exceeded");
-    this.message = `Every key of this connection is resting or switched off (${reasons}).`;
+    this.message = `Every ${what} of this connection is resting or switched off (${reasons}).`;
   }
 }
 
@@ -261,9 +263,12 @@ export class AccountPoolProvider {
 
   /** A plain rate limit rests as long as Retry-After says, else 30 s doubling with each one in a row (rateBackoffMs). */
   private rateRest(state: AccountState, failure: Failure, error: unknown): Failure {
+    const now = this.hooks.now();
+    if (state.lastRateAt !== undefined && now - state.lastRateAt > rateMemoryMs) state.rateFailures = 0;
     state.rateFailures = (state.rateFailures ?? 0) + 1;
+    state.lastRateAt = now;
     const said = httpFailure(error)?.retryAfterMs;
-    return { ...failure, untilMs: this.hooks.now() + (said ?? rateBackoffMs(state.rateFailures)) };
+    return { ...failure, untilMs: now + (said ?? rateBackoffMs(state.rateFailures)) };
   }
 
   /** The step line the moment the work moves on: to which account, which one it left, why, and when that one is back. */
@@ -292,6 +297,11 @@ export class AccountPoolProvider {
     // wait a moment and ask it again, rather than end naming a later account whose reset is unknown.
     const now = this.hooks.now(), justEnded = (state: AccountState): boolean => state.limitKnown === true && state.limitedUntil > now - 60_000;
     const limited = on.filter((account) => this.state(account.id).limitedUntil > now || justEnded(this.state(account.id)));
+    // A sign-in that is only resting after a rate limit is back in seconds: said as a rate limit that lasts until the
+    // first one is ready (as for keys), so the task waits or falls back instead of stopping on a plan limit it never hit.
+    const resting = on.filter((account) => this.state(account.id).limitedUntil <= now && this.why(account) !== null);
+    if (resting.length && !on.some((account) => this.state(account.id).limitedUntil <= now && justEnded(this.state(account.id))))
+      throw new EveryKeyRestingError(this.firstReady(resting) - now, on.map((account) => `${account.label}: ${this.why(account) ?? "ready"}`).join("; "), "account");
     const soonest = [...limited].sort((a, b) => this.state(a.id).limitedUntil - this.state(b.id).limitedUntil)[0] ?? on[0]!;
     throw this.limitError(pool, on, soonest);
   }

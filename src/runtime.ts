@@ -1096,7 +1096,7 @@ export class Runtime {
     const resumed = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
     if (options.sessionId && !resumed) throw new Error("That conversation is not a helper's own, so it cannot be carried on as one.");
     const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
-    context.signal.throwIfAborted();
+    try { context.signal.throwIfAborted(); } catch (error) { connection.release?.(); throw error; } // MODEL-050: its account lease
     let started: Run | undefined;
     const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
     void startedAt;
@@ -1107,7 +1107,7 @@ export class Runtime {
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
       try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
-    }, () => undefined);
+    }, () => { connection.release?.(); }); // MODEL-050: a helper that failed before it settled gives its account back too
     for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
     if (!started) throw new Error("The background specialist did not start");
     if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200), sessionId: started.sessionId });

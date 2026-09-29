@@ -29,6 +29,8 @@ export interface AccountState {
   limitKnown?: boolean;
   /** Plain rate limits (429s that are not a plan limit) in a row with no answer between, for the growing rest. */
   rateFailures?: number;
+  /** When the last of them came (ms); a run of them older than a day is forgotten (openclaw's FAILURE_WINDOW_MS). */
+  lastRateAt?: number;
 }
 export const freshState = (): AccountState =>
   ({ restUntil: 0, models: new Map(), limitedUntil: 0, lastUsedAt: 0, uses: 0, lastError: null, remaining: null });

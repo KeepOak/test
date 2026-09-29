@@ -59,8 +59,28 @@ test("a 429 without a usage-limit body on a sign-in rests seconds, not days", as
   assert.equal(p.states.get("a").models.get("m") - again.now(), 60_000, "a second run of 429s rests twice as long");
   assert.equal(rateBackoffMs(1), 30_000);
   assert.equal(rateBackoffMs(30), 24 * 60 * 60_000, "never more than a day");
-  const lone = pool({ accounts: ["a"], states: metered(), script: { original: [burst] } });
-  await assert.rejects(lone.ask(), (error) => error instanceof ProviderHttpError && error.status === 429, "a lone sign-in hands back the 429, not a plan limit");
+});
+
+test("sign-ins that are only resting after a rate limit say so as a rate limit, never as a plan limit", async () => {
+  const burst = () => new ProviderHttpError(429, undefined, "rate_limit_exceeded");
+  const both = pool({ states: metered(), script: { a: [burst(), burst()], b: [burst(), burst()] } });
+  await assert.rejects(both.ask(), (error) => error instanceof ProviderHttpError && error.status === 429);
+  both.tick(5_000);
+  await assert.rejects(both.ask(), (error) => {
+    assert.equal(error.name, "ProviderHttpError", "not an AccountLimitError, so the task may wait or fall back");
+    assert.equal(error.retryAfterMs, 25_000, "back when the first rest ends");
+    assert.doesNotMatch(error.message, /plan limit/);
+    return true;
+  }, "asked again inside the 30 seconds, both are resting");
+  const resetsAt = Math.floor((at + 3 * 60 * 60_000) / 1000);
+  const limit = await refusal({ error: { type: "usage_limit_reached", resets_at: resetsAt } });
+  const mixed = pool({ script: { a: [limit], b: [burst(), burst()] } });
+  await assert.rejects(mixed.ask());
+  await assert.rejects(mixed.ask(), (error) => {
+    assert.notEqual(error.name, "AccountLimitError", "one account is back in seconds, so this is not a plan limit");
+    assert.equal(error.retryAfterMs, 30_000);
+    return true;
+  });
 });
 
 test("a usage_limit_reached body benches the account until its resets_at", async () => {
