@@ -149,7 +149,9 @@ export function ledgerTokens(usage: Record<string, number>): TokenCounts & { bas
   if ((usage.reports ?? 0) > 0 && ((usage.reportedInput ?? 0) + (usage.reportedOutput ?? 0)) > 0)
     return { input: usage.reportedInput ?? 0, output: usage.reportedOutput ?? 0, basis: "reported",
       // Parts of the input served from or written to the prompt cache, priced at their own rates (src/pricing.ts).
-      cached: usage.reportedCachedInput ?? 0, cacheWrite: usage.reportedCacheWrite ?? 0, cacheWrite1h: usage.reportedCacheWrite1h ?? 0 };
+      ...(usage.reportedCachedInput ? { cached: usage.reportedCachedInput } : {}),
+      ...(usage.reportedCacheWrite ? { cacheWrite: usage.reportedCacheWrite } : {}),
+      ...(usage.reportedCacheWrite1h ? { cacheWrite1h: usage.reportedCacheWrite1h } : {}) };
   return { input: usage.estimatedInput ?? 0, output: usage.estimatedOutput ?? 0, basis: "estimated" };
 }
 
