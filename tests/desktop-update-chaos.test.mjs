@@ -22,7 +22,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { connected, exe, files, inPage, inspector, listen, progress, sha256, stockDist, until, versionFolder, wait } from "./fixtures/versioned-install.mjs";
+import { connected, drawn, exe, files, inPage, inspector, listen, progress, sha256, stockDist, until, versionFolder, wait } from "./fixtures/versioned-install.mjs";
 import { pointerFiles, pruneAppFolders, readPointer, writePointer } from "../dist/desktop/app-folders.js";
 import { shellUpMarker, windowsSwitchScript, failureName } from "../dist/desktop/shell-switch.js";
 import { hiddenLauncher } from "../dist/desktop/hand-over.js";
@@ -142,6 +142,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
   try { await body(); } catch (error) {
     progress(`FAILED: ${error.stack}`);
     progress(`switch log:\n${await readFile(join(scratch, "apply-update.log"), "utf8").catch(() => "(none)")}`);
+    progress(`first shell log:\n${(await readFile(join(home, "shell-first.log"), "utf8").catch(() => "(none)")).split("\n").slice(-40).join("\n")}`);
     for (const port of [base + 1, base + 2, base + 3, base + 4])
       progress(`shell ${port} log:\n${(await readFile(join(home, `shell-${port}.log`), "utf8").catch(() => "(none)")).split("\n").slice(-40).join("\n")}`);
     throw error;
@@ -155,12 +156,13 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
 
     // The first version, started as the tray start does: hidden, never shown.
     const output = openSync(join(home, "first-shell.log"), "a");
-    const first = spawn(join(folders[0], exe), ["--start-minimized", inspect(base)], { env: env(), detached: true, stdio: ["ignore", output, output], windowsHide: true });
+    const first = spawn(join(folders[0], exe), ["--start-minimized", inspect(base), "--enable-logging=file", `--log-file=${join(home, "shell-first.log")}`], { env: env(), detached: true, stdio: ["ignore", output, output], windowsHide: true });
     t.after(() => { try { closeSync(output); } catch { /* closed */ } });
     started.add(first.pid); first.unref();
     let shell = await inspector(base).catch(async (error) => { throw new Error(`${error.message}\n${await readFile(join(home, "first-shell.log"), "utf8").catch(() => "")}`); });
     shells.push(shell);
     progress("first shell inspector");
+    assert.equal(await drawn(shell), false, "the window stays hidden: only its page is told it is in use");
     await connected(shell);
     progress("first shell connected");
     progress("turning updating off");
@@ -168,6 +170,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
     await inPage(shell, `await fetch("/api/comfort", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ card: "notify", values: { autoUpdate: "off" } }) }).then((r) => { if (!r.ok) throw new Error("comfort " + r.status); });`);
     await inPage(shell, `for (const [path, body] of [["/api/onboarding", { done: true }], ["/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true }]])
       await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); location.reload();`).catch(() => undefined);
+    await drawn(shell);
     await connected(shell);
     progress("first shell onboarded");
     const running = JSON.parse(await readFile(join(dataDir, "running.json"), "utf8"));
@@ -274,6 +277,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       started.add(up.pid);
       assert.equal(up.restored, true, "the new window put back what the old one had open before saying it was up");
       shell = await inspector(base + at); shells.push(shell);
+      await drawn(shell);
       assert.equal(await shell.evaluate("require('electron').app.getVersion()"), versions[at]);
       assert.equal(await shell.evaluate("process.execPath"), join(folders[at], exe), "it runs from its own folder");
       const kept = await until("the draft", () => inPage(shell, `return document.getElementById("prompt")?.value || null;`));
@@ -324,6 +328,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
     await switchTo(versions[3], versions[4], base + 4);
     await until(`${versions[3]} back`, async () => /the version there was is back; starting it/.test(await readFile(join(scratch, "apply-update.log"), "utf8")), 180_000, 500);
     shell = await inspector(base + 4); shells.push(shell);
+    await drawn(shell);
     assert.equal(await shell.evaluate("require('electron').app.getVersion()"), versions[3]);
     assert.equal((await readPointer(root))?.folder, `app-${versions[3]}`, "the pointer went back");
     const status = await until("the failure to be said", () => inPage(shell, `const status = await window.branchDesktop.updateStatus(); return status.phase === "error" ? status : null;`));

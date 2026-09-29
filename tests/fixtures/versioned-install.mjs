@@ -118,6 +118,31 @@ export const inPage = (shell, code) => shell.evaluate(`(async () => {
   const window = BrowserWindow.getAllWindows().find((one) => !one.isDestroyed() && one.webContents.getURL().includes("desktop=1"));
   return window ? await window.webContents.executeJavaScript(${JSON.stringify(`(async () => { ${code} })()`)}, true) : undefined;
 })()`);
-export const connected = (shell) => until("the window to connect", () => inPage(shell, `
+export const connected = async (shell) => {
+  let looks = 0;
+  return until("the window to connect", async () => {
+    // Every half minute, what the window shows instead, so a wait that never ends says why.
+    if (++looks % 60 === 0) progress(`waiting to connect; the window shows: ${await inPage(shell, `return JSON.stringify({ href: location.href, ready: document.readyState, body: (document.body?.innerText ?? "").slice(0, 400), ob: !!document.querySelector(".ob9"), errors: window.__chaosErrors ?? null, desktop: typeof window.branchDesktop, state: await fetch("/api/state").then(async (r) => r.status + " " + (await r.text()).slice(0, 200), (e) => "fetch failed: " + e.message), health: await fetch("/gateway/health").then(async (r) => r.status + " " + (await r.text()).slice(0, 300), (e) => "fetch failed: " + e.message) });`).catch((error) => error.message)}`);
+    return inPage(shell, `
   const machines = document.querySelector('#statusbar [data-act="machines"]');
-  return !!document.querySelector('#statusbar [data-act="updmenu"]') && /^Connected/.test(machines?.textContent ?? "");`), 180_000, 500);
+  return !!document.querySelector('#statusbar [data-act="updmenu"]') && /^Connected/.test(machines?.textContent ?? "");`);
+  }, 180_000, 500);
+};
+
+/**
+ * A tray start keeps the window unpainted until it is first shown (main.ts paintWhenInitiallyHidden), so its page draws
+ * nothing. To read and type in it without ever showing it, the page is told it is in use, the way Playwright's desktop
+ * tests are (CDP page lifecycle and focus emulation). Only for reading: a switch's "up" is proved before this is done.
+ */
+export const drawn = (shell) => shell.evaluate(`(async () => {
+  const { BrowserWindow } = require("electron");
+  for (let i = 0; i < 150 && !BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes("desktop=1")); i++) await new Promise((r) => setTimeout(r, 200));
+  const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("desktop=1"));
+  if (!win) throw new Error("no window");
+  const dbg = win.webContents.debugger;
+  if (!dbg.isAttached()) dbg.attach("1.3");
+  await dbg.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+  await dbg.sendCommand("Page.enable");
+  await dbg.sendCommand("Page.setWebLifecycleState", { state: "active" });
+  return win.isVisible();
+})()`);
