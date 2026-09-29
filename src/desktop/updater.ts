@@ -296,6 +296,7 @@ export class Updater {
   private hosted: HostedBuild | null = null;
   /** Why the install under way was called off while it built or waited (the owner changed their mind), or null. */
   private calledOff: string | null = null;
+  private devToolsFound = false;
   constructor(private readonly options: UpdaterOptions) {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
@@ -717,8 +718,12 @@ export class Updater {
    */
   private async newestDevBuild(): Promise<ReleaseInfo> {
     const run = this.options.devRun ?? realRun(this.platform);
-    const missing = await devToolsMissing(run);
-    if (missing) throw new Error(missing);
+    // Found once, then trusted for this run of the app: a look every minute need not start three programs each time.
+    if (!this.devToolsFound) {
+      const missing = await devToolsMissing(run);
+      if (missing) throw new Error(missing);
+      this.devToolsFound = true;
+    }
     const tip = await remoteHead(run, this.devRepo());
     // The newest change whose whole suite passed, not simply the newest (dev-build.ts newestGreen).
     const commit = (await this.options.greenCommit?.(this.devRepo(), tip).catch(() => null)) ?? tip;
@@ -779,7 +784,8 @@ export class Updater {
     };
     // The real build runs in a low-priority process of its own (build-host.ts), so neither this process nor the
     // computer is kept busy by it; a runner handed in (tests) runs here.
-    const built = await (this.options.devRun ? buildDev(this.options.devRun, plan) : this.hostedBuild(plan, log));
+    // The real build takes GitHub's own build of the change when it is there and checks out (build-output.ts).
+    const built = await (this.options.devRun ? buildDev(this.options.devRun, plan) : this.hostedBuild({ ...plan, builtOutput: { repo: this.devRepo() } }, log));
     // Without the change the running version was built from, its version is the only way to see going back.
     if (!this.installed.commit && compareVersions(built.version, this.installed.version) < 0)
       throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);

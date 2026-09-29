@@ -20,7 +20,12 @@ export interface UpdatePlan {
 
 const lastKey = "comfort-update-last";
 export const checkEveryMs = 24 * 60 * 60 * 1000;
-export const betaCheckEveryMs = 5 * 60 * 1000;
+/**
+ * Beta looks once a minute: a look is one small git request (no rate-limited API), and GitHub has built the change in
+ * about two minutes (src/desktop/build-output.ts), so a merged change reaches the app in minutes, not the average of
+ * two and a half spent waiting for a five-minute look.
+ */
+export const betaCheckEveryMs = 60 * 1000;
 
 export function lastUpdateCheck(store: Pick<Store, "get">, owner: string): string | null {
   const at = store.get("settings", owner, lastKey)?.data?.at;
@@ -221,7 +226,7 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
   if (install && facts.updaterPhase === "idle")
     return plan("check", "Checking for an update that may have waited through the last restart.");
   if (!due) return plan("nothing", settings.releaseChannel === "beta"
-    ? "Beta updates were looked for less than five minutes ago."
+    ? "Beta updates were looked for less than a minute ago."
     : "Updates were looked for less than a day ago.");
   return plan("check", install ? "Looking for a newer version to install." : "Looking for a newer version to tell you about.");
 }
