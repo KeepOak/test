@@ -1151,6 +1151,8 @@ ${result.output || "(it said nothing)"}`;
   };
   const monitors = new Monitors(store, web, deliverMessage, watchTrunks);
   registerMonitors(registry, monitors);
+  // A check-in may open the pages the owner watches, as it may its own checklist's (src/fetch-provenance.ts).
+  scheduler.heartbeat.watchedPages = (owner) => monitors.list(owner).filter((watch) => watch.kind === "page").map((watch) => watch.target);
   // Wave 8: watching one rectangle of the screen for a change. Off unless the owner switches it on
   // AND has using the screen switched on; the picture is never kept, only a fingerprint of it.
   const screenWatches = new ScreenWatches(store, (region) => desktop.captureRegion(region),

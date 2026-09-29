@@ -9,6 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -125,4 +126,69 @@ test("a proposal is always news, and a dismissed one never runs", async (t) => {
   assert.equal(heartbeat.state("local").proposals[0].status, "dismissed");
   await assert.rejects(api(app, `/api/heartbeat/proposals/${proposal.id}/accept`), /no longer waiting/);
   assert.equal(provider.requests.length, 2, "the dismissed task never ran");
+});
+
+/* ------------------------------------------------ where a check-in's web addresses come from */
+
+/** Two pages on this computer: /news names /story in its text; nothing else is there. */
+async function site(t) {
+  const server = createServer((request, response) => {
+    const at = `http://127.0.0.1:${server.address().port}`;
+    const pages = { "/news": `<html><body><h1>News</h1><p>The full story is at ${at}/story today.</p></body></html>`,
+      "/story": "<html><body><h1>Story</h1><p>All fine.</p></body></html>" };
+    const page = pages[new URL(request.url, at).pathname];
+    response.writeHead(page ? 200 : 404, { "content-type": "text/html" }).end(page ?? "no");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  return `http://127.0.0.1:${server.address().port}`;
+}
+async function webFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), "branch-hb-web-"));
+  const provider = scripted();
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider, web: { allowPrivateAddresses: true } });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  saveQuietSwitches(app.store, "local", { checkIn: "on" });
+  return { app, provider, heartbeat: app.scheduler.heartbeat };
+}
+const outcomes = (app, runId, name) => app.store.events(runId).filter((e) => ["tool.completed", "policy.denied", "tool.failed"].includes(e.kind) && e.data.name === name)
+  .map((e) => (e.kind === "tool.completed" ? "opened" : `refused: ${e.data.reason ?? e.data.error}`));
+
+test("a check-in opens only addresses from its checklist or from pages it already read, never one it made up", async (t) => {
+  const at = await site(t);
+  const { app, provider, heartbeat } = await webFixture(t);
+  heartbeat.configure("local", { timezone: "UTC", activeHours: null, checklist: `- anything new on ${at}/news?` });
+  provider.replies.push(
+    call("web.fetch", { url: `${at}/news` }), // written in the checklist
+    call("web.fetch", { url: `${at}/story` }), // returned by the page it just read
+    call("web.fetch", { url: `${at}/story?notes=the-owner-private-notes` }), // made up: carries what it read
+    call("web.page", { url: `${at}/elsewhere` }), // made up, through another tool
+    call("heartbeat.respond", { notify: false }), "ok");
+  assert.equal(await heartbeat.checkNow("local"), "quiet");
+  const run = lastRun(heartbeat), events = app.store.events(run);
+  const fetches = events.filter((e) => e.kind === "tool.completed" && e.data.name === "web.fetch").map((e) => e.data.result.url);
+  assert.deepEqual(fetches, [`${at}/news`, `${at}/story`], "the checklist's page and the page it linked to were read");
+  const denied = events.filter((e) => e.kind === "policy.denied").map((e) => e.data.reason);
+  assert.equal(denied.length, 2, "both made-up addresses were refused");
+  assert.match(denied[0], /only opens web addresses from its checklist, your sources, or a search or page it already read/);
+  assert.match(denied[0], /notes=the-owner-private-notes came from none of those/);
+  assert.ok(!events.some((e) => e.kind === "policy.ask"), "refused outright, never asked");
+});
+
+test("the owner's sources count, and a task that is not a check-in is left to the usual rules", async (t) => {
+  const at = await site(t);
+  const { app, provider, heartbeat } = await webFixture(t);
+  heartbeat.configure("local", { timezone: "UTC", activeHours: null, checklist: "- has anything I watch changed?" });
+  await app.monitors.create("local", { url: `${at}/story`, every: 60 });
+  app.store.save("settings", "local", "asks-source-sync-sources", { sources: [{ id: "repo", kind: "github-issues", target: "keepoak/example" }] });
+  provider.replies.push(call("web.fetch", { url: `${at}/story` }), call("heartbeat.respond", { notify: false }), "ok");
+  assert.equal(await heartbeat.checkNow("local"), "quiet");
+  const run = lastRun(heartbeat);
+  assert.deepEqual(outcomes(app, run, "web.fetch"), ["opened"], "a watched page may be opened");
+  const check = (runId, url) => app.runtime.callChecks.map((c) => c("web.fetch", { url }, { runId, owner: "local" })).find((a) => a !== null) ?? null;
+  assert.equal(check(run, "https://github.com/keepoak/example"), null, "a GitHub source may be opened");
+  assert.match(String(check(run, "https://github.com/keepoak/example?x=1")), /came from none of those/);
+  provider.replies.push("done");
+  const ordinary = await app.runtime.run({ prompt: "an ordinary task" });
+  assert.equal(check(ordinary.id, "https://example.com/made-up"), null, "an owner's own task is not held to this");
 });

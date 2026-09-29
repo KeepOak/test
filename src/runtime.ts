@@ -801,6 +801,8 @@ export class Runtime {
   // key or password to the owner first. Used at three marked places below: checkPolicy, complete
   // and callTool.
   readonly leakGuard = new LeakGuard((runId, kind, detail) => this.store.event(runId, kind, detail));
+  /** Refusals other parts add for their own tasks: each answers why a call may not run, or null to let the rules decide. */
+  readonly callChecks: ((tool: string, args: unknown, context: ToolContext) => string | null)[] = [];
   /** What an address a task opens carries out (src/egress-guard.ts): asked about, noted and, past a limit, refused. */
   readonly egress = new EgressGuard((runId, kind, detail) => this.store.event(runId, kind, detail));
   // --- end mac2/leak-guard ---
@@ -4519,6 +4521,12 @@ ${run.output.slice(0, 6000)}`;
       this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args),
         target: "", reason: screenWithheldRefusal, screen: "withheld" });
       return { refusal: { ok: false, error: screenWithheldRefusal }, sandbox: null, backend: null, paths: null };
+    }
+    // A refusal a part of Branch adds for its own tasks (a check-in's web addresses, src/heartbeat.ts), before any rule.
+    const refused = this.callChecks.map((check) => check(call.name, args, context)).find((answer) => answer !== null);
+    if (refused) {
+      this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args), target: "", reason: refused });
+      return { refusal: { ok: false, error: refused }, sandbox: null, backend: null, paths: null };
     }
     // Wave mac3 (tool-safety): a second model may look at a risky or unknown call first; it can only
     // make the answer stricter, or confirm that a tool which does not say only reads (src/approval-reviewer.ts).
