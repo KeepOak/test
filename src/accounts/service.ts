@@ -346,8 +346,10 @@ export class AccountsService {
   private record(pool: string, account: Account, model: string, completion: Completion): void {
     const usage = completion.usage ?? { input: 0, output: 0 };
     const kind = this.pool(pool)?.kind;
+    // The cache reads and writes are parts of the input, priced at their own rates (src/pricing.ts).
+    const tokens = { input: usage.input, output: usage.output, cached: usage.cachedInput, cacheWrite: usage.cacheWrite, cacheWrite1h: usage.cacheWrite1h };
     const cost = kind === "api-key"
-      ? estimateCost(model, usage, pricingSettings(this.deps.store, this.deps.owner).overrides).amount ?? 0 : 0;
+      ? estimateCost(model, tokens, pricingSettings(this.deps.store, this.deps.owner).overrides).amount ?? 0 : 0;
     this.ledger.record(this.deps.owner, pool, account.id, { input: usage.input, output: usage.output, costUsd: cost }, new Date(this.now()));
   }
 
