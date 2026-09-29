@@ -35,18 +35,3 @@ test("a display is framed only while every window the view must leave out is exc
   assert.deepEqual(frame.screen, display.bounds);
 });
 
-// Diagnostic only (no assertion): how long PowerShell takes to start and load an assembly with the environment the
-// screen scripts once had, the one they have now, and the whole environment, side by side on this runner.
-test("diagnostic: PowerShell start with each environment", { timeout: 200000 }, async () => {
-  const { execFile } = await import("node:child_process");
-  const { scriptEnvironment, powerShellPath } = await import("../dist/integrations/desktop-script.js");
-  const now = scriptEnvironment();
-  const keep = ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATH", "PATHEXT", "USERPROFILE", "SYSTEMDRIVE"];
-  const before = Object.fromEntries(keep.filter((k) => now[k]).map((k) => [k, now[k]]));
-  const time = (name, env) => new Promise((done) => {
-    const started = Date.now();
-    execFile(powerShellPath, ["-NoProfile", "-NonInteractive", "-Command", "Add-Type -AssemblyName System.Drawing; [Console]::Out.Write('ok')"],
-      { env, timeout: 180000, windowsHide: true }, (error, stdout) => done(`${name}: ${Date.now() - started} ms ${error ? error.message : stdout}`));
-  });
-  for (const line of await Promise.all([time("before", before), time("now", now), time("whole", process.env)])) console.log(`# ${line}`);
-});

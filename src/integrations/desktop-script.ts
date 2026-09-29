@@ -51,14 +51,21 @@ export function captureInputPayload(action: DesktopAction, payload: Record<strin
   return checked;
 }
 
+/**
+ * computer-control: the two modules Windows ships that hold every command the screen scripts use, loaded by their own
+ * paths first. Otherwise the first command (Add-Type) sent PowerShell looking through every module installed on the
+ * computer, which in the scripts' small environment took 75 s on a hosted build machine (0.45 s with the whole
+ * environment, whose module cache the scripts do not see); loaded by path it starts in about a second.
+ */
+export const builtinModules = String.raw`# The built-in modules this script uses, by path, so no command is looked for among the others.
+Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')
+Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1')`;
+
 export const desktopScript = String.raw`
 param([Parameter(Mandatory=$true)][string]$Action, [Parameter(Mandatory=$true)][string]$Payload)
 $ErrorActionPreference = 'Stop'
 $script:started = [System.Diagnostics.Stopwatch]::StartNew()
-# The two modules Windows ships that hold every command this script uses, loaded by their own paths so no command is
-# looked for among the other modules installed on the computer.
-Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')
-Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1')
+${builtinModules}
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
 Add-Type -ReferencedAssemblies Accessibility -TypeDefinition @'
 using System;
@@ -1041,28 +1048,18 @@ Invoke-DesktopAction $Action
 const timeoutMs = 25000;
 const maxOutputBytes = 512 * 1024;
 
-/** Folders and facts Windows itself sets for every program. */
-const windowsDefined = ['LOCALAPPDATA', 'APPDATA', 'ProgramData', 'ALLUSERSPROFILE', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
-  'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS'];
 /**
  * The few settings the script needs and nothing else: where Windows is, a place for temporary
  * files, and just enough of the search path for Windows to find a program by name and to work out
  * which program opens a given file. None of the owner's own environment is passed on.
- *
- * computer-control: with only those, each start of the script took 25 to 80 s on a hosted build machine, where the
- * same PowerShell work started in two seconds with the whole environment. So PowerShell's module path is Windows'
- * own modules, and the folders and processor Windows itself defines for every program (never the owner's own
- * settings) are passed on: .NET and PowerShell keep their caches there and look there for what they load.
  */
 export function scriptEnvironment(root = process.env.SYSTEMROOT ?? 'C:\\Windows'): NodeJS.ProcessEnv {
   return {
     SYSTEMROOT: root, WINDIR: root, TEMP: tmpdir(), TMP: tmpdir(),
-    PSModulePath: `${root}\\System32\\WindowsPowerShell\\v1.0\\Modules`,
     PATH: `${root}\\system32;${root}`,
     PATHEXT: '.COM;.EXE;.BAT;.CMD',
     ...(process.env.USERPROFILE ? { USERPROFILE: process.env.USERPROFILE } : {}),
     ...(process.env.SYSTEMDRIVE ? { SYSTEMDRIVE: process.env.SYSTEMDRIVE } : {}),
-    ...Object.fromEntries(windowsDefined.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : []))),
   };
 }
 

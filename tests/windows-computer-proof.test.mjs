@@ -62,16 +62,25 @@ test("the real script reads parts with refs, presses a named button without the 
  * the owner, with a Stop that works there. On the runner the real notice script shows its real window; Branch's own
  * script lists it (on top), reads its words and presses its Stop by name, as someone at that computer would click it.
  */
-test("a held paired computer shows a topmost notice naming the owner, and its Stop ends the hold", { timeout: 300000 }, async () => {
+test("a held paired computer shows a topmost notice naming the owner, and its Stop ends the hold", { timeout: 300000 }, async (t) => {
   const { NodeActions } = await import("../dist/devices/node/actions.js");
   const { noticeTitle } = await import("../dist/devices/node/commands.js");
   const notice = new NodeActions({ os: "win32", identityDir: folder }).startNotice("Proof Owner");
-  assert.equal(await notice.shown, true, "the notice window came up");
+  t.after(() => notice.close());
+  const up = await notice.shown;
   let said = null;
   void notice.stopped.then((why) => { said = why; });
-  const { windows } = await runner.run("windows", {}, signal());
-  const shown = list(windows).find((w) => w.title === noticeTitle);
-  assert.ok(shown, `the notice is listed: ${JSON.stringify(list(windows).map((w) => w.title))}`);
+  console.log(`# the notice came up: ${up}; stopped: ${said}`);
+  assert.equal(up, true, "the notice window came up");
+  // The window is listed once Windows shows it, which may be a moment after the notice says it is up.
+  let windows = [], shown;
+  for (let i = 0; i < 20 && !shown; i++) {
+    windows = list((await runner.run("windows", {}, signal())).windows);
+    shown = windows.find((w) => w.title === noticeTitle);
+    if (!shown) await new Promise((done) => setTimeout(done, 500));
+  }
+  console.log(`# the windows: ${JSON.stringify(windows.map((w) => [w.title, w.className, w.topmost, w.x, w.y]))}`);
+  assert.ok(shown, "the notice is listed");
   assert.equal(shown.topmost, true, "it stands on top of every window");
   const nodes = list((await runner.run("read", { handle: shown.handle, limit: 30 }, signal())).nodes);
   console.log(`# the notice as read: ${JSON.stringify(nodes.map((n) => [n.role, n.name]))}`);

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { assertRealScreenAllowed } from './real-screen-guard.js'; // dogfood follow-up
 import { tmpdir } from 'node:os';
-import { DesktopScriptRunner, powerShellPath, scriptEnvironment, type PosixDesktopOptions } from './desktop-script.js';
+import { DesktopScriptRunner, builtinModules, powerShellPath, scriptEnvironment, type PosixDesktopOptions } from './desktop-script.js';
 
 /**
  * The small notice that sits on top of everything while the assistant is using the screen, with a
@@ -17,6 +17,7 @@ export const bannerTitle = 'Branch is using your screen';
 
 const bannerScript = String.raw`
 $ErrorActionPreference = 'Stop'
+${builtinModules}
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Branch is using your screen'
