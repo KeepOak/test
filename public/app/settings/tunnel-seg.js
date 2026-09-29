@@ -24,7 +24,7 @@ export function tunnelSeg() {
   const title = W("reach-webhooks-from-outside");
   const running = T.state?.status?.running ? T.state.settings?.program ?? null : null;
   const opt = (v, words) => `<button type="button" aria-pressed="${T.state ? String((running ?? "off") === v) : "false"}" data-act="tunnel-seg" data-v="${v}"${T.busy ? " disabled" : ""}>${esc(words)}</button>`;
-  const note = running && T.state?.status?.address ? W("tunnel-running") : "";
+  const note = running && T.state?.status?.address ? W("tunnel-running") : t("personal.tunnel.purpose");
   return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("off", t("accounts.switch.off"))}${PROGRAMS.map(([v, words]) => opt(v, words)).join("")}</span></span><small>${esc(note)}</small></div>`;
 }
 
