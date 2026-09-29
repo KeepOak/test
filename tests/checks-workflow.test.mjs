@@ -25,7 +25,11 @@ test("the whole suite runs on every pull request and once per batch of merges in
    suite ran, since promote follows it. Mutations: drop `test "$PLAN" = success` (a crashed plan skips every share and
    would pass), let a push run a plan (promote could follow a partial run) → this test goes red. */
 test("the suite ends in one required job, and nothing in it can hold a run past fifteen minutes", () => {
-  assert.deepEqual(workflow.jobs.verify.needs, ["plan", "test"]);
+  assert.deepEqual(workflow.jobs.verify.needs, ["plan", "test", "local-voice"]);
+  // RES-709: the real, offline speech proof is part of what green means, inside the same ceiling.
+  assert.ok(workflow.jobs["local-voice"]["timeout-minutes"] <= 15);
+  assert.match(JSON.stringify(workflow.jobs["local-voice"].steps), /BRANCH_REQUIRE_WHISPER/);
+  assert.match(workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n"), /test "\$VOICE" = success/);
   assert.equal(workflow.jobs.verify.name, "verify-suite");
   // A cancelled run (replaced by a newer push, or waiting for a CI slot) stays cancelled rather than red.
   assert.equal(workflow.jobs.verify.if, "${{ !cancelled() }}");
