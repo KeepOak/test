@@ -12,13 +12,14 @@ export const chatgptModels = [
   // Checked against a real ChatGPT account on 2026-09-17: plain gpt-5.6 and gpt-5.4 are refused with
   // "not supported when using Codex with a ChatGPT account"; these four answer. On 2026-09-24 the account's own model
   // list (as the Codex CLI reads it) added the GPT-6 family, and GPT-6 Sol at medium is the owner's choice. GPT-6 Astra
-  // is left out on purpose: it spends the plan fastest, and every model here is also a fallback when one runs out.
+  // is an explicit choice; src/chatgpt-presets.ts keeps it out of automatic fallbacks to preserve that spending choice.
   { id: "gpt-6-sol", label: "GPT-6 Sol", reasoning: "medium" },
   { id: "gpt-6-luna", label: "GPT-6 Luna", reasoning: "medium" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol (light)", reasoning: "low" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", reasoning: "medium" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", reasoning: "medium" },
   { id: "gpt-5.5", label: "GPT-5.5", reasoning: "medium" },
+  { id: "gpt-6-astra", label: "GPT-6 Astra", reasoning: "medium" },
 ] as const;
 
 export interface ChatGPTProviderOptions {
