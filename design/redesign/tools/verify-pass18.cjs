@@ -3,7 +3,7 @@
 //   Filled mode, on a folder seeded by seed-pass18.mjs (engine stopped while seeding):
 //                                       PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-pass18.cjs filled
 // SHOTS=<dir> also saves 1440 and 390 shots, light and dark.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, MODE = process.argv[2] ?? "empty", SHOTS = process.env.SHOTS;
 if (!PORT || !TOKEN) { console.error("PORT and TOKEN are required"); process.exit(2); }

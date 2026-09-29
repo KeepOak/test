@@ -104,6 +104,8 @@ export interface GoalState {
   lastRunId: string | null;
   /** Every round's task, in order, so undoing the goal (src/goal-undo.ts) knows exactly what it did. Absent on older goals. */
   runIds?: string[];
+  /** CHAT-185: a goal set from a chat runs every round as that chat's task. Never taken from a request body. */
+  origin?: { source: "channel"; permissions: string[] };
 }
 export interface Verdict { score: number; missing: string[]; done: boolean; blocked: string | null }
 
@@ -141,7 +143,7 @@ export class GoalMode {
     return recordedWrite(this.store, this.runtime.owner, byCard("goal-undo"), ["goal-undo"], () => saveGoalUndoSettings(this.store, this.runtime.owner, input));
   }
 
-  async start(input: GoalStart): Promise<GoalState> {
+  async start(input: GoalStart, origin?: { source: "channel"; permissions: string[] }): Promise<GoalState> {
     const wanted = GoalStartSchema.parse(input);
     if (this.settings().goal === "off") throw new Error(offNote);
     if (wanted.sessionId && this.live.has(wanted.sessionId)) throw new Error("This conversation is already working on a goal.");
@@ -149,6 +151,7 @@ export class GoalMode {
       sessionId: wanted.sessionId ?? "", objective: wanted.objective, status: "working", round: 0, maxRounds: wanted.maxRounds,
       score: null, best: 0, flatRounds: 0, missing: [], reason: "", checks: wanted.checks ?? null,
       startedAt: new Date(this.now()).toISOString(), elapsedMs: 0, activeSince: this.now(), lastRunId: null, runIds: [],
+      ...(origin ? { origin: { source: "channel", permissions: [...origin.permissions] } } : {}),
     };
     const started = new Promise<void>((resolve, reject) => {
       void this.drive(state, resolve).then(() => resolve(), (error: unknown) => reject(error));
@@ -248,6 +251,7 @@ export class GoalMode {
         return await this.runtime.run({
           prompt, signal: controller.signal, onTextDelta: () => undefined,
           ...(state.sessionId ? { sessionId: state.sessionId } : {}),
+          ...(state.origin ? { source: state.origin.source, permissions: state.origin.permissions } : {}),
           onStarted: (run) => {
             if (!state.sessionId) { state.sessionId = run.sessionId; this.live.set(run.sessionId, { controller, runId: null, ended }); }
             this.live.get(state.sessionId)!.runId = run.id;

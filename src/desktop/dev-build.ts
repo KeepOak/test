@@ -6,6 +6,7 @@ import { removeTree } from "./remove-tree.js";
 import { setPriority } from "node:os";
 import { activeDeadline, quietPriority, type BuildGate } from "./quiet-build.js";
 import { join, relative, sep } from "node:path";
+import { useBuiltOutput } from "./build-output.js";
 
 /**
  * The Beta update channel: like Hermes Desktop, Branch follows one line of work and builds the newest merged change
@@ -344,6 +345,13 @@ export interface DevBuildPlan {
    * (a copy built from another line of work). Only then is the never-go-back step left out; the updater checks it.
    */
   otherLineConfirmed?: boolean;
+  /**
+   * Where GitHub publishes its own build of each Beta change (build-output.ts): taken, once checked, instead of compiling
+   * here. Left out (tests, a runner handed in), the change is always compiled here.
+   */
+  builtOutput?: { repo: string; waitMs?: number };
+  /** A line for the build's log (what was waited for, why GitHub's build was not used). */
+  note?: (line: string) => void;
 }
 /** Windows: the app folder itself (nothing to zip and unzip again). macOS and Linux: the download, as a release has. */
 export type DevBuilt = { version: string; reusedPackages: boolean } & ({ folder: string } | { archive: string; checksumFile: string });
@@ -397,6 +405,21 @@ export async function fetchSource(run: Run, plan: Pick<DevBuildPlan, "repo" | "b
   return { source, git, lock, committedAt, version };
 }
 
+/**
+ * The change's compiled output: GitHub's own build of it when the plan names where to find it and it checks out in full
+ * (build-output.ts), otherwise `npm run build` here, as before. Answers where it came from.
+ */
+export async function compileChange(run: Run, plan: Pick<DevBuildPlan, "builtOutput" | "note" | "buildDir" | "commit">, source: string): Promise<"github" | "here"> {
+  if (plan.builtOutput) {
+    const got = await useBuiltOutput({ repo: plan.builtOutput.repo, commit: plan.commit, source,
+      ...(plan.builtOutput.waitMs !== undefined ? { waitMs: plan.builtOutput.waitMs } : {}), ...(plan.note ? { log: plan.note } : {}) });
+    if (got.used) { plan.note?.(`Used GitHub's build of this change (sha256 ${got.digest}), checked in ${Math.round(got.ms / 1000)} s; nothing was compiled here.`); return "github"; }
+    plan.note?.(`Compiling here: ${got.why}.`);
+  }
+  await run("npm", ["run", "build"], { cwd: source, timeoutMs: minutes(30), env: quietEnv(plan.buildDir), pausable: true });
+  return "here";
+}
+
 /** npm ci only when needed, and the stale outputs of removed sources taken out of dist/, before a build (live or packaged). */
 export async function readyToCompile(run: Run, plan: Pick<DevBuildPlan, "buildDir" | "onStage" | "platform" | "arch">, fetched: FetchedSource): Promise<boolean> {
   const platform = plan.platform ?? process.platform, arch = plan.arch ?? process.arch;
@@ -432,7 +455,7 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
   if (manifest?.scripts?.["package:desktop"] === packageSteps) {
     // The same three steps the commit's own `npm run package:desktop` runs, with the version stamped after compiling.
-    await run("npm", ["run", "build"], { cwd: source, timeoutMs, env, pausable });
+    await compileChange(run, plan, source);
     await stampDevVersion(source, committedAt, commit);
     await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env, pausable });
     await run("node", ["scripts/package-desktop.mjs", ...release], { cwd: source, timeoutMs, env, pausable });
