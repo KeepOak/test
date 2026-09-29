@@ -12,6 +12,8 @@ export const PreferencesSchema = z
     textSize: z.enum(["small", "medium", "large"]).default("medium"),
     density: z.enum(["comfortable", "compact"]).default("comfortable"),
     font: z.enum(["geist", "system"]).default("geist"),
+    /** Optional installed reading face; the theme's stack remains behind it for missing fonts/glyphs. */
+    readingFont: z.enum(["Atkinson Hyperlegible", "OpenDyslexic", "Lexend", "Arial", "Georgia", "Verdana", "Segoe UI"]).nullable().default(null),
     reduceMotion: z.boolean().default(false),
     /** The acorn toy in the side pane. Off unless the owner switches it on. */
     showAcorn: z.boolean().default(false),
