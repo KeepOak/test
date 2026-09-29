@@ -2,13 +2,15 @@ import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import type { ToolCall } from "./contracts.js";
 import {
-  decideFolder, discoverFolder, folderTrust, folderTrustMode, isFolderTrusted, needsAnswer,
+  decideFolder, discoverFolder, folderTrust, folderTrustMode, FolderTrustInputSchema, FolderTrustSettingsSchema, isFolderTrusted, needsAnswer,
   saveFolderTrustSettings, trustCappedPolicy, workspaceFolder, type FolderFindings, type FolderTrust,
 } from "./folder-trust.js";
 import { guardFor, loopGuardMode, saveLoopGuardSettings, type FeatureSwitch, type LoopGuard } from "./loop-guard.js";
 import type { Policy } from "./policy.js";
 import type { Store } from "./store.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
+import { lockdownActive } from "./lockdown.js";
+import { looseningRefusal, withoutConfirm } from "./policy-change-guard.js";
 
 /** Raised between rounds when the loop guard has decided the task should end. */
 export class LoopStoppedError extends Error {
@@ -135,6 +137,26 @@ export async function folderTrustView(app: GuardsApp): Promise<{ mode: FeatureSw
   return { mode, folders };
 }
 
+/** A folder-trust change refused before it is saved (answered with its status). */
+export class GuardsApiError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+const trustOrder = ["off", "when-needed", "on"] as const;
+/**
+ * What a folder-trust change would make less careful, in words, or null when it only tightens: trusting a folder
+ * lets what it carries for AI assistants steer the owner's tasks, and a lower mode checks fewer folders first.
+ */
+export function folderTrustLooser(store: Store, owner: string, workspace: string, input: unknown): string | null {
+  if (input && typeof input === "object" && "mode" in input) {
+    const { mode } = FolderTrustSettingsSchema.parse(input);
+    return trustOrder.indexOf(mode) < trustOrder.indexOf(folderTrustMode(store, owner)) ? "fewer folders would be checked before what they carry is used" : null;
+  }
+  const { folder, decision } = FolderTrustInputSchema.parse(input);
+  if (decision !== "trust" || folderTrust(store, owner, workspaceFolder(workspace, folder)) === "trusted") return null;
+  return `what ${folder ? `the folder "${folder}"` : "your workspace"} carries for AI assistants would be used in your tasks`;
+}
+
 /** GET reads; POST `{ mode }` changes a setting, POST `{ folder, decision }` answers for a folder. */
 export async function guardsApi(
   app: GuardsApp, request: IncomingMessage, path: string,
@@ -148,9 +170,13 @@ export async function guardsApi(
     return { mode: loopGuardMode(store, owner) };
   }
   if (body !== undefined) {
-    if (body && typeof body === "object" && "mode" in body)
-      recordedWrite(store, owner, byCard("folder_trust_mode"), ["folder_trust_mode"], () => saveFolderTrustSettings(store, owner, body));
-    else decideFolder(store, owner, workspace, body);
+    // Trusting a folder, or checking fewer, needs the owner's yes and is refused under Lockdown (src/policy-change-guard.ts).
+    const { confirmLoosening, input } = withoutConfirm(body);
+    const refusal = looseningRefusal(folderTrustLooser(store, owner, workspace, input), confirmLoosening, lockdownActive(store, owner));
+    if (refusal) throw new GuardsApiError(409, refusal);
+    if (input && typeof input === "object" && "mode" in input)
+      recordedWrite(store, owner, byCard("folder_trust_mode"), ["folder_trust_mode"], () => saveFolderTrustSettings(store, owner, input));
+    else decideFolder(store, owner, workspace, input);
   }
   return folderTrustView(app);
 }

@@ -330,6 +330,7 @@ const reach: SettingSpec[] = [
     key: "voice", name: "Voice", t: "settings-kit.name.voice", home: "settings:voice",
     fields: [sw("systemVoice", "Your computer's own voice", "settings-kit.field.system-voice", "reach"),
       yesNo("autoReadAloud", "Read replies aloud automatically", "settings-kit.field.read-aloud", "plain"),
+      { field: "readAloudWhen", label: "Which replies are read aloud", t: "settings-kit.field.read-aloud-when", guard: "plain", initial: "always", kind: { type: "choice", options: ["always", "spoken"] } },
       yesNo("keepAudioOnThisComputer", "Keep audio on this computer", "settings-kit.field.keep-audio", "guard"),
       yesNo("replyWithVoiceOnChannels", "Answer a voice note with a voice note", "settings-kit.field.voice-reply", "reach")],
     ...voiceHooks,
