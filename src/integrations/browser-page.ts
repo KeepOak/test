@@ -8,14 +8,22 @@ import { z } from 'zod';
  */
 export const ScreenshotSchema = z.object({
   fullPage: z.boolean().default(false),
+  /** A picture of one element only: by selector, by its name, or by its number from browser.annotate. */
   selector: z.string().min(1).max(300).optional(),
-}).strict();
+  name: z.string().min(1).max(300).optional(),
+  mark: z.number().int().min(1).max(500).optional(),
+}).strict().refine(v => [v.selector, v.name, v.mark].filter(x => x !== undefined).length <= 1, 'Name at most one element to picture');
 export const WaitSchema = z.object({
   text: z.string().min(1).max(300).optional(),
+  /** Wait for these words to go (a "Loading…" line, a spinner's label). */
+  textGone: z.string().min(1).max(300).optional(),
   selector: z.string().min(1).max(300).optional(),
+  /** Wait until the address contains these words. */
+  url: z.string().min(1).max(500).optional(),
   networkIdle: z.boolean().optional(),
   timeoutMs: z.number().int().min(100).max(60000).default(10000),
-}).strict().refine(v => !!v.text !== !!v.selector || !!v.networkIdle, 'Say what to wait for: some text, a selector, or networkIdle');
+}).strict().refine(v => [v.text, v.textGone, v.selector, v.url].filter(Boolean).length === 1 || (!v.text && !v.textGone && !v.selector && !v.url && !!v.networkIdle),
+  'Say what to wait for: some text, text to go, a selector, an address, or networkIdle');
 export const ExtractSchema = z.object({
   selector: z.string().min(1).max(300),
   /** Column name to a selector inside each row; leave it out to read every cell of a table row. */
@@ -79,10 +87,10 @@ async function secretMask(page: Page, filled: Locator[]): Promise<{ mask: Locato
 }
 
 /** The assistant's own picture of the page (browser.screenshot), with every secret covered as `secretMask` says. */
-export async function screenshot(page: Page, options: z.infer<typeof ScreenshotSchema>, filled: Locator[] = []): Promise<Buffer> {
+export async function screenshot(page: Page, options: z.infer<typeof ScreenshotSchema>, filled: Locator[] = [], element?: Locator): Promise<Buffer> {
   const { mask, unchanged } = await secretMask(page, filled);
   const shot = { type: 'png', timeout: 15000, mask, maskColor: '#000' } as const;
-  const png = options.selector ? await page.locator(options.selector).first().screenshot(shot)
+  const png = element ? await element.screenshot(shot) : options.selector ? await page.locator(options.selector).first().screenshot(shot)
     : await page.screenshot({ ...shot, fullPage: options.fullPage });
   unchanged();
   return png;
@@ -273,9 +281,12 @@ export function scrubSnapshot(tree: string, hidden: readonly string[], typed: Re
 export async function waitFor(page: Page, options: z.infer<typeof WaitSchema>): Promise<{ waitedFor: string; url: string }> {
   const timeout = options.timeoutMs;
   if (options.text) { await page.getByText(options.text).first().waitFor({ state: 'visible', timeout }); }
+  else if (options.textGone) { await page.getByText(options.textGone).first().waitFor({ state: 'hidden', timeout }); }
   else if (options.selector) { await page.locator(options.selector).first().waitFor({ state: 'visible', timeout }); }
+  else if (options.url) { const part = options.url; await page.waitForURL(address => address.href.includes(part), { timeout, waitUntil: 'commit' }); }
   if (options.networkIdle) await page.waitForLoadState('networkidle', { timeout });
-  const waitedFor = options.text ? `the words "${options.text}"` : options.selector ? options.selector : 'the page to go quiet';
+  const waitedFor = options.text ? `the words "${options.text}"` : options.textGone ? `the words "${options.textGone}" to go`
+    : options.selector ? options.selector : options.url ? `an address with "${options.url}"` : 'the page to go quiet';
   return { waitedFor, url: page.url() };
 }
 

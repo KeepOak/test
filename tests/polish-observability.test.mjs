@@ -449,8 +449,17 @@ test("D1 comparing two tasks shows both sets of figures and the difference betwe
   const prompt = "apples";
   // Send the prompt twice, model answers differently each time
   for (let i = 0; i < 2; i++) {
-    await page.locator("#prompt").fill(prompt);
-    await page.locator("#composer").evaluate((form) => form.requestSubmit());
+    /* The words go in and are sent in one step on the page. The new conversation's box and form are drawn again while
+       its settings load, so a form found first and sent a moment later could be the replaced one: Chromium drops that
+       submit ("the form is not connected") and "apples" stayed unsent in the box (D1 on CI). */
+    const sent = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/run", { timeout: 10000 });
+    await page.evaluate((words) => {
+      const box = document.getElementById("prompt");
+      box.value = words;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      document.getElementById("composer").requestSubmit();
+    }, prompt);
+    await sent;
     // Wait for the answer to appear
     const expectedAnswer = i === 0 ? "The first answer" : "The second answer";
     // A new conversation shows its greeting, not #conversation, until the first message is drawn.
