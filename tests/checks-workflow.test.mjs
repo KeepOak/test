@@ -96,11 +96,12 @@ test("a green push to redesign/window fast-forwards mac/cross-platform, and noth
   assert.doesNotMatch(script, /--force|\s-f\s|\+\$SHA|git merge\s/, "never forced, never a merge commit");
   assert.equal(promote.env?.SHA ?? promote.steps.find((step) => step.env?.SHA).env.SHA, "${{ github.sha }}", "the commit this run tested");
   // Only the promote job may write to the repository. The queue's two jobs may cancel and rerun runs and label pull
-  // requests, and nothing else; the test shares read.
+  // requests, and nothing else; stale-group may only cancel its own merge-queue run; the test shares read.
   const queue = { contents: "read", actions: "write", "pull-requests": "write" };
   for (const [name, job] of Object.entries(workflow.jobs)) {
     if (name === "promote") continue;
-    assert.deepEqual(job.permissions, ["plan", "verify"].includes(name) ? queue : undefined, name);
+    const expected = ["plan", "verify"].includes(name) ? queue : name === "stale-group" ? { contents: "read", actions: "write" } : undefined;
+    assert.deepEqual(job.permissions, expected, name);
   }
   assert.deepEqual(workflow.permissions, { contents: "read" });
 });
@@ -147,4 +148,19 @@ test("verify-suite is produced for pull requests and merge-queue groups, and the
   assert.match(fallback, /"lane":"linux","os":"ubuntu-latest","shard":8,"total":8/);
   assert.match(fallback, /"lane":"windows","os":"windows-latest","shard":2,"total":2/);
   assert.match(fallback, /"lane":"macos"/);
+});
+
+/* A merge-queue group whose ref the queue deleted (a group ahead failed, so it was rebuilt on a new ref) cancels its
+   own run instead of holding runners for a result nobody reads. Mutations: cancel on any API error, put the job in
+   verify-suite's needs, or run it outside the merge queue → red. */
+test("a merge-queue run whose group was dropped cancels itself, and only on a 404", () => {
+  const job = workflow.jobs["stale-group"];
+  assert.equal(job.if, "github.event_name == 'merge_group'");
+  assert.equal(job.needs, undefined, "starts beside the shares, not after them");
+  assert.ok(!workflow.jobs.verify.needs.includes("stale-group"));
+  assert.ok(job["timeout-minutes"] <= 2);
+  const script = job.steps.map((step) => step.run ?? "").join("\n");
+  assert.match(script, /git\/ref\/\$\{GITHUB_REF#refs\/\}/);
+  assert.match(script, /elif printf '%s' "\$out" \| grep -q "HTTP 404"; then\n\s*echo[^\n]*\n\s*gh run cancel "\$RUN"/);
+  assert.equal(job.steps[0].env.RUN, "${{ github.run_id }}", "its own run, never another");
 });

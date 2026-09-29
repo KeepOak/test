@@ -48,6 +48,31 @@ concurrency:
   group: ${{ github.event_name == 'pull_request' && format('checks-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') && format('checks-base-{0}', github.ref) || format('checks-run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # When a group ahead fails, the merge queue rebuilds the groups behind it on new gh-readonly-queue refs and deletes
+  # the old refs, but it does not cancel their runs: on 2026-09-29 five of ten queued merge-queue runs (about 65 jobs)
+  # tested refs that no longer existed. This job starts beside the shares and cancels its own run once its ref is gone.
+  # It is not in verify-suite's needs, so the check it guards is never skipped for it; only a 404 cancels.
+  stale-group:
+    name: merge queue group still queued
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_id }}
+        run: |
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/${GITHUB_REF#refs/}" 2>&1); then
+            echo "$GITHUB_REF is still queued."
+          elif printf '%s' "$out" | grep -q "HTTP 404"; then
+            echo "::notice::The merge queue dropped $GITHUB_REF (a group ahead failed); cancelling this run."
+            gh run cancel "$RUN" -R "$GITHUB_REPOSITORY"
+          else
+            echo "::warning::Could not read $GITHUB_REF: $out"
+          fi
   # What this run tests: the whole suite, or for a pull request into redesign/window what its change reaches.
   # A push, the nightly run and a run by hand skip it and run the whole suite at once, with no wait for its runner.
   plan:
