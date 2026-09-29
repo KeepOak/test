@@ -283,6 +283,9 @@ export const ROUTES = {
   "/api/flows/check": "other POST",
   "/api/flows/runs/:id": "look",
   "/api/folder-trust": "owner POST",
+  "/api/gitlab": "owner POST", // RES-719: the GitLab switch
+  "/api/gitlab/connect": "owner POST", // RES-719: a token checked with GitLab, then kept in the locker
+  "/api/gitlab/disconnect": "owner POST", // RES-719: the token taken out of the locker
   "/api/goal-undo/settings": "owner POST",
   "/api/goals": "task POST",
   "/api/governance": "owner POST",

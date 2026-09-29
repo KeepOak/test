@@ -2,7 +2,7 @@
    row, core/why.js) and that nothing overlaps. Also measures it: on each page, no row with a reason is wider than its
    box, the page never scrolls sideways, and no two of a row's direct parts overlap. Run against a throwaway engine only:
      PORT=<port> TOKEN=<hex> OUT=<folder> node design/redesign/tools/shots-why.cjs */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, OUT = process.env.OUT;
 if (!PORT || !TOKEN || !OUT) { console.error("Set PORT, TOKEN and OUT."); process.exit(2); }

@@ -250,33 +250,33 @@ email (EM), SMS.
 | | H | O | B today | Next for Branch |
 |---|---|---|---|---|
 | TG | ✅ 1.5 s edits, ×N, code blocks | ✅ progress draft (default) | ✅ (#565) Hermes lines from `liveSteps`, `pre`/`code` entities, ×N, summary line, sent quietly, `retry_after` waited out, 3 s in groups; overflow rolls to a new message; per-app knobs | |
-| DC | ✅ | ✅ (opt-in) | ✅ (piece 3) the same lines, fences with the language, sent quietly (flag 4096), its 429 waited out | |
-| SL | ✅ edits or native task cards | ✅ native agent card | ✅ (piece 3) the same lines, fences without a language | left: Slack's native agent card |
-| WA | ✅ (Baileys bridge) | ? | ✅ (piece 3) the Cloud API cannot edit: one line above the reply ("📖×2 🔍 · ✅ Done · 3 steps · 12 s"), naming nothing | left: milestone lines for very long tasks |
-| SG | — suppressed | ? | ✅ (piece 3) the line above the reply | |
-| IM | — skipped | ◐ edit on macOS 13+ | ✅ (piece 3) the line above the reply | |
-| MX | ✅ | ✅ | ✅ (piece 3) edits in place (`m.replace`), code as HTML, its 429 waited out | |
-| EM | — | — | ✅ (piece 3) the line above the reply | |
+| DC | ✅ | ✅ (opt-in) | ✅ (#568) the same lines, fences with the language, sent quietly (flag 4096), its 429 waited out | |
+| SL | ✅ edits or native task cards | ✅ native agent card | ✅ (#568) the same lines, fences without a language | left: Slack's native agent card |
+| WA | ✅ (Baileys bridge) | ? | ✅ (#568) the Cloud API cannot edit: one line above the reply ("📖×2 🔍 · ✅ Done · 3 steps · 12 s"), naming nothing | left: milestone lines for very long tasks |
+| SG | — suppressed | ? | ✅ (#568) the line above the reply | |
+| IM | — skipped | ◐ edit on macOS 13+ | ✅ (#568) the line above the reply | |
+| MX | ✅ | ✅ | ✅ (#568) edits in place (`m.replace`), code as HTML, its 429 waited out | |
+| EM | — | — | ✅ (#568) the line above the reply | |
 | SMS | — | — | — by design: each text costs money (`paidPerMessage`), so nothing unasked is added | |
-| Groups (all) | ◐ | ◐ | ✅ (piece 3) the short message counts kinds ("📖 Reading 2 files") and never shows a label, file, page or command | |
+| Groups (all) | ◐ | ◐ | ✅ (#568) the short message counts kinds ("📖 Reading 2 files") and never shows a label, file, page or command | |
 
 ### Code blocks and copy (commands and paths)
 | | H | O | B today |
 |---|---|---|---|
 | TG | ✅ fenced to MarkdownV2 `pre` | ◐ command text hidden by default | ✅ `pre` with language (label + Copy), `code` for files (#565) |
-| DC | ✅ fences | ◐ | ✅ fences with the language (piece 3) |
-| SL | ✅ fences, no tag | ◐ | ✅ fences without a tag (piece 3) |
+| DC | ✅ fences | ◐ | ✅ fences with the language (#568) |
+| SL | ✅ fences, no tag | ◐ | ✅ fences without a tag (#568) |
 | WA | ✅ ``` is native | ? | — |
 | SG | ✅ `bodyRanges` monospace | ? | — |
 | IM | — markdown stripped | ? | — |
-| MX | ✅ formatted body | ? | ✅ `<pre><code class="language-…">` in `formatted_body` (piece 3) |
+| MX | ✅ formatted body | ? | ✅ `<pre><code class="language-…">` in `formatted_body` (#568) |
 | EM, SMS | — plain text | — | — |
 
 ### Typing indicators
 | | H | O | B today |
 |---|---|---|---|
 | TG | ✅ | ✅ | ✅ `sendChatAction` |
-| DC | ✅ | ✅ | ◐ as TG |
+| DC | ✅ | ✅ | ✅ typing endpoint, refreshed while the task works |
 | SL | ✅ "is thinking…" assistant status | ✅ + typing reaction | ✅ assistant status (`assistant.threads.setStatus`): "is thinking…", then the step in a DM ("is reading notes.md…"), "is working…" in a channel, cleared at the end; scrubbed, sent only on change, left alone after two refusals (needs Agents & AI Apps and `assistant:write`); plus the status reaction |
 | WA | ✅ | ✅ | ✅ Cloud API typing indicator against the person's newest message (marks it read) |
 | SG | ✅ (every 8 s) | ✅ | ✅ signal-cli `sendTyping`, asked again while the task works |
@@ -309,9 +309,9 @@ proved against stand-in adapters and providers; real account connections remain 
 | SL | ✅ Block Kit | ✅ | ✅ Block Kit Yes / No buttons carrying the fingerprint (and the per-occurrence nonce for owner DM commands, shown fenced). A command Slack would draw differently (`<`, `>`, `&`, backtick) gets only No |
 | WA | — typed (never polls) | ✅ 👍/👎 reactions | ✅ 👍/✅ or 👎/❌ on the question message, from the person asked, once (30 min), naming the question's fingerprint; typed y/n still works |
 | SG | — | ✅ approval reactions | ✅ the same, matched to the question by this account's send timestamp |
-| IM | ? | ? | — typed |
+| IM | ? | ? | ◐ typed `y` / `n`, or `/approve` and `/deny` (#658) |
 | MX | ✅ reactions, limited to the requester | ✅ | ✅ the same, as an `m.annotation` on Branch's own question event |
-| EM, SMS | — | — | — typed |
+| EM, SMS, others | — | — | ◐ typed `y` / `n`, or `/approve` (`/yes`) and `/deny` (`/no`) on every app (#658) |
 
 ### Voice notes in (transcribed) and out (spoken replies)
 | | H in / out | O in / out | B today |
@@ -363,10 +363,10 @@ proved against stand-in adapters and providers; real account connections remain 
 ### Slash commands and menus
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ◐ typed commands only (switch ships off); no `setMyCommands` menu |
-| DC | ✅ native slash commands | ✅ | ◐ typed only |
-| SL | ✅ native slash commands, `!cmd` in threads | ✅ | ◐ typed only |
-| Others | ✅ typed | ✅ typed | ◐ typed (switch ships off) |
+| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ◐ typed commands: on as shipped in the owner's own paired DM (#653, #706), elsewhere behind the commands switch; no `setMyCommands` menu yet (#590, draft) |
+| DC | ✅ native slash commands | ✅ | ✅ Branch's commands in Discord's own picker, built from the one command table and empty while commands are off (#670) |
+| SL | ✅ native slash commands, `!cmd` in threads | ✅ | ✅ one `/branch <command>` slash command in the wizard's manifest, since many plain names are Slack's own (#670) |
+| Others | ✅ typed | ✅ typed | ◐ typed, under the same rules as TG; `/approve` and `/deny` always (#658) |
 
 ### Edited messages (Settings › Chat apps › Edited messages)
 | | H | O | B today |
@@ -381,6 +381,22 @@ proved against stand-in adapters and providers; real account connections remain 
 | | H | O | B today |
 |---|---|---|---|
 | All | ✅ numbered parts; fences kept valid | ✅ paragraph, then length; fences reopened | ✅ split at paragraph breaks, code blocks never left open |
+
+### Formatting in each app (#592)
+Settings › Chat apps › Formatting in each app chooses the app's own formatting or plain text, per app, and takes effect
+at once. Plain text drops presentation markers but keeps code contents and link addresses: Telegram sends no entities,
+Matrix no HTML, Slack plain-text blocks, and Discord escapes what is left and keeps a 1000-character budget so the
+escaped text still fits its 2000-character limit. Hermes and OpenClaw convert Markdown per platform; neither offers a
+per-app plain choice.
+
+### What the Trunk sees and staying connected (#553)
+| | H | O | B today |
+|---|---|---|---|
+| Edited messages | ◐ | ✅ | ✅ TG: the latest version is answered (a version arriving while its message is still gathered replaces it) |
+| Albums as one message | ◐ | ✅ inbound batching | ✅ TG (`media_group_id`): an album's photos join one turn (at least 1 s); other apps: — |
+| Wait for messages split in two | ◐ | ✅ 300 ms quiet window | ✅ every app: 0, 1 or 3 s (default 1 s); the same person's messages join the turn |
+| Watchdog | ✅ | ✅ | ✅ TG: a poll with no answer for the "stalled after" time is started again; a restart that brings nothing back shows on the card |
+| Online status in the app | — | — | ✅ TG `setMyShortDescription`: "Online" / "Offline, back soon" (off until chosen: it changes the bot's profile) |
 
 ### Reply-to / quote
 | | H | O | B today |
@@ -416,7 +432,7 @@ nothing.
 ### Per-chat model and Trunk
 | | H | O | B today |
 |---|---|---|---|
-| All | ✅ `/model` (saved per chat); per-channel prompt and model overrides | ✅ agent bindings per channel or account | ◐ `/model` in chat (commands switch); a chat linked to a Trunk's conversation. No picker menu |
+| All | ✅ `/model` (saved per chat); per-channel prompt and model overrides | ✅ agent bindings per channel or account | ◐ `/model` in chat, saved for that chat's conversation (same rule as the other commands); a chat linked to a Trunk's conversation. No picker menu yet (CHAT-079, #760 open) |
 
 ### Pairing and allowlists
 | | H | O | B today |
@@ -441,9 +457,9 @@ nothing.
 | | H | O | B today |
 |---|---|---|---|
 | Steer | ✅ interrupt / queue / steer | ✅ queue-steering | ✅ a message sent while a task works is a note to it (ships "when needed") |
-| `/stop` | ✅ | ✅ | ◐ the commands switch ships off (it reaches Branch from outside) |
-| Reset | ✅ `/new`, `/reset` | ✅ | ◐ `/new` (same switch) |
-| Usage | ✅ `/usage`, `/insights` | ✅ | ◐ `/usage` and a per-reply footer (same switch) |
+| `/stop` | ✅ | ✅ | ◐ on in the owner's own paired DM as shipped (#653, #706); elsewhere the commands switch ships off (it reaches Branch from outside) |
+| Reset | ✅ `/new`, `/reset` | ✅ | ◐ `/new` (same rule) |
+| Usage | ✅ `/usage`, `/insights` | ✅ | ◐ `/usage` and a per-reply footer (same rule) |
 
 ### Live screen and remote control from a chat (owner request, 2026-09-27)
 | | What the platform allows | H | O | B today |
@@ -536,23 +552,20 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 
 ## Plan, in pieces (one pull request each)
 
-1. **This matrix.**
-2. **Telegram, the live progress message.**
-   - Hermes lines from `liveSteps()`.
-   - Commands as `pre` "shell" blocks and paths as inline code, sent as message entities.
-   - ×N folding and a summary line at the end.
-   - `retry_after` honoured, and a slower rate in groups.
-   - Direct chats with a paired or allowed sender only.
-   - A "Show steps in chats" switch that ships on.
-3. **A channel-agnostic renderer with per-platform adapters.**
-   - Discord, Slack and Matrix edit in place, with fences.
-   - WhatsApp, Signal, iMessage, email and SMS get one compact summary.
+1. **This matrix.** Done (#556); kept current with each merge.
+2. **Telegram, the live progress message.** Done (#565): Hermes lines from `liveSteps()`, commands as `pre` "shell"
+   blocks and paths as inline code, ×N folding and a summary line, `retry_after` honoured and a slower rate in groups,
+   direct chats with a paired or allowed sender only, and "Show steps in chats" shipping on. Per-app steps knobs and
+   rolling messages: #648.
+3. **A channel-agnostic renderer with per-platform adapters.** Done (#568): Discord, Slack and Matrix edit in place
+   with fences; WhatsApp, Signal, iMessage, email and SMS get one compact summary.
 4. **The rest of the matrix, platform by platform:**
-   - typing, reactions and buttons wherever the platform has them;
-   - voice bubbles out;
-   - files in and out;
-   - threads;
-   - a command menu;
-   - quote-replies;
-   - `/sethome`.
-5. **Live screen and remote control from a chat** (security tier), under the rules above.
+   - typing, reactions and buttons wherever the platform has them: done for TG, DC, SL and MX (#568, #624, #658, #720);
+     answers by reaction on WhatsApp, Signal and Matrix (#716);
+   - voice bubbles out: #590 (draft);
+   - files in and out beyond Telegram: #664 (open);
+   - threads: TG topics and SL threads done; DC and MX not started;
+   - a command menu: DC and SL done (#670); TG `setMyCommands` in #590 (draft);
+   - quote-replies: per-app choice in #700 (open);
+   - `/sethome`: not started.
+5. **Live screen and remote control from a chat** (security tier), under the rules above: #607 and #617 (drafts).
