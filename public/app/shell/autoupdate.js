@@ -1,7 +1,7 @@
 /* Update by itself, in the desktop app. The owner's choice is kept by the engine (GET /api/comfort notify.autoUpdate:
    off, check or install, and notify.releaseChannel), set from Settings › Updates, Notifications or Branch itself. While
    it is not off, the window asks the desktop's updater what to do on the engine's plan (POST /api/comfort/update-plan):
-   install looks every 30 s, so a ready update waits for no busy task; check looks every five minutes on Beta and every
+   install looks every 30 s, so a ready update waits for no busy task; check looks every minute on Beta and every
    hour on Stable. Each next look is timed from when the last one finished, never on a fixed tick, and a look still
    going stops a second from starting. An install goes the way the Update button does (the desktop's checksum, a try on a
    copy of your work, the copy of the data folder Beta needs, a safety copy). Nothing is looked for before the owner's
@@ -31,7 +31,7 @@ export const lastLook = { plan: null, status: null, wait: null, problem: null };
 function scheduleUpdate() {
   clearTimeout(updateTimer);
   if (off() || !window.branchDesktop) return;
-  const interval = notify.autoUpdate === "install" ? 30_000 : notify.releaseChannel !== "stable" ? 5 * 60 * 1000 : 60 * 60 * 1000;
+  const interval = notify.autoUpdate === "install" ? 30_000 : notify.releaseChannel !== "stable" ? 60_000 : 60 * 60 * 1000;
   updateTimer = setTimeout(() => void autoUpdate(), interval);
 }
 

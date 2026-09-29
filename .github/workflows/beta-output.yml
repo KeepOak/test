@@ -1,0 +1,78 @@
+name: Beta build output
+# Every change merged into Beta's line is built once here, so the owner's computer does not compile it: the Beta update
+# takes this output (src/desktop/build-output.ts) after checking its build-provenance record (build-output-proof.ts),
+# and compiles on the owner's computer only when it is missing or does not check out. Nothing here makes a program:
+# the output is the compiled JavaScript and the fonts the build copies, no executable and no packages.
+#
+# Two jobs, so that nothing the change installs or runs can sign anything: `build` runs the change's own npm scripts with
+# a read-only token and no identity; `publish` never checks the change out, only hashes the file `build` left, has it
+# signed through GitHub's attestation (Sigstore), and uploads it to the rolling `beta-builds` prerelease, which the
+# Stable updater never reads (it takes only /releases/latest, a final release).
+on:
+  push:
+    branches: ['redesign/window']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: beta-output-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'stabrea/Branch-Agent' || github.repository == 'KeepOak/Branch-Agent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      # The same packages Checks keeps for this lockfile, so a merge that changes no package installs nothing.
+      - id: modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules
+          key: modules-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: node scripts/pack-build-output.mjs "$GITHUB_SHA" "$RUNNER_TEMP/output"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-output
+          path: ${{ runner.temp }}/output/branch-build-${{ github.sha }}.bbo.gz
+          if-no-files-found: error
+          retention-days: 3
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-output
+          path: output
+      # Signed before it is published: once the file can be downloaded, its record can be found.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: output/branch-build-${{ github.sha }}.bbo.gz
+      - name: Publish on the rolling beta-builds prerelease, keeping the newest 40 outputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view beta-builds >/dev/null 2>&1; then
+            gh release create beta-builds --prerelease --target "$GITHUB_SHA" --title "Beta build outputs" \
+              --notes "Compiled output of each change merged into Beta's line, taken by the Beta update instead of compiling on the owner's computer. Not an installable release." \
+              || gh release view beta-builds >/dev/null
+          fi
+          gh release upload beta-builds "output/branch-build-$GITHUB_SHA.bbo.gz" --clobber
+          gh api "repos/$GH_REPO/releases/tags/beta-builds" --jq '.assets | sort_by(.created_at) | reverse | .[40:] | .[].id' |
+            while read -r id; do gh api -X DELETE "repos/$GH_REPO/releases/assets/$id" >/dev/null; done
