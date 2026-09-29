@@ -11,6 +11,7 @@ import { maxArtifactBytes } from "./artifacts.js"; // dogfood-ux-2
 import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
+import { liveWindowCommit, liveWindowFile, liveWindowNames, ownBuild } from "./hot-update/window-files.js"; // hot-update
 import { readFile, writeFile, lstat } from "node:fs/promises";
 import { dirname, extname, join, resolve as resolvePath } from "node:path"; // R17-S-B: resolvePath
 import { fileURLToPath } from "node:url";
@@ -66,7 +67,7 @@ import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watc
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
 import { replayRun } from "./replay.js";
-import { meteringFolder, meteringSettings, saveMeteringSettings, writeMeteringFile } from "./metering.js";
+import { MeteringExportSchema, meteringFolder, meteringSettings, saveMeteringSettings, writeMeteringFile } from "./metering.js";
 import { TryToolSchema, toolForms, tryToolByHand } from "./playground.js";
 import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { exportTemplate, importTemplate } from "./templates.js";
@@ -155,7 +156,7 @@ import { clientToolsPath, serveClientToolSocket } from "./interop/client-tools.j
 import { LOOK_LANGUAGES, lookApi } from "./terminal-theme.js";
 // Wave mac3: the owner's control dashboard, a page of its own at /dashboard.
 import {
-  DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile,
+  DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile, registerRestartTool,
 } from "./dashboard-api.js";
 // Wave mac3 (commands): the one slash-command table's routes.
 import { CommandApiError, commandsApi, handlesCommandsPath } from "./commands/api.js";
@@ -245,6 +246,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
+import { answerHeader, answerProof, answerShort, askHeader, atWindowAddress, isSessionKey, markFor, newBoot, ProofDoor, proofPath, sameKey, sessionKey } from "./engine-proof.js";
 import { hereOnly, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
@@ -258,6 +260,7 @@ import { socketPath as deviceSocketPath } from "./devices/protocol.js";
 import { deploymentApi, shipAutostart, type DeploymentContext } from "./deployment-api.js";
 import { shipKeepRunningOn } from "./keep-running.js"; // the ship-on rule: keeping Branch running
 import { quitRequest } from "./install/quit.js"; // bucket 22
+import { changeSelfRule, SelfRuleRefusal, selfRulesPath, selfRulesView } from "./self-rules.js";
 import { clearRunning, writeRunning } from "./install/running.js";
 import { readFirstStart, recordFirstStart } from "./install/update-backup.js";
 import { readDesktopSettings, saveDesktopSettings } from "./integrations/desktop-config.js";
@@ -284,6 +287,7 @@ import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
 import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
+import { replyStyles, saveReplyStyle } from "./channels/reply-style.js";
 import { practiceRunsEnabled, savePracticeRuns } from "./practice-runs.js";
 import { setupIds } from "./channel-setup/service.js";
 import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
@@ -298,13 +302,13 @@ import { conversationModeApi, ConversationModeError, handlesConversationModePath
 import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
-import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
+import { handlesUsageLimitsPath, readUsageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
 // mac3/never-break: the gateway switch and suggested changes (src/never-break/api.ts).
-import { handlesNeverBreakPath, NeverBreakApiError, neverBreakApi } from "./never-break/api.js";
+import { handlesNeverBreakPath, NeverBreakApiError, neverBreakApi, type NeverBreakExtras } from "./never-break/api.js";
 import { channelSetupApi, handlesChannelSetupPath } from "./channel-setup/api.js"; // mac7/connect
 import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
@@ -504,14 +508,29 @@ const windowTypes: Record<string, string> = {
   ".webm": "video/webm", ".mp4": "video/mp4", ".woff2": "font/woff2",
 };
 let windowFileList: Map<string, [string, string]> | undefined;
+/** hot-update: the live build the list was made from (null: the engine's own files). */
+let windowFileListOf: string | null = null;
 /**
  * Redesign: the list is read from the folders once, at the first request, and never again. A request only ever
  * picks an entry from it; nothing from the request is joined onto a disk path. Links, hidden files, names with
  * anything but letters, digits, dot, dash or underscore, and unknown kinds of file are left out.
  */
 function windowFiles(): Map<string, [string, string]> {
-  if (windowFileList) return windowFileList;
+  // hot-update: a live build's window files, checked against its record (src/hot-update/window-files.ts), replace the list.
+  const live = liveWindowNames(), commit = liveWindowCommit();
+  if (windowFileList && windowFileListOf === commit) return windowFileList;
   const found = new Map<string, [string, string]>();
+  windowFileListOf = commit;
+  if (live) {
+    for (const inside of live) {
+      const parts = inside.split("/");
+      if (!windowFolders.includes(parts[0]!) || parts.length < 2 || !parts.every((part) => /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(part))) continue;
+      const type = windowTypes[extname(inside).toLowerCase()];
+      if (type) found.set(`/${inside}`, [inside, type]);
+    }
+    windowFileList = found;
+    return found;
+  }
   const walk = (relative: string): void => {
     const folder = fileURLToPath(new URL(`../public/${relative}/`, import.meta.url));
     if (!existsSync(folder)) return;
@@ -588,7 +607,8 @@ async function staticFile(
   };
   const asset = Object.hasOwn(assets, path) ? assets[path] : windowFiles().get(path);
   if (!asset) return false;
-  const body = await readFile(
+  // hot-update: the live build's checked bytes when one is in use; the engine's own file otherwise.
+  const body = liveWindowFile(asset[0]) ?? await readFile(
     new URL("../public/" + asset[0], import.meta.url),
   );
   /* rw4-language: the words (public/locales, ~465 KB for English) are kept by the browser and asked about again on
@@ -1003,6 +1023,7 @@ async function api(
   dataDir: string,
   /** mac7/bind: where this door is listening now, and why, for `/api/listen` to show. */
   listen: ListenState,
+  gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
@@ -1117,6 +1138,7 @@ async function api(
     return neverBreakApi(dataDir, request, path, readBody, {
       snapshot: () => snapshotData({ dataDir, database: app.store.sqlite, journal: app.neverBreak.journal.database }),
       telegram: app.neverBreak.telegram,
+      ...(gatewayPower ? { gatewayPower } : {}),
     }).catch((error: unknown) => {
       throw error instanceof NeverBreakApiError ? new HttpError(error.status, error.message) : error;
     });
@@ -1268,6 +1290,8 @@ async function api(
   if (request.method === "GET" && path === "/api/state") {
     // The owner's triggers and webhooks ride along here too, so their secrets stay off a door as on their own routes.
     const answer = state(app) as Record<string, unknown>;
+    // hot-update: the change the window's files come from, so an open window can tell it was updated live.
+    answer.windowBuild = liveWindowCommit() ?? ownBuild();
     for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
     return answer;
   }
@@ -1913,6 +1937,17 @@ async function api(
     return { policy: recordedWrite(app.store, app.runtime.owner, { writer: "owner-in-window", source: "card", detail: "policy" }, ["policy"],
       () => savePolicy(app.store, app.runtime.owner, input)) };
   }
+  // Settings › Branch itself: what Branch may do about itself, as approval rules (src/self-rules.ts); owner only.
+  if (path === selfRulesPath && (request.method === "GET" || request.method === "POST")) {
+    app.store.profiles.requireOwner("What Branch may do about itself");
+    const names = app.registry.names();
+    if (request.method === "GET") return selfRulesView(app.store, app.runtime.owner, names);
+    if (startedWithShortLivedKey()) throw new HttpError(401, "A short-lived key cannot change what Branch may do about itself. Do that in the app window.");
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    try { return changeSelfRule(app.store, app.runtime.owner, input, confirmLoosening, app.registry, names); } catch (error) {
+      throw error instanceof SelfRuleRefusal ? new HttpError(409, error.message) : error;
+    }
+  }
   if (request.method === "POST" && path === "/api/policy/approve") {
     const input = z.object({ sessionId: z.string().uuid(), decision: z.enum(["allow", "deny"]),
       remember: PolicyRememberSchema.default("session"),
@@ -2155,7 +2190,8 @@ async function api(
     }
   }
   if (request.method === "POST" && path === "/api/usage/metering/now") {
-    const written = await writeMeteringFile(meteringDeps(app));
+    const { range } = MeteringExportSchema.parse(await readBody(request, 1024).catch(() => ({})) ?? {});
+    const written = await writeMeteringFile(meteringDeps(app), new Date(), range);
     return { ...written, metering: meteringSettings(app.store, app.runtime.owner) };
   }
   if (request.method === "GET" && path === "/api/usage/budget") {
@@ -2178,7 +2214,7 @@ async function api(
   // --- end bucket 14 ---
   // --- mac7/usage-bar: what each connection has left, in its honest state; src/usage-limits-api.ts ---
   // Redesign phase 1: the ring under the message box. Somebody other than the owner gets an empty answer, never an error.
-  if (path === usageGlancePath && request.method === "GET") return usageGlance(app);
+  if (path === usageGlancePath && request.method === "GET") return readUsageGlance(app);
   if (handlesUsageLimitsPath(path))
     return usageLimitsRoute(app, request, path, () => readBody(request))
       .catch((error: unknown) => { throw error instanceof UsageLimitsError ? new HttpError(error.status, error.message) : error; });
@@ -3041,6 +3077,13 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     try { return { formats: saveChannelFormatting(app.store, owner, await readBody(request), setupIds()) }; }
     catch (error) { throw new HttpError(400, errorText(error)); }
   }
+  // Settings › Chat apps › Replies in each app: quoting the person's message, and the reaction on it (src/channels/reply-style.ts).
+  if (path === "/api/channels/reply-style") {
+    if (request.method === "GET") return { styles: replyStyles(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { styles: saveReplyStyle(app.store, owner, await readBody(request), setupIds()) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.
   if (path === "/api/channels/parity")
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
@@ -3695,6 +3738,11 @@ export { offLimitsToHousehold, offLimitsToShortLivedKeys };
 import { offLimitsToShortLivedKeys } from "./caller-policy.js";
 /** Tests only: see `policyProbe` below. */
 export const policyProbeHeader = "x-branch-policy-probe";
+/** selfdev: an engine the desktop app runs in a process of its own, whose engine host starts it again when it stops. */
+function hostedEngine(options: { presence?: "app" | "daemon" | undefined; presencePid?: number | undefined }): boolean {
+  return options.presence === "app" && options.presencePid !== undefined && options.presencePid !== process.pid && typeof process.send === "function";
+}
+
 export async function startServer(
   app: Branch,
   options: {
@@ -3716,6 +3764,8 @@ export async function startServer(
     authLimits?: { attempts?: number; lockoutMs?: number; windowMs?: number };
     /** bucket 22: what `branch quit` does to this launch (src/install/quit.ts); without it, it refuses. */
     quit?: () => void;
+    /** Trusted desktop broker status over the private engine Link; never supplied by a web request. */
+    gatewayPower?: NeverBreakExtras["gatewayPower"];
     /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
     onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
@@ -3739,6 +3789,22 @@ export async function startServer(
 ) {
   // Removing a phone that was handed this key makes a new one (rotateWindowKey below), so it is read where it is used.
   let token = await sessionToken(options.dataDir);
+  /** This engine's process, named for the desktop window's proof, session key and marks (src/engine-proof.ts). */
+  const boot = newBoot();
+  /** How many keyless proofs are answered, and how many window connections are held open (src/engine-proof.ts). */
+  const proofDoor = new ProofDoor();
+  /**
+   * The desktop window's side of a request, only at 127.0.0.1 and never through a door: its session key for this
+   * process stands for the window key, and the mark it asked for is returned, to go on the answer.
+   */
+  const windowSession = (request: IncomingMessage, viaRemote: boolean): string | null => {
+    if (viaRemote || !fromThisComputer(request.socket?.remoteAddress, request.headers)) return null;
+    const local = { port: request.socket?.localPort, address: request.socket?.localAddress };
+    if (atWindowAddress(local) === null) return null;
+    const supplied = /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "";
+    if (isSessionKey(supplied, token, boot)) request.headers.authorization = `Bearer ${token}`;
+    return markFor(request.headers[askHeader], sessionKey(token, boot), local, boot);
+  };
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
   const stopDiagnosticLog = startDiagnosticLog(
@@ -3808,6 +3874,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
 }
   const handle = async (request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> => {
     if (viaRemote) pairedDoorRequests.add(request);
+    const mark = windowSession(request, viaRemote);
+    if (mark) response.setHeader(answerHeader, mark);
     try {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1")
         .pathname;
@@ -3864,6 +3932,22 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // ---- end bucket 19 ----
       // A phone that still belongs collects the window's key again after it was rotated, with its own secret.
       if (path === renewPath) { await renewWindowKey(request, response, viaRemote); return; }
+      // The desktop window asks this with no key before it sends the key here again (src/engine-proof.ts).
+      if (path === proofPath && request.method === "GET" && !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)) {
+        const search = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
+        // Held open only for the desktop window, on the connection it has just proved, with its session key (which
+        // windowSession above has already taken for the window key); a keyless asker gets one short answer.
+        if (search.get("hold") === "1") {
+          if (!sameKey(request.headers.authorization, `Bearer ${token}`)) throw new HttpError(404, "Not found");
+          if (!proofDoor.hold(response)) answerShort(response, 429, { error: "Too many held connections." });
+          return;
+        }
+        if (!proofDoor.mayAnswer()) { answerShort(response, 429, { error: "Too many questions; ask again in a moment." }); return; }
+        const answer = answerProof(search, token, { port: request.socket?.localPort, address: request.socket?.localAddress }, boot);
+        if (!answer) throw new HttpError(404, "Not found");
+        answerShort(response, 200, answer);
+        return;
+      }
       // ---- mac7/nodes: a device answering an invitation has no key; its number and its signature are checked. ----
       if (openDevicePaths.includes(path)) {
         if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
@@ -4009,7 +4093,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // The key was already checked and its use counted above; this only reads what it may do.
         const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
         const answer = await dashboardApi(app, request, path, {
-          dataDir: options.dataDir, access, readBody: () => readBody(request),
+          dataDir: options.dataDir, access, readBody: () => readBody(request), deps: { hosted: hostedEngine(options) },
         }).catch((error: unknown) => {
           throw error instanceof DashboardApiError ? new HttpError(error.status, error.message) : error;
         });
@@ -4310,7 +4394,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           if (answer !== undefined) send(response, 200, answer);
           return;
         }
-        send(response, 200, await api(app, request, path, options.dataDir, listen));
+        send(response, 200, await api(app, request, path, options.dataDir, listen, options.gatewayPower));
       } finally {
         place?.();
       }
@@ -4346,6 +4430,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   });
   // mac7/nodes: one upgrade handler for this computer's door and the paired door (`viaRemote`).
   const upgrade = (request: IncomingMessage, socket: Duplex, viaRemote: boolean): void => {
+    const mark = windowSession(request, viaRemote);
     void (async () => {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1").pathname;
       // ---- mac7/nodes: a device's socket. Its own signature is the key; never the window's key. ----
@@ -4404,6 +4489,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
       // window switches profile it ends, and opening it again is refused unless the run is theirs.
       await serveRunSocket(app.store, run.id, request, socket, {
+        ...(mark ? { answerHeaders: [`${answerHeader}: ${mark}`] } : {}),
         ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     })().catch(() => socket.destroy());
   };
@@ -4544,7 +4630,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     listen.extraHosts = listen.extraHosts.filter((name) => next.extraHosts.includes(name));
     listen.ipv4Only = next.ipv4Only;
   }
-  app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
+  app.localAddress = url; // R17-C: the webhook door passes requests on to this address (handed on once that part is built)
   app.scheduler.start();
   // The ship-on rule: the installed app's first start keeps Branch running without a setup step (src/keep-running.ts).
   // How earlier versions' first starts went is read here, before noteFirstStart below writes this one's.
@@ -4558,6 +4644,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
+    registerRestartTool(app, options.dataDir, { hosted: hostedEngine(options) }); // selfdev: only a real start can be started again by what watches it
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
     void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));

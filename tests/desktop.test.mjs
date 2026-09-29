@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { _electron } from "playwright";
 
 import { backToConversation, connected, desktopOptions, offScreen, onboarded, openSettingsPage, send, taskDone, tokenNotExposed, STARTUP_MS } from "./fixtures/desktop-options.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 /* The window opens once the engine's own process has started (src/desktop/main.ts startEngine), which on a busy build
    machine takes longer than Playwright's 30 s default, so the first window is waited for as long as a start may take. */
 const firstWindow = (electron) => electron.firstWindow({ timeout: STARTUP_MS });
@@ -20,7 +21,7 @@ async function appearance(page, mode) {
   await openSettingsPage(page, "appearance");
   await page.locator(`button.mirror[data-act="themeset"][data-v="${mode}"]`).click();
   await page.waitForFunction((mode) => document.documentElement.dataset.theme === mode, mode);
-  await page.waitForFunction(async (kept) => (await (await fetch("/api/state")).json()).preferences?.appearance === kept, KEPT[mode]);
+  await waitInPage(page, async (kept) => (await (await fetch("/api/state")).json()).preferences?.appearance === kept, KEPT[mode]);
 }
 
 async function verifyWindow(electron, page, home) {

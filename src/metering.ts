@@ -1,8 +1,9 @@
 /**
- * Metering: writing this month's usage out as a spreadsheet file, on a schedule, into a folder of
- * your own workspace. Nothing is sent anywhere — the file is written on this computer and stays
- * here. Every model call and tool call is already counted in the ledger; this only copies the
- * counting out at a set time so an accounts person, or a billing sheet, can pick it up.
+ * Metering: usage is always counted in Branch's own data (the ledger, `src/usage.ts`); nothing here switches that.
+ * This file writes a copy out as a spreadsheet into a folder of your own workspace: when you ask (Settings › Usage ›
+ * Open the report › Save as a spreadsheet, or POST /api/usage/metering/now), or on a schedule you switch on. The
+ * schedule ships off: it is no (a)–(f) case, but a file written into every owner's project by itself is clutter nobody
+ * asked for (defaults audit, 2026-09-28). Nothing is sent anywhere.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -94,20 +95,26 @@ export function meteringDue(settings: MeteringSettings, now: Date): boolean {
  * Writes this month's figures out, whether or not one is due. The Settings screen's "Write it now"
  * calls this; the scheduled beat calls `meteringTick`.
  */
-export async function writeMeteringFile(deps: MeteringDeps, now = new Date()): Promise<{ path: string; days: number }> {
+export const MeteringExportSchema = z.object({ range: z.enum(["7d", "30d", "90d"]).optional() }).strict();
+
+/**
+ * With `range`, the last 7, 30 or 90 days (the report the owner has open) go into a file of their own; without it, this
+ * month's figures, as the schedule writes them.
+ */
+export async function writeMeteringFile(deps: MeteringDeps, now = new Date(), range?: "7d" | "30d" | "90d"): Promise<{ path: string; days: number }> {
   const settings = meteringSettings(deps.store, deps.owner);
   const folder = meteringFolder(deps.workspace, settings.folder);
   const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-`;
-  const month = deps.store.usageStore().aggregateUsage("90d", "day", deps.overrides())
-    .filter((day) => day.date.startsWith(prefix));
-  const path = join(folder, meteringFileName(now));
+  const month = range ? deps.store.usageStore().aggregateUsage(range, "day", deps.overrides())
+    : deps.store.usageStore().aggregateUsage("90d", "day", deps.overrides()).filter((day) => day.date.startsWith(prefix));
+  const path = join(folder, range ? `usage-report-${range}-${now.toISOString().slice(0, 10)}.csv` : meteringFileName(now));
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, meteringCsv(month), "utf8");
   deps.store.save("settings", deps.owner, settingsKey,
     MeteringSchema.parse({ ...settings, lastWrittenAt: now.toISOString(), lastFile: path }));
   audit(deps.store, deps.owner, {
     action: "data.exported", actor: deps.owner, subject: "this month's usage",
-    reason: "The usage file was written into your workspace on the schedule you set", outcome: "saved",
+    reason: range ? "You saved the usage report as a spreadsheet in your workspace" : "The usage file was written into your workspace", outcome: "saved",
   });
   return { path, days: month.length };
 }

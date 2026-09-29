@@ -47,6 +47,11 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The queue (scripts/ci-queue.mjs) cancels a waiting run, reruns a waiting one and labels its pull request.
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -60,7 +65,23 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+      # At most `prSlots` pull-request runs hold runners at once, oldest first. A run that must wait says so, labels
+      # its pull request ci-waiting and cancels itself; the queue starts it again when a slot frees.
+      - id: slot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          PR: ${{ github.event.pull_request.number }}
+        run: node scripts/ci-queue.mjs admit --run="$RUN" --attempt="$ATTEMPT" --pr="$PR"
+      - name: Waiting for a CI slot (this run is being cancelled, not failed)
+        if: steps.slot.outputs.held == 'true'
+        run: |
+          sleep 120
+          echo "::error::The run was to wait for a CI slot but was not cancelled."
+          exit 1
       - id: plan
+        if: steps.slot.outputs.held != 'true'
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -117,8 +138,9 @@ jobs:
       - run: node -e "require('electron')"
       # The browser, kept between runs and keyed on the Playwright version, so a new version starts a new copy. The
       # install still runs: with the browser already there it only checks it (Playwright marks a copy complete only
-      # once the whole download landed). Only Linux needs the system libraries; on Windows `--with-deps` installed
-      # the Media Foundation feature, three minutes of every Windows share.
+      # once the whole download landed). No system packages: the hosted images already carry what the headless shell
+      # needs (every browser file passed without them on run 36461239418), and `--with-deps` spent 13 to 38 s of
+      # every Linux share on apt; on Windows it installed the Media Foundation feature, three minutes a share.
       - id: playwright
         shell: bash
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
@@ -129,7 +151,7 @@ jobs:
             ~/Library/Caches/ms-playwright
             ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-headless-shell
-      - run: npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium --only-shell
+      - run: npx playwright install chromium --only-shell
       # Ubuntu 24.04 turns off unprivileged user namespaces, which is what Electron's own sandbox is
       # built on, so every desktop test died with "Process failed to launch!" before reaching a
       # single assertion. This relaxes it on the build machine only. The app is not changed.
@@ -157,6 +179,11 @@ jobs:
           BRANCH_TEST_TIMINGS: ${{ runner.temp }}/test-timings.json
           BRANCH_TEST_CONCURRENCY: ${{ matrix.concurrency }}
           BRANCH_TEST_FILE_TIMEOUT: '360'
+          # Every file, and every `branch` a CLI test starts, loads the same ~1,200 built modules; V8's compiled code
+          # is kept on disk for the share, so each process after the first skips compiling them. It is checked
+          # against each module's source, so a changed file is compiled afresh. Measured on run 36461239418: the
+          # files that start the CLI took 377 s instead of 570 s.
+          NODE_COMPILE_CACHE: ${{ runner.temp }}/node-compile-cache
       # How long each file took, so tests/shard-weights.json can be refreshed from a real run.
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -214,13 +241,18 @@ jobs:
   # The one check to require. It runs even when a share fails, so the check is red rather than skipped. On a pull
   # request it is green only when the plan ran and every share it planned passed (a documentation-only one plans
   # none); anywhere else only when there was no plan, so the whole suite ran and passed, since promote follows it.
-  # A partial run says so.
+  # A partial run says so. A cancelled run (replaced by a newer push, or waiting for a CI slot) is left cancelled,
+  # not red. At the end, the run hands its CI slot on: the oldest waiting pull request is started again.
   verify:
     name: verify-suite
     needs: [plan, test, local-voice]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
     steps:
       - name: The plan ran, and every share it planned passed
         env:
@@ -245,6 +277,19 @@ jobs:
           if [ "$MODE" = partial ]; then
             echo "::notice::PARTIAL: only the test files this change reaches ran. The whole suite runs on the merge into redesign/window."
           fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: always()
+        with:
+          sparse-checkout: |
+            scripts/ci-queue.mjs
+            tests/test-impact.json
+          sparse-checkout-cone-mode: false
+      - name: Hand the CI slot on
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_id }}
+        run: node scripts/ci-queue.mjs restart --run="$RUN"
   # Every merge reaches the owner: once the whole suite passed on a push to redesign/window, mac/cross-platform (the line
   # the owner's Beta and Dev app follows) is moved to that very commit. Fast-forward only: a plain `git push` refuses
   # anything else, so a commit that is not ahead of mac/cross-platform is reported, never merged and never forced. An
