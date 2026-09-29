@@ -218,8 +218,8 @@ proved against stand-in adapters and providers; real account connections remain 
 | DC | ✅ / ✅ (voice channels) | ✅ / ✅ | ✅ in; — out |
 | SL | ✅ / ? | ? | — |
 | WA | ✅ / ✅ | ✅ / ◐ calls, experimental | ✅ in; — out |
-| SG | ✅ / ✅ as attachment | ? | — |
-| IM | ? / ✅ | ? | — |
+| SG | ✅ / ✅ as attachment | ? | ✅ in (`isVoiceNote`); ✅ out as a voice note (`voiceNote`) |
+| IM | ? / ✅ | ? | ✅ in (audio messages); ◐ out: an audio file, not a recorded-audio bubble |
 | MX | ✅ / ✅ | ✅ / ? | — |
 | EM, SMS | — | — | — |
 
@@ -230,10 +230,10 @@ proved against stand-in adapters and providers; real account connections remain 
 | DC | ✅ | ✅ | ✅ / ✅ |
 | SL | ✅ | ✅ | — / ✅ |
 | WA | ✅ | ✅ | — / — |
-| SG | ✅ (100 MB) | ✅ | — / — |
-| IM | ✅ | ✅ | — / — |
+| SG | ✅ (100 MB) | ✅ | ✅ / ✅ (`getAttachment`; inline `data:` attachments, 50 MB) |
+| IM | ✅ | ✅ | ✅ / ✅ (read only from the Messages attachments folder; sent by path from Branch's folder inside it) |
 | MX | ✅ | ? | — / — |
-| EM | ✅ attachments | ? | — / — |
+| EM | ✅ attachments | ? | ✅ / ✅ (MIME read through `src/personal/mime.ts`; multipart/mixed out, 18 MB) |
 | SMS | — | ◐ MMS | ✅ in: MMS pictures and files from Twilio's Media list, fetched only when answered / — out: Twilio fetches an MMS from a public web address, which Branch does not have |
 
 ### Forum topics and threads
@@ -384,12 +384,12 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | deltachat | yes | — | — | — | — | — | — | — | — | 3500 |
 | discord | yes | yes | yes | yes | yes | — | yes | yes | yes | 2000 |
 | discourse | yes | — | — | — | — | — | — | — | — | 3500 |
-| email | yes | — | — | — | — | — | — | — | — | 3500 |
+| email | yes | — | — | — | — | — | yes | yes | — | 3500 |
 | flock | yes | — | — | — | — | — | — | — | — | 3500 |
 | gotify | yes | — | — | — | — | — | — | — | — | 3500 |
 | guilded | yes | — | — | — | — | — | — | — | — | 3500 |
 | homeassistant | yes | — | — | — | — | — | — | — | — | 3500 |
-| imessage | yes | — | — | — | — | — | — | — | — | 3000 |
+| imessage | yes | — | — | — | — | yes (audio file) | yes | yes | yes | 3000 |
 | irc | yes | — | — | — | — | — | — | — | — | 2000 |
 | keybase | yes | — | — | — | — | — | — | — | — | 3500 |
 | kook | yes | — | — | — | — | — | — | — | — | 4000 |
@@ -405,7 +405,7 @@ Microsoft Teams, Zulip, Feishu, DingTalk, WeCom, LINE and Viber.
 | qq-bot | yes | — | — | — | — | — | — | — | — | 3500 |
 | reddit | yes | — | — | — | — | — | — | — | — | 3500 |
 | revolt | yes | — | — | — | — | — | — | — | — | 2000 |
-| signal-cli | yes | — | — | — | — | — | — | — | — | 2000 |
+| signal-cli | yes | — | — | — | — | yes | yes | yes | yes | 2000 |
 | simplex | yes | — | — | — | — | — | — | — | — | 3500 |
 | slack | yes | yes | — | yes | — | — | yes | — | — | 3000 |
 | synology-chat | yes | — | — | — | — | — | — | — | — | 2000 |
