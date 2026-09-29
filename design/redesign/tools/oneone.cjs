@@ -4,7 +4,7 @@
 // prototype's example data (Trunk and people names, example tools, pets), which the window must NOT draw; everything else missing
 // is a row or control still to draw 1:1 (greyed if no route).
 // compare controls (data-act) and structural labels. LOG=<engine log> PORT=<port> node oneone.cjs [out.json]
-const { chromium } = require('C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright');
+const { chromium } = require("playwright");
 const fs = require('fs'), path = require('path');
 const DOM = path.join(__dirname, '..', 'dom');
 const tok = (fs.readFileSync(process.env.LOG, 'utf8').match(/browser\): ([a-f0-9]+)/) || [])[1];

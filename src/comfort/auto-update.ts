@@ -1,5 +1,6 @@
 import type { Store } from "../store.js";
 import { readComfort } from "./settings.js";
+import { lockdownActive } from "../lockdown.js";
 import { diagnose } from "../diagnostic-log.js";
 
 /**
@@ -180,6 +181,10 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
     if (!requested && facts.updaterTag && failedInstall(store, owner) === facts.updaterTag)
       return due ? plan("check", "Looking past the version that did not install here for a newer one.")
         : plan("nothing", "The newest version did not install here last time, so it is not tried again by itself. The next one is, as soon as it lands; Update tries this one now.", "a newer version lands");
+    // Lockdown: nothing starts by itself, and swapping in new code is the most far-reaching of all. It waits; the owner's
+    // own Update button (which never asks this plan) still installs it.
+    if (lockdownActive(store, owner))
+      return plan("nothing", "A newer version is ready; while Lockdown is on it does not install by itself. Update installs it now.", "Lockdown is off");
     if (facts.busyTasks > 0) {
       const asking = facts.askingTasks ?? 0, working = facts.workingTasks ?? facts.busyTasks - asking;
       return working > 0 || asking === 0

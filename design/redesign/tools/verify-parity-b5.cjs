@@ -7,7 +7,7 @@
    With WORKSPACE set (holding a file note.txt), putting a checkpoint back is checked on the file itself.
    SHOTS=<folder> saves a screenshot of every page. PHONE=1 also opens Settings as a paired phone (a touch screen with
    the phone's kept secret) and checks the computer-only rows are not drawn. It starts no stand-in servers. */
-const { chromium, devices } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium, devices } = require("playwright");
 const { mkdirSync } = require("node:fs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, SHOTS = process.env.SHOTS;

@@ -102,6 +102,7 @@ import { ChannelConnectors, registerChannelTools } from "./channels/connectors.j
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
 import { Teams } from "./teams.js";
+import { registerTeamGroups } from "./team-groups.js"; // RES-721
 import { Triggers } from "./triggers.js";
 import { SlackAutomations } from "./channels/slack-automations.js"; // mac6/bucket-16
 import { Webhooks } from "./webhooks.js";
@@ -173,6 +174,9 @@ import { ContractBook, contractGuard, contractPreflight } from "./self-developme
 import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
 import { registerSdkKit } from "./sdk-kit.js"; // bucket 21
+import { GitLabConnection } from "./gitlab-connection.js"; // RES-719
+import { gitlabLaunch } from "./gitlab-switch.js"; // RES-719
+import { registerGitLab } from "./integrations/gitlab.js"; // RES-719
 import { WebPages, registerWebPages } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { PluginCatalog } from "./plugin-catalog.js";
 import { AddOns } from "./add-ons/index.js"; // bucket-15: add-ons other people wrote
@@ -986,6 +990,7 @@ export async function createBranch(options: {
   await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
   const hooks = new Hooks(store, runtime.owner);
   const teams = new Teams(store, runtime.owner);
+  registerTeamGroups(registry, runtime, knowledge, teams); // RES-721: small groups, each with its own lead
   const version = String(createRequire(import.meta.url)("../package.json").version);
   const userAgent = `BranchAgent/${version}`;
   // Wave 7: one finished task's full record, in the documented trajectory shape.
@@ -1181,6 +1186,9 @@ ${result.output || "(it said nothing)"}`;
   registerFlows(registry, flows);
   // Bucket 21: tools for people building on Branch (switched off until the owner turns them on).
   registerSdkKit(registry, store);
+  // RES-719: GitLab set up in the window (Settings › Advanced › GitLab); its tools reach the index only once connected.
+  const gitlab = new GitLabConnection({ store, policy: web.policy });
+  registerGitLab(registry, (who) => gitlab.access(who));
   // w911 (A0743, A1452) hook: web.page and web.crawl (switched off until the owner turns them on).
   const webPages = new WebPages({ store, web, registry, runtime }); registerWebPages(registry, webPages);
   // "workflows.resume" is the one way in for carrying anything saved on, a graph flow included, so
@@ -1891,6 +1899,8 @@ ${result.output || "(it said nothing)"}`;
     calendar,
     /** The same workflows as boxes and arrows, for the API and the picture in Procedures. */
     flows,
+    /** RES-719: GitLab as a connection of its own. */
+    gitlab,
     /** Wave 8: the things still to be done, written down where the owner can see them. */
     todos,
     wiki,
@@ -1920,6 +1930,7 @@ ${result.output || "(it said nothing)"}`;
       router: channels,
       git,
       /** A secret from whichever project is active right now, for GitHub's personal access token. */
+      gitlab: (settings: unknown) => gitlabLaunch.set(store, settings),
       activeSecret: async (name: string) => {
         const project = store.projects.active(runtime.owner).id;
         const value = (await store.secrets.resolve(runtime.owner, project, [name], { purpose: "integration" }))[name]!;
