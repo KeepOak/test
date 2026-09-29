@@ -108,8 +108,8 @@ test("the window reads the choice after a refresh, looks again only when it chan
   await f.time.advance(45_000);
   await f.refresh();
   assert.equal(f.checks.length, 1, "a refresh with the same choice starts no look of its own");
-  await f.time.advance(300_000);
-  assert.equal(f.checks.length, 2, "the five-minute schedule carries on");
+  await f.time.advance(60_000);
+  assert.equal(f.checks.length, 2, "the one-minute schedule carries on");
   f.save({ autoUpdate: "off" });
   await f.refresh();
   await f.time.advance(3_600_000);
@@ -124,17 +124,17 @@ test("the window reads the choice after a refresh, looks again only when it chan
 });
 
 for (const latency of [1, 45_000, 240_000, 360_000]) {
-  test(`Beta schedules its next check five minutes after completion (${latency}ms response)`, async () => {
+  test(`Beta schedules its next check a minute after completion (${latency}ms response)`, async () => {
     const f = fixture(latency);
     await f.configure({ autoUpdate: "check", releaseChannel: "beta" });
     for (let index = 0; index < 3; index++) {
       assert.equal(f.checks.length, index + 1);
       await f.time.advance(latency);
       const completed = f.completions.at(-1);
-      await f.time.advance(299_999);
+      await f.time.advance(59_999);
       assert.equal(f.checks.length, index + 1, "no early/overlapping check");
       await f.time.advance(1);
-      assert.equal(f.checks.at(-1), completed + 300_000, "no skipped five-minute wake");
+      assert.equal(f.checks.at(-1), completed + 60_000, "no skipped one-minute wake");
     }
     assert.equal(f.maxActive, 1);
   });
@@ -156,12 +156,12 @@ test("refresh during a slow check cannot overlap checks or revive a disabled sch
   assert.equal(f.maxActive, 1);
 });
 
-test("a failed Beta check is retried after five minutes without overlapping", async () => {
+test("a failed Beta check is retried a minute later without overlapping", async () => {
   const f = fixture(45_000);
   f.failOnce();
   await f.configure({ autoUpdate: "check", releaseChannel: "beta" });
-  await f.time.advance(345_000);
-  assert.deepEqual(f.checks, [0, 345_000]);
+  await f.time.advance(105_000);
+  assert.deepEqual(f.checks, [0, 105_000]);
   assert.equal(f.maxActive, 1);
 });
 

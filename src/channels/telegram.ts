@@ -4,6 +4,7 @@ import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyTelegramLaunch, type TelegramLaunch } from "./telegram-init-data.js";
+import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -221,14 +222,18 @@ export class TelegramAdapter implements ChannelAdapter {
     return String(message.data.message_id);
   }
   // ---- end R17-C ----
+  /** The Mini App's signed launch data, checked with this bot's own token, which never leaves this adapter. */
+  miniAppUser(initData: string): MiniAppUser {
+    return verifyInitData(initData, this.options.token);
+  }
   /** The live browser in a chat: a photo with buttons, then the same message's photo replaced (editMessageMedia). */
-  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[], replyToMessageId?: string): Promise<string | undefined> {
     const form = new FormData(), target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
     form.append("photo", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
     if (file.caption) form.append("caption", file.caption.slice(0, 1024));
-    if (buttons.length) form.append("reply_markup", JSON.stringify({ inline_keyboard: [buttons.map((b) => ({ text: b.label, callback_data: b.value }))] }));
+    if (buttons.length) form.append("reply_markup", JSON.stringify({ inline_keyboard: [buttons.map(inlineButton)] }));
     form.append("disable_notification", "true");
     if (replyToMessageId && /^\d+$/.test(replyToMessageId))
       form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
@@ -239,13 +244,13 @@ export class TelegramAdapter implements ChannelAdapter {
     if (!message.success) throw new Error("Telegram sendPhoto failed: response missing message_id");
     return String(message.data.message_id);
   }
-  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string }[]): Promise<void> {
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[]): Promise<void> {
     const form = new FormData();
     form.append("chat_id", String(telegramTarget(chatId).chat_id));
     form.append("message_id", messageId);
     form.append("media", JSON.stringify({ type: "photo", media: "attach://picture", ...(file.caption ? { caption: file.caption.slice(0, 1024) } : {}) }));
     form.append("picture", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
-    form.append("reply_markup", JSON.stringify({ inline_keyboard: buttons.length ? [buttons.map((b) => ({ text: b.label, callback_data: b.value }))] : [] }));
+    form.append("reply_markup", JSON.stringify({ inline_keyboard: buttons.length ? [buttons.map(inlineButton)] : [] }));
     const response = await this.fetch(`${this.base}/editMessageMedia`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
     const parsed = responseSchema.parse(await response.json());
     if (!parsed.ok && !/message is not modified/i.test(parsed.description ?? ""))
@@ -505,4 +510,9 @@ export function telegramPhoto(file: Pick<OutgoingFile, "mediaType" | "bytes">): 
 function retryOf(parsed: z.infer<typeof responseSchema>): { retryAfter?: number } {
   const wait = parsed.parameters?.retry_after;
   return typeof wait === "number" ? { retryAfter: wait } : {};
+}
+
+/** One button under a message: a press sent back to Branch, or (`webApp`) the bot's Mini App opened at that address. */
+function inlineButton(button: { label: string; value: string; webApp?: string }): Record<string, unknown> {
+  return button.webApp ? { text: button.label, web_app: { url: button.webApp } } : { text: button.label, callback_data: button.value };
 }

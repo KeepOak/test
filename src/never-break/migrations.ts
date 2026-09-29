@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync as DatabaseSyncClass, type DatabaseSync } from "node:sqlite";
 
 /**
@@ -121,10 +122,22 @@ const sqliteCode = (error: unknown): number =>
 /** The low byte carries the family: 8 is read-only, 11 corrupt, 13 full, 14 cannot open, 26 not a database. */
 const family = (error: unknown): number => sqliteCode(error) & 0xff;
 
+/**
+ * What the owner can do about damaged saved work. QA retest 2026-09-28 (TRUNK-180): it always said "your last three
+ * safety copies are in `update-backups`", also when no update had ever made one and the folder did not exist.
+ */
+function safetyCopies(path: string): string {
+  let copies: string[] = [];
+  try { copies = readdirSync(join(dirname(path), "update-backups")).filter((name) => /^data-|\.sqlite$/.test(name)); } catch { /* none yet */ }
+  return copies.length
+    ? "Your last safety copies are in the `update-backups` folder beside it; `branch restore` puts one back."
+    : "Branch has made no safety copy of it yet (one is made before each update). To start again with nothing saved, move this file somewhere else and start Branch.";
+}
+
 export function dataProblemSentence(path: string, error: unknown): string | null {
   const why = (error instanceof Error ? error.message : String(error)).toLowerCase();
   const kind = family(error);
-  const restore = "Your last three safety copies are in the `update-backups` folder beside it; `branch restore` puts one back.";
+  const restore = safetyCopies(path);
   // The order matters: a disk with no room left and a folder that has gone can both come back as
   // "unable to open database file", and neither is a permissions problem to send the owner chasing.
   if (kind === 13 || /database or disk is full|no space|disk full/.test(why))

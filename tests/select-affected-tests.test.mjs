@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
-import { describe, FULL_MATRIX, laneSources, parseNameStatus, planMatrix, platformLanes, selectImpact } from "../scripts/select-affected-tests.mjs";
+import { describe, FULL_LABEL, FULL_MATRIX, laneSources, parseNameStatus, plan as planRun, planMatrix, platformLanes, selectImpact } from "../scripts/select-affected-tests.mjs";
 import { buildGraph, reachedTests } from "../scripts/test-graph.mjs";
 
 const checkedIn = JSON.parse(readFileSync(new URL("test-impact.json", import.meta.url), "utf8"));
@@ -167,4 +167,15 @@ test("a change to the ledger picks up the guard that reads it", () => {
     assert.equal(result.mode, "partial", path);
     assert.deepEqual(result.tests, ["tests/leak-guard.test.mjs", "tests/settings-page-count.test.mjs"], path);
   }
+});
+
+test("a pull request labelled ci-full runs the whole suite on every system; without it, the diff decides", () => {
+  const full = planRun("pull_request", "redesign/window", "HEAD", "HEAD", ["ui", FULL_LABEL]);
+  assert.equal(full.mode, "full");
+  assert.deepEqual(full.tests, []);
+  assert.deepEqual(full.platforms, { windows: true, macos: true });
+  assert.match(full.reasons.join(" "), /ci-full/);
+  // The same pull request without the label: an empty diff (HEAD..HEAD) is not planned as the whole suite for that reason.
+  const plain = planRun("pull_request", "redesign/window", "HEAD", "HEAD", ["ui"]);
+  assert.doesNotMatch(plain.reasons.join(" "), /ci-full/);
 });

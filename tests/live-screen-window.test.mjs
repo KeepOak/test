@@ -14,6 +14,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { installScreenStandIn } from "./local-screen-fixture.mjs";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const TOWER = "a1b2c3d4e5f60718", LAPTOP = "0f1e2d3c4b5a6978";
@@ -41,7 +42,7 @@ async function windowWith(t, prepare) {
     await page.getByLabel("Session token", { exact: true }).fill(server.token);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-    await page.locator(`[data-act="chat"][data-id="${run.sessionId}"]`).first().click();
+    await openChat(page, run.sessionId);
     await page.locator("#conversation .b").first().waitFor({ timeout: 30000 });
   } };
 }
