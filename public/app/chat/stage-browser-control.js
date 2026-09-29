@@ -147,8 +147,14 @@ function captureInputCurrent() {
     && B.tabId === tabId && B.page?.url === url;
 }
 /** Preserve the native IME node only while this conversation and input grant remain current. */
-export const ownerBrowserComposing = (sid) => sid === B.sid && B.composition?.target.isConnected
-  && B.composition.target === document.activeElement && B.composition.current();
+export function ownerBrowserComposing(sid) {
+  const composition = B.composition;
+  if (!composition) return false;
+  if (sid !== B.sid || !composition.target.isConnected || !composition.current()) {
+    composition.target.value = ""; B.composition = null; return false;
+  }
+  return composition.target === document.activeElement;
+}
 /* The owner's input is sent in the order it was given, one request at a time: nothing typed or clicked while an earlier
    request is still going is dropped. */
 let chain = Promise.resolve();
@@ -306,7 +312,7 @@ function flushWheel() {
 }
 const KEYS = ["Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"];
 function key(event) {
-  if (!visible() || !(owned() || free()) || B.pending || event.isComposing || event.keyCode === 229 || B.composition) return;
+  if (!visible() || !(owned() || free()) || B.pending || event.isComposing || event.keyCode === 229 || ownerBrowserComposing(B.sid)) return;
   const modifiers = [event.ctrlKey && "Control", event.metaKey && "Meta", event.altKey && "Alt", event.shiftKey && "Shift"].filter(Boolean);
   const name = event.key === " " ? "Space" : event.key;
   if (modifiers.some((m) => m !== "Shift") && /^[a-zA-Z0-9]$/.test(name)) {
@@ -389,7 +395,7 @@ export function initOwnerBrowser() {
     B.composition = null; event.target.value = ""; queueMicrotask(() => changed(true));
   }, true);
   document.addEventListener("input", (event) => {
-    if (event.target.id !== "ob7-keys" || event.isComposing || B.composition) return;
+    if (event.target.id !== "ob7-keys" || event.isComposing || ownerBrowserComposing(B.sid)) return;
     if (event.inputType === "insertText" && canDrive()) typeText(event.data ?? "");
     if (!event.isComposing) event.target.value = "";
   }, true);
