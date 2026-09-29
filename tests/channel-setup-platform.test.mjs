@@ -13,9 +13,10 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { setupPanel } from "../dist/channel-setup/service.js";
+import { setupList, setupPanel, saveSetup, saveSetupMode } from "../dist/channel-setup/service.js";
 import { recipes } from "../dist/channel-setup/recipes.js";
 import { readFile } from "node:fs/promises";
+import { newWindow, openPlace } from "./new-window-places.mjs";
 
 const store = { get: () => undefined };
 
@@ -29,6 +30,21 @@ test("the Set up panel says a Mac-only app cannot be set up elsewhere, and nothi
   assert.equal(setupPanel(store, "local", "imessage", "darwin").onlyOn, null);
   const held = recipes().filter((recipe) => setupPanel(store, "local", recipe.id, "win32").unavailable !== null).map((recipe) => recipe.id);
   assert.deepEqual(held, ["imessage"], "on Windows only iMessage is held");
+});
+
+test("the catalog marks only iMessage off a Mac, and saving it there is refused before anything is checked or kept", async (t) => {
+  const onlyOn = (platform) => setupList(store, "local", platform).channels.filter((c) => c.onlyOn).map((c) => [c.id, c.onlyOn]);
+  assert.deepEqual(onlyOn("win32"), [["imessage", ["darwin"]]]);
+  assert.deepEqual(onlyOn("darwin"), []);
+  const root = await mkdtemp(join(tmpdir(), "branch-setup-platform-save-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  saveSetupMode(app.store, "local", { mode: "on" });
+  let fetched = 0;
+  const host = { store: app.store, owner: "local", platform: "win32", fetch: async () => { fetched++; throw new Error("no network here"); } };
+  await assert.rejects(saveSetup(host, "imessage", { values: {}, enable: "on" }), /iMessage works only on a Mac/);
+  assert.equal(fetched, 0);
+  assert.equal(app.store.get("settings", "local", "channel-setup-done"), undefined, "nothing was kept");
 });
 
 test("the window's sentence has its words in every language the window speaks", async () => {
@@ -63,5 +79,14 @@ test("off a Mac the iMessage wizard shows why and its Continue stays off", { ski
   await note.waitFor({ timeout: 30000 });
   assert.match(await note.textContent(), /iMessage works only on a Mac/);
   assert.equal(await page.locator('[data-act="chw-next"]').isDisabled(), true, "Continue stays off");
+  assert.equal(await page.getByText("Paste what iMessage gave you", { exact: false }).count(), 0, "no Paste step with nothing to paste");
+  assert.deepEqual(errors, []);
+});
+
+test("off a Mac the chat app catalog says iMessage needs a Mac", { skip: process.platform === "darwin" && "this computer is a Mac" }, async (t) => {
+  const { page, errors } = await newWindow(t);
+  await openPlace(page, "customize", "channels");
+  await page.locator('[data-act="ch-open"][data-v="imessage"]').getByText("Needs a Mac", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Two minutes to set up", { exact: false }).count(), 0);
   assert.deepEqual(errors, []);
 });

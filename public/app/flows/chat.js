@@ -12,6 +12,7 @@ import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { qr } from "../core/qr.js";
 import { t } from "../../i18n.js";
+import { setupNeeds } from "../core/setup-needs.js";
 import { manage17d, fixNote17d } from "./chatapps17d.js"; // pass 17 part D §8
 
 let vals = {};
@@ -24,7 +25,7 @@ const inputs = (c) => [...(c.fields ?? []).map((f) => ({ key: f.name, what: f.wh
 const filled = (c) => inputs(c).every((f) => f.optional || (vals[f.key] ?? "").trim());
 
 function stepsOf(c) {
-  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, "Paste", c.hasCheck || c.noCheck ? "Check" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
+  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, inputs(c).length ? "Paste" : null, c.hasCheck || c.noCheck ? "Check" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
 }
 
 function create(c) {
@@ -97,7 +98,7 @@ function draw() {
   const back = w.step ? `<button class="btn ghost" type="button" data-act="chw-back">${t("action.back")}</button>` : `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`;
   const next = cur === "Save" ? `<button class="btn pri" type="button" data-act="chw-save">${t("action.save")}</button>` : `<button class="btn pri" type="button" data-act="chw-next" ${canNext ? "" : "disabled"}>${cur === "Pair" ? t("action.approve") : t("window.flows.chw.continue")}</button>`;
   const head = `<div class="chw-head12">${logo(c.id, c.name, 40)}<span><b>${esc(c.name)}</b><small>${t(FAMILY[c.family] ?? "window.flows.chw.more-apps")}${c.app?.name ? " · " + esc(c.app.name) : ""}</small></span></div>`;
-  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${c.unavailable ? `<p class="hint" role="status" data-chw-unavailable>${esc(onlyOnWords(c))}</p>` : ""}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
+  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${setupNeeds(c) ? `<p class="hint" data-chw-needs>${esc(setupNeeds(c))}</p>` : ""}${c.unavailable ? `<p class="hint" role="status" data-chw-unavailable>${esc(onlyOnWords(c))}</p>` : ""}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
   if (cur === "Pair") setTimeout(() => $('.code12 input[value=""]')?.focus(), 30);
 }
 

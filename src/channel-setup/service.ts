@@ -45,10 +45,13 @@ export function commandFor(id: string): { posix: string; windows: string } {
   return { posix: `branch connect ${id}`, windows: `branch connect ${id}` };
 }
 
-export function setupList(store: Pick<Store, "get">, owner: string): Record<string, unknown> {
+export function setupList(store: Pick<Store, "get">, owner: string, platform: NodeJS.Platform = process.platform): Record<string, unknown> {
   const book = recipeBook();
+  // The systems an app runs on, when this computer is not one of them, so its card can say so (a Mac for iMessage).
+  const onlyOn = (recipe: Recipe) => (typeof recipe.entry?.type === "string" ? parityOnlyOn(recipe.entry.type, platform) : null);
   return { mode: setupMode(store, owner), checked: book.checked, count: book.recipes.length,
-    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family, ...(recipe.what ? { what: recipe.what } : {}) })) };
+    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family, ...(recipe.what ? { what: recipe.what } : {}),
+      ...(onlyOn(recipe) ? { onlyOn: onlyOn(recipe) } : {}) })) };
 }
 
 /** Everything the Set up panel shows for one app. Nothing here is secret. */
@@ -78,6 +81,8 @@ export interface SetupHost {
   owner: string;
   /** Already behind the network settings. */
   fetch: typeof fetch;
+  /** The system this engine runs on; tests stand in for it, a request never names it. */
+  platform?: NodeJS.Platform;
   /** The Telegram card from never-break: its save, and connecting the bot right away. */
   telegram?: {
     save: (input: unknown) => Promise<void>;
@@ -142,6 +147,9 @@ export async function saveSetup(host: SetupHost, id: string, input: SaveInput): 
     throw new SetupRefusal(409, "Setting up chat apps from here is switched off. Turn it on under Customize, Chat apps.");
   const recipe = recipeFor(id);
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
+  // An app this computer cannot run (iMessage off a Mac) is refused here too, before anything is checked or saved.
+  const refused = typeof recipe.entry?.type === "string" ? parityPlatformRefusal(recipe.entry.type, host.platform ?? process.platform) : null;
+  if (refused) throw new SetupRefusal(409, refused);
   // Saving such an app starts the program it names, now and at every start, so it is set up only at this computer,
   // as everything else that runs a program here is (the /adapt rule in src/commands/catalog.ts).
   if (startsAProgram(recipe) && host.thisComputer === false)

@@ -9,3 +9,12 @@ export const PARITY_KINDS = [
   "threema", "homeassistant", "xmpp", "mqtt", "keybase", "simplex", "deltachat", "nostr", "vk", "qq-bot",
   "guilded", "revolt", "mumble", "kook", "wechat-mp", "wecom-app", "bluebubbles",
 ] as const;
+
+/**
+ * The added services bound to some systems, with the name each is set up under, known without loading the services: the
+ * Set up panel and the catalog read it as they draw (src/channel-setup/service.ts). tests/parity-platforms.test.mjs keeps
+ * it equal to the services' own `platforms` (parity-services.ts), so the two cannot drift.
+ */
+export const PARITY_PLATFORMS: Readonly<Record<string, { readonly name: string; readonly platforms: readonly NodeJS.Platform[] }>> = {
+  imessage: { name: "iMessage", platforms: ["darwin"] },
+};

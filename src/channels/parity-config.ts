@@ -5,7 +5,7 @@ import { ChannelPolicySchema, type ChannelAdapter } from "./router.js";
 import { connectWebSocket, type WebSocketConnect } from "./ws-client.js";
 import { openSocket, type ParityDeps, type ParityService } from "./parity-common.js";
 import { paritySwitch, SwitchedChannel } from "./parity-switch.js";
-import { PARITY_KINDS } from "./parity-kinds.js";
+import { PARITY_KINDS, PARITY_PLATFORMS } from "./parity-kinds.js";
 
 /* The services themselves are loaded on first use (parity-services.ts): an engine with none connected never holds them. */
 const services = async (): Promise<ParityService[]> => (await import("./parity-services.js")).parityServices;
@@ -97,11 +97,11 @@ function platformName(platform: NodeJS.Platform): string {
  */
 /** The systems a service runs on, when it is bound to some, and this computer is not one of them; else null. */
 export function parityOnlyOn(kind: string, platform: NodeJS.Platform = process.platform): NodeJS.Platform[] | null {
-  const service = parityService(kind);
+  const service = Object.hasOwn(PARITY_PLATFORMS, kind) ? PARITY_PLATFORMS[kind] : undefined;
   return service?.platforms && !service.platforms.includes(platform) ? [...service.platforms] : null;
 }
 export function parityPlatformRefusal(kind: string, platform: NodeJS.Platform = process.platform): string | null {
-  const service = parityService(kind);
+  const service = Object.hasOwn(PARITY_PLATFORMS, kind) ? PARITY_PLATFORMS[kind] : undefined;
   if (!service?.platforms || service.platforms.includes(platform)) return null;
   return `${service.name} works only on ${service.platforms.map(platformName).join(" or ")}, so it cannot be set up on this computer.`;
 }
