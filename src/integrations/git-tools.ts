@@ -232,6 +232,20 @@ export function registerGitHubProject(registry: ToolRegistry, github: GitHubAcce
       seconds: z.number().int().min(0).max(3600).default(75) }).strict(),
     execute: (input, context: ToolContext) => github.waitForChecks(input, context.signal),
   });
+  // selfdev (SELF-306): why a check failed, and running failed jobs again.
+  registry.register({
+    name: "github.check_logs", permission: "github.manage",
+    description: "What each failed check on a pull request's latest commit printed: the lines of its Actions log around the failures. Use it to find why CI is red before changing anything.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive(), lines: z.number().int().min(20).max(400).default(120) }).strict(),
+    execute: (input) => github.checkLogs(input),
+  });
+  registry.register({
+    name: "github.rerun_failed_checks", permission: "github.manage",
+    description: "Run the failed jobs of a pull request's latest commit again, for a check that failed for reasons outside the change (a flaky test, a runner problem). Then wait with github.wait_for_checks.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive() }).strict(),
+    target: (input) => `run the failed checks of ${String(input.repo)} #${String(input.number)} again`,
+    execute: (input) => github.rerunFailedChecks(input),
+  });
   registry.register({
     name: "github.release", permission: "github.manage",
     description: "The releases published for a GitHub repository, newest first, with their notes.",
