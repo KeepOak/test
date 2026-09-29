@@ -8,7 +8,7 @@ import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
 import { stillOutOfSight } from "../core/still.js";
-import { head as chatHead, openConversation, startConversation } from "../chat/chat.js";
+import { head as chatHead, openConversation, startConversation, addDockItem } from "../chat/chat.js";
 import { statusItems } from "../chat/messages.js";
 import { initExtras, gatewayOn, readGateway } from "./extras.js";
 import { initUsage, planMeter } from "./usage.js";
@@ -23,7 +23,7 @@ import { SQ, searchHTML, askEngine, initSearch } from "./search.js";
 import { loadLook, applyLook, savePrefs } from "./look.js";
 import { initThemes } from "./themes.js";
 import { reserveControls, followControlsLook } from "./controls.js";
-import { loadDelight, drawBackground, drawPet, petHTML, pat, D } from "./scene.js";
+import { loadDelight, drawBackground, drawPet, petHTML, pat, D, sceneryHTML, paintScenery } from "./scene.js";
 import { initPalette } from "./palette.js";
 import { ACT, working, readActivity } from "./activity.js";
 import { K, loadKeys, pressed, binding, spoken, ariaKeys } from "./keys.js";
@@ -45,6 +45,7 @@ import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 import { initWhatCan } from "../flows/whatcan.js"; // the "What can Branch do" gallery
+import { simpleButton, initSimple } from "./simple.js"; // RES-704: the Simple / Advanced switch
 
 const WIDE = matchMedia("(min-width: 761px)");
 export const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
@@ -144,7 +145,10 @@ function list() {
   const recent = rows.filter((s) => !pinnedRow(s) && !trunkFor(s));
   const threads = E.trunks.map((trunk) => {
     const own = rows.filter((session) => !pinnedRow(session) && trunkFor(session)?.id === trunk.id);
-    return own.length ? `<div class="lh">${esc(trunk.name)}</div>${own.map(row).join("")}` : "";
+    // QA 2026-09-28 (Pass 2): the default Trunk's own conversation alone is itself a row named for the Trunk, so its
+    // heading says what the list is rather than the same name twice.
+    const alone = trunk.id === E.defaultTrunkId && own.length === 1 && sessionId(own[0]) === trunk.chatSessionId;
+    return own.length ? `<div class="lh">${esc(alone ? t("rail.conversations") : trunk.name)}</div>${own.map(row).join("")}` : "";
   }).join("");
   return `<nav class="list" aria-label="${t("people.home.list")}">
     ${hidden("projects") ? "" : `<button class="lh lh-btn" type="button" data-act="projtoggle" aria-expanded="${!!S.projOpen}" data-hide="projects">${ic(S.projOpen ? "down" : "chev", "s")}${t("memory.movein.kind.project")}</button>${S.projOpen ? projectRows() : ""}`}
@@ -156,7 +160,7 @@ function side() {
   const n = waitingCount(), live = liveNow();
   const person = personHere();
   const shut = S.placesShut && !railNow(), named = shut || railNow(); // the rail keeps the column of icons (prototype places14)
-  return `${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
+  return `${sceneryHTML()}${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
     <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot${link.up ? "" : " off"}"></i></span>${ic("chev", "s")}</button>
     <div class="side-top"><label class="sq9">${ic("search", "s")}<input id="side-q" type="search" placeholder="${t("action.search")}" value="${esc(SQ.q)}" autocomplete="off" aria-label="${t("window.shell.shell.search-chats-trunks-messages-and-past")}"${binding("palette") ? ` aria-keyshortcuts="${esc(ariaKeys(binding("palette")))}"` : ""}>${SQ.q ? `<button type="button" class="sq-x" data-act="sq-clear" aria-label="${t("window.shell.shell.clear-the-search")}">${ic("x", "s")}</button>` : binding("palette") ? `<kbd>${esc(spoken(binding("palette")))}</kbd>` : ""}</label><button class="icon-btn" type="button" aria-label="${t("window.shell.shell.new-conversation-trunk-room-or-automation")}" aria-expanded="false" data-act="newmenu">${ic("plus")}</button></div>
     <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic(S.placesShut ? "chev" : "down", "s")}${t("ew.places")}</button>
@@ -169,7 +173,7 @@ function titleActions() {
   // Redesign: the owner removed the list's show/hide button; the list's edge (shell/resize.js) and Ctrl+B do it.
   const theme = document.documentElement.dataset.theme === "dark" ? "sun" : "moon";
   return `${hidden("notes") ? "" : `<button class="tb-btn" type="button" data-act="guide" aria-haspopup="menu" aria-expanded="false" data-hide="notes">${ic("bulb", "s")}${t("window.shell.shell.guide")}</button>`}
-    <button class="tb-btn" type="button" aria-label="${t("window.shell.shell.switch-light-or-dark")}" data-act="theme-flip">${ic(theme, "s")}</button>`;
+    ${simpleButton()}<button class="tb-btn" type="button" aria-label="${t("window.shell.shell.switch-light-or-dark")}" data-act="theme-flip">${ic(theme, "s")}</button>`;
 }
 
 function status() {
@@ -227,12 +231,14 @@ export function drawShell() {
   header.style.setProperty("--tint14", (merged && slot.querySelector(".head")?.style.getPropertyValue("--tint")) || "transparent");
   if (drew.includes($("#side"))) stillOutOfSight($("#side .list"));
   drawBackground();
+  paintScenery();
   drawPet();
 }
 
 export function initShell() {
   reserveControls();
   followControlsLook();
+  addDockItem(() => petHTML("dock")); // the pet by the message box, when Appearance puts it there
   markLive(["sq-f", "sq-clear", "projtoggle", "sw:side-q"]);
   on("projtoggle", () => toggleProjects());
   on("sq-f", (el) => { SQ.f = el.dataset.v; renderNow(); });
@@ -255,6 +261,7 @@ export function initShell() {
   initResize();
   initWhatCan(); // flows/whatcan.js: the "What can Branch do" gallery (Overview, this Guide menu, an empty conversation)
   initPutAway();
+  initSimple();
   markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with"]);
   on("conv-more", (el) => el.previousElementSibling?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: el.getBoundingClientRect().left, clientY: el.getBoundingClientRect().bottom })));
   // With no id (Settings' back button before any conversation is open) it just goes back to the conversation view.

@@ -252,7 +252,7 @@ test("every writer of a Settings setting leaves a change record for each value i
   await check("--preset for one task, put back after", null, () => usePreset(app.store, owner, "off", false).restore());
   await check("a remembered answer", null, () => addPolicyRule(app.store, owner, { tool: "file.read", match: "*", decision: "allow" }));
   await check("/switch vim", "comfort-keys.vim", () => switchComfort(app.store, owner, "vim", "", { t: (_key, english) => english }));
-  await check("a folder's own trust", null, () => post("/api/folder-trust", { folder: "", decision: "trust" }));
+  await check("a folder's own trust", null, () => post("/api/folder-trust", { folder: "", decision: "trust", confirmLoosening: true }));
 
   // A path made from a conversation (src/conversation-paths-api.ts) copies that conversation's own choices. None of
   // them is in the catalogue, so check() holds it to moving nothing there unrecorded; the copies themselves still land.

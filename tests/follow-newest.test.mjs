@@ -190,6 +190,28 @@ test("Q197 Shift+Space, and a key pressed with the focus on the page itself, cou
   assert.deepEqual(errors, []);
 });
 
+/* A click in the conversation makes its part draw anew at the next re-read (main.js touched); the box Space and
+   Shift+Space scrolled was the one taken away, so the keys scrolled nothing until the next click (seen on CI as Q197's
+   "control: Shift+Space scrolled up"). The box takes focus on a click now, and focus is found again by its id.
+   Mutation: drop tabindex="-1" from #scroll in chat.js draw(), and this goes red. */
+test("Q197 after a click in the conversation and a redraw of it, Shift+Space still scrolls it", async (t) => {
+  const { page } = await fixture(t, { name: "scripted", async complete() { return { content: long, toolCalls: [] }; } });
+  await send(page, "A long answer please.");
+  for (let still = 0, tries = 0; still < 2 && tries < 40; tries++)
+    still = await page.evaluate(() => new Promise((resolve) => { const box = document.getElementById("scroll"), before = box.scrollHeight; setTimeout(() => resolve(box.scrollHeight === before), 400); })) ? still + 1 : 0;
+  await page.locator("#conversation").click();
+  const replaced = await page.evaluate(async () => {
+    const box = document.getElementById("scroll");
+    document.getElementById("conversation").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    (await import("/app/core/dom.js")).renderNow();
+    return document.getElementById("scroll") !== box;
+  });
+  assert.ok(replaced, "control: the conversation's box was drawn anew");
+  await page.keyboard.press("Shift+Space");
+  const moved = await restedUp(page);
+  assert.ok(moved !== false, "Shift+Space scrolled up after the redraw");
+});
+
 test("Q198 a conversation opened from Recents after a scroll up on the empty screen starts at its newest message (NAS e87c522)", async (t) => {
   const { page, errors } = await fixture(t, { name: "scripted", async complete() { return { content: long, toolCalls: [] }; } });
   await send(page, "A long answer to come back to.");
