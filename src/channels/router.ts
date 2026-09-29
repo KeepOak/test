@@ -17,7 +17,7 @@ import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
 import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
-import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
+import { saveStepsSettings, stepsDisplayFor, stepsInChat, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
@@ -1148,6 +1148,10 @@ export class ChannelRouter {
   /** Carries out a chat command and sends its answer back. */
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
+    if (command.name === "verbose" && message.chatKind !== "direct") {
+      await this.deliver(channel, chatId, "Set steps from a direct chat; a group keeps the owner's group settings.", `verbose-group:${message.messageId}`, this.quoteFor(message));
+      return "replied";
+    }
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
     // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
@@ -1158,7 +1162,7 @@ export class ChannelRouter {
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
     const asks = command.name === "btw" || command.name === "compact" || question;
     const work = () => runChatCommand(command, {
-      runtime: this.runtime, channel, chatId, turn,
+      runtime: this.runtime, channel, kind: this.adapters.get(channel)?.adapter.kind ?? channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
@@ -1532,7 +1536,7 @@ export class ChannelRouter {
     await live?.finish(ok ? "done" : "error");
     const delivered = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null, turn);
     // The owner's "remove the steps message after a good answer"; a failed task keeps it as the record.
-    if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
+    if (ok && delivered && this.stepsDisplay(message.channel, message.chatId).cleanup) await live?.remove();
     if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
@@ -1665,12 +1669,12 @@ export class ChannelRouter {
     const adapter = this.adapters.get(message.channel)?.adapter, switches = this.switches(), setting = switches.liveStatus;
     // An app with none of typing, reactions or edits still gets a message per step when the owner chose that for it.
     const eachStep = !!adapter && !adapter.edit && !adapter.paidPerMessage && message.chatKind === "direct" && switches.steps !== "off"
-      && this.stepsDisplay(message.channel).noEdit === "each" && this.stepsDisplay(message.channel).detail !== "off";
+      && this.stepsDisplay(message.channel, message.chatId).noEdit === "each" && this.stepsDisplay(message.channel, message.chatId).detail !== "off";
     if (!adapter || setting === "off" || !this.liveOn() || (!adapter.sendTyping && !adapter.react && !adapter.edit && !eachStep)) return null;
     // A group shares one bot with other people: Telegram lets a bot post about 20 messages a minute there, edits included.
     const timing = message.chatKind === "group" ? { ...this.liveTiming, editEveryMs: Math.max(this.liveTiming.editEveryMs, this.groupEditEveryMs) } : this.liveTiming;
     // The steps name files and commands, so only a direct chat is shown them: this message already passed the sender check.
-    const display = this.stepsDisplay(message.channel);
+    const display = this.stepsDisplay(message.channel, message.chatId);
     const steps = switches.steps !== "off" && message.chatKind === "direct" && display.detail !== "off"
       && (adapter.edit || eachStep) ? this.stepsOf(runOf, display, !adapter.edit) : undefined;
     // A group gets counts of kinds of step, or (the owner's "no steps in groups") no progress message at all.
@@ -1708,7 +1712,7 @@ export class ChannelRouter {
    */
   private stepsLine(message: InboundMessage, run: Run, ok: boolean): string | null {
     const adapter = this.adapters.get(message.channel)?.adapter;
-    const display = this.stepsDisplay(message.channel);
+    const display = this.stepsDisplay(message.channel, message.chatId);
     if (!adapter || adapter.edit || adapter.paidPerMessage || message.chatKind !== "direct" || this.switches().steps === "off"
       || display.detail === "off" || display.noEdit !== "summary") return null;
     if (Date.parse(run.updatedAt) - Date.parse(run.createdAt) < this.liveTiming.progressAfterMs) return null;
@@ -1748,9 +1752,10 @@ export class ChannelRouter {
     };
   }
   /** The steps knobs for one connected app (Settings › Chat apps, src/channels/steps-display.ts). */
-  stepsDisplay(channel: string): StepsDisplay {
+  stepsDisplay(channel: string, chatId?: string): StepsDisplay {
     const adapter = this.adapters.get(channel)?.adapter;
-    return stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: channel, kind: adapter?.kind ?? channel });
+    const display = stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: channel, kind: adapter?.kind ?? channel });
+    return chatId ? stepsInChat(this.store, this.runtime.owner, channel, chatId, display) : display;
   }
   stepsSettings(): StepsSettings { return stepsSettings(this.store, this.runtime.owner); }
   setStepsSettings(input: unknown): StepsSettings { return saveStepsSettings(this.store, this.runtime.owner, input); }
