@@ -105,6 +105,11 @@ export const EmailChannelSchema = z.object({
   passwordSecret: credentialName.default('EMAIL_PASSWORD'),
   /** How often to look for new mail, in seconds. */
   pollSeconds: z.number().int().min(5).max(3600).default(60),
+  /**
+   * The name the mailbox's own server writes first in its Authentication-Results header (for Gmail, mx.google.com).
+   * Set, only that server's verdict on the sender is believed; unset, the server that wrote the top header is.
+   */
+  authservId: z.string().trim().min(1).max(253).regex(/^[^s;]+$/).optional(),
 }).merge(ChannelPolicySchema).strict();
 /**
  * Every team-chat service that works the same way: a row in `data/channels.json` says how it sends
@@ -588,6 +593,7 @@ async function buildEmail(channel: Extract<ChannelConfig, { type: 'email' }>, en
   for (const server of [channel.imap, channel.smtp])
     await policy?.assertAllowed(new URL(`https://${server.host}`), 'mail server');
   return new EmailAdapter({ id: channel.id, address: channel.address, pollMs: channel.pollSeconds * 1000,
+    ...(channel.authservId ? { authservId: channel.authservId } : {}),
     imap: { ...channel.imap, password }, smtp: { ...channel.smtp, password } });
 }
 
