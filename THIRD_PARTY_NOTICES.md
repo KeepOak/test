@@ -3564,6 +3564,14 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Window typing and touch (UP-UI-001, UP-UI-006, UP-UI-052): Hermes Agent, OpenClaw (MIT); Cline (Apache-2.0)
+
+- `public/app/core/dom.js` `composing()`: Enter while an input method is composing, or with keyCode 229, confirms the word and never sends, as in Hermes Agent's composer (`apps/desktop/src/app/chat/composer/index.tsx`, https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research, MIT) and Cline's `ChatTextArea.tsx` (https://github.com/cline/cline, Apache-2.0).
+- `public/app/core/drafts.js`: unsent words kept per conversation in the browser, text only, the newest 50, written best-effort so storage never breaks typing, after Hermes Agent's draft store (`apps/desktop/src/store/composer.ts`).
+- `public/app/styles/touch.css`: a 16px floor for text boxes under a coarse pointer, so a phone does not zoom on focus, and 44px tap targets, after OpenClaw's `ui/src/styles/settings-controls.css` and `ui/docs/design-system/settings-design.md` (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation, MIT).
+
+The code was written again for Branch. The MIT sources are used under the MIT licence, whose text is given under IronClaw above; Cline under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker

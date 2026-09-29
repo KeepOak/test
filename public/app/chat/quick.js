@@ -5,7 +5,7 @@
    then the words in it). The keys are the engine's keys card (quickAsk; ⌥ Space on a Mac); the desktop app registers them
    in every app and opens the box from there (src/desktop/quick-ask.ts, window.branchDesktop.onQuickAsk). */
 
-import { $, esc } from "../core/dom.js";
+import { $, esc, composing } from "../core/dom.js";
 import { E, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -93,7 +93,7 @@ export function initQuick() {
   on("qasend17c", () => sendBox());
   document.addEventListener("keydown", (e) => {
     if (pressedQuick(e)) { e.preventDefault(); e.stopImmediatePropagation(); toggle(); return; }
-    if (!Q.open) return;
+    if (!Q.open || composing(e)) return; // Escape and Enter while composing belong to the input method
     if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeBox(); }
     else if (e.key === "Enter" && e.target.id === "qa-in17c") { e.preventDefault(); e.stopImmediatePropagation(); sendBox(); }
   }, true);
