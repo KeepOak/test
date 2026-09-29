@@ -32,6 +32,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
@@ -1702,6 +1703,10 @@ async function api(
     }
     return result;
   }
+  // models-ui (MODEL-052): who spent what: the owner's own tasks and each Trunk's, with the accounts they used.
+  if (request.method === "GET" && path === "/api/usage/by-trunk")
+    return usageByTrunk({ store: app.store, owner: app.runtime.owner, trunkName: (id) => app.trunks.records.find(id)?.name ?? null,
+      costOf: (runId) => runCost(app, runId).amount ?? null }, Object.fromEntries(new URL(request.url ?? "/", "http://local").searchParams));
   if (request.method === "GET" && path === "/api/second-opinion")
     return secondOpinionSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/second-opinion")
