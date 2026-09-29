@@ -8058,6 +8058,7 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | Setting | What it is |
 | --- | --- |
 | `autoReadAloud` | Read every reply aloud as it arrives. |
+| `readAloudWhen` | With `autoReadAloud` on: `always` (the default) reads every reply the owner is watching; `spoken` only the reply to a message dictated in the window (Settings › Voice › Answer aloud › When I talk). |
 | `voiceId` | Which voice reads aloud. Which ones exist depends on this computer. |
 | `speechRate` | How fast it reads, from 0.5 to 2 times normal speed. |
 | `useProviderVoice` | Prefer the connected service's higher-quality voice over the browser's. |
