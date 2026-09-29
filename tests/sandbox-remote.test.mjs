@@ -1067,3 +1067,31 @@ test("A0648 a rule about another computer is about the program, not the computer
   const asks = PolicySchema.parse({ preset: "workspace", rules: presetRules("workspace") });
   assert.equal(evaluatePolicy(asks, { tool: "remote.run", target: "tower: make build", readOnly: false }).decision, "ask");
 });
+
+/* Q4: a Trunk may use another computer only when the owner lent it to that Trunk; the owner's own conversations may use
+   every one. Mutation: make getFor ignore the Trunk in src/remote/ssh-workspace.ts and the refusals go. */
+test("a Trunk uses another computer only once the owner lends it to that Trunk", async (t) => {
+  const { app, root } = await fixture(t);
+  const { RemoteWorkspaces, registerRemoteWorkspaces } = await import("../dist/remote/ssh-workspace.js");
+  const { ToolRegistry } = await import("../dist/registry.js");
+  const home = await sshHome(root, "Host tower\n  HostName tower.lan\nHost attic\n  HostName attic.lan\n",
+    "tower.lan ssh-ed25519 AAAA\nattic.lan ssh-ed25519 BBBB\n");
+  const remotes = new RemoteWorkspaces(app.store, "local", fakeSsh({ ssh: { stdout: "notes.md\n" } }).run, home);
+  assert.deepEqual((await remotes.add({ alias: "tower", root: "/srv/work", trunks: ["builder"] })).trunks, ["builder"]);
+  assert.deepEqual((await remotes.add({ alias: "attic", root: "/srv/old" })).trunks, [], "lent to no Trunk until the owner says");
+  assert.deepEqual(remotes.listFor(null).map((c) => c.alias), ["tower", "attic"]);
+  assert.deepEqual(remotes.listFor("builder").map((c) => c.alias), ["tower"]);
+  assert.deepEqual(remotes.listFor("writer"), []);
+
+  const registry = new ToolRegistry();
+  registerRemoteWorkspaces(registry, remotes);
+  const run = app.store.createRun(app.runtime.owner, "another computer");
+  const as = (trunk) => ({ ...app.runtime.context({ runId: run.id }), ...(trunk ? { trunk } : {}) });
+  assert.deepEqual((await registry.execute("remote.files", { computer: "attic", path: "." }, as(null))).entries, ["notes.md"],
+    "the owner's own conversation may use every computer");
+  assert.deepEqual((await registry.execute("remote.files", { computer: "tower", path: "." }, as("builder"))).entries, ["notes.md"]);
+  await assert.rejects(registry.execute("remote.files", { computer: "attic", path: "." }, as("builder")), /may not use "attic"/);
+  await assert.rejects(registry.execute("remote.read", { computer: "attic", path: "a.txt" }, as("builder")), /may not use "attic"/);
+  await assert.rejects(registry.execute("remote.run", { computer: "tower", program: "ls", args: [] }, as("writer")), /may not use "tower"/);
+  assert.deepEqual((await registry.execute("remote.list", {}, as("writer"))).computers, [], "a Trunk sees only what it was lent");
+});

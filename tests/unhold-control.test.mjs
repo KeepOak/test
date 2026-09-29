@@ -347,8 +347,9 @@ test("Ask before opening an app it hasn't used: once per app, per Trunk, and the
 // counts as the owner's own assistant, and the second Trunk is not asked).
 test("Ask before opening an app it hasn't used, on real Trunk turns: Ada is asked, answered once, then Bo is still asked", async (t) => {
   const { fixture: trunkFixture, on: trunksOn, call: toolCall } = await import("./trunks-helpers.mjs");
-  const { app, root } = await trunkFixture(t, [({ last, system }) => ((last?.role === "user" && /open notepad/.test(last.content ?? ""))
-    || (last?.role === "tool" && !/"ok":true/.test(last.content ?? "") && /The call you asked about did not run/.test(system ?? "")) ? toolCall("desktop.open", { app: "notepad" }) : null)]);
+  // QA R1: after the yes the engine makes the approved call itself, so the model asks for it only once.
+  const { app, root } = await trunkFixture(t, [({ last }) => (last?.role === "user" && /open notepad/.test(last.content ?? "")
+    ? toolCall("desktop.open", { app: "notepad" }) : null)]);
   trunksOn(app);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   t.after(() => server.close());

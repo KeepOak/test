@@ -26,7 +26,7 @@ import { z } from "zod";
 import { audit } from "../audit.js";
 import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import { defaultProjectId } from "../projects.js"; // dogfood D14
-import { introPrompt, introSystem } from "./intro.js"; // a new Trunk's first words, the engine's own
+import { defaultGreeting, introPrompt, introSystem } from "./intro.js"; // a new Trunk's first words, the engine's own
 import { TrunkThreads } from "./threads.js"; // defaulttrunk
 import { adoptOrphans, defaultAmong, defaultPointer, designatedDefault, pickDefault, saveDefault, setupOver } from "./defaults.js"; // defaulttrunk
 import { assistantIdentity } from "../identity.js"; // defaulttrunk: the default Branch makes is named as the owner named their assistant
@@ -243,6 +243,15 @@ export class Trunks {
         subject: `Trunk "${trunk.name}"`, reason, outcome: "saved" });
     });
   }
+  /**
+   * QA 2026-09-28 (Pass 2): the default Trunk made quietly (no model is asked) still opens its own conversation with a
+   * greeting, as a template Trunk's introduction does; written, not generated, and only into an empty conversation.
+   */
+  private greeted(store: Trunks["store"], trunk: Trunk): Trunk {
+    if (!store.messages(trunk.chatSessionId).some((message) => message.role === "assistant"))
+      store.message(trunk.chatSessionId, { role: "assistant", content: defaultGreeting(trunk.name) });
+    return trunk;
+  }
   /** The Branch mascot is the logo; even a legacy default wears its own Trunk character. */
   private defaultFace(trunk: Trunk, records = this.records): Trunk {
     return trunk.character === "branch" ? records.edit(trunk.id, { character: defaultFields(trunk.name).character }) : trunk;
@@ -258,7 +267,7 @@ export class Trunks {
     if (!trunk) {
       const name = assistantIdentity(this.store, scope).name.slice(0, 40);
       const session = this.store.createSession(scope);
-      trunk = records.put(records.build(defaultFields(name), session));
+      trunk = this.greeted(this.store, records.put(records.build(defaultFields(name), session)));
       saveDefault(this.store, scope, trunk.id);
     }
     files.seedDefault(trunk.id);
@@ -295,7 +304,7 @@ export class Trunks {
     }
     if (!now && !setupOver(this.store, this.owner)) return null;
     const picked = defaultAmong(this.store, this.owner, this.records.list())
-      ?? this.adopt(defaultFields(assistantIdentity(this.store, this.owner).name.slice(0, 40)), {}, false);
+      ?? this.greeted(this.store, this.adopt(defaultFields(assistantIdentity(this.store, this.owner).name.slice(0, 40)), {}, false));
     this.designateDefault(picked, "Setup settled the owner's default assistant; its authority was recorded");
     this.files.seedDefault(picked.id);
     this.settle();
