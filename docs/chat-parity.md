@@ -367,6 +367,15 @@ proved against stand-in adapters and providers; real account connections remain 
 | SL | ✅ native slash commands, `!cmd` in threads | ✅ | ◐ typed only |
 | Others | ✅ typed | ✅ typed | ◐ typed (switch ships off) |
 
+### Edited messages (Settings › Chat apps › Edited messages)
+| | H | O | B today |
+|---|---|---|---|
+| TG | ✅ | ✅ | ✅ `edited_message` |
+| DC | ✅ | ✅ | ✅ `MESSAGE_UPDATE` with an edit time and changed words (a link unfolding is not an edit) |
+| SL | ✅ | ✅ | ✅ `message_changed` from a person, words changed |
+| MX | ✅ | ✅ | ✅ `m.replace` by the original message's own sender, of a message Branch read |
+| WA, SG, IM | — | ◐ | — the Cloud API, signal-cli and Messages report no edits Branch can read |
+
 ### Long-message splitting
 | | H | O | B today |
 |---|---|---|---|

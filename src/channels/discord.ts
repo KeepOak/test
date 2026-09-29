@@ -1,5 +1,6 @@
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
+import { EditedWords } from "./edited-words.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
@@ -78,6 +79,8 @@ export class DiscordAdapter implements ChannelAdapter {
   /** Empty until a rate-limit header tells us to hold off; the next send waits for it. */
   private readyAt = 0;
   private readonly pressed = new Set<string>();
+  /** Settings › Chat apps › Edited messages: the words each recent message had, so an edit that changed none is not one. */
+  private readonly edits = new EditedWords();
   constructor(private readonly options: DiscordOptions) {
     this.id = options.id;
     this.base = (options.apiBase ?? "https://discord.com/api/v10").replace(/\/$/, "");
@@ -162,8 +165,18 @@ export class DiscordAdapter implements ChannelAdapter {
     if (payload.t === "READY") return this.ready(payload.d);
     if (payload.t === "INTERACTION_CREATE")
       return (payload.d as { type?: unknown } | undefined)?.type === 2 ? this.slash(payload.d, onMessage) : this.button(payload.d, onMessage);
+    if (payload.t === "MESSAGE_UPDATE") {
+      // A person's edit carries its edit time; an embed unfolding under a link does not, and changes no words.
+      const update = createSchema.extend({ edited_timestamp: z.string().min(1) }).safeParse(payload.d);
+      if (!update.success || !this.edits.changed(update.data.id, update.data.content)) return;
+      const edited = this.inbound(update.data);
+      if (edited) await onMessage({ ...edited, edited: true }).catch(() => undefined);
+      return;
+    }
     if (payload.t !== "MESSAGE_CREATE") return;
-    const inbound = this.inbound(createSchema.parse(payload.d));
+    const created = createSchema.parse(payload.d);
+    this.edits.changed(created.id, created.content);
+    const inbound = this.inbound(created);
     if (inbound) await onMessage(inbound).catch(() => undefined);
   }
   /** Gateway-authenticated component events retain Discord's actual sender and DM context. */
