@@ -185,9 +185,9 @@ against its adapter, then renders one fixed task for every app.
 | Telegram (`telegram`) | yes | code blocks with a label and copy button | 3500 | yes | yes | off by default; all when on, one bubble edited every 1.5 s | progress draft edited in place (default) | One message, edited in place, a new one when it is full |
 | Discord (`discord`) | yes | Markdown fences with the language | 2000 | yes | yes | all, one bubble edited | off by default; progress draft when chosen, deleted after the answer | One message, edited in place, a new one when it is full |
 | Slack (`slack`) | yes | fences without a language | 3000 | yes | yes | off (Bolt posts are permanent) | native progress card in threads; typing reaction outside them | One message, edited in place, a new one when it is full |
-| Matrix (`matrix`) | yes | HTML code blocks | 3500 | yes | — | new (only when the tool changes) | draft preview edited in place | One message, edited in place, a new one when it is full |
-| WhatsApp (`whatsapp`) | — | plain words | 4000 | — | yes | new through the Baileys bridge; off on the Cloud API | final answer only | One summary line above the reply (plain words) |
-| Signal (`signal`) | — | plain words | 2000 | — | — | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
+| Matrix (`matrix`) | yes | HTML code blocks | 3500 | yes | yes | new (only when the tool changes) | draft preview edited in place | One message, edited in place, a new one when it is full |
+| WhatsApp (`whatsapp`) | — | plain words | 4000 | yes | yes | new through the Baileys bridge; off on the Cloud API | final answer only | One summary line above the reply (plain words) |
+| Signal (`signal`) | — | plain words | 2000 | yes | yes | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
 | Email (`email`) | — | plain words | 3500 | — | yes | off (batch delivery) | final answer only | One summary line above the reply (plain words) |
 | Facebook Messenger (`messenger`) | — | plain words | 1900 | — | — | — | — | One summary line above the reply (plain words) |
 | Instagram (`instagram`) | — | plain words | 1900 | — | — | — | — | One summary line above the reply (plain words) |
@@ -277,8 +277,8 @@ email (EM), SMS.
 | TG | ✅ | ✅ | ✅ `sendChatAction` |
 | DC | ✅ | ✅ | ◐ as TG |
 | SL | ✅ "is thinking…" assistant status | ✅ + typing reaction | ✅ assistant status (`assistant.threads.setStatus`): "is thinking…", then the step in a DM ("is reading notes.md…"), "is working…" in a channel, cleared at the end; scrubbed, sent only on change, left alone after two refusals (needs Agents & AI Apps and `assistant:write`); plus the status reaction |
-| WA | ✅ | ✅ | — |
-| SG | ✅ (every 8 s) | ✅ | — |
+| WA | ✅ | ✅ | ✅ Cloud API typing indicator against the person's newest message (marks it read) |
+| SG | ✅ (every 8 s) | ✅ | ✅ signal-cli `sendTyping`, asked again while the task works |
 | IM | ✅ (Private API) | ✅ | — |
 | MX | ✅ | ? | ✅ |
 | EM, SMS | — | — | — |
@@ -353,9 +353,9 @@ proved against stand-in adapters and providers; real account connections remain 
 | TG | — | ✅ ack reaction | ✅ 👀 → 🤔 → 👨‍💻 → 👍 / 😢 |
 | DC | ✅ 👀 ✅ ❌ | ✅ | ✅ |
 | SL | ✅ | ✅ | ✅ |
-| WA | — | ✅ | — |
-| SG | ✅ | ✅ | — |
-| IM | ✅ tapbacks | ✅ | — |
+| WA | — | ✅ | ✅ the same status reactions on the person's message (WhatsApp keeps one per sender) |
+| SG | ✅ | ✅ | ✅ signal-cli `sendReaction` on a message Branch received |
+| IM | ✅ tapbacks | ✅ | — Messages' AppleScript cannot send a tapback |
 | MX | ✅ | ✅ | ✅ `m.reaction` on the exact inbound event; own previous status is redacted before replacement (stand-in proof) |
 | EM, SMS | — | — | — |
 
@@ -388,9 +388,9 @@ proved against stand-in adapters and providers; real account connections remain 
 | DC | ✅ (`first` / `all`) | ✅ | ✅ `message_reference` |
 | SL | ✅ threads | ✅ | ✅ thread |
 | WA | ✅ quoted context and media | ✅ quote mode | ✅ `context.message_id` |
-| SG | ✅ native quote | ? | — |
-| IM | ? | ✅ `reply_to_guid` | — |
-| MX | ? | ✅ | — |
+| SG | ✅ native quote | ? | ✅ `quoteTimestamp` and `quoteAuthor` of the person's message |
+| IM | ? | ✅ `reply_to_guid` | — Messages' AppleScript has no reply-to |
+| MX | ? | ✅ | ✅ `m.in_reply_to` the person's event, same room only |
 | EM | ✅ | ? | ✅ |
 
 Hermes Agent's `reply_to_mode` (off / first / all, default first) and OpenClaw's `replyToMode` (off / first / all /
