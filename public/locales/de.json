@@ -6430,7 +6430,7 @@
   "window.channels.needs.whatsapp": "Eine WhatsApp-Business-Nummer und eine Meta-Entwickler-App",
   "window.chat-command.off": "Aus. Befehle aus Chats warten auf Freigabe im Branch-Fenster.",
   "window.chat-command.on": "Deine ausgewählten gekoppelten Konten können Befehle anfordern. Jeder genaue Befehl fragt zuerst.",
-  "window.chat-command.pair": "Kopple zuerst dein eigenes Telegram- oder Discord-Konto. Andere Chat-Apps benötigen Schaltflächen für den genauen Befehl.",
+  "window.chat-command.pair": "Kopple zuerst dein eigenes Telegram-, Discord- oder Slack-Konto. Andere Chat-Apps benötigen Schaltflächen für den genauen Befehl.",
   "window.chat-command.pin": "Mit deiner App-Sperr-PIN bestätigen",
   "window.chat-command.title": "Befehle aus deinem eigenen Chat",
   "window.chat-command.warning": "Wähle nur deine eigenen gekoppelten Konten. Wer eines dieser Konten kontrolliert, kann Programme auf diesem Computer freigeben. Jeder Befehl zeigt alle Argumente und fragt vor dem Start. Gruppen und Sperren werden abgewiesen.",

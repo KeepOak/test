@@ -6430,7 +6430,7 @@
   "window.channels.needs.whatsapp": "A WhatsApp Business number and a Meta developer app",
   "window.chat-command.off": "Off. Commands from chat wait for approval in Branch's window.",
   "window.chat-command.on": "Your selected paired accounts can ask to run commands. Each exact command asks first.",
-  "window.chat-command.pair": "Pair your own Telegram or Discord account first. Other chat apps need exact-command buttons before they can run commands.",
+  "window.chat-command.pair": "Pair your own Telegram, Discord or Slack account first. Other chat apps need exact-command buttons before they can run commands.",
   "window.chat-command.pin": "Confirm with your App lock PIN",
   "window.chat-command.title": "Commands from your own chat",
   "window.chat-command.warning": "Select only your own paired accounts. Whoever controls one of these accounts can approve programs on this computer. Each command shows its full arguments and asks before running. Groups, Lockdown and App lock are refused.",

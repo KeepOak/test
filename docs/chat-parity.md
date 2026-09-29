@@ -204,7 +204,7 @@ proved against stand-in adapters and providers; real account connections remain 
 |---|---|---|---|
 | TG | ◐ exec approvals by typed yes/no; clarify questions by buttons | ✅ inline buttons | ✅ buttons carry the request's fingerprint |
 | DC | ✅ buttons | ? | ✅ |
-| SL | ✅ Block Kit | ✅ | — typed y / n |
+| SL | ✅ Block Kit | ✅ | ✅ Block Kit Yes / No buttons carrying the fingerprint (and the per-occurrence nonce for owner DM commands, shown fenced). A command Slack would draw differently (`<`, `>`, `&`, backtick) gets only No |
 | WA | — typed (never polls) | ✅ 👍/👎 reactions | ✅ 👍/✅ or 👎/❌ on the question message, from the person asked, once (30 min), naming the question's fingerprint; typed y/n still works |
 | SG | — | ✅ approval reactions | ✅ the same, matched to the question by this account's send timestamp |
 | IM | ? | ? | — typed |

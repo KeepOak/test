@@ -211,8 +211,10 @@ export class SlackAdapter implements ChannelAdapter {
    * CHAT-062: a question with Block Kit buttons. Each button's value is the answer and the fingerprint of the exact
    * request, as on Telegram; the words stay in `text` too, for notifications and for apps that cannot show blocks.
    */
-  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
-    const words = slackText(text).slice(0, 2900);
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string,
+    format?: MessageFormat): Promise<string | undefined> {
+    // A command shown before its Yes (src/channels/owner-commands.ts) comes as a code span, fenced here like a reply's.
+    const words = slackText(text, format).slice(0, 2900);
     const result = await this.call("chat.postMessage", this.options.token, {
       channel: chatId, text: words, ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
       blocks: [
