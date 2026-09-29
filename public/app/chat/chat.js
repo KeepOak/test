@@ -647,8 +647,22 @@ const HOOKS = {
   followRoom: (info) => followRoom(info),
   /* Answer aloud, for a message said to a Trunk in its own conversation: where the replies stood, then the new one. */
   mark: () => replyMark(C.messages),
-  readAloud: (before) => readNewReply(before, C.messages),
+  readAloud: (before) => readReplies(before),
 };
+
+/* Use the same author history as the reply's face, including rooms and conversations that changed Trunks. */
+async function readReplies(before, info = null) {
+  const sessionId = C.sessionId, messages = C.messages;
+  if (!info) {
+    await loadWho();
+    if (C.sessionId !== sessionId || C.messages !== messages) return;
+    info = whoHere();
+  }
+  return readNewReply(before, messages, (m) => replyWords(m, info), (m) => {
+    const index = messages.slice(0, messages.indexOf(m)).filter(countsAsReply).length;
+    return authorOf(m, index, info)?.voice ?? "";
+  });
+}
 
 /* A new conversation's box, typed in while its first message was answered, becomes the conversation's own. The caret it
    had is put back once, on the redraw that follows; a later call does nothing, so a caret the person moves after the
@@ -694,7 +708,7 @@ async function sendPlain(said, withLead = false) {
     const got = await api("sessions/" + run.sessionId);
     C.messages = got.messages ?? C.messages;
     C.project = got.project ?? C.project;
-    readNewReply(before, C.messages);
+    readReplies(before);
     /* The task is over once its answer is read back: from here the window only reads what it left (its questions, the
        picture, the extras). Still "sending" meanwhile, a message sent after the answer showed went to the waiting line of
        a task that had ended, and in a new conversation, which has no line, it was left unsent in the box (D1 on CI). */
@@ -773,7 +787,7 @@ async function followRoom(info) {
     const view = await readRoom(info);
     try { C.messages = (await api("sessions/" + encodeURIComponent(info.sessionId))).messages ?? C.messages; } catch { /* the next second tries again */ }
     if (heard !== null && C.sessionId === info.sessionId && replyMark(C.messages) !== heard) {
-      readNewReply(heard, C.messages, (m) => replyWords(m, info));
+      readReplies(heard, info);
       heard = replyMark(C.messages);
     }
     renderNow();
@@ -891,7 +905,7 @@ async function follow(id) {
   watchThinking(false);
   forgetMade();
   renderNow();
-  if (before !== null && C.sessionId === id) readNewReply(before, C.messages);
+  if (before !== null && C.sessionId === id) readReplies(before);
 }
 
 /* trunk-one-row: a conversation archived or deleted from its line: the timeline moves on to its Trunk's newest one. */
