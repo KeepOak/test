@@ -155,6 +155,7 @@ export const ROUTES = {
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/routes": "owner POST", // Settings › Chat apps: which Trunk answers each app or chat
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
+  "/api/channels/reply-style": "owner POST", // Per-app quoting of the person's message and the reaction on it
   "/api/channels/pairings/": "prefix",
   "/api/channels/pairings/approve": "owner POST",
   "/api/channels/pairings/remove": "owner POST",
@@ -1020,6 +1021,7 @@ export const ROUTES = {
   "/api/retrieval/search": "task POST",
   "/api/rules": "look",
   "/api/rules/add": "owner POST",
+  "/api/self-rules": "owner POST", // selfdev: Settings › Branch itself (src/self-rules.ts)
   "/api/rules/allowed": "look",
   "/api/rules/allowed/revoke": "owner POST",
   "/api/rules/remove": "owner POST",

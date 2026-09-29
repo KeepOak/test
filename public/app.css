@@ -2275,6 +2275,7 @@ img.pet-vid11.still13{object-fit:contain}
 /* side by side: two columns with a hairline between them */
 .split15{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border-top:0}
 .split15>#scroll{min-width:0}
+#scroll:focus,#scroll:focus-visible{outline:none} /* focused only to keep the keys scrolling it (chat.js draw) */
 .beside15{display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--line);background:var(--bg)}
 .bs-h15{flex:none;display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .bs-h15 .grow{display:grid;min-width:0;line-height:1.2}

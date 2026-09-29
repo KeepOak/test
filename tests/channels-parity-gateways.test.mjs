@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { saveReplyStyle } from "../dist/channels/reply-style.js";
 import { createServer, connect as tcpConnect } from "node:net";
 import {
   fixture, until, delay, assertNoSecret, httpService, socketService, pairingWalk, refusalWalk,
@@ -56,6 +57,7 @@ test("Revolt: signs in on the socket, pings, pairs a stranger in a DM, and answe
   const context = await fixture(t);
   const world = await revoltWorld(t);
   await context.app.channels.attach(world.channel, { ...policy, pairing: true });
+  saveReplyStyle(context.app.store, context.app.runtime.owner, { channel: "revolt", quote: "first" }, ["revolt"]); // A one-to-one answer quotes only when needed (reply-style.ts); "first" checks this app's quote on the wire.
   t.after(() => world.channel.stop());
   const link = await until(() => world.events.connections[0], "a socket");
   assert.match(link.path, /version=1&format=json/);
@@ -196,6 +198,7 @@ test("VK: takes stock first, pairs a stranger, answers groups on a mention, and 
   const old = { type: "message_new", object: { message: { id: 1, from_id: 1001, peer_id: 1001, out: 0, text: "an old message" } } };
   const world = await vkWorld(t, { history: [old] });
   await context.app.channels.attach(world.channel, { ...policy, pairing: true });
+  saveReplyStyle(context.app.store, context.app.runtime.owner, { channel: "vk", quote: "first" }, ["vk"]); // A one-to-one answer quotes only when needed (reply-style.ts); "first" checks this app's quote on the wire.
   t.after(() => world.channel.stop());
   await until(() => world.channel.health().state === "connected", "polling");
   const firstCheck = world.api.calls.find((c) => c.path === "/lp");

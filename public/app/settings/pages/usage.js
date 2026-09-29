@@ -22,7 +22,7 @@ import { esc, renderNow } from "../../core/dom.js";
 import { statusBox } from "../parts.js";
 import { seg15 } from "../rows15.js";
 import { logo } from "../../core/logos.js";
-import { level, E, ownerHere } from "../../core/state.js";
+import { level, E, S, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { onPhone } from "../surface17.js";
 import { updatedWords } from "../../shell/usage.js"; // the status bar's "Updated 3 min ago", the same on both lists
@@ -31,10 +31,17 @@ import { t, language, plural } from "../../../i18n.js";
 
 let usage = null;
 let range = "30";
+/* The read in flight, if any: "Open the report" waits for it, so a report opened as the page arrives (or just after
+   a new period was chosen) adds up the engine's numbers, never an empty or older stretch. */
+let reading = null;
 
-async function loadUsage() {
-  try { usage = await api(`usage?range=${range}d&by=day`); } catch (error) { usage = null; toast(error.message); }
-  renderNow();
+function loadUsage() {
+  const read = (async () => {
+    try { usage = await api(`usage?range=${range}d&by=day`); } catch (error) { usage = null; toast(error.message); }
+    renderNow();
+  })();
+  reading = read;
+  return read;
 }
 
 function reportCard() {
@@ -164,6 +171,8 @@ function evalCard() {
 /* ---------- What each connection has left (GET /api/usage/glance), 1:1 with the status bar's list ---------- */
 let glance = null;
 let limits = null;
+let identityTimer = null;
+let loadingGlance = false;
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
 
 function windowRow(w, estimated) {
@@ -180,9 +189,15 @@ export function limitRow(r) {
 }
 
 async function loadGlance() {
+  if (loadingGlance) return;
+  loadingGlance = true;
   const [g, l] = await Promise.all(["usage/glance", "usage/limits/settings"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+  loadingGlance = false;
   glance = g; limits = l?.usageLimits ?? null;
   renderNow();
+  clearTimeout(identityTimer);
+  const visible = () => ownerHere() && !document.querySelector(".lockscreen") && S.view === "settings" && S.setPage === "usage";
+  if (g?.identitiesPending && visible()) identityTimer = setTimeout(() => { if (visible()) loadGlance(); }, 1000);
 }
 
 /* The ring and the save-progress offer (POST /api/usage/glance/settings, merged) and asking a service what is left
@@ -291,7 +306,7 @@ export function init() {
     await loadGlance();
   });
   on("rep15", (el) => { range = el.dataset.v; loadUsage(); });
-  on("repopen15", () => openReport());
+  on("repopen15", async () => { await reading; openReport(); });
   on("repcsv15", () => saveCsv());
   on("keep15", (el) => keep(el.dataset.v));
   on("keeploosen15", () => { const v = keepAsked; keepAsked = null; closeDlg(); if (v) keep(v, true); });
