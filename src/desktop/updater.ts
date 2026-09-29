@@ -115,6 +115,12 @@ export interface LiveApplied { tier: "window" | "engine" | "gateway"; ms: number
 export type UpdateChannel = "stable" | "beta";
 /** Named, so the window hears a wait across IPC ("…: UpdateDeferredError: <why>") and does not report it as a failure. */
 export class UpdateDeferredError extends Error { override name = "UpdateDeferredError"; }
+/**
+ * A wait the owner has to hear about: nothing was changed and the next look tries again, but it will not clear by itself
+ * while tasks finish (a background engine that would not close, 2026-09-29). Its own name, so the window reports it (kept,
+ * written to the activity log and said once) instead of only showing it as the reason the update waits.
+ */
+export class UpdateStuckError extends UpdateDeferredError { override name = "UpdateStuckError"; }
 export interface ReleaseInfo {
   currentVersion: string;
   latestVersion: string;
