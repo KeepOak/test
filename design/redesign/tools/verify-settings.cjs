@@ -9,7 +9,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 /* DATA_DIR is optional: with it, the gateway's suggested change is written there (the assistant's gateway.propose tool
    would need a model run) so "Use it" and "Discard" can be tried; without it those two are skipped. */

@@ -81,6 +81,8 @@ export function liveHooks(options: HotApplyOptions): LiveHooks {
         repo: options.repo, buildDir: options.buildDir, commit: release.commit, running: runningChange(now, options.packaged),
         packaged: options.packaged, engineAt: now.engine?.commit ?? options.packaged, windowAt: runningChange(now, options.packaged),
         appRoot: options.appRoot, onStage: hooks.onStage, onVersion: hooks.onVersion,
+        // GitHub's own build of the change, taken instead of compiling here once it checks out (build-output.ts).
+        builtOutput: { repo: options.repo },
       }, { log: join(options.buildDir, "live-build.log") });
       if (paused) hosted.pause(true);
       try { return await hosted.done; } finally { hosted = null; }
