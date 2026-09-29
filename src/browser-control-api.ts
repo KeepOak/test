@@ -240,7 +240,18 @@ export class BrowserControlApi {
     if (!target || target.page !== frame.page || target.url !== frame.url)
       throw new BrowserApiError(409, 'The browser page changed; refresh before using this approval.');
   }
+  /**
+   * One input, answered with the page as it is afterwards: the window draws that picture at once instead of asking for
+   * it in a second request (tests/owner-browser-speed.test.mjs measures click and key to picture).
+   */
   private async action(input: z.infer<typeof ActionSchema>, access: RequestAccess) {
+    const answer = await this.act(input, access);
+    if (!('control' in answer)) return answer;
+    const { id, epoch: _epoch, frameId: _frame, sequence: _sequence, tabId: _tab, tool: _tool, arguments: _args, confirmToken: _token, ...scope } = input;
+    const view = await this.view({ ...scope, id, epoch: answer.control.epoch }, access).catch(() => null);
+    return view?.status === 'ready' ? { ...answer, view } : answer;
+  }
+  private async act(input: z.infer<typeof ActionSchema>, access: RequestAccess) {
     const { binding, control } = this.bound(input, access); this.frame(input, control);
     const frame = this.frames.get(input.id)!;
     const args = this.app.registry.runArgs(input.tool, input.arguments);

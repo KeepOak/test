@@ -2,8 +2,10 @@ import { randomBytes, randomInt } from "node:crypto";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { z } from "zod";
 import type { Store } from "../store.js";
+import type { MiniAppUser } from "../miniapp/init-data.js";
 import { heldReplay } from "../never-break/resume.js"; // mac3/never-break
 import type { Runtime } from "../runtime.js";
+import { carryable } from "../carry-on.js"; // QA R1 follow-up
 /** One question a task is waiting on, as the runtime lists them. */
 type WaitingQuestion = ReturnType<Runtime["waitingApprovals"]>[number];
 import type { PolicyRemember } from "../policy.js";
@@ -30,6 +32,9 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { executeCommand } from "../commands/execute.js";
+import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
@@ -214,6 +219,11 @@ export interface ChannelAdapter {
   sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
   /** Replaces the picture, caption and buttons of a message `sendPicture` made. */
   editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[]): Promise<void>;
+  /**
+   * The Telegram Mini App's signed launch data, checked with this bot's own token (src/miniapp/init-data.ts): the user
+   * who opened it. Throws when it was not made by this bot or is too old.
+   */
+  miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
 }
 /**
@@ -230,6 +240,8 @@ export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Arr
 export interface ApprovalButton {
   label: string;
   value: string;
+  /** Telegram only: the button opens this HTTPS address as the bot's Mini App instead of sending `value`. */
+  webApp?: string;
 }
 
 /**
@@ -443,6 +455,8 @@ export class ChannelRouter {
    * throws the plain reason it cannot. `held` says who holds it without changing anything.
    */
   browserHold: ((runId: string, op: "take" | "give" | "held") => Promise<"owner" | "task" | "none">) | undefined;
+  /** The Telegram Mini App's address for this task's browser, while the owner's phone can reach it; null otherwise. */
+  miniAppUrl: ((runId: string) => string | null) | undefined;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
   /**
@@ -788,7 +802,7 @@ export class ChannelRouter {
     /** Who typed it and whether this is a one-to-one chat (mac7/chat-approvals); both are needed
      *  before a chat's own yes may answer a question about what one of the owner's lines granted. */
     from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined },
-  ): Promise<{ decision: string; tool: string; refusal?: string; sessionId?: string; show?: WaitingQuestion | undefined } | null> {
+  ): Promise<{ decision: string; tool: string; refusal?: string; sessionId?: string; show?: WaitingQuestion | undefined; runId?: string } | null> {
     const read = readApprovalAnswer(value);
     if (!read) return null;
     const sessionId = this.sessionFor(channel, chatId);
@@ -837,7 +851,7 @@ export class ChannelRouter {
     const remember = permission === commandPermission && read.decision === "allow" ? "never" : read.remember;
     const result = this.runtime.approve(sessionId, read.decision, remember, asked.fingerprint, channel);
     this.shownCommands.delete(`${channel}\u0000${chatId}\u0000${asked.fingerprint}`);
-    return { decision: result.decision, tool: result.tool };
+    return { decision: result.decision, tool: result.tool, runId: asked.runId };
   }
   /**
    * mac7/chat-approvals: what this person on this app may say yes to from the chat, out of what
@@ -880,7 +894,9 @@ export class ChannelRouter {
     const faithful = command !== null && checked.text === asked + command
       && checked.text.length + 16 <= (adapter.maxTextLength ?? 3500)
       && this.commandYesHere(message.channel, message.chatId, waiting.runId, waiting.fingerprint ?? "", message)
-      && !(adapter.kind === "discord" && command.includes("`"));
+      && !(adapter.kind === "discord" && command.includes("`"))
+      // Slack reads <…> as links and mentions and & as an escape even in code, and a backtick breaks the fence.
+      && !(adapter.kind === "slack" && /[<>&`]/.test(command));
     // In a group anybody paired may press the button, so a standing yes is only offered one to one.
     // mac7/chat-approvals (integration review): a chat is never offered "Yes always", because a chat
     // may never give one — offering it is offering a button whose only answer is a refusal.
@@ -928,6 +944,9 @@ export class ChannelRouter {
     }
     if (saved) message = { ...message, text: saved.text };
     // ---- end of the bucket 12 hook ----
+    // CHAT-185: the owner's own commands from their own direct chat, before the chat's own list.
+    const ownerDm = await this.ownerDmLine(message);
+    if (ownerDm) return ownerDm;
     // A press on /model's menu is /model with that connection, by the same rules as typing it.
     // The live browser's own buttons in a chat: Take over, and Hand back.
     const hold = /^br:([tg]):([0-9a-f-]{36})$/.exec(message.text.trim());
@@ -954,6 +973,9 @@ export class ChannelRouter {
         if (waiting) await this.askInChat(message, answered.sessionId, waiting, "", `reshow:${message.channel}:${message.messageId}`);
         return "replied";
       }
+      // QA R1 follow-up: a yes carries the chat's own waiting task on, and the engine runs the approved call itself.
+      const waiting = answered.decision === "allow" && !answered.refusal ? carryable(this.runtime, answered.runId, "channel") : null;
+      if (waiting) return this.carryTurn(message, waiting.id);
       if (answered.decision === "allow" && this.runtime.registry.permissionOf(answered.tool) === commandPermission)
         return this.startTurn([{ ...message, text: "Continue with the exact command I just approved." }]);
       await this.deliver(message.channel, message.chatId,
@@ -1092,6 +1114,9 @@ export class ChannelRouter {
     const { channel, chatId } = message;
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
+    // held back when the owner turned steering off, and answered as the next turn if the task never read it.
+    if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
@@ -1109,6 +1134,29 @@ export class ChannelRouter {
     });
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
+    return "replied";
+  }
+  /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
+  ownerDmHost: (() => CommandHost) | null = null;
+  /**
+   * CHAT-185 (src/channels/owner-dm-commands.ts): one of the window's commands from the owner's own account in a direct
+   * chat, carried out through the one command table with that chat's conversation and permissions. Null when the line is
+   * not one, or the sender is not the owner there, so it goes on as an ordinary message.
+   */
+  private async ownerDmLine(message: InboundMessage): Promise<Outcome | null> {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const dm = message.voice ? null : ownerDmCommand(message.text);
+    if (!dm || !adapter || !this.ownerDmHost || !ownerDmHere(this.store, this.runtime.owner, adapter.kind, { ...message, caughtUp: false })) return null;
+    if (message.caughtUp) return "ignored"; // the owner's command sent while Branch was closed is old news, never carried out
+    const refused = ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), dm.name, dm.argument);
+    const key = `owner-dm:${message.chatId}:${message.messageId}`;
+    if (refused) { await this.deliver(message.channel, message.chatId, refused, key, this.quoteFor(message)).catch(() => undefined); return "replied"; }
+    const work = async () => (await executeCommand({ ...this.ownerDmHost!(), lockdownOffRefusal: "Lockdown can only be switched off in the app on this computer." }, {
+      surface: "chat", line: message.text, sessionId: this.sessionFor(message.channel, message.chatId), access: "full",
+      permissions: this.chatPermissions(message), ownerDm: true,
+    }))?.text ?? "I do not know that command.";
+    const reply = ["goal", "bg", "health"].includes(dm.name) ? await this.withSlot(work) : await work();
+    await this.deliver(message.channel, message.chatId, reply, key, this.quoteFor(message)).catch(() => undefined);
     return "replied";
   }
   /** `/model` menus sent to chats, so a press can be read back (src/channels/model-picker.ts). */
@@ -1245,6 +1293,46 @@ export class ChannelRouter {
       for (const resolve of turn.waiters) resolve(outcome);
     }
     const unread = turn.dropped ? [] : this.unreadNotes(turn);
+    if (unread.length) void this.startTurn(unread.map(withText), true).catch(() => undefined);
+    return outcome;
+  }
+  /**
+   * QA R1 follow-up: after the chat's yes, the task that asked carries on as itself (the engine runs the approved call),
+   * shown and answered in the chat as a turn is: progress while it works, then its reply or its next question.
+   */
+  private async carryTurn(message: InboundMessage, runId: string): Promise<Outcome> {
+    const key = chatKey(message);
+    const turn: ChatTurnState = { phase: "running", runId, startedAt: Date.now(), passed: 0, dropped: false,
+      messages: [message], notes: [], waiters: [], live: null, reply: null, quote: this.quoteStateFor(message, () => turn.messages) };
+    turn.live = this.liveFor(message, () => turn.runId);
+    turn.reply = this.replyFor(message);
+    this.turns.set(key, turn);
+    turn.live?.start();
+    const off = this.store.onEvent((id, kind, data) => {
+      if (id !== turn.runId) return;
+      turn.live?.event(kind, data);
+      if (kind === "model.started") turn.reply?.round();
+    });
+    let outcome: Outcome = "failed";
+    try {
+      outcome = await this.withSlot(async () => {
+        const run = await this.runtime.continueAsked(runId, {
+          onStarted: () => { turn.startedAt = Date.now(); turn.live?.thinking(); this.passNotes(turn); },
+          onTextDelta: (delta) => turn.reply?.text(delta),
+        });
+        return this.finishTurn(turn, run, "");
+      });
+    } catch {
+      await turn.live?.finish("error");
+      await this.deliver(message.channel, message.chatId, "Something went wrong on my side; the owner can see the details in Activity.",
+        `carry-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
+    } finally {
+      off();
+      turn.reply?.cancel();
+      this.turns.delete(key);
+      for (const resolve of turn.waiters) resolve(outcome);
+    }
+    const unread = this.unreadNotes(turn);
     if (unread.length) void this.startTurn(unread.map(withText), true).catch(() => undefined);
     return outcome;
   }
@@ -1447,11 +1535,14 @@ export class ChannelRouter {
   }
   /** Who holds each chat task's browser, as its picture's buttons last showed it. */
   private readonly holders = new Map<string, "owner" | "task" | "none">();
-  private holdButtons(runId: string | null): { label: string; value: string }[] {
+  private holdButtons(runId: string | null, telegram: boolean): ApprovalButton[] {
     if (!runId) return [];
     void this.browserHold?.(runId, "held").then((who) => { this.holders.set(runId, who); }, () => undefined);
-    return this.holders.get(runId) === "owner"
-      ? [{ label: "▶️ Hand back", value: `br:g:${runId}` }] : [{ label: "✋ Take over", value: `br:t:${runId}` }];
+    const hold = this.holders.get(runId) === "owner"
+      ? { label: "▶️ Hand back", value: `br:g:${runId}` } : { label: "✋ Take over", value: `br:t:${runId}` };
+    // Where the owner's phone can reach the Mini App (src/miniapp/phone-access.ts), it opens the page to drive it there.
+    const phone = telegram ? this.miniAppUrl?.(runId) ?? null : null;
+    return phone ? [hold, { label: "📱 Drive it here", value: "", webApp: phone }] : [hold];
   }
   /**
    * A press on the live browser's Take over or Hand back. Only in the direct chat the task came from, by the person who
@@ -1464,9 +1555,8 @@ export class ChannelRouter {
   private async pressHold(message: InboundMessage, op: "take" | "give", runId: string): Promise<Outcome> {
     const say = (text: string) => this.deliver(message.channel, message.chatId, text, `browser-hold:${message.messageId}`, message.messageId)
       .then(() => "replied" as const, () => "replied" as const);
-    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
-    const mine = came?.channel === message.channel && came?.chatId === message.chatId && came?.senderId === message.senderId;
-    if (!this.browserHold || message.chatKind !== "direct" || !mine || !this.senderAllowed(message.channel, message.senderId) || !this.liveOn())
+    if (!this.browserHold || message.chatKind !== "direct" || !this.mayHoldBrowser(runId, message.channel, message.chatId, message.senderId)
+      || !this.liveOn())
       return say("Only the person who started this task, in this chat, can take over its browser.");
     try {
       const who = await this.browserHold(runId, op);
@@ -1480,6 +1570,20 @@ export class ChannelRouter {
     } catch (error) {
       return say(error instanceof Error ? error.message : String(error));
     }
+  }
+  /**
+   * Whether this sender may take over this task's browser from outside Branch's window: the task came from this very
+   * chat, sent by them, and they may still talk to Branch (paired, or on the owner's list).
+   */
+  mayHoldBrowser(runId: string, channel: string, chatId: string, senderId: string): boolean {
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return came?.channel === channel && came?.chatId === chatId && came?.senderId === senderId && this.senderAllowed(channel, senderId);
+  }
+  /** The chat app a task came from, as its first message recorded it, or null. */
+  cameFrom(runId: string): { channel: string; chatId: string; senderId: string } | null {
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return typeof came?.channel === "string" && typeof came.chatId === "string" && typeof came.senderId === "string"
+      ? { channel: came.channel, chatId: came.chatId, senderId: came.senderId } : null;
   }
   /** Whether a chat may be shown typing, reactions and progress right now. */
   private liveOn(): boolean {
@@ -1536,7 +1640,7 @@ export class ChannelRouter {
     const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
     // Pictures of Branch's browser while the task works in it: a direct chat only, where the owner has them on.
     const pictures = message.chatKind === "direct" && switches.steps !== "off" && display.pictures !== "off" && !!adapter.sendFile && !adapter.paidPerMessage;
-    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf()) : undefined;
+    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf(), adapter.kind === "telegram") : undefined;
     const picture = pictures ? async () => {
       const runId = runOf(), seen = runId ? await this.browserPicture(runId) : null;
       if (!seen) return null;

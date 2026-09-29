@@ -24,8 +24,9 @@ import { takeShellLock } from "./shell-lock.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
-import { markStarted, UpdateDeferredError } from "./updater.js";
+import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
+import { logoShare, readTrayUsage, trayBitmap, trayTip, type TrayUsage } from "./tray-ring.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
 import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
 import type { DesktopSettings } from "./settings.js";
@@ -91,6 +92,7 @@ import { joinedGatewayLive } from "./gateway-client.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
+let trayTimer: NodeJS.Timeout | undefined;
 let stop: (() => Promise<void>) | undefined;
 let quitting = false;
 /* Redesign phase 1: why Branch is quitting, how many tasks are working, and whether an engine in the
@@ -109,6 +111,14 @@ function tellWindowShown(): void {
   if (window && !window.isDestroyed()) engine?.tell("window", { shown: window.isVisible() && !window.isMinimized() });
 }
 let joinedBackground = false;
+/**
+ * The update closed (or is closing) the background engine the window joined, to swap the program files. Until the
+ * hand-over has this process quit, that engine being gone is the update, not a reason to start Branch again: a restart
+ * would run the old program from the folder being swapped. An install that fails gives the updater back, and then it is.
+ */
+let closingForUpdate = false;
+let updater: Updater | undefined;
+const handingOver = (): boolean => closingForUpdate && updater?.inProgress === true;
 let askingToQuit = false;
 let countingToQuit = false;
 /** Whether the app's own engine has proved itself at the window's address (src/desktop/engine-gate.ts). */
@@ -155,6 +165,41 @@ function trayIcon(): NativeImage {
   }
   if (isTemplateTrayIcon(process.platform)) image.setTemplateImage(true);
   return image;
+}
+
+/** The tray icon with its usage ring (./tray-ring.ts), at every size trayIcon() draws; the logo alone without a share. */
+function trayImageFor(usage: TrayUsage | null): NativeImage {
+  if (!usage) return trayIcon();
+  const template = isTemplateTrayIcon(process.platform);
+  const source = nativeImage.createFromPath(markPath(!template));
+  const draw = (side: number): Buffer => {
+    const logoSide = Math.round(side * logoShare);
+    return trayBitmap(side, source.resize({ width: logoSide, height: logoSide, quality: "best" }).toBitmap(), logoSide, usage.percentLeft, template);
+  };
+  const side = trayIconSize(process.platform);
+  const image = nativeImage.createFromBitmap(draw(side), { width: side, height: side });
+  for (const scale of trayIconScales(process.platform))
+    if (scale !== 1) image.addRepresentation({ scaleFactor: scale, width: side * scale, height: side * scale, buffer: draw(side * scale) });
+  if (template) image.setTemplateImage(true);
+  return image;
+}
+
+/** Reads what the connection in use has left once a minute, and redraws the tray only when that changed. Nothing (above
+    all not the key) is sent while the engine is not answering at the window's address. */
+function watchTrayUsage(url: string, key: () => string, reachable: () => boolean): void {
+  let shown = "";
+  const look = async () => {
+    if (!reachable()) return;
+    const usage = await readTrayUsage(url, key()).catch(() => null);
+    const mark = usage ? `${usage.percentLeft}|${usage.label}` : "";
+    if (!tray || tray.isDestroyed() || mark === shown) return;
+    shown = mark;
+    tray.setImage(trayImageFor(usage));
+    tray.setToolTip(trayTip(usage));
+  };
+  void look();
+  trayTimer = setInterval(() => void look(), 60_000);
+  trayTimer.unref();
 }
 
 function protectWindow(
@@ -335,7 +380,7 @@ async function createWindow(
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
-  registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
+  updater = registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key(), client.fetch) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
@@ -369,6 +414,7 @@ async function createWindow(
     pageRecovery.failed();
   });
   createTray();
+  watchTrayUsage(url, key, () => access.ready());
 }
 
 /**
@@ -498,9 +544,11 @@ async function start(): Promise<void> {
     await createWindow(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
       stopDaemon: async () => {
+        closingForUpdate = true;
         // Its close goes through the proved connection too: the window key is never sent to its address.
-        const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true, fetch: client.fetch });
-        if (report.pid !== null && !report.stopped) throw new UpdateDeferredError(report.message);
+        const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true, fetch: client.fetch })
+          .catch((error: unknown) => { closingForUpdate = false; throw error; });
+        if (report.pid !== null && !report.stopped) { closingForUpdate = false; throw new UpdateStuckError(report.message); }
         return report.pid;
       },
       canary: desktopCanary(dataDir, async () => engineSnapshot(running.url, key(), client.fetch)), // mac3/never-break
@@ -728,7 +776,7 @@ function joinedGate(dataDir: string, url: string, key: () => string): EngineGate
   if (testHooksOn()) (globalThis as { branchEngineGateForTests?: EngineGate }).branchEngineGateForTests = gate;
   let looking = false, leaving = false;
   const moved = setInterval(() => {
-    if (gate.ready() || looking || leaving || quitting) return;
+    if (gate.ready() || looking || leaving || quitting || handingOver()) return;
     looking = true;
     void readRunning(dataDir)
       .then(async (note) => {
@@ -762,6 +810,7 @@ function shutDown(): void {
     // ended first and this waits (briefly) until it has really gone.
     .finally(() => (engine?.end(2000) ?? Promise.resolve()))
     .finally(() => {
+      if (trayTimer) clearInterval(trayTimer);
       tray?.destroy();
       app.exit(0);
     });

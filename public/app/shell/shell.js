@@ -46,6 +46,7 @@ import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 import { initWhatCan } from "../flows/whatcan.js"; // the "What can Branch do" gallery
+import { homeButton, initHome } from "./home.js"; // RES-701: the Home panel beside any page
 import { simpleButton, initSimple } from "./simple.js"; // RES-704: the Simple / Advanced switch
 
 const WIDE = matchMedia("(min-width: 761px)");
@@ -188,7 +189,7 @@ function titleActions() {
   // Redesign: the owner removed the list's show/hide button; the list's edge (shell/resize.js) and Ctrl+B do it.
   const theme = document.documentElement.dataset.theme === "dark" ? "sun" : "moon";
   return `${hidden("notes") ? "" : `<button class="tb-btn" type="button" data-act="guide" aria-haspopup="menu" aria-expanded="false" data-hide="notes">${ic("bulb", "s")}${t("window.shell.shell.guide")}</button>`}
-    ${simpleButton()}<button class="tb-btn" type="button" aria-label="${t("window.shell.shell.switch-light-or-dark")}" data-act="theme-flip">${ic(theme, "s")}</button>`;
+    ${homeButton()}${simpleButton()}<button class="tb-btn" type="button" aria-label="${t("window.shell.shell.switch-light-or-dark")}" data-act="theme-flip">${ic(theme, "s")}</button>`;
 }
 
 function status() {
@@ -276,6 +277,7 @@ export function initShell() {
   initResize();
   initWhatCan(); // flows/whatcan.js: the "What can Branch do" gallery (Overview, this Guide menu, an empty conversation)
   initPutAway();
+  initHome();
   initSimple();
   markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with"]);
   on("conv-more", (el) => el.previousElementSibling?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: el.getBoundingClientRect().left, clientY: el.getBoundingClientRect().bottom })));

@@ -114,13 +114,16 @@ test("dropping many kinds at once attaches all of them, each previewed, and send
   const posted = page.waitForRequest((request) => request.url().endsWith("/api/run") && request.method() === "POST");
   await page.locator("#prompt").fill("What did I send?");
   await page.locator("#send").click();
-  const body = (await posted).postDataJSON();
+  const request = await posted;
+  const body = request.postDataJSON();
   assert.equal(body.uploads?.length, 6, "the message names the six files it carries");
+  /* The conversation is the one the engine answered with. The side list draws its row only after the window has read the
+     ended task's questions and its picture, which can be after the answer shows (CI read no current row: undefined). */
+  const { sessionId } = await (await request.response()).json();
   await page.locator("#conversation").getByText("Read it.").first().waitFor({ timeout: 20000 });
   const said = seen.at(-1).findLast((one) => one.role === "user").content;
   assert.match(said, /export const answer = 42/, "the model got the code's words");
   assert.match(said, /mystery\.bin.*\n.*not read/, "and was told what it could not read");
-  const sessionId = (await page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id));
   const names = app.store.messages(sessionId).find((one) => one.role === "user").attachments.map((one) => one.name);
   assert.ok(names.includes("escape.sh") && !names.some((one) => one.includes("..")), `names are words, never a way out (${names})`);
   await page.locator('#conversation [data-act="attsave"]').first().waitFor({ timeout: 10000 });

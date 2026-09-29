@@ -10,7 +10,7 @@
    (si-mode, si-chain, si-stay, si-link, si-owner/owner-pin-set), and a catalogue card
    (signin) adding a key service end to end. PINs are made up here, never printed, and checked absent from the page,
    the console, browser storage and every request address. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { mkdtempSync, writeFileSync, rmSync } = require("node:fs");
