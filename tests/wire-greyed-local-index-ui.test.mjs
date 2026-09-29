@@ -14,8 +14,9 @@ test("the local index: a live switch that ships on, how far back, Update now, an
   const box = page.locator("#f15-a-local-index-of-mail-calendar-and-messa");
   await box.waitFor();
   assert.equal(await box.getAttribute("aria-disabled"), null, "the switch is live");
-  assert.equal(await box.isChecked(), true, "it ships on");
+  // The row draws before the engine's answer arrives; what it says is read once that answer has drawn the days.
   await page.locator('[data-act="li-days"][data-v="90"][aria-pressed="true"]').waitFor();
+  assert.equal(await box.isChecked(), true, "it ships on");
   assert.equal((await call("/api/local-index")).settings.mode, "when-needed", "90 days back as shipped");
   await page.locator('[data-act="li-days"][data-v="365"]').click();
   await page.locator('[data-act="li-days"][data-v="365"][aria-pressed="true"]').waitFor();
