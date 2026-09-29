@@ -19,6 +19,21 @@ export class ReplyStream {
     this.limit = Math.min(target.adapter.maxTextLength ?? 3500, 3500);
   }
   round(): void { this.words = ""; }
+  /**
+   * The steps message is about to open below this reply's first words: they are handed over to become the steps (see
+   * LiveTarget.adopt), and the reply starts again in a new message below. Waits for a send in flight, so the order in
+   * the chat is known. Null when this reply has no message yet.
+   */
+  surrender(): Promise<string | null> {
+    return this.enqueue(async () => {
+      const id = this.messageId;
+      if (!id) return null;
+      this.messageId = null;
+      this.shown = "";
+      this.words = ""; // those words came before a step; the next model round writes the reply afresh
+      return id;
+    });
+  }
   text(delta: string): void {
     if (this.closed || this.failures >= 2) return;
     // The final output comes from the runtime. Keep only enough preview for the first message.
@@ -68,7 +83,7 @@ export class ReplyStream {
     try {
       if (!(this.target.allowed?.() ?? true) || !this.target.adapter.edit || Date.now() < this.pausedUntil) return false;
       if (this.messageId) await this.target.adapter.edit(this.target.chatId, this.messageId, text);
-      else this.messageId = await this.target.adapter.send(this.target.chatId, text, this.target.messageId) ?? null;
+      else this.messageId = await this.target.adapter.send(this.target.chatId, text, this.target.quote ? this.target.quote() : this.target.messageId) ?? null;
       if (!this.messageId) { this.failures = 2; return false; }
       this.shown = text;
       this.failures = 0;
