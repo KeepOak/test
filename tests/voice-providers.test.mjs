@@ -92,11 +92,15 @@ test("the three speech-to-text shapes are each read correctly, and each one repo
 test("the command line for each local speech program is built, and an unconfigured one refuses in plain words", async (t) => {
   const cpp = localSttArgs({ executable: "w.exe", model: "ggml.bin", kind: "whisper-cpp" }, "C:/tmp/clip.wav", "en");
   assert.ok(cpp.includes("-m") && cpp.includes("ggml.bin") && cpp.includes("-l") && cpp.includes("en"));
-  const faster = localSttArgs({ executable: "fw.exe", model: "small", kind: "faster-whisper" }, "C:/tmp/clip.wav", null);
-  assert.deepEqual(faster, ["C:/tmp/clip.wav", "--model", "small"]);
-  assert.ok(!faster.includes("--language"), "no language is forced when none was chosen");
+  assert.ok(!localSttArgs({ executable: "w.exe", model: "", kind: "whisper-cpp" }, "C:/tmp/clip.wav", null).includes("-m"));
 
   const stt = new Transcription(openPolicy(), fetch, async () => "");
+  // RES-709: faster-whisper runs through its own worker (tests/voice-local-whisper.test.mjs), never with
+  // whisper.cpp's flags; with no worker it refuses rather than starting the program the wrong way.
+  await assert.rejects(
+    stt.transcribe(clip(), { kind: "local", local: { executable: "C:/py/python.exe", model: "", kind: "faster-whisper" } }),
+    /No speech program is set up on this computer/,
+  );
   await assert.rejects(
     stt.transcribe(clip(), { kind: "local", local: { executable: "", model: "", kind: "whisper-cpp" } }),
     /No speech program is set up on this computer/,
