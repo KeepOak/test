@@ -30,11 +30,18 @@ test("the suite ends in one required job, and nothing in it can hold a run past 
   assert.ok(workflow.jobs["local-voice"]["timeout-minutes"] <= 15);
   assert.match(JSON.stringify(workflow.jobs["local-voice"].steps), /BRANCH_REQUIRE_WHISPER/);
   assert.match(workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n"), /test "\$VOICE" = success/);
+  // Off a pull request (merge queue, pushes, nightly) voice is always required; on one, only when the plan asked.
+  assert.deepEqual(workflow.jobs["local-voice"].needs, ["plan"]);
+  assert.equal(workflow.jobs["local-voice"].if,
+    "${{ !cancelled() && (needs.plan.result == 'skipped' || (needs.plan.result == 'success' && needs.plan.outputs.voice == 'true')) }}");
+  assert.equal(workflow.jobs.plan.outputs.voice, "${{ steps.plan.outputs.voice }}");
+  assert.match(workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n"),
+    /if \[ "\$VOICE_PLANNED" = true \]; then\n\s*test "\$VOICE" = success[^\n]*\n\s*else\n\s*test "\$VOICE" = skipped/);
   assert.equal(workflow.jobs.verify.name, "verify-suite");
   // A cancelled run (replaced by a newer push, or waiting for a CI slot) stays cancelled rather than red.
   assert.equal(workflow.jobs.verify.if, "${{ !cancelled() }}");
   const verify = workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n");
-  assert.match(verify, /if \[ "\$EVENT" = pull_request \]; then test "\$PLAN" = success; else test "\$PLAN" = skipped; MODE=full; fi/);
+  assert.match(verify, /if \[ "\$EVENT" = pull_request \]; then test "\$PLAN" = success; else test "\$PLAN" = skipped; MODE=full; VOICE_PLANNED=true; fi/);
   assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'", "a push always runs the whole suite");
   assert.match(verify, /test "\$TEST" = success/);
   // One command per line: bash -e does not stop on the left side of `a && b`.
@@ -123,4 +130,21 @@ test("each share builds on the newest earlier build, and never trusts it as done
   assert.match(cache.with.key, /hashFiles\('src\/\*\*', 'tsconfig\.json', 'package-lock\.json', 'scripts\/build-ts\.mjs', 'scripts\/prune-dist\.mjs'\)/);
   assert.ok(cache.with.key.startsWith(cache.with["restore-keys"]), "the fallback is any earlier build of this system and Node");
   assert.match(readFileSync(new URL("../scripts/build-ts.mjs", import.meta.url), "utf8"), /pruneDist\(dist, src\)/, "orphans go first");
+});
+
+/* The one required check (branch protection on redesign/window: verify-suite, which the merge queue reads too) must be
+   produced on both a pull request and a merge-queue group, and a merge-queue group or a push never waits on the
+   pull-request queue: it has no plan job, so it is never held. Mutations: filter verify by event, drop merge_group,
+   or let plan run on merge_group → red. */
+test("verify-suite is produced for pull requests and merge-queue groups, and the merge queue is never held", () => {
+  assert.ok(Object.hasOwn(workflow.on, "merge_group"));
+  assert.ok(Object.hasOwn(workflow.on, "pull_request"));
+  assert.equal(workflow.jobs.verify.name, "verify-suite");
+  assert.doesNotMatch(workflow.jobs.verify.if, /event_name/);
+  assert.equal(workflow.jobs.plan.if, "github.event_name == 'pull_request'");
+  // Without a plan (merge queue, push) the test job falls back to the whole suite on every system.
+  const fallback = workflow.jobs.test.strategy.matrix;
+  assert.match(fallback, /"lane":"linux","os":"ubuntu-latest","shard":8,"total":8/);
+  assert.match(fallback, /"lane":"windows","os":"windows-latest","shard":2,"total":2/);
+  assert.match(fallback, /"lane":"macos"/);
 });

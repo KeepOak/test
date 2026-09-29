@@ -14,13 +14,17 @@ name: Checks
 # binary inside it) and the browser are kept between runs. The downloads and the phone apps are built for a release
 # tag, or by hand, in package.yml and mobile.yml, never here.
 #
-# A pull request into redesign/window runs what its change can reach (scripts/select-affected-tests.mjs, the `plan`
-# job): documentation alone runs no test; tests, helpers and page files run the tests that use them (every browser
-# test for a page file); anything in src/ runs the whole Linux lane. Windows and macOS run on a pull request only when
-# it touches their own code or tests. Every push, the nightly run and a run by hand run the whole suite on every
-# system, and verify-suite refuses anything less on a push, so promote only ever moves mac/cross-platform to a commit
-# the whole suite passed. (PR Fast Checks, pr-fast.yml, did the same selection in a workflow of its own; it is folded
-# in here.)
+# The merge queue (merge_group) is the gate: it runs the whole suite on every system before anything lands. A pull
+# request into redesign/window is a light, fast signal (scripts/select-affected-tests.mjs, the `plan` job):
+# documentation alone runs no test; anything else runs the tests nearest its change (the changed tests, what it reaches
+# by name, mapping or graph, the tests near a src/ change, then browser tests for a page change) on at most
+# `prLinuxShards` (2) Linux shares, cut to fit them; `npm run build` in each share is the type-check. Windows and
+# macOS run on a pull request only when it touches their own code, the files only a few tests including theirs use
+# (`platformSourceTests`), or their tests and those tests' helpers; local voice only when the change reaches its test.
+# On 2026-09-29 a pull-request run fanned out to 11 to 14 jobs (8 Linux, 2 Windows, 1 macOS, voice, plan, verify) and
+# about 29 of them filled the org's 20 runners, so a merge-queue group or a base push waited over an hour for a share.
+# Every push, the nightly run and a run by hand run the whole suite on every system, and verify-suite refuses anything
+# less there, so promote only ever moves mac/cross-platform to a commit the whole suite passed.
 on:
   pull_request:
   # GitHub's merge queue (KeepOak/Branch-Agent ruleset): each queued group is tested as it will land, whole suite,
@@ -60,6 +64,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       selected: ${{ steps.plan.outputs.selected }}
       summary: ${{ steps.plan.outputs.summary }}
+      voice: ${{ steps.plan.outputs.voice }}
     steps:
       # Two commits: a pull request's run tests the merge ref, whose first parent is the commit it merges onto.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -215,8 +220,12 @@ jobs:
   # installed here, on the build machine only, so tests/voice-local-whisper.test.mjs writes out a fixture WAV and
   # fills the window's message box from a fake microphone, offline (HF_HUB_OFFLINE), instead of skipping. The package
   # and the model are kept between runs; Branch itself installs and downloads neither.
+  # On a pull request it runs only when the plan's light run reaches tests/voice-local-whisper.test.mjs, and never for
+  # a run waiting for a CI slot; the merge queue, pushes, the nightly run and runs by hand always run it.
   local-voice:
     name: local voice (faster-whisper, offline)
+    needs: [plan]
+    if: ${{ !cancelled() && (needs.plan.result == 'skipped' || (needs.plan.result == 'success' && needs.plan.outputs.voice == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -257,9 +266,11 @@ jobs:
           BRANCH_REQUIRE_WHISPER: '1'
           BRANCH_WHISPER_PYTHON: ${{ steps.python.outputs.python-path }}
           HF_HUB_OFFLINE: '1'
-  # The one check to require. It runs even when a share fails, so the check is red rather than skipped. On a pull
-  # request it is green only when the plan ran and every share it planned passed (a documentation-only one plans
-  # none); anywhere else only when there was no plan, so the whole suite ran and passed, since promote follows it.
+  # The one check to require (branch protection on redesign/window, and so the merge queue). It runs even when a share
+  # fails, so the check is red rather than skipped. On a pull request it is green only when the plan ran and every
+  # share it planned passed (a documentation-only one plans none), and local voice passed when the plan asked for it;
+  # anywhere else only when there was no plan, so the whole suite and local voice ran and passed, since promote and
+  # the merge queue follow it.
   # A partial run says so. A cancelled run (replaced by a newer push, or waiting for a CI slot) is left cancelled,
   # not red. At the end, the run hands its CI slot on: the oldest waiting pull request is started again.
   verify:
@@ -281,10 +292,15 @@ jobs:
           EVENT: ${{ github.event_name }}
           SUMMARY: ${{ needs.plan.outputs.summary }}
           VOICE: ${{ needs.local-voice.result }}
+          VOICE_PLANNED: ${{ needs.plan.outputs.voice }}
         run: |
-          if [ "$EVENT" = pull_request ]; then test "$PLAN" = success; else test "$PLAN" = skipped; MODE=full; fi
-          echo "plan: $PLAN, mode: $MODE, tests: $TEST, local voice: $VOICE"
-          test "$VOICE" = success # RES-709: the real, offline speech proof
+          if [ "$EVENT" = pull_request ]; then test "$PLAN" = success; else test "$PLAN" = skipped; MODE=full; VOICE_PLANNED=true; fi
+          echo "plan: $PLAN, mode: $MODE, tests: $TEST, local voice: $VOICE (planned: $VOICE_PLANNED)"
+          if [ "$VOICE_PLANNED" = true ]; then
+            test "$VOICE" = success # RES-709: the real, offline speech proof
+          else
+            test "$VOICE" = skipped
+          fi
           if [ "$MODE" = docs ]; then
             test "$EVENT" = pull_request
             test "$TEST" = skipped
@@ -294,7 +310,7 @@ jobs:
           fi
           if [ -n "$SUMMARY" ]; then printf '%s' "$SUMMARY" | jq -r '.[]' | tee -a "$GITHUB_STEP_SUMMARY"; fi
           if [ "$MODE" = partial ]; then
-            echo "::notice::PARTIAL: only the test files this change reaches ran. The whole suite runs on the merge into redesign/window."
+            echo "::notice::PARTIAL: only the test files nearest this change ran. The whole suite runs in the merge queue before it lands."
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: always()
