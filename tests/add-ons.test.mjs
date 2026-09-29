@@ -463,7 +463,8 @@ test("a hand-placed plugin written for a newer interface is refused, and its hoo
   const { app, call, dataDir } = await fixture(t);
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "future.mjs"), "export default { id: 'future', name: 'Future', apiVersion: 9, tools: [] };\n");
-  await assert.rejects(call("plugins/future/enable", {}), /written for add-on interface 9/, "walled, as shipped");
+  // Walled, as shipped: refused (a Linux computer without bubblewrap cannot start the wall, and says so first).
+  await assert.rejects(call("plugins/future/enable", {}), process.platform === "linux" ? /written for add-on interface 9|needs bubblewrap/ : /written for add-on interface 9/, "walled, as shipped");
   // Its hook writes into Branch's own folder, which only a plugin running inside Branch can: the owner's choice, with a yes.
   await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true });
   await assert.rejects(call("plugins/future/enable", {}), /written for add-on interface 9/, "and inside Branch");

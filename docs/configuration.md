@@ -9509,7 +9509,7 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
   (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
   with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
-  Branch; the owner lets one plugin run inside (`POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  Branch; the owner lets one plugin run inside (`insideBranch`, set by `POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
   "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
   (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
   interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
