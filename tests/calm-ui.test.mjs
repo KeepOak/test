@@ -216,14 +216,26 @@ test("calm: a goal keeps its Resume and Stop in view", async (t) => {
   assert.deepEqual(f.errors, []);
 });
 
+/* The conversation the engine keeps for words the person sent from the window. */
+async function conversationOf(f, words) {
+  for (let tries = 0; tries < 200; tries++) {
+    const found = f.app.store.recentSessions(f.app.runtime.owner, 20).sessions.find((s) => s.opening === words);
+    if (found) return found.sessionId;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail(`no conversation began with ${words}`);
+}
+
 /* Redesign: Recents is the sidebar's conversation list. */
 test("calm: a finished conversation is in Recents at once (the new window)", async (t) => {
   const f = await fixture(t, { onboarded: true });
   await f.page.locator("#prompt").fill("Tell me a joke");
   await f.page.locator("#send").dispatchEvent("click");
-  await f.page.locator('#side [data-act="chat"]').filter({ hasText: "Tell me a joke" }).waitFor({ timeout: 10000 });
+  // trunk-one-row: the conversation is its Trunk's, so the Trunk's one row opens it at once.
+  const row = f.page.locator(`#side [data-act="chat"][data-id="${await conversationOf(f, "Tell me a joke")}"]`);
+  await row.waitFor({ timeout: 10000 });
   await f.page.locator("#conversation .b").first().waitFor({ state: "visible", timeout: 60000 });
-  assert.equal(await f.page.locator('#side [data-act="chat"]').filter({ hasText: "Tell me a joke" }).count(), 1);
+  assert.equal(await row.count(), 1);
   assert.deepEqual(f.errors, []);
 });
 
@@ -269,9 +281,10 @@ test("calm: a running task reads under its message, with a real Stop, and its co
   // Redesign: the prototype's Stop is the round Send button (no border); a real button still means one of full size.
   const stop = await stopButton.evaluate((node) => { const box = node.getBoundingClientRect(); return { width: box.width, height: box.height }; });
   assert.ok(stop.width >= 30 && stop.height >= 30, "Stop is a button, not a small link");
-  const row = f.page.locator('#side [data-act="chat"]').filter({ hasText: "Sort my Downloads folder" });
+  // trunk-one-row: the conversation's Trunk's one row opens it, and says Working while it works.
+  const id = await conversationOf(f, "Sort my Downloads folder. Delete nothing."), row = f.page.locator(`#side [data-act="chat"][data-id="${id}"]`);
   await row.waitFor({ timeout: 10000 });
-  assert.match(await row.innerText(), /Sort my Downloads folder[\s\S]*Working/);
+  await f.page.waitForFunction((id) => /Working/.test(document.querySelector(`#side [data-act="chat"][data-id="${id}"]`)?.innerText ?? ""), id, { timeout: 10000 });
   model.release();
   await f.page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 15000 });
   assert.equal(await row.count(), 1, "the task's own conversation remains exactly once after finishing");
