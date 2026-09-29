@@ -183,7 +183,7 @@ export function registerUpdaterIpc(
    */
   const installNow = (automatic: boolean, confirmed: string | null) =>
     installClaim.run(() => updater.status, () => updater.inProgress, async () => {
-      diagnose("updater", "info", automatic ? "Update by itself asked to install an update" : "The owner asked to install an update",
+      diagnose("updater", "info", automatic === true ? "Update by itself asked to install an update" : "The owner asked to install an update",
         { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       const read = hooks?.readiness;
       // Update by itself ignores a wait, so a wait before the install starts is written down here (the updater writes
@@ -198,8 +198,8 @@ export function registerUpdaterIpc(
         // first, and the plan weighs what that look finds. The Update button, pressed by the owner, goes on.
         // Thrown, not returned: the install claim is only given back on a throw (NAS 1f61d43), and the automatic
         // look ignores a deferral.
-        if (automatic && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
-        started = { channel: readiness.channel, automatic };
+        if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
+        started = { channel: readiness.channel, automatic: automatic === true };
         await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
       });
       // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
