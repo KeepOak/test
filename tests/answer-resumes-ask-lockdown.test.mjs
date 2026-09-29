@@ -1,6 +1,6 @@
 /**
- * Q050 review: a yes carries the task that asked on under its own id, so the call it asked about is made again and
- * decided again. Lockdown turned on between the question and the yes still refuses a program: the yes answers the
+ * Q050 review: a yes carries the task that asked on under its own id, and the call it asked about is made again and
+ * decided again: QA R1, by the engine itself through the same gate, never by the model. Lockdown turned on between the question and the yes still refuses a program: the yes answers the
  * question, never Lockdown. Node only, through the window's own routes.
  * Mutation, turns the Lockdown test red: src/runtime.ts: drop the `lockdownToolRefusal` early return in the policy
  * check (the kept yes then answers the call under Lockdown).
@@ -14,17 +14,13 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
-const allowedNote = /The call you asked about did not run/;
-
-/** Starts one program (process.start, which Lockdown refuses); after a yes, makes that same call once more, then stops. */
+/** Starts one program (process.start, which Lockdown refuses); never makes a call again (the engine does, QA R1). */
 function model() {
-  let again = false;
   const command = () => ({ content: "", toolCalls: [{ id: `c${Math.random()}`, name: "process.start",
     arguments: JSON.stringify({ program: "node", args: ["-e", "1"], name: "a check" }) }] });
   return { name: "scripted", async complete(request) {
     const last = request.messages.at(-1);
     if (last?.role === "user" && last.content === "start the check") return command();
-    if (last?.role === "tool" && !again && allowedNote.test(String(request.messages[0]?.content ?? ""))) { again = true; return command(); }
     return { content: "Done.", toolCalls: [] };
   } };
 }
@@ -40,7 +36,7 @@ async function fixture(t) {
       headers: { authorization: `Bearer ${server.token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  /* What became of the call made again after the yes: answered by it ("policy.overruled"), or refused ("policy.denied"). */
+  /* What became of the call the engine made again after the yes: answered by it ("policy.overruled"), or refused ("policy.denied"). */
   const afterYes = (runId) => {
     const events = app.store.events(runId);
     return events.slice(events.findIndex((event) => event.kind === "run.continued")).filter((event) => event.data.name === "process.start")
@@ -61,6 +57,7 @@ test("control: with Lockdown off, a yes carries the task on and answers the same
   assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"));
   const after = f.afterYes(first.id);
   assert.ok(after.some((event) => event.kind === "policy.overruled"), `the yes answered it: ${JSON.stringify(after)}`);
+  assert.equal(f.app.store.events(first.id).filter((event) => event.kind === "run.approved_call").length, 1, "the engine made the call itself");
 });
 
 test("Lockdown turned on between the question and the yes: the call made again is refused by Lockdown, not answered by the yes", async (t) => {
