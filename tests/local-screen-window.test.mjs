@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { newWindow } from './new-window-places.mjs';
 import { installScreenStandIn } from './local-screen-fixture.mjs';
+import { openChat } from './open-chat.mjs'; // trunk-one-row: one row per Trunk
 
 const TEMP = process.platform === 'win32' ? 'C:/Users/bishi/AppData/Local/Temp/Codex-session-files' : tmpdir();
 test('owner chooses an external application, sees its frame, manually types/clicks/scrolls, and closing releases it', async t => {
@@ -17,7 +18,7 @@ test('owner chooses an external application, sees its frame, manually types/clic
     app.store.message(sid, { role: 'assistant', content: 'Ready.' }); app.store.finish(run.id, 'completed', 'Ready.');
   } });
   const { page } = w;
-  await page.locator(`[data-act="chat"][data-id="${sid}"]`).first().click();
+  await openChat(page, sid);
   await page.locator('#conversation .b').first().waitFor();
   await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
   await page.locator('#native-target option').filter({ hasText: 'Fixture editor' }).waitFor({ state: 'attached' });
