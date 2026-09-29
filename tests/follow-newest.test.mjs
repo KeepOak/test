@@ -71,7 +71,8 @@ async function restedUp(page) {
   }
   return last;
 }
-const row = (page, words) => page.locator('#side [data-act="chat"]').filter({ hasText: words });
+/* trunk-one-row: a conversation with a Trunk is opened from the Trunk's one row, which opens its newest conversation. */
+const row = (page, words) => page.locator('#side [data-act="chat"]').filter({ hasText: words }).or(page.locator('#side [data-act="chat"][data-line]')).first();
 /* A redraw of the open conversation, as the person causes one (switching light or dark draws the window again), with a
    control that the conversation really was drawn again. */
 async function redrawn(page) {

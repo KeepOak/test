@@ -8,7 +8,8 @@ import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
 import { stillOutOfSight } from "../core/still.js";
-import { head as chatHead, openConversation, startConversation, addDockItem } from "../chat/chat.js";
+import { head as chatHead, openConversation, startFresh, addDockItem } from "../chat/chat.js";
+import { groups, lineOf, currentOf, freshIn, linePinned, lastAt, sid as idOf } from "../chat/trunkline.js"; // trunk-one-row
 import { statusItems } from "../chat/messages.js";
 import { initExtras, gatewayOn, readGateway } from "./extras.js";
 import { initUsage, planMeter } from "./usage.js";
@@ -95,6 +96,22 @@ const runningIn = (id) => (E.state?.runs ?? []).some((r) => r.sessionId === id &
 
 /* The prototype's rowHtml names and draws a Trunk's or a room's own conversation by the Trunk or room (core/state.js). */
 
+/* trunk-one-row: a Trunk's one row, like a contact in iMessage: its face and name, its newest message and when, a dot
+   while any of its conversations has something unread, Working while one of them works. It opens the Trunk's timeline
+   at the conversation written in last (chat/trunkline.js), which is where the message box sends; while the Trunk is
+   open it names the conversation open in it. */
+function lineRow(trunk) {
+  const line = lineOf(trunk), last = line.at(-1);
+  const here = !!S.chat && line.some((s) => idOf(s) === S.chat), open = here || freshIn() === trunk.id, id = here ? S.chat : currentOf(trunk);
+  const busy = line.some((s) => runningIn(idOf(s)));
+  const unread = !open && line.some((s) => s.unread);
+  const drags = ownerHere() ? ` draggable="true" data-trunk="${esc(trunk.id)}"` : ""; // trunk-rooms-live: onto another Trunk (flows/roomwith.js)
+  return `<div class="rw18"><button class="row" type="button" data-act="chat" data-id="${esc(id)}" data-line="${esc(trunk.id)}" aria-current="${open}"${busy ? ' data-running="true"' : ""}${drags}>
+    <span class="avw">${av(trunk, 40, id)}</span>
+    <b><span class="ellip14">${esc(trunk.name)}</span>${trunk.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time datetime="${esc(lastAt(last))}">${esc(when(lastAt(last)))}</time>
+    ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p>${esc(plain(last?.lastMessage))}</p>`}${unreadDot({ sessionId: id, unread })}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
+}
+
 function row(s) {
   const id = sessionId(s);
   const trunk = trunkFor(s);
@@ -138,22 +155,20 @@ function roomRows() {
     .map((r) => ({ sessionId: r.sessionId, opening: r.name, lastMessage: r.latest ?? "", updatedAt: r.at, pinned: r.pinned }));
 }
 
+/* trunk-one-row: one row per Trunk (lineRow), one per room, and one per conversation the engine gives to no Trunk;
+   Pinned first, then the rest, newest first. */
 function list() {
   if (SQ.q.trim()) return `<nav class="list searching9" aria-label="${t("people.home.list")}">${searchHTML()}</nav>`;
-  const rows = [...E.sessions, ...roomRows()];
-  const pinned = rows.filter(pinnedRow);
-  const recent = rows.filter((s) => !pinnedRow(s) && !trunkFor(s));
-  const threads = E.trunks.map((trunk) => {
-    const own = rows.filter((session) => !pinnedRow(session) && trunkFor(session)?.id === trunk.id);
-    // QA 2026-09-28 (Pass 2): the default Trunk's own conversation alone is itself a row named for the Trunk, so its
-    // heading says what the list is rather than the same name twice.
-    const alone = trunk.id === E.defaultTrunkId && own.length === 1 && sessionId(own[0]) === trunk.chatSessionId;
-    return own.length ? `<div class="lh">${esc(alone ? t("rail.conversations") : trunk.name)}</div>${own.map(row).join("")}` : "";
-  }).join("");
+  const entries = [
+    ...E.trunks.map((trunk) => ({ at: lastAt(lineOf(trunk).at(-1)), pinned: linePinned(trunk), html: () => lineRow(trunk) })),
+    ...[...groups().loose, ...roomRows()].map((s) => ({ at: lastAt(s), pinned: pinnedRow(s), html: () => row(s) })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
+  const pinned = entries.filter((e) => e.pinned), recent = entries.filter((e) => !e.pinned);
+  const rows = (list) => list.map((e) => e.html()).join("");
   return `<nav class="list" aria-label="${t("people.home.list")}">
     ${hidden("projects") ? "" : `<button class="lh lh-btn" type="button" data-act="projtoggle" aria-expanded="${!!S.projOpen}" data-hide="projects">${ic(S.projOpen ? "down" : "chev", "s")}${t("memory.movein.kind.project")}</button>${S.projOpen ? projectRows() : ""}`}
-    ${pinned.length ? `<div class="lh">${t("window.shell.shell.pinned")}</div>${pinned.map(row).join("")}` : ""}
-    ${threads}${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${recent.map(row).join("")}` : ""}${putAwayEntries()}</nav>`;
+    ${pinned.length ? `<div class="lh">${t("window.shell.shell.pinned")}</div>${rows(pinned)}` : ""}
+    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${rows(recent)}` : ""}${putAwayEntries()}</nav>`;
 }
 
 function side() {
@@ -266,8 +281,9 @@ export function initShell() {
   on("conv-more", (el) => el.previousElementSibling?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: el.getBoundingClientRect().left, clientY: el.getBoundingClientRect().bottom })));
   // With no id (Settings' back button before any conversation is open) it just goes back to the conversation view.
   // area places: "new" is a new Trunk (flows/trunk.js).
-  on("chat", (el) => { closePop(); if (el.dataset.id === "new") return run("new-trunk", el); if (el.dataset.id) openConversation(el.dataset.id); else { S.view = "chat"; renderNow(); } });
-  on("newconv", () => { closePop(); startConversation(); });
+  // trunk-one-row: a Trunk's row (or its menu's Open) goes to the Trunk's newest conversation, where the box sends.
+  on("chat", (el) => { closePop(); if (el.dataset.id === "new") return run("new-trunk", el); const line = el.dataset.line && E.trunks.find((x) => x.id === el.dataset.line); const id = (line && currentOf(line)) || el.dataset.id; if (id) openConversation(id); else { S.view = "chat"; renderNow(); } });
+  on("newconv", () => { closePop(); startFresh(); });
   // New room and New group chat both open the room dialog, which makes the room (flows/trunk.js grp-new, POST /api/trunks/rooms).
   on("newmenu", (el) => openPop(el, mi("newconv", "chat", t("comfort.field.newConversation"), binding("newConversation") ? `<kbd>${esc(spoken(binding("newConversation")))}</kbd>` : "") + mi("new-trunk", "plus", t("studio.newName")) + mi("grp-new", "room", t("window.shell.shell.new-room")) + mi("ptab", "clock", t("window.shell.shell.new-automation"), "", 'data-place="automations" data-v="scheduled"') + mi("ptab", "star", t("window.shell.shell.trunk-from-job"), "", 'data-place="customize" data-v="trunks"') + mi("grp-new", "users", t("window.shell.shell.new-group-chat"), t("window.shell.shell.people-trunks-agents")) + mi("mk-new", "spark", t("window.chat.mktrunk.title")) + quickItem()));
   on("places14", () => { S.placesShut = !S.placesShut; save(); renderNow(); });
@@ -280,7 +296,7 @@ export function initShell() {
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });
   document.addEventListener("keydown", (e) => {
-    if (pressed(e, "newConversation")) { e.preventDefault(); startConversation(); }
+    if (pressed(e, "newConversation")) { e.preventDefault(); startFresh(); }
     if (pressed(e, "sideList")) { e.preventDefault(); toggleSide(); }
   });
   document.addEventListener("contextmenu", (e) => rowMenu(e) || hideMenu(e));
@@ -317,8 +333,13 @@ function rowMenu(e) {
   const row = e.target.closest?.("#side .row[data-id]");
   if (!row) return false;
   e.preventDefault();
-  const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = s && trunkFor(s);
-  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"`) + unreadItem(row.dataset.id) + convItems(row.dataset.id);
+  /* trunk-one-row: a Trunk's row is the Trunk: its pin, and one conversation's Rename, Archive and Delete are on that
+     conversation's line in the timeline (chat/trunkline.js). */
+  const line = row.dataset.line ? E.trunks.find((x) => x.id === row.dataset.line) : null;
+  const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = line ?? (s && trunkFor(s));
+  const pin = line ? mi("tl-pin", "pin", linePinned(line) ? t("accounts.action.unpin") : t("window.shell.extras.pin-to-top"), "", `data-id="${esc(line.id)}"`)
+    + mi("rename-id", "edit", t("accounts.action.rename"), "", `data-id="${esc(line.chatSessionId)}"`) : convItems(row.dataset.id);
+  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"${line ? ` data-line="${esc(line.id)}"` : ""}`) + unreadItem(row.dataset.id) + pin;
   const tid = esc(tr?.id ?? "");
   const trunk = tr ? mi("new-with", "plus", t("window.shell.shell.new-conversation-with-name", { name: esc(tr.name) }), "", `data-id="${tid}"`) + roomItems(tr.id) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("autonomy.pause"), "", `data-id="${tid}"`) + mi("edit", "sliders", t("window.shell.shell.edit-trunk"), "", `data-id="${tid}"`) + "<hr>" + mi("remove", "trash", t("strip.menu.remove"), "", `data-id="${tid}"`) : "";
   /* A room's own row ends with the prototype's "Leave and archive", greyed: the engine keeps no leaving or archiving of
