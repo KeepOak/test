@@ -569,6 +569,7 @@ export function init() {
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
   on("st-tab", async (el) => {
+    if (!ed) return; // only while an editor is open (a household person's Edit on the owner's Trunk opens none)
     keepFields();
     const id = ed.id;
     if (el.dataset.v === "files" && !ed.files) {

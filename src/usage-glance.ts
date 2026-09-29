@@ -110,6 +110,8 @@ export type UsageGlance =
   | { available: false }
   | { available: true; settings: UsageGlanceSettings; tightest: GlanceTightest | null; crossings: GlanceCrossing[];
     running: number; rows: LimitRow[]; summary: string; empty: boolean; month?: GlanceMonth;
+    /** Verified account labels are still being read; the open usage surface may hydrate them progressively. */
+    identitiesPending?: true;
     /** A plan signed in on this computer that is not a connection yet (src/usage-limits-api.ts addableNow). */
     addable?: { program: string; connectionName: string; note: string }[] };
 

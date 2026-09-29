@@ -48,7 +48,7 @@ test("three fields make a Trunk; it introduces itself in its own pinned conversa
   on(app);
   const ada = app.trunks.create({ name: "Ada Lovelace", title: "Researcher", description: "Reads papers and sums them up" });
   assert.equal(ada.handle, "ada-lovelace");
-  assert.deepEqual(ada.reach, { channels: [], commands: false }, "every reach starts off");
+  assert.deepEqual(ada.reach, { channels: [], commands: false, sandboxed: false }, "every reach starts off");
   assert.deepEqual(ada.avatar, { kind: "face", seed: "Ada Lovelace", locked: false });
   await app.trunks.introduced();
   const said = app.store.messages(ada.chatSessionId).filter((m) => m.role === "assistant");
@@ -271,7 +271,7 @@ test("a Trunk as one file: nothing it holds and no reach travels with it", async
   const copy = app.trunks.importFile(JSON.parse(text));
   assert.notEqual(copy.id, ha.id);
   assert.equal(copy.instructions, "Plan first.");
-  assert.deepEqual(copy.reach, { channels: [], commands: false });
+  assert.deepEqual(copy.reach, { channels: [], commands: false, sandboxed: false });
   assert.deepEqual(copy.keys, { copyFromOwner: true, accounts: {} });
   assert.throws(() => app.trunks.importFile({ ...file, trunk: { ...file.trunk, reach: { channels: ["x"], commands: true } } }));
   await app.trunks.introduced();
