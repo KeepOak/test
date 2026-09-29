@@ -3564,6 +3564,14 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Hermes Agent and OpenClaw: Discord and Slack outbound options and Discord gateway handling, MIT
+
+- `allowedMentions` in `src/channels/discord.ts` (a posted or edited message may ping the people it names and the author it answers, never @everyone, @here or a role) follows `_build_allowed_mentions` in Hermes Agent's `plugins/platforms/discord/adapter.py` (https://github.com/NousResearch/hermes-agent, commit 94f3f17, Copyright (c) 2025 Nous Research).
+- `toMrkdwn` in `src/channels/slack.ts` (escape &, < and > first, then build links, so Slack control sequences in the words stay text) follows `escapeSlackMrkdwnContent` and `buildSlackLink` in OpenClaw's `extensions/slack/src/format.ts` (https://github.com/openclaw/openclaw, commit ec38fb6, Copyright (c) 2026 OpenClaw Foundation).
+- The Discord gateway handling in `src/channels/discord.ts` and `src/channels/ws-client.ts` (fatal and new-session close codes, the Message Content hint for 4014, a jittered first heartbeat, a missed acknowledgement treated as a dead connection and resumed, and op 9's resumable flag with a jittered wait) follows OpenClaw's `extensions/discord/src/internal/gateway-close-codes.ts`, `extensions/discord/src/internal/gateway.ts`, `extensions/discord/src/internal/gateway-lifecycle.ts` and `extensions/discord/src/monitor/provider.lifecycle.ts` (same commit).
+
+The code was written again for Branch. Both are under the MIT licence, whose text is given under IronClaw above.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
