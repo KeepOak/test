@@ -228,6 +228,11 @@ test("an answer that could not be sent gives the buttons back; No is the quiet a
   });
   await f.signIn();
   const card = await ask(f.page);
+  // Read in the page once the card's buttons are drawn and styled: a redraw in between left both colours empty.
+  await f.page.waitForFunction(() => {
+    const buttons = [...document.querySelectorAll("#live-ask .acts button, .acts button")];
+    return buttons.length > 1 && buttons.every((b) => b.isConnected && getComputedStyle(b).backgroundColor);
+  });
   const answers = await card.locator(".acts button").evaluateAll((buttons) => buttons.map((b) => ({
     text: b.textContent.trim(), live: b.getAttribute("aria-disabled") !== "true" && !b.disabled, pri: b.classList.contains("pri"), bg: getComputedStyle(b).backgroundColor })));
   assert.equal(answers.some((b) => /^Always allow/.test(b.text) && b.live), false, `no live standing yes: ${JSON.stringify(answers)}`);
