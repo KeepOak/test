@@ -154,6 +154,7 @@ export const ROUTES = {
   "/api/channels/steps": "owner POST", // Settings › Chat apps › Show steps in chats: the steps knobs
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
+  "/api/channels/reply-style": "owner POST", // Per-app quoting of the person's message and the reaction on it
   "/api/channels/pairings/": "prefix",
   "/api/channels/pairings/approve": "owner POST",
   "/api/channels/pairings/remove": "owner POST",
@@ -924,6 +925,9 @@ export const ROUTES = {
   "/api/pricing": "owner POST",
   "/api/privacy": "owner POST",
   "/api/processes": "task POST",
+  // workbench: what a conversation still has going (read), and cancelling one of its wake-ups: the owner's alone, never a short-lived key's.
+  "/api/open-work": "look",
+  "/api/open-work/wakeups/[0-9a-f-]{36}": "owner DELETE",
   "/api/profiles": "owner POST",
   "/api/profiles/:id/remove": "owner POST",
   "/api/profiles/:id/role": "owner POST",
@@ -1019,6 +1023,7 @@ export const ROUTES = {
   "/api/retrieval/search": "task POST",
   "/api/rules": "look",
   "/api/rules/add": "owner POST",
+  "/api/self-rules": "owner POST", // selfdev: Settings › Branch itself (src/self-rules.ts)
   "/api/rules/allowed": "look",
   "/api/rules/allowed/revoke": "owner POST",
   "/api/rules/remove": "owner POST",
@@ -1253,6 +1258,7 @@ export const ROUTES = {
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
   "/api/usage/glance": "look",
+  "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",
   "/api/usage/metering": "owner POST",
