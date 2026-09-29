@@ -362,19 +362,19 @@ test("a morning brief that names a chat keeps its own switch: an off there is ne
   assert.equal(new MorningBrief(store).settings(owner).enabled, false);
 });
 
-test("updating by itself ships on Stable only; an older record that names Beta keeps its own off", () => {
+test("updating by itself ships on for Beta too (the owner never presses Update); an off the owner chose stays off", () => {
   const store = memoryStore();
   store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "beta" });
-  assert.equal(readComfort(store, owner, "notify").autoUpdate, "off", "Beta builds every merged change here: heavy (e)");
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "install", "an old default off on Beta reads as shipped");
   store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "dev" });
-  assert.equal(readComfort(store, owner, "notify").autoUpdate, "off", "a saved Dev is Beta");
-  // The lead's decision (Codex P1, accepted by the owner): an older Stable record's off cannot be told from the old
-  // default, so it reads as shipped.
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "install", "a saved Dev is Beta");
   store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "stable" });
   assert.equal(readComfort(store, owner, "notify").autoUpdate, "install");
   const fresh = memoryStore();
   saveComfort(fresh, owner, "notify", { releaseChannel: "beta" });
-  assert.equal(readComfort(fresh, owner, "notify").autoUpdate, "install", "choosing Beta after the upgrade keeps what was shown");
+  assert.equal(readComfort(fresh, owner, "notify").autoUpdate, "install", "choosing Beta keeps updating by itself");
+  saveComfort(fresh, owner, "notify", { autoUpdate: "off" });
+  assert.equal(readComfort(fresh, owner, "notify").autoUpdate, "off", "the owner's own off is kept");
 });
 
 test("putting voice back as shipped forgets the owner's choices, so the kit has nothing left to put back", () => {
