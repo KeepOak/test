@@ -15,10 +15,17 @@ import { join } from "node:path";
 import { createBranch } from "../dist/index.js";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
 import { discardTemp } from "./temp-dir.mjs";
+import { chromium } from "playwright";
 
 const PAGE = "<!doctype html><title>Oak facts</title><h1>Oak facts</h1><p>SELF-312 proof: oaks can live a thousand years.</p>";
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
 const wanted = ["web.search", "web.fetch", "browser.navigate", "browser.snapshot"];
+
+// It drives Chromium through Branch's own browser tool; the import above is what the test selector reads to give this
+// lane a browser (tests/browser-tests-declared.test.mjs), and this asserts it is really there.
+test("this test needs a real browser, and says so", () => {
+  assert.equal(chromium.name(), "chromium", "this test declares the browser engine it requires");
+});
 
 test("the lead and a helper it starts each search the web, read a page and use the real browser", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-lead-web-"));
