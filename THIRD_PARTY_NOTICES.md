@@ -3258,6 +3258,10 @@ Copyright 2025 OpenAI
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
 
+### OpenClaw: edited chat messages are never commands (UP-CHAT-002), MIT
+
+`editedCommandShaped` and its check in `ChannelRouter.handle` (`src/channels/router.ts`) follow OpenClaw's `handleEditedMessage` in `extensions/telegram/src/bot-handlers.inbound-pipeline.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation): an edit is recorded, never dispatched as a command. The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### Letta Code (Letta, Inc.), Apache-2.0
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
