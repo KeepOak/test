@@ -12,7 +12,7 @@ import { partSettings, requirePersonal, savePartSettings } from "./settings.js";
 
 /**
  * R17-022: a file Branch made — a chart, a PDF, a spreadsheet — delivered into a chat as the chat
- * app's own attachment, through the adapter that is already connected (Telegram, Slack, Discord).
+ * app's own attachment, through the adapter that is already connected (any app whose adapter has `sendFile`).
  *
  * Before anything leaves this computer:
  *   - only the owner may send, and only to a chat that has already talked to the assistant after
@@ -121,6 +121,6 @@ export class ChatFiles {
 
 export function registerChatFiles(registry: Pick<ToolRegistry, "register">, chatFiles: ChatFiles): void {
   registry.register({ name: "chat.send_file", permission: "channels.send",
-    description: "Send a file from the workspace (a chart, PDF, spreadsheet…) into a linked chat on Telegram, Slack or Discord, as that app's own attachment.",
+    description: "Send a file from the workspace (a chart, PDF, spreadsheet…) into a linked chat (Telegram, Slack, Discord, Signal, email, iMessage and the other apps that take files), as that app's own attachment.",
     parameters: SendFileSchema, target: (input) => input.path, execute: async (input) => chatFiles.send(input) });
 }

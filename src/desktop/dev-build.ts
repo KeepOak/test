@@ -145,6 +145,30 @@ export async function devToolsMissing(run: Run): Promise<string | null> {
 }
 
 /** The newest commit on Beta's line of work, read with git (not GitHub's rate-limited web API). */
+/** The whole-suite workflow a Beta change must have passed, on a push to Beta's line, before it is taken. */
+export const wholeSuiteWorkflow = "checks.yml";
+/**
+ * Beta takes the newest change whose whole suite passed on GitHub, not simply the newest change: runs on the line are
+ * batched, so its tip is often not checked yet, or was cancelled for a newer one. GitHub is asked only when the tip
+ * moved (one small request, unauthenticated); when it cannot answer, the last passing change found is kept. Null when
+ * none is known yet, and the tip is taken as before.
+ */
+export function newestGreen(fetchImpl: typeof fetch = globalThis.fetch): (repo: string, tip: string) => Promise<string | null> {
+  let lastTip: string | null = null, green: string | null = null;
+  return async (repo, tip) => {
+    if (tip === lastTip && green) return green;
+    try {
+      const url = `https://api.github.com/repos/${repo}/actions/workflows/${wholeSuiteWorkflow}/runs?branch=${encodeURIComponent(betaLine)}&event=push&status=success&per_page=1`;
+      const response = await fetchImpl(url, { headers: { accept: "application/vnd.github+json", "user-agent": "Branch-Agent-updater" }, signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) return green;
+      const body = await response.json() as { workflow_runs?: { head_sha?: unknown; head_branch?: unknown }[] };
+      const sha = body.workflow_runs?.[0]?.head_sha;
+      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && body.workflow_runs?.[0]?.head_branch === betaLine) { green = sha; lastTip = tip; }
+    } catch { /* offline or refused: the last passing change found stands */ }
+    return green;
+  };
+}
+
 export async function remoteHead(run: Run, repo: string): Promise<string> {
   const out = await run("git", [...quietGit, "ls-remote", `https://github.com/${repo}.git`, `refs/heads/${betaLine}`], { timeoutMs: 60_000 });
   // ls-remote matches the end of ref names, so only the line naming exactly Beta's ref counts.

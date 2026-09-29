@@ -22,7 +22,7 @@ import { esc, renderNow } from "../../core/dom.js";
 import { statusBox } from "../parts.js";
 import { seg15 } from "../rows15.js";
 import { logo } from "../../core/logos.js";
-import { level, E, ownerHere } from "../../core/state.js";
+import { level, E, S, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { onPhone } from "../surface17.js";
 import { updatedWords } from "../../shell/usage.js"; // the status bar's "Updated 3 min ago", the same on both lists
@@ -164,6 +164,8 @@ function evalCard() {
 /* ---------- What each connection has left (GET /api/usage/glance), 1:1 with the status bar's list ---------- */
 let glance = null;
 let limits = null;
+let identityTimer = null;
+let loadingGlance = false;
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
 
 function windowRow(w, estimated) {
@@ -180,9 +182,15 @@ export function limitRow(r) {
 }
 
 async function loadGlance() {
+  if (loadingGlance) return;
+  loadingGlance = true;
   const [g, l] = await Promise.all(["usage/glance", "usage/limits/settings"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+  loadingGlance = false;
   glance = g; limits = l?.usageLimits ?? null;
   renderNow();
+  clearTimeout(identityTimer);
+  const visible = () => ownerHere() && !document.querySelector(".lockscreen") && S.view === "settings" && S.setPage === "usage";
+  if (g?.identitiesPending && visible()) identityTimer = setTimeout(() => { if (visible()) loadGlance(); }, 1000);
 }
 
 /* The ring and the save-progress offer (POST /api/usage/glance/settings, merged) and asking a service what is left

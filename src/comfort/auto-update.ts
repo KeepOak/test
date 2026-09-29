@@ -1,5 +1,6 @@
 import type { Store } from "../store.js";
 import { readComfort } from "./settings.js";
+import { diagnose } from "../diagnostic-log.js";
 
 /**
  * R17-S17: whether the window should look for an update now, and whether it may install one.
@@ -53,24 +54,59 @@ export function noteFailedInstall(store: Store, owner: string, tag: string, now 
 /**
  * Dogfood F4: how long a question holds an update. The Updates card said "5 tasks are working" for five old
  * conversations waiting hours for an answer; the owner's rule is that a question left for hours does not hold one.
+ * Ten minutes: a question the owner has not answered by then is kept across the update (never-break), not lost.
  */
-export const questionHoldsUpdateMs = 60 * 60 * 1000;
+export const questionHoldsUpdateMs = 10 * 60 * 1000;
+/**
+ * A task marked working that has recorded nothing for this long is not working: the engine itself calls a task that
+ * silent stale (activity.ts staleAfterMs, from the owner's own limits). This is the floor used when the engine's own
+ * figure is not given.
+ */
+export const staleTaskMs = 15 * 60 * 1000;
+/**
+ * The longest an update waits for busy tasks. After that it goes ahead: work is handed over to the new engine or
+ * carried on after it (never-break), so a task that never ends cannot hold every fix back for good.
+ */
+export const maxBusyHoldMs = 3 * 60 * 60 * 1000;
 export interface BusyTasks {
-  /** Tasks working now. */
+  /** Tasks working now (each recorded something within the stale window). */
   working: number;
-  /** Tasks stopped on a question asked within the last hour: swapping the program would lose it, so they wait too. */
+  /** Tasks stopped on a question asked within the last ten minutes: they wait too. */
   asking: number;
+  /** Tasks still marked working that have recorded nothing for longer than the stale window: they hold nothing. */
+  stale: string[];
 }
 /**
  * Integration review: every task still at work in this house, whoever started it, counted in full, not from a recent
- * list. Dogfood F4: a task stopped on its question counts only while the question is newer than an hour.
+ * list. Dogfood F4: a task stopped on its question counts only while the question is fresh. A task marked working that
+ * has gone silent past `staleMs` is reported as stale instead of counted.
  */
-export function busyTasks(store: Pick<Store, "sqlite">, now = Date.now()): BusyTasks {
-  const count = (sql: string, ...args: string[]): number => Number(store.sqlite.prepare(sql).get(...args)?.n ?? 0);
-  return {
-    working: count("SELECT COUNT(*) AS n FROM tasks WHERE status='running'"),
-    asking: count("SELECT COUNT(*) AS n FROM tasks WHERE status='needs_input' AND updated_at >= ?", new Date(now - questionHoldsUpdateMs).toISOString()),
-  };
+export function busyTasks(store: Pick<Store, "sqlite">, now = Date.now(), staleMs = staleTaskMs): BusyTasks {
+  const since = new Date(now - staleMs).toISOString();
+  const running = store.sqlite.prepare(`SELECT t.id AS id, MAX(t.updated_at, COALESCE((SELECT MAX(e.created_at) FROM events e WHERE e.run_id = t.id), '')) AS last
+    FROM tasks t WHERE t.status='running'`).all() as { id: string; last: string }[];
+  const asking = Number(store.sqlite.prepare("SELECT COUNT(*) AS n FROM tasks WHERE status='needs_input' AND updated_at >= ?")
+    .get(new Date(now - questionHoldsUpdateMs).toISOString())?.n ?? 0);
+  return { working: running.filter((row) => row.last >= since).length, asking, stale: running.filter((row) => row.last < since).map((row) => row.id) };
+}
+
+/**
+ * Busy tasks as they hold an update, at most `maxBusyHoldMs`: the time the hold began is kept, and once it is over the
+ * busy tasks are reported as `overdue` instead of holding it. Stale tasks are written to the activity log once each.
+ */
+const holdKey = "comfort-update-held";
+export function updateHold(store: Store, owner: string, busy: BusyTasks, now = Date.now()): BusyTasks & { overdue: number; heldSince: string | null } {
+  const saved = store.get("settings", owner, holdKey)?.data as { since?: unknown; staleTold?: unknown } | undefined;
+  const told = new Set(Array.isArray(saved?.staleTold) ? saved.staleTold.filter((id): id is string => typeof id === "string") : []);
+  const fresh = busy.stale.filter((id) => !told.has(id));
+  if (fresh.length) diagnose("updater", "warn", `${fresh.length} task(s) marked working have recorded nothing for a long while, so they no longer hold an update`, { fields: { tasks: fresh.slice(0, 10).join(", ") } });
+  const held = busy.working + busy.asking;
+  const since = held > 0 ? (typeof saved?.since === "string" ? saved.since : new Date(now).toISOString()) : null;
+  const staleTold = busy.stale.slice(0, 50);
+  if (since !== (typeof saved?.since === "string" ? saved.since : null) || fresh.length || staleTold.length !== told.size)
+    store.save("settings", owner, holdKey, { since, staleTold });
+  if (since && now - Date.parse(since) >= maxBusyHoldMs) return { working: 0, asking: 0, stale: busy.stale, overdue: held, heldSince: since };
+  return { ...busy, overdue: 0, heldSince: since };
 }
 /** One task holding an update: the owner's own are named by id, so the window can open its conversation. */
 export interface HoldingTask { id: string; sessionId: string; state: "working" | "asking" }
@@ -78,10 +114,11 @@ export interface HoldingTask { id: string; sessionId: string; state: "working" |
  * The owner's own tasks that hold an update, newest first (at most ten). Other people's are only counted in
  * `busyTasks`: their conversations are not the owner's to open.
  */
-export function holdingTasks(store: Pick<Store, "sqlite">, owner: string, now = Date.now()): HoldingTask[] {
-  const rows = store.sqlite.prepare(`SELECT id, session_id AS sessionId, status FROM tasks WHERE owner = ? AND
-    (status='running' OR (status='needs_input' AND updated_at >= ?)) ORDER BY updated_at DESC LIMIT 10`)
-    .all(owner, new Date(now - questionHoldsUpdateMs).toISOString()) as { id: string; sessionId: string; status: string }[];
+export function holdingTasks(store: Pick<Store, "sqlite">, owner: string, now = Date.now(), staleMs = staleTaskMs): HoldingTask[] {
+  const rows = store.sqlite.prepare(`SELECT t.id AS id, t.session_id AS sessionId, t.status AS status FROM tasks t WHERE t.owner = ? AND
+    ((t.status='running' AND MAX(t.updated_at, COALESCE((SELECT MAX(e.created_at) FROM events e WHERE e.run_id = t.id), '')) >= ?)
+      OR (t.status='needs_input' AND t.updated_at >= ?)) ORDER BY t.updated_at DESC LIMIT 10`)
+    .all(owner, new Date(now - staleMs).toISOString(), new Date(now - questionHoldsUpdateMs).toISOString()) as { id: string; sessionId: string; status: string }[];
   return rows.map((row) => ({ id: row.id, sessionId: row.sessionId, state: row.status === "running" ? "working" : "asking" }));
 }
 
@@ -107,6 +144,7 @@ export function clearUpdateProblem(store: Store, owner: string): void {
 
 /** The tasks that hold an update: those working, and those whose question is still fresh. */
 export function busyTaskCount(store: Pick<Store, "sqlite">, now = Date.now()): number {
+  // The count alone, as it stands (no hold limit): the plan and readiness apply `updateHold`.
   const busy = busyTasks(store, now);
   return busy.working + busy.asking;
 }
@@ -121,6 +159,8 @@ export interface PlanFacts {
   updaterPhase?: string | undefined;
   /** Which release the updater is talking about (its tag), so one whose install failed is not tried again by itself. */
   updaterTag?: string | undefined;
+  /** Tasks still busy after the update waited `maxBusyHoldMs` for them (updateHold): it goes ahead, and says so. */
+  overdueTasks?: number;
   now?: Date;
 }
 
@@ -148,6 +188,7 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
         ? plan("nothing", "A newer version is ready; it installs once no task is working.", "no task is working")
         : plan("nothing", "A newer version is ready; it installs once the questions asked in the last hour are answered.", "the questions asked in the last hour are answered");
     }
+    if (facts.overdueTasks) return plan("install", `A newer version has waited three hours for ${facts.overdueTasks} task(s), so it is installed now; the work carries on after it.`);
     return plan("install", "A newer version is ready and nothing is working, so it is installed now, safely.");
   }
   // An available update is remembered by GitHub, not by this process. After a restart the updater
@@ -158,4 +199,32 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
     ? "Beta updates were looked for less than a minute ago."
     : "Updates were looked for less than a day ago.");
   return plan("check", install ? "Looking for a newer version to install." : "Looking for a newer version to tell you about.");
+}
+
+/**
+ * The last time anything looked at the update plan (the app's own update loop asks it every 30 s to 5 min, whatever it
+ * then does). A loop that stopped is a problem said in Settings › Updates and in the activity log, never silence.
+ */
+const lookedKey = "comfort-update-looked";
+export function noteUpdateLook(store: Store, owner: string, now = new Date()): void {
+  store.save("settings", owner, lookedKey, { at: now.toISOString() });
+}
+export const stalledWords = "Branch has not looked for an update since";
+/** How long without a look before the loop counts as stopped: three of its slowest looks, or three hours on Stable's check-only. */
+export function stalledLookMs(settings: { autoUpdate: string; releaseChannel: string }): number {
+  return settings.autoUpdate === "check" && settings.releaseChannel === "stable" ? 3 * 60 * 60 * 1000 : 15 * 60 * 1000;
+}
+/**
+ * Whether updating by itself has stopped looking: on, and no look for `stalledLookMs` since the later of the last look
+ * and `since` (when this engine started). Said as a problem the first time; answers the words, or null.
+ */
+export function noteStalledLooks(store: Store, owner: string, since: number, now = Date.now()): string | null {
+  const settings = readComfort(store, owner, "notify");
+  if (settings.autoUpdate === "off") return null;
+  const saved = store.get("settings", owner, lookedKey)?.data?.at;
+  const last = Math.max(since, typeof saved === "string" ? Date.parse(saved) || 0 : 0);
+  if (now - last < stalledLookMs(settings)) return null;
+  const words = `${stalledWords} ${new Date(last).toISOString().slice(0, 16).replace("T", " ")} UTC: updating by itself has stopped. Restarting Branch starts it again.`;
+  if (noteUpdateProblem(store, owner, words, new Date(now))) diagnose("updater", "error", words);
+  return words;
 }
