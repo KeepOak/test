@@ -672,6 +672,8 @@ export const ROUTES = {
   "/api/vault-autofill/settings": "secret-read",
   "/api/knobs": "owner POST", // R17-S-B
   "/api/knobs/launch-file": "owner POST", // R17-S-B
+  "/api/miniapp/phone-access": "owner POST", // Settings › Chat apps: turn phone access through Tailscale on or off (window only)
+  "/api/miniapp/telegram/": "prefix", // the Mini App door's own API (src/miniapp/door.ts)
   "/api/model-savings": "owner POST", // R17-E
   "/api/model-savings/rounds": "look", // R17-E
   "/api/model-savings/companies": "owner POST", // OpenRouter picks › Only ones I list: asks OpenRouter for its companies

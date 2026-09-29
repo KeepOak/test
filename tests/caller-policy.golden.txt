@@ -1140,6 +1140,8 @@ owner GET /api/knobs | here=ok remote=ok phone=ok legacy=ok person=401/327290 re
 owner POST /api/knobs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/82cc90 run=401/82cc90 nobody=401/40daee
 owner GET /api/knobs/launch-file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/knobs/launch-file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/82cc90 run=401/82cc90 nobody=401/40daee
+owner GET /api/miniapp/phone-access | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/miniapp/phone-access | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/model-savings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/model-savings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
 owner GET /api/model-savings/rounds | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3312,6 +3314,8 @@ owner+lockdown GET /api/knobs | here=ok remote=ok phone=ok legacy=ok person=401/
 owner+lockdown POST /api/knobs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/82cc90 run=401/82cc90 nobody=401/40daee
 owner+lockdown GET /api/knobs/launch-file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/knobs/launch-file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/82cc90 run=401/82cc90 nobody=401/40daee
+owner+lockdown GET /api/miniapp/phone-access | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/miniapp/phone-access | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/model-savings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/model-savings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/e0a079 run=401/e0a079 nobody=401/40daee
 owner+lockdown GET /api/model-savings/rounds | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5484,6 +5488,8 @@ household GET /api/knobs | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run
 household POST /api/knobs | here=400/f6e21c remote=400/f6e21c read=401/82cc90 run=401/82cc90
 household GET /api/knobs/launch-file | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/knobs/launch-file | here=400/f6e21c remote=400/f6e21c read=401/82cc90 run=401/82cc90
+household GET /api/miniapp/phone-access | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/miniapp/phone-access | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/model-savings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/model-savings | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
 household GET /api/model-savings/rounds | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7656,6 +7662,8 @@ household+lockdown GET /api/knobs | here=400/f6e21c remote=400/f6e21c read=400/f
 household+lockdown POST /api/knobs | here=400/f6e21c remote=400/f6e21c read=401/82cc90 run=401/82cc90
 household+lockdown GET /api/knobs/launch-file | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/knobs/launch-file | here=400/f6e21c remote=400/f6e21c read=401/82cc90 run=401/82cc90
+household+lockdown GET /api/miniapp/phone-access | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/miniapp/phone-access | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/model-savings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/model-savings | here=400/f6e21c remote=400/f6e21c read=401/e0a079 run=401/e0a079
 household+lockdown GET /api/model-savings/rounds | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9828,6 +9836,8 @@ applock GET /api/knobs | here=423/a8f863
 applock POST /api/knobs | here=423/a8f863
 applock GET /api/knobs/launch-file | here=423/a8f863
 applock POST /api/knobs/launch-file | here=423/a8f863
+applock GET /api/miniapp/phone-access | here=423/a8f863
+applock POST /api/miniapp/phone-access | here=423/a8f863
 applock GET /api/model-savings | here=423/a8f863
 applock POST /api/model-savings | here=423/a8f863
 applock GET /api/model-savings/rounds | here=423/a8f863
