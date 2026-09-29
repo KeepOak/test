@@ -23,6 +23,9 @@ name: Checks
 # in here.)
 on:
   pull_request:
+  # GitHub's merge queue (KeepOak/Branch-Agent ruleset): each queued group is tested as it will land, whole suite,
+  # on the newest redesign/window, so a PR that was green on an older base cannot turn the base red.
+  merge_group:
   push:
     branches: [main, wave2/integration, 'release/**', 'redesign/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
   workflow_dispatch:
@@ -316,7 +319,7 @@ jobs:
     needs: [verify]
     # On a push, plan is skipped (it only queues pull-request runs), and a skipped job anywhere upstream skips this one
     # unless the condition says otherwise; so it asks for verify's own success instead.
-    if: ${{ !cancelled() && needs.verify.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && github.repository == 'stabrea/Branch-Agent' }}
+    if: ${{ !cancelled() && needs.verify.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && (github.repository == 'KeepOak/Branch-Agent' || github.repository == 'stabrea/Branch-Agent') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
