@@ -8,11 +8,14 @@ import { readFile } from "node:fs/promises";
 test("every start path that opens the window marks the new version started, including joining a background engine", async () => {
   const main = await readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
   const start = main.slice(main.indexOf("async function start("), main.indexOf("\n}\n", main.indexOf("async function start(")));
-  const joined = start.slice(start.indexOf("if (running && runningKey) {"), start.indexOf("    return;\n  }"));
+  // The joined path ends at the first return after it; earlier early-outs (one instance per data folder) come before it.
+  const joinedAt = start.indexOf("if (running && runningKey) {");
+  const joinedEnd = start.indexOf("    return;\n  }", joinedAt);
+  const joined = start.slice(joinedAt, joinedEnd);
   assert.ok(joined.includes("await createWindow(running.url"), "the joined path opens the window");
   assert.match(joined, /await createWindow\(running\.url[\s\S]*void markStarted\(updateScratchDir\(\), app\.getVersion\(\)\)/,
     "joined to the background engine, the new version says it started after its window is up");
-  const own = start.slice(start.indexOf("    return;\n  }"));
+  const own = start.slice(joinedEnd);
   assert.match(own, /await createWindow\(url[\s\S]*void markStarted\(updateScratchDir\(\), app\.getVersion\(\)\)/, "its own engine too");
   assert.equal((start.match(/void markStarted\(/g) ?? []).length, 2);
 });
