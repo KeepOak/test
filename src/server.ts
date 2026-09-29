@@ -32,6 +32,7 @@ import {
   saveSessionPlanAct, sessionPlanAct, clearSessionPlanAct,
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
+import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
@@ -128,6 +129,7 @@ import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from 
 import { handleA2a, remoteAgentsApi } from "./a2a-routes.js";
 import type { createBranch } from "./index.js";
 import { goalApi } from "./goal-mode.js";
+import { diagramFrameRoute } from "./diagram-frame.js";
 import { rewindApi } from "./rewind.js";
 import { PreferencesSchema, preferences } from "./preferences.js";
 import { asksApi, AsksHttpError, handlesAsksPath } from "./asks/api.js"; // mac6/bucket-23: the smaller asks
@@ -156,7 +158,7 @@ import { clientToolsPath, serveClientToolSocket } from "./interop/client-tools.j
 import { LOOK_LANGUAGES, lookApi } from "./terminal-theme.js";
 // Wave mac3: the owner's control dashboard, a page of its own at /dashboard.
 import {
-  DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile,
+  DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile, registerRestartTool,
 } from "./dashboard-api.js";
 // Wave mac3 (commands): the one slash-command table's routes.
 import { CommandApiError, commandsApi, handlesCommandsPath } from "./commands/api.js";
@@ -259,6 +261,7 @@ import { socketPath as deviceSocketPath } from "./devices/protocol.js";
 import { deploymentApi, shipAutostart, type DeploymentContext } from "./deployment-api.js";
 import { shipKeepRunningOn } from "./keep-running.js"; // the ship-on rule: keeping Branch running
 import { quitRequest } from "./install/quit.js"; // bucket 22
+import { changeSelfRule, SelfRuleRefusal, selfRulesPath, selfRulesView } from "./self-rules.js";
 import { clearRunning, writeRunning } from "./install/running.js";
 import { readFirstStart, recordFirstStart } from "./install/update-backup.js";
 import { readDesktopSettings, saveDesktopSettings } from "./integrations/desktop-config.js";
@@ -278,13 +281,14 @@ import { handlesHostBridgePath, hostBridgeApi, HostBridgeApiError } from "./host
 // Wave mac2 (move-in): bringing chats and memory over from another assistant.
 import { contextFileSinkFor, defaultMoveInOptions, handlesMoveInPath, moveInApi, MoveInApiError } from "./migrate-api.js";
 // Wave mac2 (guards): which workspace folders are trusted, and the loop guard switch.
-import { guardsApi, handlesGuardsPath } from "./run-guards.js";
+import { guardsApi, GuardsApiError, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
 import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
+import { replyStyles, saveReplyStyle } from "./channels/reply-style.js";
 import { practiceRunsEnabled, savePracticeRuns } from "./practice-runs.js";
 import { setupIds } from "./channel-setup/service.js";
 import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
@@ -293,13 +297,16 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { MiniAppDoor } from "./miniapp/door.js";
+import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
+import { handlesMiniAppPath, MiniAppApi } from "./miniapp/api.js";
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
-import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
+import { handlesUsageLimitsPath, readUsageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
@@ -1091,7 +1098,8 @@ async function api(
       throw error instanceof MoveInApiError ? new HttpError(error.status, error.message) : error;
     });
   // Wave mac2 (guards): which workspace folders are trusted, what each carries, and both switches.
-  if (handlesGuardsPath(path)) return guardsApi(app, request, path, readBody);
+  if (handlesGuardsPath(path))
+    return guardsApi(app, request, path, readBody).catch((error: unknown) => { throw error instanceof GuardsApiError ? new HttpError(error.status, error.message) : error; });
   // R17-S-B: the hidden knobs. Every change is the owner's (see offLimitsToShortLivedKeys).
   if (handlesKnobsPath(path))
     return knobsApi(app, request, path, readBody, () => (process.env.BRANCH_INTEGRATIONS ? resolvePath(process.env.BRANCH_INTEGRATIONS) : null))
@@ -1699,6 +1707,10 @@ async function api(
     }
     return result;
   }
+  // models-ui (MODEL-052): who spent what: the owner's own tasks and each Trunk's, with the accounts they used.
+  if (request.method === "GET" && path === "/api/usage/by-trunk")
+    return usageByTrunk({ store: app.store, owner: app.runtime.owner, trunkName: (id) => app.trunks.records.find(id)?.name ?? null,
+      costOf: (runId) => runCost(app, runId).amount ?? null }, Object.fromEntries(new URL(request.url ?? "/", "http://local").searchParams));
   if (request.method === "GET" && path === "/api/second-opinion")
     return secondOpinionSettings(app.store, app.runtime.owner);
   if (request.method === "POST" && path === "/api/second-opinion")
@@ -1925,6 +1937,17 @@ async function api(
     if (refusal) throw new HttpError(409, refusal);
     return { policy: recordedWrite(app.store, app.runtime.owner, { writer: "owner-in-window", source: "card", detail: "policy" }, ["policy"],
       () => savePolicy(app.store, app.runtime.owner, input)) };
+  }
+  // Settings › Branch itself: what Branch may do about itself, as approval rules (src/self-rules.ts); owner only.
+  if (path === selfRulesPath && (request.method === "GET" || request.method === "POST")) {
+    app.store.profiles.requireOwner("What Branch may do about itself");
+    const names = app.registry.names();
+    if (request.method === "GET") return selfRulesView(app.store, app.runtime.owner, names);
+    if (startedWithShortLivedKey()) throw new HttpError(401, "A short-lived key cannot change what Branch may do about itself. Do that in the app window.");
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    try { return changeSelfRule(app.store, app.runtime.owner, input, confirmLoosening, app.registry, names); } catch (error) {
+      throw error instanceof SelfRuleRefusal ? new HttpError(409, error.message) : error;
+    }
   }
   if (request.method === "POST" && path === "/api/policy/approve") {
     const input = z.object({ sessionId: z.string().uuid(), decision: z.enum(["allow", "deny"]),
@@ -2192,7 +2215,7 @@ async function api(
   // --- end bucket 14 ---
   // --- mac7/usage-bar: what each connection has left, in its honest state; src/usage-limits-api.ts ---
   // Redesign phase 1: the ring under the message box. Somebody other than the owner gets an empty answer, never an error.
-  if (path === usageGlancePath && request.method === "GET") return usageGlance(app);
+  if (path === usageGlancePath && request.method === "GET") return readUsageGlance(app);
   if (handlesUsageLimitsPath(path))
     return usageLimitsRoute(app, request, path, () => readBody(request))
       .catch((error: unknown) => { throw error instanceof UsageLimitsError ? new HttpError(error.status, error.message) : error; });
@@ -3055,6 +3078,13 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     try { return { formats: saveChannelFormatting(app.store, owner, await readBody(request), setupIds()) }; }
     catch (error) { throw new HttpError(400, errorText(error)); }
   }
+  // Settings › Chat apps › Replies in each app: quoting the person's message, and the reaction on it (src/channels/reply-style.ts).
+  if (path === "/api/channels/reply-style") {
+    if (request.method === "GET") return { styles: replyStyles(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { styles: saveReplyStyle(app.store, owner, await readBody(request), setupIds()) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.
   if (path === "/api/channels/parity")
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
@@ -3712,8 +3742,15 @@ export function listenOn(server: Server, port: number, address: string, anyPortI
 
 export { offLimitsToHousehold, offLimitsToShortLivedKeys };
 import { offLimitsToShortLivedKeys } from "./caller-policy.js";
+/** Settings › Chat apps: phone access through Tailscale for the Telegram Mini App (src/miniapp/phone-access.ts). */
+const phoneAccessPath = "/api/miniapp/phone-access";
 /** Tests only: see `policyProbe` below. */
 export const policyProbeHeader = "x-branch-policy-probe";
+/** selfdev: an engine the desktop app runs in a process of its own, whose engine host starts it again when it stops. */
+function hostedEngine(options: { presence?: "app" | "daemon" | undefined; presencePid?: number | undefined }): boolean {
+  return options.presence === "app" && options.presencePid !== undefined && options.presencePid !== process.pid && typeof process.send === "function";
+}
+
 export async function startServer(
   app: Branch,
   options: {
@@ -3737,6 +3774,8 @@ export async function startServer(
     quit?: () => void;
     /** Trusted desktop broker status over the private engine Link; never supplied by a web request. */
     gatewayPower?: NeverBreakExtras["gatewayPower"];
+    /** How `tailscale` is run to learn the Mini App's HTTPS address (src/miniapp/phone-access.ts); tests stand in for it. */
+    tailscaleServe?: TailscaleRunner;
     /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
     onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
@@ -3811,6 +3850,8 @@ export async function startServer(
   /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
   const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
   const browserControls = new BrowserControlApi(app);
+  /** The Telegram Mini App's one way into a task's browser, with its own checks instead of a key (src/miniapp/api.ts). */
+  const miniApp = new MiniAppApi(app, browserControls);
   /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
   const socketPhoneKey = (request: IncomingMessage): boolean => {
     const offered = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((part) => part.trim());
@@ -3823,6 +3864,29 @@ export async function startServer(
   // Counted separately from the session key, so a chat service that is set up wrongly can slow
   // itself down without ever standing between the owner and their own app.
   const webhookLimiter = new AuthLimiter(options.authLimits);
+  /**
+   * The Telegram Mini App's API, on Branch's own port and on the Mini App's door (src/miniapp/door.ts). A place that
+   * keeps sending launch data that isn't Telegram's, or a token that isn't live, waits like any wrong key; through the
+   * door every phone arrives from 127.0.0.1 and so shares that wait, which only the owner's own tailnet can reach.
+   */
+  const miniAppAnswer = async (path: string, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const from = requestSource(request.socket?.remoteAddress, request.headers);
+    const waiting = authLimiter.refusal(from, "Telegram Mini App");
+    if (waiting) { send(response, 429, { error: waiting }); return; }
+    const stopped = new AbortController();
+    request.once("aborted", () => stopped.abort());
+    response.once("close", () => { if (!response.writableEnded) stopped.abort(); });
+    try {
+      send(response, 200, await miniApp.handle(path, { method: request.method ?? "GET", token: bearerOf(request),
+        body: () => readBody(request, 16_384), signal: stopped.signal }));
+    } catch (error) {
+      if (error instanceof z.ZodError) { send(response, 400, { error: "That request wasn't understood." }); return; }
+      const refused = miniApp.error(error);
+      if (!refused) { send(response, 500, { error: "Something went wrong." }); return; }
+      if (refused.status === 401) noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the Telegram Mini App's launch data");
+      send(response, refused.status, { error: refused.message });
+    }
+  };
 
 /**
  * The widget sits on a page of the owner's own, so its call to the paired listener is cross-origin
@@ -3867,6 +3931,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         throw new HttpError(404, "Not found");
       if (request.method === "GET" && (await staticFile(path, response, request)))
         return;
+      // A ```mermaid block's sealed frame and its two scripts (src/diagram-frame.ts): its own policy, nothing private in it.
+      if (await diagramFrameRoute(request, response, path)) return;
       if (path.startsWith("/hooks/")) {
         send(response, 200, await hook(app, request, path));
         return;
@@ -3957,6 +4023,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // network must not quietly widen a page whose whole secret is its address.
       if (!viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)
         && app.asks.surfaces.serve(request, response, path)) return;
+      // ---- The Telegram Mini App (src/miniapp/api.ts): no Branch key; Telegram's signed launch data and the App lock PIN
+      // open a session held to one task's browser, and its token is good for these routes only. A place that keeps
+      // sending launch data that isn't Telegram's, or a token that isn't live, waits like any wrong key. ----
+      if (handlesMiniAppPath(path)) { await miniAppAnswer(path, request, response); return; }
       const triggerFireMatch = /^\/api\/triggers\/([a-f0-9-]{36})\/fire$/.exec(path);
       if (triggerFireMatch && request.method === "POST") {
         // Counted on the webhook limiter, not the key's: a service set up with the wrong secret
@@ -4064,7 +4134,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // The key was already checked and its use counted above; this only reads what it may do.
         const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
         const answer = await dashboardApi(app, request, path, {
-          dataDir: options.dataDir, access, readBody: () => readBody(request),
+          dataDir: options.dataDir, access, readBody: () => readBody(request), deps: { hosted: hostedEngine(options) },
         }).catch((error: unknown) => {
           throw error instanceof DashboardApiError ? new HttpError(error.status, error.message) : error;
         });
@@ -4092,6 +4162,26 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const answer = await browserControls.handle(request.method ?? "GET", path, input, { authorize: authorizeBrowser, signal: stopped.signal })
             .catch((error: unknown) => { if (error instanceof z.ZodError) throw error; const refused = browserControls.error(error); throw new HttpError(refused.status, refused.message); });
           send(response, 200, answer); return;
+        }
+        // ---- The owner's phone through Tailscale (src/miniapp/phone-access.ts): what "Turn on phone access" and "Turn off"
+        // run, and running it once the owner has seen that exact command and said yes, in Branch's window on this computer. ----
+        if (path === phoneAccessPath) {
+          if (request.method === "GET") { send(response, 200, await phoneAccessView()); return; }
+          if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+          if (key !== "window" || throughDoor(request)) throw new HttpError(403, "Phone access is turned on and off in Branch's window on this computer.");
+          app.store.profiles.requireOwner("Phone access");
+          if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing phone access.");
+          if (lockdownActive(app.store, app.runtime.owner)) throw new HttpError(403, "Lockdown is on, so your phone can't be let in.");
+          const input = z.object({ turn: z.enum(["on", "off"]), command: z.array(z.string().max(300)).max(12) }).strict().parse(await readBody(request));
+          if (input.turn === "on" && !app.sessionLock.pinSet())
+            throw new HttpError(409, "Set an App lock PIN first. Your phone asks for it each time it takes a task's browser.");
+          const noted = (outcome: string) => audit(app.store, app.runtime.owner, { action: "phone.access", actor: "owner",
+            subject: "the Telegram Mini App through Tailscale", reason: input.command.join(" ").slice(0, 400), outcome });
+          try { await phoneAccess.turn(input.turn, input.command); }
+          catch (error) { noted("refused"); throw new HttpError(409, errorText(error)); }
+          noted(input.turn === "on" ? "turned on" : "turned off");
+          send(response, 200, await phoneAccessView());
+          return;
         }
         // ---- Wave mac3 (commands): the one slash-command table, for the window, the phone and the
         // dashboard (src/commands/api.ts). What the key may do is read the way the dashboard reads it,
@@ -4601,7 +4691,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     listen.extraHosts = listen.extraHosts.filter((name) => next.extraHosts.includes(name));
     listen.ipv4Only = next.ipv4Only;
   }
-  app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
+  app.localAddress = url; // R17-C: the webhook door passes requests on to this address (handed on once that part is built)
   app.scheduler.start();
   // The ship-on rule: the installed app's first start keeps Branch running without a setup step (src/keep-running.ts).
   // How earlier versions' first starts went is read here, before noteFirstStart below writes this one's.
@@ -4615,18 +4705,33 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
+    registerRestartTool(app, options.dataDir, { hosted: hostedEngine(options) }); // selfdev: only a real start can be started again by what watches it
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
     void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
     // CHAT-147: every other chat app set up in the window; each problem goes to the diagnostics.
     void app.channelSetup.connectSaved().catch((error: unknown) => console.error(`Chat apps did not connect: ${errorText(error)}`));
   }
+  // The Telegram Mini App's own door on this computer's loopback address, and where the owner's phone reaches it.
+  const miniAppDoor = new MiniAppDoor(app.store, app.runtime.owner, miniAppAnswer);
+  await miniAppDoor.open().catch((error: unknown) => console.error(`The Telegram Mini App's door did not open: ${errorText(error)}`));
+  const phoneAccess = new PhoneAccess(() => miniAppDoor.port, options.tailscaleServe);
+  /** Where the phone reaches the Mini App now, and the exact commands the window shows before turning it on or off. */
+  const phoneAccessView = async () => ({ phoneAccess: { url: await phoneAccess.refresh(), pinSet: app.sessionLock.pinSet(),
+    on: phoneAccess.command("on"), off: phoneAccess.command("off") } });
+  void phoneAccess.refresh(); // so a task's first picture already knows whether the phone can reach the Mini App
+  app.channels.miniAppUrl = (runId) => {
+    const base = app.sessionLock.pinSet() ? phoneAccess.address() : null;
+    return base ? `${base}?run=${encodeURIComponent(runId)}` : null;
+  };
   if (options.presence) {
     await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
     await noteFirstStart(app, options.dataDir).catch(() => undefined);
   }
   return {
     url,
+    /** The Telegram Mini App's door (src/miniapp/door.ts) and where the owner's phone reaches it. */
+    miniAppDoor, phoneAccess,
     /** The window's key as it is now; removing a phone that was handed it replaces it. */
     get token(): string { return token; },
     remote,
@@ -4647,6 +4752,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       browserControls.close();
+      miniApp.close();
+      app.channels.miniAppUrl = undefined;
+      await miniAppDoor.close();
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops

@@ -69,6 +69,8 @@ export class MatrixAdapter implements ChannelAdapter {
   private loop: Promise<void> | null = null;
   private since: string | undefined;
   private encryptedSeen = 0;
+  /** Who wrote each recent message read here, so only its own sender's edit of it counts. */
+  private readonly authors = new Map<string, string>();
   /** Room ids are longer than the delivery ledger allows, so long ones get a short handle. */
   private readonly rooms = new Map<string, string>();
   /** Original event ids are kept only for recent inbound messages, never accepted from a chat handle alone. */
@@ -175,10 +177,29 @@ export class MatrixAdapter implements ChannelAdapter {
     return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
       messageId: handle(event.event_id ?? randomUUID(), "msg") };
   }
+  /**
+   * Settings › Chat apps › Edited messages: a Matrix edit is a new event that replaces an earlier one (`m.replace`), with
+   * the new words in `m.new_content`. It is read as that earlier message again, marked edited, by the same sender only.
+   */
+  private edited(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const content = event.content as Record<string, unknown> | undefined;
+    const relates = z.object({ rel_type: z.literal("m.replace"), event_id: z.string().max(300) }).passthrough().safeParse(content?.["m.relates_to"]);
+    const fresh = z.object({ msgtype: z.literal("m.text"), body: z.string().min(1) }).passthrough().safeParse(content?.["m.new_content"]);
+    if (!relates.success || !fresh.success) return null;
+    const original = this.authors.get(relates.data.event_id);
+    if (!original || original !== event.sender) return null; // only its own sender's edit of a message this adapter read
+    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content: fresh.data });
+    return inbound ? { ...inbound, edited: true } : null;
+  }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
     if (event.type === "m.room.message" && ["m.image", "m.file", "m.video", "m.audio"].includes(event.content?.msgtype ?? "")) return this.fromFile(roomId, event);
     if (event.type === "m.reaction") return this.fromReaction(roomId, event);
     if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text") return null;
+    if (event.content && "m.new_content" in event.content) return this.edited(roomId, event);
+    if (event.event_id && event.sender) {
+      this.authors.set(event.event_id, event.sender);
+      if (this.authors.size > 200) this.authors.delete(this.authors.keys().next().value!);
+    }
     const text = event.content.body ?? "", sender = event.sender ?? "";
     if (!text || !sender || sender === this.options.userId) return null;
     const chatId = handle(roomId, "room");
