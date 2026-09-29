@@ -12,7 +12,6 @@ import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
-import { gsel } from "../../core/gsel.js";
 import { ctl } from "../parts.js";
 import { A, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { localPicker, freshPick, initLocalPick } from "../../flows/localpick.js";
