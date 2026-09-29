@@ -223,7 +223,7 @@ async function inspect(el) {
   if (!runId) return;
   const rec = await api(`runs/${runId}/inspect`).catch(report);
   if (!rec) return;
-  const last = rec.rounds?.at(-1);
+  const last = rec.rounds?.filter((round) => !round.check).at(-1); // the answer's own round, not the second opinion's after it
   const rows = [[t("coding.ci.model"), last?.model], [t("window.chat.msg.words"), last?.promptTokens != null ? contextWords(last.promptTokens) : ""], ...readRows(rec),
     [t("window.chat.msg.time"), rec.seconds != null ? t("window.chat.msg.seconds", { n: rec.seconds }) : ""], [t("window.chat.msg.timing"), timingLine(rec.timing)],
     [t("window.chat.msg.cost"), rec.cost?.display],

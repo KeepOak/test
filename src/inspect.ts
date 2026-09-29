@@ -34,6 +34,11 @@ export interface InspectRound {
   cached: boolean;
   /** Why it cost nothing, in one line, when it did. */
   cacheReason: string | null;
+  /**
+   * QA retest 2026-09-28 pass 2: true for the second opinion's own round (between advice.started and its outcome), which
+   * comes after the answer; Look inside read it as the answer's, so "Words of context" was the check's 167, not 2,985.
+   */
+  check: boolean;
 }
 /** Prices one round; the caller supplies the workspace's own price table. */
 export type PriceRound = (model: string, tokens: { input: number; output: number }) => { amount: number | null; display: string };
@@ -57,8 +62,11 @@ const count = (value: unknown): number | null => (typeof value === "number" && N
 export function rounds(store: Store, runId: string, price?: PriceRound): InspectRound[] {
   const out: InspectRound[] = [];
   let started: { at: string; tokens: number | null } | null = null;
+  let checking = false;
   for (const event of store.events(runId)) {
     const data = event.data as Record<string, unknown>;
+    if (event.kind === "advice.started") { checking = true; continue; }
+    if (event.kind === "advice.given" || event.kind === "advice.failed") { checking = false; continue; }
     if (event.kind === "model.started") { started = { at: event.createdAt, tokens: count(data.estimatedInput) }; continue; }
     if (event.kind !== "model.completed" && event.kind !== "model.failed") continue;
     const said = (data.reported ?? null) as { input?: number; output?: number } | null;
@@ -83,6 +91,7 @@ export function rounds(store: Store, runId: string, price?: PriceRound): Inspect
         : price && model ? price(model, { input: input ?? 0, output: output ?? 0 }) : null,
       failed: event.kind === "model.failed",
       error: data.error === undefined ? null : String(data.error),
+      check: checking,
     });
     started = null;
   }
@@ -154,6 +163,11 @@ export function notes(store: Store, runId: string) {
     if (event.kind === "fly.applied") { learned.push({ at: event.createdAt, what: String(data.what ?? ""), names: (Array.isArray(data.names) ? data.names : []).map(String) }); continue; }
     if (event.kind === "advice.given") {
       advice = { preset: String(data.preset ?? ""), stands: String(data.stands ?? "unsure"), line: String(data.line ?? "") };
+      continue;
+    }
+    // QA retest 2026-09-28 pass 2: a check that could not run is said too, or the owner who switched it on sees nothing.
+    if (event.kind === "advice.failed") {
+      advice = { preset: String(data.preset ?? ""), stands: "not checked", line: `The second opinion could not check this answer: ${String(data.reason ?? "no reason given")}` };
       continue;
     }
     if (event.kind.startsWith("plan.")) plan.push({ at: event.createdAt, title: event.kind.replace("plan.", "plan "), detail: clip(data.steps ?? data.step ?? data.error) });
