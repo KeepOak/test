@@ -3160,7 +3160,18 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     })) };
   const retry = /^\/api\/channels\/deliveries\/([^/]{1,220})\/retry$/.exec(path);
   if (request.method === "POST" && retry) return app.channels.retryDelivery(decodeURIComponent(retry[1]!));
-  if (request.method === "POST" && path === "/api/channels/pairings/approve") return app.channels.approve(owner, await readBody(request));
+  if (request.method === "POST" && path === "/api/channels/pairings/approve") {
+    const { firstOwner, pin, ...code } = z.object({ code: z.unknown(), firstOwner: z.boolean().optional(), pin: z.string().max(64).optional() })
+      .strict().parse(await readBody(request));
+    // owner-dm-signin: naming the sender as the owner's own account is guarded as "Commands from your own chat" is below:
+    // the window on this computer, unlocked, with the PIN where one is set. A plain approval is unchanged.
+    if (firstOwner) {
+      if (throughDoor(request)) throw new HttpError(403, "Your own chat account is named in Branch's window on this computer.");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before naming your own chat account.");
+      if (app.sessionLock.pinSet()) await appLockAnswer(async () => app.sessionLock.unlock({ pin }));
+    }
+    return app.channels.approve(owner, code, { firstOwner: firstOwner === true });
+  }
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
