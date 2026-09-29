@@ -262,9 +262,9 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // NAS 2a15d6b: every ask part, its switch and its settings (Hindsight's address and the secret it sends, analytics'
   // `sendTo`, the answer engine, nodes and runtimes): each reaches past this computer or says where words go.
   "asks-",
-  // Q230: a chat made known for sends, a plan the next message carries on, a project's every-turn instructions and
+  // Q230: a chat made known for sends (and #588, which Trunk a chat, group or topic reaches: `channel-route:`), a plan the next message carries on, a project's every-turn instructions and
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
-  "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
+  "channel-session:", "channel-route:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
   "skill-origin:", "skill-package:",
   // A registry signing key the owner trusted: a file must never make a key trusted by itself.
   "registry-key:",
