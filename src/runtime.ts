@@ -226,7 +226,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** workbench (SELF-302): the helper works in its own copy of the project (a git worktree). */ ownCopy?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -1089,7 +1089,7 @@ export class Runtime {
     // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
-    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
+    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1, ownCopy: options.ownCopy === true,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
     // workbench (SELF-303): only a helper's own conversation (one with a pinned helper route) is carried on in, and only
     // on the model and account it was pinned to, so a lead cannot pour a helper into any other conversation.
@@ -2465,7 +2465,10 @@ ${run.output.slice(0, 6000)}`;
       // qa-fixes-4: a tool call written out as text, naming one of Branch's tools, is neither an answer nor a call. Its
       // words are never streamed on, kept or posted (a room would post them as a Trunk's). Beside real calls, the calls
       // go on without it; alone, the model is asked once to make the call, and a second one ends the task in plain words.
-      const isBranchTool = (name: string): boolean => this.isToolName(name);
+      // QA retest 2026-09-28 pass 2: qwen2.5:7b answered "Tell me my favourite colour…" with nothing but
+      // {"name": "user.fact", "arguments": {}}, a tool Branch does not have in its own "user." family, and the window
+      // showed the JSON as the answer. A made-up name in one of Branch's tool families counts as Branch's too.
+      const isBranchTool = (name: string): boolean => this.isToolName(name) || this.inToolFamily(name);
       // An answer that ends with a call written out (see endsWithToolCallAsText) counts too, unless the person asked how
       // something would be done, where showing the call is the answer.
       const callText = writesToolCallAsText(withoutThinking(spoken), isBranchTool)
@@ -2762,6 +2765,11 @@ ${run.output.slice(0, 6000)}`;
   }
   /** Adds a message to the working context and to the stored transcript, so nothing is lost later. */
   /** qa-fixes-4: a name that is one of Branch's tools, as written or as it travels to a model (`wireName`). */
+  /** A name shaped like one of Branch's (family.verb) whose family is one Branch's tools belong to. */
+  private inToolFamily(name: string): boolean {
+    const family = /^([a-z][a-z0-9_-]{0,30})\.[a-z][a-z0-9_]{0,40}$/.exec(name)?.[1];
+    return !!family && this.registry.names().some((tool) => tool.startsWith(`${family}.`));
+  }
   private isToolName(name: string): boolean {
     return this.registry.names().some((tool) => tool === name || wireName(tool) === name || wireName(tool, "local") === name);
   }
