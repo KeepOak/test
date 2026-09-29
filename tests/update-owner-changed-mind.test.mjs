@@ -4,6 +4,7 @@
  * turning "update by itself" off stops one it started. The Update button still works with it off. Node only.
  */
 import test from "node:test";
+import { saveComfort } from "../dist/comfort/settings.js";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,7 +44,8 @@ test("the engine's readiness carries the owner's update-by-itself choice, read f
   // A Dev choice saved before Beta became the source build is Beta.
   assert.deepEqual(first, { channel: "beta", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   assert.equal(changedMind(first, { channel: "beta", automatic: true }), null);
-  app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "off", releaseChannel: "dev" });
+  // The owner switches it off in Settings: their own choice, kept on Beta too.
+  saveComfort(app.store, app.runtime.owner, "notify", { autoUpdate: "off" });
   const later = await updateReadiness(loopback, server.token);
   assert.match(changedMind(later, { channel: "beta", automatic: true }) ?? "", /turned off/);
 });

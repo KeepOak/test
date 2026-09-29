@@ -270,7 +270,7 @@ test("WhatsApp: the address is verified, an unsigned message is refused, and a l
   assert.equal(sent.path, "/PN-1/messages");
   assert.equal(sent.body.to, "27123456789");
   assert.equal(sent.body.text.body, "Echo: what is the weather");
-  assert.equal(sent.body.context.message_id, "wamid.in1");
+  assert.equal(sent.body.context, undefined, "a one-to-one answer to the only message waiting does not quote it (reply-style.ts)");
   assert.equal(sent.headers.authorization, `Bearer ${whatsAppToken}`);
 
   // More than a day later WhatsApp no longer allows a free reply, so the message waits and is shown.

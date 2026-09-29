@@ -75,7 +75,7 @@ test("an owner's fork becomes an isolated Branch Agent project without touching 
   assert.equal(result.pullRequestTarget, "stabrea/Branch-Agent");
   assert.match(result.instructions, /Run node scripts\/review\.mjs with the focused test files/);
   assert.match(result.instructions, /never send to a shared line or change a repository.s settings or branch protection/);
-  assert.match(result.instructions, /pending is never passed\), then call branch\.finish_source_change/);
+  assert.match(result.instructions, /pending is never passed; when one fails, read why with github\.check_logs[^)]*\), then call branch\.finish_source_change/);
   assert.ok(calls.some((call) => call.includes("clone")), "the owner's fork is cloned into the workspace, not the installation");
   assert.ok(calls.some((call) => call.join(" ").includes("remote add upstream https://github.com/stabrea/Branch-Agent.git")));
   assert.ok(calls.some((call) => call.join(" ").includes("fetch upstream redesign/window")));
