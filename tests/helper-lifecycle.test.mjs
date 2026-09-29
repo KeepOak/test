@@ -123,7 +123,7 @@ test("a conversation has no more background helpers at once than its sub-tasks a
   assert.equal(seen.leadTools.filter((text) => /Helper limit reached: 2 helpers already work at once/.test(text)).length, 1, JSON.stringify(seen.leadTools));
   assert.ok(helpers.every((id) => app.store.run(id).status === "running"));
   // A lead that already finished still stops the helpers it started.
-  assert.equal(app.runtime.cancel(run.id), true);
+  app.runtime.cancel(run.id);
   assert.ok(await until(() => helpers.every((id) => app.store.run(id).status === "cancelled")));
 });
 

@@ -156,6 +156,7 @@ import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
 import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
 import { HelperTree, mayHandOn, nestedHelperRefusal } from "./helper-tree.js"; // helper-lifecycle
+import { helperParent } from "./helper-control.js"; // helper-lifecycle
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -937,12 +938,10 @@ export class Runtime {
     const controller = this.controllers.get(id);
     controller?.abort(new Error("Cancelled by user"));
     // helper-lifecycle: a stop reaches every helper this task started, and theirs, even after the task itself ended.
-    let stopped = !!controller;
-    for (const child of this.helperTree.descendants(id)) {
-      const working = this.controllers.get(child);
-      if (working && !working.signal.aborted) { working.abort(new Error("Stopped with the task that started it")); stopped = true; }
-    }
-    return stopped;
+    // The answer still says only whether this task itself was working (callers go on to stop a waiting one otherwise).
+    for (const child of this.helperTree.descendants(id))
+      this.controllers.get(child)?.abort(new Error("Stopped with the task that started it"));
+    return !!controller;
   }
   /** helper-lifecycle: a child task joins its parent's tree; one started after its parent was stopped stops at once. */
   private adoptChild(parentId: string, runId: string, controller: AbortController): void {
@@ -1744,7 +1743,9 @@ ${run.output.slice(0, 6000)}`;
     const controller = new AbortController();
     this.controllers.set(run.id, controller);
     this.activeSessions.add(run.sessionId);
-    if (parent?.runId) this.adoptChild(parent.runId, run.id, controller); // helper-lifecycle
+    // helper-lifecycle: a helper carried on after a question or a restart stays in its lead's tree.
+    const lead = parent?.runId ?? helperParent(this.store, options.continuing?.runId ?? options.resumeFrom ?? run.id);
+    if (lead) this.adoptChild(lead, run.id, controller);
     if (!parent) this.restoreCarried(run);
     // Answering a question resumes this same task with the time it originally received, as resume() does.
     const carriedDeadline = options.continuing
