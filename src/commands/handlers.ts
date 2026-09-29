@@ -42,7 +42,9 @@ export type ClientAction =
   // bucket 12: send the finished text as the next message, or only put it in the message box
   | { do: "send"; text: string } | { do: "fill"; text: string }
   // r17-h: focus view on, off, or switched (public/flows-boards.js)
-  | { do: "focus"; on: boolean | null };
+  | { do: "focus"; on: boolean | null }
+  // CHAT-187: the sidebar's search, with these words in it (public/app/shell/search.js)
+  | { do: "search"; text: string };
 export interface Reply { text: string; client?: ClientAction }
 
 interface GoalView { status: string; round: number; maxRounds: number; objective: string; reason?: string; sessionId: string }
@@ -284,4 +286,8 @@ export const HANDLERS: Record<string, Handler> = {
   ...BOARD_HANDLERS, // r17-h: /queue, /busy, /focus, /installs
   learn: learnCommand, // mac7/learn
   steer, skill, // CHAT-192, CHAT-205
+  // CHAT-187: the terminal's own /team, /find and /channels, in the window too (the terminal keeps its own runners).
+  team: go("team"), channels: go("customize channels"),
+  find: (call) => (call.argument.trim() ? say(`Searching for "${call.argument.trim().slice(0, 200)}".`, { do: "search", text: call.argument.trim().slice(0, 200) })
+    : say("Send /find and the words to look for.")),
 };

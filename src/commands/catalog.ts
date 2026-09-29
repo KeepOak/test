@@ -95,9 +95,10 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("keys", ["shortcuts"], "", "every key the view answers to", ["terminal"], "look", { ...was("terminal"), newAliases: added(["shortcuts"], "terminal") }),
   entry("exit", ["quit"], "", "leave", ["terminal"], "look", was("terminal")),
   // ---- the redesign's terminal (design/redesign/prototype.html termRun): Team, finding and the chat apps ----
-  entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", ["terminal"], "look"),
-  entry("find", ["search"], "<words>", "search every conversation and message", ["terminal"], "owner"),
-  entry("channels", [], "", "the chat apps and which ones reach Branch", ["terminal"], "owner"),
+  // CHAT-187: also in the window's "/" menu (the window opens Team, the sidebar's search, and Customize › Channels).
+  entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", [...W, "terminal"], "look"),
+  entry("find", ["search"], "<words>", "search every conversation and message", [...W, "terminal"], "owner"),
+  entry("channels", [], "", "the chat apps and which ones reach Branch", [...W, "terminal"], "owner"),
   // ---- added with this table ----
   // CHAT-192: a note for the working task, as the Steer box and "type while it works" do (src/commands/steer-skill.ts).
   entry("steer", [], "<note>", "a note for the task working now; it reads it before its next step", ["window", "phone", "terminal", "chat"], "run", { whileWorking: true }),
