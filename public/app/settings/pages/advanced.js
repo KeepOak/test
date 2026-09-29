@@ -9,6 +9,7 @@ import { seg15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
 import { initLocalIndex, localIndexRow } from "../local-index.js"; // RES-718
 import { t } from "../../../i18n.js";
+import { restart as restartEngine } from "./self.js";
 
 /* The engine's own values: show the thinking (GET/POST /api/knobs, reasoning card, merged), the activity log
    (GET/POST /api/diagnostics/log/settings, merged), the model on this computer (GET /api/local-models), the browser's
@@ -90,8 +91,9 @@ export function draw() {
   html += "<dl class=\"kv\" data-css=\"background:none;padding:0\">";
   html += [[t("window.settings.advanced.version"), s.version], [t("addons.pipelines.address"), location.host]].filter(([, v]) => v).map(([k, v]) => "<dt>" + k + "</dt><dd>" + esc(v) + "</dd>").join("");
   html += "</dl>";
-  /* Restart relaunches through the desktop app's bridge only (the engine's own route refuses on Windows and outside a
-     supervisor), so it stays greyed here. Open logs shows what the engine wrote down (GET /api/logs) in a new window. */
+  /* Restart: the desktop app starts itself again through its own bridge; in a browser tab the engine is restarted
+     (POST /api/dashboard/restart, as Branch itself › Restart the engine), and the engine says in its own words when it
+     cannot. Open logs shows what the engine wrote down (GET /api/logs) in a new window. */
   html += `<div class=\"acts\"><button class=\"btn sm\" type=\"button\" data-act=\"restart16\">${t("server.restart")}</button><button class=\"btn ghost sm\" type=\"button\" data-act=\"adv-logs\">${t("window.settings.advanced.open-logs")}</button></div>`;
   html += "</div>";
   html += localTile() + browserTile();
@@ -198,13 +200,20 @@ async function chooseOutside(el) {
   await loadAll();
 }
 
+function restartNow() {
+  const desktop = window.branchDesktop?.restartBranch;
+  if (!desktop) return restartEngine();
+  return Promise.resolve().then(() => desktop()).catch((error) => toast(error.message));
+}
+
 export function init() {
   initLocalIndex(); // RES-718
   init17();
   on("adv-logs", () => openLogs());
+  on("restart16", () => restartNow());
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
-  markLive(["adv-logs", "ad-orders", "ad-outside", "sw:ad-facts", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "sw:ad-facts", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
     const wire = WIRES[e.target.id];

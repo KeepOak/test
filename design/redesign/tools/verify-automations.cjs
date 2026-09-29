@@ -60,7 +60,8 @@ async function schedules(page) {
   const saved = await until(async () => (await api("schedules")).schedules[0]);
   check("ppok17d: Confirm saves the schedule (GET /api/schedules)", saved && saved.data.dailyAt === "18:30" && saved.data.weekdays?.join() === "0" && saved.data.prompt === "find blurry and duplicate photos", JSON.stringify(saved?.data ?? {}).slice(0, 160));
   await act(page, "ptab", { place: "automations", v: "triggers" });
-  check("Triggers: Add is live (verify-finish-soon-a.cjs proves it)", !(await greyed(page.locator('form.nl button[type="submit"]'))));
+  // Add waits (disabled) while the box is empty (B002 in verify-stress-fixes.cjs); live means it is not a greyed "soon".
+  check("Triggers: Add is live (verify-finish-soon-a.cjs proves it)", (await page.locator('form.nl button[type="submit"]').first().getAttribute("aria-disabled")) !== "true");
 }
 
 async function procedures(page) {
@@ -129,7 +130,7 @@ async function selfDiff(page) {
   await act(page, "ptab", { place: "inbox", v: "needs" });
   await page.waitForSelector(`[data-act="selfrev15"][data-id="${NOTE.approved}"]`, { timeout: 10000 });
   await page.click(`[data-act="selfrev15"][data-id="${NOTE.approved}"]`);
-  await page.waitForSelector(".dlg .diff15", { timeout: 8000 });
+  await page.waitForSelector(".dlg .diff15", { timeout: 15000 }); // the engine reads the diff first; a busy machine takes longer
   const diff = await api(`self-development/requests/${NOTE.approved}/diff`);
   check("selfrev15: the diff is the engine's (GET /api/self-development/requests/<id>/diff)", (await text(page, ".dlg .df-h15 code")) === diff.files[0].path && (await page.locator(".dlg .diff15 .d-add", { hasText: "isOpen" }).count()) === 1);
   check("Publish the draft stays greyed", await greyed(page.locator('.dlg [data-act="selfdo15"][data-v="published"]')));

@@ -224,7 +224,8 @@ async function inspect(el) {
   if (!rec) return;
   const last = rec.rounds?.at(-1);
   const rows = [[t("coding.ci.model"), last?.model], [t("window.chat.msg.words"), last?.promptTokens != null ? contextWords(last.promptTokens) : ""], ...readRows(rec),
-    [t("window.chat.msg.time"), rec.seconds != null ? t("window.chat.msg.seconds", { n: rec.seconds }) : ""], [t("window.chat.msg.cost"), rec.cost?.display],
+    [t("window.chat.msg.time"), rec.seconds != null ? t("window.chat.msg.seconds", { n: rec.seconds }) : ""], [t("window.chat.msg.timing"), timingLine(rec.timing)],
+    [t("window.chat.msg.cost"), rec.cost?.display],
     /* models-ui: the second opinion's note (Settings › Models › Second opinion), kept beside the answer, never in it. */
     [t("window.chat.msg.second-opinion"), rec.advice?.line]].filter(([, v]) => v);
   const steps = (await loadSteps(runId))?.steps?.length ?? 0;
@@ -235,6 +236,12 @@ async function inspect(el) {
     body: `<p class="lede" data-css="margin:0">${t("window.chat.msg.went-into", { name: esc(who()) })}</p><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`,
     foot: `${steps ? `<button class="btn pri" type="button" data-act="tlopen17c" data-run="${esc(runId)}">${ic("tl17c", "s")}${t("recording.page.steps")}</button>` : ""}<button class="btn" type="button" data-act="insp-copy">${t("window.chat.msg.copy-record")}</button>`,
   });
+}
+/* Where the time went (src/inspect.ts timing): each part the record can say, in seconds, in order. */
+function timingLine(timing) {
+  const parts = timing?.parts ?? [];
+  if (!parts.length) return "";
+  return parts.map((p) => `${t(`window.chat.msg.timing-${p.part}`)} ${(p.ms / 1000).toFixed(1)} s`).join(" · ");
 }
 /* What the task read first (the instruction files carried in, and how many remembered things) and the tools it was offered. */
 function readRows(rec) {
