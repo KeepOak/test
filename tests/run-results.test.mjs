@@ -14,6 +14,7 @@ import { Receipts } from "../dist/receipts.js";
 import { runResult } from "../dist/results.js";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const receipts = new Receipts({ key: async () => Buffer.alloc(32, 7) });
 const run = { id: "r1", sessionId: "s1", prompt: "Write the report", status: "completed", createdAt: "", updatedAt: "" };
@@ -120,7 +121,7 @@ test("Q52 a real task that writes a file: the result names it, proven, and the A
   errors.length = 0;
   // Redesign: the conversation's side panel (data-act="pane"), its Files tab: each file the conversation's tasks touched,
   // with Made or Changed (prototype.html's pane "files"; public/app/chat/pane.js).
-  await page.locator(`#side .list [data-act="chat"][data-id="${finished.sessionId}"]`).click();
+  await openChat(page, finished.sessionId);
   await page.locator("#conversation .u").first().waitFor({ timeout: 15000 });
   await page.locator('[data-act="pane"][data-p="activity"]').first().click();
   await page.locator('#pane [data-v="files"], #pane .ptab').filter({ hasText: "Files" }).first().click();
