@@ -139,6 +139,7 @@ async function replaceKey(service: AccountsService, pool: Pool, account: string,
   await service.deps.store.locker.set(service.deps.owner, keyProject(pool.pool), keyName(account), key);
   service.dropBuilt(pool.pool, account);
   service.statesOf(pool.pool).delete(account);
+  service.rests.forget(service.deps.owner, pool.pool, account); // a new key starts with no rest
 }
 
 export function updatePool(service: AccountsService, input: unknown) {
@@ -172,6 +173,7 @@ export async function removeAccount(service: AccountsService, input: unknown) {
   service.dropBuilt(pool.pool, asked.account);
   service.statesOf(pool.pool).delete(asked.account);
   service.ledger.forget(service.deps.owner, pool.pool, asked.account);
+  service.rests.forget(service.deps.owner, pool.pool, asked.account);
   note(service, `${account.label} (${pool.pool})`, "An account was removed and its key or sign-in taken out of the locker", "removed");
   return viewPool(service, pool);
 }

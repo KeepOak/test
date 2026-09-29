@@ -1,8 +1,9 @@
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
-import { ProviderHttpError } from "../provider-retry.js";
+import { ProviderHttpError, waitForRetry } from "../provider-retry.js";
 import { currentAccountCall, trunkSignInRefusal, type AccountCall } from "./context.js";
 import {
-  type AccountState, type Failure, failureFor, firstChoice, freshState, httpFailure, orderFor, rest, restMs, smartOrder, unavailable,
+  type AccountState, type Failure, failureFor, firstChoice, freshState, httpFailure, orderFor, rateBackoffMs, rest, restMs, smartOrder,
+  unavailable,
 } from "./pool.js";
 import type { Account, Pool } from "./settings.js";
 
@@ -46,7 +47,16 @@ export interface PoolHooks {
   sessionChoice: (sessionId: string) => string | null;
   rememberChoice: (sessionId: string, account: string) => void;
   now: () => number;
+  /** Waits out a short Retry-After before the same account is asked again; a test hands in its own clock. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Keeps an account's rest on disk, so a restart does not undo it (src/accounts/rests.ts). */
+  saveRest?: (account: string, state: AccountState) => void;
 }
+
+/** The longest Retry-After the same account is waited for before a second try; a longer one moves the work on. */
+export const sameAccountWaitMs = 5_000;
+/** A plan window with less than this share left (percent) is spent: a 429 from it is its plan limit. */
+const spentShare = 1;
 
 /** mac7/lockdown-fix: what a Trunk's call is told when no key may answer it (see trunk-guard.ts). */
 export { trunkSignInRefusal };
@@ -91,9 +101,14 @@ export function whyMoved(failure: Pick<Failure, "kind">, model: string, untilMs:
   return known ? `hit its limit, resets ${time}` : "hit its limit";
 }
 
-/** A plan limit, or a 429 from a sign-in (its plan's limit), as opposed to a failure of the service itself. */
-const limitLike = (failure: Failure | null, pool: Pool): boolean =>
-  failure?.kind === "limit" || (failure?.kind === "rate" && pool.kind !== "api-key");
+/**
+ * A plan limit, as opposed to a passing rate limit. Only when the service says so (usage_limit_reached, a program's own
+ * limit), or when a sign-in's plan meter says its window is spent: a burst 429 on a sign-in is a rate limit and rests
+ * seconds, never until the plan's weekly window refills (openai/codex api_bridge.rs reads a 429 the same way).
+ */
+const limitLike = (failure: Failure | null, pool: Pool, state: AccountState): boolean =>
+  failure?.kind === "limit" || (failure?.kind === "rate" && pool.kind !== "api-key"
+    && state.remaining !== null && state.remaining < spentShare);
 
 export class AccountPoolProvider {
   constructor(private readonly original: Provider, private readonly hooks: PoolHooks) {}
@@ -156,6 +171,8 @@ export class AccountPoolProvider {
     const provider = (await this.hooks.providerFor(account.id)) ?? this.original;
     const completion = await provider.complete(request);
     state.lastError = null;
+    // An answer ends a run of rate limits, so the next one rests 30 seconds again.
+    if (state.rateFailures) { state.rateFailures = 0; this.hooks.saveRest?.(account.id, state); }
     this.hooks.record(account, completion);
     call?.note?.("model.account", { pool: this.hooks.pool, account: account.id, label: account.label });
     return completion;
@@ -186,11 +203,11 @@ export class AccountPoolProvider {
   private async answer(pool: Pool, usable: Account[], request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
     if (!usable.some((account) => !account.disabled)) throw new Error(allSwitchedOff);
     const list = this.candidates(pool, usable, call);
-    let last: unknown = null, left: { account: Account; failure: Failure } | null = null;
+    let last: unknown = null, left: { account: Account; failure: Failure; limited: boolean } | null = null;
     for (const account of list) {
       // A lone sign-in known to be at its limit is not asked again: its sentence says when it is back.
       if (list.length === 1 && pool.kind !== "api-key" && this.state(account.id).limitedUntil > this.hooks.now()) break;
-      if (left) this.sayMoved(left.account, left.failure, account, call);
+      if (left) this.sayMoved(left.account, left.failure, left.limited, account, call);
       try {
         const answered = await this.tryAccount(account, request, call);
         // A sign-in conversation stays on the account it moved to (its prompt cache is there now); keys go by the strategy.
@@ -199,12 +216,12 @@ export class AccountPoolProvider {
       } catch (error) {
         const failure = failureFor(error, this.hooks.now());
         if (!failure || request.signal.aborted) throw error;
-        this.benchOrRest(pool, account, failure, error, call);
+        const limited = this.benchOrRest(pool, account, failure, error, call);
         last = error;
-        left = { account, failure };
+        left = { account, failure, limited };
       }
     }
-    return this.exhausted(pool, usable, last);
+    return this.exhausted(pool, usable, last, left?.limited ?? false);
   }
 
   /**
@@ -215,26 +232,43 @@ export class AccountPoolProvider {
     try { return await this.attempt(account, request, call); } catch (error) {
       const failure = failureFor(error, this.hooks.now());
       if (!failure || request.signal.aborted) throw error;
-      if (failure.kind === "rate") return this.attempt(account, request, call);
+      if (failure.kind === "rate") {
+        // The service's own Retry-After is waited for (up to a few seconds) before the same account is asked again;
+        // a longer one moves the work on at once, and the account rests for it.
+        const wait = httpFailure(error)?.retryAfterMs ?? 0;
+        if (wait > sameAccountWaitMs) throw error;
+        if (wait > 0) await (this.hooks.sleep ?? waitForRetry)(wait, request.signal);
+        return this.attempt(account, request, call);
+      }
       if (failure.kind === "auth" && this.hooks.refresh && await this.hooks.refresh(account.id).catch(() => false))
         return this.attempt(account, request, call);
       throw error;
     }
   }
 
-  private benchOrRest(pool: Pool, account: Account, failure: Failure, error: unknown, call: AccountCall | undefined): void {
-    if (limitLike(failure, pool)) return this.markLimited(account, error, call);
+  /** Rests or benches the account that failed; true when that was its plan limit. */
+  private benchOrRest(pool: Pool, account: Account, failure: Failure, error: unknown, call: AccountCall | undefined): boolean {
     const state = this.state(account.id);
-    rest(state, failure, this.hooks.model);
+    if (limitLike(failure, pool, state)) { this.markLimited(account, error, call); return true; }
+    if (failure.kind === "rate") failure = this.rateRest(state, failure, error);
+    rest(state, failure, this.hooks.model, this.hooks.now());
+    if (failure.kind === "rate") failure = { ...failure, untilMs: state.models.get(this.hooks.model) ?? failure.untilMs };
+    this.hooks.saveRest?.(account.id, state);
     state.lastError = `${failure.reason} (${new Date(failure.untilMs).toISOString()})`;
     call?.note?.("model.account_resting", { pool: this.hooks.pool, account: account.id, label: account.label, reason: failure.reason, until: new Date(failure.untilMs).toISOString() });
+    return false;
+  }
+
+  /** A plain rate limit rests as long as Retry-After says, else 30 s doubling with each one in a row (rateBackoffMs). */
+  private rateRest(state: AccountState, failure: Failure, error: unknown): Failure {
+    state.rateFailures = (state.rateFailures ?? 0) + 1;
+    const said = httpFailure(error)?.retryAfterMs;
+    return { ...failure, untilMs: this.hooks.now() + (said ?? rateBackoffMs(state.rateFailures)) };
   }
 
   /** The step line the moment the work moves on: to which account, which one it left, why, and when that one is back. */
-  private sayMoved(from: Account, failure: Failure, to: Account, call: AccountCall | undefined): void {
+  private sayMoved(from: Account, failure: Failure, limited: boolean, to: Account, call: AccountCall | undefined): void {
     const state = this.state(from.id);
-    const pool = this.hooks.settings();
-    const limited = pool ? limitLike(failure, pool) : false;
     const until = limited ? state.limitedUntil : failure.kind === "rate" ? state.models.get(this.hooks.model) ?? failure.untilMs : failure.untilMs;
     const known = limited ? state.limitKnown === true : failure.kind === "rate";
     const why = whyMoved(failure, this.hooks.model, until, known);
@@ -246,13 +280,13 @@ export class AccountPoolProvider {
   }
 
   /** Every account tried, or none ready: what the task did before this list existed. */
-  private exhausted(pool: Pool, usable: Account[], last: unknown): never {
+  private exhausted(pool: Pool, usable: Account[], last: unknown, lastLimited: boolean): never {
     if (pool.kind === "api-key") {
       if (last) throw last;
       const reasons = usable.map((account) => `${account.label}: ${this.why(account) ?? "ready"}`).join("; ");
       throw new EveryKeyRestingError(this.firstReady(usable) - this.hooks.now(), reasons);
     }
-    if (last && !limitLike(failureFor(last, this.hooks.now()), pool)) throw last;
+    if (last && !lastLimited) throw last;
     const on = usable.filter((account) => !account.disabled);
     // An account whose limit ended while the others were tried still counts: its known reset (now past) makes the task
     // wait a moment and ask it again, rather than end naming a later account whose reset is unknown.
@@ -272,15 +306,20 @@ export class AccountPoolProvider {
   }
 
   private markLimited(account: Account, error: unknown, call: AccountCall | undefined): void {
-    const wait = httpFailure(error)?.retryAfterMs;
+    const refusal = httpFailure(error), now = this.hooks.now();
+    // What the refusal said first: its body's resets_at (openai/codex api_bridge.rs), then its Retry-After.
+    const saidAt = refusal?.resetsAtMs ?? (refusal?.retryAfterMs !== undefined ? now + refusal.retryAfterMs : undefined);
+    const said = saidAt !== undefined && saidAt > now ? saidAt : undefined;
     const state = this.state(account.id);
-    // long-work: with no Retry-After, the plan meter's own reset time, when it has one, says when the limit ends.
+    // long-work: else the plan meter's own reset time, when it has one. That is the tightest window's: the one that is
+    // spent when the meter made this a limit (limitLike), and the best guess for a plan limit that said nothing else.
     const resets = state.resetAt ? Date.parse(state.resetAt) : Number.NaN;
-    const metered = Number.isFinite(resets) && resets > this.hooks.now() ? resets - this.hooks.now() : undefined;
-    state.limitedUntil = this.hooks.now() + (wait ?? metered ?? restMs.limit);
-    state.limitKnown = wait !== undefined || metered !== undefined;
+    const metered = Number.isFinite(resets) && resets > now ? resets : undefined;
+    state.limitedUntil = said ?? metered ?? now + restMs.limit;
+    state.limitKnown = said !== undefined || metered !== undefined;
     state.lastError = "reached its plan limit";
     call?.note?.("model.account_limit", { pool: this.hooks.pool, account: account.id, label: account.label, until: new Date(state.limitedUntil).toISOString() });
+    this.hooks.saveRest?.(account.id, state);
   }
 
   /** The sentence when no account of a sign-in list could take the work, naming one the owner could still pick. */

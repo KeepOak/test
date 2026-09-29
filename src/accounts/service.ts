@@ -29,6 +29,7 @@ import {
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
 } from "./settings.js";
 import { AccountUsageLedger } from "./usage.js";
+import { AccountRestStore } from "./rests.js";
 import { mergeChatGPTDuplicates } from "./dedupe.js";
 import { checkProgram, type RunStatus } from "./sign-ins.js";
 import { accountPresentation, identityKey, type AccountIdentity, type AccountSignIn } from "./identity.js";
@@ -71,6 +72,8 @@ export const planReadEveryMs: Readonly<Record<string, number>> = {
  */
 export class AccountsService {
   readonly ledger: AccountUsageLedger;
+  /** Each account's rest, kept on disk so a restart does not undo it (src/accounts/rests.ts). */
+  readonly rests: AccountRestStore;
   readonly chatgptAccounts: ChatGPTAccounts;
   /** What each sign-in's plan windows were last measured at, per account, kept across restarts. */
   readonly planWindows: PlanWindowStore;
@@ -89,6 +92,7 @@ export class AccountsService {
 
   constructor(readonly deps: AccountsDeps) {
     this.ledger = new AccountUsageLedger(deps.store.sqlite);
+    this.rests = new AccountRestStore(deps.store.sqlite);
     // Read when each sign-in is made, so a test can hand in its stand-in service afterwards.
     this.chatgptAccounts = new ChatGPTAccounts({
       locker: deps.store.locker, owner: deps.owner, userAgent: deps.userAgent, get fetch() { return deps.fetchImpl; },
@@ -263,7 +267,8 @@ export class AccountsService {
   pool(pool: string): Pool | null { return this.settings().pools.find((entry) => entry.pool === pool) ?? null; }
   statesOf(pool: string): Map<string, AccountState> {
     let found = this.states.get(pool);
-    if (!found) this.states.set(pool, found = new Map());
+    // The rests saved before a restart come back first: the map is handed to the pool by reference.
+    if (!found) this.states.set(pool, found = this.rests.load(this.deps.owner, pool, this.now()));
     return found;
   }
   stateOf(pool: string, account: string): AccountState { return this.statesOf(pool).get(account) ?? freshState(); }
@@ -310,6 +315,7 @@ export class AccountsService {
       refresh: (account: string) => this.refreshSignIn(kind, account),
       capReached: (account: Account) => this.capReached(pool, account),
       record: (account: Account, completion: Completion) => this.record(pool, account, preset.model, completion),
+      saveRest: (account: string, state: AccountState) => this.rests.save(owner, pool, account, state, this.now()),
       personIsNotOwner: () => store.profiles.scope() !== owner,
       sessionChoice: (sessionId: string) => sessionChoice(store, owner, sessionId)[pool] ?? null,
       rememberChoice: (sessionId: string, account: string) => {
