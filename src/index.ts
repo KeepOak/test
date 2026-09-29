@@ -102,6 +102,7 @@ import { ChannelConnectors, registerChannelTools } from "./channels/connectors.j
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
 import { Teams } from "./teams.js";
+import { registerTeamGroups } from "./team-groups.js"; // RES-721
 import { Triggers } from "./triggers.js";
 import { SlackAutomations } from "./channels/slack-automations.js"; // mac6/bucket-16
 import { Webhooks } from "./webhooks.js";
@@ -983,6 +984,7 @@ export async function createBranch(options: {
   await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
   const hooks = new Hooks(store, runtime.owner);
   const teams = new Teams(store, runtime.owner);
+  registerTeamGroups(registry, runtime, knowledge, teams); // RES-721: small groups, each with its own lead
   const version = String(createRequire(import.meta.url)("../package.json").version);
   const userAgent = `BranchAgent/${version}`;
   // Wave 7: one finished task's full record, in the documented trajectory shape.

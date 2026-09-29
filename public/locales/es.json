@@ -10294,7 +10294,6 @@
   "window.why.p-install": "Instalar no tiene un tipo de aprobación propio: un complemento, una habilidad o un plugin es cambiar ajustes, y un paquete que instala un comando es ejecutar comandos. Esto aparece activado solo cuando ambos se hacen sin preguntar.",
   "window.why.p-inv-keepoak": "Los equipos necesitan una cuenta de keepoak.com, que aún no está abierta.",
   "window.why.p-wall": "Este equipo no puede levantar ese muro; el motivo está escrito debajo de esta fila.",
-  "window.why.pat15-teams": "Branch no tiene equipos de grupos pequeños con su propio líder. Lo más parecido es Un líder y ayudantes.",
   "window.why.phone-access-needs-pin": "Primero define un PIN de bloqueo. Tu teléfono lo pide cada vez que toma el navegador de una tarea.",
   "window.why.phone-access-no-door": "La página de la Mini App no está abierta en este ordenador ahora mismo. Reinicia Branch y vuelve a intentarlo.",
   "window.why.plug-add": "Queda desactivado aquí hasta una revisión de seguridad aparte: un plugin es código que se ejecuta en este ordenador. Uno que pongas en la carpeta de plugins de Branch aparece aquí.",

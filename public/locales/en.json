@@ -10294,7 +10294,6 @@
   "window.why.p-install": "Installing has no approval kind of its own: an add-on, skill or plugin is changing settings, and a package a command installs is running a command. This shows on only when both go without asking.",
   "window.why.p-inv-keepoak": "Teams need a keepoak.com account, which isn't open yet.",
   "window.why.p-wall": "This computer can't build that wall; the reason is written under this row.",
-  "window.why.pat15-teams": "Branch has no teams of small groups with their own leads. A lead and helpers is the nearest.",
   "window.why.phone-access-needs-pin": "Set an App lock PIN first. Your phone asks for it every time it takes a task's browser.",
   "window.why.phone-access-no-door": "The Mini App's page isn't open on this computer right now. Restart Branch, then try again.",
   "window.why.plug-add": "Stays off here until a separate safety review: a plugin is code that runs on this computer. One you put in Branch's plugins folder shows here.",
