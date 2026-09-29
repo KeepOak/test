@@ -9,6 +9,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
+import { pressed } from "../shell/keys.js";
 
 const L = { on: false, read: false };
 /* Whether Lockdown is on, as the engine last said (the Overview button's pressed state). */
@@ -35,6 +36,11 @@ export async function setLockdown(on) {
 export function initApprovals() {
   markLive(["lock"]);
   on("lock", async (el) => setLockdown(el.closest(".lock-banner") ? false : !(await syncLockdown())));
+  document.addEventListener("keydown", (e) => {
+    if (!E.state || e.defaultPrevented || e.repeat || e.isComposing || !pressed(e, "lockdownOn")) return;
+    e.preventDefault();
+    if (!L.on) void setLockdown(true);
+  });
   // The first draw after sign-in reads it once; after that, every ten seconds while the tab is shown, as soon as it is
   // shown again, and straight after each switch.
   onRender(() => { if (E.state && !L.read) { L.read = true; syncLockdown(); } });
