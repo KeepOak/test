@@ -111,7 +111,7 @@ export const ComfortNotifySchema = z.object({
    */
   needsYes: z.boolean().default(true),
   taskDone: z.boolean().default(true),
-  /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
+  /** off: manual only; check: daily for Stable, every minute for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
   /**
    * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
