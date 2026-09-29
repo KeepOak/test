@@ -41,8 +41,10 @@ export const workTasks = [
     async run(ctx) {
       await ctx.ask("Create a file called TODO.txt in the workspace containing exactly three lines, each starting with '- '.");
       const after = await ctx.read("TODO.txt");
-      const lines = (after ?? "").split("\n").filter((l) => l.trim());
-      return { checks: [check("file exists", after !== null), check("has three bullet lines", lines.length === 3 && lines.every((l) => l.trim().startsWith("- ")), `${lines.length} lines`)] };
+      const lines = (after ?? "").split(/\r?\n/).filter((l) => l.trim());
+      // SELF-202: a line is read as written. Trimmed both ends first, the bare bullet "- " the prompt allows lost its
+      // space, and 10 of 10 correct files with qwen2.5:7b failed as "3 lines". Only leading space is set aside.
+      return { checks: [check("file exists", after !== null), check("has three bullet lines", lines.length === 3 && lines.every((l) => l.trimStart().startsWith("- ")), `${lines.length} lines: ${JSON.stringify(lines).slice(0, 80)}`)] };
     },
   },
   {
