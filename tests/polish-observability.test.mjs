@@ -214,7 +214,9 @@ test("G2 a paused task asks in Telegram with buttons, and a pressed button answe
   await until(() => app.runtime.waitingApprovals(sessionId).length === 0, "the press answered the question");
   await until(() => state.calls.includes("answerCallbackQuery"), "Telegram is told the press landed");
   assert.equal(app.runtime.allowedNow(sessionId)[0].tool, "files.write", "the yes is remembered for this conversation");
-  await until(() => state.sent.some((sent) => /I will carry on/.test(sent.text ?? "")), "the chat is told the answer landed");
+  // QA R1 follow-up: the task that asked carries on, the engine writes the file, and its reply reaches the chat.
+  await until(() => state.sent.some((sent) => /^done/.test(sent.text ?? "")), "the carried task's reply reached the chat");
+  assert.equal(app.store.events(waiting.runId).filter((event) => event.kind === "run.approved_call").length, 1, "the engine ran the approved call");
 
   /* The record of what the assistant was allowed to do says which chat app answered. */
   const decided = app.store.audit.list(app.runtime.owner, { action: "approval.decided" });
