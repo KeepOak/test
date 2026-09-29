@@ -592,11 +592,6 @@ async function buildEmail(channel: Extract<ChannelConfig, { type: 'email' }>, en
 }
 
 /** Turns on the tools that reach a server: sending and receiving work, and GitHub when set up. */
-const publicationGitHub = new WeakMap<ToolRegistry, GitHubAccess>();
-/** The currently configured GitHub identity; credentials are still read only when a call starts. */
-export function githubAccessForPublication(registry: ToolRegistry): GitHubAccess | null {
-  return registry.names().includes("github.open_pull_request") ? publicationGitHub.get(registry) ?? null : null;
-}
 function enableGit(registry: ToolRegistry, config: z.infer<typeof GitConfigSchema>, host: ChannelHost | undefined, policy: NetworkPolicy | undefined): void {
   if (!host?.git) throw new Error('Version control settings are configured but this launch cannot host them');
   if (config.remote ?? (config.github !== undefined)) registerGitRemote(registry, host.git);
@@ -613,9 +608,7 @@ function enableGit(registry: ToolRegistry, config: z.infer<typeof GitConfigSchem
     return value;
   };
   const tokenSource = chooseGitHubTokenSource(config.githubApp, personal, policy, secret, { apiBase: github.apiBase });
-  const access = new GitHubAccess(config.github, policy, tokenSource);
-  publicationGitHub.set(registry, access);
-  registerGitHub(registry, access, host.git);
+  registerGitHub(registry, new GitHubAccess(config.github, policy, tokenSource), host.git);
 }
 
 /**

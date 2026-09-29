@@ -9,8 +9,9 @@ import { wslPath } from '../dist/sandbox-backends.js';
 import { Plugins } from '../dist/plugins.js';
 import { PluginEvaluations } from '../dist/plugin-evaluations.js';
 import { AddOnShelf } from '../dist/add-ons/package-shelf.js';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { wallReport } from '../dist/sandbox-backends.js';
+import { wslProbe, wslReadiness } from '../dist/integrations/wsl-held.js';
+import { evaluationWall } from './plugin-evaluation-wall.mjs';
 
 function store() {
   const rows = new Map();
@@ -47,20 +48,11 @@ async function evaluations(t) {
   const first = await f.catalog.install(f.source);
   await writeFile(join(f.source, 'demo.mjs'), code('better'));
   const grants = ['files.read'], disabled = [];
-  const runs = [];
+  // Execute only this test's local fixture host; inspect the real wall plan without changing owner settings.
+  const { wallDeps, spawn, runs } = evaluationWall();
   const lifecycle = new PluginEvaluations({ store: f.saved, owner: 'owner', catalog: f.catalog,
     plugins: { granted: () => [...grants], disable: id => disabled.push(id) }, shelf: { record: () => null },
-    wall: { unreadable: () => [join(f.root, 'owner')], timeoutMs: 2000,
-      wallDeps: { platform: 'win32', probe: async (_exe, args) => ({ code: 0, stdout: args.includes('-p') ? 'linux' : '', stderr: '' }) },
-      // Execute only this test's local fixture host; inspect the real WSL plan without changing owner settings.
-      spawn: async (start, limits) => {
-        const plan = JSON.parse(await readFile(join(start.cwd, 'held-plan.json'), 'utf8'));
-        assert.equal(plan.registry, false); assert.equal(plan.open, undefined); assert.equal(plan.interactive, false); assert.equal(plan.scratchOnly, true);
-        assert.deepEqual(plan.env, {}); assert.deepEqual(plan.secrets, []); assert.equal(limits.network, false);
-        assert.match(start.executable, /wsl\.exe$/i); runs.push(plan);
-        const output = await promisify(execFile)(process.execPath, [join(start.cwd, 'host.mjs')], { cwd: start.cwd });
-        return { status: 'completed', exitCode: 0, stdout: output.stdout, stderr: output.stderr, truncated: false, durationMs: 1 };
-      } } });
+    wall: { unreadable: () => [join(f.root, 'owner')], timeoutMs: 2000, wallDeps, spawn } });
   await writeFile(join(f.source, 'demo.mjs'), code('old'));
   const initial = await lifecycle.evaluate({ id: 'demo', source: f.source, suite: { ...suite, cases: [{ ...suite.cases[0], expected: 'old' }] } });
   assert.equal(initial.baselineUnavailable, true);
@@ -164,7 +156,10 @@ test('metadata-only versions have different retained identities and restore the 
   const restored = await f.lifecycle.restore('demo', report.baselineSourceHash, report.candidateSourceHash);
   assert.equal(restored.name, 'Demo'); assert.equal(restored.version, '1');
 });
-test('real strong wall executes a plugin fixture without reading or writing an outside canary', async t => {
+/** Whether this computer has the real evaluation wall: WSL with Node and bubblewrap on Windows, bubblewrap on Linux. */
+const strongWall = process.platform === 'win32' ? await wslReadiness(wslProbe) === null : (await wallReport()).available;
+test('real strong wall executes a plugin fixture without reading or writing an outside canary',
+  { skip: !strongWall && 'needs a real wall: WSL Node and bubblewrap on Windows, bubblewrap on Linux' }, async t => {
   const f = await fixture(t), canary = join(f.root, 'private-canary.txt');
   await writeFile(canary, 'private owner data');
   const target = process.platform === 'win32' ? wslPath(canary) : canary;
@@ -172,11 +167,16 @@ test('real strong wall executes a plugin fixture without reading or writing an o
     export default {id:'demo',name:'Demo',permissions:['files.read'],tools:[{name:'plugin.demo.answer',permission:'files.read',run:async()=>{
       const readable=await readFile(${JSON.stringify(target)},'utf8').then(()=>true,()=>false);
       const writable=await writeFile(${JSON.stringify(target)},'changed').then(()=>true,()=>false);
-      return {readable,writable,externalInterfaces:Object.values(networkInterfaces()).flat().filter(x=>x&&!x.internal).length};
+      let externalInterfaces='refused';
+      try { externalInterfaces=Object.values(networkInterfaces()).flat().filter(x=>x&&!x.internal).length; } catch {}
+      return {readable,writable,externalInterfaces};
     }}]};`;
   const host = new WalledPlugins({ evaluation: true, policy: () => ({ walled: true, hosts: [] }), unreadable: () => [], timeoutMs: 15000 });
   const result = await host.ask(source, [], { kind: 'call', tool: 'plugin.demo.answer', args: {} });
-  assert.deepEqual(result.result, { readable: false, writable: false, externalInterfaces: 0 });
+  // Linux's seccomp filter refuses even listing the interfaces; WSL's held runner shows only loopback.
+  const { externalInterfaces, ...files } = result.result;
+  assert.deepEqual(files, { readable: false, writable: false });
+  assert.ok(externalInterfaces === 0 || externalInterfaces === 'refused', `no outside network: ${externalInterfaces}`);
   assert.equal(await readFile(canary, 'utf8'), 'private owner data');
 });
 test('fresh installation cannot activate before proof and concurrent enable cannot cross a lifecycle lock', async t => {
@@ -202,7 +202,7 @@ test('a never-installed candidate requires exact manifest-and-code proof at the 
   const f = await fixture(t);
   await writeFile(join(f.source, 'demo.mjs'), code('better'));
   const lifecycle = new PluginEvaluations({ store: f.saved, owner: 'owner', catalog: f.catalog,
-    plugins: { granted: () => [], disable() {} }, shelf: { record: () => null }, wall: { unreadable: () => [], timeoutMs: 15000 } });
+    plugins: { granted: () => [], disable() {} }, shelf: { record: () => null }, wall: { unreadable: () => [], timeoutMs: 15000, ...evaluationWall() } });
   const report = await lifecycle.evaluate({ id: 'demo', source: f.source, suite });
   assert.equal(report.baselineUnavailable, true); assert.equal(report.baselineHash, ''); assert.equal(report.passed, true);
   const install = f.catalog.install.bind(f.catalog);

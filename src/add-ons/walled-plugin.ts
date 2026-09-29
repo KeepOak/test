@@ -194,12 +194,12 @@ export class WalledPlugins implements PluginIsolation {
       const wall = this.wallFor(hosts);
       const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", HOME: staging, TMPDIR: staging, NODE_USE_ENV_PROXY: "1",
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
+      const host = { executable: process.execPath, args: ["--no-warnings", join(staging, "host.mjs")], cwd: staging, env };
       const timeoutMs = this.options.timeoutMs ?? 30_000;
       const held = this.platform() === "win32" && this.options.evaluation;
       const opened = held ? { start: await scriptWslStart(staging, timeoutMs, this.options.unreadable(), this.options.wallDeps ?? {}, false, true),
         finish: async (_run: unknown) => null, close: async () => undefined }
-        : await openWall(wall, { executable: process.execPath, args: ["--no-warnings", join(staging, "host.mjs")], cwd: staging, env },
-          { workspace: staging }, this.options.wallDeps ?? {});
+        : await openWall(wall, host, { workspace: staging }, this.options.wallDeps ?? {});
       try {
         const limits = { timeoutMs, maxMemoryMb: 512, maxCpuSeconds: Math.ceil(timeoutMs / 1000), maxOutputBytes: 1_000_000, network: hosts.length > 0, job: true };
         const start = this.options.evaluation && !held

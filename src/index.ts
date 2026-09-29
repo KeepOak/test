@@ -162,7 +162,7 @@ import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.
 import { askForHandoffs, registerLeadUsage } from "./lead-usage.js"; // workbench (SELF-307)
 import { openWork } from "./open-work.js"; // workbench (SELF-307)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
-import { registerGit } from "./integrations/git-tools.js";
+import { githubAccessForPublication, registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
 import { PluginEvaluations } from "./plugin-evaluations.js";
 import { createTasteLearning } from "./taste/integration.js";
@@ -275,7 +275,7 @@ import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
 import { commandHost } from "./commands/host.js"; // CHAT-185
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { liveChannels } from "./channel-setup/live.js"; // CHAT-147: every chat app set up in the window connects there and then
-import { buildChannelEntry, githubAccessForPublication, type ChannelHost } from "./integrations/bootstrap.js";
+import { buildChannelEntry, type ChannelHost } from "./integrations/bootstrap.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
 import { Devices, type DeviceNetwork } from "./devices/index.js"; // mac7/nodes: the owner's other devices

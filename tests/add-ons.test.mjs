@@ -20,6 +20,7 @@ import { PipelinesReader } from "../dist/add-ons/pipelines.js";
 import { checkApiVersion, definePlugin } from "../dist/add-ons/sdk.js";
 import { tomlStrings } from "../dist/add-ons/toml-lite.js";
 import { switchedToolTiers } from "../dist/feature-switches.js";
+import { evaluationWall } from "./plugin-evaluation-wall.mjs";
 
 const sha = (text) => createHash("sha256").update(text, "utf8").digest("hex");
 const say = (content) => () => ({ content, toolCalls: [] });
@@ -36,6 +37,11 @@ async function writeTree(root, files) {
     await writeFile(path, body);
   }
   return root;
+}
+/** The plugin evaluation's wall with its program start stood in (tests/plugin-evaluation-wall.mjs), so a build machine without bubblewrap still evaluates. */
+function standInEvaluationWall(app) {
+  const { wallDeps, spawn } = evaluationWall();
+  Object.assign(app.pluginEvaluations.options.wall, { wallDeps, spawn });
 }
 async function fixture(t, steps = [say("ok")]) {
   const root = await mkdtemp(join(tmpdir(), "branch-addons-app-"));
@@ -253,6 +259,7 @@ export default { id: "narrow", name: "Narrow", permissions: ["files.read", "memo
     format: "branch-addon", id: "narrow", name: "Narrow", plugin: "narrow.mjs", permissions: ["files.read", "memory.read"] }) });
   await call("plugin-catalog/add-ons/install", { source: folder, sha256: (await call("plugin-catalog/add-ons/look", { source: folder })).offer.sha256 });
   assert.ok((await app.plugins.list()).some((entry) => entry.id === "narrow" && !entry.enabled), "it is in the plugins list, switched off");
+  standInEvaluationWall(app);
   const proof = await call("plugin-catalog/evaluate", { id: "narrow", source: folder, suite: { id: "narrow-tasks", cases: [
     { id: "look", tool: "plugin.narrow.look", args: {}, expected: "looked" },
   ] } });
@@ -300,6 +307,7 @@ test("the add-on that comes with Branch is offered, installed only on a yes, and
   assert.equal(app.addOns.shelf.record("branch-starter"), null, "offering it installs nothing");
   const record = await call("plugin-catalog/add-ons/bundled/install", { id: "branch-starter", sha256: starter.offer.sha256 });
   assert.equal(record.bundled, true);
+  standInEvaluationWall(app);
   const proof = await call("plugin-catalog/evaluate", { id: "branch-starter", source: record.source, suite: { id: "starter-tasks", cases: [
     { id: "count", tool: "plugin.branch-starter.count", args: { text: "two words" }, expected: { words: 2, lines: 1, characters: 9 } },
   ] } });

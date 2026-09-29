@@ -9,7 +9,6 @@ test("computer menu transfers the selected conversation and returns it after rem
   let sessionId;
   const sent = [], provider = { name: "fixture", complete: async () => ({ content: "Ready.", toolCalls: [] }) };
   const { page, app, errors } = await settingsWindow(t, { name: "continuity-ui", provider, before: async (engine) => {
-    sessionId = (await engine.runtime.run({ prompt: "Continue this conversation on my remote computer" })).sessionId;
     const nodes = [{ id: "remote", name: "Remote", address: "https://remote.example", secret: "PAIRED", labels: [] }];
     engine.asks.nodes.save({ nodes });
     saveAskMode(engine.store, "local", "nodes", { mode: "on" });
@@ -22,9 +21,12 @@ test("computer menu transfers the selected conversation and returns it after rem
       },
     }, () => {});
   } });
+  // Start the conversation once the window is up, as the owner would, then reload so the side list holds it.
+  sessionId = (await app.runtime.run({ prompt: "Continue this conversation on my remote computer" })).sessionId;
+  await page.reload();
   await page.locator(`#side [data-act="chat"][data-id="${sessionId}"]`).first().click();
   await page.locator('#side [data-act="machines"]').click();
-  await page.getByRole("menuitem", { name: "Keep working on another computer", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Carry on elsewhere", exact: true }).click();
   await page.getByLabel("Task and context to send", { exact: true }).fill("Only send these chosen words.");
   await page.getByLabel("Include a preview of this conversation and its latest task", { exact: true }).check();
   await page.getByRole("button", { name: "Stop here and preview transfer", exact: true }).click();
