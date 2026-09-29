@@ -469,6 +469,8 @@ async function folders(base: string): Promise<{ dataDir: string; workspace: stri
  * taken before each update leaves out (src/install/data-copy.ts).
  */
 const betaBuildDir = (dataDir: string): string => join(dataDir, "updates", "beta-build");
+/** A live update's own notes (the engine handed over, a live build not used): on the console and in the activity log. */
+const liveNote = (line: string): void => { console.error(line); diagnose("updater", "info", line); };
 /**
  * mac7/safe-rollback: the app's Update button writes the same record `branch update --yes` does, so
  * a person who updates from the window can go back afterwards. It stays `staged` until the next
@@ -542,8 +544,8 @@ async function start(): Promise<void> {
       host: () => undefined, forkLive: forkEngine, runtime: process.execPath,
       snapshot: async () => engineSnapshot(running.url, key(), client.fetch),
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
-      tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(),
-    }).catch((error: Error) => { console.error("Background engine's update channel:", error.message); return null; }) : null;
+      tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), log: liveNote,
+    }).catch((error: Error) => { liveNote(`Background engine's update channel: ${error.message}`); return null; }) : null;
     if (testHooksOn() && brokerLive) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: brokerLive.hooks, engineState: brokerLive.inspect };
     await createWindow(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
@@ -569,7 +571,7 @@ async function start(): Promise<void> {
     return;
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
-  const live = await liveAtStart(liveAppRoot(), (line) => console.error(line));
+  const live = await liveAtStart(liveAppRoot(), liveNote);
   liveWindowNow = live.window;
   const url = await startEngine(base, settings, { dataDir, workspace }, live.engineFile);
   // The key, and anything main sends, go only to the app's own engine serving at the window's address that has proved
@@ -587,7 +589,7 @@ async function start(): Promise<void> {
     snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
     tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
     onEngineDeparture: () => closeCapture(),
-    log: (line) => console.error(line) });
+    log: liveNote });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
   await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.

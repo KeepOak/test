@@ -8,7 +8,6 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   DiagnosticLog, DiagnosticLogSettingsSchema, diagnose, markedLogSettings, setDiagnosticLog, writeLogSettingsMark,
 } from "../dist/diagnostic-log.js";
@@ -66,7 +65,7 @@ test("the engine in another process and main write the same file at once: every 
   const dataDir = await dataFolder(t);
   mark(dataDir, { mode: "when-needed", maxMegabytes: 1 }); // 1 MB over five files: a rotation every ~200 KB
   const each = 400, padding = "x".repeat(300);
-  const module = pathToFileURL(join(process.cwd(), "dist", "diagnostic-log.js")).href;
+  const module = new URL("../dist/diagnostic-log.js", import.meta.url).href;
   // The engine: its own process, its own log object on the same folder, the owner's settings with everything on.
   const engine = spawn(process.execPath, ["--input-type=module", "-e", `
     import { DiagnosticLog, DiagnosticLogSettingsSchema } from ${JSON.stringify(module)};
