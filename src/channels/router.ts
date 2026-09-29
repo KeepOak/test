@@ -32,6 +32,8 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { activationFor, activationGate, groupActivations, setGroupActivation } from "./group-activation.js"; // group chats
+import type { GroupReading } from "./addressing.js";
 import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
@@ -142,6 +144,11 @@ export interface ChannelAdapter {
    * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
    */
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /**
+   * Group chats: whether the app hands the bot every message in this group (Telegram's privacy mode, admin status), and
+   * what to change when it does not. Absent means the app does not say; "every message" is then the owner's to try.
+   */
+  groupReading?(chatId?: string): Promise<GroupReading>;
   /**
    * The app's own command picker (Discord's slash commands; Telegram's "/" menu in #590), filled from the same catalog
    * every surface reads. An empty list clears it. Absent means the app keeps its commands elsewhere (Slack's are in the
@@ -635,12 +642,40 @@ export class ChannelRouter {
       intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
+      groups: this.groups(owner), // group chats: when the assistant answers in each
       ownerCommands: ownerCommands(this.store, owner),
       // owner-dm-signin: whether any chat account is named as the owner's yet, so approving a pairing may offer "this is me".
       ownerNamed: ownerAccountNamed(this.store, owner),
       // Settings › Chat apps › Show steps in chats: the knobs, for every app and for each (src/channels/steps-display.ts).
       steps: this.stepsView(),
     };
+  }
+  /**
+   * Group chats the assistant has answered in, and any with a choice of their own, each with when it answers there:
+   * its own choice, or the app's (`activation` in the connections file, "mention" unless set).
+   */
+  groups(owner: string): { channel: string; chatId: string; title: string; activation: "mention" | "always"; own: boolean }[] {
+    const own = groupActivations(this.store, owner);
+    const seen = this.store.list("settings", owner).flatMap((record) => {
+      const data = record.data as { channel?: unknown; chatId?: unknown; title?: unknown; kind?: unknown };
+      return record.id.startsWith("channel-session:") && data.kind === "group" && typeof data.channel === "string" && typeof data.chatId === "string"
+        ? [{ channel: data.channel, chatId: data.chatId, title: typeof data.title === "string" ? data.title : data.chatId }] : [];
+    });
+    const all = new Map<string, { channel: string; chatId: string; title: string }>();
+    for (const group of [...seen, ...own]) all.set(`${group.channel}\u0000${group.chatId}`, { channel: group.channel, chatId: group.chatId, title: group.title });
+    return [...all.values()].slice(0, 200).map((group) => {
+      const mine = own.find((one) => one.channel === group.channel && one.chatId === group.chatId);
+      const fallback = this.adapters.get(group.channel)?.policy.activation ?? "mention";
+      return { ...group, activation: mine?.activation ?? fallback, own: !!mine };
+    });
+  }
+  /** Settings › Chat apps: one group's choice, with what the app says about reading every message there. */
+  async setGroup(input: unknown): Promise<{ activation: "mention" | "always" | null; reading: GroupReading | null }> {
+    const activation = setGroupActivation(this.store, this.runtime.owner, input, "from the Branch app");
+    const { channel, chatId } = input as { channel: string; chatId: string };
+    const adapter = this.adapters.get(channel)?.adapter;
+    const reading = activation === "always" && adapter?.groupReading ? await adapter.groupReading(chatId).catch(() => null) : null;
+    return { activation, reading };
   }
   /** The steps knobs with what each connected app can do and what it will show, for the Chat apps card. */
   stepsView() {
@@ -723,7 +758,15 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
-    if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
+    // Group chats: `/activation` from the owner's own account is read even when the assistant was not mentioned.
+    const activated = await activationGate(this.store, this.runtime.owner, message, adapter);
+    if (activated) {
+      if (activated.reply) await adapter.send(message.chatId, activated.reply, message.messageId).catch(() => undefined);
+      return "ignored";
+    }
+    // Each group's own choice (Settings › Chat apps, or /activation), else the app's.
+    const activation = message.chatKind === "group" ? activationFor(this.store, this.runtime.owner, message, policy.activation) : policy.activation;
+    if (message.chatKind === "group" && activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
     const held = platformGate(this.store, this.runtime.owner, message);
     if (held) {
@@ -734,6 +777,8 @@ export class ChannelRouter {
     const access = this.access(message, policy);
     if (access !== "allowed") {
       if (message.caughtUp) return "ignored"; // mac6/bucket-16 integration
+      // In a group that is answered at every message, a stranger who did not speak to the assistant gets no pairing code.
+      if (message.chatKind === "group" && !message.addressed) return "ignored";
       const text = access === "pairing"
         ? `I don't know you yet. Ask my owner to approve code ${this.pairingCode(message)} under Settings → Channels, then message me again.`
         : "This assistant is private.";
@@ -1511,7 +1556,7 @@ export class ChannelRouter {
     const trunkId = this.trunkOfConversation(run.sessionId);
     saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
-      ...(trunkId ? { trunkId } : {}) });
+      ...(trunkId ? { trunkId } : {}), kind: message.chatKind }); // #649: the group list reads which chats are groups
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped."
       // owner-dm-signin: the task's own reason, scrubbed and kept short, rather than the bare status.

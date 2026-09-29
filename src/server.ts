@@ -3191,6 +3191,11 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     return app.channels.deliver(channel, chatId, "Test message from Branch Agent: this channel is connected and working.", `test:${Date.now()}`);
   }
   if (request.method === "POST" && path === "/api/channels/pairings/remove") return app.channels.remove(owner, await readBody(request));
+  // Group chats: when the assistant answers in one group (only when mentioned, or every message); null follows the app.
+  if (request.method === "POST" && path === "/api/channels/groups") {
+    try { return await app.channels.setGroup(await readBody(request)); }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Batch 20 (wave 8): the address each chat service posts to, with its own unguessable word on the
   // end. Shown on the Connections card with a button that copies it, and rotatable.
   if (request.method === "GET" && path === "/api/channels/addresses") return channelAddresses(app, owner);

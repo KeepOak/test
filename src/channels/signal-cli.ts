@@ -38,6 +38,10 @@ const envelopeSchema = z.object({
     envelope: z.object({
       source: z.string().optional(), sourceName: z.string().optional(), timestamp: z.number().optional(),
       dataMessage: z.object({ message: z.string().optional(), groupInfo: z.object({ groupId: z.string().optional() }).passthrough().optional(),
+        /** Who a group message @mentions, by number or account id. */
+        mentions: z.array(z.object({ number: z.string().nullish(), uuid: z.string().nullish() }).passthrough()).optional(),
+        /** The message this one replies to, and who wrote it. */
+        quote: z.object({ author: z.string().nullish(), authorNumber: z.string().nullish() }).passthrough().optional(),
         reaction: z.object({ emoji: z.string().max(40).optional(), targetAuthor: z.string().optional(), targetAuthorNumber: z.string().optional(),
           targetSentTimestamp: z.number().optional(), isRemove: z.boolean().optional() }).passthrough().optional(),
       }).passthrough().optional(),
@@ -157,11 +161,16 @@ export class SignalAdapter implements ChannelAdapter {
       this.authors.set(String(envelope.timestamp), envelope.source);
       if (this.authors.size > 200) this.authors.delete(this.authors.keys().next().value!);
     }
+    // In a group: an @mention of the assistant's number, or a reply to one of its messages (Signal groups were never answered).
+    const me = this.options.account;
+    const mentioned = (envelope.dataMessage?.mentions ?? []).some((mention) => mention.number === me);
+    const quote = envelope.dataMessage?.quote;
+    const repliedTo = !!quote && (quote.authorNumber === me || quote.author === me);
     return {
       channel: this.id, chatId: group ?? envelope.source, chatKind: group ? "group" : "direct",
       ...(group ? { chatTitle: `group ${group.slice(0, 12)}` } : {}),
       senderId: envelope.source, senderName: envelope.sourceName ?? envelope.source,
-      text, addressed: !group, messageId: String(envelope.timestamp ?? Date.now()),
+      text, addressed: !group || mentioned || repliedTo, messageId: String(envelope.timestamp ?? Date.now()),
       ...this.filesOf(files, group ? { groupId: group } : { recipient: envelope.source }),
     };
   }
