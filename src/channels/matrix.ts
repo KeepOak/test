@@ -285,8 +285,11 @@ export class MatrixAdapter implements ChannelAdapter {
     }
     if (!response.ok) throw new Error(`Matrix refused to replace the status reaction (${response.status})`);
   }
-  async send(chatId: string, text: string, _replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
-    const eventId = await this.put(chatId, MatrixAdapter.content(text.slice(0, this.maxTextLength), format));
+  async send(chatId: string, text: string, replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
+    // CHAT-116: a reply quotes the person's own message (m.in_reply_to), only one received in this same room.
+    const quoted = replyTo ? this.received.get(replyTo) : undefined;
+    const inReply = quoted && quoted.roomId === (this.rooms.get(chatId) ?? chatId) ? { "m.relates_to": { "m.in_reply_to": { event_id: quoted.eventId } } } : {};
+    const eventId = await this.put(chatId, { ...MatrixAdapter.content(text.slice(0, this.maxTextLength), format), ...inReply });
     if (!eventId) return undefined;
     const short = handle(eventId, "msg");
     this.sent.set(short, eventId);

@@ -9,6 +9,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { ContractBook } from "../dist/self-development-contract.js";
 import { HandOff, claudeAllowedCommands, handOffReason, linksOut, programCall, readClaude, readCodex, repoOwnSettings } from "../dist/coding/hand-off.js";
+import { codexDefaultModel } from "../dist/providers/cli-agent.js";
 import { addPolicyRule } from "../dist/policy.js";
 import { withAccountCall } from "../dist/accounts/context.js";
 
@@ -114,7 +115,10 @@ test("the model and how hard it thinks are passed to each program in its own wor
   assert.deepEqual(codex.args.slice(codex.args.indexOf("--model"), codex.args.indexOf("--model") + 2), ["--model", "gpt-6-astra"]);
   assert.ok(codex.args.includes('model_reasoning_effort="medium"'));
   assert.equal(codex.args.at(-1), "-", "the job itself still comes in on the program's input");
-  assert.ok(!programCall("codex", "/work/repo").args.includes("--model"), "with none chosen, the program's own setting stands");
+  // QA 2026-09-28: with none chosen, Codex is told Branch's model; the owner's own Codex settings never decide it.
+  const plain = programCall("codex", "/work/repo").args;
+  assert.deepEqual(plain.slice(plain.indexOf("--model"), plain.indexOf("--model") + 2), ["--model", codexDefaultModel]);
+  assert.ok(!programCall("claude-code", "/work/repo").args.includes("--model"), "Claude Code with none chosen keeps its own");
 });
 
 test("an expired sign-in is said as one, so the owner knows to sign in again", async (t) => {

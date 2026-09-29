@@ -487,6 +487,12 @@ owner GET /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/
 owner POST /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd6788 run=401/dd6788 nobody=401/40daee
+owner GET /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/goals | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1857,6 +1863,10 @@ owner GET /api/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 r
 owner POST /api/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/second-opinion | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/second-opinion | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/codex-models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/codex-models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2216,6 +2226,8 @@ owner GET /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401
 owner POST /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/webhooks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/webhooks | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/webhooks/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -2687,6 +2699,12 @@ owner+lockdown GET /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok pe
 owner+lockdown POST /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd6788 run=401/dd6788 nobody=401/40daee
+owner+lockdown GET /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/goals | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4057,6 +4075,10 @@ owner+lockdown GET /api/search | here=ok remote=ok phone=ok legacy=ok person=401
 owner+lockdown POST /api/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/second-opinion | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/second-opinion | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/codex-models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/codex-models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4416,6 +4438,8 @@ owner+lockdown GET /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok p
 owner+lockdown POST /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/voice/dictation/listen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/voice/dictation/hear | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/webhooks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/webhooks | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/webhooks/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4887,6 +4911,12 @@ household GET /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c read=400/f
 household POST /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=401/dd6788 run=401/dd6788
+household GET /api/gitlab | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/gitlab | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/goals | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6257,6 +6287,10 @@ household GET /api/search | here=400/f6e21c remote=400/f6e21c read=401/86eff9 ru
 household POST /api/search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/second-opinion | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/second-opinion | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/codex-models | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/codex-models | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/secrets | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6616,6 +6650,8 @@ household GET /api/voice/dictation | here=ok remote=ok read=401/86eff9 run=401/8
 household POST /api/voice/dictation | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/voice/dictation/listen | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household POST /api/voice/dictation/listen | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/webhooks | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/webhooks | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/webhooks/:id | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -7087,6 +7123,12 @@ household+lockdown GET /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c r
 household+lockdown POST /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=401/dd6788 run=401/dd6788
+household+lockdown GET /api/gitlab | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/gitlab | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/goals | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8457,6 +8499,10 @@ household+lockdown GET /api/search | here=400/f6e21c remote=400/f6e21c read=401/
 household+lockdown POST /api/search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/second-opinion | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/second-opinion | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/codex-models | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/codex-models | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/secrets | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8816,6 +8862,8 @@ household+lockdown GET /api/voice/dictation | here=ok remote=ok read=401/86eff9 
 household+lockdown POST /api/voice/dictation | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/voice/dictation/listen | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/voice/dictation/listen | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/voice/dictation/hear | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/webhooks | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/webhooks | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/webhooks/:id | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -9287,6 +9335,12 @@ applock GET /api/flows/runs/:id | here=423/a8f863
 applock POST /api/flows/runs/:id | here=423/a8f863
 applock GET /api/folder-trust | here=423/a8f863
 applock POST /api/folder-trust | here=423/a8f863
+applock GET /api/gitlab | here=423/a8f863
+applock POST /api/gitlab | here=423/a8f863
+applock GET /api/gitlab/connect | here=423/a8f863
+applock POST /api/gitlab/connect | here=423/a8f863
+applock GET /api/gitlab/disconnect | here=423/a8f863
+applock POST /api/gitlab/disconnect | here=423/a8f863
 applock GET /api/goal-undo/settings | here=423/a8f863
 applock POST /api/goal-undo/settings | here=423/a8f863
 applock GET /api/goals | here=423/a8f863
@@ -10657,6 +10711,10 @@ applock GET /api/search | here=423/a8f863
 applock POST /api/search | here=423/a8f863
 applock GET /api/second-opinion | here=423/a8f863
 applock POST /api/second-opinion | here=423/a8f863
+applock GET /api/codex-models | here=423/a8f863
+applock POST /api/codex-models | here=423/a8f863
+applock GET /api/codex-models/check | here=423/a8f863
+applock POST /api/codex-models/check | here=423/a8f863
 applock GET /api/helper-defaults | here=423/a8f863
 applock POST /api/helper-defaults | here=423/a8f863
 applock GET /api/secrets | here=423/a8f863
@@ -11016,6 +11074,8 @@ applock GET /api/voice/dictation | here=423/a8f863
 applock POST /api/voice/dictation | here=423/a8f863
 applock GET /api/voice/dictation/listen | here=423/a8f863
 applock POST /api/voice/dictation/listen | here=423/a8f863
+applock GET /api/voice/dictation/hear | here=423/a8f863
+applock POST /api/voice/dictation/hear | here=423/a8f863
 applock GET /api/webhooks | here=423/a8f863
 applock POST /api/webhooks | here=423/a8f863
 applock GET /api/webhooks/:id | here=423/a8f863

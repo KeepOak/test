@@ -72,9 +72,11 @@ export function saveDictationSettings(store: Store, owner: string, input: unknow
  *     Branch at all on this path** — only the words, and only while the program runs.
  *   • "reads-sound" — the program is handed sound on its standard input. Branch holds one recorder
  *     open, counts how loud the room is, and feeds it only what carries speech.
+ *   • "window-mic" — RES-709: no streaming program, but faster-whisper is here. The window records while the
+ *     owner holds Dictate, and each piece is written out on this computer (src/voice-whisper.ts).
  *   • "none" — there is nothing here that can do this, whatever the switch says.
  */
-export type DictationEngineKind = "own-microphone" | "reads-sound" | "none";
+export type DictationEngineKind = "own-microphone" | "reads-sound" | "window-mic" | "none";
 
 export interface DictationEngine {
   available: boolean;
@@ -247,10 +249,17 @@ export function cleanWords(written: string): string {
 export const dictationLockedRefusal =
   "Branch is locked, so dictation is off and the microphone is let go of. Unlock it and press Dictate again.";
 
+/**
+ * RES-709: the free speech program on this computer (src/voice-whisper.ts), as the window's own microphone uses
+ * it. When no streaming program is here but this is, the window records while Dictate is held and this writes
+ * it out, on this computer; the switch above still decides whether the microphone may be used at all.
+ */
+export interface WindowSpeech { available: boolean; how: string }
+
 /** Why dictation is refused right now, or null. Every sentence is one the owner reads. */
 export function dictationRefusal(
   store: Store, owner: string, platform: string = process.platform,
-  present: ProgramPresent = onThisComputer,
+  present: ProgramPresent = onThisComputer, local: WindowSpeech | null = null,
 ): string | null {
   const settings = dictationSettings(store, owner);
   if (settings.mode === "off")
@@ -258,7 +267,7 @@ export function dictationRefusal(
       ? "Lockdown is on, so dictation is off and nothing can open the microphone. Turn Lockdown off in Settings to allow this again."
       : "Dictation is switched off, so nothing is listening. Turn it on in Settings, Voice.";
   const engine = dictationEngine(voiceSettings(store, owner), platform, present);
-  if (!engine.available) return engine.how;
+  if (!engine.available) return local?.available ? null : local ? local.how : engine.how;
   if (engine.kind === "reads-sound" && !dictationCapture(engine, platform, present))
     return "This computer has no recording program to feed that speech program. Install one yourself — `brew install sox` on a Mac, arecord or parecord on Linux — and dictation can use it; until then the switch stays off.";
   return null;
@@ -268,21 +277,26 @@ export function dictationRefusal(
 export function dictationState(
   store: Store, owner: string, platform: string = process.platform,
   /** Whether the microphone is open this moment. Read from the listener itself, never from the switch. */
-  open = false, present: ProgramPresent = onThisComputer,
+  open = false, present: ProgramPresent = onThisComputer, local: WindowSpeech | null = null,
 ): {
   settings: DictationSettings; mode: FeatureMode; engine: DictationEngine; recorder: string | null;
-  refusal: string | null; open: boolean; canDictate: boolean;
+  refusal: string | null; open: boolean; canDictate: boolean; windowMic: boolean;
 } {
   const settings = dictationSettings(store, owner);
-  const engine = dictationEngine(voiceSettings(store, owner), platform, present);
+  const streaming = dictationEngine(voiceSettings(store, owner), platform, present);
+  // RES-709: no streaming program, but the free one is here: the window's microphone, written out on this computer.
+  // With neither, what the card says to install is the free one, which is the one that needs the least.
+  const windowMic = !streaming.available && !!local?.available;
+  const engine: DictationEngine = streaming.available || !local ? streaming
+    : { available: local.available, kind: local.available ? "window-mic" : "none", how: local.how, command: null };
   return {
     settings, mode: settings.mode, engine,
     // The recorder's own name, for the sentence a person reads before macOS asks them about the
     // microphone. Only ever a name, never the full path, which is a thing of this computer's.
     recorder: engine.kind === "reads-sound" ? recorderName(platform, present) : null,
-    refusal: dictationRefusal(store, owner, platform, present),
+    refusal: dictationRefusal(store, owner, platform, present, local),
     canDictate: engine.available,
-    open,
+    open, windowMic,
   };
 }
 
@@ -296,12 +310,12 @@ export const dictationOwnerOnlyRefusal =
  */
 export function dictationView(
   store: Store, owner: string, platform: string = process.platform, isOwner = true,
-  open = false, present: ProgramPresent = onThisComputer,
+  open = false, present: ProgramPresent = onThisComputer, local: WindowSpeech | null = null,
 ): Record<string, unknown> {
   if (!isOwner)
     return { isOwner: false, canDictate: false, open: false, mode: "off" as FeatureMode,
       refusal: dictationOwnerOnlyRefusal };
-  const state = dictationState(store, owner, platform, open, present);
+  const state = dictationState(store, owner, platform, open, present, local);
   // The program's full path never travels: it is a thing of the owner's computer, and the card only
   // ever shows the sentence and whether there is a program at all, as the wake word's card does.
   return { ...state, isOwner: true,

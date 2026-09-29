@@ -102,6 +102,7 @@ import { ChannelConnectors, registerChannelTools } from "./channels/connectors.j
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
 import { Teams } from "./teams.js";
+import { registerTeamGroups } from "./team-groups.js"; // RES-721
 import { Triggers } from "./triggers.js";
 import { SlackAutomations } from "./channels/slack-automations.js"; // mac6/bucket-16
 import { Webhooks } from "./webhooks.js";
@@ -121,6 +122,7 @@ import { NeedsInputError, type ToolContext } from "./contracts.js";
 import { defaultPreset } from "./providers.js";
 import { restoreConnections } from "./connections-preset.js";
 import { restoreSignIns } from "./accounts/saved-sign-ins.js"; // accounts-wizard-plans
+import { CodexModels, attachCodexModels } from "./codex-models.js";
 import { JevDecisions, registerJevDecisions, type JevRunner } from "./jev-decisions.js";
 import { DecisionModels } from "./decision-models.js"; // P17-D §4
 import { Workbooks, registerWorkbookTools } from "./workbooks.js"; // P17-D §3
@@ -136,6 +138,7 @@ import { VoiceService, registerVoice } from "./voice-service.js";
 import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRunner } from "./voice-wake.js"; // mac7/wake-mic
 import { startDictation, type SoundStreamRunner, type SpeechStreamRunner } from "./voice-dictation-run.js"; // mac7/live-voice
 import { soundStreamRunner, speechStreamRunner } from "./voice-dictation-host.js"; // mac7/live-voice
+import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
 import { wakeCaptureRunner, wakeRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
@@ -168,6 +171,9 @@ import { ContractBook, contractGuard, contractPreflight } from "./self-developme
 import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
 import { registerSdkKit } from "./sdk-kit.js"; // bucket 21
+import { GitLabConnection } from "./gitlab-connection.js"; // RES-719
+import { gitlabLaunch } from "./gitlab-switch.js"; // RES-719
+import { registerGitLab } from "./integrations/gitlab.js"; // RES-719
 import { WebPages, registerWebPages } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { PluginCatalog } from "./plugin-catalog.js";
 import { AddOns } from "./add-ons/index.js"; // bucket-15: add-ons other people wrote
@@ -261,6 +267,7 @@ import { formatCopiesToPrune } from "./install/update-backup.js";
 import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
+import { commandHost } from "./commands/host.js"; // CHAT-185
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { liveChannels } from "./channel-setup/live.js"; // CHAT-147: every chat app set up in the window connects there and then
 import { buildChannelEntry, type ChannelHost } from "./integrations/bootstrap.js";
@@ -271,7 +278,7 @@ import { Autonomy } from "./autonomy/index.js"; // r17-b: it suggests, and runs 
 import { trunkMode } from "./trunks/settings.js"; // Q153
 import { Trunks } from "./trunks/index.js"; // R17-A: Trunks, named long-lived agents
 import { computerPlatforms } from "./trunks/starts-in.js"; // Q44
-import { accountsSettings, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
+import { accountsSettings, poolOf, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
 import { Coding } from "./coding/index.js"; // mac7/r17-d: coding polish
 import { worktreeScope } from "./coding/worktrees.js"; // mac7/r17-d
 import type { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
@@ -363,6 +370,11 @@ export async function createBranch(options: {
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
    */
   dictation?: { speech?: SpeechStreamRunner; sound?: SoundStreamRunner; present?: ProgramPresent; platform?: string };
+  /**
+   * RES-709: the free speech program on this computer (src/voice-whisper.ts). Left out, Branch looks for the real
+   * faster-whisper; a test hands in its own, or null for none.
+   */
+  localSpeech?: LocalWhisper | null;
   /** Test-only: clock function for deterministic rate limiting. Normal production uses Date.now. */
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
@@ -856,7 +868,8 @@ export async function createBranch(options: {
   registerMedia(registry, media);
   // Wave 7: one place that turns speech into words and words into speech, whichever service does
   // the work, plus switching model in one conversation. Voice notes on chat apps come through here.
-  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch));
+  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch),
+    options.localSpeech !== undefined ? { whisper: options.localSpeech } : {});
   // Wave 8: live conversations. Every connection that stays open leaves a span and a line in the
   // record of what the assistant was allowed to do — the host and the path only, never the whole
   // address, because a key can travel in the query string.
@@ -970,9 +983,11 @@ export async function createBranch(options: {
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
   // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
+  attachCodexModels(runtime.models, new CodexModels(store, runtime.owner)); // QA 2026-09-28: Codex's model, chosen in Branch
   await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
   const hooks = new Hooks(store, runtime.owner);
   const teams = new Teams(store, runtime.owner);
+  registerTeamGroups(registry, runtime, knowledge, teams); // RES-721: small groups, each with its own lead
   const version = String(createRequire(import.meta.url)("../package.json").version);
   const userAgent = `BranchAgent/${version}`;
   // Wave 7: one finished task's full record, in the documented trajectory shape.
@@ -1168,6 +1183,9 @@ ${result.output || "(it said nothing)"}`;
   registerFlows(registry, flows);
   // Bucket 21: tools for people building on Branch (switched off until the owner turns them on).
   registerSdkKit(registry, store);
+  // RES-719: GitLab set up in the window (Settings › Advanced › GitLab); its tools reach the index only once connected.
+  const gitlab = new GitLabConnection({ store, policy: web.policy });
+  registerGitLab(registry, (who) => gitlab.access(who));
   // w911 (A0743, A1452) hook: web.page and web.crawl (switched off until the owner turns them on).
   const webPages = new WebPages({ store, web, registry, runtime }); registerWebPages(registry, webPages);
   // "workflows.resume" is the one way in for carrying anything saved on, a graph flow included, so
@@ -1408,8 +1426,19 @@ ${result.output || "(it said nothing)"}`;
   const trunkAccounts = {
     get connected() { return accountsSettings(store, runtime.owner).mode !== "off"; },
     // models-ui: the connection's own name ("Claude Code", "ChatGPT"), so keyPlan's notes read as the window's lists do.
-    pools: () => accountsSettings(store, runtime.owner).pools.map((pool) => ({ id: pool.pool, label: connectionName(accounts, pool.pool),
-      accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) })),
+    // QA retest 2026-09-28 pass 2: every connection that can have several accounts, as Settings › Accounts lists them
+    // (src/accounts/manage.ts viewAll), not only the lists saved once a second account was added: a connection with
+    // just its first account (Claude Code signed in on this computer) was missing, and Edit Trunk › Accounts said
+    // "No connection has accounts to pick from yet". The saved settings are only read here, never written.
+    pools: () => {
+      const saved = accountsSettings(store, runtime.owner), draft = { ...saved, pools: [...saved.pools] };
+      for (const preset of runtime.models.presets.values()) {
+        const found = accounts.poolFor(preset);
+        if (found) poolOf(draft, found.pool, found.kind);
+      }
+      return draft.pools.map((pool) => ({ id: pool.pool, label: connectionName(accounts, pool.pool),
+        accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) }));
+    },
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
   const trunks = new Trunks({ runtime, registry, knowledge, scheduler, workflows, accounts: trunkAccounts,
@@ -1881,6 +1910,8 @@ ${result.output || "(it said nothing)"}`;
     calendar,
     /** The same workflows as boxes and arrows, for the API and the picture in Procedures. */
     flows,
+    /** RES-719: GitLab as a connection of its own. */
+    gitlab,
     /** Wave 8: the things still to be done, written down where the owner can see them. */
     todos,
     wiki,
@@ -1910,6 +1941,7 @@ ${result.output || "(it said nothing)"}`;
       router: channels,
       git,
       /** A secret from whichever project is active right now, for GitHub's personal access token. */
+      gitlab: (settings: unknown) => gitlabLaunch.set(store, settings),
       activeSecret: async (name: string) => {
         const project = store.projects.active(runtime.owner).id;
         const value = (await store.secrets.resolve(runtime.owner, project, [name], { purpose: "integration" }))[name]!;
@@ -1981,6 +2013,7 @@ ${result.output || "(it said nothing)"}`;
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
+      voice.close(); // RES-709: the free speech worker ends with the app
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
       await autonomy.close(); // r17-b: nothing more starts by itself, and a turn that is working gets a moment
       await trunks.close(); // R17-A: rooms stop between turns
@@ -2021,6 +2054,8 @@ ${result.output || "(it said nothing)"}`;
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
   channelHostRef.current = branch.channelHost;
+  channels.ownerDmHost = () => commandHost(runtime, branch); // CHAT-185: the owner's commands from their own chat
+  runtime.ownerChatRun = (runId) => channels.ownerDmRun(runId); // owner-dm-signin: the owner's own verified DM may use their sign-in
   // Pictures of a chat task's own browser window, as the window's live view takes them: password and code boxes covered,
   // never a borrowed browser, never while Branch's own sign-in handling is showing.
   channels.browserPicture = async (runId) => {
@@ -2344,6 +2379,7 @@ export * from "./voice-stt.js";
 export * from "./voice-tts.js";
 export * from "./voice-talk.js";
 export * from "./voice-service.js";
+export * from "./voice-whisper.js"; // RES-709
 export * from "./realtime.js";
 export * from "./realtime-openai.js";
 export * from "./realtime-gemini.js";

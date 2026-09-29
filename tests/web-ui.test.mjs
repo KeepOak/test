@@ -237,6 +237,8 @@ test("U3 an approval question appears in the conversation and the answer reaches
   for (let i = 0; i < 100 && !(await app.registry.execute("files.list", { path: "." }, app.runtime.context()).then((r) => JSON.stringify(r).includes("gated.txt"), () => false)); i++)
     await page.waitForTimeout(100);
   assert.ok(JSON.stringify(await app.registry.execute("files.list", { path: "." }, app.runtime.context())).includes("gated.txt"), "the yes let the write happen");
+  // The write lands a moment before the page redraws without the card; wait for that redraw, then check.
+  await page.locator("#live-ask").waitFor({ state: "detached", timeout: 10000 }).catch(() => undefined);
   assert.equal(await page.locator("#live-ask").count(), 0, "the card is gone once answered");
   assert.deepEqual(errors, []);
 });

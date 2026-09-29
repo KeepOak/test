@@ -45,6 +45,7 @@ import { saveVoiceSettings, voiceSettings, VoiceSettingsSchema } from "../voice.
 import { codingModelRounds, readKnobs, saveKnobs } from "../knobs/settings.js";
 import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 import { sdkKitMode, sdkKitShipsAs } from "../sdk-kit-switch.js"; // defaults audit
+import { gitlabMode, gitlabShipsAs } from "../gitlab-switch.js"; // RES-719
 
 /**
  * R17-S-A (understandable settings): the settings that can be put back to how they started, set
@@ -413,6 +414,8 @@ const reach: SettingSpec[] = [
   },
   // Defaults audit (2026-09-28): ships "when needed" (src/sdk-kit-switch.ts sdkKitShipsAs), read as the module reads it.
   shipsAs(one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach", modeFrom(sdkKitMode)), sdkKitShipsAs),
+  // RES-719: GitLab ships "when needed" (src/gitlab-switch.ts); it does nothing until a token is saved, and each change on GitLab asks first.
+  shipsAs(one("gitlab-connection", "GitLab", "settings-kit.name.gitlab-connection", "settings:advanced", "reach", modeFrom(gitlabMode)), gitlabShipsAs),
   // r17-i integration review: every reach and platform switch reaches further when raised (src/reach/settings.ts).
   // src/server.ts saves them through Reach, so the tools and the relay follow the switch at once.
   // Q65: shown as saved, not as Lockdown reads it (`reachMode`), so a change is weighed against the owner's own switch.

@@ -5,7 +5,7 @@
 //   BRANCH_DATA_DIR=<fresh dir> BRANCH_WORKSPACE=<fresh dir> BRANCH_PORT=<port> node dist/cli.js start
 // Run: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-projects.cjs
 // Screenshots go to SHOTS (default: the session temp folder).
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { mkdirSync } = require("node:fs");
 const { join } = require("node:path");
 
