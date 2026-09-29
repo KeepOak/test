@@ -89,11 +89,13 @@ function helperPermissions(runtime: Runtime, runId: string): string[] {
  */
 async function resumeHelper(runtime: Runtime, helper: string, text: string, minutes: number, context: ToolContext) {
   const run = runtime.store.run(helper)!;
+  // helper-lifecycle: a helper its lead let hand work on keeps that leave when it carries on.
+  const delegates = runtime.store.events(helper).find((event) => event.kind === "run.started")?.data.delegates === true;
   const permissions = helperPermissions(runtime, helper).filter((permission) => context.permissions.has(permission));
   const prompt = `Message from your lead (the task that started you). Carry on from where you stopped:
 ${text}`;
   const started = await runtime.delegateBackground(prompt, context, permissions, helperInstructions,
-    { timeoutMs: minutes * 60_000, sessionId: run.sessionId, tellsLead: true });
+    { timeoutMs: minutes * 60_000, sessionId: run.sessionId, tellsLead: true, ...(delegates ? { delegates: true } : {}) });
   runtime.store.event(context.runId, "delegation.helper_resumed", { childRunId: started.childRunId, from: helper });
   return { resumed: true, helper: started.childRunId, from: helper, note: "It carries on in its own conversation; you are told when it finishes." };
 }

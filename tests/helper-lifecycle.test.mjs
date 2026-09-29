@@ -10,6 +10,9 @@
  * - src/runtime.ts delegateBackground: drop the `reserve` refusal and the third helper starts.
  * - src/helper-messages.ts helpers.start: use `[...context.permissions]` again and the helper has user.ask.
  * - src/runtime.ts cancel: drop the descendants loop and the helpers outlive their stopped lead.
+ * - src/runtime.ts visibleTools: list registry.descriptions(context.permissions) again and a helper is shown fleet.send.
+ * - src/helper-messages.ts resumeHelper: drop `delegates` and the helper carried on loses its leave.
+ * - src/runtime.ts started: drop `this.carriedHelper(options)` and a helper resumed after a restart starts helpers.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -20,6 +23,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import { createBranch } from "../dist/index.js";
 import { saveKnobs } from "../dist/knobs/settings.js";
 import { HANDLERS } from "../dist/commands/handlers.js";
+import { handOnRefusal } from "../dist/helper-tree.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const say = (content) => ({ content, toolCalls: [] });
@@ -38,7 +42,15 @@ function scripted(seen) {
   return { name: "scripted", async complete(request) {
     const system = request.messages.filter((m) => m.role === "system").map((m) => String(m.content)).join("\n");
     const asked = firstUser(request), tools = toolTexts(request);
+    if (/RESUMABLE/.test(asked)) {
+      // Its first run finishes; carried on after a restart, it tries to start a helper of its own.
+      if (!tools.length && !seen.resumed) { seen.resumed = true; return say("first run done"); }
+      if (!tools.length) return call("helpers.start", { brief: "HOLD never", minutes: 5 });
+      seen.resumedNest = tools.at(-1);
+      return say("could not nest after the restart");
+    }
     if (/You are a helper working in the background/.test(system)) {
+      (seen.helperTools ??= []).push(...(request.tools ?? []).map((tool) => tool.name));
       if (/NESTED/.test(asked) && !tools.length) return call("helpers.start", { brief: "HOLD grandchild", minutes: 5 });
       if (/TRY-NEST/.test(asked)) {
         if (!tools.length) return call("helpers.start", { brief: "HOLD never", minutes: 5 });
@@ -59,6 +71,8 @@ function scripted(seen) {
     if (/NAMED/.test(asked)) return call("helpers.start", { brief: "plain", minutes: 5, permissions: ["files.read", "user.ask", "specialists.use"] });
     if (/TREE/.test(asked)) return call("helpers.start", { brief: "NESTED", minutes: 5, delegates: true });
     if (/AFRESH/.test(asked)) return call("helpers.start", { brief: "HOLD afresh", minutes: 5 });
+    if (/LEAVE/.test(asked)) return call("helpers.start", { brief: "quick", minutes: 5, delegates: true });
+    if (/RESTART/.test(asked)) return call("helpers.start", { brief: "RESUMABLE", minutes: 5 });
     return say("nothing to do");
   } };
 }
@@ -167,4 +181,50 @@ test("stopping a lead stops its helper tree, and starting afresh stops a convers
     sessionId: afresh.sessionId, access: "full", mode: "full" });
   assert.equal(reply.client.do, "new");
   assert.ok(await until(() => app.store.run(left).status === "cancelled"), app.store.run(left).status);
+});
+
+test("a helper is not shown the hand-on tools it may not use", async (t) => {
+  const { app, seen, lead, helpersOf } = await fixture(t);
+  const run = await lead("PERMS: one helper with the default tools");
+  const [helper] = helpersOf(run.id);
+  assert.ok(await until(() => app.store.run(helper).status === "completed"));
+  const handOn = ["helpers.start", "fleet.send", "trunks.remote.message"];
+  assert.ok(seen.helperTools.length, "the helper was shown tools");
+  assert.deepEqual(handOn.filter((name) => seen.helperTools.includes(name)), [], "never offered to it");
+  // What the lead is shown of them (fleet.send and trunks.remote.message only where those parts are set up), a helper
+  // is shown none of, unless its lead let it hand work on.
+  const reach = app.runtime.context({ runId: run.id });
+  const names = (context) => app.runtime.visibleTools(context).map((tool) => tool.name);
+  const leads = handOn.filter((name) => names(reach).includes(name));
+  assert.ok(leads.includes("helpers.start"), `a lead sees helpers.start: ${leads}`);
+  assert.deepEqual(handOn.filter((name) => names({ ...reach, depth: 1 }).includes(name)), [], "a helper sees none");
+  assert.deepEqual(handOn.filter((name) => names({ ...reach, depth: 1, delegates: true }).includes(name)), leads, "one allowed sees what its lead does");
+  assert.deepEqual(handOn.map((name) => handOnRefusal(name, { depth: 1 }) !== null), [true, true, true], "and none of the three runs for it");
+});
+
+test("a helper allowed to hand work on keeps that leave when its lead carries it on", async (t) => {
+  const { app, lead, helpersOf, started } = await fixture(t);
+  const run = await lead("LEAVE: a helper that may start its own");
+  const [helper] = helpersOf(run.id);
+  assert.ok(await until(() => app.store.run(helper).status === "completed"));
+  assert.equal(started(helper).delegates, true, "its start says so");
+  const resumed = await app.registry.execute("helpers.message", { helper, text: "one more thing" }, app.runtime.context({ runId: run.id }));
+  assert.equal(resumed.resumed, true);
+  assert.equal(started(resumed.helper).delegates, true, "carried on with the same leave");
+  assert.equal(started(resumed.helper).depth, 1);
+  assert.ok(await until(() => app.store.run(resumed.helper).status === "completed"));
+});
+
+test("a helper carried on after a restart keeps its depth, so it still starts no helpers of its own", async (t) => {
+  const { app, seen, lead, helpersOf, started } = await fixture(t);
+  const run = await lead("RESTART: a helper that is cut off");
+  const [helper] = helpersOf(run.id);
+  assert.ok(await until(() => app.store.run(helper).status === "completed"));
+  assert.equal(started(helper).depth, 1);
+  app.store.sqlite.prepare("UPDATE tasks SET status='interrupted' WHERE id=?").run(helper);
+  const again = await app.runtime.resume(helper);
+  assert.equal(again.status, "completed", again.output);
+  assert.equal(started(again.id).depth, 1, "the carried-on task works at its helper depth");
+  assert.match(seen.resumedNest, /does not start helpers or message other Branches and Trunks unless its lead allowed it/);
+  assert.equal(helpersOf(again.id).length, 0, "no grandchild");
 });

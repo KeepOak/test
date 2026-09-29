@@ -155,7 +155,7 @@ import { loadWords, type Words } from "./terminal-words.js"; // the workspace's 
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
 import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
-import { HelperTree, mayHandOn, nestedHelperRefusal } from "./helper-tree.js"; // helper-lifecycle
+import { HelperTree, handOnRefusal, mayHandOn, nestedHelperRefusal } from "./helper-tree.js"; // helper-lifecycle
 import { helperParent } from "./helper-control.js"; // helper-lifecycle
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
@@ -901,6 +901,8 @@ export class Runtime {
       allowProjectTests?: boolean;
       /** FQ-routing.isolated-agents: the agent executing this context, for scope-aware memory and fact writes. */
       agent?: string;
+      /** helper-lifecycle: a helper carried on keeps its lead's leave to hand work on (src/helper-tree.ts). */
+      delegates?: boolean;
     } = {},
   ): ToolContext {
     // FQ-routing.isolated-agents: work a Trunk set going (a workflow or flow step, a procedure it replays)
@@ -923,6 +925,7 @@ export class Runtime {
       ...(options.unattended ? { unattended: true } : {}),
       ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
       ...(options.agent ? { agent: options.agent } : {}),
+      ...(options.delegates ? { delegates: true } : {}),
       ...(trunkWork ? { trunk: trunkWork } : {}),
       // Q123 (NAS 24f2b9c): and with that Trunk's keys, so every guard that knows a Trunk by them (a saved sign-in
       // filled, Branch removed, a program installed, a sign-in connection) knows its work too, not only its turn.
@@ -1769,6 +1772,7 @@ ${run.output.slice(0, 6000)}`;
           ...(options.source ? { source: options.source } : {}),
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
+          ...this.carriedHelper(options), // helper-lifecycle
         }), trunk);
     // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
     // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
@@ -1824,6 +1828,9 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
+      ...(context.depth ? { depth: context.depth } : {}),
+      ...(context.delegates ? { delegates: true } : {}),
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
       ...(context.dryRun ? { dryRun: true } : {}),
       ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
@@ -3322,7 +3329,7 @@ ${run.output.slice(0, 6000)}`;
    * in a toolbox for anything else (a web page's cookie wall included).
    */
   private offered(run: Run, context: ToolContext): ToolDescription[] {
-    const tools = this.registry.descriptions(context.permissions);
+    const tools = this.visibleTools(context);
     if (this.screenWanted(run, context)) return tools;
     return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name), this.registry.declaresScreen(tool.name)));
   }
@@ -3414,7 +3421,22 @@ ${run.output.slice(0, 6000)}`;
    */
   private toolsFor(context: ToolContext): ToolDescription[] {
     if (!context.permissions.size) return [];
-    return this.catalogs.get(context.runId)?.descriptions() ?? this.registry.descriptions(context.permissions);
+    return this.catalogs.get(context.runId)?.descriptions() ?? this.visibleTools(context);
+  }
+  /** helper-lifecycle: the tools this task may use, less those a helper may not hand work on with (src/helper-tree.ts). */
+  private visibleTools(context: ToolContext): ToolDescription[] {
+    return this.registry.descriptions(context.permissions).filter((tool) => !handOnRefusal(tool.name, context));
+  }
+  /**
+   * helper-lifecycle: a helper carried on after a question or a restart runs with no lead's context in hand, so it keeps
+   * the depth and the leave to hand work on that its first start recorded (an older record: depth 1 when it had a lead).
+   */
+  private carriedHelper(options: RunOptions): { depth?: number; delegates?: boolean } {
+    const from = options.continuing?.runId ?? options.resumeFrom;
+    const started = from ? this.store.events(from).find((event) => event.kind === "run.started")?.data : undefined;
+    if (!started) return {};
+    const depth = Number.isInteger(started.depth) ? Number(started.depth) : typeof started.parentRunId === "string" ? 1 : 0;
+    return { ...(depth > 0 ? { depth } : {}), ...(started.delegates === true ? { delegates: true } : {}) };
   }
   /** What this round costs and what is left, so compaction can be decided on the conversation alone. */
   private budgetOf(messages: Message[], context: ToolContext, preset?: ModelPreset): ContextBudget {
