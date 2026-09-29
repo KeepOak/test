@@ -139,10 +139,10 @@ function happened(): Record<string, Pair> {
 
 /** One of a kind: its measure's last part names it. */
 const flags: Record<string, [string, string]> = {
-  "acorn-shown": ["Hüter der Eichel", "Die Eichel in der Ecke anzeigen."],
-  "acorn-turned": ["Eichelkreisel", "Die Eichel durch Ziehen drehen."],
+  "acorn-shown": ["Hüter des Baums", "Den Baum am Fuß der Liste behalten."],
+  "acorn-turned": ["Wechsel der Jahreszeit", "Die Jahreszeit hinter dem Glas selbst wechseln."],
   still: ["Stillleben", "„Alles ruhig halten“ einschalten."],
-  everything: ["Alles, überall", "„Alles zeigen“ einschalten."],
+  everything: ["Alles, überall", "Unter „Wie viel angezeigt wird“ „Technisch“ wählen."],
   "follow-system": ["Der Sonne folgen", "Branch dem hellen oder dunklen Modus deines Computers folgen lassen."],
   language: ["Mehrsprachig", "Die Sprache wechseln."],
   "pet-named": ["Namensschild", "Deinem Haustier einen Namen geben."],
