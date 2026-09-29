@@ -191,7 +191,7 @@ interface McpVerdict {
   tooMany: string;
 }
 
-/** A resource only shows up when the owner's approval settings would allow the matching tool. */
+/** A resource only shows up when the owner shares the matching tool and the approval settings allow it. */
 interface ResourceScope { uri: string; name: string; description: string; mimeType: string; tool: string; permission: string }
 const scopedResources: readonly ResourceScope[] = [
   { uri: 'memory://facts', name: 'Memory facts', description: 'What Branch remembers', mimeType: 'application/json',
@@ -305,10 +305,22 @@ export class McpServer {
       try { listener({ jsonrpc: '2.0', method, params }); } catch { /* a broken stream never breaks a call */ }
   }
 
-  /** Tells whoever asked to be told that a resource has new contents. */
+  /**
+   * Tells whoever asked to be told that a resource has new contents, while that resource is one the
+   * connection may read. Checked when the news goes out, so a change to what is shared counts at once.
+   */
   publishResourceUpdate(uri: string): void {
-    for (const session of this.sessions.values())
-      if (session.subscriptions.has(uri)) this.notifySession(session, 'notifications/resources/updated', { uri });
+    const subscribed = [...this.sessions.values()].filter((session) => session.subscriptions.has(uri));
+    if (!subscribed.length || !this.mayWatch(uri)) return;
+    for (const session of subscribed) this.notifySession(session, 'notifications/resources/updated', { uri });
+  }
+
+  /** Whether the resource at this address is one this connection may read right now. */
+  private mayWatch(uri: string): boolean {
+    if (uri === hiddenToolsUri) return true;
+    const scope = scopedResources.find((entry) => entry.uri === uri);
+    if (scope) return this.mayRead(scope);
+    return /^(?:runs?|conversation):\/\//.test(uri) && this.mayRead(historyScope);
   }
 
   /** What the owner is sharing right now; read fresh so a settings change takes effect at once. */
@@ -679,12 +691,17 @@ export class McpServer {
     };
   }
 
-  /** Whether the owner's settings would let this connection read a resource of that kind. */
+  /**
+   * Whether this connection may read a resource of that kind: only when the owner shares the
+   * matching tool and the approval settings let it run without asking. A read has no place to wait
+   * for the owner's yes, so "ask" does not count.
+   */
   private mayRead(scope: { tool: string; permission: string }): boolean {
+    if (!this.exposed().has(scope.tool)) return false;
     const policy = cappedPolicy(readPolicy(this.store, this.runtime.owner), 'mcp');
     const { decision } = evaluatePolicy(policy,
       { tool: scope.tool, target: '', readOnly: isReadOnlyPermission(scope.permission) });
-    return decision !== 'deny';
+    return decision === 'allow';
   }
 
   private listResources(): unknown[] {
