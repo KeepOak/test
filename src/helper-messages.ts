@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
 import { HelperSelectionSchema, helperRouteTarget } from "./delegation.js";
 import { helperParent } from "./helper-control.js";
+import { defaultHelperPermissions } from "./helper-tree.js"; // helper-lifecycle
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 
@@ -59,8 +60,11 @@ export function tellTask(runtime: Runtime, to: string, from: string, text: strin
 export const StartHelperSchema = HelperSelectionSchema.extend({
   /** Everything the helper needs to know: it sees nothing of this conversation. */
   brief: z.string().trim().min(1).max(8000),
-  /** Only some of this task's tools; all of them when left out. */
+  /** Only some of this task's tools. Left out, all of them except sending to people, asking the owner and scheduling
+   *  work (src/helper-tree.ts helperWithheldPermissions); name one here to give it. */
   permissions: z.array(z.string().min(1).max(100)).max(200).optional(),
+  /** helper-lifecycle: let this helper start helpers of its own and message other Branches and Trunks; off by default. */
+  delegates: z.boolean().default(false),
   /** How long it may work, in minutes (1 to 120). */
   minutes: z.number().int().min(1).max(120).default(30),
   /** SELF-302: work in its own copy of the project (a git worktree), so helpers started together never edit the same files. The copy is removed when it holds nothing; one with work in it is kept and named. */
@@ -107,14 +111,14 @@ function resumedFrom(runtime: Runtime, lead: string, helper: string): string | u
 export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime): void {
   registry.register({
     name: "helpers.start", permission: "specialists.use", group: "agents",
-    description: "Start a helper that works on a brief in the background while you carry on, with some or all of your tools, on a chosen model or account, and (ownCopy) in its own copy of the project so helpers started together never touch the same files. Start several at once for parallel work. You are told when each finishes; message it with helpers.message while it works.",
+    description: "Start a helper that works on a brief in the background while you carry on, with some or all of your tools (by default all but sending messages, asking the owner and scheduling work), on a chosen model or account, and (ownCopy) in its own copy of the project so helpers started together never touch the same files. Start several at once for parallel work. You are told when each finishes; message it with helpers.message while it works.",
     parameters: StartHelperSchema,
     // The rules judge the exact model and account a helper is sent to, as for every other hand-off.
     target: (a) => helperRouteTarget([{ specialist: "helper", ...(a.model ? { model: a.model } : {}), ...(a.accountRef ? { accountRef: a.accountRef } : {}) }]),
     execute: async (input, context: ToolContext) => {
-      const permissions = input.permissions ?? [...context.permissions];
+      const permissions = input.permissions ?? defaultHelperPermissions(context.permissions);
       const started = await runtime.delegateBackground(input.brief, context, permissions, helperInstructions,
-        { timeoutMs: input.minutes * 60_000, tellsLead: true, ownCopy: input.ownCopy === true, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
+        { timeoutMs: input.minutes * 60_000, tellsLead: true, ownCopy: input.ownCopy === true, delegates: input.delegates === true, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
       return { helper: started.childRunId, minutes: input.minutes, note: "It works in the background; you are told when it finishes." };
     },
   });
@@ -137,7 +141,7 @@ export function registerHelperMessages(registry: ToolRegistry, runtime: Runtime)
   });
   registry.register({
     name: "helpers.stop", permission: "specialists.use", group: "agents",
-    description: "Stop a helper this conversation started. What it did so far is kept; message it later with helpers.message to carry it on.",
+    description: "Stop a helper this conversation started, and any helpers it started. What it did so far is kept; message it later with helpers.message to carry it on.",
     parameters: z.object({ helper: z.string().uuid() }).strict(),
     execute: async (input, context: ToolContext) => {
       if (!startedBy(runtime, input.helper, context.runId)) throw new Error("There is no helper with that number started in this conversation.");

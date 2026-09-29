@@ -155,6 +155,7 @@ import { loadWords, type Words } from "./terminal-words.js"; // the workspace's 
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
 import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
+import { HelperTree, mayHandOn, nestedHelperRefusal } from "./helper-tree.js"; // helper-lifecycle
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -226,7 +227,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** workbench (SELF-302): the helper works in its own copy of the project (a git worktree). */ ownCopy?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** workbench (SELF-302): the helper works in its own copy of the project (a git worktree). */ ownCopy?: boolean; /** helper-lifecycle: the helper may start helpers of its own (src/helper-tree.ts). */ delegates?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -581,6 +582,8 @@ export interface RunOptions {
   timeoutMs?: number;
   budget?: BudgetOptions;
   onStarted?: (run: Run) => void;
+  /** helper-lifecycle: the task exists and its start is written, before any slow setup (its own copy of the project). */
+  onCreated?: (run: Run) => void;
   onTextDelta?: (text: string) => void;
   /** FQ-surfaces: the id of the user message this run saved, for playback clip matching. */
   onUserMessageId?: (id: number) => void;
@@ -678,6 +681,9 @@ export const lockdownStandingYes = "Lockdown is on, so a yes cannot be kept for 
 const ownerSources = new Set(["owner", "schedule", "trigger"]);
 export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOwner() && !startedWithShortLivedKey();
 
+/** helper-lifecycle: a background helper not created within this long is stopped and reported as not started. */
+const helperStartMs = 30_000;
+const helperNotStarted = "The background specialist did not start";
 export class Runtime {
   private readonly controllers = new Map<string, AbortController>();
   /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
@@ -690,6 +696,8 @@ export class Runtime {
    */
   private readonly replyCeilings = new Map<string, number>();
   private readonly children = new Map<string, number>();
+  /** helper-lifecycle: which live task started which, and background helpers at once (src/helper-tree.ts). */
+  private readonly helperTree = new HelperTree();
   private readonly helperModels = new Map<string, ModelPreset>();
   /** Accounts owns final authorization and binds an immutable provider without changing defaults. */
   resolveHelperModel = async (preset: ModelPreset, accountRef: HelperSelection["accountRef"], _parentSessionId: string): Promise<HelperConnection> => {
@@ -928,7 +936,29 @@ export class Runtime {
   cancel(id: string): boolean {
     const controller = this.controllers.get(id);
     controller?.abort(new Error("Cancelled by user"));
-    return !!controller;
+    // helper-lifecycle: a stop reaches every helper this task started, and theirs, even after the task itself ended.
+    let stopped = !!controller;
+    for (const child of this.helperTree.descendants(id)) {
+      const working = this.controllers.get(child);
+      if (working && !working.signal.aborted) { working.abort(new Error("Stopped with the task that started it")); stopped = true; }
+    }
+    return stopped;
+  }
+  /** helper-lifecycle: a child task joins its parent's tree; one started after its parent was stopped stops at once. */
+  private adoptChild(parentId: string, runId: string, controller: AbortController): void {
+    this.helperTree.adopt(parentId, runId);
+    if (this.controllers.get(parentId)?.signal.aborted) controller.abort(new Error("Stopped with the task that started it"));
+  }
+  /** helper-lifecycle: /new and reset stop the helpers a conversation's tasks started, and theirs; answers how many. */
+  stopHelpers(sessionId: string): number {
+    let stopped = 0;
+    for (const lead of this.helperTree.parents())
+      if (this.store.run(lead)?.sessionId === sessionId)
+        for (const helper of this.helperTree.descendants(lead)) {
+          const working = this.controllers.get(helper);
+          if (working && !working.signal.aborted) { working.abort(new Error("Stopped: its conversation started afresh")); stopped++; }
+        }
+    return stopped;
   }
   /**
    * long-work: the owner's Pause. The task stops after the step it is on (a wait for a limit or a connection ends at
@@ -1083,35 +1113,73 @@ export class Runtime {
    */
   async delegateBackground(prompt: string, parent: ToolContext, permissions: string[], instructions: string, options: DelegateOptions = {}): Promise<{ childRunId: string; sessionId: string }> {
     if (parent.depth >= 3) throw new Error("Delegation depth limit reached");
+    // helper-lifecycle: a helper starts no helpers of its own unless its lead let it (src/helper-tree.ts).
+    if (!mayHandOn(parent)) throw new Error(nestedHelperRefusal);
     if (permissions.some((p) => !parent.permissions.has(p))) throw new Error("Delegation permission escalation denied");
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
-    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1, ownCopy: options.ownCopy === true,
-      budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
     // workbench (SELF-303): only a helper's own conversation (one with a pinned helper route) is carried on in, and only
     // on the model and account it was pinned to, so a lead cannot pour a helper into any other conversation.
     const resumed = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
     if (options.sessionId && !resumed) throw new Error("That conversation is not a helper's own, so it cannot be carried on as one.");
-    const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
-    context.signal.throwIfAborted();
-    let started: Run | undefined;
-    const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
-    void startedAt;
-    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.sessionId ? { sessionId: options.sessionId } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    parent.signal.throwIfAborted();
+    // helper-lifecycle: no more background helpers at once in a conversation than its sub-tasks at once; the place is
+    // reserved before anything is awaited, so helpers asked for in one step cannot all pass the check.
+    const home = this.helperTree.homeFor(parent.runId, this.store.run(parent.runId)?.sessionId ?? parent.runId);
+    const release = this.helperTree.reserve(home, sub.atOnce);
+    if (!release) throw new Error(`Helper limit reached: ${sub.atOnce} helpers already work at once in this conversation. Wait for one to finish, or stop one, and start it then.`);
+    // helper-lifecycle: stopping the helper before it exists (its lead stopped, or it never started) stops it all the same.
+    const stop = new AbortController();
+    const context = { ...parent, signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), stop.signal]), permissions: new Set(permissions), depth: parent.depth + 1,
+      ownCopy: options.ownCopy === true, delegates: options.delegates === true,
+      budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    try {
+      const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
+      context.signal.throwIfAborted();
+      parent.signal.throwIfAborted(); // helper-lifecycle: a lead stopped while its helper's connection was chosen starts none
+      return await this.startHelper(prompt, parent, context, instructions, connection, options, { home, release, stop });
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+  /**
+   * helper-lifecycle: the background helper exists, is in its lead's tree and is on the lead's record (so helpers.list
+   * and helpers.stop reach it) as soon as its task is created, before any slow setup such as its own copy of the project.
+   * One that does not start in time is stopped rather than left running where nothing can see it.
+   */
+  private async startHelper(prompt: string, parent: ToolContext, context: ToolContext, instructions: string, connection: HelperConnection,
+    options: DelegateOptions, held: { home: string; release: () => void; stop: AbortController }): Promise<{ childRunId: string; sessionId: string }> {
+    let created!: (run: Run) => void;
+    const exists = new Promise<Run>((resolve) => { created = resolve; });
+    const onCreated = (run: Run) => {
+      this.helperTree.setHome(run.id, held.home);
+      this.store.event(parent.runId, "delegation.background_started", { childRunId: run.id, prompt: prompt.slice(0, 200), sessionId: run.sessionId });
+      created(run);
+    };
+    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onCreated, ...(options.sessionId ? { sessionId: options.sessionId } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    void child.then(held.release, held.release);
     void child.then((run) => {
       const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
         ...(options.tellsLead ? { tellsLead: true } : {}) };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
-      if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
+      this.store.event(parent.runId, "delegation.background_finished", { ...result });
       try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
     }, () => undefined);
-    for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
-    if (!started) throw new Error("The background specialist did not start");
-    if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200), sessionId: started.sessionId });
-    return { childRunId: started.id, sessionId: started.sessionId };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(helperNotStarted)), helperStartMs); });
+    try {
+      const run = await Promise.race([exists, child.then(() => { throw new Error(helperNotStarted); }), late]);
+      return { childRunId: run.id, sessionId: run.sessionId };
+    } catch (error) {
+      held.stop.abort(error);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
   /**
    * Continues a task that was interrupted (for example by a restart) from its saved transcript.
@@ -1676,6 +1744,7 @@ ${run.output.slice(0, 6000)}`;
     const controller = new AbortController();
     this.controllers.set(run.id, controller);
     this.activeSessions.add(run.sessionId);
+    if (parent?.runId) this.adoptChild(parent.runId, run.id, controller); // helper-lifecycle
     if (!parent) this.restoreCarried(run);
     // Answering a question resumes this same task with the time it originally received, as resume() does.
     const carriedDeadline = options.continuing
@@ -1759,6 +1828,7 @@ ${run.output.slice(0, 6000)}`;
       ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
+    options.onCreated?.(run); // helper-lifecycle: before placeTask, which may take a while (git worktree add)
     // ── mac2/fly-core: the learning core ranks what worked before as the task starts, and learns from
     // the outcome once it has settled (src/fly-core/hook.ts). Advice only; it never fails a task. ──
     // P17-D §3: a learning task's conversation is sealed: nothing of the owner's goes in, and nothing it read is learned from.
@@ -2133,6 +2203,7 @@ ${run.output.slice(0, 6000)}`;
       output = `Run cleanup failed: ${errorText(error)}. Work result before cleanup: ${output}`;
     } finally {
       this.controllers.delete(run.id);
+      this.helperTree.release(run.id); // helper-lifecycle
       this.pausing.delete(run.id); // long-work
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
