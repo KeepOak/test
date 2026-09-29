@@ -52,7 +52,10 @@ async function send(page, words) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function scrollUp(page) {
-  const box = await page.locator("#scroll").boundingBox();
+  // The scroll box may be drawn anew as the window's own reads arrive (a Trunk's earlier conversation joining the
+  // timeline, trunk-one-row), which takes it away for a moment: it is measured once it is back.
+  let box = null;
+  for (let tries = 0; tries < 50 && !box; tries++) box = await page.locator("#scroll").boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
   for (let i = 0; i < 20 && await top(page) > 0; i += 1) await page.mouse.wheel(0, -2000);
 }
