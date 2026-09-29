@@ -305,8 +305,19 @@ test("a caret put in the box after a new conversation's first answer shows stays
   await prompt.fill("Say hello");
   await page.locator("#send").click();
   await page.waitForFunction(() => document.getElementById("conversation")?.textContent.includes("Done."), undefined, { timeout: 20_000 });
-  await prompt.fill("a half-typed thought");
-  await prompt.evaluate((node) => { node.focus(); node.setSelectionRange(2, 6); });
+  /* Typed and the caret put in one step on the page, each on the box drawn at that moment. The box is drawn again while
+     the window reads what the task left, and typing can draw it again (Stop turns back into Send), so a box found
+     first and changed later can be one no longer on the page (CI: the caret went to a replaced box, and the live one
+     kept the end of the words, 20). */
+  await page.evaluate(() => {
+    const typed = document.getElementById("prompt");
+    typed.focus();
+    typed.value = "a half-typed thought";
+    typed.dispatchEvent(new Event("input", { bubbles: true }));
+    const box = document.getElementById("prompt");
+    box.focus();
+    box.setSelectionRange(2, 6);
+  });
   await answered; // the held read is answered; the window then reads the picture and the extras, and its send ends
   await page.waitForTimeout(1500);
   assert.deepEqual(
