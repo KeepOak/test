@@ -10418,5 +10418,19 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "seasons.settings-title": "Apprentissage nocturne de Seasons",
+  "seasons.settings-rings": "Mémoire nocturne de Rings",
+  "seasons.settings-gardener": "Amélioration des compétences du Gardener",
+  "seasons.settings-from": "Heure de début de la nuit",
+  "seasons.settings-to": "Heure de fin de la nuit",
+  "seasons.settings-idle": "Minutes d’inactivité avant d’apprendre",
+  "seasons.settings-paid": "Utiliser des modèles payants la nuit",
+  "seasons.settings-gain": "Gain minimal en points de pourcentage",
+  "seasons.settings-rings-hint": "Apprendre des tâches terminées pendant la période nocturne calme.",
+  "seasons.settings-gardener-hint": "Adopter une compétence seulement si la répétition des tâches prouve un gain.",
+  "seasons.settings-hours-hint": "Heures locales du début à la fin. La période peut traverser minuit.",
+  "seasons.settings-idle-hint": "Attendre ces minutes d’inactivité. S’arrête entre les étapes à la reprise du travail.",
+  "seasons.settings-paid-hint": "Désactivé utilise des modèles locaux ou un abonnement. Activé autorise aussi les connexions facturées par appel.",
+  "seasons.settings-gain-hint": "Points de pourcentage entiers de gain mesuré nécessaires pour adopter une compétence."
 }
