@@ -6,7 +6,9 @@ import { z } from "zod";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
 import { startCall } from "../windows-command.js";
+import { assertRealAgentAllowed } from "./real-agent-guard.js"; // owner-dm-signin: never the real program from a test
 import { codexDefaultModel, codexVerified, codexModelsFor, type CodexModels, type CodexProbe, type CodexTry } from "../codex-models.js";
+import { closeWarmCodex, startCodexAppServer, warmCodexTurn, type StartAppServer } from "../asks/codex-app-server.js";
 import { claudeSubscriptionModels } from "./claude-models.js";
 
 /**
@@ -130,6 +132,8 @@ export function codexArgs(args: readonly string[], model: string, workDir: strin
   const where = workDir ? ["-C", workDir, "--skip-git-repo-check"] : [];
   return at < 0 ? [...args] : [...args.slice(0, at + 1), "-c", `model=${model}`, ...where, ...args.slice(at + 1)];
 }
+/** Codex programs found to have no app-server this run; they answer through exec. */
+const noAppServer = new Set<string>();
 /** OpenAI's own `codex` program as Branch knows it (not a command the owner typed), which alone gets Branch's folder. */
 const ownCodex = (row: CliAgentRow): boolean => row.id === "codex" && row.command === "codex";
 /** Branch's own working folder for Codex: empty, private to this user, made on first use. */
@@ -290,6 +294,7 @@ function holdOpen(child: Child, hold: boolean): void {
 const spares = new Map<string, { child: Child; exited: boolean; timer: ReturnType<typeof setTimeout> }>();
 export const spareIdleMs = 30 * 60_000;
 function startProgram(row: CliAgentRow, env: NodeJS.ProcessEnv): Child {
+  assertRealAgentAllowed(row.command, env);
   // An npm-installed program is a .cmd launcher on Windows, which cannot be started without a shell (src/windows-command.ts).
   const start = startCall(row.command, row.args, env);
   return spawn(start.command, start.args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false, env });
@@ -317,6 +322,7 @@ function prepareSpare(key: string, row: CliAgentRow, env: NodeJS.ProcessEnv): vo
 }
 /** Stops every program started ahead of time (Branch closing). */
 export function closeSpareAgents(): void {
+  closeWarmCodex(); // QA 2026-09-28: the warm Codex app-servers too
   for (const [key, spare] of spares) { clearTimeout(spare.timer); spare.child.kill(); spares.delete(key); }
 }
 
@@ -393,6 +399,11 @@ export class CliAgentProvider implements Provider {
   model?: string;
   /** Codex's choice and which models it takes (src/codex-models.ts), shared by every account of the connection. */
   codexModels: CodexModels | null = null;
+  /**
+   * QA 2026-09-28: Codex answers word by word over its app-server protocol (src/asks/codex-app-server.ts); `codex exec`
+   * only hands the whole answer back at the end. Null keeps exec. A Codex without app-server falls back to exec.
+   */
+  appServer: StartAppServer | null = null;
   constructor(
     private readonly row: CliAgentRow,
     limits: CliAgentLimits = {},
@@ -402,9 +413,14 @@ export class CliAgentProvider implements Provider {
   ) {
     this.name = `${cliAgentShape}:${row.id}`;
     this.limits = { timeoutMs: limits.timeoutMs ?? 180_000, maxOutputChars: limits.maxOutputChars ?? 200_000, firstOutputMs: limits.firstOutputMs ?? 60_000 };
+    if (ownCodex(row) && spawnAgent === runCliAgent) this.appServer = startCodexAppServer;
   }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
+    if (this.appServer && this.row.id === "codex" && !noAppServer.has(this.row.command)) {
+      const streamed = await this.viaAppServer(request, this.appServer);
+      if (streamed) return streamed;
+    }
     const row = this.withModel(this.rowFor(request));
     // A new Codex may take models the last one refused: checked in the background, never on the owner's time.
     if (this.row.id === "codex" && this.codexModels && this.spawnAgent === runCliAgent) this.codexModels.refreshIfUpdated(this.probe());
@@ -452,6 +468,25 @@ export class CliAgentProvider implements Provider {
     return { ...this.row, args: [...this.row.args, ...lean, "--tools", ""] };
   }
   /** Codex's chosen model, refused in plain words before the program starts when Codex cannot use it with a ChatGPT sign-in. */
+  /**
+   * One turn over Codex's app-server, its words streamed as they come. Null when this Codex has no app-server (it exits
+   * before the handshake), which is remembered so later calls go straight to exec. Codex's own failure is said as exec's is.
+   */
+  private async viaAppServer(request: CompletionRequest, start: StartAppServer): Promise<Completion | null> {
+    const model = this.codexModel();
+    const env = this.home ? { ...strippedEnvironment(), [this.home.name]: this.home.path } : strippedEnvironment();
+    const thread = { model, ...(ownCodex(this.row) ? { cwd: codexWorkDir() } : {}), env, ...(this.home ? { home: this.home.path } : {}),
+      ...(this.limits.firstOutputMs ? { silenceMs: this.limits.firstOutputMs } : {}) };
+    try {
+      return await warmCodexTurn(this.row.command, start, request, thread, this.limits.timeoutMs);
+    } catch (error) {
+      if ((error as { appServerUnavailable?: boolean }).appServerUnavailable) { noAppServer.add(this.row.command); return null; }
+      const said = error instanceof Error ? error.message : String(error);
+      if (/said nothing at all|is not on this computer|took too long|request was stopped/.test(said)) throw error;
+      if ((this.home || this.detectLimits) && limitWords.test(said)) throw new ProgramLimitError(`${this.row.name} says this account has reached its plan limit.`);
+      throw new Error(programFailure(this.row, 1, said, model, this.codexOffered()));
+    }
+  }
   private codexOffered(): readonly string[] { return this.codexModels?.offered() ?? codexVerified; }
   private codexModel(): string {
     const model = this.model ?? this.codexModels?.chosen() ?? codexDefaultModel;

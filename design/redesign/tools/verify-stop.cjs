@@ -2,7 +2,7 @@
    button is Stop; typing gives Send back; Stop cancels the task (GET /api/runs/<id> says cancelled) and Send returns.
    Run: PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-stop.cjs. It sets approvals to "Ask before changes" and
    puts the owner's policy back at the end. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { PORT, TOKEN } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN"); process.exit(2); }
 const base = `http://127.0.0.1:${PORT}`;

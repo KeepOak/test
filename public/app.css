@@ -4516,3 +4516,19 @@ audio.docread18m{width:100%}
 /* area: a conversation with no Trunk (the mascot is the logo only): a neutral chat tile in rows, replies and quick-ask */
 .av.none18c{border-radius:30%;background:var(--fill-2);color:var(--ink-3)}
 .av.none18c>svg.i{width:56%;height:56%}
+
+/* trunk-one-row: a Trunk's one timeline (chat/trunkline.js): each conversation starts under a quiet line, with its own
+   menu (Rename, Archive, Delete) beside it on hover; older conversations sit in the thread as its own messages do */
+.tl-block19{display:contents}
+.tl-sep19{align-self:stretch;display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tl-sep19::before,.tl-sep19::after{content:"";flex:1;height:1px;background:var(--line)}
+.tl-sep19>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}
+.tl-mb19{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);opacity:0;flex:none}
+.tl-sep19:hover .tl-mb19,.tl-mb19:focus-visible,.tl-mb19[aria-expanded="true"]{opacity:1}
+.tl-mb19:hover{background:var(--fill-2);color:var(--ink)}
+@media (hover:none){.tl-mb19{opacity:1}}
+.tl-more19{height:1px;flex:none}
+.tl-past19{padding-bottom:0}
+.tl-past19+#conversation{padding-top:16px}
+#conversation:has(+.tl-after19){padding-bottom:0}
+.tl-after19{padding-top:16px}

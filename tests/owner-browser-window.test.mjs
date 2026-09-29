@@ -17,6 +17,7 @@ import { createBranch } from "../dist/index.js";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
 import { savePolicy } from "../dist/policy.js";
 import { saveComfort } from "../dist/comfort/settings.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 assert.equal(typeof chromium.launch, "function");
 
@@ -44,7 +45,7 @@ async function fixture(t, provider, pages = {}) {
   app.store.message(sid, { role: "assistant", content: "Ready." });
   t.after(async () => { await browser.close(); await app.close(); site.close(); await discardTemp(root); });
   const w = await newWindow(t, { app, root });
-  await w.page.locator(`[data-act="chat"][data-id="${sid}"]`).first().click();
+  await openChat(w.page, sid);
   await w.page.locator("#conversation .b").first().waitFor();
   /** The engine's own page behind the owner's active tab. */
   const enginePage = (index = 0) => {

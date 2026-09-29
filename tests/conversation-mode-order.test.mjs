@@ -90,7 +90,7 @@ const mixedPermissions = {
   "media.write": { local: ["media.convert","media.frames","media.image","media.speak","media.trim","voice.say"], outbound: ["media.download","video.generate"] },
   "skills.read": { local: ["environment.about","sdk.route","sdk.routes","sdk.starter","skills.list","skills.read","skills.usage","tools.services"], outbound: ["skills.bundle.preview"] },
   "skills.write": { local: ["tools.forget_service"], outbound: ["tools.from_openapi"] },
-  "specialists.use": { local: ["delegate.debate","delegate.handoff","delegate.parallel","delegate.route","delegate.supervise","delegate.swarm","helpers.list","helpers.message","helpers.start","helpers.stop","helpers.tell_lead","mode.task","specialists.delegate","specialists.fanout"], outbound: ["fleet.send","trunks.remote.message"] },
+  "specialists.use": { local: ["delegate.debate","delegate.handoff","delegate.parallel","delegate.route","delegate.supervise","delegate.swarm","delegate.teams","helpers.list","helpers.message","helpers.start","helpers.stop","helpers.tell_lead","mode.task","specialists.delegate","specialists.fanout"], outbound: ["fleet.send","trunks.remote.message"] },
   "specialists.read": { local: ["fleet.status","mode.list"], outbound: ["trunks.remote.roster"] },
   "monitors.manage": { local: ["monitor.remove","monitors.screen.check","monitors.screen.create"], outbound: ["monitor.check","monitor.create"] },
   "data.read": { local: ["data.chart","data.describe","data.query"], outbound: ["data.load"] },
