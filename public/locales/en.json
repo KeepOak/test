@@ -4657,7 +4657,7 @@
   "savings.mixtures.title": "Mixtures of models",
   "savings.note.aggregator": "This connection reads the others' answers and writes the one you see, with tools as usual.",
   "savings.note.allowFallbacks": "Off means a request fails rather than going to a company you did not list.",
-  "savings.note.classifierModel": "Pick a small, cheap model. Left as it is, the easy-task connection is asked.",
+  "savings.note.classifierModel": "Pick a small, cheap model. Left as it is, a model on this computer is asked when there is one, otherwise the easy-task connection.",
   "savings.note.dataCollection": "The stricter choice keeps requests away from companies that may store them or train on them.",
   "savings.note.difficultyMode": "When needed: it first looks at the task's length and tools, which is free, and asks the model only when that cannot tell.",
   "savings.note.easyModel": "Nothing is routed until both an easy and a hard connection are picked.",

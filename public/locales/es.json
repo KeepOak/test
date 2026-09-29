@@ -4657,7 +4657,7 @@
   "savings.mixtures.title": "Mezclas de modelos",
   "savings.note.aggregator": "Esta conexión lee las respuestas de las demás y escribe la que ves, con herramientas como siempre.",
   "savings.note.allowFallbacks": "Desactivado significa que una petición falla en lugar de ir a una empresa que no incluiste.",
-  "savings.note.classifierModel": "Elige un modelo pequeño y barato. Si lo dejas como está, se pregunta a la conexión de tareas fáciles.",
+  "savings.note.classifierModel": "Elige un modelo pequeño y barato. Si lo dejas como está, se pregunta a un modelo de este ordenador si hay uno y, si no, a la conexión de tareas fáciles.",
   "savings.note.dataCollection": "La opción más estricta mantiene las peticiones lejos de empresas que pueden guardarlas o entrenar con ellas.",
   "savings.note.difficultyMode": "Cuando haga falta: primero mira la longitud y las herramientas de la tarea, lo que es gratis, y solo pregunta al modelo cuando eso no basta.",
   "savings.note.easyModel": "No se reparte nada hasta que se elijan una conexión fácil y una difícil.",
