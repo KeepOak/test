@@ -8,7 +8,8 @@ import { z } from "zod";
 import { errorText, type ToolContext } from "../contracts.js";
 import { refuseAnyTrunk } from "../accounts/context.js";
 import { primaryAccount, savedAccountsSettings } from "../accounts/settings.js";
-import { accountHomeVariables, strippedEnvironment } from "../providers/cli-agent.js";
+import { accountHomeVariables, codexDefaultModel, strippedEnvironment } from "../providers/cli-agent.js"; // codexDefaultModel: QA 2026-09-28
+import { codexChosen, codexModelSettings } from "../codex-models.js";
 import type { ToolRegistry } from "../registry.js";
 import { globFits, worktreeOf, type ContractBook } from "../self-development-contract.js";
 import type { Store } from "../store.js";
@@ -72,7 +73,9 @@ export const claudeIsolation: readonly string[] = ["--setting-sources", "user", 
 
 export interface ProgramCall { command: string; args: string[]; cwd: string }
 export function programCall(program: HandOffProgram, folder: string, model?: string, effort?: string): ProgramCall {
-  const chosen = model ? ["--model", model] : [];
+  // QA 2026-09-28: Codex is always told its model, so the owner's own Codex settings never pick one its sign-in refuses.
+  const named = model ?? (program === "codex" ? codexDefaultModel : undefined);
+  const chosen = named ? ["--model", named] : [];
   if (program === "claude-code")
     return { command: "claude", cwd: folder, args: ["-p", "--output-format", "stream-json", "--verbose", ...chosen,
       ...(effort ? ["--effort", effort] : []),
@@ -420,7 +423,9 @@ export class HandOff {
     const onLine = (line: string): void => {
       if (shown++ < 200) this.deps.store.event(context.runId, "code.hand_off.step", { program: input.program, line: line.slice(0, 500) });
     };
-    const ran = await (this.deps.run ?? runProgram)(programCall(input.program, folder.absolute, input.model, input.effort), input.task, env,
+    // QA 2026-09-28: with no model named, Codex gets the one chosen in Settings › Models, never its own settings' pick.
+    const model = input.model ?? (input.program === "codex" ? codexChosen(codexModelSettings(this.deps.store, this.deps.owner)) : undefined);
+    const ran = await (this.deps.run ?? runProgram)(programCall(input.program, folder.absolute, model, input.effort), input.task, env,
       context.signal, input.minutes * 60_000, onLine);
     if (ran.missing) throw new Error(`"${programCall(input.program, folder.absolute).command}" is not installed on this computer.`);
     const report = input.program === "codex" ? readCodex(ran.lines) : readClaude(ran.lines);

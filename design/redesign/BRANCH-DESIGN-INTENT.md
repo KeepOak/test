@@ -6973,9 +6973,9 @@ How a patch works (so you can add pass 17 the same way):
   and the manifests in `assets/`. If that repo is missing, the data is still inside `branch-redesign.v12.html` and later builds.
 
 ### 9.3 The tests
-Tests are Node scripts using Playwright (the copy bundled with the installed Branch app:
-`C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright`; any Playwright works if you change
-that path). Each opens `branch-redesign.html` beside it headlessly and prints `NO ERRORS` or the failures. Run one with
+Tests are Node scripts using the repo's own Playwright (`require("playwright")`, from the `node_modules` that `npm ci`
+installs; never the copy inside an installed Branch app, which an update or an uninstall would take away;
+`tests/tools-repo-playwright.test.mjs` holds every script to that). Each opens `branch-redesign.html` beside it headlessly and prints `NO ERRORS` or the failures. Run one with
 `node check13.cjs`. The full suite, in order:
 | Test | What it proves |
 |---|---|

@@ -6,7 +6,7 @@
 // It removes the seeded assistant, so seed a fresh folder for each run.
 // Setup through the API (not window controls): Trunks and rooms switched on, two Trunks, a person on this computer, a
 // skill, a copy link to stop. Everything else is done by clicking the window.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("PORT and TOKEN are required"); process.exit(2); }

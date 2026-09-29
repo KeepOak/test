@@ -28,6 +28,8 @@ export interface PoolHooks {
   pool: string;
   /** The connection's name as the window shows it, for what a Trunk is told. */
   name?: string;
+  /** models-ui: a Trunk's work moved on to another account (told to the owner, src/accounts/service.ts trunkMoves). */
+  moved?: (move: TrunkMove) => void;
   model: string;
   /** The pool as saved now, or null when this connection has no list of its own. */
   settings: () => Pool | null;
@@ -51,6 +53,13 @@ export { trunkSignInRefusal };
 /* models-ui: named as the window names the connection, and pointing at the tab where the pick is made. */
 export const trunkKeyRefusal = (pool: string, name?: string): string =>
   `This Trunk does not copy your accounts and has no account picked for ${name || pool}. Pick one for it in Edit Trunk › Accounts.`;
+
+/** A Trunk's work moving from one account to another, as the owner is told it. */
+export interface TrunkMove { sessionId: string; pool: string; name: string; from: string; to: string; why: string; at: string }
+/** A Trunk's own accounts for a connection, in its order: its pick, then where it goes on to. */
+export function trunkOrder(keys: { accounts: Record<string, string>; next?: Record<string, string[]> | undefined }, pool: string): string[] {
+  return [...new Set([keys.accounts[pool], ...(keys.next?.[pool] ?? [])].filter((id): id is string => !!id))];
+}
 
 /** Every account of a list is switched off: where the owner switches one on again. */
 export const allSwitchedOff = "Every account of this connection is switched off. Switch one on in Settings › Accounts.";
@@ -129,9 +138,10 @@ export class AccountPoolProvider {
       return this.original.complete(request);
     }
     if (pool.kind !== "api-key" && call.trunk!.signIns !== true) throw new Error(trunkSignInRefusal);
-    const picked = call.trunk!.keys.accounts[pool.pool];
+    // models-ui: its pick, then the accounts it goes on to (keys.next), and the owner's others only when it copies them.
+    const own = trunkOrder(call.trunk!.keys, pool.pool);
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account)
-      && (call.trunk!.keys.copyFromOwner || account.id === picked));
+      && (call.trunk!.keys.copyFromOwner || own.includes(account.id)));
     if (!usable.length) throw new Error(trunkKeyRefusal(pool.pool, this.hooks.name));
     return this.answer(pool, usable, request, call);
   }
@@ -166,7 +176,11 @@ export class AccountPoolProvider {
     if (pool.strategy === "least-used" && pool.kind !== "api-key") return smartOrder(ready, this.hooks.states);
     // Fill first starts from the owner's pick; round robin and least used start from their own turn, a Trunk's pick aside.
     const first = pool.strategy === "priority" ? preferred : call?.trunk ? preferred : null;
-    return orderFor(pool.strategy, ready, this.hooks.states, this.hooks.cursor.value++, first);
+    const ordered = orderFor(pool.strategy, ready, this.hooks.states, this.hooks.cursor.value++, first);
+    // models-ui: a Trunk goes through its own accounts in its own order first, then (when it copies them) the owner's.
+    const own = call?.trunk ? trunkOrder(call.trunk.keys, pool.pool) : [];
+    const rank = (account: Account): number => { const at = own.indexOf(account.id); return at < 0 ? own.length : at; };
+    return own.length ? [...ordered].sort((a, b) => rank(a) - rank(b)) : ordered;
   }
 
   private async answer(pool: Pool, usable: Account[], request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
@@ -223,8 +237,12 @@ export class AccountPoolProvider {
     const limited = pool ? limitLike(failure, pool) : false;
     const until = limited ? state.limitedUntil : failure.kind === "rate" ? state.models.get(this.hooks.model) ?? failure.untilMs : failure.untilMs;
     const known = limited ? state.limitKnown === true : failure.kind === "rate";
+    const why = whyMoved(failure, this.hooks.model, until, known);
     call?.note?.("model.account_moved", { pool: this.hooks.pool, from: from.label, account: to.id, label: to.label,
-      reason: failure.kind, why: whyMoved(failure, this.hooks.model, until, known), until: new Date(until).toISOString(), known, model: this.hooks.model });
+      reason: failure.kind, why, until: new Date(until).toISOString(), known, model: this.hooks.model });
+    // models-ui: a Trunk's work moving on is told to the owner too, wherever they are in the window.
+    if (call?.trunk) this.hooks.moved?.({ sessionId: call.sessionId ?? "", pool: this.hooks.pool, name: this.hooks.name ?? this.hooks.pool,
+      from: from.label, to: to.label, why, at: new Date(this.hooks.now()).toISOString() });
   }
 
   /** Every account tried, or none ready: what the task did before this list existed. */
