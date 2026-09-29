@@ -458,6 +458,26 @@ test("R17-047 the easy-or-hard question goes to the owner's pick, else a model o
   const missing = await chooseByDifficulty(cardWith(null), owner, { prompt: "local not in picker", toolCount: 3,
     known: (id) => id !== "here", localPreset: "here", ask: async (preset) => { assert.equal(preset, "e"); return "HARD"; } });
   assert.equal(missing.reason, "e called this task hard", "a local connection missing from the model picker is not asked");
+
+  // The model on this computer is not answering: the easy connection answers, once, and its answer is the one kept.
+  const store = cardWith(null);
+  let asked = [];
+  const localDown = async (preset) => { asked.push(preset); if (preset === "here") throw new Error("local server stopped"); return "HARD"; };
+  const down = (now) => chooseByDifficulty(store, owner, { prompt: "local is down", toolCount: 3, known: () => true, localPreset: "here", ask: localDown, now });
+  const fellBack = await down(1);
+  assert.deepEqual(asked, ["here", "e"], "local throws, so the easy connection is asked once");
+  assert.equal(fellBack.reason, "e called this task hard", "the reason names the model that answered");
+  assert.equal(fellBack.difficulty, "hard");
+  asked = [];
+  assert.equal((await down(2)).reason, "e called this task hard");
+  assert.deepEqual(asked, ["here"], "the kept answer is filed under the easy connection, which is not asked again");
+  const fine = await chooseByDifficulty(store, owner, { prompt: "local is down", toolCount: 3, known: () => true, localPreset: "here",
+    ask: async () => "EASY", now: 3 });
+  assert.equal(fine.reason, "here called this task easy", "nothing was kept under the local model while it was down");
+
+  // An owner's own pick that fails is not retried: the error goes up to the hook, as it always did.
+  await assert.rejects(chooseByDifficulty(cardWith("small"), owner, { prompt: "picked is down", toolCount: 3, known: () => true, localPreset: "here",
+    ask: async (preset) => { if (preset === "small") throw new Error("picked model down"); return "EASY"; } }), /picked model down/);
 });
 
 test("review: reported counts are per app, ignore nonsense, and stay capped at four", () => {
