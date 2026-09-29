@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
 import { startCall } from "../windows-command.js";
+import { assertRealAgentAllowed } from "./real-agent-guard.js"; // owner-dm-signin: never the real program from a test
 import { codexDefaultModel, codexVerified, codexModelsFor, type CodexModels, type CodexProbe, type CodexTry } from "../codex-models.js";
 import { closeWarmCodex, startCodexAppServer, warmCodexTurn, type StartAppServer } from "../asks/codex-app-server.js";
 import { claudeSubscriptionModels } from "./claude-models.js";
@@ -293,6 +294,7 @@ function holdOpen(child: Child, hold: boolean): void {
 const spares = new Map<string, { child: Child; exited: boolean; timer: ReturnType<typeof setTimeout> }>();
 export const spareIdleMs = 30 * 60_000;
 function startProgram(row: CliAgentRow, env: NodeJS.ProcessEnv): Child {
+  assertRealAgentAllowed(row.command, env);
   // An npm-installed program is a .cmd launcher on Windows, which cannot be started without a shell (src/windows-command.ts).
   const start = startCall(row.command, row.args, env);
   return spawn(start.command, start.args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false, env });
