@@ -935,6 +935,23 @@ to the assistant is let be, rather than sent a pairing code at each message.
 
 Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
+### The window's commands from your own chat (CHAT-185)
+
+From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
+Chat apps › Commands from your own chat), in a direct chat, on Telegram, Discord, Slack or Matrix (whose servers
+vouch for who sent a message; never email, SMS or a posted webhook), these also work: `/goal`, `/subgoal`, `/bg`,
+`/memory`, `/skills`, `/health`, `/sessions`, `/queue`, `/busy`, `/lockdown` and `/lockdown on`, and the looking,
+pausing and stopping half of `/loop`, `/heartbeat`, `/suggestions` and `/blueprint`. They are read whether or not
+the chat commands switch is on, because naming the account is the owner's choice. What they hold to:
+
+- a task `/goal` or `/bg` starts is that chat's task, not yours: the chat's short list of permissions, and your
+  approval rules held to "Ask before changes", every round of a goal included (below);
+- nothing that keeps running is made from a chat (starting a `/loop` or `/heartbeat`, accepting a suggestion, making
+  a blueprint), and Lockdown is switched off only in the app on this computer;
+- under Lockdown or the App lock only `/lockdown` and `/lockdown on` are read, and nothing is sent back until it is
+  off; a command sent while Branch was closed is never carried out;
+- from anybody else, in a group, or on another app, the same line is an ordinary message.
+
 ### Who a chat message's task counts as (mac7/chat-source)
 
 A chat app cannot prove who is typing, even when the sender is you on your own paired account. So a
@@ -1868,7 +1885,7 @@ Speech-to-text transcription requires an OpenAI-compatible provider with an API 
 
 **Talk** next to the message box is hold-to-talk: hold it, speak, let go. What you said is written out, put in the message box so you can see it, sent as an ordinary message, and the answer is read back to you. Press Talk again while it is talking and it stops. The four states it moves through (waiting, listening, working, reading aloud) live in `src/voice-talk.ts` and are tested on their own.
 
-Three services can write out what you say, and Branch picks whichever one your settings point at: an OpenAI-shaped `/audio/transcriptions` (the Whisper shape, which most providers speak), Gemini's own route (the sound goes inline with the request), or **a speech program already installed on this computer** — whisper.cpp or faster-whisper. Branch never downloads a speech model for you: you point it at the program and its model file, and it checks the program is there before it tries. The transcript is read from what the program prints, using the flags whisper.cpp's and faster-whisper's own command lines document; this has not been run against a real installation, so a build that names its flags differently will refuse in plain words rather than silently return nothing. Three can read text aloud: the OpenAI-shaped `/audio/speech`, Gemini's speech route, and **the voices that come with Windows**, which need no key, no account and no internet. The Windows voice is driven by a short PowerShell script written to a temporary file and run with `-File` and no console window; the words are put in as a quoted string, so nothing in a reply can be run as a command.
+Three services can write out what you say, and Branch picks whichever one your settings point at: an OpenAI-shaped `/audio/transcriptions` (the Whisper shape, which most providers speak), Gemini's own route (the sound goes inline with the request), or **a speech program already installed on this computer** — whisper.cpp or faster-whisper. Branch never downloads a speech program or model for you. **faster-whisper is found by itself** (RES-709): installed with `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli`, with a model it already fetched once (`faster-whisper --model_size_or_path base.en` on any recording), Branch runs it as a small worker that keeps the model loaded, offline (`HF_HUB_OFFLINE=1`, `local_files_only`), and writes nothing to disk. Left on **auto**, that free route is used before any paid service, and Telegram voice notes go through it too. With dictation switched on (it ships off), the window's microphone button uses it for push-to-talk with live captions: hold it to talk, or press it once and press Done; the words land in the message box and nothing is sent until you send it. whisper.cpp is still run the old way: you point Branch at the program and its model file, and the transcript is read from what it prints. Three can read text aloud: the OpenAI-shaped `/audio/speech`, Gemini's speech route, and **the voices that come with Windows**, which need no key, no account and no internet. The Windows voice is driven by a short PowerShell script written to a temporary file and run with `-File` and no console window; the words are put in as a quoted string, so nothing in a reply can be run as a command.
 
 - **Keep audio on this computer**: nothing containing sound may leave. Both cloud routes then refuse in plain words instead of sending anyway, and the refusal lives in the service itself, so the `voice.say` tool cannot go around it. The two sound tools in the media toolbox (`media.transcribe` and `media.speak`) read the same setting straight from your settings and refuse the same way, so a workspace sound file is not a way round it either. It also wins over "answer a voice note with a voice note": a spoken reply would be uploaded to the chat app, so with this on the words are sent instead.
 - **Who writes out what you say** / **Who reads replies aloud**: pick a service, or leave it on "whatever suits".
@@ -3799,13 +3816,28 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 
 That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
-**GitLab** can be read in the same way, with its own token saved as `GITLAB_TOKEN`:
+**GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
+ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
+(gitlab.com, or your own server; https only, plain http only for one on this computer) and a personal access token with
+the `api` scope. Branch checks the token with GitLab first (`GET /user`) and keeps it only if GitLab accepts it, in the
+locker of the project that is active at that moment, as `GITLAB_TOKEN`, where Settings › Secrets lists it. The token is
+never read back into the window. **Disconnect** takes it out of the locker again, after a yes.
 
-```json
-{ "git": { "gitlab": { "tokenSecret": "GITLAB_TOKEN" } } }
-```
+Once connected (and while the switch is not off) these tools reach the index:
 
-That registers `gitlab.issues`, `gitlab.releases` and `gitlab.pipelines` behind `gitlab.read`. Reading only: GitLab's endpoints for changing things are shaped differently enough from GitHub's that offering half of them would mislead you about what Branch can actually do. The token is read from whichever project is active at the moment of the call, is sent only in the request header, is never written into a web address, and is scrubbed out of anything reported back — it cannot appear in Activity, in a receipt, or in an error message. Every GitHub address goes through the same network policy as web reading, so an address that is blocked there is refused here too. Nothing is installed on your account; your own GitHub App can be used instead of a token (below).
+- `gitlab.issues`, `gitlab.issue` (one in full, with what people wrote under it), `gitlab.merge_requests`,
+  `gitlab.merge_request` (its description, comments and how its pipeline went), `gitlab.pipelines` and
+  `gitlab.releases`, behind `gitlab.read`, which only looks;
+- `gitlab.create_issue`, `gitlab.comment` (under an issue or a merge request), `gitlab.open_merge_request` (a draft when
+  you say so: "Draft: " is put in front of the title) and `gitlab.create_project` (private unless you say otherwise),
+  behind `gitlab.manage`, which asks you first, like `github.manage`.
+
+Routes: `GET /api/gitlab` (the switch, whether it is connected and to whom), `POST /api/gitlab` `{ mode }`,
+`POST /api/gitlab/connect` `{ token, apiBase? }` and `POST /api/gitlab/disconnect` `{}`, each change the owner's only.
+An older launch settings file that names GitLab (`{ "git": { "gitlab": { "tokenSecret": "GITLAB_TOKEN" } } }`) still
+works: its address and token name are handed to the same connection, and the token is read from the active project at
+each call, until you connect in the window. The token is sent only in the request header, is never written into a web
+address, and is scrubbed out of anything reported back. Every GitHub address goes through the same network policy as web reading, so an address that is blocked there is refused here too. Nothing is installed on your account; your own GitHub App can be used instead of a token (below).
 
 **Your own GitHub App instead of a personal token (A2227).** Save the app's private key (the `.pem`
 GitHub gave you) in your secrets, then name it, the app number and the installation number:
@@ -6390,7 +6422,7 @@ changes unless Yes is pressed. In order of how much they matter:
 **Updates** in Settings is now three choice cards instead of a list: *Install updates by myself*,
 *Tell me when there's an update*, and *Keep Branch up to date by itself* (marked Recommended). Picking
 a card saves it at once. It is the same `autoUpdate` setting (`off`, `check`, `install`), and it ships
-as `install`: an update is installed by itself when no task is working. An `off` you chose stays off.
+as `install`: an update is installed by itself when no task is working and Lockdown is off. An `off` you chose stays off; under Lockdown a ready update waits, and the Update button still installs it.
 
 **Quitting while work runs.** Closing the window keeps Branch in the tray (or the dock), so work goes
 on. Quitting stops it, so when a task is running and no background engine would carry on with it,
@@ -6870,6 +6902,12 @@ same budget, the same approval rules and the same record as any other delegated 
   for somebody else rather than being lost.
 - **`delegate.route`** — works out which one of several specialists a request belongs to, from a
   short description of what each one is for, then hands it straight to that one.
+- **`delegate.teams`** (RES-721) — small groups, each with its own lead, over your saved teams (Team › Teams of
+  specialists). A team's lead is its member whose role says "lead" (else its first member); the others are its
+  helpers. A head (a specialist you name, or the first team's lead) splits the job between two to four teams, each
+  team's lead shares its part among its own helpers as `delegate.supervise` does, the teams work at the same time, and
+  the head writes the one answer, saying where a part failed. "Teams" is also a choice under Customize › Specialists ›
+  how Trunks work together; chosen, a task is told to work that way, and another way waits for your yes.
 
 **Handing work on.** `delegate.handoff` now takes a reason, and the handover is written into the
 conversation — "Handed over from X to Y: why" — so a person reading it afterwards can see the work
@@ -8100,9 +8138,9 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `ttsModel` | The model name to use for reading aloud, when the route wants one. |
 | `keepAudioOnThisComputer` | Nothing containing sound may leave. Both cloud routes then refuse in plain words, and so does a live conversation. |
 | `replyWithVoiceOnChannels` | Answer a voice note on a chat app with a voice note back. Telegram only, today. |
-| `localSpeechExecutable` | The full path to whisper.cpp or faster-whisper, if you have one. Branch downloads nothing. |
-| `localSpeechModel` | The model file that program should use. |
-| `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`, so the right flags are used. |
+| `localSpeechExecutable` | The full path to whisper.cpp, or to the Python that has faster-whisper. Empty: Branch looks for faster-whisper where `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli` put it. Branch downloads nothing. |
+| `localSpeechModel` | The model file whisper.cpp should use; for faster-whisper a model name (`base.en`) or folder. Empty: the fastest faster-whisper model already on this computer. |
+| `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`. faster-whisper runs as a small worker kept loaded while it is used, offline. |
 | `localSpeechStream` | The full path to a streaming speech program that is handed sound on its standard input and writes words out as it hears them, for live dictation. Empty means none, and Branch looks for `whisper-stream` or sherpa-onnx on your search path instead. Branch downloads nothing. |
 | `liveMaxMinutes` | How many minutes one live conversation may last. 10 by default. |
 | `liveMaxDollars` | How much one live conversation may cost. $1.00 by default. |

@@ -7,10 +7,10 @@ import { z } from "zod";
  * chooses between the ways below. Once the owner picks one, a multi-worker tool of another way is
  * only used after the owner's own yes (an approval card, asked once per conversation; src/runtime.ts).
  *
- * The labels and descriptions are the design's words (design/redesign/prototype.html PATTERNS15).
- * "Teams" (small groups, each with its own lead) has no engine form yet, so it is not one of them.
+ * The labels and descriptions are the design's words (design/redesign/prototype.html PATTERNS15). "Teams" (small groups,
+ * each with its own lead) runs over the owner's saved teams (RES-721, src/team-groups.ts).
  */
-export const teamPatterns = ["auto", "one", "super", "swarm", "router", "parallel"] as const;
+export const teamPatterns = ["auto", "one", "super", "swarm", "router", "parallel", "teams"] as const;
 export type TeamPattern = (typeof teamPatterns)[number];
 export const TeamPatternSchema = z.enum(teamPatterns);
 
@@ -20,6 +20,7 @@ const patternWords: Record<Exclude<TeamPattern, "auto">, { label: string; means:
   swarm: { label: "Swarm", means: "Equals pass the work to whoever fits best.", tools: "delegate.swarm" },
   router: { label: "Router", means: "Sends each request to the one Trunk that matches.", tools: "delegate.route" },
   parallel: { label: "In parallel", means: "The same job split up, then gathered.", tools: "delegate.parallel or specialists.fanout" },
+  teams: { label: "Teams", means: "Small groups, each with its own lead.", tools: "delegate.teams over the owner's saved teams" },
 };
 
 /**
@@ -33,6 +34,7 @@ const toolPatterns: Record<string, Exclude<TeamPattern, "auto" | "one">> = {
   "delegate.route": "router",
   "delegate.parallel": "parallel",
   "specialists.fanout": "parallel",
+  "delegate.teams": "teams",
 };
 
 export function patternOfTool(tool: string): Exclude<TeamPattern, "auto" | "one"> | null {

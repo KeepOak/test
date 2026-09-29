@@ -81,16 +81,38 @@ export class SignalAdapter implements ChannelAdapter {
   private lines: Interface | undefined;
   private state: ChannelHealth = { state: "reconnecting", reason: "Looking for signal-cli" };
   private nextId = 1;
+  /** Who sent each recent message (by its timestamp), for a reaction or a quote on it. */
+  private readonly authors = new Map<string, string>();
+  /** Which method each request still waiting for signal-cli's answer called, so only a `send` is taken as a message. */
+  private readonly asked = new Map<string, string>();
   /** Answers signal-cli still owes, by the id of the call that asked. */
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   /** Signal takes files up to 100 MB; Branch writes each one inline on a single line, so it keeps well under that. */
   readonly maxFileBytes = 50 * 1024 * 1024;
-  /** When each of Branch's sends was made (signal-cli's timestamp), by the request id `send` returned. */
+  /** When each of Branch's recent sends was made (signal-cli's timestamp), by the request id `send` returned. */
   private readonly sentAt = new Map<string, number>();
+  /**
+   * The same for sends that carry a question, kept apart so replies and status reactions in a busy chat never push a
+   * waiting question out (coordinator review of #729); only another question can.
+   */
+  private readonly questionAt = new Map<string, number>();
   /** Questions a 👍 / 👎 reaction may answer, by the question's send request id (src/channels/reaction-answers.ts). */
   private readonly answers = new ReactionAnswers();
   watchAnswers(chatId: string, messageId: string, senderId: string, fingerprint: string): void {
     this.answers.watch(messageId, chatId, senderId, fingerprint);
+    const at = this.sentAt.get(messageId);
+    if (at !== undefined) { this.sentAt.delete(messageId); this.remember(this.questionAt, messageId, at); }
+  }
+  private remember(map: Map<string, number>, id: string, at: number): void {
+    map.set(id, at);
+    while (map.size > 200) map.delete(map.keys().next().value!);
+  }
+  /** signal-cli's answer to a request: a `send`'s timestamp is kept; typing and reactions are not messages anyone answers. */
+  private sendAnswered(id: string, timestamp: number): void {
+    const method = this.asked.get(id);
+    this.asked.delete(id);
+    if (method !== undefined && method !== "send") return;
+    this.remember(this.answers.watching(id) ? this.questionAt : this.sentAt, id, timestamp);
   }
   constructor(private readonly options: SignalOptions) { this.id = options.id; }
   botName(): string | null { return this.options.account; }
@@ -125,8 +147,7 @@ export class SignalAdapter implements ChannelAdapter {
     try { raw = JSON.parse(line); parsed = envelopeSchema.parse(raw); } catch { return null; }
     const result = resultSchema.safeParse(raw);
     if (result.success) {
-      this.sentAt.set(String(result.data.id), result.data.result.timestamp);
-      while (this.sentAt.size > 200) this.sentAt.delete(this.sentAt.keys().next().value!);
+      this.sendAnswered(String(result.data.id), result.data.result.timestamp);
       return null;
     }
     const envelope = parsed.params?.envelope;
@@ -136,6 +157,10 @@ export class SignalAdapter implements ChannelAdapter {
     const files = attachmentsOf(envelope?.dataMessage);
     if (!envelope?.source || (!text && !files.length)) return null;
     const group = envelope.dataMessage?.groupInfo?.groupId;
+    if (envelope.timestamp !== undefined) {
+      this.authors.set(String(envelope.timestamp), envelope.source);
+      if (this.authors.size > 200) this.authors.delete(this.authors.keys().next().value!);
+    }
     // In a group: an @mention of the assistant's number, or a reply to one of its messages (Signal groups were never answered).
     const me = this.options.account;
     const mentioned = (envelope.dataMessage?.mentions ?? []).some((mention) => mention.number === me);
@@ -214,22 +239,41 @@ export class SignalAdapter implements ChannelAdapter {
     targetSentTimestamp?: number | undefined; isRemove?: boolean | undefined }): InboundMessage | null {
     const author = reaction.targetAuthorNumber ?? reaction.targetAuthor;
     if (!envelope.source || reaction.isRemove || author !== this.options.account || reaction.targetSentTimestamp === undefined) return null;
-    const request = [...this.sentAt].find(([, at]) => at === reaction.targetSentTimestamp)?.[0];
+    const request = [...this.questionAt].find(([, at]) => at === reaction.targetSentTimestamp)?.[0];
     const group = envelope.dataMessage?.groupInfo?.groupId, chatId = group ?? envelope.source;
     const said = request ? this.answers.read(request, chatId, envelope.source, reaction.emoji ?? "") : null;
     return said ? { channel: this.id, chatId, chatKind: group ? "group" : "direct", ...(group ? { chatTitle: `group ${group.slice(0, 12)}` } : {}),
       senderId: envelope.source, senderName: envelope.sourceName ?? envelope.source, text: said, addressed: true,
       messageId: String(envelope.timestamp ?? Date.now()) } : null;
   }
-  async send(chatId: string, text: string): Promise<string | undefined> {
-    return this.write(chatId, text.slice(0, this.maxTextLength));
+  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+    // CHAT-116: a reply quotes the person's own message (signal-cli's quoteTimestamp and quoteAuthor).
+    const author = replyToMessageId ? this.authors.get(replyToMessageId) : undefined;
+    const quote = author ? { quoteTimestamp: Number(replyToMessageId), quoteAuthor: author } : {};
+    return this.request("send", { ...this.target(chatId), message: text.slice(0, this.maxTextLength), ...quote });
+  }
+  /** CHAT-109: Signal's typing indicator (it lasts about 15 seconds; the live status asks again while the task works). */
+  async sendTyping(chatId: string): Promise<void> {
+    this.request("sendTyping", this.target(chatId));
+  }
+  /** CHAT-112: a status reaction on the person's message; Signal keeps one reaction per sender, so the new one replaces it. */
+  async react(chatId: string, messageId: string, emoji: string): Promise<void> {
+    const author = this.authors.get(messageId);
+    if (!author) throw new Error("Signal: that message is not one Branch received");
+    this.request("sendReaction", { ...this.target(chatId), emoji, targetAuthor: author, targetTimestamp: Number(messageId) });
+  }
+  private target(chatId: string): Record<string, unknown> {
+    return chatId.startsWith("+") ? { recipient: [chatId] } : { groupId: chatId };
   }
   private async write(chatId: string, message: string, attachments?: string[], voiceNote = false): Promise<string | undefined> {
+    return this.request("send", { ...this.target(chatId), message, ...(attachments ? { attachments } : {}), ...(voiceNote ? { voiceNote } : {}) });
+  }
+  private request(method: string, params: Record<string, unknown>): string {
     if (!this.child?.stdin?.writable) throw new Error("signal-cli is not running, so the message could not be sent");
     const id = this.nextId++;
-    const isGroup = !chatId.startsWith("+");
-    const params = { ...(isGroup ? { groupId: chatId } : { recipient: [chatId] }), message, ...(attachments ? { attachments } : {}), ...(voiceNote ? { voiceNote } : {}) };
-    this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "send", params, id }) + "\n");
+    this.asked.set(String(id), method);
+    while (this.asked.size > 200) this.asked.delete(this.asked.keys().next().value!);
+    this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params, id }) + "\n");
     return String(id);
   }
 }
