@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopGateway } from "./gateway-runtime.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
-import { serveDesktopControl } from "./gateway-control.js";
+import { serveDesktopControl, type DesktopControlHost } from "./gateway-control.js";
 import { applyGatewayLive, gatewayApplyOwner } from "./gateway-live.js";
 import { retainedDesktopWorker } from "./gateway-engine.js";
 import { desktopGatewayConfig } from "./gateway-mode.js";
@@ -16,6 +16,7 @@ import { brokerRequest } from "./gateway-engine.js";
 import { gatewayUpdates } from "./gateway-updates.js";
 import { requestUpdateBackup } from "../install/background-engine.js";
 import { updateScratchDir } from "./updater-ipc.js";
+import { gatewayCliUpdate, retainedCliUpdateRequest } from "./gateway-cli-update.js";
 
 export interface DetachedDesktopOptions {
   base: string; dataDir: string; workspace: string; appRoot: string;
@@ -28,13 +29,14 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
   if ((await desktopGatewayConfig(dataDir)).config.mode === "off") return null;
   let gateway: Gateway | null = null, live: LiveHooks | null = null, host: EngineHost | null = null;
   let adoptedAlone: { ok: boolean; error?: string } | null = null;
+  let residentUpdater: Awaited<ReturnType<typeof gatewayUpdates>> | null = null;
   const power = new GatewayPowerPolicy({ blocker: powerSaveBlocker, events: powerMonitor,
     read: async () => { const saved = (await loadGatewayConfig(dataDir)).config;
       return { keepAwake: saved.keepAwake, gatewayDesired: saved.mode !== "off" }; },
     suspended: async () => { if (host?.running && !host.handingOver) await host.call("power-suspend", {}, 5000); },
     resumed: async () => { if (host?.running && !host.handingOver) await host.call("power-resume", {}, 10000); } });
   try { await power.start(); } catch (error) { power.close(); throw error; }
-  const control = await serveDesktopControl(dataDir, {
+  const control: DesktopControlHost = await serveDesktopControl(dataDir, {
     "apply-live": (args) => {
       if (!live) throw new Error("The retained engine is not ready to update.");
       const hooks = live;
@@ -56,7 +58,8 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
       },
       "test-adopted-alone": () => adoptedAlone,
     } : {}),
-  }).catch((error: unknown) => { power.close(); throw error; });
+  }, { "owner-update": (args) => gatewayCliUpdate(args, { resident: () => residentUpdater, engine: (path, body) => retainedCliUpdateRequest(host, path, body),
+    shellOpen: () => control.current() !== null }) }).catch((error: unknown) => { power.close(); throw error; });
   const owner = gatewayApplyOwner(control);
   try {
     gateway = await startDesktopGateway({ dataDir, engineFile: fileURLToPath(new URL("./engine-process.js", import.meta.url)),
@@ -83,12 +86,12 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
       if (!response.ok) throw new Error(answer?.error ?? `The engine answered ${response.status}.`);
       return answer;
     });
-    const { loop } = await gatewayUpdates({ dataDir, appRoot, scratchDir: updateScratchDir(), shellOpen: () => control.current() !== null, live: () => live,
+    residentUpdater = await gatewayUpdates({ dataDir, appRoot, scratchDir: updateScratchDir(), shellOpen: () => control.current() !== null, live: () => live,
       adopt: (action) => owner.apply(action),
       engine: call,
       snapshot: async () => { const body = await call("/api/never-break/snapshot", {}) as { folder?: unknown }; if (typeof body?.folder !== "string") throw new Error("The retained engine did not make an update copy."); return body.folder; },
       backup: () => engine(async (client, url) => { await requestUpdateBackup(url, "", { fetch: client.fetch }); }) });
-    loop.start(60_000);
+    residentUpdater.loop.start(60_000);
   }
   return gateway;
 }

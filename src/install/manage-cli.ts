@@ -6,6 +6,7 @@ import { rollbackCommand, type RollbackCliDeps } from "./rollback-cli.js";
 import { quitRunning, runningNow, type QuitDeps } from "./quit.js";
 import { fetchedFolders, performUnixUninstall, unixLayout, type UnixLayout, type UnixUninstallReport } from "./unix-install.js";
 import type { RunTool } from "./windows.js";
+import { windowsManagementEnv } from "./windows-context.js";
 
 /**
  * The commands a script uses to manage an installed Branch without clicking (bucket 22, issue #106):
@@ -95,6 +96,8 @@ async function uninstall(context: ManageContext, args: string[]): Promise<number
 /** Answers with an exit code, or null when the command is not one of these (or `update` belongs to a Git checkout). */
 export async function manageCommand(args: string[], context: ManageContext): Promise<number | null> {
   const [command = "", ...rest] = args;
+  if (context.platform === "win32" && ["version", "quit", "update", "rollback", "uninstall"].includes(command))
+    context = { ...context, env: await windowsManagementEnv(context.packageRoot, context.env) };
   if (command === "version" && rest.includes("--json")) {
     context.print(JSON.stringify(await versionInfo(context)));
     return 0;
@@ -111,6 +114,6 @@ export async function manageCommand(args: string[], context: ManageContext): Pro
   if (!installRoot || existsSync(join(context.packageRoot, ".git"))) return null;
   return headlessUpdate({
     installRoot, dataDir: dataDirOf(context.env), version: context.version, platform: context.platform,
-    yes: rest.includes("--yes") || rest.includes("-y"), print: context.print, ...(context.deps?.update ? { deps: context.deps.update } : {}),
+    yes: rest.includes("--yes") || rest.includes("-y"), json: rest.includes("--json"), print: context.print, ...(context.deps?.update ? { deps: context.deps.update } : {}),
   });
 }
