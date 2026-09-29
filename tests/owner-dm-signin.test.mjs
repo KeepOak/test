@@ -53,11 +53,11 @@ async function fixture(t, { kind = "telegram", named = true } = {}) {
   // Marked as the owner's own under Settings › Chat apps › Commands from your own chat, with the switch left off.
   if (named) saveOwnerCommands(app.store, app.runtime.owner, { on: false, accounts: [{ channel: "tg", sender: OWNER }] });
   let n = 0;
-  const say = async (senderId, text, chatKind = "direct") => {
+  const say = async (senderId, text, chatKind = "direct", extra = {}) => {
     const chatId = chatKind === "direct" ? senderId : "group-1";
     const before = seen.length;
     await app.channels.handle({ channel: "tg", chatId, chatKind, senderId, senderName: senderId, chatTitle: "Group",
-      text, addressed: true, messageId: `m${++n}` });
+      text, addressed: true, messageId: `m${++n}`, ...extra });
     const thread = chatThread(app.store, app.runtime.owner, "tg", chatId);
     const run = app.store.runs(app.runtime.owner).filter((r) => r.sessionId === thread?.sessionId).at(-1);
     return { run, reply: sent.at(-1)?.text ?? "", programRan: seen.length > before, thread };
@@ -73,6 +73,13 @@ test("the owner's own direct chat on the default Trunk answers through the owner
   assert.equal(run.status, "completed", run.output);
   assert.equal(programRan, true, "the owner's sign-in answered");
   assert.match(reply, /from the sign-in/);
+});
+
+test("the owner's message fetched after a restart is still the owner's (the app vouched for it), so it answers too", async (t) => {
+  const { say } = await fixture(t);
+  const { run, programRan } = await say(OWNER, "Hola", "direct", { caughtUp: true });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(programRan, true);
 });
 
 test("a Trunk the owner's own chat is bound to answers through the sign-in too", async (t) => {

@@ -17,8 +17,9 @@ import { manage17d, fixNote17d } from "./chatapps17d.js"; // pass 17 part D §8
 let vals = {};
 /* owner-dm-signin: the App lock PIN typed to name the sender as the owner's own; sent once with the approval, then cleared. */
 let pin = "";
-/* Apps whose servers vouch for who sent each message (src/channels/owner-commands.ts vouchedSenderKinds). */
-const VOUCHED = ["telegram", "discord", "slack", "matrix"];
+/* Apps whose servers vouch for who sent each message (src/channels/owner-commands.ts vouchedSenderKinds), as far as the
+   "Commands from your own chat" dialog lists them: a Matrix owner named here would be dropped by that dialog's next Save. */
+const VOUCHED = ["telegram", "discord", "slack"];
 const FAMILY = { core: "window.flows.chw.popular", chat: "window.flows.chw.work-chat" };
 /* The steps are named in English in the code (BODIES, the checks below); these are the words each one shows. */
 const STEP_WORD = { Create: "action.create", Paste: "window.flows.chw.paste", Check: "safety.scan.run", Pair: "pair.step.pair", Save: "action.save" };
