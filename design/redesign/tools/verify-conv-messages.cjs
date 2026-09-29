@@ -3,7 +3,7 @@
 // Run: PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-conv-messages.cjs
 // Use a throwaway engine (fresh BRANCH_DATA_DIR, the offline demo provider): it creates a Trunk and a project, sets a
 // price for the demo model, turns on the waiting line and briefly sets a tool-call limit, then puts the limit back.
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("PORT and TOKEN are required"); process.exit(2); }

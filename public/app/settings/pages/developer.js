@@ -6,7 +6,8 @@
    the engine always does (src/tool-loading.ts), so it shows on and has no switch. Finding Branch on other computers
    happens only while "Add a computer" is open (src/devices/find.ts), so its row opens that dialog (flows/computers.js,
    "addcomp"). Every other greyed row says why (core/why.js). A row of choices or a button with a translated title
-   carries its English title's id as its reason key. The Playground's Open runs one tool by hand through the engine's
+   carries its English title's id as its reason key. Turn an OpenAPI file into tools reads a chosen file and
+   lets the owner pick its operations (../openapi-pick.js). The Playground's Open runs one tool by hand through the engine's
    own approval gate (../playground.js). */
 import { esc, render } from "../../core/dom.js";
 import { api } from "../../core/api.js";
@@ -17,6 +18,7 @@ import { id15, sw15, btn15, code15, sec15 } from "../rows15.js";
 import { developer17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { initPlayground } from "../playground.js";
+import { initOpenApiPick } from "../openapi-pick.js";
 import { say } from "../../core/words.js";
 import { t } from "../../../i18n.js";
 
@@ -67,7 +69,7 @@ export function draw() {
   html += `<div class="ctl"><b>${t("window.settings.developer.use-a-debugger")}</b><input class="sw" type="checkbox" id="dv-dbg" ${value("dv-dbg") ? "checked" : ""} aria-label="${t("window.settings.developer.use-a-debugger")}" data-sw="set"><small>${t("window.settings.developer.nothing-downloads-and-nothing-runs-until")}</small></div>`;
   html += "</div>";
   html += sec15(t("window.settings.developer.tools-technical"),
-    btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), "", t("delight.bg.choose"), "soon", "f15-turn-an-openapi-file-into-tools")
+    btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), t("window.settings.openapi.row"), t("delight.bg.choose"), "openapi-pick")
     + sw("Tool scripts and WebAssembly", "Sandboxed JavaScript and .wasm add-ons.")
     + sw("Tools that join over a WebSocket", `ws://${location.host}/api/interop/client-tools/ws`)
     + sw15("Load tools only when needed", "Thousands of tools at the cost of dozens.", true) // state: always, every round (src/tool-loading.ts)
@@ -101,6 +103,7 @@ export function init() {
   on("dv-copy", () => copyAddress());
   on("dv-status", (el) => setStatusLine(el.dataset.v));
   initPlayground();
+  initOpenApiPick();
   markLive(["dv-copy", "dv-status", "sw:dv-ls", "sw:dv-dbg", "sw:f15-flow-search", "sw:f15-send-metrics-with-opentelemetry", "sw:f15-is-branch-keeping-up"]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];

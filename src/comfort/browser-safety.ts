@@ -14,6 +14,7 @@ import { readComfort } from "./settings.js";
  */
 export const sensitiveBrowserTools = [
   "browser.click", "browser.fill", "browser.act", "browser.upload", "browser.borrow", "browser.profile",
+  "browser.keys", "browser.select",
   "computer.press", "computer.type",
 ] as const;
 

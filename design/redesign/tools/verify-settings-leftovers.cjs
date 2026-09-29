@@ -5,7 +5,7 @@
      PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-settings-leftovers.cjs
    It starts no stand-in servers. The one-click install is checked on a machine with no model runtime: the engine refuses,
    the window shows that refusal word for word, and no setup job is recorded. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }

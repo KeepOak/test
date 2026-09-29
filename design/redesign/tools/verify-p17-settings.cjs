@@ -4,7 +4,7 @@
    (two offline model connections, moving in pointed at a made-up home), then:
      PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-p17-settings.cjs
    It puts back what it changed (the emergency stop it presses through the API is let go the same way). */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { pathToFileURL } = require("node:url");
 const { resolve } = require("node:path");
 
