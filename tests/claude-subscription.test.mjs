@@ -32,7 +32,7 @@ function events(name = nativeToolPrefix + nativeToolName(tool.name), malformed =
     { type: "message_stop" },
   ];
 }
-async function fixture(t, { mode = "normal", reply = events(), hold = false, status = 200, options = {} } = {}) {
+async function fixture(t, { mode = "normal", reply = events(), hold = false, status = 200, pace = 0, options = {} } = {}) {
   const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true });
   const root = await mkdtemp(join(parent, "subscription-fixture-"));
   const seen = [], launches = [];
@@ -43,7 +43,12 @@ async function fixture(t, { mode = "normal", reply = events(), hold = false, sta
     response.on("close", () => { disconnected = true; });
     response.writeHead(status, { "content-type": "text/event-stream", ...(status === 429 ? { "anthropic-ratelimit-unified-reset": "1790672400" } : {}) });
     const body = Buffer.from(reply.map((event) => `event: ${event.type}\r\ndata: ${JSON.stringify(event)}\r\n\r\n`).join(""));
-    for (let i = 0; i < body.length; i += 3) response.write(body.subarray(i, i + 3));
+    // `pace`: the reply arrives in twelve parts, this many milliseconds apart, as a long reply streams in.
+    const size = pace ? Math.ceil(body.length / 12) : 3;
+    for (let i = 0; i < body.length && !response.destroyed; i += size) {
+      response.write(body.subarray(i, i + size));
+      if (pace) await new Promise((go) => setTimeout(go, pace));
+    }
     if (!hold) response.end();
   });
   await new Promise((go) => server.listen(0, "127.0.0.1", go));
@@ -163,13 +168,30 @@ test("generation cancellation and the provider's own deadline close an active up
   }
 });
 
+test("provider-audit: a reply that keeps streaming past the idle deadline is not stopped; only the hard cap ends it", async (t) => {
+  // Before, one deadline covered the whole reply (180 s in the product), so a long Opus reply was cut off mid-stream.
+  // Here the idle deadline is 1.5 s and the reply streams for about 3.6 s, more than twice over it.
+  const long = await fixture(t, { pace: 300, options: { timeoutMs: 1500 } });
+  const started = Date.now(), answer = await scope(() => long.provider.complete(request()));
+  assert.ok(Date.now() - started > 3000, "the reply streamed for longer than the idle deadline");
+  assert.equal(answer.content, "Ready☘");
+  const capped = await fixture(t, { pace: 300, options: { timeoutMs: 1500, maxDurationMs: 2000 } });
+  await assert.rejects(scope(() => capped.provider.complete(request())), /longest allowed time/);
+  // A reply that goes silent is still stopped by the idle deadline.
+  const silent = await fixture(t, { hold: true, options: { timeoutMs: 1000 } });
+  await assert.rejects(scope(() => silent.provider.complete(request())), /silent for too long/);
+});
+
 test("subscription sign-in and plan failures are actionable without disclosing native output", async (t) => {
   const signedOut = await fixture(t, { mode: "signed-out" });
   await assert.rejects(scope(() => signedOut.provider.complete(request())), /Accounts.*sign in again/);
   assert.equal(signedOut.seen.length, 0);
   for (const status of [401, 429]) {
     const f = await fixture(t, { status });
+    let rates = ""; f.provider.onOutput = (value) => { rates = value; };
     await assert.rejects(scope(() => f.provider.complete(request())), status === 401 ? /Accounts.*sign in again/ : { name: "ProgramLimitError" });
+    // provider-audit: what the plan has left is published on a refused reply too, not only on a success.
+    assert.match(rates, /"rate_limit_event"/, `plan usage published on HTTP ${status}`);
     // The plan's own reset time is named when the service gives one.
     if (status === 429) await assert.rejects(scope(() => f.provider.complete(request())), /plan limit until about 2026-09-29 09:00 UTC/);
   }

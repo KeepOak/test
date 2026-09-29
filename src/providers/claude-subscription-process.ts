@@ -14,11 +14,13 @@ export class NativeProcess {
   readonly closed: Promise<number | null>;
   private readonly events: (NativeEvent | Error | null)[] = [];
   private waiter: ((event: NativeEvent | Error | null) => void) | null = null;
-  private bytes = 0;
+  /** Bytes of the line being read now: one line is capped, not the whole reply (a long reply is many small lines). */
+  private lineBytes = 0;
   private ended = false;
   private stopping: Promise<void> | null = null;
   private readonly rates: string[] = [];
-  constructor(invocation: NativeInvocation, start: NativeSpawn = spawn) {
+  /** `activity` is told of every native event, so the caller's idle deadline starts again while output flows. */
+  constructor(invocation: NativeInvocation, start: NativeSpawn = spawn, private readonly activity: () => void = () => {}) {
     if (start === spawn) assertRealAgentAllowed(invocation.command, invocation.env);
     const call = startCall(invocation.command, invocation.args, invocation.env);
     this.child = start(call.command, call.args, { env: invocation.env, cwd: invocation.cwd, shell: false, windowsHide: true, detached: true });
@@ -27,8 +29,9 @@ export class NativeProcess {
       this.child.once("close", (code) => { this.ended = true; this.put(null); resolve(code); });
     });
     this.child.stdout.on("data", (chunk: Buffer) => {
-      this.bytes += chunk.length;
-      if (this.bytes > 8 * 1024 * 1024) this.put(new Error("Claude subscription native output exceeds 8 MiB"));
+      const newline = chunk.lastIndexOf(10);
+      this.lineBytes = newline < 0 ? this.lineBytes + chunk.length : chunk.length - newline - 1;
+      if (this.lineBytes > 8 * 1024 * 1024) this.put(new Error("Claude subscription native output line exceeds 8 MiB"));
     });
     const lines = createInterface({ input: this.child.stdout });
     lines.on("line", (line) => this.line(line));
@@ -41,7 +44,7 @@ export class NativeProcess {
     if (!event || typeof event !== "object" || typeof event.type !== "string")
       return this.put(new Error("Claude subscription returned an invalid native protocol event"));
     if (event.type === "rate_limit_event" && this.rates.length < 32) this.rates.push(line);
-    this.put(event);
+    this.activity(); this.put(event);
   }
   private put(event: NativeEvent | Error | null): void {
     if (this.waiter) { const receive = this.waiter; this.waiter = null; receive(event); }
