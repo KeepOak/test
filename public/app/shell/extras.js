@@ -21,24 +21,19 @@ import { initFileView } from "./fileview.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 
-/* The gateway is on or off: "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so a file saved as
-   "when-needed" reads as on, and the switch saves "when-needed" or "off" ("on" also carries interrupted work on by itself,
-   which is Settings › Gateway's own switch). Switched on, it runs only from the next start (`underGateway`), so until then
-   it says so (QA retest 2026-09-28, G1). */
-const SAID = { off: "Off. When you close Branch, your Trunks stop, and Telegram and automations go quiet until you open it again.", on: "On. Telegram, your phone and automations keep working when the window is closed." };
+/* The saved choice and the worker actually running behind a gateway are separate facts. */
 let gw = null;
 
 function gatewayPop() {
-  const on = (gw?.mode ?? "off") !== "off";
-  const line = gw?.problem ? String(gw.problem) : on && !gatewayOn() ? t("window.settings.gateway.switched-on-takes-over-next-start") : say(SAID[on ? "on" : "off"]) ?? "";
+  const saved = (gw?.mode ?? "off") !== "off", running = gw?.underGateway === true;
+  const line = gw?.problem ? String(gw.problem) : running && !saved ? t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater") : running ? t("gatewayChoice.running")
+    : saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
   const note = gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
-  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${on ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
+  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("gatewayChoice.preference")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${saved ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
 }
 
-/* The status bar's "Gateway on" / "Gateway off" (the prototype's gwWord), lit when on: whether the gateway runs this engine
-   now (switched on and `underGateway`), read again after each change of the engine's state (GET /api/never-break), drawn
-   again only when on/off changed. null until read. */
-export const gatewayOn = () => (gw ? gw.mode !== "off" && gw.underGateway === true : null);
+/* The status bar reports the actual worker, not the next-start preference. */
+export const gatewayOn = () => (gw ? gw.underGateway === true : null);
 /** Settings › Gateway hands over what it just read, so the status bar says the same at once. */
 export function noteGateway(read) {
   const was = gatewayOn();
@@ -65,6 +60,7 @@ async function setGateway(v) {
   renderNow();
   const anchor = document.querySelector('[data-act="gwpop"]');
   if (anchor) openPop(anchor, gatewayPop(), { right: true, force: true });
+  setTimeout(() => { gwFor = null; void readGateway(); }, 1200);
 }
 
 /* ---------- keyboard shortcuts ---------- */

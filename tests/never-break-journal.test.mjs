@@ -50,6 +50,11 @@ test("each call is classed by what it can do, and keyed so a repeat is recognise
   assert.equal(effectsOf("git.status", "git.read"), "none");
   assert.equal(effectsOf("files.write", "files.write"), "idempotent");
   assert.equal(effectsOf("email.send", "email.send"), "external");
+  // selfdev (SELF-314): a GitHub look under a permission that can change things, and a push, are safe to do again.
+  assert.equal(effectsOf("github.wait_for_checks", "github.manage"), "none");
+  assert.equal(effectsOf("github.check_logs", "github.manage"), "none");
+  assert.equal(effectsOf("git.push", "git.remote"), "idempotent");
+  assert.equal(effectsOf("github.merge_pull_request", "github.manage"), "external");
   assert.equal(effectsOf("mcp.someone.tool", "mcp.call"), "external", "anything unknown is treated as reaching outside");
   const call = { id: "c1", name: "files.write", arguments: "{\"path\":\"a\"}" };
   assert.equal(idempotencyKey("r1", call), idempotencyKey("r1", { ...call }));

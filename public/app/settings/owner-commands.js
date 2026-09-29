@@ -16,7 +16,7 @@ export function initOwnerCommands(state, reload) {
     try {
       const lock = await api("lock");
       const kinds = new Map((state.channels ?? []).map((channel) => [channel.id, channel.kind]));
-      const pairs = (state.approved ?? []).filter((pair) => ["telegram", "discord"].includes(kinds.get(pair.channel)));
+      const pairs = (state.approved ?? []).filter((pair) => ["telegram", "discord", "slack"].includes(kinds.get(pair.channel)));
       const rows = pairs.map((pair) => {
         const checked = state.ownerCommands.accounts.some((account) => account.channel === pair.channel && account.sender === pair.senderId);
         return `<label class="ctl"><input type="checkbox" data-sw="chatCommandAccount" data-chat-command-account data-channel="${esc(pair.channel)}" value="${esc(pair.senderId)}" ${checked ? "checked" : ""}><span>${esc(pair.name)} · ${esc(pair.channel)} · ${esc(pair.senderId)}</span></label>`;

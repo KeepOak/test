@@ -66,7 +66,7 @@ test("every chat app's panel makes an entry the connections file itself accepts,
     }
     checked++;
   }
-  assert.equal(checked, 54, "every app but the Telegram card");
+  assert.equal(checked, 55, "every app but the Telegram card");
 });
 
 test("an entry holds only what the recipe templates: a request cannot add an address or a key of its own", () => {

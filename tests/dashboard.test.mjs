@@ -12,6 +12,7 @@ import {
 } from "../dist/dashboard-api.js";
 import { forecast, restartPlan, scheduleStanding } from "../dist/dashboard-summary.js";
 import { launchdLabel } from "../dist/install/launchd.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 /* Wave mac3: the owner's control dashboard (src/dashboard-api.ts, public/dashboard/). */
 const PUBLIC = join(import.meta.dirname, "..", "public");
@@ -450,12 +451,12 @@ test("the switch lives in Customize › Everywhere, where the engine's refusal s
   assert.equal(await box.isChecked(), false);
   assert.equal(await box.getAttribute("aria-disabled"), null, "the switch is live");
   await box.click();
-  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "on", f.server.token, { timeout: 10000 });
+  await waitInPage(page, async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "on", f.server.token, { timeout: 10000 });
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "on");
   assert.equal((await f.call("/api/dashboard/automations", f.server.token, { paused: false })).status, 200, "Pause all goes through once it is on");
   await tile.getByRole("link", { name: "Open the dashboard" }).waitFor();
   await page.locator("#dash-b6").click();
-  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "off", f.server.token, { timeout: 10000 });
+  await waitInPage(page, async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "off", f.server.token, { timeout: 10000 });
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
 });
 
