@@ -1479,14 +1479,25 @@ ${run.output.slice(0, 6000)}`;
    * may answer it as they answer the owner. Not when a household person (their key, their profile in the
    * window, their lent conversation or their room message), a short-lived key (another computer), a chat
    * app or another program (MCP, ACP, A2A: a Trunk message from another computer) is anywhere along the
-   * task's chain: a sign-in is one person's own. Without a task to read, no. Worked out once here and
-   * carried on the account-call mark.
+   * task's chain: a sign-in is one person's own. The one chat that counts is the owner's own verified
+   * direct chat (owner-dm-signin, below). Without a task to read, no. Worked out once here and carried on
+   * the account-call mark.
    */
   trunkSignIns(runId: string | undefined): boolean {
     if (currentPerson() || startedWithShortLivedKey() || !runId) return false;
     const origin = runOrigin(this.store, runId);
-    return !origin.shortLivedKey && !origin.personProfileId && !origin.lentTo && ownerSources.has(origin.source);
+    if (origin.shortLivedKey || origin.personProfileId || origin.lentTo) return false;
+    if (ownerSources.has(origin.source)) return true;
+    // owner-dm-signin: a chat's task counts as the owner's only when every chat message along its chain came from an
+    // account the owner named as their own, in a direct chat, on an app that vouches for its senders (the router's
+    // ownerDmHere, the same check its owner-only commands use). Without the router to ask, no.
+    return origin.source === "channel" && this.ownerChatRun?.(runId) === true;
   }
+  /**
+   * owner-dm-signin: whether a chat's task came only from the owner's own verified direct chat. createBranch connects the
+   * chat router's check (ChannelRouter.ownerDmRun); on its own nothing is, and a chat is never the owner.
+   */
+  ownerChatRun: ((runId: string) => boolean) | null = null;
   /**
    * mac7/pooling-review: the conversation whose account choice a task's model calls follow: the one
    * at the top of its tree, so a helper or a background sub-task answers through the account its
@@ -1763,6 +1774,9 @@ ${run.output.slice(0, 6000)}`;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
     try {
+      // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
+      // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
+      options.onStarted?.(run);
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
@@ -1771,7 +1785,6 @@ ${run.output.slice(0, 6000)}`;
         this.helperModels.set(run.id, connection.preset);
         this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
       }
-      options.onStarted?.(run);
       const work = async (working: ToolContext) => {
         if (approved) await this.runApproved(run, working, approved); // QA R1
         return this.loop(run, working, instructions, options.onTextDelta, {

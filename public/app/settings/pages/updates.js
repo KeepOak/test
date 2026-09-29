@@ -182,7 +182,7 @@ function draw() {
   if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>" + notesRow(version);
   if (!notOwner() && bridgeHere()) html += statusCard(autoUpdate);
 
-  // The prototype's "Updating" section, under its heading. The switch says how often it really looks: every five minutes on Beta, once a day on Stable (src/comfort/auto-update.ts).
+  // The prototype's "Updating" section, under its heading. The switch says how often it really looks: every minute on Beta, once a day on Stable (src/comfort/auto-update.ts).
   html += `<div class="sec upd18-self"><h2>${t("window.settings.updates.updating")}</h2><div class="ctl"><b>${t("comfort.update.install")}</b><input class="sw" type="checkbox" id="u-auto" ${autoUpdate ? "checked" : ""} aria-label="${t("comfort.update.install")}" data-sw="set"><small>${t(beta ? "window.updates.card.checks-every-few-minutes" : "window.settings.updates.checks-every-day")}</small></div></div>`;
 
   /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: going back

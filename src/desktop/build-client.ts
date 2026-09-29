@@ -17,12 +17,12 @@ export interface HostedBuild<T = DevBuilt> { done: Promise<T>; pause(paused: boo
 export const hostScript = (): string => join(dirname(fileURLToPath(import.meta.url)), "build-host.js");
 
 export function runHostedBuild(plan: DevBuildPlan, options: { log: string; script?: string }): HostedBuild {
-  const { onStage, onVersion, ...rest } = plan;
+  const { onStage, onVersion, note: _note, ...rest } = plan;
   return runHost<DevBuilt>({ type: "build", plan: rest, log: options.log }, { onStage, onVersion }, options);
 }
 
 export function runHostedLiveBuild(plan: LivePlan, options: { log: string; script?: string }): HostedBuild<LiveOutcome> {
-  const { onStage, onVersion, ...rest } = plan;
+  const { onStage, onVersion, note: _note, ...rest } = plan;
   const hosted = runHost<WireLiveOutcome>({ type: "live-build", plan: rest, log: options.log }, { onStage, onVersion }, options);
   return { ...hosted, done: hosted.done.then((built) => "parts" in built ? { ...built, parts: new Set(built.parts as Part[]) } : built) };
 }

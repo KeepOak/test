@@ -3,7 +3,7 @@
 // Setup it does through the engine first, and puts back at the end: the command list and the autonomy part for /bg
 // switched on, approvals set to "Ask before changes" (so a background task waits and can be stopped), Trunks switched on.
 // It adds one Trunk when there is none, and two conversations (one carrying a two-second sound file).
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT || "3322";
 const TOKEN = process.env.TOKEN;

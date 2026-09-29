@@ -487,6 +487,12 @@ owner GET /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/
 owner POST /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd6788 run=401/dd6788 nobody=401/40daee
+owner GET /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/goals | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2673,6 +2679,12 @@ owner+lockdown GET /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok pe
 owner+lockdown POST /api/flows/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/folder-trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd6788 run=401/dd6788 nobody=401/40daee
+owner+lockdown GET /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/gitlab | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/gitlab/connect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/gitlab/disconnect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/goal-undo/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/goals | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4859,6 +4871,12 @@ household GET /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c read=400/f
 household POST /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=401/dd6788 run=401/dd6788
+household GET /api/gitlab | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/gitlab | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/goals | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7045,6 +7063,12 @@ household+lockdown GET /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c r
 household+lockdown POST /api/flows/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/folder-trust | here=400/f6e21c remote=400/f6e21c read=401/dd6788 run=401/dd6788
+household+lockdown GET /api/gitlab | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/gitlab | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/gitlab/connect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/gitlab/disconnect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/goal-undo/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/goals | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9231,6 +9255,12 @@ applock GET /api/flows/runs/:id | here=423/a8f863
 applock POST /api/flows/runs/:id | here=423/a8f863
 applock GET /api/folder-trust | here=423/a8f863
 applock POST /api/folder-trust | here=423/a8f863
+applock GET /api/gitlab | here=423/a8f863
+applock POST /api/gitlab | here=423/a8f863
+applock GET /api/gitlab/connect | here=423/a8f863
+applock POST /api/gitlab/connect | here=423/a8f863
+applock GET /api/gitlab/disconnect | here=423/a8f863
+applock POST /api/gitlab/disconnect | here=423/a8f863
 applock GET /api/goal-undo/settings | here=423/a8f863
 applock POST /api/goal-undo/settings | here=423/a8f863
 applock GET /api/goals | here=423/a8f863
