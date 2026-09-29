@@ -12,6 +12,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { heardSpeech } from "./aloud.js";
 
 const D = { state: null, reading: false, on: false, timer: null, base: "", heard: "" };
 
@@ -51,6 +52,7 @@ function put(words) {
   const box = $("#prompt");
   if (!box) return;
   box.value = D.base + words;
+  if (words) heardSpeech(); // the message is spoken, for Answer aloud › When I talk (chat/aloud.js)
   box.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
