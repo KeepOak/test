@@ -79,10 +79,12 @@ async function signInRoute(deps: PersonalHttpDeps, path: string): Promise<unknow
   const signIn = root.forAccount(account);
   if (match[3]) {
     if (deps.method !== "POST") return undefined;
+    if (service !== "spotify") deps.personal.privateIndex.purgeAccount(service, account);
     if (match[3] === "secret") return saveSignInSecret(deps, service, account);
     requirePersonal(deps.runtime.store, deps.runtime.owner, signIn.part);
     return signIn.start();
   }
+  if (deps.method === "POST" && service !== "spotify") deps.personal.privateIndex.purgeAccount(service, account);
   const settings = deps.method === "POST" ? signIn.save(await deps.readBody()) : signIn.settings();
   return { accountId: account, accounts: root.accounts.list(), settings, status: await signIn.status() };
 }
@@ -127,6 +129,11 @@ async function voiceRoute(deps: PersonalHttpDeps, path: string): Promise<unknown
 
 async function route(deps: PersonalHttpDeps, path: string): Promise<unknown> {
   const { personal, method } = deps, post = method === "POST";
+  if (path === "/api/personal/index") return post ? personal.privateIndex.configure(await deps.readBody()) : personal.privateIndex.overview();
+  if (path === "/api/personal/index/sync" && post) return personal.privateIndex.sync();
+  if (path === "/api/personal/index/search" && post) return personal.privateIndex.search(await deps.readBody());
+  if (path === "/api/personal/index/cancel" && post) return personal.privateIndex.cancel();
+  if (path === "/api/personal/index/purge" && post) return personal.privateIndex.purge();
   if (path === "/api/personal") return { modes: personal.modes(), labels: personalLabels, parts: personalParts };
   if (path === "/api/personal/switch" && post) {
     const { part, mode } = SwitchSchema.parse(await deps.readBody());

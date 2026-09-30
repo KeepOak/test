@@ -110,7 +110,7 @@ export class Store {
     this.db = new DatabaseSync(path);
     try {
       this.db.exec(
-        "PRAGMA busy_timeout=100; PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;",
+        "PRAGMA busy_timeout=100; PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;",
       );
     } catch (e) {
       this.db.close();

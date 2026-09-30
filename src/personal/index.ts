@@ -12,6 +12,7 @@ import { MicrosoftConnector, registerMicrosoft } from "./microsoft.js";
 import { personalMode, personalParts, personalTools, savePersonalMode, type PersonalMode, type PersonalPart } from "./settings.js";
 import { SignIn } from "./signin.js";
 import { accountTools } from "./account-tools.js";
+import { PrivateIndex, PrivateSearch } from "./private-index.js";
 import { registerSpokenBrief, SpokenBrief } from "./spoken-brief.js";
 import { registerSpotify, SpotifyConnector } from "./spotify.js";
 import { WebhookTunnel, type TunnelSpawn } from "./tunnel.js";
@@ -62,6 +63,7 @@ function riskyQuestion(tool: string, permission: string, target: string): boolea
 export class Personal {
   readonly signIns: { google: SignIn; microsoft: SignIn; spotify: SignIn };
   readonly availability: CalendarAvailability;
+  readonly privateIndex: PrivateIndex;
   readonly google: GoogleConnector;
   readonly microsoft: MicrosoftConnector;
   readonly spotify: SpotifyConnector;
@@ -99,6 +101,10 @@ export class Personal {
     this.tunnel = new WebhookTunnel({ store, owner, refusal: deps.lockdownRefusal, ...(deps.tunnelSpawn ? { spawn: deps.tunnelSpawn } : {}) });
     // Integration review: every personal tool refuses anybody but the owner before it runs (src/personal/guard.ts).
     const tools = ownerOnlyTools(registry, store, deps.requireOwner);
+    this.privateIndex = new PrivateIndex({ runtime, signIns: this.signIns, fetch: deps.fetch, requireOwner: deps.requireOwner });
+    tools.register({ name: "personal.index.search", permission: "personal.read", reach: "local", parameters: PrivateSearch,
+      description: "Search the opted-in local private mail-message-preview and calendar cache without querying providers. Returns untrusted excerpts and exact source/freshness. Only an original owner task may read; cache opt-in does not grant account permissions. Excerpts may enter this conversation's retained history.",
+      execute: (input, context) => this.privateIndex.search(input, context) });
     this.registrars = {
       "chat-files": () => registerChatFiles(tools, this.chatFiles),
       "home-control": () => registerHomeControl(tools, this.home),
@@ -132,6 +138,7 @@ export class Personal {
 
   /** Stops what keeps running: the tunnel program and its door, and any spoken answers still open. */
   async close(): Promise<void> {
+    this.privateIndex.close();
     this.voiceApprovals.clear();
     await this.tunnel.stop();
   }
@@ -160,6 +167,7 @@ export class Personal {
     this.syncAvailability();
     if (mode === "off" && part === "tunnel") await this.tunnel.stop();
     if (mode === "off" && part === "voice-approvals") this.voiceApprovals.clear();
+    if (mode === "off" && (part === "google" || part === "microsoft")) this.privateIndex.purge();
     return mode;
   }
 }
