@@ -7,10 +7,11 @@ import { sourceGit } from "./self-development-evidence.js";
 import { contractHash, sourceFolder } from "./self-development-contract.js";
 import type { SelfDevelopmentDeps } from "./self-development.js";
 import type { TestCopyReceipt } from "./self-development-test-copy.js";
+import { dogfoodProbe } from "./continuous-qa-probe.js";
 
-const JobInput = z.object({ id: z.string().uuid(), mode: z.enum(["tests", "preview"]) }).strict();
+const JobInput = z.object({ id: z.string().uuid(), mode: z.enum(["tests", "preview", "dogfood"]) }).strict();
 const IdInput = z.object({ id: z.string().uuid() }).strict();
-type Job = { id: string; copyId: string; sha: string; mode: "tests" | "preview"; status: "running" | "passed" | "failed" | "cancelled" | "held";
+type Job = { id: string; copyId: string; sha: string; mode: "tests" | "preview" | "dogfood"; status: "running" | "passed" | "failed" | "cancelled" | "held";
   startedAt: string; finishedAt?: string; problem?: string; result?: SandboxRunResult };
 
 // Runs only inside the isolated container. Port 38127 is never published on the owner's computer.
@@ -20,7 +21,7 @@ let ended=false; child.once('exit',()=>{ended=true});
 child.stdout.on('data',d=>process.stdout.write(d)); child.stderr.on('data',d=>process.stderr.write(d));
 (async()=>{try{for(let i=0;i<60;i++){if(ended)throw Error('Preview engine exited before health answered');try{const r=await fetch('http://127.0.0.1:38127/api/health');if(r.ok){console.log('Confined preview answered health; provider access and native desktop UI remain untested.');return;}}catch{}await new Promise(r=>setTimeout(r,500));}throw Error('Preview health did not answer');}catch(e){console.error(e.message);process.exitCode=1;}finally{child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),2000).unref();}})();`;
 
-function command(copy: TestCopyReceipt, mode: "tests" | "preview") {
+function command(copy: TestCopyReceipt, mode: "tests" | "preview" | "dogfood") {
   if (!copy.expectedTests.length || !copy.expectedTests.every((file) => /^tests\/[A-Za-z0-9._/-]+\.test\.mjs$/.test(file) && !file.split("/").includes("..")))
     throw new Error("The contract must name focused test files before the copy can run.");
   // Dependencies must be pre-provisioned in this isolated copy. Nothing installs or downloads them.
@@ -28,7 +29,7 @@ function command(copy: TestCopyReceipt, mode: "tests" | "preview") {
 if(Number(process.versions.node.split('.')[0])<24||!fs.existsSync('node_modules/typescript')){console.error('Held: this copy needs Node 24 and its own prepared dependencies. Nothing was installed.');process.exit(75);}
 const env={PATH:process.env.PATH,HOME:'/tmp',TMPDIR:'/tmp',BRANCH_DATA_DIR:'/work/data',BRANCH_WORKSPACE:'/work/workspace',BRANCH_PORT:'0'};
 const tests=spawnSync(process.execPath,${JSON.stringify(["scripts/review.mjs", "--jobs", "1", ...copy.expectedTests])},{env,stdio:'inherit'});if(tests.status!==0)process.exit(tests.status||1);
-${mode === "preview" ? `const preview=spawnSync(process.execPath,['-e',${JSON.stringify(startupProbe)}],{env,stdio:'inherit'});process.exit(preview.status===0?0:1);` : ""}`;
+${mode !== "tests" ? `const preview=spawnSync(process.execPath,['-e',${JSON.stringify(mode === "dogfood" ? dogfoodProbe : startupProbe)}],{env,stdio:'inherit'});process.exit(preview.status===0?0:preview.status===75?75:1);` : ""}`;
   return { executable: "node", args: ["-e", script] };
 }
 
@@ -36,6 +37,7 @@ ${mode === "preview" ? `const preview=spawnSync(process.execPath,['-e',${JSON.st
 export class TestCopyJobs {
   private readonly jobs = new Map<string, { job: Job; controller: AbortController }>();
   constructor(private readonly deps: SelfDevelopmentDeps) {}
+  verifiedReceipt(id: string): Promise<TestCopyReceipt> { return this.copy(IdInput.parse({ id }).id); }
   private async copy(id: string): Promise<TestCopyReceipt> {
     const home = resolve(this.deps.workspace, sourceFolder, ".branch-test-copies", id);
     if (await realpath(home) !== home) throw new Error("The saved test copy was replaced by a link.");
