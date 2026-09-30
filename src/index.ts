@@ -184,6 +184,7 @@ import { Research, registerResearch } from "./research.js";
 import { Monitors, registerMonitors, trunksSwitchedOff } from "./monitors.js";
 // Wave 8: watching a rectangle of the screen for a change, off unless the owner asks twice.
 import { ScreenWatches, registerScreenWatches } from "./screen-watch.js";
+import { readScreenText } from "./screen-watch-ocr.js";
 import { MorningBrief, registerBrief } from "./brief.js";
 import { DesktopControl } from "./integrations/desktop.js";
 import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
@@ -1154,7 +1155,8 @@ ${result.output || "(it said nothing)"}`;
   // Wave 8: watching one rectangle of the screen for a change. Off unless the owner switches it on
   // AND has using the screen switched on; the picture is never kept, only a fingerprint of it.
   const screenWatches = new ScreenWatches(store, (region) => desktop.captureRegion(region),
-    () => desktop.enabled(runtime.owner), deliverMessage, watchTrunks);
+    () => desktop.enabled(runtime.owner), deliverMessage, watchTrunks,
+    async (picture) => runtime.hideSecrets(await readScreenText(picture)));
   registerScreenWatches(registry, screenWatches);
   const brief = new MorningBrief(store, monitors, documents, deliverMessage);
   registerBrief(registry, brief);
