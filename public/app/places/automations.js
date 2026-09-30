@@ -270,7 +270,22 @@ function checkinsTile(hb) {
     <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours && !work ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}${seg("hb-hours", "work", t("window.places.automations.work-hours"), work)}</span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}${work ? ` ${esc(hhmm(WORK_HOURS.from))} – ${esc(hhmm(WORK_HOURS.to))}` : ""}</small></div>
     <div class="ctl"><b>${t("window.places.automations.quiet-on-weekends")}</b><input class="sw" type="checkbox" id="hb-wk" aria-label="${t("window.places.automations.quiet-on-weekends")}" data-sw="hb-wk" ${set?.quietWeekends ? 'checked=""' : ""} ${set ? "" : "disabled"}><small>${t("window.places.automations.it-still-tells-you-if-a")}</small></div>
     <div class="sec"><h2>${t("window.places.automations.what-it-checks")}</h2><div class="rows">${linesOf(hb).map((c) => `<div class="prow"><span class="ico-tile"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg></span><span class="grow"><b data-css="font-weight:500">${esc(c)}</b></span><button class="icon-btn" type="button" aria-label="${t("accounts.action.remove")}" data-act="hb-rm" data-v="${esc(c)}" data-css="width:28px;height:28px"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>`).join("")}</div><form class="nl" data-form="hb" data-css="margin-top:8px"><input class="inp" id="hb-in" placeholder="${esc(t("window.places.automations.add-something-to-check-a-reply"))}" aria-label="${t("window.places.automations.add-something-to-check")}"><button class="btn" type="submit">${t("asks.runtimes.add")}</button></form></div>
-    <div class="sec"><h2>${t("window.places.automations.last-check-ins")}</h2><ol class="tl">${history.map((h) => `<li class="${h.outcome === "failed" ? "" : "ok"}"><span>${esc(h.outcome)}<small>${esc(h.reason ?? "")}</small></span><time>${esc(new Date(h.startedAt).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("")}</ol></div></div>${gateTiles(hb)}`;
+    <div class="sec"><h2>${t("window.places.automations.last-check-ins")}</h2><ol class="tl">${history.map((h) => `<li class="${h.outcome === "failed" ? "" : "ok"}"><span>${esc(h.outcome)}<small>${esc(h.reason ?? "")}</small></span><time>${esc(new Date(h.startedAt).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("")}</ol></div></div>${proposalTiles(hb)}${gateTiles(hb)}`;
+}
+
+/* What a check-in proposes (GET /api/heartbeat state.proposals, status waiting). Nothing runs until Accept starts the
+   task as the owner's own, under their usual approvals (POST /api/heartbeat/proposals/<id>/accept), Dismiss drops it. */
+function proposalTiles(hb) {
+  const waiting = (hb?.heartbeat?.state?.proposals ?? []).filter((p) => p.status === "waiting").reverse();
+  return waiting.map((p) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-in-suggests")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${esc(p.task)}</p><small>${t("window.places.automations.accept-runs-it-as-your-task")}</small><div class="acts"><button class="btn pri sm" type="button" data-act="hb-accept" data-id="${esc(p.id)}">${t("window.places.automations.accept-suggestion")}</button><button class="btn ghost sm" type="button" data-act="hb-dismiss" data-id="${esc(p.id)}">${t("window.places.automations.dismiss-suggestion")}</button></div></div>`).join("");
+}
+
+async function answerProposal(id, answer) {
+  try {
+    await api(`heartbeat/proposals/${encodeURIComponent(id)}/${answer}`, {});
+    heartbeat = await api("heartbeat");
+  } catch (error) { toast(error.message); }
+  renderNow();
 }
 
 /* Each job whose check script waits for the owner's yes (GET /api/heartbeat schedules, gate.approved false): the job and
@@ -314,7 +329,7 @@ export function init() {
     const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
     if (add) add.disabled = !e.target.value.trim();
   });
-  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
+  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "hb-accept", "hb-dismiss", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
   initRecipeRun();
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
@@ -354,6 +369,8 @@ export function init() {
   on("hb-every", (el) => (el.dataset.v === "off" ? saveHeartbeat(null, "off") : saveHeartbeat({ everyMinutes: +el.dataset.v }, "on")));
   on("hb-hours", (el) => (el.dataset.v === "always" ? saveHeartbeat({ activeHours: null }) : el.dataset.v === "work" ? saveHeartbeat({ activeHours: WORK_HOURS }) : null));
   on("hb-rm", (el) => removeLine(el.dataset.v));
+  on("hb-accept", (el) => answerProposal(el.dataset.id, "accept"));
+  on("hb-dismiss", (el) => answerProposal(el.dataset.id, "dismiss"));
   // Scheduled: "Add" (and Enter, which presses it) asks the engine to read the words into a proposal card
   // (schedule-card.js). Triggers: the same, read into a trigger (trigger-card.js). The page itself is never submitted.
   initScheduleCard();

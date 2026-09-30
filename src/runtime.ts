@@ -5257,6 +5257,12 @@ ${run.output.slice(0, 6000)}`;
   }
   /** Remembers one short thing about a tool. The owner can read and delete every one of these. */
   private noteTool(call: ToolCall, context: ToolContext, args: unknown): { ok: boolean; result?: unknown; error?: string } {
+    // A note is written for good, so a task that may only look (a restored Trunk, src/trunks/restored.ts) keeps none.
+    if (![...context.permissions].some((permission) => !isReadOnlyPermission(permission))) {
+      const error = "This task can only look, so it cannot keep notes.";
+      this.store.event(context.runId, "tool.failed", { name: call.name, id: call.id, error });
+      return { ok: false, error };
+    }
     try {
       // A note is kept for good and shown with its tool in every later request, so anything the
       // assistant saw in a result goes through the same scrubber as a reply before it is written.

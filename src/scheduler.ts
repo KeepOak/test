@@ -702,6 +702,10 @@ export async function quietJobsApi(scheduler: Scheduler, method: string, path: s
   if (path === "/api/heartbeat" && method === "POST") return scheduler.heartbeat.configure(owner, await body());
   if (path === "/api/heartbeat/switches" && method === "POST") return saveQuietSwitches(scheduler.store, owner, await body());
   if (path === "/api/heartbeat/check" && method === "POST") return { outcome: await scheduler.heartbeat.checkNow(owner) };
+  // A check-in only looks; what it proposes runs as the owner's own task once they accept it here.
+  const proposal = /^\/api\/heartbeat\/proposals\/([a-f0-9-]{36})\/(accept|dismiss)$/.exec(path);
+  if (proposal && method === "POST")
+    return proposal[2] === "accept" ? scheduler.heartbeat.acceptProposal(owner, proposal[1]!) : scheduler.heartbeat.dismissProposal(owner, proposal[1]!);
   const gate = /^\/api\/schedules\/([a-f0-9-]{36})\/gate$/.exec(path);
   if (gate && method === "POST") {
     const { approve } = z.object({ approve: z.boolean() }).strict().parse(await body());

@@ -583,6 +583,7 @@ test("a short-lived key may look at the check-in but not change it, start it, or
   assert.equal((await call("GET", "/api/heartbeat")).status, 200);
   for (const [path, body] of [["/api/heartbeat", { deliverTo: { channel: "telegram", chatId: "999" } }],
     ["/api/heartbeat/switches", { checkIn: "on" }], ["/api/heartbeat/check", {}],
+    [`/api/heartbeat/proposals/${"0".repeat(8)}-0000-0000-0000-${"0".repeat(12)}/accept`, {}],
     [`/api/schedules/${"0".repeat(8)}-0000-0000-0000-${"0".repeat(12)}/gate`, { approve: true }]]) {
     const answer = await call("POST", path, body);
     assert.equal(answer.status, 401, path);

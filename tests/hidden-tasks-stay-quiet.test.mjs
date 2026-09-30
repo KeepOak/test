@@ -53,6 +53,9 @@ test("the window does not cheer work no list shows, and still cheers a listed co
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await signIn(page, server);
+  // The side bar draws before the first state arrives; wait for the signed-in state itself, not for time.
+  await page.evaluate(async () => { window.__E = (await import("/app/core/state.js")).E; });
+  await page.waitForFunction(() => window.__E.state !== null, undefined, { timeout: 60000 });
   const cheerAfter = (run) => page.evaluate(async (run) => {
     const [{ E }, { renderNow }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js")]);
     document.querySelector(".cheer11")?.remove();

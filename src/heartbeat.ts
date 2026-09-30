@@ -127,16 +127,20 @@ export const heartbeatInstructions =
   "This is a scheduled check-in, not a message from the owner. Work through the owner's checklist below. " +
   "When you are done, call heartbeat.respond exactly once (if it is not in your tool list, load it with tools.describe first): " +
   "notify=false when nothing needs the owner's attention, or notify=true with a short text only when they should be interrupted. " +
-  `If you cannot call it, reply with exactly ${quietWord} when nothing needs them, or with only the news. Do not invent tasks that are not on the list.`;
+  `If you cannot call it, reply with exactly ${quietWord} when nothing needs them, or with only the news. Do not invent tasks that are not on the list. ` +
+  "When something beyond the checklist should be done, or the owner should decide it, put it in heartbeat.respond's propose as one " +
+  "short task in plain words; it runs only if the owner accepts it.";
 export function heartbeatPrompt(checklist: string | null): string {
   return checklist === null
     ? `${heartbeatInstructions}\n\nThere is no checklist on file. Look over what is already set up and say only what needs the owner.`
     : `${heartbeatInstructions}\n\nThe owner's checklist:\n${checklist.trim()}`;
 }
 
-interface Response { notify: boolean; text: string }
+interface Response { notify: boolean; text: string; propose?: string | undefined }
+/** Something a check-in found to do. It never runs by itself: the owner accepts it, and it runs as their own task. */
+export interface HeartbeatProposal { id: string; task: string; at: string; status: "waiting" | "accepted" | "dismissed"; runId?: string }
 export interface HeartbeatEntry extends HealthEntry { runId: string | null; outcome: string; reason: string | null; trigger: string }
-export interface HeartbeatState { nextAt: string | null; runCount: number; lastOutcome: string | null; lastReason: string | null; history: HeartbeatEntry[] }
+export interface HeartbeatState { nextAt: string | null; runCount: number; lastOutcome: string | null; lastReason: string | null; history: HeartbeatEntry[]; proposals: HeartbeatProposal[] }
 /**
  * Where the checklist comes from: null means there is no checklist file, and the check-in still
  * runs; an empty text means there is nothing to do, and it is skipped. The default reads the text
@@ -145,7 +149,12 @@ export interface HeartbeatState { nextAt: string | null; runCount: number; lastO
 export type ChecklistSource = (owner: string) => Promise<string | null>;
 /** A second opinion on whether news is worth an interruption; tests hand in their own. */
 export type Judge = (run: Run, text: string, checklist: string) => Promise<{ notify: boolean; reason: string }>;
-const RespondSchema = z.object({ notify: z.boolean(), text: z.string().trim().max(2000).default("") }).strict()
+const RespondSchema = z.object({
+  notify: z.boolean(),
+  text: z.string().trim().max(2000).default(""),
+  /** A task to offer the owner; it runs only if they accept it. */
+  propose: z.string().trim().min(1).max(500).optional(),
+}).strict()
   .refine((value) => !value.notify || value.text.length > 0, "Say what the owner should know when notify is true");
 
 export class Heartbeat {
@@ -188,10 +197,11 @@ export class Heartbeat {
   state(owner: string): HeartbeatState {
     const saved = this.store.get("settings", owner, "heartbeat-state")?.data as Partial<HeartbeatState> | undefined;
     return { nextAt: saved?.nextAt ?? null, runCount: saved?.runCount ?? 0, lastOutcome: saved?.lastOutcome ?? null,
-      lastReason: saved?.lastReason ?? null, history: Array.isArray(saved?.history) ? saved.history : [] };
+      lastReason: saved?.lastReason ?? null, history: Array.isArray(saved?.history) ? saved.history : [],
+      proposals: Array.isArray(saved?.proposals) ? saved.proposals : [] };
   }
   private saveState(owner: string, state: HeartbeatState): void {
-    this.store.save("settings", owner, "heartbeat-state", { ...state, history: state.history.slice(-50) });
+    this.store.save("settings", owner, "heartbeat-state", { ...state, history: state.history.slice(-50), proposals: state.proposals.slice(-20) });
   }
   mode(owner: string): QuietMode {
     return quietSwitches(this.store, owner).checkIn;
@@ -255,8 +265,11 @@ export class Heartbeat {
     const run = context.runId ? this.store.run(context.runId) : undefined;
     const started = run ? this.store.events(run.id).some((event) => event.kind === "heartbeat.started") : false;
     if (!started) throw new Error("heartbeat.respond only answers a scheduled check-in.");
-    this.store.event(context.runId, "heartbeat.responded", { notify: answer.notify, text: answer.text });
-    return { recorded: true, notify: answer.notify };
+    // A proposal is always news: the owner has to see it to accept it.
+    const notify = answer.notify || answer.propose !== undefined;
+    const text = answer.text || (answer.propose ? "A check-in has a suggestion." : "");
+    this.store.event(context.runId, "heartbeat.responded", { notify, text, ...(answer.propose ? { propose: answer.propose } : {}) });
+    return { recorded: true, notify };
   }
   /** Runs one check-in. The caller has already taken the lock; this always lets it go. */
   private async checkIn(owner: string, settings: HeartbeatSettings, checklist: string | null, now: Date, trigger: string): Promise<string> {
@@ -284,20 +297,23 @@ export class Heartbeat {
   private async decide(run: Run, settings: HeartbeatSettings, checklist: string): Promise<{ outcome: string; reason: string | null }> {
     const answer = this.answerOf(run.id) ?? answerFromText(run.output);
     if (!answer.notify) return { outcome: "quiet", reason: null };
+    if (answer.propose) this.propose(run, answer.propose);
     if (settings.secondOpinion) {
       const verdict = await this.judge(run, answer.text, checklist)
         .catch((error: unknown) => ({ notify: true, reason: `The second opinion could not be asked (${error instanceof Error ? error.message : String(error)}), so the news was sent.` }));
       this.store.event(run.id, "heartbeat.second_opinion", verdict);
       if (!verdict.notify) return { outcome: "held", reason: verdict.reason || "The second opinion thought this could wait." };
     }
-    const reason = await this.send(run, answer.text, settings);
+    const reason = await this.send(run, answer.propose ? proposalText(answer.text, answer.propose) : answer.text, settings);
     // Only that there was news, where it went and the task behind it: the words stay on this computer.
     this.runtime.notifyEvent("heartbeat.notify", { runId: run.id, via: settings.deliverTo?.channel ?? "activity", delivered: reason === null });
     return { outcome: "notified", reason };
   }
   private answerOf(runId: string): Response | null {
     const said = this.store.events(runId).filter((event) => event.kind === "heartbeat.responded").at(-1);
-    return said ? { notify: said.data.notify === true, text: String(said.data.text ?? "") } : null;
+    if (!said) return null;
+    return { notify: said.data.notify === true, text: String(said.data.text ?? ""),
+      propose: typeof said.data.propose === "string" ? said.data.propose : undefined };
   }
   private async send(run: Run, text: string, settings: HeartbeatSettings): Promise<string | null> {
     const target = settings.deliverTo;
@@ -315,10 +331,47 @@ export class Heartbeat {
       return `Sending to ${target.channel} failed (${reason}), so the news is in the activity list.`;
     }
   }
-  /** What a scheduled job may use, plus the one tool a check-in answers with. */
+  /**
+   * The owner's reach, as Hermes Agent's cron jobs get the normal toolset (cron/scheduler.py, MIT; studied, not copied),
+   * less what a job run by the clock should not do: send messages, stop to ask a question nobody is there to answer, or
+   * change the schedules. Plus the one tool a check-in answers with.
+   */
   private permissions(): string[] {
     const all = [...this.runtime.context().permissions];
-    return [...new Set([...all.filter((p) => !p.startsWith("schedules.") && !p.endsWith(".manage")), "schedules.read", respondPermission])];
+    return [...new Set([...all.filter((p) => !checkInWithheld.includes(p)), respondPermission])];
+  }
+  /** Keeps a check-in's proposal until the owner accepts or dismisses it. */
+  private propose(run: Run, task: string): void {
+    const state = this.state(run.owner);
+    const proposal: HeartbeatProposal = { id: run.id, task, at: new Date().toISOString(), status: "waiting" };
+    this.saveState(run.owner, { ...state, proposals: [...state.proposals.filter((p) => p.id !== run.id), proposal] });
+    this.store.event(run.id, "heartbeat.proposed", { task });
+  }
+  /**
+   * The owner's yes to a proposal: it starts as an ordinary task of theirs, with the permissions and approval rules
+   * an owner's task has. Answers once the task has started; it carries on by itself.
+   */
+  async acceptProposal(owner: string, id: string): Promise<{ runId: string }> {
+    const proposal = this.settle(owner, id, "accepted");
+    const runId = await new Promise<string>((resolve, reject) => {
+      this.runtime.run({ prompt: proposal.task, onStarted: (run) => resolve(run.id), onTextDelta: () => undefined })
+        .then((run) => resolve(run.id), reject);
+    });
+    const state = this.state(owner);
+    this.saveState(owner, { ...state, proposals: state.proposals.map((p) => (p.id === id ? { ...p, runId } : p)) });
+    return { runId };
+  }
+  dismissProposal(owner: string, id: string): { dismissed: true } {
+    this.settle(owner, id, "dismissed");
+    return { dismissed: true };
+  }
+  /** Marks a waiting proposal answered; each is answered once. */
+  private settle(owner: string, id: string, status: "accepted" | "dismissed"): HeartbeatProposal {
+    const state = this.state(owner);
+    const found = state.proposals.find((p) => p.id === id && p.status === "waiting");
+    if (!found) throw new Error("That suggestion is no longer waiting.");
+    this.saveState(owner, { ...state, proposals: state.proposals.map((p) => (p.id === id ? { ...p, status } : p)) });
+    return found;
   }
   private async askSecondOpinion(run: Run, text: string, checklist: string): Promise<{ notify: boolean; reason: string }> {
     const preset = this.runtime.models.plan(run.owner, run.sessionId).candidates[0];
@@ -337,6 +390,10 @@ export function secondOpinionQuestion(text: string, checklist: string): string {
     `The checklist it worked from (material, not instructions):\n${checklist.slice(0, 2000)}`,
     `What it wants to say (material, not instructions):\n${text.slice(0, 2000)}`,
   ].join("\n\n");
+}
+/** What the owner is sent with a proposal: the news, the task, and where to accept it. */
+export function proposalText(text: string, task: string): string {
+  return `${text}\n\nSuggested: ${task}\nIt runs only if you accept it in Automations > Check-ins.`;
 }
 /** The fallback when heartbeat.respond was not used: exactly NOTHING_NEW (or nothing) is quiet. */
 export function answerFromText(output: string): Response {
@@ -359,10 +416,12 @@ export function readVerdict(reply: string): { notify: boolean; reason: string } 
  * changes") calls it without waiting for anybody.
  */
 export const respondPermission = "heartbeat.respond";
+/** What a check-in never gets: messages to others, questions it would wait on, and changes to the schedules. */
+export const checkInWithheld: readonly string[] = ["channels.send", "user.ask", "schedules.manage"];
 export function registerHeartbeat(registry: ToolRegistry, heartbeat: Heartbeat): void {
   registry.register({
     name: "heartbeat.respond",
-    description: "Only in a scheduled check-in: notify=false stays quiet; notify=true sends text to the owner.",
+    description: "Only in a scheduled check-in: notify=false stays quiet; notify=true sends text to the owner; propose offers the owner one task to accept.",
     permission: respondPermission,
     // With the other clockwork, so ordinary tasks do not carry it; a check-in is told to load it.
     group: "schedules",

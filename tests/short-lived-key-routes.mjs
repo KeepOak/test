@@ -327,6 +327,9 @@ export const ROUTES = {
   "/api/heartbeat": "owner POST",
   "/api/heartbeat/": "prefix",
   "/api/heartbeat/check": "owner POST",
+  // A check-in's proposal: accepting starts it as the owner's own task, so only the owner answers one.
+  "/api/heartbeat/proposals/:id/accept": "owner POST",
+  "/api/heartbeat/proposals/:id/dismiss": "owner POST",
   "/api/heartbeat/switches": "owner POST",
   "/api/help": "look",
   "/api/help/": "prefix",
