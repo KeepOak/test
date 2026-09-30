@@ -1,10 +1,12 @@
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { esc, render } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { S, E, ownerHere, activeId } from "../core/state.js";
 import { markLive } from "../core/features.js";
 
-let snapshot = null, problem = "", busy = false, repository = "", selection = "";
+let snapshot = null, problem = "", busy = false, repository = "", selection = "", reading = 0;
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
 const states = { unread: "Check evidence not read", unknown: "Unknown", pending: "Queued or running", "observed-passed": "Observed checks passed", "not-passed": "Checks did not pass" };
 
 export function ciQueueSection() {
@@ -23,8 +25,12 @@ export function ciQueueSection() {
 
 export function initCiQueue() {
   markLive(["self-ci-refresh", "sw:self-ci-repo", "sw:self-ci-selected"]); // both fields are read by Refresh CI below, so neither is greyed
+  /* A read's answer is kept and drawn only for the owner who asked, on the same page, unlocked, and only if no newer read
+     started: owner CI data never reaches another person, the lock screen or a later page. */
   on("self-ci-refresh", async () => {
-    if (busy) return;
+    if (busy || !ownerHere() || !unlocked()) return;
+    const profile = activeId(), view = S.view, mine = ++reading;
+    const still = () => mine === reading && ownerHere() && activeId() === profile && unlocked() && S.view === view;
     repository = document.getElementById("self-ci-repo")?.value.trim() ?? "";
     selection = document.getElementById("self-ci-selected")?.value.trim() ?? "";
     const selected = selection ? selection.split(",").map((value) => Number(value.trim())) : [];
@@ -32,8 +38,8 @@ export function initCiQueue() {
       snapshot = null; problem = "Enter up to 20 positive PR numbers, separated by commas."; render(); return;
     }
     snapshot = null; problem = ""; busy = true; render();
-    try { snapshot = await api("self-development/ci", { repo: repository, selected }); }
-    catch (error) { problem = error.message; }
-    finally { busy = false; render(); }
+    try { const read = await api("self-development/ci", { repo: repository, selected }); if (still()) snapshot = read; }
+    catch (error) { if (still()) problem = error.message; }
+    finally { busy = false; if (still()) render(); }
   });
 }

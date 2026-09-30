@@ -15,7 +15,7 @@ const stubs = {
   "app/core/api.js": "export const api = async (path, body) => globalThis.__ci.api(path, body);",
   "app/core/actions.js": "export const on = (name, fn) => { globalThis.__ci.acts[name] = fn; };",
   "app/core/dom.js": "export const esc = (s) => String(s ?? \"\"); export const render = () => { globalThis.__ci.renders++; };",
-  "app/core/state.js": "export const E = { profiles: { isOwner: true } };",
+  "app/core/state.js": "export const S = { view: \"settings\" }; export const E = { profiles: { isOwner: true } }; export const ownerHere = () => true; export const activeId = () => null;",
   "app/core/features.js": "export const markLive = (ids) => { for (const id of ids) globalThis.__ci.live.add(id); };",
 };
 
@@ -28,7 +28,7 @@ async function ciPage(t, fields = {}) {
   const calls = [];
   const ci = { acts: {}, live: new Set(), renders: 0, api: async (path, body) => { calls.push({ path, body }); return { observedAt: "now", rows: [], listComplete: true }; } };
   globalThis.__ci = ci;
-  globalThis.document = { getElementById: (id) => (id in fields ? { value: fields[id] } : null) };
+  globalThis.document = { getElementById: (id) => (id in fields ? { value: fields[id] } : id === "app" ? { classList: { contains: () => false } } : null) };
   t.after(async () => { delete globalThis.__ci; delete globalThis.document; await discardTemp(root); });
   const page = await import(pathToFileURL(join(root, "app", "settings", "self-development-ci.js")).href);
   page.initCiQueue();
