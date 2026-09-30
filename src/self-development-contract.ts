@@ -15,6 +15,7 @@ import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { lockdownActive } from "./lockdown.js";
 import { betaLine } from "./desktop/dev-build.js";
 import { githubRepositoryOf } from "./github-address.js";
+import { canonicalRepo } from "./desktop/repo-pair.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -489,8 +490,11 @@ function heldTerms(deps: ContractGuardDeps, name: string, args: unknown, context
 
 /** Permissions whose tools start a program on this computer. */
 const commandPermissions = new Set(["shell.execute", "code.execute", "process.manage"]);
-/** The one command tool the shell can hold behind the OS sandbox with its writes kept to one folder. */
-const confinableCommand = "shell.execute";
+/**
+ * The command tools the shell can hold behind the OS sandbox with their writes kept to one folder: a one-off command,
+ * and (SELF-304) a program left running, which the shell walls the same way before it starts (BranchShell.launchHeld).
+ */
+const confinableCommands: ReadonlySet<string> = new Set(["shell.execute", "process.start"]);
 const whileCheckedOut = "While Branch's own source is checked out in this workspace, ";
 
 /** Whether a tool starts a program here: by its permission, its name, or a command line it reports. */
@@ -525,8 +529,8 @@ async function confineCommand(deps: ContractGuardDeps, name: string, args: unkno
   // The active project's worktree, or the one this task prepared itself (it stays in its conversation's project).
   const own = cwdFolder !== null ? worktreeOf(cwdFolder) : "";
   const worktree = worktreeOf(scope) || (own && preparedByTask(deps.store, deps.book, deps.owner, own, context.runId) ? own : "");
-  if (name !== confinableCommand)
-    refuse(deps, context, name, worktree, `${whileCheckedOut}${name} is refused: Branch cannot hold the program it starts to one folder. Only shell.execute runs then, from the active self-development worktree, behind the OS sandbox.`);
+  if (!confinableCommands.has(name))
+    refuse(deps, context, name, worktree, `${whileCheckedOut}${name} is refused: Branch cannot hold the program it starts to one folder. Only shell.execute and process.start run then, from the active self-development worktree, behind the OS sandbox.`);
   const folder = workspacePath(deps.workspace, "", commandFolder(context.workspace || deps.workspace, cwdOf(args).cwd));
   if (!worktree || folder === null || worktreeOf(folder) !== worktree)
     refuse(deps, context, name, worktree, `${whileCheckedOut}a command runs only inside the active self-development worktree: make its project active and set cwd to a folder in ${worktree || "branch-agent-source/.branch-worktrees/self-<name>"}. Commands run anywhere else again once the self-development work is finished and branch-agent-source is removed from the workspace.`);
@@ -587,8 +591,9 @@ function sendPinned(name: string, args: unknown, repositories: readonly string[]
   // Only into a repository written with the contract when the worktree was made, never one named later.
   if (!repositories?.length)
     return notPinned;
-  const repo = String(input.repo ?? "").toLowerCase();
-  if (!repositories.includes(repo))
+  // stabrea/Branch-Agent and KeepOak/Branch-Agent are one repository (GitHub redirects the old name).
+  const repo = canonicalRepo(String(input.repo ?? ""));
+  if (!repositories.some((allowed) => canonicalRepo(allowed) === repo))
     return `A change to Branch itself is proposed only to ${repositories.join(" or ")}, where this worktree was made from, so no pull request is opened in ${String(input.repo ?? "") || "that repository"}.`;
   if (!selfDevelopmentBase(input.base)) return `A change to Branch itself is proposed only to ${selfDevelopmentBaseWords}.`;
   if (input.draft !== true) return "A change to Branch itself is opened only as a draft pull request, for the owner to review.";
@@ -606,7 +611,7 @@ const notPinned = "This worktree was prepared before Branch kept where its chang
 export function pushRepositoryRefusal(repositories: readonly string[] | undefined, remote: string, repos: readonly string[]): string | null {
   const origin = repositories?.[0];
   if (!origin) return notPinned;
-  if (repos.length && repos.every((repo) => repo.toLowerCase() === origin)) return null;
+  if (repos.length && repos.every((repo) => canonicalRepo(repo) === canonicalRepo(origin))) return null;
   return `A change to Branch itself is sent only to ${origin}, where this worktree was made from, and ${remote} sends to ${[...new Set(repos)].join(", ") || "no GitHub repository"}, so nothing is sent.`;
 }
 
