@@ -8324,21 +8324,29 @@ into the same check every delegated answer already passes through, so a declared
 the same way a tool's arguments are. Nothing further is needed, and adding a Python dependency to a
 TypeScript app to satisfy the letter of the row would be worse than not having it.
 
-### The adapter family (`adapter-system` in #55): chat and XML are not applicable
+### Typed answer adapters
 
-The audit's `adapter-system` family asks for three adapters. Only one of them means anything here,
-and building the other two would be building something nobody would run:
+`answers.adapt` declares a signature (`name`, `instructions`, `inputs`, `outputs`), actual
+`inputs`, and up to eight typed input/output `demonstrations`. Its `adapter` is `chat`,
+`json` (default), or `xml`. Each declared field has a `type`, optional `description`, and
+optional primitive `choices`. Supported types are `string`, `number`, `integer`, `boolean`
+and their arrays. All one to 24 fields are required; unknown and duplicate outputs are refused.
 
-- **JSON adapter — built.** That is the shaped answer above, native where a service offers it.
-- **Chat adapter — not applicable.** Every connection Branch has already speaks the one chat shape:
-  `Message[]` in, `Completion` out, through `openaiMessage`, `anthropicMessages` and their
-  equivalents. A "chat adapter" is the `Provider` contract itself, which has existed since the
-  first release. Adding a thing called a chat adapter on top of it would be a second name for the
-  same object.
-- **XML adapter — not applicable.** Nothing in Branch consumes XML from a model. Tool calls arrive
-  as structured objects from every provider's own API, not as tags to be parsed out of prose, and
-  the one place a reply's shape matters is covered by JSON above. An XML adapter would add a
-  parser, a failure mode and a setting for a format no part of the app reads.
+Chat uses labeled `[[ ## field ## ]]` sections and a final `completed` marker; JSON uses
+the provider's native answer schema where available; XML uses escaped field fragments.
+XML accepts no attributes, nested tags, declarations, external resources or general documents.
+Malformed chat output gets one JSON fallback; JSON and XML get one format repair. Provider
+errors escape without retry. A second malformed answer returns a refusal.
+
+This helper requires `specialists.use` on the initiating running task, shares its model and
+budget accounting, disables model tools, rechecks permission/policy/lock state, and has a
+60-second deadline. Connections that own their own execution time are unsupported here.
+Prompts and replies are each bounded to 64 KiB; array fields to 128 items. This is a bounded
+typed-signature implementation, not arbitrary Python/DSPy types or nested XML compatibility.
+The independent codecs follow the format contracts in
+[DSPy's MIT-licensed adapters](https://github.com/stanfordnlp/dspy/tree/9c900c7de0a3cc3114c23fe8202ebe48e2206ce1/dspy/adapters);
+no new dependency or upstream implementation code is imported. Provider effect tools continue
+through the existing OpenAPI tool path and its native permissions.
 
 ## The smaller asks, the Python client and installing: where each one stands (wave mac2)
 

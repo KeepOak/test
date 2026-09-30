@@ -166,6 +166,7 @@ import { patternNote, patternOfTool, patternQuestion, type TeamPattern } from ".
 import { commandDifference, commandWords, correctionLabel, offPlanDifference, relatedCommand, saveSessionPlanAct } from "./plan-act.js";
 import { heldMode, policyForMode, readConversationMode, saveConversationMode, type ConversationMode, type ConversationModeRecord } from "./conversation-mode.js"; // redesign phase 1
 import { type AnswerShape, askInShape, shapeInstructions, type ShapedAnswer } from "./answer-shape.js";
+import { AdaptAnswerInput, adaptAnswer, type AdaptAnswerResult } from './answer-adapters.js';
 import { advisorInstructions, advisorQuestion, adviceLine, readAdvice, secondOpinionSettings, type Advice } from "./second-opinion.js";
 import { styleShape, takeScratch, type SpecialistStyle } from "./specialist-styles.js";
 import { Deferrals, deferredCall } from "./deferred.js";
@@ -2847,6 +2848,41 @@ ${run.output.slice(0, 6000)}`;
       ...(answer.status === "refused" ? { reason: answer.reason } : {}) });
     return answer;
   }
+  /** Typed signature adapters share the real task's accounting and cannot dispatch any model tools. */
+  async adapted(context: ToolContext, input: unknown): Promise<AdaptAnswerResult> {
+    const request = AdaptAnswerInput.parse(input), fingerprint = argumentFingerprint('answers.adapt', JSON.stringify(request));
+    const run = this.store.run(context.runId);
+    if (!run || run.owner !== context.owner || run.owner !== this.owner || run.status !== 'running')
+      throw new Error('An adapted answer needs the initiating running task.');
+    const preset = this.models.plan(context.owner, run.sessionId).candidates[0];
+    if (!preset) throw new Error('This task has no available model connection.');
+    const guard = () => {
+      context.signal.throwIfAborted();
+      if (this.store.run(run.id)?.status !== 'running' || this.owner !== context.owner || this.fullAccessLocked()
+        || !context.permissions.has('specialists.use') || this.roleRefusal('specialists.use', 'answers.adapt')
+        || this.checkPolicy('specialists.use', request, context, fingerprint).decision === 'deny')
+        throw new Error('The initiating task or its helper permission is no longer available.');
+    };
+    guard();
+    const stopped = new AbortController();
+    const timer = setInterval(() => { try { guard(); } catch { stopped.abort(); } }, 250);
+    timer.unref();
+    const scoped: ToolContext = { ...context, permissions: new Set(),
+      signal: AbortSignal.any([context.signal, stopped.signal, AbortSignal.timeout(60000)]) };
+    try {
+      const answer = await adaptAnswer(request, async (messages, shape) => {
+        guard(); scoped.signal.throwIfAborted();
+        const said = await this.complete(run, messages, scoped, preset, null, undefined, shape, undefined, true);
+        guard(); scoped.signal.throwIfAborted();
+        if (said.toolCalls.length && (!shape || said.toolCalls.length !== 1 || said.toolCalls[0]?.name !== shape.name))
+          throw new Error('An answer adapter cannot invoke tools.');
+        return said.toolCalls[0]?.arguments ?? said.content;
+      });
+      guard();
+      this.store.event(run.id, 'answer.adapted', { adapter: answer.adapter, status: answer.status, reasked: answer.reasked });
+      return answer;
+    } finally { clearInterval(timer); }
+  }
   /**
    * A note the owner sends to a task that is still working. It goes in front of the next round,
    * unlike a follow-up message, which waits for the task to finish.
@@ -3745,11 +3781,14 @@ ${run.output.slice(0, 6000)}`;
     onTextDelta?: (text: string) => void,
     shape?: AnswerShape,
     firstCapMs?: number,
+    noProgramTools = false,
   ): Promise<Completion> {
     preset = this.helperModels.get(run.id) ?? preset;
     // A task that must stay on this computer never reaches a connection elsewhere, whichever part of it asks:
     // a side job that names its own connection is answered by the one here instead, and with none here it stops.
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
+    if (noProgramTools && preset.provider.keepsOwnTime)
+      throw new Error('Answer adapters require a model connection that uses Branch’s bounded no-tools request.');
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     context.budget.step(context.signal);
@@ -3772,7 +3811,7 @@ ${run.output.slice(0, 6000)}`;
       shape: shape?.name ?? null,
     };
     const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
-    const kept = pinnedHelper ? null : this.requestCache.look(cacheKey);
+    const kept = pinnedHelper || noProgramTools ? null : this.requestCache.look(cacheKey);
     if (kept) return this.shownThinking(this.answeredFromCache(run, preset, kept, input));
     context.budget.charge(input);
     if (maxTokens < 1) throw new BudgetError(`Token budget exhausted.${this.spentOnRun(run.id, preset.model)}`);
@@ -3800,7 +3839,7 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
         // An installed program answering as the model (Claude Code, Codex) keeps its own tools only for the owner's own
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
-        ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
+        ...(!noProgramTools && runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
@@ -3853,7 +3892,7 @@ ${run.output.slice(0, 6000)}`;
       if (!this.setupFinished && answered) this.setupFinished = finishSetupOnFirstAnswer(this.store, this.owner, preset.provider.name);
       span?.end("ok", "", { "branch.tool_calls": completion.toolCalls.length, "branch.tokens.estimated_output": output });
       // Only a plain answer is kept; one that asks for a tool would replay whatever that tool does.
-      if (!pinnedHelper) this.requestCache.keep(cacheKey, completion);
+      if (!pinnedHelper && !noProgramTools) this.requestCache.keep(cacheKey, completion);
       return this.shownThinking(completion);
     } catch (e) {
       if (e instanceof ProviderStreamError)
