@@ -501,6 +501,8 @@ const SHARED_WITH_FRENCH = new Set([
   "Fennec", "Capybara", "Koala", "Hamster", "Ctrl",
   // The local index names its mail sources by their own brand names (RES-718).
   "Gmail", "Outlook",
+  // Seasons is the learning place's own name, kept in French as in German and Spanish ("Rouvrez Seasons").
+  "Seasons",
 ]);
 test("Q6 French is a real translation, not the English file under another name", async (t) => {
   const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));

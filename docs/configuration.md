@@ -4238,6 +4238,8 @@ Local HTTP authorization is single-owner access, not a multi-user tenancy system
 record (`PreferencesSchema` in `src/preferences.ts`) holds `appearance` (`forest` or `daylight`),
 `followSystem`, `accent` (`copper`, `leaf`, `earth`, `slate`, `ink`), `textSize`
 (`small`/`medium`/`large`), `density` (`comfortable`/`compact`), `font` (`geist`/`system`),
+`readingFont` (a reading face for replies, used only when it is installed on this computer: `Atkinson Hyperlegible`,
+`OpenDyslexic`, `Lexend`, `Arial`, `Georgia`, `Verdana` or `Segoe UI`; `null`, the default, keeps the theme's font),
 `reduceMotion`, `showAcorn` (the pixel acorn in the rail's bottom corner, off by default), `showEverything`
 and `showVoice`. Every field has a default, so a record saved by an older version still loads.
 Settings → Appearance changes all of them; each choice shows at once and Save keeps it.
