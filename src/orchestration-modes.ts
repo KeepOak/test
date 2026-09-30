@@ -123,7 +123,7 @@ export async function runSwarm(runtime: Runtime, knowledge: Knowledge, context: 
   const { specialists, items } = SwarmSchema.parse(input);
   const list = new SharedWorkList(items);
   const results: SwarmResult[] = [];
-  const share = Math.max(1, Math.floor(context.budget.remaining() / Math.max(items.length, 1)));
+  const shares = context.budget.share(Math.max(items.length, 1), 8), share = shares.maxTokens;
   // Each item works from a share of what is left, and the total comes off this task's budget at the
   // end, the same way a fan-out does. Without that, a swarm would cost this task nothing and could
   // be asked for again and again on the same budget.
@@ -131,7 +131,7 @@ export async function runSwarm(runtime: Runtime, knowledge: Knowledge, context: 
   await pooled(specialists, specialists.length, async (specialist) => {
     for (let taken = list.claim(specialist); taken; taken = list.claim(specialist)) {
       if (context.runId) runtime.store.event(context.runId, "swarm.claimed", { specialist, index: taken.index });
-      const budget = new Budget({ maxSteps: 8, maxTokens: share });
+      const budget = new Budget(shares);
       budgets.push(budget);
       const branch: ToolContext = { ...context, budget };
       try {

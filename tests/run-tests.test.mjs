@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, runFile, runPool, shareFiles, shards, testGroups,
-  testProcessStatus } from "../scripts/run-tests.mjs";
+import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, RETRY_AT_MOST, retryFailed, runFile, runPool,
+  shareFiles, shards, testGroups, testProcessStatus } from "../scripts/run-tests.mjs";
 import { mergeWeights, readTimings } from "../scripts/test-weights.mjs";
 import { FULL_MATRIX, planMatrix } from "../scripts/select-affected-tests.mjs";
 
@@ -30,7 +30,7 @@ test("npm test isolates browser and desktop files while keeping ordinary tests t
      "tests/desktop-gateway-presence.test.mjs", "tests/desktop-gateway-preview.test.mjs",
      "tests/desktop-gateway-runtime.test.mjs", "tests/desktop-gateway-worker.test.mjs",
      "tests/desktop-hot-update.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-joined-engine.test.mjs",
-     "tests/desktop-old-engine.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs",
+     "tests/desktop-old-engine.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs", "tests/desktop-update-chaos.test.mjs",
      "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
   assert.equal(real.shared.some((file) => /^tests[\\/]desktop/.test(file)), false);
   assert.ok(real.browser.includes(join("tests", "glass-select.test.mjs")));
@@ -238,4 +238,29 @@ test("the weights are refreshed per system from a run's timings, and a file that
     win32: { "tests/a.test.mjs": 30 },
     darwin: { "tests/c.test.mjs": 5 },
   });
+});
+
+test("a merge-queue share runs a failed file once more alone: a pass there is named flaky, a second failure still fails", async () => {
+  const runs = [];
+  const second = { "tests/flaky.test.mjs": 0, "tests/broken.test.mjs": 1 };
+  const runOne = async (file) => { runs.push(file); return { file, status: second[file], timedOut: 0 }; };
+  const failed = [{ file: "tests/flaky.test.mjs", status: 1, timedOut: 0 }, { file: "tests/broken.test.mjs", status: 1, timedOut: 0 }];
+  const { stillFailed, flaky } = await retryFailed(failed, { runOne });
+  assert.deepEqual(runs, ["tests/flaky.test.mjs", "tests/broken.test.mjs"], "each failed file runs once more, one at a time");
+  assert.deepEqual(flaky.map((r) => r.file), ["tests/flaky.test.mjs"]);
+  assert.deepEqual(stillFailed.map((r) => r.file), ["tests/broken.test.mjs"], "a file that fails twice still fails the share");
+});
+
+test("no second run when more files failed than a flake explains, or one ran past its limit", async () => {
+  const runOne = async () => assert.fail("nothing runs again");
+  const many = Array.from({ length: RETRY_AT_MOST + 1 }, (_, n) => ({ file: `tests/f${n}.test.mjs`, status: 1, timedOut: 0 }));
+  assert.equal((await retryFailed(many, { runOne })).stillFailed.length, many.length);
+  const stuck = [{ file: "tests/stuck.test.mjs", status: null, timedOut: 360 }];
+  assert.deepEqual((await retryFailed(stuck, { runOne })).stillFailed, stuck);
+});
+
+test("only merge-queue groups and pushes rerun failed files; a pull request's own run does not", () => {
+  const workflow = parse(readFileSync(new URL("../.github/workflows/checks.yml", import.meta.url), "utf8"));
+  const step = workflow.jobs.test.steps.find((one) => String(one.run ?? "").includes("scripts/run-tests.mjs"));
+  assert.match(step.run, /github\.event_name != 'pull_request' && ' --retry-failed'/);
 });
