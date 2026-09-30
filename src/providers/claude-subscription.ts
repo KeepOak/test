@@ -12,6 +12,7 @@ import { ProviderHttpError } from "../provider-retry.js";
 import { isOutOfRoomThinking } from "../provider-stream.js";
 import { NativeProcess, type NativeInvocation, type NativeSpawn, type NativeEvent } from "./claude-subscription-process.js";
 import { boundedNativeJson, nativeGeneration, nativeHistory, nativeInventory, type NativeFrame } from "./claude-subscription-history.js";
+import { NativeContinuations, nativeTrigger, nativeTurnMarker } from "./claude-subscription-continuation.js";
 
 export interface ClaudeSubscriptionOptions { owner: string; model?: string; accountHome?: AccountHome; command?: string; timeoutMs?: number }
 /** Injection is confined to explicit in-process protocol fixtures, never persisted account or model settings. */
@@ -39,7 +40,7 @@ async function invocation(root: string, options: Readonly<ClaudeSubscriptionOpti
     env: runAsNode(process.execPath) } } };
   const args = ["-p", "--model", options.model ?? claudeDefaultModel, "--input-format", "stream-json", "--output-format", "stream-json",
     "--verbose", "--include-partial-messages", "--tools", "", "--system-prompt-file", join(root, "system.md"), "--settings", join(root, "settings.json"),
-    "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--max-turns", "1", "--permission-mode", "dontAsk",
+    "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--permission-mode", "dontAsk",
     "--no-session-persistence", "--mcp-config", JSON.stringify(mcp), ...(request.reasoning ? ["--effort", request.reasoning] : [])];
   return { invocation: { command: options.command ?? "claude", args,
     env: nativeEnvironment(options.accountHome, relay.url, request.maxTokens), cwd: root }, frames: history.frames };
@@ -55,21 +56,18 @@ async function replay(native: NativeProcess, frames: NativeFrame[], signal: Abor
     } while (ack.type !== "result");
     if (ack.num_turns !== 0 || ack.is_error) throw new Error("Claude Code does not support safe zero-turn history replay");
   }
-  native.child.stdin.end();
 }
-async function nativeResult(native: NativeProcess, signal: AbortSignal): Promise<{ event: NativeEvent; code: number | null; authenticationFailed: boolean }> {
-  const results: NativeEvent[] = [];
+async function nativeResult(native: NativeProcess, signal: AbortSignal): Promise<{ event: NativeEvent; authenticationFailed: boolean }> {
   let authenticationFailed = false;
   let event: NativeEvent | null;
   while ((event = await native.receive(signal))) {
-    if (event.type === "result") results.push(event);
+    if (event.type === "result") return { event, authenticationFailed };
     if (event.error === "authentication_failed") authenticationFailed = true;
   }
-  const code = await native.closed; signal.throwIfAborted();
-  if (results.length !== 1) throw new Error("Claude subscription native response is incomplete");
-  return { event: results[0]!, code, authenticationFailed };
+  signal.throwIfAborted();
+  throw new Error("Claude subscription native response is incomplete");
 }
-function completed(relay: NativeAdmission, result: { event: NativeEvent; code: number | null; authenticationFailed: boolean }): Completion {
+function completed(relay: NativeAdmission, result: { event: NativeEvent; authenticationFailed: boolean }): Completion {
   if (relay.status === 429) {
     const until = relay.resetsAt ? ` until about ${relay.resetsAt.toISOString().slice(0, 16).replace("T", " ")} UTC` : "";
     throw new ProgramLimitError(`Claude subscription has reached its plan limit${until}; wait or choose another account`);
@@ -81,8 +79,8 @@ function completed(relay: NativeAdmission, result: { event: NativeEvent; code: n
   if (isOutOfRoomThinking(relay.error)) throw relay.error;
   if (relay.status !== 200 || !relay.completion || relay.failure)
     throw new Error(`Claude subscription did not receive a complete response from its official service${relay.status !== null && relay.status !== 200 ? ` (HTTP ${relay.status})` : ""}`);
-  const boundary = result.code === 1 && result.event.subtype === "error_max_turns" && relay.completion.toolCalls.length > 0;
-  if (!boundary && !relay.denied && (result.code !== 0 || result.event.is_error || result.event.subtype !== "success"))
+  const boundary = relay.completion.toolCalls.length > 0 && (relay.denied > 0 || result.event.subtype === "error_max_turns");
+  if (!boundary && (result.event.is_error || result.event.subtype !== "success"))
     throw new Error("Claude subscription native request failed; check the official Claude Code sign-in and try again");
   return relay.completion;
 }
@@ -103,15 +101,29 @@ function removeLater(target: string, attempt: number): void {
       .catch(() => { if (attempt < 30) removeLater(target, attempt + 1); });
   }, 2000).unref();
 }
+/** A kept native session could not take this turn before any generation was admitted (for example, it had ended). */
+class NativeSessionEnded extends Error {
+  constructor(cause: unknown) { super("Claude subscription kept session ended before this turn", { cause }); }
+}
 /** Request folders being used right now, so two requests never share one and a late removal never takes a live one. */
 const inUse = new Set<string>();
+type NativeSession = { root: string; native: NativeProcess; relay: NativeAdmission; frames: NativeFrame[]; closing: Promise<void> | null };
+function disposeSession(session: NativeSession): Promise<void> {
+  return session.closing ??= (async () => {
+    try { await session.native.stop(); } finally {
+      try { await session.relay.close(); } finally {
+        try { await removePrivateRequest(session.root); } finally { inUse.delete(session.root); }
+      }
+    }
+  })();
+}
 /**
  * selfdev: the native process's working folder appears in the environment note Claude Code puts near the start of
  * every request, so a fresh random folder each round changed the prompt's front and no round after the first could
  * be read from Anthropic's prompt cache (each round of a long task was paid in full). The folder is now named from
  * what stays the same for one conversation (its standing instructions and its first message, with the owner, the
- * account and the model), so every round of it starts with the same bytes. It is still private, still emptied after
- * each request, and a second request of the same conversation at the same moment gets a random one instead.
+ * account and the model), so every round of it starts with the same bytes. It stays private and is removed when its
+ * retained transport closes. A concurrent request of the same conversation gets a random folder instead.
  */
 async function requestFolder(parent: string, options: Readonly<ClaudeSubscriptionOptions>, request: CompletionRequest): Promise<string> {
   const first = request.messages.find((message) => message.role !== "system");
@@ -138,6 +150,7 @@ export class ClaudeSubscriptionProvider implements Provider {
   detectLimits = true;
   onOutput: ((stdout: string) => void) | null = null;
   private readonly options: Readonly<ClaudeSubscriptionOptions>;
+  private readonly continuations = new NativeContinuations<NativeSession>((session) => !session.native.isClosed() && !session.closing, disposeSession);
   constructor(options: ClaudeSubscriptionOptions, private readonly dependencies: ClaudeSubscriptionDependencies = {}) {
     if (!options.owner || options.accountHome && (options.accountHome.name !== "CLAUDE_CONFIG_DIR" || !isAbsolute(options.accountHome.path)))
       throw new Error("Claude subscription account home must be its owner's absolute CLAUDE_CONFIG_DIR");
@@ -153,25 +166,56 @@ export class ClaudeSubscriptionProvider implements Provider {
     const timer = setTimeout(() => controller.abort(new Error("Claude subscription took too long and was stopped")), this.options.timeoutMs ?? 180000);
     timer.unref();
     const scope = { ...request, signal }, authorize = (): void => { signal.throwIfAborted(); authorized(this.options.owner); };
-    let root: string | undefined, native: NativeProcess | undefined, relay: NativeAdmission | undefined;
-    const stop = (): void => { void native?.stop().catch(() => {}); };
-    signal.addEventListener("abort", stop, { once: true });
     try {
-      const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true, mode: 0o700 });
-      root = await requestFolder(parent, this.options, request);
-      relay = new NativeAdmission(scope, nativeInventory(request.tools), authorize, this.dependencies.connect);
-      await relay.listen(); authorize();
-      const input = await invocation(root, this.options, scope, relay); authorize();
-      native = new NativeProcess(input.invocation, this.dependencies.spawn);
-      await replay(native, input.frames, signal, authorize);
-      const result = completed(relay, await nativeResult(native, signal)); authorize();
-      const rateEvents = native.rateEvents(); if (rateEvents) this.onOutput?.(rateEvents);
-      authorize(); return result;
+      try { return await this.completeTurn(scope, authorize); }
+      // A kept session that ended between turns admitted nothing, so one fresh transport may take the turn.
+      catch (error) { if (!(error instanceof NativeSessionEnded)) throw error; return await this.completeTurn(scope, authorize); }
     } finally {
-      clearTimeout(timer); signal.removeEventListener("abort", stop); controller.abort();
-      try { await native?.stop(); } finally {
-        try { await relay?.close(); } finally { if (root) try { await removePrivateRequest(root); } finally { inUse.delete(root); } }
-      }
+      clearTimeout(timer); controller.abort();
+    }
+  }
+  private async startSession(request: CompletionRequest, authorize: () => void, marker: string): Promise<NativeSession> {
+    const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true, mode: 0o700 }); authorize();
+    const root = await requestFolder(parent, this.options, request);
+    let relay: NativeAdmission | undefined, native: NativeProcess | undefined;
+    try {
+      authorize(); relay = new NativeAdmission(request, nativeInventory(request.tools), authorize, this.dependencies.connect, marker);
+      await relay.listen(); authorize();
+      const input = await invocation(root, this.options, request, relay); authorize();
+      native = new NativeProcess(input.invocation, this.dependencies.spawn);
+      const frames = input.frames.map((frame) => ({ ...frame, message: { ...frame.message, content: [...frame.message.content] } }));
+      frames.at(-1)!.message.content.push(...nativeTrigger(marker).message.content);
+      return { root, native, relay, frames, closing: null };
+    } catch (error) {
+      try { await native?.stop(); } finally { try { await relay?.close(); } finally { await removePrivateRequest(root); inUse.delete(root); } }
+      throw error;
+    }
+  }
+  private async completeTurn(request: CompletionRequest, authorize: () => void): Promise<Completion> {
+    const lease = this.continuations.lease(request), marker = nativeTurnMarker();
+    let session = lease.value, retained = false, armed = false;
+    const stop = (): void => { void session?.native.stop().catch(() => undefined); };
+    request.signal.addEventListener("abort", stop, { once: true });
+    try {
+      if (session) { session.native.beginTurn(); session.relay.arm(request, nativeInventory(request.tools), authorize, marker); armed = true; }
+      else { await lease.released; session = await this.startSession(request, authorize, marker); }
+      authorize();
+      if (lease.continued) await session.native.send(nativeTrigger(marker), request.signal);
+      else await replay(session.native, session.frames, request.signal, authorize);
+      session.frames = [];
+      const terminal = await nativeResult(session.native, request.signal);
+      await session.relay.disarm(); authorize();
+      const result = completed(session.relay, terminal);
+      const rateEvents = session.native.rateEvents(); if (rateEvents) this.onOutput?.(rateEvents);
+      authorize(); retained = this.continuations.finish(lease, session, result);
+      return result;
+    } catch (error) {
+      this.continuations.fail(lease);
+      if (lease.continued && !request.signal.aborted && !(armed && session?.relay.used)) throw new NativeSessionEnded(error);
+      throw error;
+    } finally {
+      request.signal.removeEventListener("abort", stop);
+      if (session && !retained) await disposeSession(session);
     }
   }
 }
