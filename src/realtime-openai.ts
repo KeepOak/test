@@ -117,6 +117,7 @@ export class OpenAiRealtimeSession extends SocketSession {
       return;
     }
     if (type === "response.audio.delta") { this.outputAudio(message); return; }
+    if (type !== "response.done" && this.retiredResponses.has(textAt(message["response_id"]))) return;
     if (this.cancelled && type.startsWith("response.") && type !== "response.done") return;
     if (type === "response.audio_transcript.delta")
       { this.onTranscript({ who: "assistant", text: textAt(message["delta"]), final: false }); return; }
@@ -132,7 +133,11 @@ export class OpenAiRealtimeSession extends SocketSession {
       });
       return;
     }
-    if (type === "response.done") { this.responseActive = false; this.readUsage(message["response"]); return; }
+    if (type === "response.done") {
+      const response = message["response"] as Record<string, unknown> | undefined;
+      if (!textAt(response?.["id"]) || textAt(response?.["id"]) === this.responseId) this.responseActive = false;
+      this.readUsage(response); return;
+    }
     if (type === "error") {
       const error = message["error"];
       this.onError(textAt((error as Record<string, unknown> | undefined)?.["message"]) || "The service reported a problem");
@@ -143,7 +148,8 @@ export class OpenAiRealtimeSession extends SocketSession {
     const audio = fromBase64(textAt(message["delta"]));
     this.responseActive = true;
     const itemId = textAt(message["item_id"]);
-    const contentIndex = typeof message["content_index"] === "number" ? message["content_index"] : 0;
+    const contentIndex = typeof message["content_index"] === "number" && Number.isInteger(message["content_index"])
+      && message["content_index"] >= 0 ? message["content_index"] : 0;
     if (itemId) {
       const key = `${itemId}:${contentIndex}`;
       if (!this.audioBytes.has(key) && this.audioBytes.size >= 32) this.audioBytes.delete(this.audioBytes.keys().next().value!);
