@@ -6656,6 +6656,7 @@
   "window.chat.bg.finished": "{count} terminadas en segundo plano",
   "window.chat.bg.hint": "Empieza una con {code} o + › Ejecutar en segundo plano. Hasta tres a la vez.",
   "window.chat.bg.ready": "Terminada · lista para leer",
+  "window.chat.bg.resume-explanation": "Reanudar inicia una nueva tarea con los mensajes guardados de esta conversación. Una acción sin un resultado guardado puede haber ocurrido ya.",
   "window.chat.bg.run": "Ejecutarlo en segundo plano",
   "window.chat.bg.running": "{count} en segundo plano",
   "window.chat.bg.title": "En marcha en segundo plano",
