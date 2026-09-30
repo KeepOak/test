@@ -218,7 +218,7 @@ function onInput(e) {
 }
 
 export function init() {
-  markLive(["sw:tg-media", "sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
+  markLive(["sw:tg-media15", "sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
   on("ch-open", (el) => openChatWizard(el.dataset.v));
   on("revfix17d", () => openChatWizard(S.chw?.id ?? "telegram", "Paste")); // pass 17 part D §8: the app whose page this is
   on("chw-remove", () => remove());
