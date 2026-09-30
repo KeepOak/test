@@ -20,8 +20,9 @@ if (mode === "inert") {
   writeFileSync(process.env.BRANCH_NATIVE_FIXTURE_INERT, answer);
 }
 const lines = createInterface({ input: process.stdin });
-let work = Promise.resolve();
+let work = Promise.resolve(), ending = false;
 lines.on("line", (line) => { work = work.then(async () => {
+  if (ending) return; // "exit-soon": ended after its one result, though its input was still open
   const frame = JSON.parse(line); frames.push(frame);
   if (frame.shouldQuery === false) { emit({ type: "result", num_turns: mode === "bad-ack" ? 1 : 0, is_error: false }); return; }
   if (frame.type !== "user") return;
@@ -29,8 +30,11 @@ lines.on("line", (line) => { work = work.then(async () => {
     emit({ type: "assistant", error: "authentication_failed" });
     emit({ type: "result", num_turns: 1, subtype: "error_during_execution", is_error: true }); process.exitCode = 1; return;
   }
-  const payload = { model: value("--model"), ...generation,
+  const payload = { model: value("--model"), stream: true, ...generation,
     system: [{ type: "text", text: readFileSync(value("--system-prompt-file"), "utf8") }], messages: frames.map((item) => item.message) };
+  // A native request that lost this turn's transport marker (another turn's request) is sent as plain words.
+  if (mode === "no-marker") payload.messages = payload.messages.map((message) => ({ ...message,
+    content: [{ type: "text", text: JSON.stringify(message.content).replace(/BRANCH_TRANSPORT_TURN_[0-9a-f]+/g, "") }] }));
   const url = process.env.ANTHROPIC_BASE_URL + "/v1/messages?beta=true";
   const request = () => fetch(url, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-native-account", "anthropic-version": "2023-06-01",
     ...(process.env.BRANCH_NATIVE_FIXTURE_RELAY ? { "x-branch-fixture-relay": process.env.BRANCH_NATIVE_FIXTURE_RELAY } : {}) }, body: JSON.stringify(payload) });
@@ -42,4 +46,7 @@ lines.on("line", (line) => { work = work.then(async () => {
   } else emit({ type: "rate_limit_event", rate_limit_info: { rateLimitType: "five_hour", utilization: 0.25, resetsAt: 2000000000 } });
   emit({ type: "result", num_turns: 1, subtype: mode === "retry" ? "error_during_execution" : "success", is_error: mode === "retry" });
   process.exitCode = mode === "retry" ? 1 : 0;
+  // An older Claude Code ends after its one result instead of waiting for the next turn.
+  if (mode === "once") { lines.close(); process.stdin.destroy(); }
+  if (mode === "exit-soon") { ending = true; setTimeout(() => process.exit(0), 300); }
 }).catch(() => { emit({ type: "result", num_turns: 1, subtype: "error_during_execution", is_error: true }); process.exitCode = 1; }); });
