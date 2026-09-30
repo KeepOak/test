@@ -80,7 +80,7 @@ export function draw() {
     + code15(t("window.settings.developer.loop-a-prompt"), t("window.settings.developer.or-heartbeat-for-the-check-in"), "/loop 10m check the build"));
   html += sec15(t("window.settings.developer.system"),
     fact15("Portable mode", "f15-portable-mode")
-    + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint ?? "")
+    + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint || "Sends each task's traces to your own OpenTelemetry collector.")
     + statusRow()
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")

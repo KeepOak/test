@@ -106,7 +106,7 @@ export function draw() {
 
 /* Where Branch runs (Overview's Finish setting up opens this page for it): this computer, or another one added through
    the Settings › Computer flow's own "Add a computer" (flows/computers.js comp-add, pairing through the engine). */
-const where = () => `<div class="sec"><h2>${t("window.flows.setup.step-where")}</h2><div class="ctl"><b>${t("window.p18.ob.fin-where")}</b><span class="right"><button class="btn sm" type="button" data-act="comp-add">${t("window.settings.computer.add-a-computer")}</button></span></div></div>`;
+const where = () => `<div class="sec"><h2>${t("window.flows.setup.step-where")}</h2><div class="ctl"><b>${t("window.p18.ob.fin-where")}</b><span class="right"><button class="btn sm" type="button" data-act="comp-add">${t("window.settings.computer.add-a-computer")}</button></span><small>${t("window.settings.explain.where")}</small></div></div>`;
 
 /* ---------- starting up ---------- */
 async function startUp(el) {
