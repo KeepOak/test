@@ -846,6 +846,8 @@ owner GET /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=
 owner POST /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/trunks/:id/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/trunks/:id/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/resume-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3104,6 +3106,8 @@ owner+lockdown GET /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=o
 owner+lockdown POST /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/trunks/:id/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/trunks/:id/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/resume-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5362,6 +5366,8 @@ household GET /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=4
 household POST /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/:id/files | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household POST /api/trunks/:id/files | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/trunks/:id/spend | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/trunks/:id/spend | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/resume-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7620,6 +7626,8 @@ household+lockdown GET /api/trunks/:id/default | here=400/f6e21c remote=400/f6e2
 household+lockdown POST /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/:id/files | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/trunks/:id/files | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/trunks/:id/spend | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/trunks/:id/spend | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/resume-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9878,6 +9886,8 @@ applock GET /api/trunks/:id/default | here=423/a8f863
 applock POST /api/trunks/:id/default | here=423/a8f863
 applock GET /api/trunks/:id/files | here=423/a8f863
 applock POST /api/trunks/:id/files | here=423/a8f863
+applock GET /api/trunks/:id/spend | here=423/a8f863
+applock POST /api/trunks/:id/spend | here=423/a8f863
 applock GET /api/trunks/pause-all | here=423/a8f863
 applock POST /api/trunks/pause-all | here=423/a8f863
 applock GET /api/trunks/resume-all | here=423/a8f863

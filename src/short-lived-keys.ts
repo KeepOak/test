@@ -141,6 +141,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   // P17-D §9: which of the owner's computers a Trunk may use names them, as the devices list does.
   new RegExp(`^/api/trunks/${id}/computers$`),
   new RegExp(`^/api/trunks/${id}/files$`), // personal instructions and private notes outlive a script's key
+  // models-ui: what a Trunk spent this month, and its limit, is the owner's to read.
+  new RegExp(`^/api/trunks/${id}/spend$`),
   new RegExp(`^/api/trunks/${id}/secrets$`), // RES-260: the names of a Trunk's own secrets
   // R17-S-A: the settings file outlives the key, and the owner's own files say who they are.
   /^\/api\/settings-kit\/(export|files)(\/.*)?$/,

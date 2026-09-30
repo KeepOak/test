@@ -499,6 +499,8 @@ export const ROUTES = {
   "/api/trunks/:id/secrets": "owner GET,POST", // RES-260: a Trunk's own secrets, by name
   "/api/trunks/:id/default": "owner POST",
   "/api/trunks/:id/files": "other GET,POST", // personal files; scripts cannot read or change them, people only their own
+  // models-ui: a Trunk's monthly spending limit and what it spent this month.
+  "/api/trunks/:id/spend": "owner GET,POST",
   "/api/trunks/pause-all": "owner POST",
   "/api/trunks/resume-all": "owner POST",
   "/api/trunks/rooms/:id": "owner POST",

@@ -1,5 +1,34 @@
 # Third-party notices
 
+## Hermes memory tool approval snapshot adaptation
+
+The whole-file proposal snapshot guard in `src/trunks/files.ts` adapts the pinned-entry approval pattern in
+[`tools/memory_tool.py`](https://github.com/NousResearch/hermes-agent/blob/94a57ead919dddfe54f7945cab5c829e907e5c26/tools/memory_tool.py),
+specifically `_pin_matched_entries` and `_gate_or_stage`. Branch captures the entire original file at staging,
+then refuses acceptance if that content changed. The integration always requires a person to review the proposal.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ### Hermes chat branch argument parsing
 
 `src/channels/branch-command.ts` adapts the leading `--here` argument handling from `gateway/slash_commands_branch_thread.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, MIT. Branch uses its existing SessionBranches file/transcript copy, path records and per-conversation choices; it branches in place and does not open a native chat-app thread. The MIT license is reproduced elsewhere in this document under Hermes Agent.
