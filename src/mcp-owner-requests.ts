@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { ClientCapabilities } from '@modelcontextprotocol/sdk/types.js';
@@ -29,7 +29,7 @@ const bounded = (preset: { provider: { name: string; keepsOwnTime?: boolean } })
 type Settings = z.infer<typeof McpOwnerRequestSettings>;
 type Answer = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> };
 interface Pending {
-  id: string; server: string; kind: 'sampling' | 'elicitation' | 'roots'; details: unknown;
+  id: string; server: string; kind: 'sampling' | 'elicitation' | 'roots' | 'urlRetry'; details: unknown;
   owner: string; settings: string; finish: (answer: Answer) => void;
 }
 
@@ -41,6 +41,7 @@ export class McpOwnerRequests {
   readonly urls: McpUrlElicitation;
   private readonly pending = new Map<string, Pending>();
   private readonly rates = new Map<string, number[]>();
+  private readonly calls = new Map<string, { context: ToolContext; permission: string; args: Record<string, unknown> }>();
   constructor(private readonly store: Store, private readonly owner: () => string,
     private readonly models: ModelRouter, private readonly locked: () => boolean = () => false,
     private readonly permitted: (context: ToolContext, permission: string, args: Record<string, unknown>) => boolean = () => false,
@@ -93,16 +94,13 @@ export class McpOwnerRequests {
       ...(modern && settings.roots ? { roots: {} } : {}) };
   }
   /** Embedded MRTR requests share the initiating task's exact permission and cancellation boundary. */
-  async fulfill(server: string, request: unknown, context: ToolContext, permission: string, args: Record<string, unknown>): Promise<unknown> {
+  async fulfill(server: string, request: unknown, context: ToolContext, permission: string, args: Record<string, unknown>,
+    urlSource?: { connection: string; inputId: string; state: string; requestId: string }): Promise<unknown> {
     const input = z.object({ method: z.enum(['elicitation/create', 'sampling/createMessage', 'roots/list']),
       params: z.record(z.string(), z.unknown()).optional() }).strict().parse(request);
-    const guard = () => {
-      context.signal.throwIfAborted();
-      const run = this.store.run(context.runId);
-      if (!this.ready() || context.owner !== this.owner() || !context.permissions.has(permission) || !this.permitted(context, permission, args)
-        || !run || run.owner !== context.owner || run.status !== 'running')
-        throw new Error('The initiating task or its permission is no longer available.');
-    };
+    const original = JSON.stringify(args);
+    const guard = () => { this.assertCall(context, permission, args);
+      if (JSON.stringify(args) !== original) throw new Error('The original tool arguments changed.'); };
     guard();
     const signal = new AbortController();
     const timer = setInterval(() => { try { guard(); } catch { signal.abort(); } }, 250);
@@ -110,10 +108,59 @@ export class McpOwnerRequests {
     const bound = AbortSignal.any([context.signal, signal.signal]);
     try {
       const result = input.method === 'sampling/createMessage' ? await this.sample(server, input.params, bound, context)
-        : input.method === 'elicitation/create' ? await this.elicit(server, input.params, bound)
+        : input.method === 'elicitation/create' ? input.params?.mode === 'url'
+          ? await this.modernUrl(server, input.params, context, permission, args, bound, urlSource)
+          : await this.elicit(server, input.params, bound)
         : await this.roots(server, context, bound);
       guard(); return result;
     } finally { clearInterval(timer); }
+  }
+  assertCall(context: ToolContext, permission: string, args: Record<string, unknown>): void {
+    context.signal.throwIfAborted();
+    const run = this.store.run(context.runId);
+    if (!this.ready() || context.owner !== this.owner() || !context.permissions.has(permission) || !this.permitted(context, permission, args)
+      || !run || run.owner !== context.owner || run.status !== 'running')
+      throw new Error('The initiating task or its permission is no longer available.');
+  }
+  async withCall<T>(connection: string, context: ToolContext, permission: string, args: Record<string, unknown>,
+    invoke: () => Promise<T>): Promise<T> {
+    if (this.calls.has(connection)) throw new Error('An interactive call is already using this server connection.');
+    this.calls.set(connection, { context, permission, args });
+    try { return await invoke(); }
+    finally { this.calls.delete(connection); }
+  }
+  private async modernUrl(server: string, params: Record<string, unknown>, context: ToolContext, permission: string,
+    args: Record<string, unknown>, signal: AbortSignal, source?: { connection: string; inputId: string; state: string; requestId: string }) {
+    if (!source || !source.requestId || !source.inputId) throw new Error('The server URL question is missing its initiating request.');
+    const settings = this.guard(server, 'urlElicitation'), saved = JSON.stringify(settings), original = JSON.stringify(args);
+    const valid = () => { try { this.assertCall(context, permission, args);
+      return JSON.stringify(args) === original && JSON.stringify(this.settings(server)) === saved; } catch { return false; } };
+    // The local identity pins the named embedded request to this exact source/state/run/arguments.
+    const elicitationId = createHash('sha256').update(JSON.stringify([source.requestId, source.inputId, source.state, context.runId, permission, original])).digest('hex');
+    const value = z.object({ mode: z.literal('url'), url: z.string(), message: z.string() }).strict().parse(params);
+    return this.urls.ask(server, source.connection, { ...value, elicitationId }, settings.urlOrigins, valid, signal,
+      { mode: 'modern', runId: context.runId, tool: permission, args: JSON.parse(original) as Record<string, unknown>, continuation: !!source.state });
+  }
+  /** Error-list retries always require a separate review of the exact original call after browser consent. */
+  async retryUrls(server: string, connection: string, requests: unknown, context: ToolContext,
+    permission: string, args: Record<string, unknown>, modern: boolean): Promise<void> {
+    const list = z.array(z.object({ mode: z.literal('url'), message: z.string().max(4000), url: z.string().url().max(8192),
+      elicitationId: z.string().min(1).max(200).optional(), task: z.never().optional() }).passthrough()).min(1).max(4).parse(requests);
+    const original = JSON.stringify(args), saved = JSON.stringify(this.settings(server));
+    const valid = () => { try { this.assertCall(context, permission, args);
+      return JSON.stringify(args) === original && JSON.stringify(this.settings(server)) === saved; } catch { return false; } };
+    this.assertCall(context, permission, args);
+    for (const request of list) {
+      if (!modern && !request.elicitationId) throw new Error('The server omitted its browser question identifier.');
+      const settings = this.guard(server, 'urlElicitation');
+      const answer = await this.urls.ask(server, connection, { ...request, elicitationId: request.elicitationId ?? randomUUID() },
+        settings.urlOrigins, valid, context.signal, { mode: modern ? 'modern' : 'error', runId: context.runId, tool: permission });
+      if (answer.action !== 'accept' || !valid()) throw new Error('The owner cancelled the browser retry.');
+    }
+    const answer = await this.ask(server, 'urlRetry', { tool: permission, args: JSON.parse(original), runId: context.runId,
+      message: 'Retry this exact original tool once? The server requested a browser step, but this does not prove it made no prior changes. Retrying may repeat effects. Browser consent is not proof of login success.' },
+      this.guard(server, 'urlElicitation', false), context.signal);
+    if (answer.action !== 'accept' || !valid()) throw new Error('The owner declined the original tool retry.');
   }
   private async roots(server: string, context: ToolContext, signal: AbortSignal) {
     const settings = this.guard(server, 'roots'), uri = pathToFileURL(context.workspace).href;
@@ -125,7 +172,7 @@ export class McpOwnerRequests {
   }
   private guard(server: string, kind: Pending['kind'] | 'urlElicitation', spend = true): Settings {
     const settings = this.settings(server);
-    if (!this.ready() || !settings[kind]) throw new Error('The owner window is unavailable or this server feature is off.');
+    if (!this.ready() || !settings[kind === 'urlRetry' ? 'urlElicitation' : kind]) throw new Error('The owner window is unavailable or this server feature is off.');
     if (!spend) return settings;
     const recent = (this.rates.get(server) ?? []).filter(time => time > Date.now() - 60_000);
     if (recent.length >= settings.requestsPerMinute) throw new Error('This server reached its request limit.');
@@ -161,7 +208,7 @@ export class McpOwnerRequests {
       this.pending.set(id, { id, server, kind, details, owner: this.owner(), settings: JSON.stringify(settings), finish });
     });
   }
-  async install(client: Client, server: string, negotiated?: ClientCapabilities): Promise<() => void> {
+  async install(client: Client, server: string, negotiated?: ClientCapabilities): Promise<(() => void) & { connection: string; urlReady: boolean; signal: AbortSignal }> {
     const { CreateMessageRequestSchema, ElicitRequestSchema, ElicitationCompleteNotificationSchema } = await import('@modelcontextprotocol/sdk/types.js');
     const capabilities = negotiated ?? this.capabilities(server), connection = randomUUID(), closed = new AbortController();
     if (capabilities.elicitation?.url) client.setNotificationHandler(ElicitationCompleteNotificationSchema,
@@ -170,12 +217,19 @@ export class McpOwnerRequests {
     if (capabilities.elicitation) client.setRequestHandler(ElicitRequestSchema, (request, extra) => {
       if (request.params.mode !== 'url') return this.elicit(server, request.params, extra.signal);
       if (!capabilities.elicitation?.url) throw new Error('Browser questions were not negotiated.');
+      const call = this.calls.get(connection);
+      if (!call) throw new Error('Browser questions require an initiating tool call.');
+      this.assertCall(call.context, call.permission, call.args);
       const settings = this.guard(server, 'urlElicitation'), saved = JSON.stringify(settings), owner = this.owner();
+      const original = JSON.stringify(call.args);
       return this.urls.ask(server, connection, request.params, settings.urlOrigins,
-        () => this.ready() && this.owner() === owner && JSON.stringify(this.settings(server)) === saved,
-        AbortSignal.any([extra.signal, closed.signal]));
+        () => { try { this.assertCall(call.context, call.permission, call.args);
+          return this.owner() === owner && JSON.stringify(this.settings(server)) === saved && JSON.stringify(call.args) === original;
+        } catch { return false; } },
+        AbortSignal.any([extra.signal, call.context.signal, closed.signal]));
     });
-    return () => { closed.abort(); this.urls.cancel(server, connection); };
+    return Object.assign(() => { closed.abort(); this.urls.cancel(server, connection); },
+      { connection, urlReady: !!capabilities.elicitation?.url, signal: closed.signal });
   }
   private async sample(server: string, input: unknown, signal: AbortSignal, context?: ToolContext) {
     const settings = this.guard(server, 'sampling');

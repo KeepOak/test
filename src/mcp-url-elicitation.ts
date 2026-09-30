@@ -6,9 +6,10 @@ export const ElicitationOrigin = z.string().max(300).refine(value => {
   catch { return false; }
 }, 'Use an exact HTTPS origin without a path, credentials or query.');
 type Action = { action: 'accept' | 'decline' | 'cancel' };
+export interface UrlFlow { mode: 'push' | 'modern' | 'error'; runId?: string; tool?: string; args?: Record<string, unknown>; continuation?: boolean }
 interface Waiting {
   id: string; server: string; connection: string; elicitationId: string; origin: string;
-  url: string; owner: string; message: string; stage: 'approval' | 'opening' | 'completion';
+  url: string; owner: string; message: string; stage: 'approval' | 'opening' | 'completion' | 'resume'; flow: UrlFlow;
   valid: () => boolean; accept: () => void; finish: (result: Action) => void;
 }
 interface Ticket { id: string; proof: string; expires: number; consumed: boolean }
@@ -25,9 +26,9 @@ export class McpUrlElicitation {
   list() {
     for (const [id, value] of this.completed) if (value.until <= Date.now()) this.completed.delete(id);
     return [...this.pending.values()].filter(item => item.owner === this.owner())
-      .map(({ id, server, message, origin, stage }) => ({ id, server, message, origin, stage: stage as string }))
+      .map(({ id, server, message, origin, stage, flow }) => ({ id, server, message, origin, stage: stage as string, flow }))
       .concat([...this.completed.values()].filter(item => item.owner === this.owner())
-        .map(({ id, server, origin }) => ({ id, server, origin, stage: 'completed', message: 'This server reported that the browser step completed.' })));
+        .map(({ id, server, origin }) => ({ id, server, origin, stage: 'completed', flow: { mode: 'push' as const }, message: 'This server reported that the browser step completed.' })));
   }
   cancel(server?: string, connection?: string): void {
     for (const item of this.pending.values()) if ((!server || item.server === server)
@@ -44,6 +45,13 @@ export class McpUrlElicitation {
   decline(input: unknown): void {
     const value = z.object({ id: z.string().uuid(), action: z.enum(['decline', 'cancel']) }).strict().parse(input);
     this.current(value.id).finish({ action: value.action });
+  }
+  resume(input: unknown): void {
+    const { id } = z.object({ id: z.string().uuid() }).strict().parse(input);
+    const item = this.current(id);
+    if (!(item.flow.mode === 'modern' && item.stage === 'resume'
+      || item.flow.mode === 'error' && item.stage === 'completion')) throw new Error('Open the browser step before continuing.');
+    item.finish({ action: 'accept' });
   }
   prepare(input: unknown): { ticket: string } {
     const { id } = z.object({ id: z.string().uuid() }).strict().parse(input);
@@ -73,7 +81,10 @@ export class McpUrlElicitation {
     this.tickets.delete(value.ticket);
     const item = this.current(handoff.id);
     if (!value.opened) item.finish({ action: 'cancel' });
-    else { item.stage = 'completion'; item.accept(); }
+    else {
+      item.stage = item.flow.mode === 'modern' ? 'resume' : 'completion';
+      if (item.flow.mode === 'push') item.accept();
+    }
   }
   complete(connection: string, elicitationId: string): void {
     for (const item of this.pending.values()) if (item.connection === connection
@@ -89,7 +100,7 @@ export class McpUrlElicitation {
     }
   }
   async ask(server: string, connection: string, input: unknown, origins: string[], valid: () => boolean,
-    signal: AbortSignal): Promise<Action> {
+    signal: AbortSignal, flow: UrlFlow = { mode: 'push' }): Promise<Action> {
     const params = z.object({ mode: z.literal('url'), message: z.string().max(4000),
       url: z.string().url().max(8192), elicitationId: z.string().min(1).max(200), task: z.never().optional() }).passthrough().parse(input);
     const url = new URL(params.url);
@@ -101,14 +112,15 @@ export class McpUrlElicitation {
     used.add(params.elicitationId); this.used.set(connection, used);
     await this.vetAddress(url); signal.throwIfAborted();
     if (!this.ready() || !valid() || this.pending.size >= 8) throw new Error('Browser questions are unavailable.');
-    return this.wait(server, connection, params, valid, signal);
+    if (Buffer.byteLength(JSON.stringify(flow)) > 32768) throw new Error('Original request exceeds the review limit.');
+    return this.wait(server, connection, params, valid, signal, flow);
   }
   private async vetAddress(url: URL): Promise<void> {
     try { await this.vet(url); }
     catch { throw new Error('The browser question address was refused by network policy.'); }
   }
   private wait(server: string, connection: string, params: { url: string; message: string; elicitationId: string },
-    valid: () => boolean, signal: AbortSignal): Promise<Action> {
+    valid: () => boolean, signal: AbortSignal, flow: UrlFlow): Promise<Action> {
     return new Promise(resolve => {
       const id = randomUUID(), expires = Date.now() + 300_000;
       const finish = (answer: Action) => {
@@ -124,7 +136,7 @@ export class McpUrlElicitation {
       timer.unref?.(); signal.addEventListener('abort', cancel, { once: true });
       this.pending.set(id, { id, server, connection, elicitationId: params.elicitationId,
         url: params.url, origin: new URL(params.url).origin, message: params.message, owner: this.owner(),
-        stage: 'approval', valid, accept: () => resolve({ action: 'accept' }), finish });
+        stage: 'approval', flow, valid, accept: () => resolve({ action: 'accept' }), finish });
       if (signal.aborted) cancel();
     });
   }

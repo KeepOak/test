@@ -90,11 +90,28 @@ function browserQuestion(request) {
   card.dataset.request = request.id; card.dataset.stage = request.stage;
   title.textContent = `${request.server}: A browser step for you`;
   message.textContent = `${request.message}\nApproved origin: ${request.origin}\n${request.stage === 'approval'
-    ? 'Opening this page uses your external browser. The server must confirm completion; login details stay outside the conversation.'
+    ? request.flow?.mode === 'modern' ? 'Opening uses your external browser. Return here to approve continuing the original request; login details stay outside the conversation.'
+      : 'Opening this page uses your external browser. Login details stay outside the conversation.'
     : request.stage === 'completed' ? 'You may retry the original request when needed; normal tool approval still applies.'
       : 'Waiting for this server to confirm completion. You can stop waiting at any time.'}`;
   card.append(title, message);
+  if (request.flow?.tool) {
+    const original = document.createElement('pre');
+    original.textContent = `Original task: ${request.flow.runId}\nTool: ${request.flow.tool}${request.flow.args ? `\n${JSON.stringify(request.flow.args, null, 2)}` : ''}`;
+    card.append(original);
+  }
   if (request.stage === 'completed') return card;
+  if (request.stage === 'resume' || request.stage === 'completion' && request.flow?.mode === 'error') {
+    message.textContent = `${request.message}\nOrigin: ${request.origin}\nBrowser consent does not prove login success. Continue only after finishing the browser step; the server will check its own authorization.${request.flow.mode === 'modern' ? '\nContinuing sends this original tool again and may repeat effects; the server controls request-state idempotency.' : ''}`;
+    const resume = document.createElement('button'); resume.type = 'button';
+    resume.textContent = request.flow.mode === 'error' ? 'I finished; review the original retry' : 'Continue this exact request';
+    resume.onclick = async () => {
+      resume.disabled = true;
+      try { await api('mcp/owner-requests/url-resume', { id: request.id }); card.remove(); }
+      catch (error) { toast(error.message); }
+    };
+    card.append(resume);
+  }
   if (request.stage === 'approval') {
     const open = document.createElement('button'); open.type = 'button'; open.textContent = `Open ${request.origin}`;
     open.onclick = async () => {
@@ -103,7 +120,8 @@ function browserQuestion(request) {
         if (!window.branchDesktop?.openMcpElicitation) throw new Error('Use the local desktop app to open this page.');
         const { ticket } = await api('mcp/owner-requests/url-prepare', { id: request.id });
         await window.branchDesktop.openMcpElicitation(ticket);
-        message.textContent = `Waiting for ${request.server} to confirm completion at ${request.origin}.`;
+        message.textContent = request.flow?.mode === 'modern' ? 'Finish the browser step, then return here to review continuing.'
+          : `Waiting for ${request.server} to confirm completion at ${request.origin}.`;
       } catch (error) { toast(error.message); }
     };
     card.append(open);
@@ -125,7 +143,9 @@ function question(request) {
   const inputs = new Map();
   if (request.kind === 'sampling') body.textContent = `${request.details.notice}\nModel: ${request.details.modelName}\nOutput limit: ${request.details.maxTokens}\n${request.details.messages.map(m => `${m.role}: ${m.content}`).join('\n\n')}`;
   else if (request.kind === 'roots') body.textContent = `${request.details.message}\n${request.details.uri}\nTask: ${request.details.runId}`;
-  else body.textContent = `${request.details.message}\nYour answers will be sent to ${request.server}.`;
+  else body.textContent = `${request.details.message}\n${request.kind === 'urlRetry'
+    ? `Tool: ${request.details.tool}\nTask: ${request.details.runId}\nExact arguments:\n${JSON.stringify(request.details.args, null, 2)}`
+    : `Your answers will be sent to ${request.server}.`}`;
   form.append(title, body);
   if (request.kind === 'elicitation') for (const [name, spec] of Object.entries(request.details.requestedSchema.properties)) {
     const input = field(form, spec.title || name, spec.type === 'boolean' ? 'checkbox' : spec.type === 'number' || spec.type === 'integer' ? 'number' : 'text');
@@ -135,7 +155,7 @@ function question(request) {
     input.required = spec.type !== 'boolean' && (request.details.requestedSchema.required || []).includes(name);
     inputs.set(name, { input, spec });
   }
-  for (const [action, label] of [['accept', 'Allow this request'], ['decline', 'Decline'], ['cancel', 'Cancel']]) {
+  for (const [action, label] of [['accept', request.kind === 'urlRetry' ? 'Retry this exact tool once' : 'Allow this request'], ['decline', 'Decline'], ['cancel', 'Cancel']]) {
     const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
     button.onclick = async () => {
       if (action === 'accept' && !form.reportValidity()) return;

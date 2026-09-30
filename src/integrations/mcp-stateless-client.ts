@@ -12,6 +12,8 @@ import { headerAnnotations, parameterHeaders } from './mcp-stateless-headers.js'
 import { appendMcpUi } from './mcp-app-resource.js';
 import { mcpToolName } from './mcp.js';
 import type { McpOwnerRequests } from '../mcp-owner-requests.js';
+import { randomUUID } from 'node:crypto';
+import { urlRequiredRetry } from './mcp-url-retry.js';
 export class LegacyMcpFallback extends Error {}
 
 function selectedEnv(config: Extract<McpConfig, { transport: 'stdio' }>, env: NodeJS.ProcessEnv): Record<string, string> {
@@ -77,10 +79,10 @@ export async function openModernHttp(config: Extract<McpTransportConfig, { trans
 
 export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv,
   policy: { guard(base: typeof fetch): typeof fetch } | undefined, timeout: number, ownerRequests?: McpOwnerRequests) {
-  const interactive = ownerRequests?.capabilities(config.id, true) ?? {};
+  const interactive = ownerRequests?.capabilities(config.id, true, true) ?? {};
   const client = new Client({ name: 'branch', version: '0.1.0' }, {
     capabilities: { ...(interactive.sampling ? { sampling: {} } : {}),
-      ...(interactive.elicitation ? { elicitation: { form: {} } } : {}), ...(interactive.roots ? { roots: {} } : {}),
+      ...(interactive.elicitation ? { elicitation: interactive.elicitation } : {}), ...(interactive.roots ? { roots: {} } : {}),
       ...(config.apps ? { extensions: {
       'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } } } : {}) },
     inputRequired: { autoFulfill: false }, listMaxPages: 10,
@@ -94,19 +96,22 @@ export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv
   };
   if ('stderr' in connection.transport) connection.transport.stderr?.on('data', () => undefined);
   let alive = true;
-  client.onclose = () => { alive = false; };
+  const source = randomUUID(), closed = new AbortController();
+  const revoke = () => { alive = false; closed.abort(); ownerRequests?.urls.cancel(config.id, source); };
+  client.onclose = revoke;
   const continuations = new Map<string, { state: string; expires: number }>();
   try {
     await negotiateModern(client, connection.transport, config, timeout);
     if (client.getProtocolEra() !== 'modern') throw new LegacyMcpFallback('Server negotiated legacy MCP');
     if (client.getServerVersion()?.version !== config.expectedVersion) throw new Error('MCP server version changed');
     const found = await listTools(client, config.tools, timeout);
-    const call = modernCall(client, found, continuations, config, new Set(Object.keys(interactive)), ownerRequests);
+    const declared = new Set([...Object.keys(interactive), ...(interactive.elicitation?.url ? ['elicitation/url'] : [])]);
+    const call = modernCall(client, found, continuations, config, declared, source, closed.signal, ownerRequests);
     // Shared Apps bridge can consume this structural interface after capability negotiation is wired.
     const resourceReader = { readResource: client.readResource.bind(client) };
     return { config, found, secrets: connection.secrets, call, resourceReader, alive: () => alive,
-      close: async () => { alive = false; continuations.clear(); await client.close(); } };
-  } catch (error) { await client.close(); throw error; }
+      close: async () => { revoke(); continuations.clear(); await client.close(); } };
+  } catch (error) { revoke(); await client.close(); throw error; }
 }
 
 async function negotiateModern(client: Client, transport: Parameters<Client['connect']>[0], config: McpTransportConfig,
@@ -122,28 +127,40 @@ async function negotiateModern(client: Client, transport: Parameters<Client['con
 }
 
 function modernCall(client: Client, found: Tool[], continuations: Map<string, { state: string; expires: number }>,
-  config: McpConfig, declared: ReadonlySet<string>, ownerRequests?: McpOwnerRequests) {
+  config: McpConfig, declared: ReadonlySet<string>, source: string, closed: AbortSignal, ownerRequests?: McpOwnerRequests) {
   return async (name: string, args: Record<string, unknown>, context: ToolContext): Promise<unknown> => {
     const tool = found.find((item) => item.name === name);
     if (!tool) throw new Error('MCP tool is not in the reviewed allowlist');
     const key = `${context.runId}:${argumentFingerprint(name, JSON.stringify(args))}`, deadline = Date.now() + 120000;
-    const bound = { ...context, signal: AbortSignal.any([context.signal, AbortSignal.timeout(120000)]) };
+    const bound = { ...context, signal: AbortSignal.any([context.signal, closed, AbortSignal.timeout(120000)]) };
     let inputResponses: Record<string, unknown> | undefined;
+    let retried = false;
     for (const [id, held] of continuations) if (held.expires < Date.now()) continuations.delete(id);
     for (let round = 0; round < 10 && Date.now() < deadline; round++) {
       bound.signal.throwIfAborted();
       const held = continuations.get(key);
-      const result = await client.request({ method: 'tools/call', params: { name, arguments: args,
+      if (inputResponses) ownerRequests?.assertCall(bound, mcpToolName(config.id, name), args);
+      // Consume held state before sending: ambiguous failures cannot silently reuse it.
+      continuations.delete(key);
+      const invoke = () => client.request({ method: 'tools/call', params: { name, arguments: args,
         ...(held ? { requestState: held.state } : {}), ...(inputResponses ? { inputResponses } : {}) } }, withInputRequired(CallToolResultSchema),
         { signal: bound.signal, timeout: Math.min(30000, Math.max(1, deadline - Date.now())), allowInputRequired: true,
           headers: parameterHeaders(tool.inputSchema, args) });
+      const result = ownerRequests && declared.has('elicitation/url') ? await urlRequiredRetry(invoke,
+        (error): error is ProtocolError => error instanceof ProtocolError, async questions => {
+          if (retried) throw new Error('This original call already used its owner-approved retry.');
+          retried = true;
+          await ownerRequests.retryUrls(config.id, source, questions, bound, mcpToolName(config.id, name), args, true);
+          ownerRequests.assertCall(bound, mcpToolName(config.id, name), args);
+        }) : await invoke();
       if (!isInputRequiredResult(result)) {
         continuations.delete(key);
         return config.apps ? appendMcpUi(client, tool, result, bound.signal) : result;
       }
-      inputResponses = await embeddedResponses(result.inputRequests, config.id, name, args, bound, declared, ownerRequests);
       if (result.requestState !== undefined && (typeof result.requestState !== 'string' || result.requestState.length > 16384 || continuations.size >= 100 && !held))
         throw new Error('MCP continuation exceeds limits');
+      inputResponses = await embeddedResponses(result.inputRequests, config.id, name, args, bound, declared,
+        source, result.requestState, randomUUID(), ownerRequests);
       if (result.requestState === undefined) continuations.delete(key);
       else continuations.set(key, { state: result.requestState, expires: Date.now() + 600000 });
       if (!inputResponses) await pause(bound.signal);
@@ -153,7 +170,8 @@ function modernCall(client: Client, found: Tool[], continuations: Map<string, { 
 }
 
 async function embeddedResponses(requests: Record<string, unknown> | undefined, server: string, tool: string, args: Record<string, unknown>,
-  context: ToolContext, declared: ReadonlySet<string>, ownerRequests?: McpOwnerRequests): Promise<Record<string, unknown> | undefined> {
+  context: ToolContext, declared: ReadonlySet<string>, connection: string, state: string | undefined, requestId: string,
+  ownerRequests?: McpOwnerRequests): Promise<Record<string, unknown> | undefined> {
   if (!requests || !Object.keys(requests).length) return undefined;
   if (!ownerRequests || Object.keys(requests).length > 8 || Buffer.byteLength(JSON.stringify(requests)) > 32768)
     throw new Error('MCP embedded requests are unavailable or exceed limits');
@@ -163,7 +181,10 @@ async function embeddedResponses(requests: Record<string, unknown> | undefined, 
     const method = request && typeof request === 'object' ? (request as { method?: unknown }).method : undefined;
     const capability = method === 'sampling/createMessage' ? 'sampling' : method === 'elicitation/create' ? 'elicitation' : method === 'roots/list' ? 'roots' : '';
     if (!declared.has(capability)) throw new Error('MCP requested a capability absent from this connection');
-    responses[id] = await ownerRequests.fulfill(server, request, context, mcpToolName(server, tool), args);
+    const mode = request && typeof request === 'object' ? (request as { params?: { mode?: unknown } }).params?.mode : undefined;
+    if (mode === 'url' && !declared.has('elicitation/url')) throw new Error('MCP URL requests were not negotiated.');
+    responses[id] = await ownerRequests.fulfill(server, request, context, mcpToolName(server, tool), args,
+      { connection, inputId: id, state: state ?? '', requestId });
   }
   return responses;
 }

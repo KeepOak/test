@@ -13,6 +13,7 @@ import type { McpOwnerRequests } from '../mcp-owner-requests.js';
 import { openStatelessMcp, LegacyMcpFallback } from './mcp-stateless-client.js';
 import { StatelessError } from '../mcp-stateless.js';
 import { appendMcpUi, mcpUi } from './mcp-app-resource.js';
+import { urlRequiredRetry } from './mcp-url-retry.js';
 
 export const mcpToolName = (id: string, tool: string): string =>
   `mcp.${id}.${createHash('sha256').update(tool).digest('hex').slice(0, 16)}`;
@@ -58,10 +59,20 @@ function redact(result: unknown, secrets: string[]): unknown {
  */
 type CallThrough = (tool: string, args: Record<string, unknown>, context: ToolContext) => Promise<unknown>;
 
-const through = (client: Client, tools: readonly Tool[]): CallThrough =>
-  async (tool, args, context) => appendMcpUi(client, tools.find(item => item.name === tool),
-    await client.callTool({ name: tool, arguments: args }, undefined,
-      { signal: context.signal, timeout: 30000 }), context.signal);
+const through = (client: Client, tools: readonly Tool[], server: string,
+  ownerRequests?: McpOwnerRequests, source?: { connection: string; urlReady: boolean; signal: AbortSignal }): CallThrough =>
+  async (tool, args, context) => {
+    const bound = { ...context, signal: AbortSignal.any([context.signal, ...(source ? [source.signal] : [])]) };
+    const invoke = () => client.callTool({ name: tool, arguments: args }, undefined, { signal: bound.signal, timeout: 30000 });
+    const result = ownerRequests && source?.urlReady ? await ownerRequests.withCall(source.connection, bound,
+      mcpToolName(server, tool), args, async () => {
+        const { McpError } = await import('@modelcontextprotocol/sdk/types.js');
+        return urlRequiredRetry(invoke, (error): error is InstanceType<typeof McpError> => error instanceof McpError,
+          async questions => { await ownerRequests.retryUrls(server, source.connection, questions, bound, mcpToolName(server, tool), args, false);
+            ownerRequests.assertCall(bound, mcpToolName(server, tool), args); });
+      }) : await invoke();
+    return appendMcpUi(client, tools.find(item => item.name === tool), result, bound.signal);
+  };
 
 function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: string[]): ToolDefinition {
   if (JSON.stringify(redact(tool, secrets)) !== JSON.stringify(tool))
@@ -194,7 +205,7 @@ export async function openMcp(
   const capabilities = { ...(ownerRequests?.capabilities(config.id, false, true) ?? {}),
     ...(config.apps ? { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } } } : {}) };
   const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' }, { capabilities });
-  let revokeOwnerRequests: (() => void) | undefined;
+  let revokeOwnerRequests: Awaited<ReturnType<McpOwnerRequests['install']>> | undefined;
   try {
     revokeOwnerRequests = await ownerRequests?.install(client, config.id, capabilities);
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
@@ -207,7 +218,8 @@ export async function openMcp(
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
     client.onclose = () => { alive = false; revokeOwnerRequests?.(); };
-    return { config, found, secrets, call: through(client, found), close: () => { revokeOwnerRequests?.(); return client.close(); }, alive: () => alive };
+    return { config, found, secrets, call: through(client, found, config.id, ownerRequests, revokeOwnerRequests),
+      close: () => { revokeOwnerRequests?.(); return client.close(); }, alive: () => alive };
   } catch {
     revokeOwnerRequests?.();
     await client.close().catch(() => undefined);

@@ -3497,6 +3497,7 @@ async function mcpApi(app: Branch, request: IncomingMessage, path: string): Prom
       if (path.endsWith('/url-open')) return urls.consume(input);
       if (path.endsWith('/url-opened')) { urls.opened(input); return { recorded: true }; }
       if (path.endsWith('/url-cancel')) { urls.decline(input); return { cancelled: true }; }
+      if (path.endsWith('/url-resume')) { urls.resume(input); return { resumed: true }; }
       throw new HttpError(405, 'Unsupported browser question request.');
     }
     if (path === '/api/mcp/owner-requests/close' && request.method === 'POST') { app.mcpOwnerRequests.closeWindow(); return { closed: true }; }
