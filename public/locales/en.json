@@ -2491,6 +2491,8 @@
   "folder-trust.switch.on": "On",
   "folder-trust.switch.when-needed": "When needed",
   "folder-trust.workspace": "Your workspace",
+  "gatewayActivity.reading": "Reading gateway status and recent activity…",
+  "gatewayActivity.unavailable": "Recent gateway activity could not be read.",
   "gatewayChoice.off": "Gateway is not running. Background work stops when Branch closes.",
   "gatewayChoice.offLater": "Saved off. This gateway keeps running until Branch next starts.",
   "gatewayChoice.preference": "Keep Branch running after this window closes",
@@ -10417,7 +10419,5 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder",
-  "gatewayActivity.reading": "Reading gateway status and recent activity…",
-  "gatewayActivity.unavailable": "Recent gateway activity could not be read."
+  "wsedit.up": "Up one folder"
 }
