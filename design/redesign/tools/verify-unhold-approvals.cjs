@@ -186,10 +186,14 @@ async function kindSwitch(page) {
   check("without-asking switch under Lockdown: nothing changed", (await decision()) === "allow");
 }
 
-/* The password manager: Bitwarden and 1Password through the engine; Windows greyed; the on/off switch untouched. */
+/* The password manager: Bitwarden and 1Password through the engine; Windows Credential Manager offered where the engine
+   runs on Windows (GET /api/credentials/settings platform) and greyed elsewhere; the on/off switch untouched. */
 async function passwordManager(page) {
   await openSettings(page, "secrets");
-  check("password manager: Windows Credential Manager stays greyed (no engine service)", await greyed(page.locator('[data-act="vaultwinb17"]')));
+  const { platform } = await api("credentials/settings");
+  const win = platform === "win32" ? page.locator('[data-act="vaultb17"][data-v="windows"]') : page.locator('[data-act="vaultwinb17"]');
+  check(`password manager: Windows Credential Manager ${platform === "win32" ? "offered on Windows" : "greyed off Windows"} (${platform})`,
+    (await win.count()) === 1 && (platform === "win32") !== (await greyed(win)));
   for (const [v, service] of [["bitwarden", "bitwarden"], ["onepassword", "1password"]]) {
     await page.locator(`[data-act="vaultb17"][data-v="${v}"]`).click();
     const saved = await until(service, async () => { const c = await api("credentials/settings"); return c.services[0] === service ? c : null; }).catch(() => null);
@@ -208,6 +212,11 @@ async function passwordManager(page) {
   const { saveConversationModeSettings } = await dist("conversation-mode.js");
   const writer = { name: "writer", async complete(request) {
     const last = request.messages.at(-1);
+    // After a yes the engine answers "not run yet: make this same call again" (src/store.ts); a model does, so this does.
+    if (last?.role === "tool" && /"outcome":"not_run"/.test(String(last.content))) {
+      const call = [...request.messages].reverse().find((m) => m.role === "assistant" && m.toolCalls?.length)?.toolCalls?.[0];
+      if (call) return { content: "", toolCalls: [{ ...call, id: `w${Date.now()}` }] };
+    }
     if (last?.role === "tool") return { content: "Written.", toolCalls: [] };
     const asked = [...request.messages].reverse().find((m) => m.role === "user" && /^write \S+/.test(String(m.content)));
     if (last?.role === "user" && asked)
