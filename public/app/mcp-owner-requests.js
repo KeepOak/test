@@ -22,7 +22,7 @@ async function open() {
     if (!panel.open || busy || document.visibilityState !== 'visible') return;
     busy = true;
     try {
-      const state = await api('/api/mcp/owner-requests/window', 'POST', {});
+      const state = await api('mcp/owner-requests/window', {});
       if (!settings.childNodes.length) drawSettings(settings, state.models);
       const ids = state.requests.map(r => r.id).join(',');
       if (ids !== seen) {
@@ -35,7 +35,7 @@ async function open() {
     finally { busy = false; }
   };
   const timer = setInterval(poll, 5000);
-  panel.addEventListener('close', () => { clearInterval(timer); panel.remove(); void api('/api/mcp/owner-requests/close', 'POST', {}).catch(() => {}); }, { once: true });
+  panel.addEventListener('close', () => { clearInterval(timer); panel.remove(); void api('mcp/owner-requests/close', {}).catch(() => {}); }, { once: true });
   await poll();
 }
 function field(form, label, type = 'text') {
@@ -55,7 +55,7 @@ function drawSettings(form, models) {
   const load = document.createElement('button'); load.type = 'button'; load.textContent = 'Read saved choices';
   load.onclick = async () => {
     try {
-      const value = await api(`/api/mcp/owner-requests/settings?server=${encodeURIComponent(server.value)}`);
+      const value = await api(`mcp/owner-requests/settings?server=${encodeURIComponent(server.value)}`);
       sampling.checked = value.sampling; elicitation.checked = value.elicitation;
       rpm.value = String(value.requestsPerMinute); cap.value = String(value.tokenCap);
       for (const option of allowed.options) option.selected = value.models.includes(option.value);
@@ -64,7 +64,7 @@ function drawSettings(form, models) {
   const save = document.createElement('button'); save.type = 'submit'; save.textContent = 'Save choices'; form.append(load, save);
   form.onsubmit = async event => {
     event.preventDefault();
-    try { await api('/api/mcp/owner-requests/settings', 'POST', { server: server.value, settings: {
+    try { await api('mcp/owner-requests/settings', { server: server.value, settings: {
       sampling: sampling.checked, elicitation: elicitation.checked, requestsPerMinute: Number(rpm.value),
       tokenCap: Number(cap.value), models: [...allowed.selectedOptions].map(o => o.value) } }); toast('Saved. Reconnect this server to advertise the enabled features.'); }
     catch (error) { toast(error.message); }
@@ -93,7 +93,7 @@ function question(request) {
       try {
         const content = action !== 'accept' ? {} : Object.fromEntries([...inputs].filter(([, { input, spec }]) => input.value !== '' || spec.type === 'boolean').map(([name, { input, spec }]) => [name,
           spec.type === 'boolean' ? input.checked : spec.type === 'number' || spec.type === 'integer' ? Number(input.value) : spec.type === 'array' ? JSON.parse(input.value) : input.value]));
-        await api('/api/mcp/owner-requests/answer', 'POST', { id: request.id, action, ...(action === 'accept' && request.kind === 'elicitation' ? { content } : {}) }); form.remove();
+        await api('mcp/owner-requests/answer', { id: request.id, action, ...(action === 'accept' && request.kind === 'elicitation' ? { content } : {}) }); form.remove();
       } catch (error) { toast(error.message); }
     };
     form.append(button);
