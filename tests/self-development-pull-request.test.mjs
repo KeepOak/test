@@ -7,7 +7,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { z } from "zod";
@@ -16,6 +16,8 @@ import { savePullRequestHookSettings } from "../dist/pr-hook.js";
 import { ContractBook } from "../dist/self-development-contract.js";
 import { discardTemp } from "./temp-dir.mjs";
 import { saveCodingMode } from "../dist/coding/settings.js";
+import { GitHubAccess } from "../dist/integrations/github.js";
+import { registerGitHubProject } from "../dist/integrations/git-tools.js";
 
 const sha = "d".repeat(40);
 // The worktree's commit, and the one new commit the pull request makes on it.
@@ -23,6 +25,8 @@ const walked = "e".repeat(40), made = "f".repeat(40);
 const worktree = "branch-agent-source/.branch-worktrees/self-remove-button";
 const home = await mkdtemp(join(tmpdir(), "branch-self-pr-git-"));
 const gitLog = join(home, "git.log"), diffOut = join(home, "diff.out");
+// Written once the stand-in commits: from then on HEAD is the new commit, as it is for real Git.
+const committed = join(home, "committed");
 const bin = join(home, "bin");
 await mkdir(bin, { recursive: true });
 await writeFile(join(bin, "git"), `#!/bin/sh
@@ -31,13 +35,15 @@ echo "$*" >> '${gitLog}'
 case "$1" in
   remote) echo https://github.com/stabrea/Branch-Agent.git; exit 0;;
   symbolic-ref) echo refs/remotes/origin/main; exit 0;;
-  switch|push|--literal-pathspecs|merge-base) exit 0;;
+  --literal-pathspecs) case "$*" in *" commit "*) : > '${committed}';; esac; exit 0;;
+  switch|push|merge-base) exit 0;;
+  ls-remote) exit 0;;
   diff|diff-tree) cat '${diffOut}'; exit 0;;
   log) exit 0;;
   rev-parse) case "$*" in
     *--show-toplevel*) pwd -P; echo "$(pwd -P)/../../.git";;
     *refs/heads/branch/*) echo ${made};;
-    *) echo ${walked};;
+    *) if [ -f '${committed}' ]; then echo ${made}; else echo ${walked}; fi;;
   esac; exit 0;;
   rev-list) echo "${made} ${walked}"; exit 0;;
   ls-files) exit 0;;
@@ -47,7 +53,9 @@ esac
 await chmod(join(bin, "git"), 0o755);
 // selfdev: the computer's own GitHub CLI, standing in: it writes down what it was asked and the body it was given.
 const ghLog = join(home, "gh.log");
+// A queued publication first looks for a pull request it may already have opened (gh api): there is none.
 await writeFile(join(bin, "gh"), `#!/bin/sh
+if [ "$1" = api ]; then echo '[]'; exit 0; fi
 printf '%s\n' "$@" > '${ghLog}'
 echo "--body--" >> '${ghLog}'
 cat >> '${ghLog}'
@@ -61,6 +69,7 @@ const posixOnly = { skip: process.platform === "win32" && "the stand-in git is a
 
 async function branchWith(t, permissions, options = {}) {
   await writeFile(gitLog, "");
+  await rm(committed, { force: true });
   await writeFile(diffOut, options.changed ?? "src/ui/button.ts\0");
   const root = await mkdtemp(join(tmpdir(), "branch-self-pr-"));
   let calls = 0;
@@ -86,6 +95,9 @@ async function branchWith(t, permissions, options = {}) {
   if (options.noGitHub) app.registry.register({ name: "git.push", permission: "git.remote", description: "stand-in", parameters: z.object({}).passthrough(), execute: async () => ({}) });
   if (!options.noGitHub) app.registry.register({ name: "github.open_pull_request", permission: "github.manage", description: "stand-in for GitHub",
     parameters: z.object({}).passthrough(), execute: async (args) => { opened.push(args); return { number: 7, draft: args.draft }; } });
+  // The saved connection behind it, which a queued publication asks first whether its pull request is already open: none is.
+  if (!options.noGitHub) registerGitHubProject(app.registry, new GitHubAccess({}, { assertAllowed: async () => {} }, async () => "test-token",
+    async () => new Response("[]", { status: 200 })));
   app.store.projects.save(owner, { id: "branch-agent-remove-button", name: "Branch Agent: remove-button", instructions: "",
     modelPreset: null, repository: "stabrea/Branch-Agent", folder: options.folder ?? worktree, profile: null, knowledgeBases: [], branch: "" });
   app.store.projects.setActive(owner, { active: "branch-agent-remove-button" });
