@@ -79,6 +79,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
             do {
                 let session = try await BranchClient.pair(origin: origin, id: id, code: code, name: call.getString("name") ?? "iPhone")
                 try BranchKeychain.save(session)
+                BranchBackground.syncPush()
                 call.resolve(["paired": true])
             } catch {
                 call.resolve(["paired": false, "error": error.localizedDescription])
@@ -90,10 +91,12 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         guard fromAppPage(call) else { return }
         guard let session = BranchKeychain.load() else { call.resolve(["paired": false]); return }
         call.resolve(["paired": true, "origin": session.origin, "pairedAt": session.pairedAt, "deviceId": session.deviceId ?? ""])
+        BranchBackground.syncPush()
     }
 
     @objc func forget(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
+        if let session = BranchKeychain.load() { BranchBackground.unregisterPush(session) }
         BranchKeychain.forget()
         call.resolve()
     }

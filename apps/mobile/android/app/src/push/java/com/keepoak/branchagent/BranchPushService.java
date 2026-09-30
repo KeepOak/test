@@ -12,6 +12,7 @@ public class BranchPushService extends FirebaseMessagingService {
     @Override
     public void onNewToken(String token) {
         BranchWords.state(this).edit().putString("push-token", token).apply();
+        BranchPushRegistration.sync(this);
     }
 
     @Override
@@ -19,6 +20,6 @@ public class BranchPushService extends FirebaseMessagingService {
         if (BranchWords.position(this, "push").equals("off")) return;
         String body = message.getData().containsKey("question") ? message.getData().get("question") : "";
         BranchNotify.show(this, message.getMessageId() == null ? "push" : message.getMessageId(),
-            BranchWords.word(this, "phone.notify.title", "Branch needs you"), body);
+            "finished".equals(message.getData().get("kind")) ? "Branch finished" : BranchWords.word(this, "phone.notify.title", "Branch needs you"), body);
     }
 }
