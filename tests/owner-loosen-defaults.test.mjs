@@ -37,6 +37,9 @@ test("Full access asks nothing but a dangerous command, even past the owner's ow
   assert.equal(decide(own, "shell.execute", shell("git status")), "allow");
   assert.equal(decide(own, "shell.execute", shell("npm test")), "allow");
   assert.equal(decide(own, "settings.change", { changes: [{ setting: "messagesPerConversationHour", value: 61 }] }), "allow", "no settings question");
+  // Hermes Agent asks before its own config is edited: turning a protection off still asks once, so the command scan stays.
+  assert.equal(decide(own, "settings.change", { changes: [{ setting: "safety-command-scan.mode", value: "off" }] }), "ask", "switching the scan off asks");
+  assert.equal(decide(own, "settings.loosen", { changes: [{ setting: "safety-command-scan.mode", value: "off" }] }), "ask");
   assert.equal(decide(own, "home.call", { domain: "lock", service: "unlock", entity: "lock.front_door" }), "allow", "no lock question");
   assert.equal(decide(own, "code.hand_off", { program: "codex", folder: "site", task: "Review it" }), "allow", "no hand-off question");
   // Hermes Agent's list still asks, as its CLI does for its owner.

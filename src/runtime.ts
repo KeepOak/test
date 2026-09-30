@@ -4425,9 +4425,12 @@ ${run.output.slice(0, 6000)}`;
     // owner did not start is asked about, and a lock or door always is, just this once — whatever the rules say.
     // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
     // the owner's external program sign-in and keeps its own once-only question.
-    // Owner ruling 2026-09-30: under Full access none of these extra questions is put; only Hermes's dangerous commands ask.
+    // Owner ruling 2026-09-30: under Full access none of these extra questions is put; only Hermes's dangerous commands ask,
+    // and a settings change that takes a protection away (the command scan among them) asks once, as Hermes Agent asks
+    // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
-    const personal = fullAccess ? null : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
+    const loosening = fullAccess ? settingsHold(tool, args) : null;
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
