@@ -3370,8 +3370,17 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
  * models-ui: the connection that makes pictures now (src/media.ts preset: the owner's plan for "media") and the kind of
  * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
  */
-function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
+function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini" | "codex"; defaultModel: string } | null {
   const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  if (preset && typeof (preset.provider as { signInImages?: unknown }).signInImages === "function" &&
+      (preset.provider as { signInImagesAvailable?: boolean }).signInImagesAvailable !== false) {
+    const service = accountsServiceFor(app.runtime.models), found = service?.poolFor(preset), pool = found ? service?.usablePool(found.pool) : null;
+    if (!app.store.profiles.isOwner() || app.store.profiles.scope() !== app.runtime.owner || currentPerson() || startedWithShortLivedKey() || lockdownActive(app.store, app.runtime.owner) ||
+        (found && found.kind === "chatgpt" && !service?.legacySignedIn) ||
+        (pool && (pool.accounts.length !== 1 || pool.accounts[0]!.id !== "primary" || pool.accounts[0]!.disabled || pool.accounts[0]!.monthlyCapUsd !== null ||
+          (pool.defaultAccount !== null && pool.defaultAccount !== "primary")))) return null;
+    return { connection: preset.name, kind: "codex", defaultModel: "gpt-image-2" };
+  }
   const where = preset ? providerImages(preset.provider) : null;
   return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
 }
