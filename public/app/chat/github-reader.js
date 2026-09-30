@@ -42,7 +42,7 @@ async function read() {
   finally { p.busy=false; if (here(p)) draw(p); }
 }
 export function initGithubReader() {
-  markLive(["github-reader-open","github-reader-read"]);
+  markLive(["github-reader-open","github-reader-read","sw:github-reader-reference"]);
   on("github-reader-open",() => {
     if (!ownerHere()) return;
     closePop(); page={scope:activeId(),chat:S.chat,draft:"",busy:false,error:"",result:null,address:""}; draw(page);
