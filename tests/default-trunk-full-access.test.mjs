@@ -47,21 +47,24 @@ test("the owner's designated default Trunk in a Full Access conversation is the 
   assert.equal(turn.defaultTurn, true, "self-development reads the same designated default turn");
 });
 
-test("another Trunk, an undesignated fallback and outside callers keep their questions", async (t) => {
+test("another Trunk and an undesignated fallback ask nothing in the owner's Full Access chat, but never carry the owner's authority; outside callers keep their questions", async (t) => {
   const served_ = await served(t), { app } = served_;
   const ada = app.trunks.create({ name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
   await app.trunks.introduced();
   const fallback = await fullTurn(served_, ada);
   assert.equal(fallback.full, null, "an introduction's routing fallback is not a designation");
-  assert.equal(fallback.decision, "ask");
+  // Owner ruling 2026-09-30: the owner's own chat set to Full access asks nothing but dangerous commands, whichever Trunk answers.
+  assert.equal(fallback.decision, "allow");
   app.trunks.setDefault(ada.id);
   const other = await fullTurn(served_, bo);
-  assert.equal(other.full, null, "a Trunk that is not the default keeps its own boundary");
-  assert.equal(other.decision, "ask");
+  assert.equal(other.full, null, "a Trunk that is not the default cannot authorize an unattended merge");
+  assert.equal(other.decision, "allow", "the owner's Full access chat with another Trunk asks nothing either");
   assert.equal(other.defaultTurn, false);
   const own = await fullTurn(served_, ada);
   assert.notEqual(own.full, null);
   assert.equal(app.runtime.ownerFullAccessFor({ ...own.context, source: "channel" }), null, "a chat source cannot borrow it");
+  assert.equal(app.runtime.checkPolicy("settings.change", change, { ...own.context, source: "channel" }).decision, "ask",
+    "a chat source keeps its question");
   app.trunks.setDefault(bo.id);
   assert.equal(app.runtime.ownerFullAccessFor(own.context), null, "designation is checked at the call, not remembered from the start");
 });

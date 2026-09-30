@@ -17,6 +17,8 @@ import { tightenCheck } from "../dist/safety-extras/hooks.js";
 const kinds = (command) => scanCommand(command).map((finding) => finding.kind);
 
 test("hidden codes, look-alike letters and piped downloads are found", () => {
+  // The dangerous-command list (owner ruling 2026-09-30) is tested on its own below.
+  const kinds = (command) => scanCommand(command).map((finding) => finding.kind).filter((kind) => kind !== "dangerous");
   assert.deepEqual(kinds("echo \u001b[31mhello"), ["escape"]);
   assert.deepEqual(kinds("ls\u0007"), ["escape"]);
   assert.deepEqual(kinds("rm -rf ./build \u202e#txt.exe"), ["escape"]);

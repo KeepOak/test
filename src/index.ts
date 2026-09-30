@@ -245,7 +245,7 @@ import { registerCheckpoints, SnapshotStore, systemGit, type GitCall } from "./c
 // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
 import { GoalMode, goalUndoSettings } from "./goal-mode.js";
 import { Rewinds } from "./rewind.js";
-import { isReadOnlyPermission } from "./policy.js";
+import { isReadOnlyPermission, migrateUnmatchedCommands } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
@@ -420,6 +420,7 @@ export async function createBranch(options: {
   if (journalReset) console.error(journalReset);
   // --- end mac3/never-break ---
   migrateFeatureSwitches(store, options.owner ?? "local", existedBefore);
+  migrateUnmatchedCommands(store, options.owner ?? "local"); // owner ruling 2026-09-30: commands no rule covers run
   const lockerKey = options.lockerKey ?? new FileLockerKey(join(dataDir, "locker.key"));
   store.openLocker(lockerKey);
   // The key every approval question is fingerprinted with, kept for this install so a question kept across a restart

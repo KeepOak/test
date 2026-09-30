@@ -276,7 +276,7 @@ const safety: SettingSpec[] = [
     fields: [
       { field: "preset", label: "How careful", t: "settings-kit.field.policy-preset", guard: "guard", initial: "off",
         kind: { type: "choice", options: ["read-only", "careful", "ask-before-changes", "workspace", "off"] } },
-      { field: "unmatchedCommands", label: "A command no rule mentions", t: "settings-kit.field.unmatched", guard: "guard", initial: "ask",
+      { field: "unmatchedCommands", label: "A command no rule mentions", t: "settings-kit.field.unmatched", guard: "guard", initial: "allow", // owner ruling 2026-09-30
         kind: { type: "choice", options: ["ask", "allow"] } },
     ],
     // The approval rules are worked out from the preset, so the preset is saved the way the card saves it.

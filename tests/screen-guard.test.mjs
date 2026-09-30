@@ -128,13 +128,13 @@ test("a screen call on a window through computer.* is refused during research; t
   assert.equal(events(app, run, "policy.ask").length, 0);
 });
 
-test("the owner asking for the screen is offered it, is asked first even under Full access, and a yes runs it", async (t) => {
+test("the owner asking for the screen is offered it, is asked first outside Full access, and a yes runs it", async (t) => {
   const shot = call("desktop.screenshot", {}, "p1");
   // QA R1: after the yes the engine takes the approved screenshot itself; the model never makes the call again.
   const { app, seen, calls } = await scripted(t, [shot, { content: "Here is your screen.", toolCalls: [] }, call("desktop.open", { app: "notepad" }, "o1"), done]);
-  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
+  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "auto" });
   assert.ok(offeredNames(seen[0]).includes("desktop.screenshot"), "asked for in the owner's words, the tool is offered");
-  assert.equal(first.status, "needs_input", "it stops to ask, even under Full access");
+  assert.equal(first.status, "needs_input", "it stops to ask outside Full access");
   assert.equal(calls.length, 0, "nothing ran before the yes");
   const [waiting] = app.runtime.approvals.waiting(first.sessionId);
   assert.equal(waiting.tool, "desktop.screenshot");
@@ -146,9 +146,17 @@ test("the owner asking for the screen is offered it, is asked first even under F
   assert.equal(next.status, "completed");
   assert.equal(calls.length, 1, "after the owner's yes, the task that asked took the screenshot once");
   assert.deepEqual(events(app, first, "run.approved_call").map((event) => event.data.id), ["p1"], "the engine ran the approved call itself");
-  const elsewhere = await app.runtime.run({ prompt: "open notepad", conversationMode: "full" });
+  const elsewhere = await app.runtime.run({ prompt: "open notepad", conversationMode: "auto" });
   assert.equal(elsewhere.status, "needs_input", "another conversation asks again: a screen yes is never carried over");
   assert.equal(calls.length, 1);
+});
+
+test("owner ruling 2026-09-30: in the owner's Full access the screen is used without a question, as Codex's never-ask does", async (t) => {
+  const { app, calls } = await scripted(t, [call("desktop.screenshot", {}, "p1"), { content: "Here is your screen.", toolCalls: [] }]);
+  const run = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(calls.length, 1, "the screenshot ran");
+  assert.equal(events(app, run, "policy.ask").length, 0, "nothing was asked");
 });
 
 test("work the owner did not start (a schedule, a chat app) is never offered the screen, whatever its words say", async (t) => {
@@ -192,12 +200,12 @@ test("one yes to a screenshot never carries into the next task of the same conve
   const shot = call("desktop.screenshot", {}, "p1");
   const press = call("desktop.key", { window: "Chrome", chord: "escape" }, "k1");
   const { app, calls } = await scripted(t, [shot, { content: "Here is your screen.", toolCalls: [] }, press, done]);
-  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
+  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "auto" });
   const [waiting] = app.runtime.approvals.waiting(first.sessionId);
   app.runtime.approve(first.sessionId, "allow", "never", waiting.fingerprint);
   assert.equal((await app.runtime.continueAsked(first.id)).status, "completed");
   assert.equal(calls.length, 1, "control: the approved screenshot ran");
-  // Later, in the same Full access conversation, a research turn meets a cookie wall and reaches for a key.
+  // Later, in the same conversation, a research turn meets a cookie wall and reaches for a key.
   const research = await app.runtime.run({ prompt: "Read-only web research: what changed in Node 26?", sessionId: first.sessionId });
   assert.ok(research.status === "needs_input" || events(app, research, "policy.denied").some((event) => event.data.screen === "withheld"),
     "the key press was asked about or refused, never simply done");
@@ -206,7 +214,7 @@ test("one yes to a screenshot never carries into the next task of the same conve
 
 test("an answer that fails its checks (a changed request) never counts as a yes to the screen", async (t) => {
   const { app, calls } = await scripted(t, [call("desktop.screenshot", {}, "p1"), done]);
-  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
+  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "auto" });
   assert.equal(first.status, "needs_input");
   assert.throws(() => app.runtime.approve(first.sessionId, "allow", "never", "0".repeat(32)), /different request/);
   const context = app.runtime.context({ runId: first.id });

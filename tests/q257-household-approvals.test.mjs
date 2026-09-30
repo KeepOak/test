@@ -228,6 +228,7 @@ test("POST /api/policy: a loosening needs confirmLoosening, and nothing is chang
   const rules = await call("POST", "/api/policy", { rules: [{ tool: "*", match: "*", decision: "allow" }] });
   assert.equal(rules.status, 409, "an allow-everything rule list is a loosening");
   assert.equal(preset(), "read-only");
+  assert.equal((await call("POST", "/api/policy", { unmatchedCommands: "ask" })).status, 200, "control: asking before commands tightens");
   assert.equal((await call("POST", "/api/policy", { unmatchedCommands: "allow" })).status, 409, "letting unmentioned commands through loosens");
   assert.equal((await call("POST", "/api/policy", { limits: { toolCallsPerMinute: 30 } })).status, 200, "control: a limit tightens");
   assert.equal((await call("POST", "/api/policy", { limits: { toolCallsPerMinute: 0 } })).status, 409, "taking a limit away loosens");

@@ -47,6 +47,8 @@ async function served(t, steps, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-tool-safety-"));
   const provider = scripted(steps);
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider, ...options });
+  // Owner ruling 2026-09-30: commands no rule covers ship as "allow"; these tests are about the owner who chose "ask".
+  savePolicy(app.store, app.runtime.owner, { unmatchedCommands: "ask" });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const api = async (method, path, body) => {
