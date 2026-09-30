@@ -7,7 +7,7 @@ import { routeByProfile } from "../model-profiles.js";
 import { pickLocalPreset, routingSettings } from "../local-routing.js";
 import { withAccountCall, type AccountCall } from "../accounts/context.js";
 import { chooseByDifficulty, type DifficultyAsk } from "./difficulty.js";
-import { KeepAlive } from "./keep-alive.js";
+import { KeepAlive, keptWarmProviders } from "./keep-alive.js";
 import { openRouterRouting } from "./openrouter.js";
 import { noteReported } from "./reported.js";
 import { readSavings } from "./settings.js";
@@ -98,6 +98,9 @@ export interface AnsweredRound {
   guard?: Pick<PingGuard, "family" | "active" | "monthly">;
   /** mac7/lockdown-fix: a Trunk's round; its ping goes through the Trunk's own keys, never a sign-in. */
   trunk?: AccountCall["trunk"];
+  /** The successful account receipt for this round, not a pool's current next account. */
+  pinnedAccount?: AccountCall["pinnedAccount"];
+  accountSessionId?: string;
 }
 
 export interface PingGuard {
@@ -114,6 +117,9 @@ export interface PingGuard {
 /** Why a cache ping must not be sent now, or null. Each ping is money the owner did not ask for this minute. */
 export function pingRefusal(store: Store, owner: string, guard: PingGuard): string | null {
   if (lockedDown(store, owner)) return "Lockdown is on";
+  // The independent recorded-estimate guard checks normal rounds; maintenance must not bypass it.
+  const thresholds = store.get("settings", owner, "model-savings-costThresholds")?.data;
+  if (thresholds?.mode !== undefined && thresholds.mode !== "off") return "cost thresholds are enabled, so background cache pings are stopped";
   if (!store.ownsSession(owner, guard.sessionId)) return "the conversation is gone";
   if (guard.active()) return "the conversation is working again";
   return guard.monthly() ?? spendCapCheck(store, owner, guard.family, guard.model).refusal;
@@ -122,20 +128,27 @@ export function pingRefusal(store: Store, owner: string, guard: PingGuard): stri
 /** R17-048 and R17-050: after each answered round. */
 export function afterRound(runtime: SavingsRuntime, keepAlive: KeepAlive, round: AnsweredRound): void {
   noteReported(runtime.store, round.run.id, round.estimatedInput, round.reported);
-  if (!round.mainRound) return;
+  if (!round.mainRound) { keepAlive.cancel(round.run.sessionId); return; }
   const { store } = runtime;
   const { preset, run } = round;
+  if (!round.pinnedAccount) {
+    keepAlive.cancel(run.sessionId);
+    if (keptWarmProviders.includes(preset.provider.name) && readSavings(store, round.owner, "keepAlive").mode === "on")
+      store.event(run.id, "cache.keep_alive_stopped", { reason: "No successful account receipt identifies which account's cache to warm." });
+    return;
+  }
   // Priced at the larger of Branch's estimate and the service's own count, so the cap is never kept on too low a figure.
   const size = Math.max(round.estimatedInput, round.reported?.input ?? 0);
-  const priced = estimateCost(preset.model, { input: size, output: 1 }, pricingSettings(store, round.owner).overrides).amount;
   const guard = round.guard ?? { family: [run.id], active: () => false, monthly: () => null };
   const messages = round.messages.slice(), tools = round.tools.slice();
   keepAlive.arm(round.owner, run.sessionId, preset.provider.name, {
-    runId: run.id, price: priced,
+    runId: run.id,
+    get price() { return estimateCost(preset.model, { input: size * 2, output: 1 }, pricingSettings(store, round.owner).overrides).amount; },
     refusal: () => pingRefusal(store, round.owner, { ...guard, sessionId: run.sessionId, model: preset.model }),
     send: async () => {
       // The same account wrapper as every other call, so a connection with several accounts bills the chosen one.
-      const answer: Completion = await withAccountCall({ owner: run.owner, sessionId: run.sessionId, runId: run.id, note: (kind, data) => store.event(run.id, kind, data),
+      const answer: Completion = await withAccountCall({ owner: run.owner, sessionId: round.accountSessionId ?? run.sessionId, runId: run.id, note: (kind, data) => store.event(run.id, kind, data),
+        ...(round.pinnedAccount ? { pinnedAccount: round.pinnedAccount } : {}),
         ...(round.trunk ? { trunk: round.trunk } : {}) }, // mac7/lockdown-fix
         () => preset.provider.complete({ messages, tools, maxTokens: 1, signal: AbortSignal.timeout(60_000) }));
       const usage = UsageSchema.safeParse(answer.usage);

@@ -3937,7 +3937,13 @@ ${run.output.slice(0, 6000)}`;
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
         ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
-      const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
+      let answeredAccount: { pool: string; account: string } | undefined;
+      const accountSessionId = this.modelAccountSession(run.id);
+      const raw = await withAccountCall({ owner: run.owner, sessionId: accountSessionId, runId: run.id, note: (kind, data) => {
+        this.store.event(run.id, kind, data);
+        if (kind === "model.account" && typeof data.pool === "string" && typeof data.account === "string")
+          answeredAccount = { pool: data.pool, account: data.account };
+      },
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
         // mac7/empty-completion: thinking resets the silence clock as text does. A reasoning model
         // writes no words of its answer while it thinks, and the watchdog was calling that a dead
@@ -3961,7 +3967,9 @@ ${run.output.slice(0, 6000)}`;
       const { output, reported } = this.recordCompletion(run, context, raw, input);
       // R17-048 / R17-050: note the service's own count, and keep its cache warm if the owner asked.
       savings.afterRound(this, this.keepAlive, { run, owner: this.owner, preset, messages: request.messages, tools, estimatedInput: input, reported,
-        mainRound: context.depth === 0 && context.permissions.size > 0 && !shape,
+        mainRound: context.depth === 0 && context.permissions.size > 0 && !shape && !pinnedHelper &&
+          (preset.provider.name !== "claude-subscription" || runOrigin(this.store, run.id).source === "owner"),
+        accountSessionId, ...(answeredAccount ? { pinnedAccount: answeredAccount } : {}),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}), // mac7/lockdown-fix
         guard: { family: this.spendFamily(run.id), active: () => this.activeSessions.has(run.sessionId), monthly: () => this.monthlyBudgetRefusal() } });
       const completion = CompletionSchema.parse(raw);

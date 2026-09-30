@@ -9,7 +9,7 @@ import { readSavings } from "./settings.js";
  * request is scheduled to be sent again, asking for a single token, after the chosen number of
  * minutes. It stops at the chosen number of pings or before a ping would take the pause past its
  * spending cap, whichever comes first, and a new round starts the count again. A ping is priced at
- * the full input price before it is sent (the cache usually makes it cheaper), and one whose price
+ * twice the full input price before it is sent (a one-hour cache write can cost that much), and one whose price
  * is not known is never sent, because then the cap could not be kept. Every ping is counted in the
  * task's usage and written down as an event.
  */
@@ -36,7 +36,7 @@ const realTimers: KeepAliveTimers = {
 };
 
 /** Only connections whose prompt cache lapses after a few quiet minutes are kept warm. */
-export const keptWarmProviders: readonly string[] = ["anthropic"];
+export const keptWarmProviders: readonly string[] = ["anthropic", "claude-subscription"];
 
 interface Pause { handle: unknown; pings: number; spent: number }
 

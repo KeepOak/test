@@ -9087,7 +9087,7 @@ rounds are read from `/api/model-savings/rounds?session=<id>`.
 | Model for planning, and side questions on flex (R17-044, R17-045) | Models → Defaults | The connection that drafts the plan when "Show me the plan first" is on; the work is still done by the conversation's model. Side questions (plans, reviews, summaries, the easy-or-hard question) can ask for OpenAI's cheaper flex tier, sent only to `api.openai.com`; the main answer keeps R17-S-B's service tier |
 | Choose the model by how hard the task is (R17-047) | Models → Defaults | Off, on, or only when unsure. A small model is asked "easy or hard?" (one short, charged question per task; answers are kept for ten minutes) and the answer picks the easy or hard connection. "Only when unsure" asks only when the free length-and-tools reading cannot tell. A model picked for the run, the conversation or a routing profile always wins; a failed question leaves the usual choice |
 | Count what the service says (R17-048) | Models → Defaults | The ratio between what the service reported and Branch's estimate for the task's last request scales the estimate before the fold decision, only upwards (at most four times) |
-| Keep the cache warm during a pause (R17-050) | Models → Defaults | Claude connections only. After each answered round the same request is repeated for one token every few minutes, up to a number of pings and a spending cap per pause (both required). Each ping is priced at the full input price before it is sent; a model with no price is never pinged. Pings are added to the task's usage and written down as `cache.keep_alive` events |
+| Keep the cache warm during a pause (R17-050) | Models → Defaults | Claude API and subscription connections, off until you choose on. After each eligible answered round the same request is repeated asking for one output token, every few minutes, up to a number of pings and an estimated spending cap per pause (both required). Each ping reserves twice the full input price plus one output token, to allow for a one-hour cache write; a model with no price is never pinged. Pings are added to the task's usage and written down as `cache.keep_alive` events |
 | OpenRouter company choice (R17-046) | Models → Connection | Sends OpenRouter's documented `provider` object (sort, order, only, ignore, fallbacks, data collection), and only to connections whose address is `openrouter.ai` |
 | Mixtures of models (R17-051) | Models → Second opinion | Each mixture becomes a connection named `mixture-<name>` in the picker. Its reference connections answer without tools, and the writing connection answers with their answers as material. Usage is the sum of every call; the mixture is priced as its most expensive member so a spending cap is never undercounted |
 | Round-by-round chart (R17-049) | Appearance | Adds a chart to Settings › Data & usage: tokens in and out per round, what the cache served, where the conversation was summarised (a `context.compacting` event marks a summary in progress), and how close the last round was to the next one |
@@ -9095,6 +9095,21 @@ rounds are read from `/api/model-savings/rounds?session=<id>`.
 Setting names: `planModel` and `sideTier` (planning model and flex for side questions), `easyModel`, `hardModel` and
 `classifierModel` (choose by difficulty), `maxPings` (keep-alive), `allowFallbacks` and `dataCollection` (OpenRouter),
 and `mixtures` (mixtures of models).
+
+Cache maintenance needs a successful `model.account` receipt identifying the last account that
+answered. A missing or unbound receipt stops it. Each ping stays on that account and the model's
+account conversation; it cannot rotate to another account, retry a refused call, or refresh a
+sign-in on its own. Disabled, limited, capped, unshared or no-longer-permitted accounts refuse it.
+Existing Trunk source/sign-in constraints still apply. Subscription pings are scheduled only
+after the owner's own main round, and pinned helper rounds never schedule a ping. No returned
+tool call is executed. Live subscription/cache reuse acceptance still needs provider proof.
+
+Maintenance also stops when Lockdown is on, the conversation is gone or working again, a task
+or monthly limit is reached, or the optional cost-threshold card is enabled: that card guards
+ordinary rounds, and pings must not bypass it. The cache-ping cap is an estimate at the known model
+price, including subscription model list-price estimates; it is not the service's actual bill or
+plan allowance. Creator-bound receipts for original/single-account connections are required to
+warm those connections; a guessed pool default is insufficient.
 
 `difficulty.mixHard` defaults to false. When enabled with two different easy and hard connections,
 hard tasks use both as a mixture and the hard connection writes the combined answer. Easy tasks continue

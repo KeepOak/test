@@ -121,6 +121,7 @@ export class AccountPoolProvider {
   complete = async (request: CompletionRequest): Promise<Completion> => {
     const pool = this.hooks.settings();
     const call = currentAccountCall();
+    if (call?.pinnedAccount) return this.pinned(pool, call, request);
     // mac7/lockdown-fix: a Trunk's call never falls through to a sign-in or to the owner's default.
     if (call?.trunk) return this.forTrunk(pool, call, request);
     // The one account of a list switched off is the owner saying this connection does not answer.
@@ -138,6 +139,26 @@ export class AccountPoolProvider {
     // A pool default is not evidence of what the original provider used; only its creator can bind it.
     call?.note?.("model.account", accountCallReceipt(this.hooks.pool, account, label, this.hooks.model, completion, "connection"));
     return completion;
+  }
+
+  /** Cache maintenance cannot warm a different account or get extra tries after a refusal. */
+  private async pinned(pool: Pool | null, call: AccountCall, request: CompletionRequest): Promise<Completion> {
+    const pin = call.pinnedAccount!;
+    if (call.owner !== this.hooks.owner || !pool || pin.pool !== this.hooks.pool || pin.pool !== pool.pool)
+      throw new Error("The account that answered is no longer on this connection");
+    if (call.trunk && pool.kind !== "api-key" && call.trunk.signIns !== true) throw new Error(trunkSignInRefusal);
+    const account = pool.accounts.find((candidate) => candidate.id === pin.account);
+    const own = call.trunk ? trunkOrder(call.trunk.keys, pool.pool) : [];
+    if (!account || !this.personMayUse(pool, account) ||
+        (call.trunk && !call.trunk.keys.copyFromOwner && !own.includes(account.id)))
+      throw new Error("The account that answered is no longer permitted for this call");
+    const refusal = this.why(account);
+    if (refusal) throw new Error(`The account that answered is unavailable: ${refusal}`);
+    try { return await this.attempt(account, request, call); } catch (error) {
+      const failure = failureFor(error, this.hooks.now());
+      if (failure && !request.signal.aborted) this.benchOrRest(pool, account, failure, error, call);
+      throw error;
+    }
   }
 
   private personMayUse(pool: Pool, account: Account): boolean {
