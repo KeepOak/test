@@ -18,7 +18,7 @@ export function accountTools(registry: Pick<ToolRegistry, "register">, signIn: S
   return {
     register<T>(definition: ToolDefinition<T>): void {
       if (!(definition.parameters instanceof z.ZodObject)) throw new Error("Account tools need object arguments.");
-      const parameters = definition.parameters.extend({ account: PersonalAccountId.optional().describe("Account ID from Settings Accounts; omitted reads use the selected account. Specify it for writes when several accounts exist.") });
+      const parameters = definition.parameters.safeExtend({ account: PersonalAccountId.optional().describe("Account ID from Settings Accounts; omitted reads use the selected account. Specify it for writes when several accounts exist.") });
       registry.register<T & { account?: string }>({ ...definition, parameters: parameters as z.ZodType<T & { account?: string }>,
         ...(definition.target ? { target: (input: T & { account?: string }, context: ToolContext) =>
           signIn.inAccount(accountFor(definition.permission, input.account), () => {
