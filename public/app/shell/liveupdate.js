@@ -13,6 +13,7 @@ import { sendingWithoutSession } from "../chat/chat.js";
 import { toast } from "../core/ui.js";
 import { $, renderNow } from "../core/dom.js";
 import { goingAway } from "../core/api.js";
+import { initUpdateCheckpoint } from "./update-checkpoint.js";
 
 const KEY = "branch-live-restore";
 const bridge = () => window.branchDesktop ?? null;
@@ -20,6 +21,7 @@ let waitingMessage = "";
 
 /* Listens for live updates from the app (the desktop window only). */
 export function initLive() {
+  initUpdateCheckpoint();
   // A shell update (src/desktop/shell-switch.ts) asks for the same record, to hand to the new version's window.
   window.branchKeepForShell = keepForShell;
   bridge()?.onWindowUpdated?.((update) => {

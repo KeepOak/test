@@ -14,6 +14,7 @@ import { stagedEngine, updateCanary } from "../never-break/canary.js";
 import { runStagedSmoke } from "./beta-smoke.js";
 import { portableMarker } from "../install/layout.js";
 import { diagnose } from "../diagnostic-log.js";
+import { githubCheckpointConnected } from "./update-checkpoint.js";
 
 /**
  * Update by itself when no window is open: only the detached gateway runs (src/desktop/gateway-desktop.ts), so it
@@ -71,6 +72,8 @@ export async function gatewayUpdates(options: GatewayUpdatesOptions): Promise<{ 
     plan: async (facts) => await options.engine("/api/comfort/update-plan", facts) as LoopPlan,
     updater,
     install: async () => {
+      if (githubCheckpointConnected(await options.engine("/api/tools")))
+        throw new UpdateDeferredError("Open Branch to choose whether to keep a GitHub checkpoint before this update. Nothing was saved or sent.");
       const done = await gatewayInstall({ shellOpen: options.shellOpen, updater, live: options.live, appFolders,
         ...(options.adopt ? { adopt: options.adopt } : {}) });
       if (done === "switched") diagnose("updater", "info", "Updated with no window open", { fields: { to: updater.status.installed.version } });

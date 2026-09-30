@@ -1,4 +1,4 @@
-import { app, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import { app, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
@@ -18,6 +18,9 @@ import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
 import { watchForOwner, type OwnerWindow } from "./quiet-build.js";
 import { newestGreen } from "./dev-build.js";
+import { OwnerUpdateQueue, updateWorkQuestion } from "./update-work-choice.js";
+import { checkpointQuestion, UpdateCheckpointChoice } from "./update-checkpoint.js";
+import { randomUUID } from "node:crypto";
 
 /** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
 export const updateScratchDir = (): string => join(app.getPath("temp"), "branch-agent-update");
@@ -46,6 +49,8 @@ const settingsPages = openableSettingsPages(process.platform);
  * joined one that was already working, so an update behaves the same either way.
  */
 export interface UpdateHooks {
+  /** Existing authenticated tool inventory only; taking/sending a checkpoint remains an owner workflow. */
+  githubConnected?: () => Promise<boolean>;
   /** Authenticated current channel and full task count from the local or joined engine. */
   readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "workingTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
@@ -107,13 +112,15 @@ export function registerUpdaterIpc(
   const open = (): BrowserWindow | null => { const now = window(); return now && !now.isDestroyed() ? now : null; };
   // Dogfood F1 (NAS): what the owner had chosen when the install under way began; the last gate reads it again.
   let started: InstallStart | null = null;
+  let allowWorking = false;
   // hot-update: a live update needs no quiet moment (work is handed over, not stopped); the packaged swap still does (beforeStop).
   const ensureIdle = async (idleNeeded = true) => {
     if (!hooks?.readiness) throw new UpdateDeferredError("Branch cannot verify that work is idle, so the update is waiting.");
     const state = await hooks.readiness().catch(() => {
       throw new UpdateDeferredError("Branch cannot confirm that work is idle, so the update is waiting.");
     });
-    if (idleNeeded && state.busyTasks > 0) throw new UpdateDeferredError("An update is ready, but Branch will wait until every task finishes or is answered.");
+    if (idleNeeded && state.busyTasks > 0 && !(allowWorking && appFolders))
+      throw new UpdateDeferredError("An update is ready, but Branch will wait until every task finishes or is answered.");
     const why = changedMind(state, started);
     if (why) throw new UpdateDeferredError(why);
   };
@@ -157,6 +164,46 @@ export function registerUpdaterIpc(
       throw new Error("Desktop update access denied");
   };
   const installClaim = new UpdateInstallClaim();
+  const checkpoints = new UpdateCheckpointChoice();
+  let composerReceipt: { id: string; receive: (opened: boolean) => void } | null = null;
+  ipcMain.handle("branch:update-checkpoint-ready", (event, id: unknown, opened: unknown) => {
+    authorized(event);
+    if (composerReceipt?.id === id) composerReceipt.receive(opened === true);
+  });
+  const openCheckpointComposer = (shown: BrowserWindow, tag: string, to: string): Promise<boolean> => new Promise((resolve) => {
+    try { if (new URL(shown.webContents.getURL()).origin !== origin) { resolve(false); return; } }
+    catch { resolve(false); return; }
+    const id = randomUUID();
+    const timer = setTimeout(() => finish(false), 5000);
+    const finish = (opened: boolean) => { clearTimeout(timer); if (composerReceipt?.id === id) composerReceipt = null; resolve(opened); };
+    composerReceipt = { id, receive: finish };
+    shown.webContents.send("branch:update-checkpoint", { id, tag, version: to });
+  });
+  const offerCheckpoint = async (automatic: boolean): Promise<boolean> => {
+    const release = updater.status.release;
+    if (!release || !release.available && !release.otherLine) return true;
+    const key = `${updater.selectedChannel}:${release.tag}`;
+    if (automatic && checkpoints.paused(key)) return false;
+    if (!checkpoints.needed(key, automatic)) return true;
+    if (!hooks?.githubConnected) throw new UpdateDeferredError("Branch cannot read its GitHub connection. The update is waiting.");
+    if (!(await hooks.githubConnected())) return true;
+    const shown = open();
+    if (!shown || !shown.isVisible()) throw new UpdateDeferredError("Open Branch to choose whether to keep a GitHub checkpoint before this update.");
+    const { response } = await dialog.showMessageBox(shown, checkpointQuestion(release.latestVersion));
+    checkpoints.decide(key, response);
+    if (response === 1) {
+      updater.recordCheckpointChoice({ tag: release.tag, decision: "skip", composerOpened: false });
+      return true;
+    }
+    queue.stop();
+    updater.waitForTasks(false, "The update is waiting for your checkpoint choice.");
+    const composerOpened = response === 0 && await openCheckpointComposer(shown, release.tag, release.latestVersion);
+    updater.deferCheckpoint({ tag: release.tag, decision: response === 0 ? "prepare" : "cancel", composerOpened },
+      response !== 0 ? "The update was cancelled before any checkpoint, download or handover."
+        : composerOpened ? "An unsent checkpoint request is in your conversation. Review it and send it when ready; this update waits."
+          : "The checkpoint composer did not confirm opening. Nothing was saved or sent; press Update now to try again.");
+    return false;
+  };
   // A new version that did not come up sent the switch back to this one: said now, once (shell-switch.ts).
   if (appFolders) void readSwitchFailure(updateScratchDir(), version).then((failure) => {
     if (!failure) return;
@@ -181,8 +228,35 @@ export function registerUpdaterIpc(
    * One install, the Update button's and the app's own update loop's alike (update-loop.ts): `automatic` for update by
    * itself, which never confirms another line's change. #215: one install at a time, claimed before anything is awaited.
    */
-  const installNow = (automatic: boolean, confirmed: string | null) =>
+  const installNow = (automatic: boolean, confirmed: string | null, work: "ask" | "wait" = "ask"): Promise<UpdateStatus> =>
     installClaim.run(() => updater.status, () => updater.inProgress, async () => {
+      allowWorking = false;
+      if (!(await offerCheckpoint(automatic))) { installClaim.release(); return updater.status; }
+      if (!automatic && work === "ask" && hooks?.readiness) {
+        const state = await hooks.readiness();
+        if (updater.selectedChannel !== state.channel) {
+          queue.stop();
+          updater.waitForTasks(false, "The update channel changed. Check for an update on this channel first.");
+          updater.setChannel(state.channel);
+          throw new UpdateDeferredError("The update channel changed. Check for an update on this channel first.");
+        }
+        if (state.busyTasks > 0 || queue.pending) {
+          const shown = open();
+          if (!shown) throw new UpdateDeferredError("Open Branch to choose how this update handles your tasks.");
+          const { response } = await dialog.showMessageBox(shown, updateWorkQuestion(state.busyTasks, queue.pending));
+          queue.stop();
+          updater.waitForTasks(false, "The waiting update was cancelled.");
+          if (response === 2) { installClaim.release(); return updater.status; }
+          if (response === 0) {
+            const tag = updater.status.release?.tag;
+            if (!tag) throw new UpdateDeferredError("Check for an update before asking it to wait.");
+            queue.start({ tag, channel: state.channel, confirmed });
+            installClaim.release();
+            return updater.waitForTasks(true, "This update waits until every task finishes or is answered. Press Update now to change this choice.");
+          }
+          allowWorking = true;
+        }
+      }
       diagnose("updater", "info", automatic === true ? "Update by itself asked to install an update" : "The owner asked to install an update",
         { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       const read = hooks?.readiness;
@@ -208,7 +282,7 @@ export function registerUpdaterIpc(
         // Dogfood F1 while it builds or waits: a changed channel, or update by itself switched off, calls it off now.
         const why = changedMind(state, started);
         if (why) updater.callOff(why);
-        return state.workingTasks ?? state.busyTasks;
+        return allowWorking ? 0 : state.workingTasks ?? state.busyTasks;
       });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
@@ -249,17 +323,37 @@ export function registerUpdaterIpc(
       setTimeout(() => app.exit(0), 20000).unref();
       return status;
     });
+  const queue: OwnerUpdateQueue = new OwnerUpdateQueue({
+    state: async () => {
+      if (!hooks?.readiness) throw new Error("Branch cannot read its current tasks.");
+      const state = await hooks.readiness();
+      return { tag: updater.status.release?.tag ?? null, channel: state.channel, busyTasks: state.busyTasks,
+        installing: installClaim.active || updater.inProgress };
+    },
+    install: async (request) => {
+      updater.waitForTasks(false, "Your tasks finished; starting the requested update.");
+      try { await installNow(false, request.confirmed, "wait"); }
+      catch (error) {
+        if (!(error instanceof UpdateDeferredError)) throw error;
+        queue.start(request);
+        updater.waitForTasks(true, error.message);
+      }
+    },
+    cancelled: (words) => { updater.waitForTasks(false, words); diagnose("updater", "info", words); },
+    failed: (words) => { diagnose("updater", "warn", words); },
+  });
   ipcMain.handle("branch:update-install", async (event, automatic: unknown, confirm: unknown) => {
     authorized(event);
     // A Beta change that does not contain this copy's goes in only on the owner's confirmation of that exact change,
     // pressed in the window; update by itself never confirms anything.
+    if (automatic === true && queue.pending) return updater.status;
     return installNow(automatic === true, confirmedChange(automatic, confirm));
   });
   // Update by itself runs here, in the app, not in the window's page: it goes on whether the page is loaded, closed to
   // the tray or gone (update-loop.ts). The page only shows what it says.
   // Only an installed copy updates itself; one run from its source is updated with `branch update`.
   const loop = app.isPackaged && hooks?.readiness && hooks.plan ? new UpdateLoop({
-    readiness: async () => { const state = await hooks.readiness!(); return { channel: state.channel, autoUpdate: state.autoUpdate ?? "off" }; },
+    readiness: async () => { const state = await hooks.readiness!(); return { channel: state.channel, autoUpdate: queue.pending ? "off" : state.autoUpdate ?? "off" }; },
     plan: hooks.plan, updater, install: async () => { await installNow(true, null); },
     tell: (words) => { open()?.webContents.send("branch:update-said", words); diagnose("updater", "warn", words); },
   }) : null;
@@ -275,6 +369,6 @@ export function registerUpdaterIpc(
     return true;
   });
   // Nothing is torn down when a window closes: the app, closed to the tray or with no window yet, keeps itself up to date.
-  app.once("will-quit", () => loop?.stop());
+  app.once("will-quit", () => { queue.stop(); loop?.stop(); });
   return updater;
 }
