@@ -1295,6 +1295,7 @@
   "commands.improve": "ask the owner for a change to Branch itself; only the owner answers, in the Branch app",
   "commands.inbox": "what needs you, what finished, and the history",
   "commands.init": "look around this project and write its instruction file (AGENTS.md)",
+  "commands.insights": "last 30 days of completed-task tokens, estimated cost, models and sources",
   "commands.installs": "requests for new packages and tool servers; only the owner answers, and nothing installs itself",
   "commands.keys": "every key the view answers to",
   "commands.learn": "a map of something and a guided walk through it, in plain words",
