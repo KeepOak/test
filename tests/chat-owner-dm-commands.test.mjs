@@ -14,6 +14,7 @@ import { createBranch } from "../dist/index.js";
 import { saveOwnerAccounts } from "../dist/reach/platform.js";
 import { lockdownState } from "../dist/lockdown.js";
 import { ownerDmCommand, ownerDmRefusal } from "../dist/channels/owner-dm-commands.js";
+import { runOrigin, startedFromChat } from "../dist/key-context.js";
 
 async function fixture(t, kind = "telegram") {
   const root = await mkdtemp(join(tmpdir(), "branch-owner-dm-"));
@@ -76,29 +77,53 @@ test("nothing that keeps running is made from a chat; looking is fine", async (t
   assert.match(last(sent), /Open an earlier conversation in the Branch app/);
 });
 
-test("/bg from the owner's chat runs as that chat's task, with the chat's permissions, never as the owner", async (t) => {
-  const { app, sent, say } = await fixture(t);
-  const before = new Set(app.store.runs(app.runtime.owner).map((run) => run.id));
-  await say("owner-1", "/bg summarise my notes");
-  assert.match(last(sent), /separate conversation|background/i, last(sent));
-  const started = await (async () => { for (let i = 0; i < 100; i++) { const run = app.store.runs(app.runtime.owner).find((r) => !before.has(r.id)); if (run) return run; await delay(20); } })();
-  assert.ok(started, "a background task started");
-  const origin = app.store.events(started.id).find((event) => event.kind === "run.started").data;
-  assert.equal(origin.source, "channel");
-  assert.ok(!origin.permissions.includes("shell.execute"), "the chat's short list, not everything");
-});
+/** The first task started after `before`, waited for (a background task starts a moment after its reply). */
+async function newRun(app, before, match = () => true) {
+  for (let i = 0; i < 100; i++) {
+    const run = app.store.runs(app.runtime.owner).find((r) => !before.has(r.id) && match(r));
+    if (run) return run;
+    await delay(20);
+  }
+}
+const startOf = (app, run) => app.store.events(run.id).find((event) => event.kind === "run.started").data;
 
-test("/goal from the owner's chat: every round is the chat's task", async (t) => {
-  const { app, sent, say } = await fixture(t);
-  const before = new Set(app.store.runs(app.runtime.owner).map((run) => run.id));
-  await say("owner-1", "/goal write a haiku --max 1");
-  assert.match(last(sent), /Goal/, last(sent));
-  const round = app.store.runs(app.runtime.owner).find((r) => !before.has(r.id) && r.prompt.includes("haiku"));
-  assert.ok(round, "a round started");
-  const origin = app.store.events(round.id).find((event) => event.kind === "run.started").data;
-  assert.equal(origin.source, "channel");
-  assert.ok(!origin.permissions.includes("shell.execute"));
-});
+// owner-dm-full: with "Your own chats have your full access" on (as shipped), what /bg and /goal start from the owner's
+// own verified direct chat is the owner's, as a plain message's task is, and carries that chat's mark so it is checked
+// again at every step; with the switch off it is that chat's task, with the chat's short list.
+for (const on of [true, false]) {
+  test(`/bg from the owner's chat, full access ${on ? "on: the owner's own task" : "off: the chat's task"}`, async (t) => {
+    const { app, sent, say } = await fixture(t);
+    if (!on) app.channels.setPermissionSettings({ ownerChats: false });
+    const before = new Set(app.store.runs(app.runtime.owner).map((run) => run.id));
+    await say("owner-1", "/bg summarise my notes");
+    assert.match(last(sent), /separate conversation|background/i, last(sent));
+    const started = await newRun(app, before);
+    assert.ok(started, "a background task started");
+    assert.equal(startOf(app, started).source, on ? "owner" : "channel");
+    await delay(50); // its mark is written as it starts
+    assert.equal(runOrigin(app.store, started.id).source, on ? "owner" : "channel");
+    assert.equal(startedFromChat({ runId: started.id }, app.store), !on);
+    if (on) assert.ok(startOf(app, started).permissions.includes("files.write"), "the owner's permissions");
+    else assert.ok(!startOf(app, started).permissions.includes("files.write"), "the chat's short list");
+  });
+
+  test(`/goal from the owner's chat, full access ${on ? "on: every round is the owner's" : "off: every round is the chat's"}`, async (t) => {
+    const { app, sent, say } = await fixture(t);
+    if (!on) app.channels.setPermissionSettings({ ownerChats: false });
+    const before = new Set(app.store.runs(app.runtime.owner).map((run) => run.id));
+    await say("owner-1", "/goal write a haiku --max 1");
+    assert.match(last(sent), /Goal/, last(sent));
+    const round = await newRun(app, before, (r) => r.prompt.includes("haiku"));
+    assert.ok(round, "a round started");
+    assert.equal(startOf(app, round).source, on ? "owner" : "channel");
+    assert.equal(runOrigin(app.store, round.id).source, on ? "owner" : "channel");
+    assert.equal(startOf(app, round).permissions.includes("files.write"), on);
+    if (!on) return;
+    // Turned off while the goal's round is on record: it is the chat's again at once, not at the next goal.
+    app.channels.setPermissionSettings({ ownerChats: false });
+    assert.equal(runOrigin(app.store, round.id).source, "channel");
+  });
+}
 
 test("only a direct chat, only a vouched app, never a message fetched after a restart", async (t) => {
   const { app, sent, say } = await fixture(t);

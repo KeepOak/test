@@ -29,7 +29,7 @@ const SwitchBody = z.object({ part: BoardPartSchema, mode: BoardModeSchema }).st
 const RunBody = z.object({ inputs: InputsSchema.default({}) }).strict();
 const FollowUpBody = z.object({ sessionId: z.string().uuid(), id: z.string().uuid() }).passthrough();
 const SendBody = z.object({ sessionId: z.string().uuid(), prompt: z.string().trim().min(1).max(16000) }).strict();
-const AnswerBody = z.object({ despiteUnchecked: z.boolean().default(false) }).strict();
+const AnswerBody = z.object({ despiteUnchecked: z.boolean().default(false), expectedRequest: z.string().max(65536).optional() }).strict();
 const cardRoute = /^\/api\/flows-boards\/board\/cards\/([a-f0-9-]{36})\/(move|handoff|work|reset|remove)$/;
 const flowRoute = /^\/api\/flows-boards\/flows\/([a-f0-9-]{36})\/(steps|fork)$/;
 const recipeRoute = /^\/api\/flows-boards\/recipes\/([a-f0-9-]{36})\/(checks|run)$/;
@@ -137,8 +137,10 @@ const installs: Route = async ({ boards, method, readBody }, path) => {
   }
   const match = installRoute.exec(path);
   if (!match || method !== "POST") return undefined;
-  const { despiteUnchecked } = AnswerBody.parse((await readBody()) ?? {});
-  return { request: await boards.installs.answer(match[1]!, match[2] === "approve", { despiteUnchecked }) };
+  const { despiteUnchecked, expectedRequest } = AnswerBody.parse((await readBody()) ?? {});
+  return { request: await boards.installs.answer(match[1]!, match[2] === "approve", {
+    despiteUnchecked, ...(expectedRequest !== undefined ? { expectedRequest } : {}),
+  }) };
 };
 
 const routes: Route[] = [top, flows, recipes, board, widgets, waiting, installs];

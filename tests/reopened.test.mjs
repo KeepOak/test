@@ -364,15 +364,16 @@ test("A1465 screen control stops with the Windows sentence before it touches any
 
 // ---------------------------------------------------------------- A1629
 
-test("A1629 a command nobody has ruled on is asked about, and saying yes settles it for good", async (t) => {
+test("A1629 for an owner who keeps commands asking, a command nobody has ruled on is asked about, and saying yes settles it for good", async (t) => {
   const { app } = await fixture(t);
   const { evaluatePolicy, readPolicy, savePolicy } = await import("../dist/policy.js");
   const { resourceOf } = await import("../dist/policy-resources.js");
   const command = (target) => ({ tool: "shell.execute", target, readOnly: false, resource: resourceOf("shell.execute", "shell.execute", target, {}) });
 
-  // Out of the box, with no rules at all, a command is a question rather than a guess.
-  const fresh = readPolicy(app.store, app.runtime.owner);
-  assert.equal(fresh.unmatchedCommands, "ask", "asking is what a fresh install does");
+  // Owner ruling 2026-09-30: out of the box a command runs (only Hermes Agent's dangerous list asks, in the command scan);
+  // an owner who picks "ask" gets a question rather than a guess.
+  assert.equal(readPolicy(app.store, app.runtime.owner).unmatchedCommands, "allow", "running is what a fresh install does");
+  const fresh = savePolicy(app.store, app.runtime.owner, { unmatchedCommands: "ask" });
   const asked = evaluatePolicy(fresh, command("rm -rf notes"));
   assert.equal(asked.decision, "ask");
   assert.equal(asked.rule.remember, "always", "so answering it once settles that command for good");
@@ -387,7 +388,7 @@ test("A1629 a command nobody has ruled on is asked about, and saying yes settles
   assert.equal(evaluatePolicy(ruled, command("git status")).decision, "allow");
   assert.equal(evaluatePolicy(ruled, command("rm -rf notes")).decision, "ask", "a rule about git says nothing about rm");
 
-  // An owner who would rather have the old behaviour back can say so, and it comes back.
+  // An owner who would rather have commands run can say so, and it comes back.
   const back = savePolicy(app.store, app.runtime.owner, { unmatchedCommands: "allow" });
   assert.equal(evaluatePolicy(back, command("rm -rf notes")).decision, "allow");
   assert.equal(back.rules.length, 1, "and the rules they already had are untouched");

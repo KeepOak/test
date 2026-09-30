@@ -250,7 +250,8 @@ async function automations(page, s) {
     check(`demob17 ${k}: one row per engine item (GET /api/${route})`, (await page.locator(".dlg .demo-b17 .prow").count()) === items.length);
     // Send a test is live once there is an address to send to (automations17.js sendTest); with none there is nothing to offer.
     if (k === "outhook") check("demob17 outhook: with no address, no Send a test is offered", items.length > 0 || (await page.locator('.dlg [data-act^="demodob17"]').count()) === 0);
-    else check(`demob17 ${k}: its primary stays greyed`, await greyed(page, '.dlg [data-act^="demodob17"]'));
+    // Hooks run on their events only: there is no Run the checks, and the lead says so.
+    else check("demob17 hooks: no primary; they run only on their events", (await page.locator('.dlg [data-act^="demodob17"]').count()) === 0);
     await act(page, "dlg-close");
   }
   await setLevel(page, "regular");
@@ -449,7 +450,7 @@ async function specialists(page, s) {
   await act(page, "dlg-close");
   await setLevel(page, "advanced");
   await act(page, "ptab", { place: "customize", v: "specialists" });
-  check("Other coding agents stays greyed (no route lists them; handing over starts a program)", await greyed(page, '[data-k="handoffcli"]'));
+  check("Other coding agents is words, no button (only Branch itself hands a coding job over)", (await page.locator('[data-k="handoffcli"]').count()) === 0 && (await page.getByText("Only Branch itself hands a coding job").count()) === 1);
 }
 
 async function tools(page) {
