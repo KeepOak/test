@@ -24,7 +24,7 @@
    saves the workflow the engine drafts from the recording (POST /api/runs/<id>/recording/flow). */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh, level, needsYou } from "../core/state.js";
+import { S, E, refresh, level, needsYou, ownerHere, activeId } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -292,7 +292,7 @@ async function openReplay(id) {
   RP.frames = recording.frames ?? [];
   const page = typeof window.branchDesktop === "object" ? "rp-page-desktop" : "rp-page";
   openDlg({ title: t("recordings.title"), wide: true, body: '<div class="replay6"></div>',
-    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="${page}">${t("recordings.save-page")}</button><button class="btn" type="button" data-act="rp-flow">${t("window.places.inbox.make-a-workflow")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="${page}">${t("recordings.save-page")}</button>${ownerHere() ? `<button class="btn ghost" type="button" data-act="rp-events">${t("recording.save-events")}</button>` : ""}<button class="btn" type="button" data-act="rp-flow">${t("window.places.inbox.make-a-workflow")}</button>` });
   drawReplay(0);
 }
 /* The engine's page of this recording, saved as the file the engine names. */
@@ -306,6 +306,22 @@ async function savePage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast(t("window.places.inbox.saved-as-a-page"));
   } catch (error) { toast(error.message); }
+}
+async function saveEvents() {
+  const id = RP.id, box = dialog(), profile = activeId();
+  const current = () => ownerHere() && activeId() === profile && RP.id === id && dialog() === box
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+  if (!current()) return;
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(id)}/recording/events`, { cache: "no-store",
+      headers: token.get() ? { authorization: "Bearer " + token.get() } : {} });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
+    const blob = await response.blob();
+    if (!current()) return;
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement("a"), { href: url, download: `task-events-${id}.jsonl` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { if (current()) toast(error.message); }
 }
 /* The workflow the engine drafts from the recording, saved; its steps are the recorded ones it can repeat. */
 async function makeFlow() {
@@ -393,7 +409,7 @@ export function init() {
   initDemo17();
   initInbox17();
   // Security tier: Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.
-  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
+  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo-no", "sw:histq", "selfno15", "rp-events", "rp-page", "rp-flow"]);
   on("replay", (el) => openReplay(el.dataset.id));
   /* Recordings switched on from History or from the replay dialog: the task that was asked for plays now. */
   document.addEventListener("branch-switched", (e) => {
@@ -407,6 +423,7 @@ export function init() {
   on("xdo", (el) => answerInstall(el));
   on("xdo-no", (el) => answerInstall(el));
   on("rp", (el) => stepReplay(el));
+  on("rp-events", () => saveEvents());
   on("rp-page", () => savePage());
   on("rp-flow", () => makeFlow());
   on("tmsg", async (el) => {

@@ -4411,6 +4411,7 @@
   "recordings.pictures": "Put the pictures it looked at into saved pages",
   "recordings.play": "Play",
   "recordings.purpose": "Play back what a finished task did, one step at a time, see the path it took, and keep it as a page or a workflow.",
+  "recording.save-events": "Save event log (JSONL)",
   "recordings.save-page": "Save as a page",
   "recordings.saved": "Saved.",
   "recordings.switch": "Recordings of tasks",

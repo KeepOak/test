@@ -16,6 +16,7 @@
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, extname, resolve } from "node:path";
+import { runEventLog } from "./run-event-log.js";
 import { audit } from "./audit.js";
 import { errorText } from "./request-errors.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "./event-loop-watch.js";
@@ -41,7 +42,7 @@ export interface RecordingApiOptions {
   readPublic?: (name: string) => Promise<string>;
 }
 
-const runPath = /^\/api\/runs\/([a-f0-9-]{36})\/(recording|recording\/page|recording\/path|recording\/flow|monitor)$/;
+const runPath = /^\/api\/runs\/([a-f0-9-]{36})\/(recording|recording\/events|recording\/page|recording\/path|recording\/flow|monitor)$/;
 
 export function handlesRecordingPath(path: string): boolean {
   return path === "/api/recordings" || path === "/api/event-loop" || runPath.test(path);
@@ -86,6 +87,16 @@ async function route(app: RecordingApp, request: IncomingMessage, response: Serv
   const settings = recordingSettings(app.store, owner);
   requireRecordings(settings.mode);
   const scrub = app.runtime.hideSecrets;
+  if (part === "recording/events") {
+    if (method !== "GET") throw Object.assign(new Error("Use GET to export the event log"), { status: 405 });
+    app.store.profiles.requireOwner("Export the complete task event log");
+    const body = runEventLog(app.store, owner, run.id, scrub);
+    audit(app.store, owner, { action: "data.exported", actor: owner, runId: run.id, subject: "task event log" });
+    response.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store",
+      "x-content-type-options": "nosniff", "content-disposition": `attachment; filename="task-events-${run.id}.jsonl"` });
+    response.end(body);
+    return undefined;
+  }
   if (part === "monitor") {
     const after = Number(new URL(request.url ?? "/", "http://local").searchParams.get("after") ?? 0);
     return runMonitor(app.store, run.id, { after: Number.isInteger(after) && after > 0 ? after : 0, scrub });
