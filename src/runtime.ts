@@ -27,6 +27,7 @@ import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
 import { currentCaller } from "./caller.js"; // owner-selected Full Access keeps its local caller
+import { TrunkSchema } from "./trunks/record.js";
 import type { TrunkRunShape } from "./trunks/shape.js"; // R17-A (Trunks)
 import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { diagnose } from "./diagnostic-log.js"; // Q44: a queued message that cannot start is logged
@@ -889,8 +890,7 @@ export class Runtime {
     this.queueGuard(waiting.sessionId);
     // Validate before settling: an unavailable scope leaves the handoff unanswered.
     const scope = this.deferredScope(waiting.runId, waiting.sessionId);
-    if (this.trunkShape({ prompt: "", sessionId: waiting.sessionId }) !== null || currentAccountCall()?.trunk !== undefined)
-      throw new Error("This handed-over job remains unanswered because its current Trunk credential scope cannot be reconciled with the original task.");
+    this.checkDeferredCredentials(scope.credentials, this.trunkShape({ prompt: "", sessionId: waiting.sessionId }));
     const entry = this.deferrals.settle(id, answer);
     if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
@@ -1724,11 +1724,13 @@ ${run.output.slice(0, 6000)}`;
     }
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──
-    const trunk = parent ? null : this.trunkShape(options);
-    // Default owner Trunks can carry credential keys without a context.trunk identity.
-    // This queue cannot prove their saved key/route scope, so never adopt current keys.
-    if (options.deferredFrom && (trunk !== null || currentAccountCall()?.trunk !== undefined))
-      throw new Error("This handed-over task cannot continue under a current Trunk credential scope. Reconcile its original credential authority first.");
+    let trunk = parent ? null : this.trunkShape(options);
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      this.checkDeferredCredentials(saved.credentials, trunk);
+      // Bind the validated saved keys, not a mutable current configuration object.
+      if (trunk && saved.credentials) trunk = { ...trunk, keys: saved.credentials.keys };
+    }
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
     if (paused) throw new Error(paused);
@@ -1878,10 +1880,12 @@ ${run.output.slice(0, 6000)}`;
       permissions: [...context.permissions].sort(),
       // Only an ordinary root can be reconstructed by this deferred queue. Helpers, scoped
       // memory, borrowed copies and other execution shapes require their original placement.
-      deferredScope: { version: 2, workspace: this.workspace, root: !parent && context.depth === 0 && !context.agent
-        && !context.trunk && context.trunkKeys === undefined && !context.isolated && !context.ownCopy && !options.lentTo
+      deferredScope: { version: 3, credentials: trunk && trunk.owners && !trunk.roomTurn
+        ? { trunkId: trunk.trunkId, keys: context.trunkKeys } : null, workspace: this.workspace, root: !parent && context.depth === 0 && !context.agent
+        && !context.trunk && (!context.trunkKeys || !!trunk?.owners)
+        && (!trunk || (trunk.owners === true && !trunk.roomTurn)) && !currentAccountCall()?.trunk && !context.isolated && !context.ownCopy && !options.lentTo
         && context.workspace === this.workspace && (context.source ?? "owner") === "owner"
-        && !currentPerson() && !startedWithShortLivedKey() && !options.originFrom
+        && !currentPerson() && !startedWithShortLivedKey() && (!options.originFrom || !!options.deferredFrom)
         && !options.resumeFrom && !options.continuing, dryRun: context.dryRun === true },
       // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
       ...(context.depth ? { depth: context.depth } : {}),
@@ -2111,7 +2115,7 @@ ${run.output.slice(0, 6000)}`;
     return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
   /** Deferred answers only resume a durably identified ordinary root; other shapes remain held. */
-  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean } {
+  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean; credentials: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null } {
     const run = runId ? this.store.run(runId) : null;
     const events = runId ? this.store.events(runId) : [];
     const started = events.find((event) => event.kind === "run.started")?.data;
@@ -2120,11 +2124,31 @@ ${run.output.slice(0, 6000)}`;
       ? value as Record<string, unknown> : null;
     if (!run || run.owner !== this.owner || run.sessionId !== sessionId
       || !saved
-      || saved.version !== 2 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
+      || saved.version !== 3 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
       || !Array.isArray(started?.permissions) || !started.permissions.every((permission) => typeof permission === "string")
       || events.some((event) => event.kind === "worktree.used" || event.kind === "worktree.inherited"))
       throw new Error("This handed-over task cannot continue safely because its saved effective scope or workspace cannot be recovered. The job remains unanswered; reconcile its original task first.");
-    return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun };
+    let credentials: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null = null;
+    if (saved.credentials !== null) {
+      const value = saved.credentials;
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new Error("The handed-over task's saved credential scope is unavailable; the job remains unanswered.");
+      const record = value as Record<string, unknown>;
+      const keys = TrunkSchema.shape.keys.safeParse(record.keys);
+      if (typeof record.trunkId !== "string" || !record.trunkId || record.keys === undefined || !keys.success
+        || canonicalArguments(JSON.stringify(record.keys)) !== canonicalArguments(JSON.stringify(keys.data)))
+        throw new Error("The handed-over task's saved credential identity or key restrictions are invalid; the job remains unanswered.");
+      credentials = { trunkId: record.trunkId, keys: keys.data };
+    }
+    return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun, credentials };
+  }
+  private checkDeferredCredentials(saved: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null): void {
+    // Equality deliberately holds changed scopes: neither a different identity nor newly added
+    // accounts/fallbacks/owner access may be installed by answering an existing handoff.
+    if (currentAccountCall()?.trunk || (saved === null ? current !== null
+      : !current || current.owners !== true || current.roomTurn || current.trunkId !== saved.trunkId
+        || canonicalArguments(JSON.stringify(current.keys)) !== canonicalArguments(JSON.stringify(saved.keys))))
+      throw new Error("This handed-over task's original credential identity or key restrictions no longer match. Reconcile its scope before answering; no new credential authority was adopted.");
   }
   /** Q050: what a task taken up again may reach, narrowed by what is asked now. */
   private continuedReach(runId: string, now: string[] | undefined): string[] {
