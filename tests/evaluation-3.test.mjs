@@ -151,7 +151,7 @@ test("A1766: the html scorer reads the answer and a file, and says what is wrong
 
 test("A1766 and A0927: the four new scorers are among the kinds and are documented", () => {
   for (const kind of ["f1", "passage", "html", "trajectory"]) assert.ok(scorerKinds.includes(kind), kind);
-  assert.equal(scorerKinds.length, 16);
+  assert.equal(scorerKinds.length, 17);
 });
 
 /* ------------------------------------------------------------ A1752 trajectory scoring */
