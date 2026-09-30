@@ -177,7 +177,7 @@ import { heldMode, policyForMode, readConversationMode, saveConversationMode, ty
 import { type AnswerShape, askInShape, shapeInstructions, type ShapedAnswer } from "./answer-shape.js";
 import { advisorInstructions, advisorQuestion, adviceLine, readAdvice, secondOpinionSettings, type Advice } from "./second-opinion.js";
 import { styleShape, takeScratch, type SpecialistStyle } from "./specialist-styles.js";
-import { Deferrals, deferredCall } from "./deferred.js";
+import { Deferrals, deferredCall, deferredFollowUp, deferredOutcome, type DeferredAction } from "./deferred.js";
 import { switchedToolTiers } from "./feature-switches.js";
 import { troubleshootInTask } from "./troubleshoot.js"; // w911 (A0374) hook: the debugging loop.
 import { RequestCache, type CacheKeyParts } from "./request-cache.js";
@@ -875,15 +875,19 @@ export class Runtime {
    * The answer to a tool call that was handed over earlier. It is written down and then put to the
    * conversation as an ordinary follow-up message, so the assistant picks the thread back up.
    */
-  settleDeferred(id: string, outcome: string): { id: string; sessionId: string; queued: number } {
+  settleDeferred(id: string, outcome?: string, action?: DeferredAction): { id: string; sessionId: string; queued: number } {
     const waiting = this.deferrals.get(id);
-    // Q44: refused before the step is marked answered; one already answered is told so first, by settle.
-    if (waiting && !waiting.settledAt) this.queueGuard(waiting.sessionId);
-    const entry = this.deferrals.settle(id, outcome);
-    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool });
+    if (!waiting) throw new Error("There is no handed-over job with that number");
+    if (waiting.settledAt) throw new Error("That job has already been answered");
+    const answer = deferredOutcome(waiting, outcome, action);
+    if (!this.store.ownsSession(this.owner, waiting.sessionId)) throw new Error("Session not found");
+    // Q44: a refused continuation must leave the step unanswered.
+    this.queueGuard(waiting.sessionId);
+    const entry = this.deferrals.settle(id, answer);
+    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
     const queued = this.followUp(entry.sessionId,
-      `The "${entry.tool}" step you handed over earlier has finished${entry.description ? ` (${entry.description})` : ""}. What came of it: ${entry.outcome}`,
+      deferredFollowUp(entry, action),
       null, { originFrom: entry.runId || undefined });
     return { id: entry.id, sessionId: entry.sessionId, queued: queued.queued };
   }
@@ -5196,10 +5200,12 @@ ${run.output.slice(0, 6000)}`;
     const deferred = deferredCall(result);
     if (!deferred) return null;
     const entry = this.deferrals.open({ id: deferred.id, runId: context.runId, sessionId: this.sessionOf(context),
-      tool: call.name, description: deferred.description });
-    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description });
-    return { deferred: true, id: entry.id,
-      note: "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
+      tool: call.name, description: deferred.description, ...(deferred.kind ? { kind: deferred.kind } : {}) });
+    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description, kind: entry.kind });
+    return { deferred: true, id: entry.id, kind: entry.kind,
+      note: entry.kind === "later"
+        ? "This work is set aside and still unfinished. Do not do the remaining work now. Finish your answer with what is pending. The person's Finish now button queues a continuation in this conversation."
+        : "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
   }
   /**
    * Some servers answer with a small page meant to be looked at rather than read out. It is kept
