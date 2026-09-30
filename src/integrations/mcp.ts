@@ -57,9 +57,12 @@ function redact(result: unknown, secrets: string[]): unknown {
  */
 type CallThrough = (tool: string, args: Record<string, unknown>, context: ToolContext) => Promise<unknown>;
 
-const through = (client: Client): CallThrough =>
+// Adapted from Gemini CLI's configured timeout/progress call path; see THIRD_PARTY_NOTICES.md.
+const through = (client: Client, config: McpConfig): CallThrough =>
   (tool, args, context) => client.callTool({ name: tool, arguments: args }, undefined,
-    { signal: context.signal, timeout: 30000 });
+    { signal: context.signal, timeout: (config.callTimeoutSeconds ?? 30) * 1000,
+      // The SDK attaches and correlates its own progress token when this callback is present.
+      onprogress: () => undefined, resetTimeoutOnProgress: true, maxTotalTimeout: 3600000 });
 
 function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: string[], policy: McpContentPolicy = () => 'redact', changed: () => boolean = () => false): ToolDefinition {
   if (JSON.stringify(redact(tool, secrets)) !== JSON.stringify(tool))
@@ -220,7 +223,7 @@ export async function openMcp(
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
     client.onclose = () => { alive = false; };
-    return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive };
+    return { config, found, secrets, call: through(client, config), close: () => client.close(), alive: () => alive };
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');

@@ -1,5 +1,21 @@
 # Third-party notices
 
+### OpenClaw Telegram inbound locations
+
+`src/channels/telegram-location.ts` adapts `extractTelegramLocation` from `extensions/telegram/src/bot/body-helpers.ts` and location text formatting from `src/channels/location.ts` in [OpenClaw](https://github.com/openclaw/openclaw), Copyright (c) 2026 OpenClaw Foundation, under the MIT License. Its Telegram venue precedence, live-pin detection, coordinate precision and accuracy formatting are retained; the implementation uses Branch's schemas and quotes venue labels as sender-provided material. The OpenClaw MIT license is reproduced elsewhere in this document.
+
+### Hermes chat progress level command
+
+`verboseInChat` in `src/channels/steps-display.ts` adapts the level cycle in `gateway/slash_commands.py` and override precedence in `gateway/display_config.py` from [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch persists the level per direct chat rather than per platform and supports its own four display levels.
+
+### Hermes Signal monospace formatting
+
+`src/channels/signal-format.ts` adapts code-block extraction, formatting marker removal and `MONOSPACE` style ranges from `gateway/platforms/signal_format.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch uses JavaScript's UTF-16 offsets and its existing progress spans, and sends signal-cli's `textStyle` parameters. OpenClaw `extensions/signal/src/format.ts` was reviewed but depends on its shared markdown renderer, which is not included here.
+
+### Hermes email sender authentication
+
+`src/channels/mail-auth.ts` ports the comment/quote-aware Authentication-Results clause and property parsing and sender-authentication decision from `plugins/platforms/email/adapter.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/plugins/platforms/email/adapter.py), Copyright (c) 2025 Nous Research, MIT. Branch considers only the first header, uses exact optional authserv-id pins, and uses exact domain alignment for SPF/DKIM fallback. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
 ### MCP tool error feedback
 
 `src/integrations/mcp-errors.ts` adapts Gemini CLI's MCP tool error-result handling, with Branch's
@@ -3309,7 +3325,35 @@ owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFro
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Agent Skills progressive disclosure (format reference)
+
+The separate-reference layout and lazy resource reads in `src/agent-skills.ts`, `src/skill-packages.ts` and `src/skill-tools.ts` were written for Branch after inspecting the progressive-disclosure format in Anthropic's skill-creator SKILL.md at commit `8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4` (https://github.com/anthropics/skills/blob/8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4/skills/skill-creator/SKILL.md, Apache-2.0). This source documents a format, not a compatible implementation of Branch's owner/version/governance storage APIs. No source text or executable code was copied. The PDF skill's proprietary materials were inspected for format only and are not included or adapted.
+
+### Hermes Agent skill guard, MIT
+
+`src/skill-scan-patterns.ts` adapts selected exfiltration, destructive, persistence, network and obfuscation regexes and the invisible-character set from `tools/skills_guard.py` at commit `a9a54245b2311c705d29050b7f9868c015917aec` (https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/skills_guard.py), Copyright (c) 2025 Nous Research, MIT. Changes: port selected families to JavaScript, supply Branch's finding reasons, scan both original and visible text and retain Branch's existing block/review policy instead of the upstream repository trust tiers. Package text/layout checks are Branch code and keep its existing size/file-count limits.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ### Gemini CLI (Google LLC), Apache-2.0
+
+The configured MCP call timeout and progress-token request pattern in `src/integrations/mcp.ts` is adapted from `packages/core/src/tools/mcp-client.ts`, lines 1440–1490 at commit `40d4dccfa9aec692b27798ca819b918609e2bc60` (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-client.ts), Copyright 2025 Google LLC, Apache-2.0. Changes: use the SDK's correlated progress token, reset the inactivity timer on progress, retain cancellation and add a one-hour total deadline; Branch supplies its own bounded per-server setting and owner controls. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), whose text appears above; distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
 The test in `src/skill-authoring.ts` for whether something deserves to be a new skill (a concrete, repeatable procedure, not general knowledge, a one-off fix or a preference; when in doubt, none) follows `packages/core/src/agents/skill-extraction-agent.ts` in Gemini CLI (https://github.com/google-gemini/gemini-cli, commit 6a466a7), rewritten in Branch's words. Copyright 2026 Google LLC. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), on the same terms as above.
 
@@ -3766,3 +3810,49 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `programStart` in `src/coding/hand-off.ts` starts an npm-installed Codex as its own program with the environment its npm launcher (`codex-cli/bin/codex.js`, commit d14143834) adds, as `codexBinary` in `src/asks/codex-app-server.ts` already did for the app-server.
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
+
+### OpenClaw skill manifest requirements (MIT)
+
+`src/skill-metadata.ts` adapts the `requires`/OS extraction structure from OpenClaw `resolveSkillManifestMetadata` and `resolveOpenClawManifestRequires`: https://github.com/openclaw/openclaw/blob/1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef/src/skills/loading/frontmatter.ts#L158-L190 and https://github.com/openclaw/openclaw/blob/1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef/src/shared/frontmatter.ts. Branch preserves bounded metadata and checks local availability without running installation declarations.
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### PDF.js CMap decoding and text-gap spacing (Apache-2.0)
+
+`src/document-pdf.ts` adapts byte-wise destination increment and code-space matching from Mozilla PDF.js CMap.mapBfRange/readCharCode, and its evaluator SPACE_IN_FLOW_MIN_FACTOR for TJ gaps. Sources reviewed at 18e8a26a3813a319b38c806076f0b0ef9baf1bf4: https://github.com/mozilla/pdf.js/blob/18e8a26a3813a319b38c806076f0b0ef9baf1bf4/src/core/cmap.js#L247-L273 and #L307-L328; https://github.com/mozilla/pdf.js/blob/18e8a26a3813a319b38c806076f0b0ef9baf1bf4/src/core/evaluator.js#L2514-L2536. Branch uses its own bounded reader and does not embed the PDF.js engine.
+
+Copyright 2012 Mozilla Foundation
+
+Licensed under the Apache License, Version 2.0 (the License); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an AS IS BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License. The complete Apache-2.0 license is reproduced above.
+
+## Hermes Agent profile import preview
+
+The Trunk import preview/apply flow adapts the staged manifest review in [hermes_cli/profile_distribution.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/profile_distribution.py) (`plan_install`/`install_distribution`), reviewed on 2026-09-29. The implementation uses Branch Trunk JSON and its existing import route; no archive installer is included.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

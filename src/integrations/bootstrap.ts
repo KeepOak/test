@@ -107,6 +107,8 @@ export const EmailChannelSchema = z.object({
   passwordSecret: credentialName.default('EMAIL_PASSWORD'),
   /** How often to look for new mail, in seconds. */
   pollSeconds: z.number().int().min(5).max(3600).default(60),
+  requireAuthenticatedSender: z.boolean().default(true),
+  trustedAuthservIds: z.array(z.string().trim().regex(/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$/)).max(32).default([]),
 }).merge(ChannelPolicySchema).strict();
 /**
  * Every team-chat service that works the same way: a row in `data/channels.json` says how it sends
@@ -408,7 +410,8 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
     if (new Set(config.channels.map(channel => channel.id)).size !== config.channels.length) throw new Error('Channel ids must be unique');
     for (const channel of config.channels) {
       const adapter = await buildChannel(channel, env, channels!, policy);
-      await channels!.router.attach(adapter, { activation: channel.activation, pairing: channel.pairing, allowlist: channel.allowlist });
+      await channels!.router.attach(adapter, { activation: channel.activation, pairing: channel.pairing, allowlist: channel.allowlist,
+        ...(channel.groupAllowlist !== undefined ? { groupAllowlist: channel.groupAllowlist } : {}) });
       closers.push(() => adapter.stop());
     }
     return { close, count: closers.length + mcpRunning, hosted };
@@ -593,6 +596,7 @@ async function buildEmail(channel: Extract<ChannelConfig, { type: 'email' }>, en
   for (const server of [channel.imap, channel.smtp])
     await policy?.assertAllowed(new URL(`https://${server.host}`), 'mail server');
   return new EmailAdapter({ id: channel.id, address: channel.address, pollMs: channel.pollSeconds * 1000,
+    requireAuthenticatedSender: channel.requireAuthenticatedSender, trustedAuthservIds: channel.trustedAuthservIds,
     imap: { ...channel.imap, password }, smtp: { ...channel.smtp, password } });
 }
 

@@ -9,6 +9,7 @@ import { describeFindings, scanSkill } from "./skill-scan.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 import { fetchGitHubSkill, quarantineGitHubSkill, takeGitHubSkill, requireGitHubSkillOwner } from "./skill-github.js";
 import { readSkillPackage } from "./skill-package.js";
+import { skillDocumentLimit } from "./skill-document.js";
 
 /**
  * Bucket 12 (A2374, A0776): installing and removing a skill while Branch runs, with a written
@@ -36,7 +37,7 @@ export const InstallRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("agent-skill"), file: fileField, approve: z.boolean().default(false), allow: PackageInstallSchema.shape.allow }).strict(),
   z.object({ kind: z.literal("package"), file: fileField, approve: z.boolean().default(false), allow: PackageInstallSchema.shape.allow }).strict(),
   z.object({ kind: z.literal("registry"), url: z.string().url().max(2000), skillId: z.string().min(1).max(64) }).strict(),
-  z.object({ kind: z.literal("document"), document: z.string().min(1).max(16000) }).strict(),
+  z.object({ kind: z.literal("document"), document: z.string().min(1).max(skillDocumentLimit) }).strict(),
 ]);
 type InstallRequest = z.infer<typeof InstallRequestSchema>;
 
