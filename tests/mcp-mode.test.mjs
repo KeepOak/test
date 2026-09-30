@@ -95,7 +95,7 @@ async function stream(url, token, sessionId, want, act) {
   return { got, sessionId: response.headers.get("mcp-session-id") };
 }
 
-test("C1: the modern transport gives a session, an event stream, and a plain error for a version it does not speak", async (t) => {
+test("C1: the modern transport gives a session, an event stream, and its newest version to a client asking for one it does not speak", async (t) => {
   const { url, token, sessionId, initialize } = await initialized(t);
   assert.ok(sessionId, "Branch names the conversation in the reply to the first message");
   assert.deepEqual(initialize.result.capabilities, {
@@ -115,9 +115,23 @@ test("C1: the modern transport gives a session, an event stream, and a plain err
     jsonrpc: "2.0", id: 3, method: "initialize",
     params: { protocolVersion: "1999-01-01", clientInfo: { name: "probe", version: "1.0.0" } },
   });
-  assert.equal(old.data.error.code, -32602);
-  assert.match(old.data.error.message, /does not speak MCP version "1999-01-01"/);
-  assert.ok(old.data.error.data.supported.includes("2025-06-18"));
+  // A version Branch does not speak is answered with its newest, not refused: the client decides.
+  assert.equal(old.data.error, undefined, JSON.stringify(old.data));
+  assert.equal(old.data.result.protocolVersion, "2025-11-25");
+  assert.equal(old.response.headers.get("mcp-protocol-version"), "2025-11-25");
+
+  const current = await rpc(url, token, {
+    jsonrpc: "2.0", id: 4, method: "initialize",
+    params: { protocolVersion: "2025-11-25", clientInfo: { name: "probe", version: "1.0.0" } },
+  });
+  assert.equal(current.data.result.protocolVersion, "2025-11-25", "the version the shipped MCP SDK sends is accepted");
+
+  const notified = await fetch(`${url}/mcp`, {
+    method: "POST",
+    headers: headers(url, token, { "content-type": "application/json", "mcp-session-id": sessionId }),
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  assert.equal(notified.status, 202, "a notification is accepted with no reply");
 
   const plain = await fetch(`${url}/mcp`, { headers: headers(url, token) });
   assert.equal(plain.status, 405, "a GET that does not ask for a stream is still refused");

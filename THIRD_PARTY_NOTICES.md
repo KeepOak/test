@@ -3564,6 +3564,10 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### MCP TypeScript SDK (Model Context Protocol), MIT
+
+The MCP server's version handshake (`negotiatedProtocolVersion` and `supportedProtocolVersions` in `src/mcp-server.ts`) follows `_oninitialize` in `@modelcontextprotocol/sdk` 1.30.0 (upstream `packages/server/src/server/server.ts`, https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/server.ts#L898-L922): a version it speaks is echoed, any other is answered with the newest, and the version list is the SDK's `SUPPORTED_PROTOCOL_VERSIONS`. The 202 answer to a notification on `/mcp` (`src/server.ts`) follows the SDK's Streamable HTTP server (https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/streamableHttp.ts#L893-L900). Used under the MIT licence of `@modelcontextprotocol/sdk` 1.30.0, whose text is given above.
+
 ### Helper lifecycle (ideas only), MIT and Apache-2.0
 
 `src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.

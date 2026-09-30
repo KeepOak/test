@@ -541,7 +541,7 @@ test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) 
   const replies = collect(child, 3);
 
   const send = (message) => child.stdin.write(JSON.stringify(message) + "\n");
-  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: "stdio-test", version: "1.0.0" } } });
+  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", clientInfo: { name: "stdio-test", version: "1.0.0" } } });
   send({ jsonrpc: "2.0", method: "notifications/initialized" });
   send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
   send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "branch.ask", arguments: { prompt: "Say hello" } } });
