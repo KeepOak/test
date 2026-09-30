@@ -149,6 +149,12 @@ export async function knowledgeApi(
   bases: KnowledgeBases, models: ModelRouter | undefined, owner: string,
   method: string, path: string, body: () => Promise<unknown>,
 ): Promise<unknown> {
+  if (path === "/api/knowledge/embeddings") {
+    const sources = bases.embeddingSources;
+    sources.requireOwner();
+    if (method === "POST") sources.configure(owner, await body());
+    if (method === "GET" || method === "POST") return sources.view(owner);
+  }
   if (method === "GET" && path === "/api/knowledge") return bases.view(owner);
   if (method === "POST" && path === "/api/knowledge/settings") return bases.configure(owner, await body());
   if (method === "POST" && path === "/api/knowledge") return bases.create(owner, await body());

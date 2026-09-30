@@ -451,7 +451,7 @@ One button takes a computer with nothing on it to a model that answers: install 
 
 **Routing rules** (`settings/routing`, off by default): `enabled`, `localForPrivate` (a task mentioning personal details stays here), `cloudForHard` (long or tool-heavy tasks go to the cloud model), `costCeilingDollars` (a simple task that would cost more than this in the cloud uses the free local model instead), and optional `localPreset` / `cloudPreset`. What you explicitly choose for a run or a conversation always wins; when routing does pick, the run records a `model.routed` event with the reason. A task kept here because of personal details is kept here for good: it is planned only on connections on this computer (never the configured fallbacks elsewhere), its side jobs (the advisor, summaries, learning) and sub-tasks and the tools it uses are answered here too, and the later turns of the same conversation stay here, since they carry its words. If the model here does not answer, the task fails with that model's own error; with no model on this computer it is refused. Only a task kept here to save money may still fall back to the cloud when the model here is not answering. `POST /api/local-models/routing/preview` is the one caller that can set `localUp` today.
 
-**Reading passages by meaning.** When the connected model is Ollama on this computer, document and memory search use Ollama's own `/api/embeddings` instead of the OpenAI-shaped route, one passage per request, and `text-embedding-3-small` is swapped for `nomic-embed-text`, which is what exists here.
+**Reading passages by meaning.** Document, memory and knowledge-base search use their independent **Embeddings come from** choice in Library. It defaults to Ollama on this computer with an installed `nomic-embed-text`, using `/api/embeddings`, one passage per request. A chat subscription can be used alongside this local meaning search. Availability and the installed model's digest are checked through `/api/tags` when meaning search runs; Branch does not download models or choose a remote fallback automatically.
 
 **Addresses.** Every call to a program on this computer is first checked to be `localhost`, `127.0.0.1` or `[::1]` with no credentials, query or fragment, then against the owner's network rules — allowed and blocked hosts and paths all apply, so blocking `127.0.0.1` stops it — with only the blanket refusal of local addresses left out, since a local runtime is nothing but a local address (`src/local-policy.ts`). Local connections are rebuilt at start with that same check rather than with the ordinary provider rules, which would refuse them. Calls to Hugging Face and Ollama's registry go through the ordinary network policy in full. Model names are checked against the shape each program accepts, so a name can never become a path.
 
@@ -3485,7 +3485,9 @@ Asking about one tool call at a time is not the same as agreeing what is going t
 
 Text is split into passages of about 3000 characters with 400 characters of overlap, ending at a paragraph or sentence where one is near. Passages are indexed in SQLite full-text search and ranked with BM25, and the search box shows the matching words highlighted. Where this build of SQLite has no full-text search, the panel still finds passages by plain word matching and says nothing about ranking; a warning is printed once at startup.
 
-If your model connection is an OpenAI-compatible one, its `/embeddings` route is also used (model `text-embedding-3-small` by default, changeable through `embeddingModel`): passages are sent in batches of at most 64, the answers are kept on this computer as vectors, and the two orderings — by wording and by meaning — are combined with reciprocal rank fusion. Without such a connection, or if the provider refuses, the document is still searchable by its words and the panel says so. Embedding requests go to the provider address only, under the same rule as every other provider call (HTTPS, or plain HTTP only on this computer).
+**Embeddings come from** in Library › Documents › Managing what it reads chooses one source for documents, memory and knowledge bases, independently of the chat model. The default is Ollama on this computer with an installed `nomic-embed-text`; Branch checks `/api/tags` before sending passages and never installs a model or falls back to a remote provider automatically. You can choose a connected embedding provider and its embedding model, or word search only. OpenAI-compatible and Gemini providers are supported. Subscription sign-ins alone do not provide embeddings. Off-computer calls retain the network rules, and a task restricted to this computer refuses a remote embedding source.
+
+`GET|POST /api/knowledge/embeddings` reads or changes `{source: "ollama" | "provider" | "off", preset: string | null, model: string, version: string}`. Only the owner may read or change these settings. No key or endpoint is exposed by this route. The optional version separates weights changed behind the same remote model name; Ollama's installed-model digest supplies its version automatically. Changing source, model or version makes older vectors ineligible for meaning search. Existing unversioned indexes stay available by words until documents and knowledge bases are read again and memory is prepared again. Cached vectors are separated by route, model and version, and vectors of different dimensions are not compared. The existing `embeddingModel` fields in document and memory configuration now read and update this shared model choice.
 
 **Use my documents when answering** puts the three best passages in front of each of your tasks, each labelled with the document it came from, the same way remembered facts are. It is on while your library has something in it and can be switched off. Specialists working on your behalf do not receive them, document text is marked as untrusted, and a retrieval that fails is recorded (`documents.retrieved`, `documents.retrieval_failed`) without stopping the task.
 
@@ -3595,9 +3597,9 @@ Routes: `GET /api/memory/tidy` (read only) and `POST /api/memory/tidy {}` (stage
 
 ### Matching facts by meaning
 
-`memory.search` matches the words in a fact using the database's own ranking, and — when the connected model also answers `/embeddings`, the same route the document library uses — compares facts by meaning as well. The two orders are combined with reciprocal rank fusion and then weighted by how useful each fact has been. Without a key, without an embeddings route, or with meaning turned off, word search stands alone; on a build of SQLite without full-text search, facts are matched plainly instead.
+`memory.search` matches the words in a fact using the database's own ranking, and also compares facts by meaning through the independent **Embeddings come from** source described under Documents. The two orders are combined with reciprocal rank fusion and then weighted by how useful each fact has been. Without an available embedding model, or with meaning turned off, word search stands alone; on a build of SQLite without full-text search, facts are matched plainly instead.
 
-**Also match facts by meaning** turns it on or off per owner, and **Prepare facts for matching by meaning** sends your fact texts to the provider in batches of 64 so they can be compared. Only the text of a fact is sent; nothing else leaves this computer. Routes: `GET|POST /api/memory/retrieval {useEmbeddings, embeddingModel}`, `POST /api/memory/index {}`, and `POST /api/memory/search {query, limit}`.
+**Also match facts by meaning** turns it on or off per owner, and **Prepare facts for matching by meaning** compares fact texts through the chosen embedding source. Remote sources receive the text; Ollama keeps it on this computer. Routes: `GET|POST /api/memory/retrieval {useEmbeddings, embeddingModel}`, `POST /api/memory/index {}`, and `POST /api/memory/search {query, limit}`.
 
 ### Facts as JSON Lines, conversations as Markdown
 
@@ -5746,8 +5748,8 @@ file formats are added here, and a PDF is skipped rather than half-read. Passage
 from the file and the wording, so the same folder always produces the same passages with the same
 names. Up to 20 folders or files per knowledge base, 400 files in total, 5 MB a file.
 
-**What is sent where.** Passages are compared by meaning only if a model you have already connected
-can do it. An OpenAI-shaped connection is asked at its `/embeddings` route; a Gemini connection at
+**What is sent where.** Passages use the independent **Embeddings come from** choice described under
+Documents; changing your chat model does not change that source. An OpenAI-shaped connection is asked at its `/embeddings` route; a Gemini connection at
 `batchEmbedContents`; a model running on this computer through Ollama's own `/api/embeddings`, in
 which case **nothing leaves this computer**. LM Studio speaks the OpenAI shape and is reached the same
 way, also without leaving the machine. **Your question goes to the same place as your files:** matching
@@ -5755,7 +5757,7 @@ by meaning means the wording of each search — and the first 500 characters of 
 base is ticked **Use this when answering** — is sent to that same connection, unless the model is on
 this computer, in which case nothing leaves it. The card says which of those is happening. If none of your
 connections can do it, Branch says so in one sentence and the knowledge base still works by its words
-alone. Every reading is kept here under a fingerprint of the passage and the model, so reading the
+alone. Every reading is kept here under a fingerprint of the passage, route, model and version, so reading the
 same folder twice costs nothing, and the cost of a first reading is charged to the task that asked for
 it, exactly like a model answer. Background reading has no task to charge, so it is recorded as a
 `knowledge.index.progress` event instead, and each knowledge base keeps a running total of how much

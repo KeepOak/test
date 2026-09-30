@@ -31,9 +31,10 @@ export interface VectorBackend {
   /**
    * The closest passages to a question, best first. `scanAtMost` is how many stored passages one
    * comparison may look at, so the work never grows without a ceiling; a backend that does the
-   * comparison itself may ignore it.
+   * comparison itself may ignore it. When `model` is supplied, it is a route/model/version identity;
+   * an adapter must restrict results to that identity and the query's dimensions.
    */
-  search(owner: string, collection: string, query: Float32Array, limit: number, scanAtMost?: number): Promise<VectorMatch[]>;
+  search(owner: string, collection: string, query: Float32Array, limit: number, scanAtMost?: number, model?: string): Promise<VectorMatch[]>;
   count(owner: string, collection?: string): Promise<number>;
   /** Which passages of a collection are already read, by fingerprint, so re-reading is free. */
   fingerprints(owner: string, collection: string, model: string): Promise<Map<string, string>>;
@@ -88,12 +89,15 @@ export class SqliteVectors implements VectorBackend {
    * lengths — a collection read by two different models — score zero rather than throwing.
    */
   async search(
-    owner: string, collection: string, query: Float32Array, limit: number, scanAtMost = comfortableChunkCount,
+    owner: string, collection: string, query: Float32Array, limit: number, scanAtMost = comfortableChunkCount, model?: string,
   ): Promise<VectorMatch[]> {
     if (!query.length) return [];
     const ceiling = Math.max(1, Math.min(scanAtMost, comfortableChunkCount));
-    const rows = this.db.prepare("SELECT doc_id, chunk_id, blob FROM vectors WHERE owner=? AND collection=? LIMIT ?")
-      .all(owner, collection, ceiling);
+    const rows = model
+      ? this.db.prepare("SELECT doc_id, chunk_id, blob FROM vectors WHERE owner=? AND collection=? AND model=? AND dims=? LIMIT ?")
+        .all(owner, collection, model, query.length, ceiling)
+      : this.db.prepare("SELECT doc_id, chunk_id, blob FROM vectors WHERE owner=? AND collection=? AND dims=? LIMIT ?")
+        .all(owner, collection, query.length, ceiling);
     return rows
       .map((row) => ({
         docId: String(row.doc_id), chunkId: String(row.chunk_id),
