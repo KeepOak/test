@@ -186,17 +186,25 @@ for (const row of table) {
       return adapter.receive(raw, headers);
     };
 
-    // An unknown sender is given a pairing code rather than being answered.
+    // An unknown sender is given a pairing code rather than being answered. UP-CHAT-007: in a group the code is never
+    // posted; the request waits under Settings → Channels, where the owner sees it with its code.
     await send(said("hello there"));
-    const first = await until(() => service.calls[0], "pairing reply");
-    const code = /\b(\d{6})\b/.exec(row.sentText(first));
-    assert.ok(code, `a six-digit code was offered: ${row.sentText(first)}`);
+    let code;
+    if (row.group) {
+      code = (await until(() => app.channels.summary().pending[0], "a pairing request")).code;
+      await delay(80);
+      assert.equal(service.calls.length, 0, "no code is posted where a group can read it");
+    } else {
+      const first = await until(() => service.calls[0], "pairing reply");
+      code = /\b(\d{6})\b/.exec(row.sentText(first))?.[1];
+      assert.ok(code, `a six-digit code was offered: ${row.sentText(first)}`);
+    }
     assert.equal(provider.requests.length, 0, "a stranger never reaches the model");
 
     // Once the owner approves the code, the same person is answered.
-    app.channels.approve(app.runtime.owner, { code: code[1] });
+    app.channels.approve(app.runtime.owner, { code });
     await send(said("what is the time"));
-    const answered = await until(() => service.calls.find((call, index) => index > 0 && /Echo:/.test(row.sentText(call) ?? "")), "an answer");
+    const answered = await until(() => service.calls.find((call) => /Echo:/.test(row.sentText(call) ?? "")), "an answer");
     assert.match(row.sentText(answered), /what is the time/);
 
     // A post that does not prove it came from the service is refused and nothing inside it is read.
@@ -739,8 +747,10 @@ test("a first message on Matrix or Signal gets a pairing code and never reaches 
   const matrix = new MatrixAdapter({ id: "matrix", homeserver: `http://127.0.0.1:${server.address().port}`,
     userId: "@branch:example.org", accessToken: TOKEN, syncTimeoutMs: 30, reconnectBaseMs: 5 });
   await app.channels.attach(matrix, { activation: "always", pairing: true, allowlist: [] });
-  const offered = await until(() => sends[0], "a pairing code on Matrix");
-  assert.match(offered.body, /\b\d{6}\b/, "a stranger on Matrix is offered a code, not an answer");
+  // UP-CHAT-007: a Matrix room is a group to Branch, so the code is not posted there; the request waits for the owner.
+  const pending = await until(() => app.channels.summary().pending.find((p) => p.channel === "matrix"), "a pairing request on Matrix");
+  assert.match(pending.code, /^\d{6}$/);
+  assert.equal(sends.length, 0, "no code is posted in the room");
   assert.equal(provider.requests.length, 0, "and never reaches the model");
   await matrix.stop();
 
