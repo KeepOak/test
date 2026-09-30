@@ -15,6 +15,7 @@ import { switchesNow } from "/ph-switches.js";
 
 const C = { results: null, searched: "", pending: "", draft: "", attach: [], timer: 0 };
 let phoneFrame = null;
+let phoneViewEpoch = 0;
 function phoneView() {
   if (!trunkOf(P.chat)) return "";
   const view = phoneFrame?.session === P.chat && phoneFrame.expiresAt > Date.now() ? phoneFrame : null;
@@ -170,18 +171,18 @@ export async function attachFiles(list) {
   draw();
 }
 export function initChats() {
-  on("ph-view-close", () => { phoneFrame = null; draw(); });
+  on("ph-view-close", () => { phoneViewEpoch++; phoneFrame = null; draw(); });
   on("ph-view", async el => {
-    const session = P.chat; phoneFrame = null; draw();
+    const session = P.chat, epoch = ++phoneViewEpoch; phoneFrame = null; draw();
     try {
       const view = await get("/api/phone/trunk-view", `session=${encodeURIComponent(session)}&kind=${el.dataset.v}`);
-      if (P.chat !== session || document.hidden) return;
+      if (P.chat !== session || document.hidden || epoch !== phoneViewEpoch) return;
       if (view.raw) { view.frame = privateImage(view.raw); delete view.raw; }
       phoneFrame = { ...view, session }; draw();
-      setTimeout(() => { if (phoneFrame?.session === session) { phoneFrame = null; draw(); } }, Math.min(10000, Math.max(0, view.expiresAt - Date.now())));
+      setTimeout(() => { if (epoch === phoneViewEpoch && phoneFrame?.session === session) { phoneFrame = null; draw(); } }, Math.min(10000, Math.max(0, view.expiresAt - Date.now())));
     } catch (error) { toast(error.message); }
   });
-  document.addEventListener("visibilitychange", () => { if (document.hidden) { phoneFrame = null; draw(); } });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { phoneViewEpoch++; phoneFrame = null; draw(); } });
   on("ph-cf", (el) => { P.chatF = el.dataset.v; draw(); });
   on("new", () => { P.chat = null; C.attach = []; go("chat"); });
   on("ph-sheet", (el) => { P.sheet = el.dataset.v || null; draw(); });
