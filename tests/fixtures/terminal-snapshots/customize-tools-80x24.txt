@@ -1,5 +1,5 @@
  ♣ Branch Agent · Customize › Tools                     ● Offline demonstration
-  1  2 2  3  4  5 Customize  6                             Ctrl+K Find anything
+  1  2 2  3  4  5 Customize  6  7                          Ctrl+K Find anything
 
   CUSTOMIZE
   Who your Trunks are, what they can do, and where you can reach them.

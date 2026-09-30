@@ -1,5 +1,5 @@
  ♣ Branch Agent · Settings › Models › Defaults          ● Offline demonstration
-  1  2 2  3  4  5  6                                       Ctrl+K Find anything
+  1  2 2  3  4  5  6  7                                    Ctrl+K Find anything
  Settings › Models  (7/19)
  < Instructions & personality   Accounts >
    MODELS

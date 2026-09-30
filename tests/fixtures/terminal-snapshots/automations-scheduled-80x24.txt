@@ -1,5 +1,5 @@
  ♣ Branch Agent · Automations › Scheduled               ● Offline demonstration
-  1  2 2  3 Automations  4  5  6                           Ctrl+K Find anything
+  1  2 2  3 Automations  4  5  6  7                        Ctrl+K Find anything
 
   AUTOMATIONS
   Work your Trunks do on their own.

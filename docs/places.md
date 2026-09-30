@@ -1,8 +1,8 @@
 # Where things go
 
 Branch Agent has one window: the conversation, seven places and Settings. The places are the new
-window's own (`public/app/shell/shell.js` PLACES): Overview, Inbox, Automations, Library, Seasons, Team and
-Customize. Every feature, old or new, lives in exactly one of them, and the owner should be able to
+window's own (`public/app/shell/shell.js` PLACES): Overview, Inbox, Automations, Library, Team, Customize and
+Seasons. Every feature, old or new, lives in exactly one of them, and the owner should be able to
 guess which before looking. This page is the rule for choosing, the list of homes, and how a new
 screen puts itself there. The terminal view (`src/terminal-places.ts`) shows the same map: the
 conversation and the places on its tab row (Overview is reached from the Trunks strip), and the

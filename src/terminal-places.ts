@@ -29,8 +29,6 @@ export const PLACES: Place[] = [
     intro: ["window.places.library.what-your-trunks-remember-the-documents", "What your Trunks remember, the documents they read, and everything they made."],
     tabs: [tab("memory", "place.library.memory", "Memory"), tab("documents", "place.library.documents", "Documents"),
       tab("made", "place.library.made", "Made for you")] },
-  { id: "seasons", key: "place.seasons", english: "Seasons",
-    intro: ["seasons.intro", "What Branch learned overnight, its measured gains, and the changes you can keep or undo."], tabs: [] },
   { id: "customize", key: "place.customize", english: "Customize",
     intro: ["window.places.customize.who-your-trunks-are-what-they", "Who your Trunks are, what they can do, and where you can reach them."],
     tabs: [tab("trunks", "settingsDirectory.trunks", "Trunks"), tab("tools", "dashboard.filter.tools", "Tools"),
@@ -39,6 +37,8 @@ export const PLACES: Place[] = [
   { id: "team", key: "window.shell.shell.team", english: "Team",
     intro: ["window.places.team.everyone-who-uses-branch-and-what", "Everyone who uses Branch, and what their Trunks are doing right now."],
     tabs: [tab("live", "window.places.team.live-now", "Live now"), tab("people", "people.admin.people", "People")] },
+  { id: "seasons", key: "place.seasons", english: "Seasons",
+    intro: ["seasons.intro", "What Branch learned overnight, its measured gains, and the changes you can keep or undo."], tabs: [] },
 ];
 /** The window's Overview, reached from the Trunks strip rather than the tab row. */
 export const STRIP_PLACES: Place[] = [
@@ -95,7 +95,11 @@ export const settingsPage = (id: string): Route => ({ settings: id, sub: id === 
 /** Every home the terminal can open, written as `docs/places.md` writes them. */
 export function allHomes(): string[] {
   const homes = ["chat"];
-  for (const place of ALL_PLACES) for (const entry of place.tabs) homes.push(`${place.id}:${entry.id}`);
+  // A place with no tabs (Seasons) is a home of its own.
+  for (const place of ALL_PLACES) {
+    if (!place.tabs.length && place.id !== "chat") homes.push(place.id);
+    for (const entry of place.tabs) homes.push(`${place.id}:${entry.id}`);
+  }
   for (const entry of SETTINGS_PAGES) {
     if (entry.id === "models") for (const sub of MODEL_TABS) homes.push(`settings:models:${sub.id}`);
     else homes.push(`settings:${entry.id}`);
@@ -158,6 +162,6 @@ function settingsRoute(parts: string[], words?: Words): Route | null {
 }
 /** The home a route stands for, as `docs/places.md` writes it. */
 export function homeOf(route: Route): string {
-  if ("place" in route) return route.place === "chat" ? "chat" : `${route.place}:${route.tab}`;
+  if ("place" in route) return route.place === "chat" || !route.tab ? route.place : `${route.place}:${route.tab}`;
   return route.settings === "models" ? `settings:models:${OLD_MODEL_TABS[route.sub] ?? (route.sub || FIRST_MODEL_TAB)}` : `settings:${route.settings}`;
 }

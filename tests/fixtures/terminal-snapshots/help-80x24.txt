@@ -1,5 +1,5 @@
  ♣ Branch Agent · Inbox › History                       ● Offline demonstration
-  1  2 Inbox 2  3  4  5  6                                 Ctrl+K Find anything
+  1  2 Inbox 2  3  4  5  6  7                              Ctrl+K Find anything
   ╭─ Help ───────────────────────────────────────────────────────────────────╮
   │ Esc, then 1-6: the places                                                │
   │ Ctrl+K: find anything                                                    │
