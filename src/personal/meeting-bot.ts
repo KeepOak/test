@@ -34,7 +34,8 @@ export class MeetingBot {
   constructor(private readonly store: Store, private readonly owner: string, private readonly fetch: typeof fetch,
     private readonly secret: (name: string, purpose: string) => Promise<string>, private readonly guard: () => void) {}
   private sessions(): SessionValue[] {
-    return z.array(Session).max(16).parse(this.store.get("settings", this.owner, "meeting-bot-sessions")?.data ?? []);
+    const saved = this.store.get("settings", this.owner, "meeting-bot-sessions")?.data;
+    return z.object({ sessions: z.array(Session).max(16) }).strict().parse(saved ?? { sessions: [] }).sessions;
   }
   private save(item: SessionValue): void {
     const all = this.sessions().filter(x => x.id !== item.id);
@@ -43,7 +44,7 @@ export class MeetingBot {
       if (index < 0) throw new Error("Leave an active bot before opening another session.");
       all.splice(index, 1);
     }
-    this.store.save("settings", this.owner, "meeting-bot-sessions", [...all, Session.parse(item)]);
+    this.store.save("settings", this.owner, "meeting-bot-sessions", { sessions: [...all, Session.parse(item)] });
   }
   private session(id: string): SessionValue {
     const item = this.sessions().find(x => x.id === id);
