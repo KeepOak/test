@@ -129,6 +129,7 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/people/me/passkeys/remove"),
     own("/api/people/me/pin"),
     own("/api/people/me/sign-out"),
+    own("/api/people/rooms/:id/message"), // TRUNK-079: a seated person writes in their room from their own device
     own("/api/personal/brief/play"),
     own("/api/personal/chat-files/send"),
     own("/api/personal/google/events"),
