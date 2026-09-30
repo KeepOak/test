@@ -52,7 +52,8 @@ async function skillPage(t) {
   };
   const answer = (path, value) => settle(path, "resolve", value), fail = (path, error) => settle(path, "reject", error);
   const button = () => ({ disabled: false, isConnected: true });
-  return { page, sg, answer, fail, asked,
+  const drain = async () => { for (let i = 0; i < 100; i++) { while (held.length) held.shift().resolve({}); await Promise.resolve(); } };
+  return { page, sg, answer, fail, asked, drain,
     inspect: () => sg.acts["github-skill-inspect"](button()), install: () => sg.acts["github-skill-install"](button()) };
 }
 const previewed = { ticket: "tk", blocked: false, manifest: { name: "tidy" }, origin: { url: "https://github.com/octo/skills", owner: "octo", repo: "skills", treeSha: "a".repeat(40) }, document: "" };
@@ -116,4 +117,18 @@ test("an inspect that fails behind the lock shows no error over it", async (t) =
   await w.fail("skill-installs/github", new Error("GitHub is not answering"));
   await inspecting;
   assert.deepEqual(w.sg.toasts, []);
+});
+
+/* The install's success closes the preview it came from, never a dialog opened after that preview was left. */
+test("the preview was left and another dialog opened while the install was answered: that dialog stays open", async (t) => {
+  const w = await withPreview(t);
+  const installing = w.install();
+  w.sg.dlg = null; // the preview was closed (Cancel, the close button or Escape)
+  const replacement = { other: {} };
+  w.sg.dlg = replacement;
+  await w.answer("skill-installs/github/install", { result: { skill: { id: "tidy" } } });
+  await w.drain();
+  await installing;
+  assert.equal(w.sg.dlg, replacement, "the replacement dialog is still open");
+  assert.deepEqual(w.sg.shown, []);
 });
