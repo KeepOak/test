@@ -2361,6 +2361,7 @@ export * from "./vector-store.js";
 export * from "./vector-store-file.js";
 export * from "./vector-store-remote.js";
 export * from "./vector-store-pinecone.js";
+export * from "./vector-store-milvus.js";
 export * from "./native-memory.js";
 export * from "./native-memory-clients.js";
 export * from "./retrieval-filters.js";
