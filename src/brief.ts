@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Store } from "./store.js";
 import type { ToolRegistry } from "./registry.js";
 import type { DocumentLibrary } from "./documents.js";
-import type { Monitors } from "./monitors.js";
+import type { Monitors, MonitorRecord } from "./monitors.js";
 import type { DeliveryHandler } from "./scheduler.js";
 import { nextDailyOccurrence } from "./scheduler.js";
 import { placeholders, substitute } from "./recipes.js";
@@ -29,7 +29,7 @@ export const defaultTemplate = `Good morning. Here is {{date}}.
 **New documents**
 {{documents}}
 
-**Watches that changed**
+**Watches**
 {{watches}}
 
 **Reminders**
@@ -56,6 +56,32 @@ export const BriefSettingsSchema = z.object({
 export type BriefSettings = z.infer<typeof BriefSettingsSchema>;
 export type BriefContent = Record<BriefSection, string[]>;
 const nothing = "Nothing today.";
+
+/** Labels and saved errors are text, not Markdown supplied by a source page. */
+function briefWords(value: string, limit: number): string {
+  return value.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").slice(0, limit).replace(/[\\`*_{}\[\]()<>#!|]/g, "\\$&");
+}
+
+function watchSource(monitor: MonitorRecord): string {
+  if (monitor.kind !== "page") return `Search: ${briefWords(monitor.target, 160)} (article sources not retained)`;
+  try {
+    const url = new URL(monitor.target);
+    if (!["https:", "http:"].includes(url.protocol)) return "Source link unavailable";
+    url.username = ""; url.password = "";
+    const href = url.href.replace(/[()<>]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+    return `[Source page](${href})`;
+  } catch { return "Source link unavailable"; }
+}
+
+/** Saved observations only: health is the watch's health, and change counts are its lifetime count. */
+function briefWatch(monitor: MonitorRecord): string {
+  const state = monitor.health.state;
+  const health = state === "never-run" ? "no finished checks recorded" : state === "held" ? "held" : state;
+  const error = monitor.lastError ? `; last error: ${briefWords(monitor.lastError, 200)}` : "";
+  const held = state === "held" && monitor.health.heldBecause ? `; ${briefWords(monitor.health.heldBecause, 160)}` : "";
+  const checked = monitor.lastCheckedAt ? `; last checked ${briefWords(monitor.lastCheckedAt, 40)}` : "";
+  return `${briefWords(monitor.label, 120)} — watch ${health}; ${monitor.changes} recorded changes${error}${held}${checked}. ${watchSource(monitor)}`;
+}
 
 /**
  * Refuses a wording that asks for something the brief cannot fill in. Without this a single typo
@@ -126,8 +152,10 @@ export class MorningBrief {
       documents: (this.documents?.list(owner) ?? []).filter((document) => document.updatedAt >= since)
         .slice(0, 8).map((document) => `${document.name} (${document.chunks} passage${document.chunks === 1 ? "" : "s"})`),
       watches: (this.monitors?.list(owner) ?? [])
-        .filter((monitor) => monitor.changes > 0 && (monitor.lastCheckedAt ?? "") >= since)
-        .slice(0, 8).map((monitor) => `${monitor.label} changed ${monitor.changes} time${monitor.changes === 1 ? "" : "s"}`),
+        .filter((monitor) => monitor.health.state !== "healthy" || (monitor.changes > 0 && (monitor.lastCheckedAt ?? "") >= since))
+        .sort((a, b) => Number(b.health.state !== "healthy") - Number(a.health.state !== "healthy")
+          || (b.lastCheckedAt ?? "").localeCompare(a.lastCheckedAt ?? ""))
+        .slice(0, 8).map(briefWatch),
       reminders: this.store.list("memory", owner)
         .filter((record) => /remind/i.test(`${String(record.data.attribute ?? "")} ${String(record.data.text ?? "")}`) && !record.data.validTo)
         .slice(0, 5).map((record) => String(record.data.text).slice(0, 160)),
