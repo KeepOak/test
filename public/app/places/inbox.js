@@ -24,9 +24,10 @@
    saves the workflow the engine drafts from the recording (POST /api/runs/<id>/recording/flow). */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh, level, needsYou } from "../core/state.js";
+import { S, E, refresh, level, needsYou, ownerHere, activeId } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api, token } from "../core/api.js";
+import { readEventLog } from "./event-replay.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { openConversation } from "../chat/chat.js";
@@ -136,13 +137,14 @@ function duration(r) {
 }
 /* The newest finished task, offered to watch again; the tile is not drawn when nothing has finished. */
 function replayTile() {
-  if (recMode === "off" && (E.state.runs ?? []).length) return `<div data-css="margin:10px 0 12px">${recordingsOff()}</div>`;
+  if (recMode === "off" && (E.state.runs ?? []).length) return `<div data-css="margin:10px 0 12px">${recordingsOff()}<button class="btn ghost sm" type="button" data-act="rp-import">Open event log</button></div>`;
   const done = (E.state.runs ?? []).filter((r) => r.status === "completed"), last = done[0];
-  if (!last) return "";
+  const importButton = '<button class="btn ghost sm" type="button" data-act="rp-import">Open event log</button>';
+  if (!last) return importButton;
   const before = done.find((r) => r !== last && r.prompt === last.prompt);
   const day = before ? dayWord(before.createdAt) : "";
   const compare = before ? `<button class="btn ghost sm" type="button" data-act="compare" data-id="${esc(last.id)}" data-v="${esc(before.id)}">${t("window.places.inbox.compare-it-with-value-s", { value: esc(day.charAt(0).toLowerCase() + day.slice(1)) })}</button>` : "";
-  return `<div class="tile" data-css="margin:10px 0 12px"><div class="th"><b>${t("recordings.title")}</b></div><p>${t("window.places.inbox.step-through-what-a-task-did")}</p><div class="acts"><button class="btn sm" type="button" data-act="replay" data-id="${esc(last.id)}">${ic("play", "s")}${t("window.places.inbox.watch-prompt", { prompt: esc(last.title ?? firstLine(last.prompt)) })}</button>${compare}</div></div>`;
+  return `<div class="tile" data-css="margin:10px 0 12px"><div class="th"><b>${t("recordings.title")}</b></div><p>${t("window.places.inbox.step-through-what-a-task-did")}</p><div class="acts"><button class="btn sm" type="button" data-act="replay" data-id="${esc(last.id)}">${ic("play", "s")}${t("window.places.inbox.watch-prompt", { prompt: esc(last.title ?? firstLine(last.prompt)) })}</button>${compare}${importButton}</div></div>`;
 }
 
 /* A task's day as the prototype names it: Today, Last <weekday> within the week, else the date. */
@@ -319,7 +321,7 @@ async function openReplay(id) {
   RP.frames = recording.frames ?? [];
   const page = typeof window.branchDesktop === "object" ? "rp-page-desktop" : "rp-page";
   openDlg({ title: t("recordings.title"), wide: true, body: '<div class="replay6"></div>',
-    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="${page}">${t("recordings.save-page")}</button><button class="btn" type="button" data-act="rp-flow">${t("window.places.inbox.make-a-workflow")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="${page}">${t("recordings.save-page")}</button>${ownerHere() ? `<button class="btn ghost" type="button" data-act="rp-events">${t("recording.save-events")}</button>` : ""}<button class="btn" type="button" data-act="rp-flow">${t("window.places.inbox.make-a-workflow")}</button>` });
   drawReplay(0);
 }
 /* The engine's page of this recording, saved as the file the engine names. */
@@ -333,6 +335,72 @@ async function savePage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast(t("window.places.inbox.saved-as-a-page"));
   } catch (error) { toast(error.message); }
+}
+async function saveEvents() {
+  const id = RP.id, box = dialog(), profile = activeId();
+  const current = () => ownerHere() && activeId() === profile && RP.id === id && dialog() === box
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+  if (!current()) return;
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(id)}/recording/events`, { cache: "no-store",
+      headers: token.get() ? { authorization: "Bearer " + token.get() } : {} });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
+    const blob = await response.blob();
+    if (!current()) return;
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement("a"), { href: url, download: `task-events-${id}.jsonl` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { if (current()) toast(error.message); }
+}
+
+let importedLog = null;
+function importEvents() {
+  const picker = Object.assign(document.createElement("input"), { type: "file", accept: ".jsonl,application/x-ndjson" });
+  picker.onchange = async () => {
+    stopReplay();
+    const profile = activeId();
+    try {
+      const log = await readEventLog(picker.files?.[0]);
+      if (activeId() !== profile || document.getElementById("app")?.classList.contains("locked-b17")) return;
+      importedLog = { ...log, profile };
+      openDlg({ title: "Recorded event log", wide: true,
+        body: '<p>Playback shows the retained events exactly as exported. It does not execute tools or restore approvals.</p><pre id="event-log-step"></pre>',
+        foot: '<button class="btn" type="button" data-act="event-step">Step</button><button class="btn" type="button" data-act="event-play">Play</button>'
+          + (ownerHere() ? '<button class="btn ghost" type="button" data-act="event-restart">Restart as a new task…</button>' : "") });
+      importedLog.index = 0;
+      drawImportedEvent();
+    } catch (error) { toast(error.message); }
+  };
+  picker.click();
+}
+function drawImportedEvent() {
+  const box = dialog()?.querySelector("#event-log-step"), log = importedLog;
+  if (!box || !log || activeId() !== log.profile || document.getElementById("app")?.classList.contains("locked-b17")) {
+    stopReplay(); if (box) box.textContent = "Open the log again in the active profile."; return false;
+  }
+  box.textContent = log.events.length ? `${log.index + 1} / ${log.events.length}\n` + JSON.stringify(log.events[log.index], null, 2) : "No retained events";
+  return true;
+}
+function advanceImportedEvent(play) {
+  stopReplay();
+  if (!drawImportedEvent()) return;
+  const advance = () => {
+    if (!importedLog || importedLog.index >= importedLog.events.length - 1) return stopReplay();
+    importedLog.index++;
+    drawImportedEvent();
+  };
+  if (play) RP.timer = setInterval(advance, 800); else advance();
+}
+async function restartImportedEvent() {
+  stopReplay();
+  const log = importedLog;
+  if (!log || !ownerHere() || activeId() !== log.profile || !drawImportedEvent()) return;
+  if (!window.confirm("Start a new task from this log's original prompt? Current permissions, model rules and tool approvals apply. Previous approvals are not restored. External results may differ.")) return;
+  if (!ownerHere() || activeId() !== log.profile || !drawImportedEvent()) return;
+  try {
+    const done = await api("recordings/restart", { jsonl: log.text, confirmed: true });
+    if (activeId() === log.profile) toast(`New task: ${done.replay}`);
+  } catch (error) { if (activeId() === log.profile) toast(error.message); }
 }
 /* The workflow the engine drafts from the recording, saved; its steps are the recorded ones it can repeat. */
 async function makeFlow() {
@@ -420,7 +488,7 @@ export function init() {
   initDemo17();
   initInbox17();
   // Install answers only record the owner's decision and show a manual next step.
-  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
+  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo", "xdo-no", "sw:histq", "selfno15", "rp-events", "rp-page", "rp-flow"]);
   on("replay", (el) => openReplay(el.dataset.id));
   /* Recordings switched on from History or from the replay dialog: the task that was asked for plays now. */
   document.addEventListener("branch-switched", (e) => {
@@ -434,6 +502,12 @@ export function init() {
   on("xdo", (el) => answerInstall(el));
   on("xdo-no", (el) => answerInstall(el));
   on("rp", (el) => stepReplay(el));
+  on("rp-events", () => saveEvents());
+  on("rp-import", () => importEvents());
+  markLive(["rp-import", "event-step", "event-play", "event-restart"]);
+  on("event-step", () => advanceImportedEvent(false));
+  on("event-play", () => advanceImportedEvent(true));
+  on("event-restart", () => restartImportedEvent());
   on("rp-page", () => savePage());
   on("rp-flow", () => makeFlow());
   on("tmsg", async (el) => {

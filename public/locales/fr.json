@@ -4432,6 +4432,7 @@
   "recording.page.speed": "Vitesse",
   "recording.page.steps": "Toutes les étapes",
   "recording.page.title": "Une tâche, étape par étape",
+  "recording.save-events": "Enregistrer le journal des événements (JSONL)",
   "recordings.back": "Étape précédente",
   "recordings.box-words": "{boxes} cases de procédure ; {words} mots de contexte utilisés en tout.",
   "recordings.counts": "{rounds} échanges avec le modèle, {actions} actions, {failed} en échec, {seconds} s en tout",

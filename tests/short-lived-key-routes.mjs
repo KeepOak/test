@@ -1010,6 +1010,7 @@ export const ROUTES = {
   "/api/remove-branch": "owner POST",
   "/api/remove-branch/plan": "owner POST",
   "/api/recordings": "owner POST",
+  "/api/recordings/restart": "owner POST", // RES-512: a new task from a checked event log, after the owner's yes
   "/api/recipes/:id/steps": "owner POST", // finish-soon-a: a saved recipe's steps moved or taken out, a new version to verify
   "/api/reflection": "look",
   "/api/reflection/batches/:id/accept": "other POST",
@@ -1073,6 +1074,7 @@ export const ROUTES = {
   "/api/runs/:id/plan": "task POST",
   "/api/runs/:id/receipts": "look",
   "/api/runs/:id/recording": "look",
+  "/api/runs/:id/recording/events": "look", // RES-512: the same task's retained events as JSONL, scrubbed as the recording is
   "/api/runs/:id/result": "look", // Q52: what a finished task made and how it was checked, like its receipts (classified in Q64)
   // mac7/smoke-fixes (B4): one task's steps, for `branch trace`. "look" on purpose, not an
   // oversight — it carries none of the task's words, and `inspect` beside it already shows a

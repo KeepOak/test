@@ -4431,6 +4431,7 @@
   "recording.page.speed": "Speed",
   "recording.page.steps": "Every step",
   "recording.page.title": "A task, step by step",
+  "recording.save-events": "Save event log (JSONL)",
   "recordings.back": "Step back",
   "recordings.box-words": "{boxes} flow boxes; {words} words of context used in all.",
   "recordings.counts": "{rounds} rounds with the model, {actions} actions, {failed} failed, {seconds} s in all",

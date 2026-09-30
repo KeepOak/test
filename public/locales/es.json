@@ -4431,6 +4431,7 @@
   "recording.page.speed": "Velocidad",
   "recording.page.steps": "Todos los pasos",
   "recording.page.title": "Una tarea, paso a paso",
+  "recording.save-events": "Guardar el registro de eventos (JSONL)",
   "recordings.back": "Paso atrás",
   "recordings.box-words": "{boxes} cajas de flujo; {words} palabras de contexto usadas en total.",
   "recordings.counts": "{rounds} rondas con el modelo, {actions} acciones, {failed} fallidas, {seconds} s en total",

@@ -909,6 +909,15 @@ export class Store {
         createdAt: String(row.created_at),
       }));
   }
+  /** A bounded event-log snapshot: callers retain this high-water mark across pages. */
+  eventLogEnd(runId: string): number {
+    return Number(this.db.prepare("SELECT MAX(id) AS last FROM events WHERE run_id=?").get(runId)?.last ?? 0);
+  }
+  eventLogPage(runId: string, after: number, through: number): Event[] {
+    return this.db.prepare("SELECT * FROM events WHERE run_id=? AND id>? AND id<=? ORDER BY id LIMIT 500")
+      .all(runId, after, through).map((row) => ({ id: Number(row.id), runId: String(row.run_id),
+        kind: String(row.kind), data: JSON.parse(String(row.data)), createdAt: String(row.created_at) }));
+  }
   /** The newest events across all of one owner's tasks, for the diagnostics bundle. */
   recentEvents(owner: string, limit = 200): Event[] {
     return this.db
