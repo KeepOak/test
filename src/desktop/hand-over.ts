@@ -36,7 +36,7 @@ export type HandOverJob =
 
 /** A `.json` hand-over is a versioned switch plan (version-switch.ts); anything else is a batch script. */
 export function jobFor(script: string, pid: number): HandOverJob {
-  const log = join(dirname(script), "hand-over-runner.log");
+  const log = win32.join(win32.dirname(script), "hand-over-runner.log");
   if (script.toLowerCase().endsWith(".json"))
     return { kind: "module", module: fileURLToPath(new URL("./version-switch.js", import.meta.url)), plan: script, log };
   return { kind: "script", script, pid, log };
@@ -120,7 +120,7 @@ export async function launchHandOver(script: string, pid: number, deps: LaunchDe
   if ((deps.platform ?? process.platform) !== "win32") return launchPosixHandOver(script, pid, deps.spawn);
   const exec = deps.exec ?? (execFile as unknown as Exec), start = deps.spawn ?? (spawn as unknown as Spawn);
   const schtasks = win32.join(deps.systemRoot ?? process.env.SystemRoot ?? "C:\\Windows", "System32", "schtasks.exe");
-  const program = await (deps.prepare ?? prepareRunner)(jobFor(script, pid), dirname(script),
+  const program = await (deps.prepare ?? prepareRunner)(jobFor(script, pid), win32.dirname(script),
     deps.runtime ?? dirname(process.execPath), deps.executableName ?? basename(process.execPath));
   const name = `BranchAgentUpdate-${pid}`, command = `"${program}"`;
   const run = (args: string[]) => new Promise<void>((resolve, reject) =>
