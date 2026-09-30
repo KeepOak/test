@@ -45,6 +45,7 @@ import { GitLabAccess, GitLabConfigSchema } from './gitlab.js';
 import { LinearAccess, LinearConfigSchema } from './linear.js';
 import { JiraAccess, JiraConfigSchema } from './jira.js';
 import { IssueAccess, registerIssues, type IssueTrackers } from './issue-tools.js';
+import type { InjectionPolicy } from '../content-guard.js';
 // Wave mac3 (channels-parity): the chat services added to match other assistants, all behind a switch.
 import { ParityChannelSchema, buildParityChannel, isParityChannel, type ParityChannelConfig } from '../channels/parity-config.js';
 
@@ -442,7 +443,7 @@ export async function startMcp(
     await vet();
     return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injectionPolicy); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -460,7 +461,7 @@ export async function startMcp(
     // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
       ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
-  });
+  }, host.injectionPolicy);
   if (!names.length) {
     const connection = await connect();
     return connection.close;
@@ -475,6 +476,8 @@ async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<vo
 }
 /** What `loadIntegrations` needs to run outside servers on demand rather than at startup. */
 export interface McpHost {
+  /** Read fresh when outside descriptions or replies are used. Unset defaults to redaction. */
+  injectionPolicy?: () => InjectionPolicy;
   connectWhen(): 'startup' | 'on-demand';
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
@@ -665,8 +668,8 @@ function parseVerdict(printed: string): unknown {
 }
 
 function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext): HookRunner {
-  // The shell runs one host command at a time. Hooks for the same event fire together, so they take
-  // turns here, and each waits for any task command still running before it starts.
+  // Hooks for the same event fire together, so they take turns here; the shell itself queues each one behind any
+  // command still running in the same folder (SELF-302, src/integrations/command-turns.ts).
   let turn: Promise<unknown> = Promise.resolve();
   return (hook, payload) => {
     const mine = turn.then(() => runHook(shell, context, hook, payload));
@@ -677,17 +680,12 @@ function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext)
 
 async function runHook(shell: BranchShell, context: (runId: string) => ToolContext, hook: HookConfig, payload: Record<string, unknown>): ReturnType<HookRunner> {
   const scoped = { ...context(String(payload.runId ?? '')), signal: AbortSignal.timeout(hook.timeoutMs + 1000) };
-  for (;;) {
-    try {
-      await shell.whenIdle(scoped.signal);
-      const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
-      // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
-      // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
-      return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Another command started between the shell going quiet and this one asking: wait again.
-      if (!/already active/.test(message) || scoped.signal.aborted) return { ok: false, error: message };
-    }
+  try {
+    const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
+    // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
+    // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
+    return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

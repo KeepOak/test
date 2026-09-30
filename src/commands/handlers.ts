@@ -51,7 +51,7 @@ interface GoalView { status: string; round: number; maxRounds: number; objective
 /** The goal feature (mac2/goal-undo), when this copy has it. */
 export interface GoalHost {
   /** `origin`: a goal set from a chat, whose rounds are the chat's tasks (its source and its short list of permissions). */
-  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel"; permissions: string[] }): Promise<GoalView>;
+  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel" | "owner"; permissions: string[]; chat?: OwnerChat }): Promise<GoalView>;
   status(sessionId: string): GoalView | null;
   pause(sessionId: string): GoalView;
   resume(sessionId: string): Promise<GoalView>;
@@ -76,7 +76,11 @@ export interface Call {
   mode: FeatureMode;
   /** What a task from this chat may use, for `/whoami` in a chat app. */
   permissions?: string[];
+  /** owner-dm-full: the owner's own verified direct chat with full access; what `/goal` and `/bg` start is the owner's. */
+  ownerChat?: OwnerChat;
 }
+/** owner-dm-full: the chat a command from the owner's own direct chat came from (src/key-context.ts `ownerChatMark`). */
+export interface OwnerChat { channel: string; senderId: string }
 type Handler = (call: Call) => Reply | Promise<Reply>;
 const say = (text: string, client?: ClientAction): Reply => (client ? { text, client } : { text });
 const needSession = "Start a conversation first; this command works on the conversation you are in.";
@@ -230,7 +234,9 @@ async function goal(call: Call): Promise<Reply> {
     return say(goalLine(await goals[word](call.sessionId)));
   }
   const state = await goals.start({ ...parseGoal(call.argument), ...(call.sessionId ? { sessionId: call.sessionId } : {}) },
-    call.surface === "chat" ? { source: "channel", permissions: call.permissions ?? [] } : undefined); // CHAT-185
+    call.surface !== "chat" ? undefined // CHAT-185; owner-dm-full: the owner's own chat's goal is the owner's, re-checked each step
+      : call.ownerChat ? { source: "owner", permissions: call.permissions ?? [], chat: call.ownerChat }
+      : { source: "channel", permissions: call.permissions ?? [] });
   return say(goalLine(state), state.sessionId && state.sessionId !== call.sessionId ? { do: "open-session", id: state.sessionId } : undefined);
 }
 async function health(call: Call): Promise<Reply> {
@@ -257,6 +263,11 @@ function sessions(call: Call): Reply {
   const found = id.length >= 6 ? runsHere(store, owner, call.surface).map((run) => run.sessionId).find((sessionId) => sessionId.startsWith(id)) : undefined;
   return found && mayUseConversation(store, owner, call.surface, found) ? say("Opening that conversation.", { do: "open-session", id: found }) : say("No conversation has that id.");
 }
+/** helper-lifecycle: starting afresh stops the helpers the conversation left working (read-only access stops nothing). */
+function freshConversation(call: Call): Reply {
+  if (call.sessionId && call.access !== "read") call.host.runtime.stopHelpers(call.sessionId);
+  return say("Starting a fresh conversation.", { do: "new" });
+}
 function pane(call: Call): Reply {
   const tab = ["activity", "plan", "files", "memory"].includes(call.argument) ? call.argument : undefined;
   return say("Showing or hiding the side pane.", { do: "toggle", what: "pane", on: tab ? true : null, ...(tab ? { tab } : {}) });
@@ -269,7 +280,7 @@ export const HANDLERS: Record<string, Handler> = {
   attach: () => say("Choose a file to send with your next message.", { do: "attach" }),
   export: exportConversation,
   history: (call) => say(historyLines(call.host.runtime, call.sessionId).join("\n")),
-  new: () => say("Starting a fresh conversation.", { do: "new" }),
+  new: freshConversation,
   sessions,
   go: go(""), inbox: go("inbox"), automations: go("automations"), library: go("library"),
   customize: go("customize"), settings: go("settings"),

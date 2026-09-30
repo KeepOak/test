@@ -46,16 +46,17 @@ test("two ambiguous phrasings each come back as one question, with nothing plann
   assert.deepEqual(await values(), before);
 });
 
-test("a request that fits no setting asks which one is meant and lists none", async (t) => {
+test("a request that fits no setting is handed back to the model, with no question for the owner", async (t) => {
   const { find, values } = await fixture(t);
   const before = await values();
   const none = await find({ request: "turn on the flux capacitor" });
-  assert.equal(none.status, "ask");
+  assert.equal(none.status, "no-match");
   assert.equal(none.planned, false);
   assert.deepEqual(none.choices, []);
-  assert.match(none.question, /could not find a setting.*flux capacitor.*Which setting do you mean\?/);
+  assert.equal(none.question, undefined, "never a canned \"Which setting do you mean?\"");
+  assert.match(none.note, /answer their message yourself/);
   const empty = await find({ request: "turn it on" });
-  assert.equal(empty.status, "ask");
+  assert.equal(empty.status, "no-match");
   assert.deepEqual(empty.choices, []);
   assert.deepEqual(await values(), before);
 });
