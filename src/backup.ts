@@ -198,6 +198,8 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // The programs each Trunk has opened on this computer (src/desktop-app-ask.ts): the record stands in for the owner's
   // yes to opening them again, so a file must never write one.
   "desktop-apps-used:",
+  // A Trunk's private Linux desktop: its local Docker image, container labels and snapshot ids exist only on this computer.
+  "private-desktop-",
   // CHAT-081: a /topic request's outcome, kept so an uncertain Telegram write is never sent twice; this computer's chat record.
   "topic-request:",
   // CHAT-082: a chat's idle and age limits, set from the owner's own direct chat; this computer's chat record.

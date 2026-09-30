@@ -1140,6 +1140,7 @@ export const ROUTES = {
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
   "/api/sessions": "look",
+  "/api/private-desktops": "owner POST",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
   "/api/sessions/:id/branch": "other POST", // pass 17: a named path of the conversation, copied like duplicate
