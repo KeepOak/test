@@ -56,7 +56,7 @@ export interface WorktreeDeps {
 const short = (id: string): string => id.replace(/-/g, "").slice(0, 8);
 
 export class WorktreePlaces {
-  /** Sources held by live helpers, including copies that are still being created. */
+  /** Sources/copies held by live tasks, including copies that are still being created. */
   private readonly helperSources = new Map<string, string>();
   private readonly pendingForkReservations = new Set<string>();
   /** Prevents new descendants while this instance is removing their parent copy. */
@@ -298,13 +298,19 @@ export class WorktreePlaces {
     const fork = this.forks().find((entry) => entry.sessionId === run.sessionId);
     if (!fork) return null;
     const scope = this.scopeFor(fork.folder, fork.name), workspace = join(this.deps.root, scope);
+    this.requireAvailableSource(scope);
     if (fork.baselineFailed) throw new Error("This conversation's project copy has no safely recorded initial commit, so the task stopped before working in another folder.");
     if (!existsSync(workspace)) {
       this.deps.note(run.id, "worktree.missing", { path: scope });
       throw new Error("This conversation’s project copy is missing, so this task stopped before working in the original project.");
     }
-    this.deps.note(run.id, "worktree.used", { path: scope, branch: fork.branch, ...(fork.base ? { base: fork.base } : {}) });
-    return { scope, workspace, release: async () => undefined };
+    // Ordinary fork tasks need the same live ownership as restored copies: clean Git
+    // status is not evidence that nobody is still reading or about to write here.
+    this.helperSources.set(run.id, scope);
+    try {
+      this.deps.note(run.id, "worktree.used", { path: scope, branch: fork.branch, ...(fork.base ? { base: fork.base } : {}) });
+      return { scope, workspace, release: async () => { this.helperSources.delete(run.id); } };
+    } catch (error) { this.helperSources.delete(run.id); throw error; }
   }
 
   private async helperPlace(run: { id: string }, context: ToolContext): Promise<TaskPlace | null> {
