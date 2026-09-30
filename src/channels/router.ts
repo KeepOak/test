@@ -787,7 +787,7 @@ export class ChannelRouter {
   async actOnOwnMessage(input: OwnMessageTarget, action: "edit" | "delete", context: ToolContext, text?: string) {
     this.requireMessageActionOwner(context);
     const { channel, chatId, messageId } = OwnMessageSchema.parse({ channel: input.channel, chatId: input.chatId, messageId: input.messageId });
-    const adapter = this.adapters.get(channel)?.adapter;
+    const attached = this.adapters.get(channel), adapter = attached?.adapter;
     const row = this.deliveries.list().find((one) => one.channel === channel && one.chatId === chatId && one.messageId === messageId && one.status === "sent" && !one.deletedAt);
     if (!adapter || !row) throw new Error("Branch has no retained record of sending that message to this exact chat.");
     const key = JSON.stringify([channel, chatId, messageId]);
@@ -803,6 +803,9 @@ export class ChannelRouter {
         replacement = checked.text;
       } else if (!adapter.deleteMessage) throw new Error("This chat app cannot delete Branch's messages.");
       this.requireMessageActionOwner(context);
+      // The chat app may have been detached, or replaced by a new connection, while the text was checked: only the exact
+      // connection that was looked up may act, and the stopped one never does.
+      if (this.adapters.get(channel) !== attached) throw new Error("That chat app changed while the message was being checked; nothing was changed.");
       if (context.dryRun) return { channel, chatId, messageId, action, confirmed: false, dryRun: true, wouldChange: replacement ?? "delete own message" };
       if (action === "edit") await adapter.edit!(chatId, messageId, replacement!);
       else await adapter.deleteMessage!(chatId, messageId);

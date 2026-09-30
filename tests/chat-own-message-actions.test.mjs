@@ -51,3 +51,31 @@ test("CHAT-023: deleting a sent message asks once, even where a rule would allow
   assert.notEqual(run.status, "completed", `the delete waited for the owner (${run.status})`);
   assert.deepEqual(asked, [], "nothing was deleted before the owner answered");
 });
+
+test("CHAT-023: an edit whose chat app was detached or replaced while its text was checked goes nowhere", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-own-messages-swap-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const asked = [];
+  const chat = (name) => ({ id: "chat", kind: "fake", botName: () => "Branch", async start() {}, async stop() {},
+    async send() { return "m-41"; }, async edit(chatId, messageId, text) { asked.push([name, chatId, messageId, text]); } });
+  const policy = { activation: "always", pairing: true, allowlist: ["owner"] };
+  await app.channels.attach(chat("old"), policy);
+  await app.channels.deliver("chat", "7", "The meeting is at 3.");
+  const run = app.store.createRun(app.runtime.owner, "fix my message");
+  app.store.event(run.id, "run.started", { source: "owner", parentRunId: null });
+  const context = app.runtime.context({ runId: run.id, permissions: app.registry.permissions() });
+  const plain = app.channels.outboundGuard;
+  for (const swap of [() => app.channels.detach("chat"), async () => { await app.channels.detach("chat"); await app.channels.attach(chat("new"), policy); }]) {
+    if (!app.channels.adapter("chat")) await app.channels.attach(chat("old"), policy);
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    app.channels.outboundGuard = async (text) => { await held; return plain(text); };
+    const edit = app.channels.actOnOwnMessage({ channel: "chat", chatId: "7", messageId: "m-41" }, "edit", context, "The meeting is at 4.");
+    await swap();
+    release();
+    await assert.rejects(edit, /changed while/);
+    app.channels.outboundGuard = plain;
+  }
+  assert.deepEqual(asked, [], "neither the detached adapter nor its replacement edited the message");
+});
