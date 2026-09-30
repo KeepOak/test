@@ -8689,6 +8689,8 @@
   "window.settings.accounts.your-theme-saved-colours-and-season": "Your theme, saved colours and season follow you between computers and keepoak.com.",
   "window.settings.achievements.hints-bronze-and-silver-get-a": "Hints: Bronze and Silver get a pet hint at most once an hour; Gold and up get none.",
   "window.settings.achievements.keep-achievements-quiet": "Keep achievements quiet",
+  "window.settings.achievements.connection-bonuses": "Connection bonuses",
+  "window.settings.achievements.bonuses-outside-rank": "{earned} of {total} bonuses unlocked. These sit outside the rank tree and do not change your rank, Collector or whole-tree progress.",
   "window.settings.achievements.no-pop-ups-they-still-unlock": "No pop-ups. They still unlock. Bronze and Silver pop small for 7 seconds; Gold and up get the big one with confetti.",
   "window.settings.achievements.private-to-you-never-nagging": "Private to you, never nagging.",
   "window.settings.achievements.private-to-you-never-nagging-earned": "Private to you, never nagging. {earned} of {total} unlocked.",

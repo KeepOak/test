@@ -4,7 +4,7 @@ import { startedWithShortLivedKey } from "./key-context.js";
 import { currentPerson } from "./people/context.js";
 import { fromSetup } from "./setup-origin.js";
 import {
-  achievementCatalogue, backgroundKinds, measure, noticedFlags, petKinds, rankFor, seasons, themeNames,
+  achievementCatalogue, backgroundKinds, keepOakVerifiedFlag, measure, noticedFlags, petKinds, rankFor, seasons, themeNames,
   type Achievement, type AchievementFacts,
 } from "./achievements.js";
 import { inFrench } from "./achievements-fr.js";
@@ -138,7 +138,7 @@ function factsFor(store: DelightStore, owner: string, saved: Progress): { facts:
   return { facts: { tallies, audit, records, noticed: saved.noticed }, caughtUp };
 }
 let regularIds: Set<string> | null = null;
-const regular = (): Set<string> => (regularIds ??= new Set(achievementCatalogue().filter((a) => a.tier !== "SSS+").map((a) => a.id)));
+const regular = (): Set<string> => (regularIds ??= new Set(achievementCatalogue().filter((a) => !a.bonus && a.tier !== "SSS+").map((a) => a.id)));
 const earnedOf = (got: Record<string, string>): number => Object.keys(got).filter((id) => regular().has(id)).length;
 
 interface Evaluated { newly: string[]; facts: AchievementFacts; caughtUp: boolean }
@@ -165,11 +165,12 @@ const achievementLanguage = (asked: string | null): AchievementLanguage =>
 /** One achievement as the window may see it. The higher the tier, the less a locked one gives away. */
 function shown(a: Achievement, saved: Progress, facts: AchievementFacts): Record<string, unknown> {
   const got = saved.got[a.id];
-  if (got) return { id: a.id, name: a.name, desc: a.desc, kind: a.kind, tier: a.tier, got };
+  const bonus = a.bonus ? { bonus: true } : {};
+  if (got) return { id: a.id, name: a.name, desc: a.desc, kind: a.kind, tier: a.tier, got, ...bonus };
   if (a.tier === "Godly" || a.tier === "SSS+") return { id: a.id, name: "", desc: "", kind: a.kind, tier: a.tier };
   if (a.tier === "Diamond") return { id: a.id, name: "???", desc: "???", kind: a.kind, tier: a.tier };
   const now = Math.min(measure(a.metric, facts), a.goal);
-  return { id: a.id, name: a.name, desc: a.tier === "Gold" ? "???" : a.desc, kind: a.kind, tier: a.tier, now, goal: a.goal };
+  return { id: a.id, name: a.name, desc: a.tier === "Gold" ? "???" : a.desc, kind: a.kind, tier: a.tier, now, goal: a.goal, ...bonus };
 }
 /** Works out and writes down what is earned now, and which of it is to be celebrated. */
 function settle(store: DelightStore, owner: string, saved: Progress, settings: DelightSettings): { facts: AchievementFacts; caughtUp: boolean } {
@@ -195,11 +196,28 @@ export function achievementsView(store: DelightStore, owner: string, language: A
   const catalogue = achievementCatalogue().map((a) => worded(a, language));
   const byId = new Map(catalogue.map((a) => [a.id, a]));
   const fresh = (during || !popupsOn(store, owner) ? [] : saved.fresh).map((id) => byId.get(id)).filter((a): a is Achievement => Boolean(a))
-    .map((a) => ({ id: a.id, name: a.name, desc: a.desc, tier: a.tier, kind: a.kind }));
+    .map((a) => ({ id: a.id, name: a.name, desc: a.desc, tier: a.tier, kind: a.kind, ...(a.bonus ? { bonus: true } : {}) }));
   return {
-    on: true, quiet: settings.achievements.quiet, earned: facts.earned, total: achievementCatalogue().length, behind: !caughtUp,
+    on: true, quiet: settings.achievements.quiet, earned: facts.earned, total: catalogue.filter((a) => !a.bonus).length, behind: !caughtUp,
+    bonusEarned: catalogue.filter((a) => a.bonus && saved.got[a.id]).length,
+    bonusTotal: catalogue.filter((a) => a.bonus).length,
     rank: rankFor(facts.earned), list: catalogue.map((a) => shown(a, saved, facts)), fresh,
   };
+}
+
+/** Called only by the connection client's validated /me producer, never by a window notice or locker metadata. */
+export function noteKeepOakProfileVerified(store: Pick<Store, "get" | "save" | "profiles">, owner: string,
+  identity: { id: string }): void {
+  store.profiles.requireOwner("Recording a verified KeepOak profile");
+  if (startedWithShortLivedKey() || currentPerson() || owner !== store.profiles.ownerName)
+    throw new DelightError(403, "KeepOak verification belongs to the owner's own connection.");
+  z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(identity);
+  const saved = progress(store, owner);
+  if (saved.noticed.flags.includes(keepOakVerifiedFlag)) return;
+  // Existing notice endpoints retain their closed list; neither this flag nor account identifiers are accepted there.
+  if (saved.noticed.flags.length >= 40) throw new DelightError(409, "The achievement flag record is full.");
+  saved.noticed.flags.push(keepOakVerifiedFlag);
+  store.save("settings", owner, progressKey, saved);
 }
 
 /* ---------- the switches ---------- */
