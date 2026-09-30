@@ -32,8 +32,15 @@ export function applyCatalogUpdates(catalog: Catalog, body: unknown): Catalog {
     if (updates.has(entry.id)) throw new Error(`The model catalogue update repeats a service: ${entry.id}`);
     updates.set(entry.id, entry);
   }
-  return { ...catalog, pricedAt: bundle.pricedAt,
-    services: catalog.services.map((entry) => ({ ...entry, ...updates.get(entry.id) })) };
+  // Only the fields an update names are changed; its prices are added over the shipped ones.
+  return { ...catalog, pricedAt: bundle.pricedAt, services: catalog.services.map((entry) => {
+    const change = updates.get(entry.id);
+    if (!change) return entry;
+    return { ...entry,
+      ...(change.defaultModel !== undefined ? { defaultModel: change.defaultModel } : {}),
+      ...(change.recommendedModels !== undefined ? { recommendedModels: change.recommendedModels } : {}),
+      ...(change.prices !== undefined ? { prices: { ...(entry.prices ?? {}), ...change.prices } } : {}) };
+  }) };
 }
 
 /** The owner's explicitly selected local bundle, loaded at startup; nothing is downloaded or written here. */
