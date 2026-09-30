@@ -53,6 +53,12 @@ const short = (id: string): string => id.replace(/-/g, "").slice(0, 8);
 export class WorktreePlaces {
   /** Sources held by live helpers, including copies that are still being created. */
   private readonly helperSources = new Map<string, string>();
+  /** Prevents new descendants while this instance is removing their parent copy. */
+  private readonly removing = new Set<string>();
+  private requireAvailableSource(scope: string): void {
+    if ([...this.removing].some((parent) => scope === parent || scope.startsWith(`${parent}/`)))
+      throw new Error("The assigned project copy is being removed, so a nested copy could not be started.");
+  }
   constructor(private readonly deps: WorktreeDeps) {}
 
   private scopeFor(folder: string, name: string): string {
@@ -71,12 +77,20 @@ export class WorktreePlaces {
     const { store, owner } = this.deps;
     requireCoding(store, owner, "worktrees");
     if (worktreeScope()) throw new Error("This conversation already works in a copy of the project.");
-    const branched = await this.deps.branchSession(owner, input);
-    const name = `fork-${short(branched.sessionId)}`, branch = `branch/fork-${short(branched.sessionId)}`;
-    await this.deps.git.worktree({ folder: ".", action: "add", name, branch }, signal);
-    const fork = { sessionId: branched.sessionId, name, branch, folder: this.deps.projectFolder(), createdAt: new Date().toISOString() };
-    this.saveForks([...this.forks(), fork]);
-    return { ...fork, path: this.scopeFor(fork.folder, name) };
+    const folder = this.deps.projectFolder();
+    this.requireAvailableSource(folder);
+    const pending = `fork:${input.sessionId}`;
+    if (this.helperSources.has(pending)) throw new Error("A project copy is already being created for this conversation.");
+    this.helperSources.set(pending, folder);
+    try {
+      const branched = await this.deps.branchSession(owner, input);
+      this.requireAvailableSource(folder);
+      const name = `fork-${short(branched.sessionId)}`, branch = `branch/fork-${short(branched.sessionId)}`;
+      await inWorktree(folder, () => this.deps.git.worktree({ folder: ".", action: "add", name, branch }, signal));
+      const fork = { sessionId: branched.sessionId, name, branch, folder, createdAt: new Date().toISOString() };
+      this.saveForks([...this.forks(), fork]);
+      return { ...fork, path: this.scopeFor(fork.folder, name) };
+    } finally { this.helperSources.delete(pending); }
   }
 
   /** Forgets a fork and removes its copy, only when the copy holds no unsaved change (its line of work is kept). */
@@ -84,15 +98,25 @@ export class WorktreePlaces {
     const fork = this.forks().find((entry) => entry.sessionId === sessionId);
     if (!fork) throw new Error("That conversation has no copy of its own.");
     // The Git helper removes with --force, so unsaved work is looked for here first and kept.
-    const copy = join(this.deps.root, this.scopeFor(fork.folder, fork.name));
-    if (existsSync(copy)) {
-      const dirty = await this.deps.run(copy, ["status", "--porcelain"], signal).catch(() => null);
-      if (dirty?.status !== "completed" || dirty.exitCode !== 0 || dirty.stdout.trim())
-        throw new Error("That copy holds changes that are not saved yet, so it was kept. Save or undo them first.");
-    }
-    await this.deps.git.worktree({ folder: ".", action: "remove", name: fork.name }, signal);
-    this.saveForks(this.forks().filter((entry) => entry.sessionId !== sessionId));
-    return { removed: fork.name };
+    const scope = this.scopeFor(fork.folder, fork.name), copy = join(this.deps.root, scope);
+    const keepChildren = async () => {
+      if (await this.hasChildren(scope, copy))
+        throw new Error("That copy holds active or retained nested copies, so it was kept. Finish or remove those copies first.");
+    };
+    this.requireAvailableSource(scope);
+    this.removing.add(scope);
+    try {
+      await keepChildren();
+      if (existsSync(copy)) {
+        const dirty = await this.deps.run(copy, ["status", "--porcelain"], signal).catch(() => null);
+        if (dirty?.status !== "completed" || dirty.exitCode !== 0 || dirty.stdout.trim())
+          throw new Error("That copy holds changes that are not saved yet, so it was kept. Save or undo them first.");
+      }
+      await keepChildren();
+      await inWorktree(fork.folder, () => this.deps.git.worktree({ folder: ".", action: "remove", name: fork.name }, signal));
+      this.saveForks(this.forks().filter((entry) => entry.sessionId !== sessionId));
+      return { removed: fork.name };
+    } finally { this.removing.delete(scope); }
   }
 
   /** Where this task works: its conversation's copy, a new copy for a helper, or null for the usual place. */
@@ -131,6 +155,7 @@ export class WorktreePlaces {
 
   private async helperPlace(run: { id: string }, context: ToolContext): Promise<TaskPlace | null> {
     const folder = worktreeScope() ?? this.deps.projectFolder();
+    this.requireAvailableSource(folder);
     this.helperSources.set(run.id, folder);
     let placed = false;
     try {
@@ -170,29 +195,36 @@ export class WorktreePlaces {
   }
 
   private async hasChildren(scope: string, workspace: string): Promise<boolean> {
-    if ([...this.helperSources.values()].some((source) => source === scope || source.startsWith(`${scope}/`))) return true;
+    const liveChildren = () => [...this.helperSources.values()].some((source) => source === scope || source.startsWith(`${scope}/`));
+    if (liveChildren()) return true;
     const children = await readdir(join(workspace, WORKTREE_HOME)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : null);
     // A kept nested copy may be ignored by Git; retain the parent even if its Git status is clean.
-    return children === null || children.length > 0;
+    return children === null || children.length > 0 || liveChildren();
   }
 
   /** Removes a helper's copy only on proof that it holds nothing; otherwise keeps it and says where. */
   private async releaseHelper(runId: string, copy: { cwd: string; workspace: string; name: string; branch: string; base: string; scope: string; folder: string }): Promise<void> {
     const signal = AbortSignal.timeout(60_000);
-    if (await this.hasChildren(copy.scope, copy.workspace)) {
-      this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "nested-copies" }); return;
+    if ([...this.removing].some((parent) => copy.scope === parent || copy.scope.startsWith(`${parent}/`))) {
+      this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "parent-removal" }); return;
     }
-    const dirty = await this.deps.run(copy.workspace, ["status", "--porcelain"], signal).catch(() => null);
-    const ahead = await this.deps.run(copy.workspace, ["rev-list", "--count", `${copy.base}..HEAD`], signal).catch(() => null);
-    const proven = dirty?.status === "completed" && dirty.exitCode === 0 && !dirty.stdout.trim()
-      && ahead?.status === "completed" && ahead.exitCode === 0 && ahead.stdout.trim() === "0";
-    if (!proven) { this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch }); return; }
-    if (await this.hasChildren(copy.scope, copy.workspace)) {
-      this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "nested-copies" }); return;
-    }
-    const removed = await inWorktree(copy.folder, () => this.deps.git.worktree({ folder: ".", action: "remove", name: copy.name }, signal)).catch(() => null);
-    if (!removed) { this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "removal-failed" }); return; }
-    await this.deps.run(copy.cwd, ["branch", "-D", copy.branch], signal).catch(() => undefined);
-    this.deps.note(runId, "worktree.removed", { path: copy.scope });
+    this.removing.add(copy.scope);
+    try {
+      if (await this.hasChildren(copy.scope, copy.workspace)) {
+        this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "nested-copies" }); return;
+      }
+      const dirty = await this.deps.run(copy.workspace, ["status", "--porcelain"], signal).catch(() => null);
+      const ahead = await this.deps.run(copy.workspace, ["rev-list", "--count", `${copy.base}..HEAD`], signal).catch(() => null);
+      const proven = dirty?.status === "completed" && dirty.exitCode === 0 && !dirty.stdout.trim()
+        && ahead?.status === "completed" && ahead.exitCode === 0 && ahead.stdout.trim() === "0";
+      if (!proven) { this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch }); return; }
+      if (await this.hasChildren(copy.scope, copy.workspace)) {
+        this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "nested-copies" }); return;
+      }
+      const removed = await inWorktree(copy.folder, () => this.deps.git.worktree({ folder: ".", action: "remove", name: copy.name }, signal)).catch(() => null);
+      if (!removed) { this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "removal-failed" }); return; }
+      await this.deps.run(copy.cwd, ["branch", "-D", copy.branch], signal).catch(() => undefined);
+      this.deps.note(runId, "worktree.removed", { path: copy.scope });
+    } finally { this.removing.delete(copy.scope); }
   }
 }
