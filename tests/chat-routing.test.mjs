@@ -137,6 +137,13 @@ for (const [label, options, extra, change] of [
   assert.match(sent.at(-1).text, /paired direct chat/);
   await say("/trunk", extra); assert.doesNotMatch(sent.at(-1).text, /Bo \(@/);
 });
+// #1054's group floor comes first: /trunk is not on it, so someone else in a group is refused before /trunk can say which Trunk answers there.
+test("a bare /trunk from someone else in a group is refused by the group floor and names no Trunk", async t => {
+  const { sent, say } = await setup(t);
+  await say("/trunk", { chatKind: "group", chatId: "-10", senderId: "other" });
+  assert.match(sent.at(-1).text, /only the owner or someone they choose can use \/trunk/);
+  assert.doesNotMatch(sent.at(-1).text, /answers here/);
+});
 test("route schema rejects channel key collisions and unreadable scopes", () => {
   assert.throws(() => ChannelRouteSchema.parse({ channel: "chat:other", scope: "*", trunkId: "default" }));
   assert.throws(() => ChannelRouteSchema.parse({ channel: "chat", scope: "a\u0000b", trunkId: "default" }));
