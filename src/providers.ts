@@ -13,6 +13,7 @@ import type {
 import { anthropicBatchApi, openaiBatchApi } from "./provider-batch.js";
 import { DemoProvider, demoProviderName } from "./demo.js";
 import { ProviderHttpError, rejectedHttpResponse } from "./provider-retry.js";
+import { anthropicUsage, AnthropicUsageSchema } from "./anthropic-usage.js";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { onOwnNetwork } from "./network-policy.js";
@@ -79,15 +80,8 @@ const anthropicResponse = z.object({
       z.object({ type: z.literal("redacted_thinking") }),
     ]),
   ),
-  usage: z
-    .object({
-      input_tokens: usageNumber,
-      output_tokens: usageNumber,
-      /** What prompt caching saved on this call: tokens written to, and read from, the cache. */
-      cache_creation_input_tokens: usageNumber.optional(),
-      cache_read_input_tokens: usageNumber.optional(),
-    })
-    .optional(),
+  /** Tokens in and out, and what prompt caching wrote and read on this call (src/anthropic-usage.ts). */
+  usage: AnthropicUsageSchema.optional(),
 });
 /**
  * How a tool's name travels to a model service. "cloud": a hash, which every service accepts. "local": the name the
@@ -592,18 +586,8 @@ export class AnthropicProvider implements Provider {
           arguments: JSON.stringify(c.input),
         })),
       ...anthropicThought(response.content),
-      ...(response.usage
-        ? {
-            usage: {
-              input: response.usage.input_tokens,
-              output: response.usage.output_tokens,
-              // Only what was read back from the cache; writing to it is charged, not saved.
-              ...(response.usage.cache_read_input_tokens !== undefined
-                ? { cachedInput: response.usage.cache_read_input_tokens }
-                : {}),
-            },
-          }
-        : {}),
+      // The cache reads and writes are part of what the call used; Anthropic counts them apart from input_tokens.
+      ...(response.usage ? { usage: anthropicUsage(response.usage) } : {}),
     };
   }
 }

@@ -79,6 +79,7 @@ import { chatgptPresetPrefix } from "./chatgpt-presets.js";
 import { claudeCodePool } from "./providers/claude-models.js";
 import { ownerTidyRemainder } from "./owner-folders.js";
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
+import { boundSummaryInput, ownerWordsMaxTokens, ownerWordsSection, transcriptLine } from "./compaction-input.js"; // P0 (self-build)
 import { contractHold, sourceSendHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
@@ -150,7 +151,7 @@ import {
 import type { RunToolEmbedder, ToolEmbedder } from "./tool-index.js";
 import { mcpAppIn } from "./mcp-apps.js";
 import { NoteInputSchema } from "./tool-usage.js";
-import { estimateCost, formatCost, pricingSettings } from "./pricing.js";
+import { estimateCost, formatCost, pricingSettings, tokenCountsOf } from "./pricing.js";
 // --- R17-S-B: the owner's knobs, read fresh at each marked hook (src/knobs/apply.ts) ---
 import * as knobs from "./knobs/apply.js";
 import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
@@ -1145,13 +1146,15 @@ export class Runtime {
     const context = { ...parent, signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), stop.signal]), permissions: new Set(permissions), depth: parent.depth + 1,
       ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
+      connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
       context.signal.throwIfAborted();
       parent.signal.throwIfAborted(); // helper-lifecycle: a lead stopped while its helper's connection was chosen starts none
       return await this.startHelper(prompt, parent, context, instructions, connection, options, { home, release, stop });
     } catch (error) {
       release();
+      connection?.release?.(); // MODEL-050: its account lease (released once, however often it is called)
       throw error;
     }
   }
@@ -1177,7 +1180,7 @@ export class Runtime {
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       this.store.event(parent.runId, "delegation.background_finished", { ...result });
       try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
-    }, () => undefined);
+    }, () => { connection.release?.(); }); // MODEL-050: a helper that failed before it settled gives its account back too
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(helperNotStarted)), helperStartMs); });
     try {
@@ -1443,11 +1446,14 @@ export class Runtime {
       depth: parent.depth + 1,
       ...(options.agent ? { agent: options.agent } : {}),
     };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, options);
+      connection = await this.helperConnection(parent, options);
       context.signal.throwIfAborted();
-      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+      const chosen = connection;
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: chosen.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, chosen));
     } finally {
+      connection?.release?.(); // MODEL-050: the helper's account lease, also when it never started
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
@@ -1858,6 +1864,7 @@ ${run.output.slice(0, 6000)}`;
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
@@ -1865,6 +1872,7 @@ ${run.output.slice(0, 6000)}`;
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        pinnedHelper = connection;
         context.signal.throwIfAborted();
         keepHelperRoute(this.store, run.owner, run.sessionId, connection);
         this.helperModels.set(run.id, connection.preset);
@@ -1924,6 +1932,7 @@ ${run.output.slice(0, 6000)}`;
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
+    pinnedHelper?.release?.(); helper?.release?.(); // MODEL-050: the helper's account is free for the next one
     if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
@@ -2023,10 +2032,7 @@ ${run.output.slice(0, 6000)}`;
   private spentOnRun(runId: string, model: string): string {
     const usage = this.store.usage(runId);
     const { overrides } = pricingSettings(this.store, this.owner);
-    const estimate = estimateCost(model, {
-      input: usage.reportedInput || usage.estimatedInput || 0,
-      output: usage.reportedOutput || usage.estimatedOutput || 0,
-    }, overrides);
+    const estimate = estimateCost(model, tokenCountsOf(usage), overrides); // cache parts at their own rates
     return estimate.amount === null ? "" : ` So far this task has used about ${formatCost(estimate)}.`;
   }
   /**
@@ -3576,11 +3582,12 @@ ${run.output.slice(0, 6000)}`;
     if (from < 1 || to - from < 2) return;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!);
     const room = Math.max(2000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4);
-    const transcript = messages.slice(from, to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n");
+    const transcript = messages.slice(from, to).map(transcriptLine).join("\n");
     this.store.event(run.id, "context.folding_task", { messages: to - from });
     const summariser: Message[] = [
       { role: "system", content: taskFoldInstructions },
-      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${transcript.slice(-room)}` },
+      // P0 (self-build): the start and the end of the work, as a conversation's fold reads it (src/compaction-input.ts).
+      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${boundSummaryInput(transcript, room)}` },
     ];
     const summary = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim().slice(0, 6000);
     if (!summary) return;
@@ -3616,13 +3623,8 @@ ${run.output.slice(0, 6000)}`;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!); // R17-S11
     // dogfood D22: the summariser's own question fits the room of the model that answers it.
     const room = Math.max(2000, Math.min(60000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4));
-    const transcript = messages.slice(split.from, split.to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n").slice(0, room);
     const previous = messages.slice(1, split.from).filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    const summariser: Message[] = [
-      { role: "system", content: compactionInstructions },
-      { role: "user", content: (previous ? previous + "\n\n" : "") + transcript },
-    ];
-    const answer = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+    const answer = await this.summariseRange(run, context, preset, previous, messages.slice(split.from, split.to).map(transcriptLine), room);
     const reply = answer.slice(0, 6000);
     // long-work: what earlier folds kept is merged in, never left to the model to remember, and the record's own
     // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them. The whole
@@ -3633,15 +3635,54 @@ ${run.output.slice(0, 6000)}`;
     const summary = [summaryText(structured), parsed ? "" : reply].filter(Boolean).join("\n\n").slice(0, 8000);
     const throughId = ids[split.to - 1]!;
     this.store.saveSessionSummary(context.owner, run.sessionId, structured, summary);
-    this.store.saveCompaction(run.sessionId, throughId, summary);
+    // P0 (self-build): the owner's own words stay word for word beside the summary, up to a share of the room.
+    const words = ownerWordsSection(this.ownerWordsThrough(run.sessionId, throughId),
+      Math.min(ownerWordsMaxTokens, Math.floor(budget.threshold / 10)) * 4);
+    const working = words ? `${summary}\n\n${words}` : summary;
+    this.store.saveCompaction(run.sessionId, throughId, working);
     const kept = this.keepAfterCompaction(run.sessionId, messages, ids, split);
-    messages.splice(1, messages.length - 1, summaryMessage(summary), ...kept.messages);
+    messages.splice(1, messages.length - 1, summaryMessage(working), ...kept.messages);
     ids.splice(1, ids.length - 1, null, ...kept.ids);
     this.store.event(run.id, "context.compacted", {
       droppedMessages: split.to - split.from - kept.pinned, keptMessages: kept.messages.length, summaryChars: summary.length,
-      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold,
+      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold, ownerWordsChars: words?.length ?? 0,
       estimatedBefore: before, estimatedAfter: estimateTokens(messages.map(textOnly)), throughMessageId: throughId,
     });
+  }
+  /**
+   * P0 (self-build): the summariser's answer for a folded range, its input held to `room` with the start and the end
+   * kept (src/compaction-input.ts). A summariser that is itself refused as too long is asked again without the oldest
+   * part, as Codex does (openai/codex, codex-rs/core/src/compact.rs, Apache-2.0), until one part is left.
+   */
+  private async summariseRange(run: Run, context: ToolContext, preset: ModelPreset, previous: string, lines: string[], room: number): Promise<string> {
+    const prefix = previous ? previous + "\n\n" : "";
+    for (let first = 0; ; first++) {
+      const summariser: Message[] = [
+        { role: "system", content: compactionInstructions },
+        { role: "user", content: prefix + boundSummaryInput(lines.slice(first).join("\n"), Math.max(2000, room - prefix.length)) },
+      ];
+      try {
+        return (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+      } catch (error) {
+        const overflow = overflowOf(error).overflow || (error instanceof BudgetError && error.message === tooLong);
+        if (!overflow || first >= lines.length - 1) throw error;
+        this.store.event(run.id, "context.compaction_trimmed", { dropped: first + 1 });
+      }
+    }
+  }
+  /** P0 (self-build): the owner's own messages up to a fold, newest first; Branch's own notes, pinned and left-out ones are not. */
+  private ownerWordsThrough(sessionId: string, throughId: number): string[] {
+    const pinned = this.store.pinnedMessageIds(sessionId);
+    const rows = this.store.sqlite.prepare(`SELECT id, body FROM messages WHERE session_id=? AND id<=?
+      AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id DESC LIMIT 200`)
+      .all(sessionId, throughId, sessionId);
+    const words: string[] = [];
+    for (const row of rows) {
+      if (pinned.has(Number(row.id))) continue;
+      const message = JSON.parse(String(row.body)) as Message;
+      if (message.role === "user" && !message.from && message.content.trim()) words.push(message.content);
+    }
+    return words;
   }
   /** long-work: what the record itself says a summary must keep — the files this conversation's tools touched, its open to-dos. */
   private recordedForSummary(sessionId: string): Partial<SessionSummary> {
