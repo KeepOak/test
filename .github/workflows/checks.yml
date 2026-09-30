@@ -126,7 +126,8 @@ jobs:
         with:
           node-version: '24'
       # The queue's own script and prSlots come from the base, never from the pull request under test: a pull request
-      # that changed them (#1367 raised prSlots) would otherwise admit runs by its own unmerged rule.
+      # that changed them (#1367 raised prSlots) would otherwise admit runs by its own unmerged rule. This step and the
+      # restart in verify each read the base as it is when they run, so the two may see different base commits.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.sha }}

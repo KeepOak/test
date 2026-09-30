@@ -151,9 +151,20 @@ function argument(name) {
   return process.argv.slice(3).find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
 }
 
+/** The queue's own rule was missing or broken: unlike GitHub being unreachable, this admits nothing and restarts nothing. */
+export class PolicyError extends Error {}
+
+/** prSlots from the base's tests/test-impact.json: a whole number of at least 1, or a PolicyError. */
+export function readPolicy(read = () => readFileSync(join(root, "tests", "test-impact.json"), "utf8")) {
+  let config;
+  try { config = JSON.parse(read()); } catch (error) { throw new PolicyError(`tests/test-impact.json could not be read: ${error.message}`); }
+  if (!Number.isInteger(config?.prSlots) || config.prSlots < 1) throw new PolicyError("tests/test-impact.json has no prSlots of at least 1");
+  return config.prSlots;
+}
+
 async function main() {
   const command = process.argv[2];
-  const slots = JSON.parse(readFileSync(join(root, "tests", "test-impact.json"), "utf8")).prSlots;
+  const slots = readPolicy();
   const api = github(process.env.GH_TOKEN, process.env.GITHUB_REPOSITORY);
   const selfId = Number(argument("run"));
   const { runs, pulls } = await state(api);
@@ -187,6 +198,12 @@ async function main() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
+    // A broken rule fails closed: no admission, no restarts, and the run says why.
+    if (error instanceof PolicyError) {
+      console.log(`::error title=CI queue rule missing or broken::${error.message}. No run is admitted or restarted.`);
+      process.exitCode = 1;
+      return;
+    }
     // A queue that cannot be read never holds a run back (a decision to hold is written before any write is tried).
     console.log(`::warning title=CI queue unavailable::${error.message}`);
   });

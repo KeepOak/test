@@ -4,9 +4,12 @@
 // counting a replaced (superseded) run or a draft or `hold` pull request as waiting, counting finished or push runs as
 // holding a slot, and missing an admitted run whose shares wait for runners (it reports `queued`).
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { activeRuns, github, QUEUE_ACTOR, schedule, waitingRuns, waitingWords } from "../scripts/ci-queue.mjs";
+import { activeRuns, github, PolicyError, QUEUE_ACTOR, readPolicy, schedule, waitingRuns, waitingWords } from "../scripts/ci-queue.mjs";
 
 const wait = (pr, created, priority = false) => ({ pr, runId: pr * 10, created, priority });
 
@@ -166,4 +169,27 @@ test("the queue runs the base's own script and prSlots, never the pull request's
   const handOn = flow.slice(0, flow.indexOf("- name: Hand the CI slot on")).split("- uses: actions/checkout").at(-1);
   assert.ok(handOn.includes(base) && handOn.includes("tests/test-impact.json"), "the restart reads the base's copy too");
   assert.equal((flow.match(/node (\S*)scripts\/ci-queue\.mjs/g) ?? []).length, 2, "no other queue call reads the pull request's copy");
+});
+
+test("a missing or broken queue rule admits nothing and restarts nothing; a sound one is read", () => {
+  assert.equal(readPolicy(() => '{"prSlots": 3}'), 3);
+  for (const text of ["", "{", "{}", '{"prSlots": 0}', '{"prSlots": "3"}', '{"prSlots": 2.5}'])
+    assert.throws(() => readPolicy(() => text), PolicyError, text);
+  assert.throws(() => readPolicy(() => { throw new Error("ENOENT"); }), PolicyError);
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "ci-queue-rule-")));
+  try {
+    mkdirSync(join(home, "scripts")); mkdirSync(join(home, "tests"));
+    copyFileSync(new URL("../scripts/ci-queue.mjs", import.meta.url), join(home, "scripts", "ci-queue.mjs"));
+    writeFileSync(join(home, "tests", "test-impact.json"), '{"prSlots": "many"}');
+    const output = join(home, "out");
+    writeFileSync(output, "");
+    for (const command of ["admit", "restart"]) {
+      const run = spawnSync(process.execPath, [join(home, "scripts", "ci-queue.mjs"), command, "--run=1", "--pr=2"],
+        { env: { PATH: process.env.PATH, GITHUB_OUTPUT: output, GH_TOKEN: "t", GITHUB_REPOSITORY: "o/r" }, encoding: "utf8" });
+      assert.equal(run.status, 1, command);
+      assert.match(run.stdout, /::error title=CI queue rule missing or broken::/, command);
+      assert.doesNotMatch(run.stdout, /Took a CI slot|Started pull request|CI queue unavailable/, command);
+    }
+    assert.equal(readFileSync(output, "utf8"), "", "no held or admitted output is written");
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
