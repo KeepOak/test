@@ -1230,6 +1230,7 @@ ${result.output || "(it said nothing)"}`;
   // Wave 6: labels and project notes, durable workflows, the waiting line, and days off and quiet hours.
   registerLabels(registry, store.labels);
   const workflows = new Workflows(store, runtime, knowledge);
+  scheduler.onTick.add((now) => workflows.tick(now));
   registerWorkflows(registry, workflows);
   // The same workflows seen as boxes and arrows, with a way in over HTTP and a note sent out as
   // each box finishes.

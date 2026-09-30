@@ -682,3 +682,26 @@ test("a workflow left working when the app closed is marked and can be carried o
     "reopening the folder must not leave it stuck as working");
   assert.equal((await second.app.workflows.run("local", made.id)).status, "completed");
 });
+
+test("RES-180: a timed wait that falls due carries on by itself, after a restart too, and only once", async (t) => {
+  const base = await mkdtemp(join(tmpdir(), "branch-collab-"));
+  t.after(() => discard(base));
+  const first = await createBranch({ workspace: join(base, "workspace"), dataDir: join(base, "data"), provider: scripted() });
+  first.coding.setMode("read-first", "off");
+  const made = first.workflows.create("local", { name: "Later", steps: [
+    { name: "Wait an hour", kind: "wait", waitMinutes: 60 }, { name: "Do it", kind: "prompt", prompt: "do it" }] });
+  assert.equal((await first.workflows.run("local", made.id)).status, "waiting_time");
+  await first.workflows.tick(new Date());
+  assert.equal(first.workflows.view("local", made.id).status, "waiting_time", "not due yet, so it keeps waiting");
+  // The hour passes while Branch is closed.
+  const saved = first.store.get("workflows", "local", made.id);
+  first.store.save("workflows", "local", made.id, { ...saved.data, waitingUntil: new Date(Date.now() - 1000).toISOString() });
+  await first.close();
+  const { app, provider } = await fixture(t, base);
+  const later = new Date();
+  await Promise.all([app.scheduler.tick(later), app.workflows.tick(later)]);
+  const done = app.workflows.view("local", made.id);
+  assert.equal(done.status, "completed", "the due wait carried on after the restart");
+  assert.deepEqual(done.state.map((step) => step.status), ["done", "done"]);
+  assert.equal(provider.requests.length, 1, "two overlapping beats ran the step once");
+});
