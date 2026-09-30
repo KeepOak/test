@@ -12,7 +12,7 @@ import { signIn, attachFiles } from "./new-window-places.mjs";
 import { MediaTools, registerMedia, kindOf } from "../dist/media.js";
 import { readWav, trimWav, writeWav, transcribeFile } from "../dist/media-audio.js";
 import { mediaInfo, mp4Boxes, videoLimits } from "../dist/media-video.js";
-import { estimateImageCost } from "../dist/media-settings.js";
+import { estimateImageCost, mediaSettings, saveMediaSettings } from "../dist/media-settings.js";
 import { providerImages, noImageEndpoint, ImageRequestSchema } from "../dist/media-images.js";
 import { OpenAIProvider, GeminiProvider, AnthropicProvider } from "../dist/providers.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
@@ -415,4 +415,19 @@ test("every media tool is registered with a permission and a target the approval
   assert.ok(app.registry.names().includes("media.frames"), "the app registers it; the switch in Settings decides whether it is offered");
   assert.equal(registry.permissionOf("media.describe"), "media.read");
   assert.equal(registry.permissionOf("media.image"), "media.write");
+});
+
+test("MODEL-120: pictures can use their own API connection while text stays on another, and a missing one is said plainly", async (t) => {
+  const { app } = await fixture(t);
+  const service = await fakeService(t, { "/images/generations": () => ({ data: [{ b64_json: onePixelPng.toString("base64") }] }) });
+  const media = toolsFor(app, new AnthropicProvider({ endpoint: "http://127.0.0.1:9", model: "claude-test", apiKey: "k" }));
+  app.runtime.models.register({ id: "pics", name: "Picture key", provider: new OpenAIProvider({ endpoint: service.endpoint, model: "gpt-4o", apiKey: "sk-test" }), model: "gpt-4o" });
+  await assert.rejects(media.image({ prompt: "an oak tree" }, context(app)), /picture/i, "the text connection has no picture route");
+  saveMediaSettings(app.store, "local", { ...mediaSettings(app.store, "local"), imagePreset: "pics" });
+  const made = await media.image({ prompt: "an oak tree" }, context(app));
+  assert.equal(made.mediaType, "image/png");
+  assert.equal(service.seen[0].url, "/images/generations", "the picture went through the chosen connection");
+  assert.equal(app.runtime.models.settings("local").activePreset, "test", "the text model is left alone");
+  saveMediaSettings(app.store, "local", { ...mediaSettings(app.store, "local"), imagePreset: "gone" });
+  await assert.rejects(media.image({ prompt: "an oak tree" }, context(app)), /unavailable/);
 });

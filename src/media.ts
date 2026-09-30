@@ -51,6 +51,7 @@ const keepAudioRefusal =
   "You asked for audio to stay on this computer under Settings → Voice, so this sound was not sent anywhere. Set up a speech program on this computer, or turn that setting off.";
 
 /** Every picture, sound and video tool, sharing one workspace and one connected model. */
+const pictureUnavailable = "The picture connection you selected is unavailable for this task. Choose another under Settings → Models → Media.";
 export class MediaTools {
   artifacts: RunArtifacts | undefined;
   /**
@@ -113,9 +114,10 @@ export class MediaTools {
     return this.artifacts;
   }
   private preset(owner: string, imagePreset = "") {
+    if (imagePreset && !this.models.presets.has(imagePreset)) throw new Error(pictureUnavailable);
     const chosen = this.models.plan(owner, "media", imagePreset ? { preset: imagePreset } : {}).candidates[0];
     if (imagePreset && chosen?.id !== imagePreset)
-      throw new Error("The picture connection you selected is unavailable for this task. Choose another under Settings → Models → Media.");
+      throw new Error(pictureUnavailable);
     if (!chosen) throw new Error("No model is connected yet. Add one under Settings → Model.");
     return chosen;
   }
