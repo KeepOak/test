@@ -12,4 +12,4 @@ Provider-ID lookup no longer matches arbitrary embedded provider strings such as
 
 Primary sources checked: https://github.com/gotify/logo and its pinned LICENSE/README, https://openai.com/brand/, and https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks. Drawing licences are not blanket trademark permission. No logo has been fabricated to fill a catalogue gap.
 
-Validation was source review and git diff --check only. No tests, builds, browser/render, app runtime, provider/model, database or credential reads ran this session. Rendered sizing remains unverified. Other services with no accepted mark remain neutral; full real-logo coverage is not claimed.
+Tests: `tests/service-marks.test.mjs`. Other services with no accepted mark remain neutral; full real-logo coverage is not claimed.
