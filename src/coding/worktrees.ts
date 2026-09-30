@@ -98,11 +98,20 @@ export class WorktreePlaces {
   /** Where this task works: its conversation's copy, a new copy for a helper, or null for the usual place. */
   async placeTask(run: { id: string; sessionId: string }, context: ToolContext, parent: ToolContext | undefined): Promise<TaskPlace | null> {
     const { store, owner } = this.deps;
+    const assigned = worktreeScope() ?? this.deps.projectFolder();
+    if (assigned.split(/[\\/]/).includes(WORKTREE_HOME) && !existsSync(join(this.deps.root, assigned))) {
+      this.deps.note(run.id, "worktree.missing", { path: assigned });
+      throw new Error("The assigned project copy is missing, so this task stopped before working in another folder.");
+    }
     if (worktreeScope() && !parent) return null;
     // workbench (SELF-302): a helper its lead asked to give a copy of its own gets one, whatever the switches say: the
     // switches decide what happens by default (it ships off, a whole copy on disk each time), the lead decides per helper.
     if (parent && context.ownCopy) return this.helperPlace(run, context);
-    if (!codingOn(store, owner, "worktrees")) return null;
+    if (!codingOn(store, owner, "worktrees")) {
+      if (!parent && this.forks().some((fork) => fork.sessionId === run.sessionId))
+        throw new Error("This conversation is assigned to a project copy, but project copies are switched off. Enable them before continuing this conversation.");
+      return null;
+    }
     if (!parent) return this.forkPlace(run);
     if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).perHelper) return null;
     return this.helperPlace(run, context);
@@ -114,7 +123,7 @@ export class WorktreePlaces {
     const scope = this.scopeFor(fork.folder, fork.name), workspace = join(this.deps.root, scope);
     if (!existsSync(workspace)) {
       this.deps.note(run.id, "worktree.missing", { path: scope });
-      return null;
+      throw new Error("This conversation’s project copy is missing, so this task stopped before working in the original project.");
     }
     this.deps.note(run.id, "worktree.used", { path: scope, branch: fork.branch });
     return { scope, workspace, release: async () => undefined };
@@ -134,15 +143,25 @@ export class WorktreePlaces {
   private async createHelper(run: { id: string }, context: ToolContext, folder: string): Promise<TaskPlace | null> {
     const cwd = join(this.deps.root, folder);
     const head = await this.deps.run(cwd, ["rev-parse", "HEAD"], context.signal).catch(() => null);
-    if (!head || head.status !== "completed" || head.exitCode !== 0) {
-      // A copy asked for by name is never skipped without a word: the helper then works in the usual place.
-      if (context.ownCopy) this.deps.note(run.id, "worktree.skipped", { reason: "The project is not a git repository with a commit, so there is nothing to copy." });
-      return null;
+    if (!head || head.status !== "completed" || head.exitCode !== 0 || !head.stdout.trim()) {
+      context.signal.throwIfAborted();
+      const reason = "The helper needs a separate project copy, but the project has no readable Git commit. The helper was not started in the shared project.";
+      this.deps.note(run.id, "worktree.failed", { reason });
+      throw new Error(reason);
     }
     const name = `helper-${short(run.id)}`, branch = `branch/helper-${short(run.id)}`;
     try { await inWorktree(folder, () => this.deps.git.worktree({ folder: ".", action: "add", name, branch }, context.signal)); }
-    catch (error) { this.deps.note(run.id, "worktree.skipped", { reason: String((error as Error).message).slice(0, 200) }); return null; }
+    catch {
+      context.signal.throwIfAborted();
+      const reason = "The helper’s separate project copy could not be created, so the helper was not started in the shared project.";
+      this.deps.note(run.id, "worktree.failed", { reason });
+      throw new Error(reason);
+    }
     const scope = this.scopeFor(folder, name), workspace = join(this.deps.root, scope), base = head.stdout.trim();
+    if (!existsSync(workspace)) {
+      this.deps.note(run.id, "worktree.missing", { path: scope });
+      throw new Error("The helper’s assigned project copy is missing after creation, so the helper was not started in the shared project.");
+    }
     this.deps.note(run.id, "worktree.used", { path: scope, branch, source: folder, base });
     return { scope, workspace, release: async () => {
       try { await this.releaseHelper(run.id, { cwd, workspace, name, branch, base, scope, folder }); }

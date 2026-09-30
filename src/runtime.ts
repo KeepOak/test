@@ -1772,8 +1772,13 @@ ${run.output.slice(0, 6000)}`;
     let status: Run["status"] = "completed";
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
-    const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let place: Awaited<ReturnType<CodingHooks["placeTask"]>> = null;
+    let placementReady = false;
     try {
+      place = this.coding ? await this.coding.placeTask(run, context, parent) : null;
+      if (context.ownCopy && !place)
+        throw new Error("This task requires a separate project copy, but none could be assigned. It was not started in the shared project.");
+      placementReady = true;
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
       options.onStarted?.(run);
@@ -1844,7 +1849,7 @@ ${run.output.slice(0, 6000)}`;
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
     // asked with no tools, charged to this task, as reviewRun's is; everything it finds waits for
     // the owner. Nothing happens unless its switches are on, and it never fails the task. ──
-    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
+    if (placementReady && !parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
       const preset = this.sideJobPreset(this.owner, run.sessionId); // R17-S11
       const scoped: ToolContext = { ...context, permissions: new Set(), budget: new Budget({ maxSteps: 2, maxTokens: 24000 }), signal: AbortSignal.timeout(120000) };
       return (await this.complete(run, [{ role: "system", content: system }, { role: "user", content: question }], scoped, preset, null)).content;
