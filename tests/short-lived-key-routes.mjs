@@ -247,6 +247,12 @@ export const ROUTES = {
   "/api/deployment": "look",
   "/api/deployment/autostart": "owner POST",
   "/api/deployment/backup": "owner POST",
+  "/api/deployment/github-checkpoint": "owner POST",
+  "/api/deployment/github-checkpoint/preview": "owner POST",
+  "/api/deployment/github-checkpoint/enroll": "owner POST",
+  "/api/deployment/github-checkpoint/disable": "owner POST",
+  "/api/deployment/github-checkpoint/recover": "owner POST",
+  "/api/deployment/github-checkpoint/recover-preview": "owner POST",
   "/api/deployment/close": "owner POST",
   "/api/deployment/quit": "owner POST", // bucket 22: `branch quit`
   "/api/deployment/daemon": "owner POST",

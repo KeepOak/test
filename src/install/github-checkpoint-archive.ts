@@ -69,7 +69,8 @@ export async function encryptDataCopy(dataDir: string, folder: { name: string; p
   const expected = join(dataDir, backupFolder, folder.name);
   if (!dataCopyPattern.test(folder.name) || basename(folder.path) !== folder.name || await realpath(expected) !== await realpath(folder.path)) throw new Error("Remote checkpoint must use the exact finalized update data copy.");
   const entries: Entry[] = [], root = await realpath(expected);
-  await collect(root, expected, entries, { bytes: 0, max: config.maxBytes, deadline: Date.now() + 30000 }, new Set());
+  // Walked from its resolved path, so a data folder reached through a link (macOS /var, a moved home) names files the same way.
+  await collect(root, root, entries, { bytes: 0, max: config.maxBytes, deadline: Date.now() + 30000 }, new Set());
   const plain = Buffer.from(JSON.stringify({ format: 1, name: folder.name, entries }));
   if (plain.length > 96 * 1024 * 1024) { plain.fill(0); throw new Error("Encrypted archive size limit exceeded; update held."); }
   const key = randomBytes(32), nonce = randomBytes(12);

@@ -467,6 +467,8 @@ Stable is the default update channel and checks GitHub's latest final `vX.Y.Z` r
 
 The `openai` adapter uses Chat Completions; the `anthropic` adapter uses Messages. Compatibility depends on the configured server implementing the expected request, tool-call and usage formats. Remote model endpoints require HTTPS; loopback endpoints may use HTTP. API usage may incur the provider's charges.
 
+**Encrypted GitHub checkpoints before an update** (opt-in, `src/install/github-checkpoint-contract.ts`, kept in `update-backups/github-checkpoint`, never a Settings row): `repository` and its numeric `repositoryID` pin the one private repository, `project` and `tokenSecret` name the locker secret used for it, `publicKey` and its `fingerprint` are the owner's RSA recovery key, `maxBytes` caps the copy's original bytes, and `enrollment` and `approvedAt` record the owner's confirmed enrolment. See [docs/github-update-checkpoints.md](github-update-checkpoints.md).
+
 ### Temporary provider failures
 
 Branch retries eligible failed model requests at most twice per model round. It waits 250 ms before the first retry and 500 ms before the second by default, honors a valid `Retry-After` minimum, and stops if the requested wait exceeds five seconds. Backoff can be cancelled. The configured provider, model and credential remain unchanged.
