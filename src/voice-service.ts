@@ -162,8 +162,11 @@ export class VoiceService {
     });
   }
   /** Reads text aloud, using the owner's chosen voice and speed. */
+  sentences(text: string): string[] { return spokenSentences(text); }
   async speak(owner: string, input: SpeakRequest, options: { signal?: AbortSignal } = {}): Promise<SpokenAudio> {
     const settings = this.settings(owner);
+    input = { ...input, text: prepareSpokenText(input.text) };
+    if (!input.text) throw new Error("There is no spoken text in this reply.");
     // Bucket 17 hook: a chosen speech plug-in does the work instead.
     const byEngine = await this.engines?.speak(owner, input.text, settings.keepAudioOnThisComputer, options.signal);
     if (byEngine) return byEngine;
@@ -211,3 +214,4 @@ export function registerVoice(registry: ToolRegistry, voice: VoiceService, store
     },
   });
 }
+import { prepareSpokenText, spokenSentences } from "./voice-spoken-text.js";

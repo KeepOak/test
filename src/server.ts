@@ -5069,6 +5069,12 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     }
     return true;
   }
+  if (request.method === "POST" && path === "/api/voice/sentences") {
+    const body = z.object({ text: z.string().max(200_000) }).strict().parse(await readBody(request));
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    response.end(JSON.stringify({ sentences: app.voice.sentences(body.text) }));
+    return true;
+  }
   if (request.method === "POST" && path === "/api/voice/speak") {
     const body = z.object({
       text: z.string().max(4000), voice: z.string().max(80).optional(), speed: z.number().min(0.5).max(2).optional(),
