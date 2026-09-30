@@ -18,7 +18,7 @@ const stubs = {
   "app/core/state.js": `export const level = () => 1; export const S = globalThis.__cc.S; export const E = globalThis.__cc.E;
     export const ownerHere = () => globalThis.__cc.owner; export const activeId = () => globalThis.__cc.profile;`,
   "app/core/api.js": "export const api = (path, body) => globalThis.__cc.api(path, body);",
-  "app/core/ui.js": "export const toast = (m) => globalThis.__cc.toasts.push(m); export const openDlg = () => {}; export const closeDlg = () => {};",
+  "app/core/ui.js": "export const toast = (m) => globalThis.__cc.toasts.push(m); export const openDlg = () => {}; export const closeDlg = () => {}; export const dialog = () => null;",
   "app/core/logos.js": "export const logo = () => \"\";",
   "app/core/actions.js": "export const on = (name, fn) => { globalThis.__cc.acts[name] = fn; };",
   "app/core/features.js": "export const markLive = () => {};",

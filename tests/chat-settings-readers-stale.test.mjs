@@ -15,7 +15,8 @@ import { discardTemp } from "./temp-dir.mjs";
 const stubs = {
   "app/core/dom.js": "export const esc = (s) => String(s ?? \"\"); export const render = () => { globalThis.__rd.renders++; };",
   "app/core/api.js": "export const api = (path, body) => globalThis.__rd.api(path, body);",
-  "app/core/ui.js": "export const toast = (m) => globalThis.__rd.toasts.push(m); export const openDlg = () => {}; export const closeDlg = () => { globalThis.__rd.closed++; };",
+  "app/core/ui.js": `export const toast = (m) => globalThis.__rd.toasts.push(m); export const openDlg = (o) => { globalThis.__rd.dlg = { asked: o }; return globalThis.__rd.dlg; };
+    export const closeDlg = () => { globalThis.__rd.closed++; globalThis.__rd.dlg = null; }; export const dialog = () => globalThis.__rd.dlg;`,
   "app/core/actions.js": "export const on = (name, fn) => { globalThis.__rd.acts[name] = fn; };",
   "app/core/features.js": "export const markLive = () => {};",
   "app/core/state.js": "export const S = globalThis.__rd.S; export const ownerHere = () => globalThis.__rd.owner; export const activeId = () => globalThis.__rd.profile;",
@@ -28,10 +29,11 @@ async function reader(t, name) {
   await writeFile(join(root, "app", "settings", `${name}.js`), await readFile(new URL(`../public/app/settings/${name}.js`, import.meta.url)));
   for (const [file, code] of Object.entries(stubs)) await writeFile(join(root, file), code);
   const held = [];
-  const rd = { S: { view: "settings" }, owner: true, profile: null, locked: false, toasts: [], acts: {}, renders: 0, closed: 0,
+  const rd = { S: { view: "settings" }, owner: true, profile: null, locked: false, toasts: [], acts: {}, renders: 0, closed: 0, dlg: null, listeners: [],
     api: (path, body) => new Promise((resolve, reject) => held.push({ path, body, resolve, reject })) };
   globalThis.__rd = rd;
-  globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && rd.locked } } : null) };
+  globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && rd.locked } } : null),
+    addEventListener: (type, fn, capture) => { if (capture) rd.listeners.push({ type, fn }); } };
   t.after(async () => { delete globalThis.__rd; delete globalThis.document; await discardTemp(root); });
   const mod = await import(pathToFileURL(join(root, "app", "settings", `${name}.js`)).href);
   const next = async () => { for (let i = 0; i < 50 && !held.length; i++) await Promise.resolve(); assert.ok(held.length, "a read was asked for"); return held.shift(); };
@@ -127,4 +129,55 @@ test("the App lock came on while phone access was being turned on: the dialog is
   await running;
   assert.deepEqual(rd.toasts, []);
   assert.equal(reloads, 0);
+});
+
+/* Phone access's own dialog: the run's answer is kept and the page read again, but the asking dialog is closed only if it
+   is still the one open. Cancelled, then another dialog opened on the same page while the run waited: that one stays. */
+async function runPending(t, afterCancel) {
+  const { mod, rd, next } = await reader(t, "phone-access");
+  const loading = mod.loadPhoneAccess();
+  (await next()).resolve({ phoneAccess: { ...phone, url: null } });
+  await loading;
+  let reloads = 0;
+  mod.initPhoneAccess(async () => { reloads++; });
+  rd.acts["phone-access-on"]();
+  assert.ok(rd.dlg?.asked, "the asking dialog is open");
+  const running = rd.acts["phone-access-run"]({ dataset: { v: "on" }, disabled: false });
+  const read = await next();
+  afterCancel(rd);
+  const replacement = { replacement: true };
+  rd.dlg = replacement;
+  const closedBefore = rd.closed;
+  read.resolve({ phoneAccess: phone });
+  await running;
+  return { mod, rd, replacement, closedBefore, reloads: () => reloads };
+}
+const CANCELS = [
+  ["Cancel", (rd) => rd.acts["phone-access-cancel"]()],
+  ["the close button", (rd) => { for (const l of rd.listeners) if (l.type === "click") l.fn({ target: { closest: (q) => (q.includes("dlg-close") ? {} : null) } }); rd.dlg = null; }],
+  ["Escape", (rd) => { for (const l of rd.listeners) if (l.type === "keydown") l.fn({ key: "Escape" }); rd.dlg = null; }],
+  ["nothing (a dialog opened over it)", () => {}],
+];
+for (const [how, cancel] of CANCELS) {
+  test(`phone access run, its dialog left with ${how}, another dialog opened: that dialog stays and the result is still kept`, async (t) => {
+    const w = await runPending(t, cancel);
+    assert.equal(w.rd.dlg, w.replacement, "the replacement dialog is still open");
+    assert.equal(w.rd.closed, w.closedBefore, "the late success closed nothing");
+    assert.equal(phoneOn(w.mod.phoneAccessCard()), true, "the engine's answer (phone access on) is kept");
+    assert.equal(w.reloads(), 1, "the page was read again");
+  });
+}
+
+test("with nothing changed, a phone access run closes its own dialog", async (t) => {
+  const { mod, rd, next } = await reader(t, "phone-access");
+  const loading = mod.loadPhoneAccess();
+  (await next()).resolve({ phoneAccess: { ...phone, url: null } });
+  await loading;
+  mod.initPhoneAccess(async () => {});
+  rd.acts["phone-access-on"]();
+  const running = rd.acts["phone-access-run"]({ dataset: { v: "on" }, disabled: false });
+  (await next()).resolve({ phoneAccess: phone });
+  await running;
+  assert.equal(rd.dlg, null);
+  assert.equal(rd.closed, 1);
 });
