@@ -230,6 +230,42 @@ test("a short thread's check that runs late does not read further back than the 
   assert.deepEqual(errors, []);
 });
 
+/* CI flake after the timer fix (PR #1079's run, 05:00 UTC): the browser sends a scroll it queued on the next frame, and a
+   redraw in that frame had replaced the thread's box. The old box, off the page, reads scrollTop 0, so its scroll looked
+   like the reader at the top and read the conversation above. Here the queued scroll and the redraw are made in one step. */
+test("a scroll that lands on a thread box a redraw already replaced reads nothing further back", async (t) => {
+  const { app, root } = await fixture(t, [long]);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  age(app, home.chatSessionId, 5 * 3600000);
+  const oldest = await app.runtime.run({ prompt: "oldest long talk", trunkId: home.id });
+  age(app, oldest.sessionId, 4 * 3600000);
+  const middle = await app.runtime.run({ prompt: "middle long talk", trunkId: home.id });
+  age(app, middle.sessionId, 3 * 3600000);
+  await app.runtime.run({ prompt: "newest long talk", trunkId: home.id });
+  const { page, errors, reads } = await open(t, app, root, { width: 1100, height: 640 });
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  const thread = page.locator("#scroll");
+  await thread.locator(".u", { hasText: "newest long talk" }).waitFor();
+  await thread.locator(".u", { hasText: "middle long talk" }).waitFor();
+  const { replaced, asked } = await page.evaluate(async () => {
+    const asked = [], fetch = window.fetch;
+    window.fetch = (url, ...rest) => { asked.push(String(url)); return fetch(url, ...rest); }; // api.js calls fetch at once
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    const box = document.querySelector("#scroll");
+    box.scrollTop -= 50; // a scroll the browser sends on the next frame
+    S.view = "settings"; renderNow(); S.view = "chat"; renderNow(); // the conversation drawn anew, in a new box
+    const gone = !box.isConnected && document.querySelector("#scroll") !== box;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); // the queued scroll is sent
+    window.fetch = fetch;
+    return { replaced: gone, asked };
+  });
+  assert.equal(replaced, true, "the box the scroll was queued on was replaced");
+  assert.equal([...asked, ...reads].some((url) => url.endsWith(`/api/sessions/${oldest.sessionId}`)), false, "the conversation above is not read by a scroll on a box off the page");
+  assert.deepEqual(errors, []);
+});
+
 test("a conversation's line deletes and restores just that conversation; the row pins the Trunk", async (t) => {
   const { app, root } = await fixture(t);
   saveOnboarding(app.store, app.runtime.owner, { done: true });
