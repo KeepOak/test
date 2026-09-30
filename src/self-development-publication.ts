@@ -94,7 +94,7 @@ export class PublicationQueue {
       if (this.get(id)?.state !== "blocked") return this.get(id);
       return this.save({ ...entry, reason: publicationFailure(error).reason });
     }
-    const ready = { ...entry, state: "waiting", attempts: 0, nextAttemptAt: this.now(), reason: null };
+    const ready: PublicationEntry = { ...entry, state: "waiting", attempts: 0, nextAttemptAt: this.now(), reason: null };
     const changed = this.db.prepare("UPDATE self_development_publications SET data=?,due=?,state='waiting' WHERE id=? AND owner=? AND state='blocked'")
       .run(JSON.stringify(ready), ready.nextAttemptAt, id, this.owner);
     if (!changed.changes) return this.get(id);
