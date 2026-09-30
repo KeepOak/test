@@ -133,6 +133,9 @@ export const thisComputerSettings: readonly string[] = [
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
   // no backup carries, so the account stays with it.
   "gitlab-account",
+  // SELF-021: which GitHub account the device sign-in connected and the locker name of its token; the token itself is in
+  // the locker, which no backup carries, so the account stays with it.
+  "github.device.account",
   // NAS 49b183b's unchecked class: this computer's OS sandbox, whether its emergency stop is pressed (letting it go
   // needs the authenticator code, which a replacing restore would skip), and which tools need that code.
   "os-sandbox", "safety-emergency-stop", "safety-code-approvals-setup",

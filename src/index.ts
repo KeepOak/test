@@ -177,6 +177,7 @@ import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
 import { registerSdkKit } from "./sdk-kit.js"; // bucket 21
 import { GitLabConnection } from "./gitlab-connection.js"; // RES-719
+import { GitHubDeviceConnection } from "./github-device-connection.js";
 import { gitlabLaunch } from "./gitlab-switch.js"; // RES-719
 import { registerGitLab } from "./integrations/gitlab.js"; // RES-719
 import { WebPages, registerWebPages } from "./web-pages.js"; // w911 (A0743, A1452) hook
@@ -1211,6 +1212,8 @@ ${result.output || "(it said nothing)"}`;
   registerSdkKit(registry, store);
   // RES-719: GitLab set up in the window (Settings › Advanced › GitLab); its tools reach the index only once connected.
   const gitlab = new GitLabConnection({ store, policy: web.policy });
+  const githubDevice = new GitHubDeviceConnection({ store, owner: runtime.owner, policy: web.policy, locked: () => sessionLock.locked() });
+  releaseOnLock.push(async () => githubDevice.cancel());
   registerGitLab(registry, (who) => gitlab.access(who));
   // w911 (A0743, A1452) hook: web.page and web.crawl (switched off until the owner turns them on).
   const webPages = new WebPages({ store, web, registry, runtime }); registerWebPages(registry, webPages);
@@ -1948,6 +1951,7 @@ ${result.output || "(it said nothing)"}`;
     flows,
     /** RES-719: GitLab as a connection of its own. */
     gitlab,
+    githubDevice,
     /** Wave 8: the things still to be done, written down where the owner can see them. */
     todos,
     wiki,
@@ -1978,6 +1982,7 @@ ${result.output || "(it said nothing)"}`;
       git,
       /** A secret from whichever project is active right now, for GitHub's personal access token. */
       gitlab: (settings: unknown) => gitlabLaunch.set(store, settings),
+      githubToken: (config: { apiBase: string }) => githubDevice.token(config.apiBase),
       activeSecret: async (name: string) => {
         const project = store.projects.active(runtime.owner).id;
         const value = (await store.secrets.resolve(runtime.owner, project, [name], { purpose: "integration" }))[name]!;
@@ -2029,6 +2034,7 @@ ${result.output || "(it said nothing)"}`;
     close: () => (closing ??= (async () => {
       // bucket-18 (A0300): nothing is sent to GitHub while the app is closing.
       stopPullRequests();
+      githubDevice.cancel();
       stopOfferingPullRequests();
       pullRequestStop.abort(new Error("Branch is closing"));
       await stopSourcePublications();

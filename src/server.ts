@@ -335,6 +335,8 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
+import { githubDeviceApi, handlesGitHubDevicePath } from "./github-device-connection.js";
+import { GitHubDeviceError } from "./integrations/github-device-auth.js";
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
@@ -1112,6 +1114,10 @@ async function api(
     return gitlabApi({ connection: app.gitlab, store: app.store, owner: app.runtime.owner,
       requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof GitLabApiError ? new HttpError(error.status, error.message) : error;
+    });
+  if (handlesGitHubDevicePath(path))
+    return githubDeviceApi(app.githubDevice, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof GitHubDeviceError ? new HttpError(error.status, error.message) : error;
     });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))

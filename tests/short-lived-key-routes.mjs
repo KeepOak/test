@@ -309,6 +309,11 @@ export const ROUTES = {
   "/api/flows/check": "other POST",
   "/api/flows/runs/:id": "look",
   "/api/folder-trust": "owner POST",
+  "/api/github-device": "owner POST", // SELF-021: the owner's GitHub device connection (client ID, and what is connected)
+  "/api/github-device/begin": "owner POST", // SELF-021: starts GitHub's device sign-in
+  "/api/github-device/cancel": "owner POST",
+  "/api/github-device/disconnect": "owner POST", // SELF-021: the token taken out of the locker
+  "/api/github-device/poll": "owner POST", // SELF-021: finishes the sign-in and keeps the token in the locker
   "/api/gitlab": "owner POST", // RES-719: the GitLab switch
   "/api/gitlab/connect": "owner POST", // RES-719: a token checked with GitLab, then kept in the locker
   "/api/gitlab/disconnect": "owner POST", // RES-719: the token taken out of the locker
