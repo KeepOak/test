@@ -5,8 +5,10 @@ import type { Catalog } from "./provider-catalog.js";
 import type { ModelPrice } from "./pricing.js";
 
 const modelId = z.string().min(1).max(256);
-const price = z.object({ input: z.number().min(0).max(10000), output: z.number().min(0).max(10000),
-  cached: z.number().min(0).max(10000).optional() }).strict();
+const rate = z.number().min(0).max(10000);
+// Cache writes may be named too; a rate an update leaves out keeps the shipped one (src/pricing.ts tablePrice).
+const price = z.object({ input: rate, output: rate, cached: rate.optional(), cacheWrite: rate.optional(),
+  cacheWrite1h: rate.optional() }).strict();
 const update = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/),
   defaultModel: modelId.optional(),

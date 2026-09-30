@@ -172,8 +172,10 @@ export function tablePrice(model: string, table: Record<string, ModelPrice> = bu
   const normalized = normalizeModelId(model);
   if (table !== builtInPrices) return table[model] ?? table[normalized];
   const catalog = pricesFromCatalog();
-  const updated = localCatalogPriceUpdates?.prices;
-  return updated?.[model] ?? updated?.[normalized] ?? table[model] ?? table[normalized] ?? catalog[model] ?? catalog[normalized];
+  const shipped = table[model] ?? table[normalized] ?? catalog[model] ?? catalog[normalized];
+  const updated = localCatalogPriceUpdates?.prices[model] ?? localCatalogPriceUpdates?.prices[normalized];
+  // An update lays its rates over the shipped ones, so a cache-write premium it does not name is kept.
+  return updated ? { ...shipped, ...updated } : shipped;
 }
 
 const round = (value: number): number => Math.round(value * 1_000_000) / 1_000_000;

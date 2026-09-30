@@ -40,3 +40,19 @@ test("a chosen update file's prices are used, with their own date, until the set
   catalogWithLocalUpdates(base(), {});
   assert.equal(estimateCost("vendor/priced-model", { input: 1, output: 1 }).amount, null, "back to the shipped catalogue");
 });
+
+test("an update's rates lay over the shipped ones: a cache-write premium it leaves out is kept", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-catalog-cache-"));
+  t.after(() => { catalogWithLocalUpdates(base(), {}); return discardTemp(root); });
+  const file = join(root, "catalogue.json");
+  const hourWrite = { input: 1_000_000, output: 0, cacheWrite: 1_000_000, cacheWrite1h: 1_000_000 };
+  const shipped = estimateCost("claude-opus-4-5", hourWrite).amount;
+  await writeFile(file, JSON.stringify({ version: 1, pricedAt: "2026-10-01",
+    services: [{ id: "anthropic", prices: { "claude-opus-4-5": { input: 5, output: 25 } } }] }));
+  catalogWithLocalUpdates(base(), { BRANCH_MODEL_CATALOG_FILE: file });
+  assert.equal(estimateCost("claude-opus-4-5", hourWrite).amount, shipped, "the one-hour write keeps its shipped premium");
+  await writeFile(file, JSON.stringify({ version: 1, pricedAt: "2026-10-02",
+    services: [{ id: "anthropic", prices: { "claude-opus-4-5": { input: 5, output: 25, cacheWrite1h: 12 } } }] }));
+  catalogWithLocalUpdates(base(), { BRANCH_MODEL_CATALOG_FILE: file });
+  assert.equal(estimateCost("claude-opus-4-5", hourWrite).amount, 12, "an update may name the cache-write rate itself");
+});

@@ -86,7 +86,9 @@ The application reads environment variables when it starts. It does not automati
 
 `BRANCH_MODEL_CATALOG_FILE` selects a local JSON file in this format. Prices are US dollars per million tokens;
 the bundle's explicit prices take precedence over Branch's shipped tables, while your saved price overrides still win.
-Only list fields you want to replace; unlisted services retain their shipped model choices and prices.
+Only list fields you want to replace; unlisted services retain their shipped model choices and prices. A model's price
+takes `input` and `output`, and optionally `cached`, `cacheWrite` and `cacheWrite1h`; a rate it leaves out keeps the
+shipped one, so a known cache-write premium is not lost.
 
 ```json
 {
