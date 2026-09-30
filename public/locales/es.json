@@ -10417,5 +10417,17 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "github-skill.owner": "Importa habilidades de GitHub en la ventana del propietario.",
+  "github-skill.title": "Añadir una habilidad de GitHub",
+  "github-skill.owner-field": "Propietario del repositorio",
+  "github-skill.repo": "Repositorio",
+  "github-skill.path": "Carpeta de la habilidad (vacía para la raíz)",
+  "github-skill.sha": "SHA del árbol (opcional)",
+  "github-skill.public-only": "Solo repositorios públicos. Branch lee instrucciones y referencias de texto; se omiten scripts y recursos. Inspeccionar no instala nada.",
+  "github-skill.inspect": "Inspeccionar habilidad",
+  "github-skill.off": "Revisa estas instrucciones exactas antes de instalar. La habilidad se instala desactivada y necesita tu activación por separado.",
+  "github-skill.instructions": "Instrucciones",
+  "github-skill.left-out": "Archivos omitidos",
+  "github-skill.approve": "Aprobar e instalar desactivada"
 }

@@ -10417,5 +10417,17 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "github-skill.owner": "Importiere GitHub-Skills im App-Fenster des Eigentümers.",
+  "github-skill.title": "Skill von GitHub hinzufügen",
+  "github-skill.owner-field": "Repository-Eigentümer",
+  "github-skill.repo": "Repository",
+  "github-skill.path": "Skill-Ordner (leer für Repository-Stamm)",
+  "github-skill.sha": "Tree-SHA (optional)",
+  "github-skill.public-only": "Nur öffentliche Repositories. Branch liest Anweisungen und Textreferenzen; Skripte und Assets werden ausgelassen. Prüfen installiert nichts.",
+  "github-skill.inspect": "Skill prüfen",
+  "github-skill.off": "Prüfe diese genauen Anweisungen vor der Installation. Der Skill wird ausgeschaltet installiert und muss separat aktiviert werden.",
+  "github-skill.instructions": "Anweisungen",
+  "github-skill.left-out": "Ausgelassene Dateien",
+  "github-skill.approve": "Genehmigen und ausgeschaltet installieren"
 }
