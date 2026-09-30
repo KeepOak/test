@@ -90,6 +90,9 @@ export const waitingWords = (position, queued, slots) =>
 
 /** GitHub's own passing errors: a 502 on the cancel once left a run that was to wait failed, never started again. */
 const passing = new Set([500, 502, 503, 504]);
+/** Only calls that are the same done twice are tried again: reads, cancelling a run, and adding or removing a label.
+ *  A rerun is not: a first attempt GitHub took before answering 502 would be started a second time. */
+const repeatable = (method, path) => method === "GET" || /\/cancel$/.test(path) || /\/labels(\/|$)/.test(path);
 
 export function github(token, repo, { get = fetch, pause = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}) {
   return async (method, path, body) => {
@@ -99,7 +102,7 @@ export function github(token, repo, { get = fetch, pause = (ms) => new Promise((
         headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
-      if (passing.has(response.status) && tries < 3) { await pause(tries * 2000); continue; }
+      if (passing.has(response.status) && tries < 3 && repeatable(method, path)) { await pause(tries * 2000); continue; }
       if (!response.ok && response.status !== 404) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`);
       return response.status === 204 || response.status === 202 ? null : response.json().catch(() => null);
     }

@@ -144,3 +144,14 @@ test("a passing GitHub error is tried again, so a run that is to wait is still c
   await assert.rejects(refused("POST", "actions/runs/1/cancel"), /403/);
   assert.equal(calls, 1);
 });
+
+test("a rerun is never sent twice, even after a passing error: GitHub may have started it already", async () => {
+  let reruns = 0;
+  const api = github("t", "o/r", { get: async () => { reruns += 1; return { ok: false, status: 502, text: async () => "" }; }, pause: async () => {} });
+  await assert.rejects(api("POST", "actions/runs/7/rerun"), /502/);
+  assert.equal(reruns, 1);
+  let labels = 0;
+  const label = github("t", "o/r", { get: async () => { labels += 1; return labels < 2 ? { ok: false, status: 503, text: async () => "" } : { ok: true, status: 200, json: async () => [] }; }, pause: async () => {} });
+  await label("POST", "issues/5/labels", { labels: ["ci-waiting"] });
+  assert.equal(labels, 2, "adding a label is the same done twice, so it is tried again");
+});
