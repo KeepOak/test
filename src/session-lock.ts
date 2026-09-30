@@ -147,6 +147,13 @@ export class SessionLock {
     if (wasLocked) this.onUnlock();
     return this.state();
   }
+  /** Fresh confirmation of one screen session; shares PIN backoff and never unlocks or touches activity. */
+  confirmScreenPin(input: unknown): boolean {
+    const { pin } = UnlockSchema.parse(input);
+    if (!this.pinSet() || this.locked() || !pin) return false;
+    this.checkPin(pin);
+    return true;
+  }
   locked(): boolean {
     if (this.lockedAt !== null) return true;
     const { idleMinutes } = this.settings();

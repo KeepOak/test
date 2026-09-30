@@ -15,6 +15,8 @@ export interface WebSocketConnection {
   close(): void;
   /** Resolves when the socket is gone, whichever side ended it. */
   readonly closed: Promise<void>;
+  /** The status code in the server's close frame, once one has arrived (Discord's 4014 and the like). */
+  readonly closeCode?: number | undefined;
   /** mac6/bucket-16: sends a ping frame; `onPong` runs when the server's pong comes back. */
   ping?(onPong: () => void): void;
 }
@@ -78,12 +80,18 @@ function attach(socket: Socket, head: Buffer, onMessage: (text: string) => void)
   let pending = head.length ? Buffer.from(head) : Buffer.alloc(0);
   let message = Buffer.alloc(0);
   let done = () => undefined as void;
+  let closeCode: number | undefined;
   const pongs: (() => void)[] = []; // mac6/bucket-16
   const closed = new Promise<void>((resolve) => { done = resolve; });
   const drain = () => {
     for (let decoded = readFrame(pending); decoded; decoded = readFrame(pending)) {
       pending = pending.subarray(decoded.consumed);
-      if (decoded.opcode === 0x8) { socket.end(maskedFrame(Buffer.alloc(0), 0x8)); return; }
+      if (decoded.opcode === 0x8) {
+        // The first two bytes of a close frame are its status code (RFC 6455 section 5.5.1).
+        if (decoded.payload.length >= 2) closeCode = decoded.payload.readUInt16BE(0);
+        socket.end(maskedFrame(Buffer.alloc(0), 0x8));
+        return;
+      }
       if (decoded.opcode === 0x9) { socket.write(maskedFrame(decoded.payload, 0xa)); continue; }
       if (decoded.opcode === 0xa) { for (const pong of pongs.splice(0)) pong(); continue; }
       message = Buffer.concat([message, decoded.payload]);
@@ -101,8 +109,14 @@ function attach(socket: Socket, head: Buffer, onMessage: (text: string) => void)
   socket.setTimeout(0);
   return {
     send: (text) => { if (socket.writable) socket.write(maskedFrame(Buffer.from(text, "utf8"), 0x1)); },
-    close: () => { if (socket.writable) socket.end(maskedFrame(Buffer.alloc(0), 0x8)); else socket.destroy(); },
+    close: () => {
+      if (!socket.writable) { socket.destroy(); return; }
+      socket.end(maskedFrame(Buffer.alloc(0), 0x8));
+      // A peer that has gone silent never answers the close, so the socket is let go after a short wait.
+      setTimeout(() => socket.destroy(), 5000).unref();
+    },
     closed,
+    get closeCode() { return closeCode; },
     // mac6/bucket-16: a client-side heartbeat for services that ask for one (Guilded).
     ping: (onPong) => { if (!socket.writable) return; pongs.push(onPong); socket.write(maskedFrame(Buffer.from("branch"), 0x9)); },
   };

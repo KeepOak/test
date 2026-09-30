@@ -1,11 +1,13 @@
-import { mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { WorkspaceFiles } from '../files.js';
+import { fenceRefusal, trunkFence } from '../trunks/shell-fence.js';
 import type { ToolContext } from '../contracts.js';
 import type { ToolRegistry } from '../registry.js';
 import { commandFolder, ShellConfigSchema, ShellInputSchema, shellEnvironment, netlessEnvironment, validateExecutables, type ShellConfig, type ShellInput } from './shell-config.js';
 import { ShellProcess, type ProcessResult } from './shell-process.js';
+import { CommandTurns, maxParallelCommands, projectRoot, queueGraceMs } from './command-turns.js'; // SELF-302
 import { defaultJobObjects, type Job, type JobObjects } from './job-object.js';
 import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
@@ -37,6 +39,14 @@ export class BranchShell {
   private readonly config: ShellConfig;
   private readonly env: NodeJS.ProcessEnv;
   private readonly pending = new Set<Operation>();
+  /**
+   * SELF-302: whose turn it is to run a command. There used to be one command at a time for the whole engine, so a
+   * second one from any helper or conversation was refused at once, and helpers started together could not build or
+   * test in their own copies. Now each folder takes one command at a time (so two never write the same folder or sweep
+   * each other's `.git`), the rest wait their turn, and the engine as a whole runs a bounded number at once, since each
+   * holds its own memory and processor limits.
+   */
+  private readonly turns = new CommandTurns(maxParallelCommands);
   private closed = false;
   private spare: Job | null = null;
   /**
@@ -57,10 +67,10 @@ export class BranchShell {
   async ready(): Promise<void> { await validateExecutables(this.config); }
   execute(input: ShellInput, context: ToolContext): Promise<ProcessResult & { target: ShellTarget }> {
     if (this.closed) return Promise.reject(new Error('Host command execution is closed'));
-    if (this.pending.size) return Promise.reject(new Error('A host command is already active'));
     if (!context.owner || !context.runId) return Promise.reject(new Error('Host commands require an owner and run ID'));
     const parsed = ShellInputSchema.parse(input);
     const operation: Operation = { controller: new AbortController(), owner: context.owner, runId: context.runId, done: Promise.resolve(), cleared: Promise.resolve() };
+    // A command waiting for its turn is pending too, so a run finishing or the shell closing stops it as well.
     this.pending.add(operation);
     const done = this.perform(parsed, context, operation.controller.signal);
     operation.done = done;
@@ -92,14 +102,28 @@ export class BranchShell {
     if (!executable) throw new Error('Executable alias is not configured');
     const signal = AbortSignal.any([context.signal, stopping]);
     signal.throwIfAborted();
+    // A Trunk's own folder (src/trunks/shell-fence.ts) is made on demand, as code.run and files.write make it.
+    const fence = trunkFence(context);
+    if (fence) await mkdir(fence.own, { recursive: true });
     // Q12: the same folder the self-development contract judged (commandFolder), checked as a workspace path.
     const cwd = await new WorkspaceFiles(context.workspace).checked(input.cwd, true);
     if (cwd !== commandFolder(context.workspace, input.cwd)) throw new Error('Command cwd must be a workspace directory');
     if (!(await stat(cwd)).isDirectory()) throw new Error('Command cwd must be a workspace directory');
+    const fenced = fence && fenceRefusal(fence, cwd, input.args);
+    if (fenced) throw new Error(fenced);
     const confined = context.writesConfinedTo ? await confinedFolder(context.writesConfinedTo, cwd) : null;
     const tuned = this.tuning(); // R17-S10
     const limitMs = tuned.timeoutMs ?? this.config.timeoutMs;
     if (input.timeoutMs && input.timeoutMs > limitMs) throw new Error('Command timeout exceeds configured maximum');
+    signal.throwIfAborted();
+    // SELF-302: one command at a time per folder, the rest wait their turn (src/integrations/command-turns.ts).
+    const release = await this.turns.take(confined ?? await projectRoot(cwd, context.workspace), signal, limitMs + queueGraceMs);
+    try { return await this.performInTurn(input, context, signal, { executable, cwd, confined, tuned, limitMs }); }
+    finally { release(); }
+  }
+  private async performInTurn(input: ShellInput, context: ToolContext, signal: AbortSignal, at: { executable: { path: string; args: string[] };
+    cwd: string; confined: string | null; tuned: ReturnType<BranchShell['tuning']>; limitMs: number }) {
+    const { executable, cwd, confined, tuned, limitMs } = at;
     signal.throwIfAborted();
     const injected = await this.injected(input.secrets, context);
     // An approval rule may say how tightly this command is held; without one the shell settings and

@@ -73,8 +73,11 @@ const heldBy = (job: Job | null): { heldBySystem?: HeldBySystem } => {
   return held ? { heldBySystem: held } : {};
 };
 
+/** How long a program's output may keep coming after it exits before it is settled anyway (Codex's TRAILING_OUTPUT_GRACE). */
+const trailingOutputMs = 100;
+
 /** One program left running, with what it has printed so far. */
-class Running {
+export class Running {
   readonly id = randomUUID();
   readonly startedAt = new Date().toISOString();
   private readonly chunks: Buffer[] = [];
@@ -102,7 +105,16 @@ class Running {
     child.stdout?.on("data", (chunk: Buffer) => this.keep(chunk));
     child.stderr?.on("data", (chunk: Buffer) => this.keep(chunk));
     child.once("error", () => { this.settle("failed"); });
-    child.once("exit", (code) => { this.exitCode = code; this.settle(code === 0 ? "finished" : "failed"); });
+    // P0 (self-build): settled once its output is in, not the moment it exits, so the wake-up carries its last lines.
+    // A program that leaves something holding its output open is settled a moment later all the same. As Codex's
+    // unified exec does (openai/codex, codex-rs/core/src/unified_exec/async_watcher.rs, TRAILING_OUTPUT_GRACE, Apache-2.0).
+    child.once("exit", (code) => {
+      this.exitCode = code;
+      const done = (): void => { clearTimeout(grace); this.settle(code === 0 ? "finished" : "failed"); };
+      const grace = setTimeout(done, trailingOutputMs);
+      grace.unref();
+      child.once("close", done);
+    });
     this.timer = setTimeout(() => { void this.stop(); }, maxMinutes * 60000);
     this.timer.unref();
   }
@@ -119,16 +131,19 @@ class Running {
   private watch(chunk: Buffer): void {
     const lines = (this.partial + chunk.toString("utf8")).split(/\r?\n/);
     this.partial = (lines.pop() ?? "").slice(-4000);
-    for (const line of lines) {
-      if (this.wakesLeft <= 0) return;
-      const lower = line.toLowerCase();
-      if (!this.wake.onText.some((word) => lower.includes(word.toLowerCase()))) continue;
-      this.wakesLeft--;
-      try { this.onLine(this.view(), line.slice(0, 1000)); } catch { /* a wake-up must never break the program */ }
-    }
+    for (const line of lines) this.match(line);
+  }
+  private match(line: string): void {
+    if (this.wakesLeft <= 0) return;
+    const lower = line.toLowerCase();
+    if (!this.wake.onText.some((word) => lower.includes(word.toLowerCase()))) return;
+    this.wakesLeft--;
+    try { this.onLine(this.view(), line.slice(0, 1000)); } catch { /* a wake-up must never break the program */ }
   }
   private settle(status: ProcessView["status"]): void {
     if (this.status !== "running") return;
+    // P0 (self-build): a last line printed without a newline still wakes the conversation.
+    if (this.partial) { const last = this.partial; this.partial = ""; this.match(last); }
     // A program the owner stopped counts as stopped, whatever exit code the kill itself produced.
     this.status = this.asked ? "stopped" : status;
     this.endedAt = new Date().toISOString();

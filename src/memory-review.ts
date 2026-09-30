@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { isCurrentFact, MemoryDataSchema, reworded, takeBackFact, visibleTo, type MemoryFacts, type MemoryRecord, type OutsideMemoryProvider } from "./memory.js";
+import { inOpeningContext, isCurrentFact, MemoryDataSchema, reworded, takeBackFact, type MemoryFacts, type MemoryRecord, type OutsideMemoryProvider } from "./memory.js";
 import { FactKindSchema } from "./memory-layers.js";
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
-import { detectInjection } from "./content-guard.js";
+import { blockedMemoryText, detectInjection, memoryWriteRefusal } from "./content-guard.js";
 import { MemoryDestinationSchema, type MemoryWriteReceipt } from "./memory-backend.js";
 
 /**
@@ -98,6 +98,12 @@ export class MemoryReview {
   /** R17-S13: the owner's memory budget; `createBranch` connects it, and without it the fixed figures apply. */
   snapshotLimits?: (owner: string) => { facts: number; chars: number };
   /**
+   * Set at start-up to the runtime's own secret scrubber (Runtime.hideSecrets): the words of every suggestion pass
+   * through it before they are stored, as Codex redacts each field of a memory it writes (openai/codex
+   * `codex-rs/memories/write/src/phase1_output.rs` lines 49-56, commit bd4204e, Apache-2.0; see THIRD_PARTY_NOTICES.md).
+   */
+  hideSecrets?: <T>(value: T) => T;
+  /**
    * Set at start-up: what accepting a skill idea from the learning core does. It returns a skill
    * draft for the existing skill editor to open, pre-filled from the steps; nothing is installed.
    */
@@ -150,7 +156,9 @@ export class MemoryReview {
    * memory.put passes, never from the suggestion itself, so nothing else can choose a Trunk's memory for it.
    */
   propose(owner: string, input: unknown, fact: unknown = null): Proposal {
-    const data = { ...ProposalSchema.parse(input), fact: fact === null ? null : ProposedFactSchema.parse(fact) };
+    const parsed = ProposalSchema.parse(input);
+    const words = { text: parsed.text, source: parsed.source, note: parsed.note, learned: parsed.learned, card: parsed.card };
+    const data = { ...parsed, ...(this.hideSecrets?.(words) ?? words), fact: fact === null ? null : ProposedFactSchema.parse(fact) };
     if ((data.kind === "put" || data.kind === "update") && !data.text) throw new Error("A memory suggestion needs text");
     if (tidyingKinds.includes(data.kind) && !data.memoryIds.length) throw new Error("A tidying suggestion needs the facts it applies to");
     // QA retest 2026-09-28 (m12): the same fact suggested again while the first is still waiting is that suggestion,
@@ -214,6 +222,7 @@ export class MemoryReview {
       // is saved exactly as it always was, as a fact about the world.
       const kind = FactKindSchema.safeParse(proposal.learned?.kind).data;
       const data = { text: proposal.text, source: proposal.source, sourceRunId: proposal.runId, ...(kind ? { kind } : {}), ...proposal.fact };
+      refuseInjected(proposal.text, proposal.fact?.entity, proposal.fact?.attribute);
       if (!outside) return this.memories.save(owner, randomUUID(), data);
       // As memory.put: a save reported as failed is never read back, even if the service applies it late.
       const id = randomUUID();
@@ -227,6 +236,7 @@ export class MemoryReview {
       const apply = async () => {
         const current = proposal.memoryId ? await (outside ? outside.read(owner, proposal.memoryId) : this.memories.get(owner, proposal.memoryId)) : undefined;
         if (!current) throw new Error("The memory this suggestion changes no longer exists");
+        refuseInjected(proposal.text);
         if (modelWritten(proposal.source) && whose(current.data) !== "private") throw new Error(notTheOwners);
         // Only the words change: an accepted change keeps whose fact it is, as memory.update does.
         const data = reworded(current.data, { text: proposal.text, source: proposal.source, sourceRunId: proposal.runId });
@@ -276,6 +286,7 @@ export class MemoryReview {
       if (others.some((record) => whose(record!.data) !== whose(current.data)))
         throw new Error("These facts belong to different people, so they are not merged. Each stays as it is.");
       if (modelWritten(proposal.source) && whose(current.data) !== "private") throw new Error(notTheOwners);
+      refuseInjected(proposal.text);
       this.memories.save(owner, current.id, { ...current.data, text: proposal.text, source: proposal.source || String(current.data.source) });
     }
     const setAside: string[] = [];
@@ -330,25 +341,60 @@ export class MemoryReview {
       return { id, memories: records.length, skills: restoredSkills };
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
-  /** The memory snapshot a conversation started with; the same one is returned for the rest of that conversation. */
+  /**
+   * The memory snapshot a conversation started with; the same one is returned for the rest of that conversation. It
+   * keeps the id of every fact in it, so a fact deleted, forgotten or set aside since leaves it at once rather than
+   * when the next conversation starts. A snapshot saved before ids were kept cannot be checked that way and is taken
+   * again. A line that reads like orders to the assistant is shown as a placeholder, however it was saved.
+   */
   sessionSnapshot(owner: string, sessionId: string, agent?: string): { text: string; count: number; reused: boolean; takenAt: string } {
     // FQ-routing.isolated-agents: one per conversation and per whoever answers in it, so a conversation the owner
     // re-chose for another Trunk never hands it the facts the first one was shown (the owner's own key is unchanged).
     const key = `memory-snapshot:${sessionId}${agent ? `:${agent}` : ""}`;
-    const saved = this.db.prepare("SELECT data FROM settings WHERE owner=? AND id=?").get(owner, key);
-    if (saved) return { ...(JSON.parse(String(saved.data)) as { text: string; count: number; takenAt: string }), reused: true };
-    const lines: string[] = []; let chars = 0;
+    const row = this.db.prepare("SELECT data FROM settings WHERE owner=? AND id=?").get(owner, key);
+    const saved = row ? SavedSnapshotSchema.safeParse(JSON.parse(String(row.data))) : null;
+    if (saved?.success) return { ...snapshotText(this.stillOpenable(owner, saved.data.facts, agent)), takenAt: saved.data.takenAt, reused: true };
+    const snapshot = { facts: this.takeSnapshot(owner, sessionId, agent), takenAt: new Date().toISOString() };
+    this.db.prepare("INSERT INTO settings VALUES(?,?,?,?,?) ON CONFLICT(id,owner) DO UPDATE SET data=excluded.data").run(key, owner, JSON.stringify(snapshot), snapshot.takenAt, snapshot.takenAt);
+    return { ...snapshotText(snapshot.facts), takenAt: snapshot.takenAt, reused: false };
+  }
+  private takeSnapshot(owner: string, sessionId: string, agent?: string): SnapshotFact[] {
     const binned = binnedRuns(this.db); // a fact a conversation in Recently Deleted taught is not handed to a new one
-    const ordered = (this.orderFacts?.(owner, agent, sessionId) ?? this.memories.list(owner).filter((r) => visibleTo(r, agent)))
-      .filter((r) => !learnedInBin(binned, r.data) && isCurrentFact(r)); // SELF-202: a fact a newer one ended is not current
+    const ordered = (this.orderFacts?.(owner, agent, sessionId) ?? this.memories.list(owner)).filter((r) => openable(r, agent, binned));
     const limits = this.snapshotLimits?.(owner) ?? memorySnapshotLimits; // R17-S13
+    const facts: SnapshotFact[] = []; let chars = 0;
     for (const record of ordered.slice(0, limits.facts)) {
       const line = `- ${String(record.data.text).replace(/\s+/g, " ").trim()}`;
       if (chars + line.length > limits.chars) break;
-      lines.push(line); chars += line.length + 1;
+      facts.push({ id: record.id, line }); chars += line.length + 1;
     }
-    const snapshot = { text: lines.join("\n"), count: lines.length, takenAt: new Date().toISOString() };
-    this.db.prepare("INSERT INTO settings VALUES(?,?,?,?,?) ON CONFLICT(id,owner) DO UPDATE SET data=excluded.data").run(key, owner, JSON.stringify(snapshot), snapshot.takenAt, snapshot.takenAt);
-    return { ...snapshot, reused: false };
+    return facts;
   }
+  /** The facts of a saved snapshot that are still saved, still current and still this reader's to be shown. */
+  private stillOpenable(owner: string, facts: SnapshotFact[], agent?: string): SnapshotFact[] {
+    const binned = binnedRuns(this.db);
+    return facts.filter((fact) => {
+      const record = this.memories.get(owner, fact.id);
+      return !!record && openable(record, agent, binned);
+    });
+  }
+}
+type SnapshotFact = { id: string; line: string };
+const SavedSnapshotSchema = z.object({ facts: z.array(z.object({ id: z.string(), line: z.string() })), takenAt: z.string() });
+/**
+ * Whether a fact may open a conversation: this reader's to be shown unasked (only the owner's own and shared facts
+ * for the owner, never a Trunk's own), still true, and not taught by a conversation in Recently Deleted.
+ */
+function openable(record: MemoryRecord, agent: string | undefined, binned: ReturnType<typeof binnedRuns>): boolean {
+  return inOpeningContext(record, agent) && !learnedInBin(binned, record.data) && isCurrentFact(record); // SELF-202
+}
+/** A snapshot as the model reads it; a line that fails the strict checks becomes a placeholder naming only why. */
+function snapshotText(facts: SnapshotFact[]): { text: string; count: number } {
+  const lines = facts.map((fact) => { const blocked = blockedMemoryText(fact.line); return blocked ? `- ${blocked}` : fact.line; });
+  return { text: lines.join("\n"), count: lines.length };
+}
+/** A suggestion is refused on acceptance, as memory.put refuses the same words. */
+function refuseInjected(...texts: (string | undefined)[]): void {
+  const refused = memoryWriteRefusal(...texts);
+  if (refused) throw new Error(refused);
 }

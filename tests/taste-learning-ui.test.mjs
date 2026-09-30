@@ -1,0 +1,45 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { newWindow } from "./new-window-places.mjs";
+
+test("reply feedback UI learns from the real message and offers inspect, correct and forget", async t => {
+  const provider = { name: "scripted", async complete(request) {
+    const analysis = request.messages.some(message => message.content.includes("Extract lasting taste preferences"));
+    return { content: analysis ? JSON.stringify({ disposition: "durable", preferences: [{ domain: "writing", text: "Use plain language.", evidence: "I prefer plain language" }] }) : "A finished note for your review.", toolCalls: [] };
+  } };
+  const { app, page, call, errors } = await newWindow(t, { provider });
+  await page.locator("#prompt").fill("Write a note.");
+  await page.locator("#send").click();
+  await page.getByText("A finished note for your review.", { exact: true }).first().waitFor();
+  const button = page.locator('[data-act="taste-open"]').last();
+  await button.waitFor();
+  const sessionId = await button.getAttribute("data-sid");
+  const run = app.store.runs(app.runtime.owner).find(item => item.sessionId === sessionId && item.prompt === "Write a note.");
+  assert.ok(run);
+  const messageId = Number(await button.getAttribute("data-mid"));
+  assert.ok(app.store.sessionView(app.runtime.owner, run.sessionId).messages.some(message => message.role === "assistant" && message.messageId === messageId));
+  await page.locator(`#conversation [data-i15="${messageId}"]`).hover();
+  await button.click();
+  await page.getByLabel("Your response", { exact: true }).selectOption("edit");
+  await page.getByLabel("What should Branch remember for future tasks?", { exact: true }).fill("I prefer plain language");
+  await page.getByLabel("Your replacement text (required for an edit)", { exact: true }).fill("Here is a simple note.");
+  const saving = page.waitForResponse(response => response.url().endsWith("/api/taste/feedback"));
+  await page.locator('[data-act="taste-save"]').click();
+  const saved = await saving;
+  assert.equal(saved.status(), 200, await saved.text());
+  await page.locator(".dlg").waitFor({ state: "hidden" });
+  const { preferences } = await call(`/api/taste/preferences?sessionId=${run.sessionId}`);
+  assert.equal(preferences.length, 1); assert.equal(preferences[0].messageId, messageId);
+  await page.locator(`#conversation [data-i15="${messageId}"]`).hover();
+  await button.click(); await page.locator('[data-act="taste-list"]').click();
+  await page.getByText("Use plain language.", { exact: true }).waitFor();
+  await page.locator('[data-act="taste-correct"]').click();
+  await page.getByLabel("Preference", { exact: true }).fill("Use examples when explaining technical concepts.");
+  await page.locator('[data-act="taste-correction-save"]').click();
+  await page.getByText("Use examples when explaining technical concepts.", { exact: true }).first().waitFor();
+  assert.equal((await call(`/api/taste/preferences?sessionId=${run.sessionId}`)).preferences[0].revision, 2);
+  await page.locator('[data-act="taste-forget"]').click();
+  await page.getByText("No preferences learned for this project and assistant yet.", { exact: true }).waitFor();
+  assert.deepEqual((await call(`/api/taste/preferences?sessionId=${run.sessionId}`)).preferences, []);
+  assert.deepEqual(errors, []);
+});

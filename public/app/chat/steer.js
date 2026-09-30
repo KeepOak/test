@@ -4,7 +4,7 @@
    round. The thread's "You steered …" line is drawn from the task's own record (its run.steered steps, GET
    /api/runs/<id>/steps), never from what was typed here. The prototype's example suggestions are not drawn. */
 
-import { $, esc, renderNow } from "../core/dom.js";
+import { $, esc, renderNow, composing } from "../core/dom.js";
 import { ic, toast, openPop, closePop } from "../core/ui.js";
 import { S, E, ownTrunkOf } from "../core/state.js";
 import { api } from "../core/api.js";
@@ -82,5 +82,5 @@ export function initSteer() {
   markLive(["steerb17", "steergob17", "sw:steer-in-b17"]);
   on("steerb17", (el) => openPop(el, pop()));
   on("steergob17", () => steer());
-  document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target?.id === "steer-in-b17") { e.preventDefault(); steer(); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target?.id === "steer-in-b17" && !composing(e)) { e.preventDefault(); steer(); } });
 }

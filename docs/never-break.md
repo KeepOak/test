@@ -34,8 +34,9 @@ free). A worker whose gateway disappears notices its IPC channel closing and clo
 killed gateway never leaves an orphan holding the lock.
 
 Chat connections and the scheduler clock run in the worker, next to the store they write to. What
-makes them survive a restart is that their position is written down: the Telegram offset is saved
-after each message is handled, and a schedule is claimed in the database before it runs.
+makes them survive a restart is that their position is written down: each Telegram update is saved
+to an inbox in the database before Telegram is told it arrived, and marked done once it is handled, so
+a restart hands over only the unfinished ones; a schedule is claimed in the database before it runs.
 
 ### Desktop gateway draft
 
@@ -142,8 +143,10 @@ outright when there is no such copy.
 On the update side: a power cut in the moment between the two renames of the swap leaves the
 program at `<name>.previous`. The gateway's start-up repair puts it back when Branch runs as a
 background service; the app window on its own has nothing to run the repair, so the owner has to
-rename it back. On Windows the swap is a copy (`robocopy /MIR`), not a rename, so a power cut in the
-middle leaves a mixed folder that only the previous-version copy can repair. The canary check pauses
+rename it back. On Windows an installed copy has a folder per version and switches by one rename of
+`current.json` (see docs/configuration.md), so there is no moment without a whole program; only a
+portable copy still swaps by copying (`robocopy /MIR`), where a power cut in the middle leaves a
+mixed folder that only the previous-version copy can repair. The canary check pauses
 the copy's timed jobs and silences webhooks, but a tool a resumed self-test task runs could still
 reach the network; the check only resumes its own made-up task, which only lists files.
 

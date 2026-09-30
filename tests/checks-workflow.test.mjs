@@ -25,15 +25,15 @@ test("the whole suite runs on every pull request and once per batch of merges in
    suite ran, since promote follows it. Mutations: drop `test "$PLAN" = success` (a crashed plan skips every share and
    would pass), let a push run a plan (promote could follow a partial run) → this test goes red. */
 test("the suite ends in one required job, and nothing in it can hold a run past fifteen minutes", () => {
-  assert.deepEqual(workflow.jobs.verify.needs, ["plan", "test", "local-voice"]);
+  assert.deepEqual(workflow.jobs.verify.needs, ["plan", "reuse", "test", "local-voice"]);
   // RES-709: the real, offline speech proof is part of what green means, inside the same ceiling.
   assert.ok(workflow.jobs["local-voice"]["timeout-minutes"] <= 15);
   assert.match(JSON.stringify(workflow.jobs["local-voice"].steps), /BRANCH_REQUIRE_WHISPER/);
   assert.match(workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n"), /test "\$VOICE" = success/);
   // Off a pull request (merge queue, pushes, nightly) voice is always required; on one, only when the plan asked.
-  assert.deepEqual(workflow.jobs["local-voice"].needs, ["plan"]);
+  assert.deepEqual(workflow.jobs["local-voice"].needs, ["plan", "reuse"]);
   assert.equal(workflow.jobs["local-voice"].if,
-    "${{ !cancelled() && (needs.plan.result == 'skipped' || (needs.plan.result == 'success' && needs.plan.outputs.voice == 'true')) }}");
+    "${{ !cancelled() && needs.reuse.outputs.run == '' && (needs.plan.result == 'skipped' || (needs.plan.result == 'success' && needs.plan.outputs.voice == 'true')) }}");
   assert.equal(workflow.jobs.plan.outputs.voice, "${{ steps.plan.outputs.voice }}");
   assert.match(workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n"),
     /if \[ "\$VOICE_PLANNED" = true \]; then\n\s*test "\$VOICE" = success[^\n]*\n\s*else\n\s*test "\$VOICE" = skipped/);
@@ -100,7 +100,8 @@ test("a green push to redesign/window fast-forwards mac/cross-platform, and noth
   const queue = { contents: "read", actions: "write", "pull-requests": "write" };
   for (const [name, job] of Object.entries(workflow.jobs)) {
     if (name === "promote") continue;
-    const expected = ["plan", "verify"].includes(name) ? queue : name === "stale-group" ? { contents: "read", actions: "write" } : undefined;
+    const expected = ["plan", "verify"].includes(name) ? queue : name === "stale-group" ? { contents: "read", actions: "write" }
+      : name === "reuse" ? { contents: "read", actions: "read" } : undefined;
     assert.deepEqual(job.permissions, expected, name);
   }
   assert.deepEqual(workflow.permissions, { contents: "read" });
@@ -163,4 +164,24 @@ test("a merge-queue run whose group was dropped cancels itself, and only on a 40
   assert.match(script, /git\/ref\/\$\{GITHUB_REF#refs\/\}/);
   assert.match(script, /elif printf '%s' "\$out" \| grep -q "HTTP 404"; then\n\s*echo[^\n]*\n\s*gh run cancel "\$RUN"/);
   assert.equal(job.steps[0].env.RUN, "${{ github.run_id }}", "its own run, never another");
+});
+
+/* A landing ran the whole suite twice: in the merge queue, then again on the push of the same commit. The push reuses
+   the queue's green result for the same tree, and only on a push to redesign/window; anything else runs the suite.
+   Mutations: skip the shares without a reused run, reuse on a pull request or merge-queue run, or let verify-suite
+   pass a reused push whose shares ran or failed → red. */
+test("a push to redesign/window reuses the merge queue's whole-suite result for the same tree, and nothing else does", () => {
+  const reuse = workflow.jobs.reuse;
+  assert.equal(reuse.if, "github.event_name == 'push' && github.ref == 'refs/heads/redesign/window'");
+  assert.match(reuse.steps.at(-1).run, /ci-reuse\.mjs --sha="\$SHA"/);
+  assert.equal(reuse.steps.at(-1).env.SHA, "${{ github.sha }}");
+  assert.equal(reuse.outputs.run, "${{ steps.find.outputs.run }}");
+  assert.deepEqual(workflow.jobs.test.needs, ["plan", "reuse"]);
+  assert.match(workflow.jobs.test.if, /^\$\{\{ !cancelled\(\) && needs\.reuse\.outputs\.run == '' && /);
+  const verify = workflow.jobs.verify.steps.map((step) => step.run ?? "").join("\n");
+  assert.equal(workflow.jobs.verify.steps[0].env.REUSED, "${{ needs.reuse.outputs.run }}");
+  assert.match(verify, /if \[ -n "\$REUSED" \]; then\n\s*test "\$EVENT" = push\n\s*MODE=reused\n\s*VOICE_PLANNED=false/);
+  assert.match(verify, /if \[ "\$MODE" = reused \]; then\n\s*test "\$TEST" = skipped/);
+  // promote still follows verify-suite's own success on that push run, so the updater's newest green push is unchanged.
+  assert.deepEqual(workflow.jobs.promote.needs, ["verify"]);
 });

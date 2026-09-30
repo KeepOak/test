@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { memoryWriteRefusal } from "../content-guard.js";
 import type { Store } from "../store.js";
 import type { TrunkRecords } from "./record.js";
 
@@ -90,6 +91,9 @@ export class TrunkFiles {
   /** Writes one memory file, or MEMORY.md itself; nothing else of the Trunk's (its SOUL.md, AGENTS.md, ...) is reachable here. */
   writeMemory(id: string, actor: string, input: { name: string; description?: string | undefined; type?: MemoryFile["type"] | undefined; body: string }): void {
     this.records.get(id);
+    // MEMORY.md and every file's description are read by the Trunk every turn, so they meet the same checks as a fact.
+    const refused = memoryWriteRefusal(input.description, input.body);
+    if (refused) throw new Error(refused);
     this.store.atomically(() => {
       if (input.name === "MEMORY.md") {
         this.write(id, { files: { ...this.saved(id), "MEMORY.md": z.string().max(8000).parse(input.body) } });
