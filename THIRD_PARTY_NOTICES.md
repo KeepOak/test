@@ -1,5 +1,9 @@
 # Third-party notices
 
+### Hermes chat branch argument parsing
+
+`src/channels/branch-command.ts` adapts the leading `--here` argument handling from `gateway/slash_commands_branch_thread.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, MIT. Branch uses its existing SessionBranches file/transcript copy, path records and per-conversation choices; it branches in place and does not open a native chat-app thread. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.

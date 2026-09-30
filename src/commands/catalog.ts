@@ -80,6 +80,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
   entry("export", ["save"], "[file]", "save this conversation as a Markdown file", [...W, "terminal"], "look", was("terminal")),
   entry("new", ["clear", "reset"], "", "start a fresh conversation", ["window", "phone", "terminal", "chat"], "look", { ...was("terminal", "chat"), newAliases: added(["clear"], "chat") }),
+  entry("branch", ["fork"], "[--here] [name]", "copy this chat's conversation and follow the copy here; the original is kept", ["chat"], "run"),
   entry("sessions", ["resume"], "[id]", "earlier conversations; with a number, carry one on", [...W, "terminal"], "look", was("terminal")),
   entry("go", ["open"], "<place>", "open a place or a Settings page by name: /go inbox finished", [...W, "terminal", "dashboard"], "look", was("terminal")),
   entry("inbox", [], "[tab]", "what needs you, what finished, and the history", [...W, "terminal", "dashboard"], "look", was("terminal")),

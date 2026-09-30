@@ -1160,6 +1160,14 @@ export class ChannelRouter {
     const work = () => runChatCommand(command, {
       runtime: this.runtime, channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
+      ownerDm: ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message),
+      branchRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "branch", command.argument),
+      bindBranch: (parent, sessionId) => {
+        if (this.sessionFor(channel, chatId) !== parent || this.turns.has(chatKey(message))) return false;
+        this.link(this.runtime.owner, { channel, chatId, sessionId });
+        this.shownInChat.delete(`${channel}\u0000${chatId}`);
+        return true;
+      },
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
