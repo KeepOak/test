@@ -11,6 +11,7 @@ import { readRunning, sessionTokenFileName } from "./install/running.js";
 import { loadGatewayConfig } from "./never-break/gateway-config.js";
 import { listUpdateBackups, readFirstStart, readUpdateBackup, writeUpdateBackup } from "./install/update-backup.js";
 import { takeDataCopy } from "./install/data-copy.js";
+import { checkpointBeforeUpdate, githubCheckpointApi } from "./github-update-checkpoint-api.js";
 import { uninstallCommands, type UninstallCommandDeps } from "./install/uninstall-commands.js";
 import { doctorFix } from "./doctor-fix.js";
 import type { RemoteAccess } from "./remote/remote-access.js";
@@ -258,6 +259,7 @@ export async function deploymentApi(
   remoteHandler: Parameters<RemoteAccess["enable"]>[0],
   deps: DeploymentDeps = {},
 ): Promise<unknown | undefined> {
+  if (path.startsWith("/api/deployment/github-checkpoint")) return githubCheckpointApi(app, request, path, context.dataDir, readBody);
   const platform = deps.platform ?? process.platform;
   if (request.method === "GET" && path === "/api/deployment") return overview(app, context, platform, deps);
   if (request.method === "GET" && path === "/api/deployment/suggestion") return suggestion(app, context, platform);
@@ -293,7 +295,8 @@ export async function deploymentApi(
     const written = await writeUpdateBackup(context.dataDir, app.store.backup(app.version), app.version);
     const folder = await takeDataCopy({ dataDir: context.dataDir, version: app.version,
       open: { "branch.sqlite": app.store.sqlite, "journal.sqlite": app.neverBreak.journal.database } });
-    return { ...written, dataCopy: folder.name };
+    const githubCheckpoint = await checkpointBeforeUpdate(app, request, context.dataDir, folder);
+    return { ...written, dataCopy: folder.name, githubCheckpoint };
   }
   if (request.method === "GET" && path === "/api/deployment/restore-points")
     return { points: await listUpdateBackups(context.dataDir), firstStart: await readFirstStart(context.dataDir) };

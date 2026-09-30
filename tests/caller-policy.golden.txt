@@ -429,6 +429,18 @@ owner GET /api/deployment/autostart | here=ok remote=ok phone=ok legacy=ok perso
 owner POST /api/deployment/autostart | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/deployment/backup | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/deployment/backup | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/deployment/github-checkpoint | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/deployment/github-checkpoint | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/deployment/github-checkpoint/preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/deployment/github-checkpoint/preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/deployment/github-checkpoint/enroll | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/deployment/github-checkpoint/enroll | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/deployment/github-checkpoint/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/deployment/github-checkpoint/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/deployment/github-checkpoint/recover | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/deployment/github-checkpoint/recover | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/deployment/github-checkpoint/recover-preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/deployment/github-checkpoint/recover-preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/deployment/close | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/deployment/close | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/a5f0b7 run=401/a5f0b7 nobody=401/40daee
 owner GET /api/deployment/quit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2693,6 +2705,18 @@ owner+lockdown GET /api/deployment/autostart | here=ok remote=ok phone=ok legacy
 owner+lockdown POST /api/deployment/autostart | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/deployment/backup | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/deployment/backup | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/deployment/github-checkpoint | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/deployment/github-checkpoint | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/deployment/github-checkpoint/preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/deployment/github-checkpoint/preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/deployment/github-checkpoint/enroll | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/deployment/github-checkpoint/enroll | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/deployment/github-checkpoint/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/deployment/github-checkpoint/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/deployment/github-checkpoint/recover | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/deployment/github-checkpoint/recover | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/deployment/github-checkpoint/recover-preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/deployment/github-checkpoint/recover-preview | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/deployment/close | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/deployment/close | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/a5f0b7 run=401/a5f0b7 nobody=401/40daee
 owner+lockdown GET /api/deployment/quit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4957,6 +4981,18 @@ household GET /api/deployment/autostart | here=400/f6e21c remote=400/f6e21c read
 household POST /api/deployment/autostart | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/deployment/backup | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/deployment/backup | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/deployment/github-checkpoint | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/deployment/github-checkpoint | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/deployment/github-checkpoint/preview | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/deployment/github-checkpoint/preview | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/deployment/github-checkpoint/enroll | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/deployment/github-checkpoint/enroll | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/deployment/github-checkpoint/disable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/deployment/github-checkpoint/disable | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/deployment/github-checkpoint/recover | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/deployment/github-checkpoint/recover | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/deployment/github-checkpoint/recover-preview | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/deployment/github-checkpoint/recover-preview | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/deployment/close | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/deployment/close | here=400/f6e21c remote=400/f6e21c read=401/a5f0b7 run=401/a5f0b7
 household GET /api/deployment/quit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7221,6 +7257,18 @@ household+lockdown GET /api/deployment/autostart | here=400/f6e21c remote=400/f6
 household+lockdown POST /api/deployment/autostart | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/deployment/backup | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/deployment/backup | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/deployment/github-checkpoint | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/deployment/github-checkpoint | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/deployment/github-checkpoint/preview | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/deployment/github-checkpoint/preview | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/deployment/github-checkpoint/enroll | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/deployment/github-checkpoint/enroll | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/deployment/github-checkpoint/disable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/deployment/github-checkpoint/disable | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/deployment/github-checkpoint/recover | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/deployment/github-checkpoint/recover | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/deployment/github-checkpoint/recover-preview | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/deployment/github-checkpoint/recover-preview | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/deployment/close | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/deployment/close | here=400/f6e21c remote=400/f6e21c read=401/a5f0b7 run=401/a5f0b7
 household+lockdown GET /api/deployment/quit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9485,6 +9533,18 @@ applock GET /api/deployment/autostart | here=423/a8f863
 applock POST /api/deployment/autostart | here=423/a8f863
 applock GET /api/deployment/backup | here=423/a8f863
 applock POST /api/deployment/backup | here=423/a8f863
+applock GET /api/deployment/github-checkpoint | here=423/a8f863
+applock POST /api/deployment/github-checkpoint | here=423/a8f863
+applock GET /api/deployment/github-checkpoint/preview | here=423/a8f863
+applock POST /api/deployment/github-checkpoint/preview | here=423/a8f863
+applock GET /api/deployment/github-checkpoint/enroll | here=423/a8f863
+applock POST /api/deployment/github-checkpoint/enroll | here=423/a8f863
+applock GET /api/deployment/github-checkpoint/disable | here=423/a8f863
+applock POST /api/deployment/github-checkpoint/disable | here=423/a8f863
+applock GET /api/deployment/github-checkpoint/recover | here=423/a8f863
+applock POST /api/deployment/github-checkpoint/recover | here=423/a8f863
+applock GET /api/deployment/github-checkpoint/recover-preview | here=423/a8f863
+applock POST /api/deployment/github-checkpoint/recover-preview | here=423/a8f863
 applock GET /api/deployment/close | here=423/a8f863
 applock POST /api/deployment/close | here=ok
 applock GET /api/deployment/quit | here=423/a8f863
