@@ -25,7 +25,8 @@ public class BranchTrunkWidget extends AppWidgetProvider {
     }
     static JSONObject projection(Context c) throws Exception {
         KeyguardManager guard = (KeyguardManager)c.getSystemService(Context.KEYGUARD_SERVICE);
-        if (guard == null || guard.isDeviceLocked()) throw new SecurityException("Unlock this phone.");
+        android.os.PowerManager power=(android.os.PowerManager)c.getSystemService(Context.POWER_SERVICE);
+        if (guard == null || guard.isDeviceLocked() || power==null || !power.isInteractive()) throw new SecurityException("Unlock this phone.");
         JSONObject session = new BranchVault(c).load();
         if (session == null || !session.has("deviceId") || !session.has("deviceKey")) throw new SecurityException("Pair this phone again.");
         BranchClient.Answer answer = BranchClient.send(session, "GET", "/api/phone/widgets", null, null, null, null);
@@ -78,7 +79,8 @@ public class BranchTrunkWidget extends AppWidgetProvider {
     }
     static void render(Context c, int id, JSONObject config, JSONObject data) throws Exception {
         JSONObject current=new BranchVault(c).load(); KeyguardManager guard=(KeyguardManager)c.getSystemService(Context.KEYGUARD_SERVICE);
-        if(current==null || guard==null || guard.isDeviceLocked() || !identity(current).equals(config.getString("identity"))) {
+        android.os.PowerManager power=(android.os.PowerManager)c.getSystemService(Context.POWER_SERVICE);
+        if(current==null || guard==null || guard.isDeviceLocked() || power==null || !power.isInteractive() || !identity(current).equals(config.getString("identity"))) {
             empty(c,id,"Phone locked or pairing changed. Refresh after unlocking."); return;
         }
         RemoteViews views = new RemoteViews(c.getPackageName(), R.layout.branch_trunk_widget);
