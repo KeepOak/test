@@ -24,7 +24,7 @@ async function tick() {
   if (!sid || document.hidden) return;
   L.busy = true;
   try {
-    const view = await api(`panels/live?session=${encodeURIComponent(sid)}`);
+    const view = await api(`panels/live?session=${encodeURIComponent(sid)}${L.fast ? "&observe=steps" : ""}`);
     if (L.want !== sid) return;
     const before = L.view;
     L.sid = sid;
