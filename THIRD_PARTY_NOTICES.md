@@ -3925,6 +3925,9 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 
+### Gemini CLI helper evaluation case categories, Apache-2.0
+
+The explicit-delegation and trivial-task restraint cases in `data/evaluation/helpers.json` adapt the case categories in Google Gemini CLI's `evals/subagents.eval.ts` at commit `38700b4b38bf387dafded6c97c3f190d084b49e9` (https://github.com/google-gemini/gemini-cli/blob/38700b4b38bf387dafded6c97c3f190d084b49e9/evals/subagents.eval.ts). Copyright 2026 Google LLC. Licensed under Apache-2.0, whose full text appears above. Gemini's Vitest TestRig/unified-agent implementation is incompatible with Branch's declarative evaluation suite and background helper API. The prompts, child provenance projection and scorer are original Branch code; no TestRig code is copied.
 
 ## Hermes weekly recap aggregation
 
