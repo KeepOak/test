@@ -1,3 +1,4 @@
+import { privateDesktopApi } from "./integrations/private-desktop-api.js";
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import {
   createServer,
@@ -1594,6 +1595,14 @@ async function api(
   // Batch 26 (wave 8): what Windows itself allows, with the page that turns each one on.
   if (request.method === "GET" && path === "/api/os-permissions")
     return { permissions: await app.osPermissions.all(), ...permissionsContext() };
+  // Private desktop lifecycle and viewer credentials are exclusive to the unlocked owner window.
+  if (path === "/api/private-desktops") {
+    if (startedWithShortLivedKey() || currentPerson() || app.sessionLock.shut()) throw new HttpError(403, "Private computers belong to the owner in the unlocked app window.");
+    app.store.profiles.requireOwner("Private computers");
+    if (request.method === "POST" && lockdownActive(app.store, app.runtime.owner)) throw new HttpError(403, "Turn Lockdown off before changing private computers.");
+    try { return await privateDesktopApi(app.privateDesktops, app.runtime.owner, request.method ?? "GET", request.method === "POST" ? await readBody(request, 4096) : undefined); }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Batch 26 (wave 8): reading passwords out of the password manager the owner already has.
   // Q255: the owner's alone, read and write; a household person is refused here, a short-lived key at the door.
   if (path === "/api/credentials/settings" && (request.method === "GET" || request.method === "POST"))

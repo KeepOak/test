@@ -1,3 +1,5 @@
+import { PrivateDesktops } from "./integrations/private-desktops.js";
+import { registerPrivateDesktops } from "./integrations/private-desktop-tools.js";
 import { environmentTool } from "./environment.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
 import { currentAccountCall } from "./accounts/context.js";
@@ -598,6 +600,8 @@ export async function createBranch(options: {
     banner: new TakeOverBanner(undefined, options.bannerWindow ? { window: options.bannerWindow } : {}),
   });
   registerLinuxDesktop(registry, linuxDesktop);
+  const privateDesktops = new PrivateDesktops(store, agent => Boolean(trunks.records.find(agent)));
+  registerPrivateDesktops(registry, privateDesktops);
   // Wave 7: one short way of saying "look at this, press that" for both a web page and a window.
   // The page half is filled in later, if and when a browser is configured for this launch.
   const computer: ComputerLayers = { window: desktop };
@@ -1847,7 +1851,7 @@ ${result.output || "(it said nothing)"}`;
     /** The screen and keyboard of this computer, and the switch that has to be on to use them. */
     desktop,
     /** FQ-execution.desktop: the shared Linux desktop the owner may watch or take over. */
-    linuxDesktop,
+    linuxDesktop, privateDesktops,
     /** What Windows itself allows: the microphone, the camera and taking hold of windows. */
     osPermissions,
     /** Folders on the owner's other computers, reached with the OpenSSH client Windows already has. */
@@ -2056,6 +2060,7 @@ ${result.output || "(it said nothing)"}`;
       await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
+      await privateDesktops.close().catch(() => undefined);
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
       await ownMcp.closeAll(); // eng-connectors: no question watcher or server of the owner's outlives the app
       await mcpConnections.closeAll();
