@@ -517,6 +517,7 @@ export const ROUTES = {
   "/api/personal/google/events": "other POST",
   "/api/personal/home": "secret-read",
   "/api/personal/home/states": "other POST",
+  "/api/personal/home/test": "owner POST", // RES-408: one read of Home Assistant's GET /api/
   "/api/personal/mail": "secret-read",
   "/api/personal/mail/search": "other POST",
   "/api/personal/microsoft/events": "other POST",
