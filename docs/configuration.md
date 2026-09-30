@@ -999,6 +999,8 @@ to be able to change your local copy but never publish it, and now it cannot do 
 below allows it — unlike commands and your devices, which a line can never allow. This is a change: before, a chat's task was given everything except
 a named few, so anything nobody had thought of was handed over. It is now the other way round.
 
+**Who may message Branch.** The owner's `GET /api/channels/allowlist` and `POST /api/channels/allowlist` read and change the shared sender list. `unknown: "pair"` offers unapproved senders a code; `"block"` refuses them with a private-assistant reply; `"ignore"` refuses them and leaves unauthorized direct chats unanswered, without creating a pairing request. Groups keep the existing refusal reply. Existing approved pairings and allow rules still work, and explicit block rules win. For example, `{"unknown":"ignore"}` changes only that choice; rules not supplied stay as they are. The default remains `"pair"`. Changing the list requires the owner's full app access; no chat command changes it.
+
 **Your own chats have your full access.** One chat counts as you: an account you named as your own
 (Customize → Chat apps → Commands from your own chat, or `/platform`), writing to Branch one to one, on an
 app whose servers vouch for who sent it (Telegram, Discord, Slack, Matrix; never email, SMS or a webhook).
@@ -4234,6 +4236,8 @@ Local HTTP authorization is single-owner access, not a multi-user tenancy system
 record (`PreferencesSchema` in `src/preferences.ts`) holds `appearance` (`forest` or `daylight`),
 `followSystem`, `accent` (`copper`, `leaf`, `earth`, `slate`, `ink`), `textSize`
 (`small`/`medium`/`large`), `density` (`comfortable`/`compact`), `font` (`geist`/`system`),
+`readingFont` (a reading face for replies, used only when it is installed on this computer: `Atkinson Hyperlegible`,
+`OpenDyslexic`, `Lexend`, `Arial`, `Georgia`, `Verdana` or `Segoe UI`; `null`, the default, keeps the theme's font),
 `reduceMotion`, `showAcorn` (the pixel acorn in the rail's bottom corner, off by default), `showEverything`
 and `showVoice`. Every field has a default, so a record saved by an older version still loads.
 Settings → Appearance changes all of them; each choice shows at once and Save keeps it.
