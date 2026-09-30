@@ -11,7 +11,7 @@ import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
-import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
+import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslOnlyName, wslProbe, wslReadiness } from './wsl-held.js';
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -67,6 +67,17 @@ export class BranchShell {
     operation.cleared = done.finally(() => this.pending.delete(operation)).catch(() => undefined);
     return done;
   }
+  /**
+   * The program an alias names: the launch file's first, then the owner's own. SELF-015: on Windows a command held to
+   * one folder runs inside WSL and never starts a Windows program, so a program WSL runs (curl, wget, pip, uv, python3)
+   * needs no Windows alias of its own; it is named as it is, and wsl-held.ts decides whether it runs (apt never does).
+   */
+  private executableFor(name: string, context: Pick<ToolContext, 'writesConfinedTo'>): { path: string; args: string[] } | undefined {
+    const own = this.extra();
+    if (Object.hasOwn(this.config.executables, name)) return this.config.executables[name];
+    if (Object.hasOwn(own, name)) return own[name];
+    return context.writesConfinedTo && process.platform === 'win32' && wslOnlyName(name) ? { path: name, args: [] } : undefined;
+  }
   /** Resolves once no host command is running, so a caller can take its turn instead of guessing. */
   async whenIdle(signal?: AbortSignal): Promise<void> {
     const stopped = signal ? new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })) : null;
@@ -77,9 +88,7 @@ export class BranchShell {
     signal?.throwIfAborted();
   }
   private async perform(input: ShellInput, context: ToolContext, stopping: AbortSignal) {
-    const own = this.extra();
-    const executable = Object.hasOwn(this.config.executables, input.executable) ? this.config.executables[input.executable]
-      : Object.hasOwn(own, input.executable) ? own[input.executable] : undefined;
+    const executable = this.executableFor(input.executable, context);
     if (!executable) throw new Error('Executable alias is not configured');
     const signal = AbortSignal.any([context.signal, stopping]);
     signal.throwIfAborted();
@@ -137,6 +146,11 @@ export class BranchShell {
       const result = await this.spawnIn(run, scratch);
       swept = before ? await sweepNewGitFolders(run.workspace, before) : [];
       return swept.length ? { ...result, stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}Branch removed the .git this command made (${swept.join(', ')}): Git is never run from a repository a held command planted.` } : result;
+    } catch (error) {
+      // A command refused before it started (WSL not ready, a program WSL does not run, apt) never reached its job, and
+      // the job's supervisor would outlive it; closing twice is harmless.
+      await run.job?.close().catch(() => undefined);
+      throw error;
     } finally {
       // However the command ended, what it planted does not outlive it.
       if (before && !swept.length) await sweepNewGitFolders(run.workspace, before).catch(() => undefined);
