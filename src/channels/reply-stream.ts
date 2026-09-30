@@ -69,6 +69,19 @@ export class ReplyStream {
       if (this.messageId) await this.stop(this.messageId);
     }).catch(() => undefined);
   }
+  /** Close admission and settle every earlier preview/stop before an error can become a fresh reply. */
+  async finishError(): Promise<boolean> {
+    this.cancel(false);
+    return this.enqueue(async () => {
+      // A queued write can acquire its id (or lose its acknowledgement) after cancellation.
+      // Stop only that exact acknowledged message, including when another failure already held it.
+      if (this.messageId) {
+        try { await this.stop(this.messageId); }
+        catch { return false; }
+      }
+      return !this.deliveryUncertain;
+    });
+  }
   async finish(text: string): Promise<PlacedReply | null> {
     this.cancel(false);
     return this.enqueue(async () => {

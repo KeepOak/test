@@ -1540,8 +1540,9 @@ export class ChannelRouter {
         return this.finishTurn(turn, run, "");
       });
     } catch (error) {
+      const replySettled = await turn.reply?.finishError() ?? true;
       await turn.live?.finish("error");
-      if (!(error instanceof ReplyDeliveryUncertain) && !turn.reply?.uncertain)
+      if (replySettled && !(error instanceof ReplyDeliveryUncertain) && !turn.reply?.uncertain)
         await this.deliver(message.channel, message.chatId, "Something went wrong on my side; the owner can see the details in Activity.",
           `carry-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
     } finally {
@@ -1668,12 +1669,13 @@ export class ChannelRouter {
       this.store.event(run.id, "channel.sent", { ms: Date.now() - receivedAt });
       return outcome;
     } catch (error) {
+      const replySettled = await turn.reply?.finishError() ?? true;
       await live?.finish("error");
       // Messages per conversation per hour: that refusal is said as it is, since no task started to show in Activity.
       const said = (error as { conversationRate?: boolean }).conversationRate ? (error as Error).message : "Something went wrong on my side; the owner can see the details in Activity.";
       // A preview may already exist despite a missing acknowledgement. Keep the exact-message
       // reconciliation hold: even the generic error would otherwise be a second outbound reply.
-      if (!(error instanceof ReplyDeliveryUncertain) && !turn.reply?.uncertain)
+      if (replySettled && !(error instanceof ReplyDeliveryUncertain) && !turn.reply?.uncertain)
         await this.deliver(message.channel, message.chatId, said, `reply-error:${message.channel}:${message.messageId}`, this.quoteIn(turn)).catch(() => undefined);
       void error;
       return "failed";
