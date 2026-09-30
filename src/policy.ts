@@ -260,6 +260,7 @@ const readOnlyPermissions = new Set([
   "projects.read", "intents.read", "sources.read", "blocks.read", "nodes.read",
   // mac7/nodes: which of the owner's devices are paired and connected only looks (src/devices/).
   "devices.read",
+  "phone.read",
   // R17-C: reading the owner's own mail, calendar, files, music and house only looks (src/personal/).
   "personal.read",
   // r17-h: the shared board's cards, the widgets' list and the install requests only look (src/flows-boards/).

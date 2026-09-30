@@ -14,6 +14,30 @@ import { planShare } from "/rules.js";
 import { switchesNow } from "/ph-switches.js";
 
 const C = { results: null, searched: "", pending: "", draft: "", attach: [], timer: 0 };
+let phoneFrame = null;
+let phoneViewEpoch = 0;
+function phoneView() {
+  if (!trunkOf(P.chat)) return "";
+  const view = phoneFrame?.session === P.chat && phoneFrame.expiresAt > Date.now() ? phoneFrame : null;
+  return `<section><p>Read-only view requires the owner’s local, expiring grant.</p><button type="button" data-act="ph-view" data-v="private-desktop">Refresh this Trunk’s private computer</button><button type="button" data-act="ph-view" data-v="browser">Refresh Trunk browser</button><button type="button" data-act="ph-view" data-v="computer">Refresh shared computer</button><button type="button" data-act="ph-view-close">Hide view</button>${view?.frame ? `<img src="${esc(view.frame)}" alt="Read-only ${esc(view.kind)} snapshot" style="max-width:100%"><p>Snapshot; refresh to see changes. No control permission.</p>` : ""}</section>`;
+}
+function privateImage(raw) {
+  if (raw?.format !== "rgbx" || !Number.isInteger(raw.width) || !Number.isInteger(raw.height)
+    || raw.width < 1 || raw.width > 1280 || raw.height < 1 || raw.height > 800 || typeof raw.pixels !== "string"
+    || raw.pixels.length > 5500000) throw new Error("Unsupported private computer frame.");
+  const bytes = atob(raw.pixels);
+  if (bytes.length !== raw.width * raw.height * 4) throw new Error("Incomplete private computer frame.");
+  const canvas = document.createElement("canvas"); canvas.width = raw.width; canvas.height = raw.height;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("Phone canvas unavailable.");
+  const image = context.createImageData(raw.width, raw.height);
+  for (let i = 0; i < bytes.length; i += 4) {
+    image.data[i] = bytes.charCodeAt(i); image.data[i + 1] = bytes.charCodeAt(i + 1);
+    image.data[i + 2] = bytes.charCodeAt(i + 2); image.data[i + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+  const frame = canvas.toDataURL("image/png"); canvas.width = canvas.height = 1; return frame;
+}
 const waitingIn = (id) => asks().some((q) => q.sessionId === id);
 const runningIn = (id) => runs().some((r) => r.sessionId === id && r.status === "running");
 
@@ -70,7 +94,7 @@ export function drawChat() {
   const pending = C.pending ? `<div class="pmsg pme">${esc(C.pending)}</div><div class="pmsg sys"><i class="p-work8"></i></div>` : "";
   const attached = C.attach.length ? `<div class="p-attach">${C.attach.map((a) => `<span>${esc(a.name)}</span>`).join("")}</div>` : "";
   const composer = `<form class="p-comp" data-form="ph"><button type="button" class="p-plus" data-act="ph-sheet" data-v="plus" aria-label="${w("asks.runtimes.add", "Add")}">+</button><button type="button" class="p-plug9" aria-label="${w("safety.stop.tools", "Tools")}" ${soon}>${ic("plug", "s")}</button><input id="ph-in" value="${esc(C.draft)}" placeholder="${w("phone8.chat.message", "Message {name}", { name })}" autocomplete="off"><button type="button" class="p-mic8" data-act="voice" aria-label="${w("phone8.home.talk", "Talk")}" ${talk}>${ic("mic", "s")}</button><button type="submit" class="p-send" aria-label="${w("composer.send", "Send")}">${ic("up", "s")}</button></form>`;
-  return head + `<div class="p-msgs" data-bottom>${messages}${pending}</div>${attached}${modelPill()}${composer}`;
+  return head + `<div class="p-msgs" data-bottom>${messages}${pending}${phoneView()}</div>${attached}${modelPill()}${composer}`;
 }
 /** How much the conversation may do, read to show which is chosen (GET /api/conversation-mode). */
 async function loadMode(id) {
@@ -147,6 +171,18 @@ export async function attachFiles(list) {
   draw();
 }
 export function initChats() {
+  on("ph-view-close", () => { phoneViewEpoch++; phoneFrame = null; draw(); });
+  on("ph-view", async el => {
+    const session = P.chat, epoch = ++phoneViewEpoch; phoneFrame = null; draw();
+    try {
+      const view = await get("/api/phone/trunk-view", `session=${encodeURIComponent(session)}&kind=${el.dataset.v}`);
+      if (P.chat !== session || document.hidden || epoch !== phoneViewEpoch) return;
+      if (view.raw) { view.frame = privateImage(view.raw); delete view.raw; }
+      phoneFrame = { ...view, session }; draw();
+      setTimeout(() => { if (epoch === phoneViewEpoch && phoneFrame?.session === session) { phoneFrame = null; draw(); } }, Math.min(10000, Math.max(0, view.expiresAt - Date.now())));
+    } catch (error) { toast(error.message); }
+  });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { phoneViewEpoch++; phoneFrame = null; draw(); } });
   on("ph-cf", (el) => { P.chatF = el.dataset.v; draw(); });
   on("new", () => { P.chat = null; C.attach = []; go("chat"); });
   on("ph-sheet", (el) => { P.sheet = el.dataset.v || null; draw(); });

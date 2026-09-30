@@ -15,6 +15,8 @@ export const deviceArgs = {
   screen: z.object({}).strict(),
   location: z.object({}).strict(),
   notify: z.object({ title: z.string().trim().min(1).max(120), body: z.string().trim().max(1000).default("") }).strict(),
+  "notification-read": z.object({ package: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/).max(160), content: z.boolean().default(false), limit: z.number().int().min(1).max(10).default(5) }).strict(),
+  "notification-action": z.object({ id: z.string().uuid(), action: z.enum(["open", "dismiss", "reply"]), text: z.string().max(500).optional() }).strict(),
   "clipboard-read": z.object({}).strict(),
   "clipboard-write": z.object({ text: z.string().max(20000) }).strict(),
   "open-url": z.object({ url: Url }).strict(),

@@ -241,6 +241,8 @@ export class Profiles {
     this.wrongPins.set(profileId, { count, until: this.now() + pinLockoutMs });
   }
   /** Who is using the app right now (inside a task's tool: who the task is for): a profile, or the owner. */
+  /** Physical window identity, including from an owner's paired device. */
+  localWindowProfileId(): string | null { return this.current; }
   active(): Profile | null {
     const id = this.judged();
     if (!id) return null;

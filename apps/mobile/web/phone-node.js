@@ -7,9 +7,8 @@
  *   camera   getUserMedia + a canvas frame          listen  getUserMedia + MediaRecorder
  *   location navigator.geolocation                  speak   speechSynthesis
  *   open-url window.open                            canvas  a sealed frame on the home screen
- * Not offered on phones until a plugin is added (see docs/configuration.md, "Devices"): notifications
- * (@capacitor/local-notifications), the clipboard in the background (@capacitor/clipboard), and
- * anything while the app is closed (no background socket without a native service).
+ * Native lending bridges additionally post notifications and open HTTPS pages. Clipboard and anything
+ * while the app is closed are not offered. A companion action also needs the computer's own expiring grant.
  *
  * Every browser and system call is passed in (`env`), so the same code is tested in Node with fakes.
  *
@@ -27,10 +26,11 @@ export const PHONE_OFFERS = ["camera", "location", "open-url", "speak", "listen"
 /**
  * PH-03: what the phone apps really do when lent. The app's own page takes the photo, records and speaks (the native
  * side only carries the socket): camera and microphone on both, speaking where the web view has speech (iOS; Android's
- * WebView has none). Neither app asks for the location, opens pages for Branch or shows its pages, so none is offered.
+ * WebView has none). Location is one foreground web-view fix; notifications and HTTPS opening use the native bridge.
+ * None of the four companion actions is usable without its separate local-owner grant and phone-side switches.
  * The native sides keep the same lists (BranchLend.java OFFERS, BranchLend.swift offers).
  */
-export const APP_OFFERS = { ios: ["camera", "listen", "speak"], android: ["camera", "listen"] };
+export const APP_OFFERS = { ios: ["camera", "listen", "speak", "location", "notify", "open-url"], android: ["camera", "listen", "location", "notify", "open-url", "notification-read", "notification-action"] };
 /** What this phone offers Branch: what it can do, less what the owner told it here never to do. */
 export const offersLess = (never, can = PHONE_OFFERS) => can.filter((capability) => !readNever(never).includes(capability));
 
@@ -138,17 +138,45 @@ async function capture(env, capability, args) {
   } finally { signal?.removeEventListener("abort", stop); stop(); }
 }
 
+/** One foreground location fix; the watch is removed on success, refusal, timeout or cancellation. */
+function phoneLocation(env) {
+  return new Promise((resolve, reject) => {
+    if (!env.geolocation?.watchPosition || env.signal?.aborted) { reject(new Error("Location unavailable or lending stopped.")); return; }
+    let watch;
+    const finish = (error, value) => {
+      clearTimeout(timer); env.signal?.removeEventListener("abort", stop);
+      if (watch !== undefined) env.geolocation.clearWatch(watch);
+      error ? reject(error) : resolve(value);
+    };
+    const stop = () => finish(new Error("Lending stopped."));
+    const timer = setTimeout(() => finish(new Error("Location unavailable within fifteen seconds.")), 15000);
+    env.signal?.addEventListener("abort", stop, { once: true });
+    try { watch = env.geolocation.watchPosition(value => finish(null, value), error => finish(error), { timeout: 15000, maximumAge: 0, enableHighAccuracy: false }); }
+    catch (error) { finish(error); }
+  });
+}
 /** Does one switched-on thing. Arguments are checked again here, whatever Branch sent. */
 export async function perform(env, capability, args = {}) {
+  if (capability === "notification-read" || capability === "notification-action") {
+    if (env.platform !== "android") throw new Error("Other-app notifications are only supported on Android.");
+    return { value: await env.notifications({ ...args, capability, invokeId: env.invokeId }) };
+  }
   if (capability === "camera" || capability === "listen") return { value: { captured: capability }, media: await capture(env, capability, args) };
   if (capability === "location") {
-    const where = await new Promise((resolve, reject) => env.geolocation.getCurrentPosition(resolve, reject, { timeout: 15000, maximumAge: 60000 }));
+    const where = await phoneLocation(env);
     return { value: { latitude: where.coords.latitude, longitude: where.coords.longitude, accuracyMeters: where.coords.accuracy ?? null } };
   }
   if (capability === "open-url") {
-    if (!/^https?:\/\//i.test(String(args.url ?? ""))) throw new Error("Only web addresses can be opened.");
-    env.open(String(args.url));
+    const url = new URL(String(args.url ?? ""));
+    if (url.protocol !== "https:" || url.username || url.password) throw new Error("Only HTTPS web addresses without credentials can be opened.");
+    await env.open(url.href, env.invokeId);
     return { value: { done: "opened" } };
+  }
+  if (capability === "notify") {
+    if (typeof args.title !== "string" || !args.title.trim() || args.title.length > 120 || typeof args.body !== "string" || args.body.length > 1000)
+      throw new Error("Give a bounded notification title and body.");
+    await env.notify({ id: env.invokeId, title: args.title, body: args.body });
+    return { value: { done: "notification-requested" } };
   }
   // PH-03: "spoken" only once the phone said it started; a speaker that never starts is an error, not a success.
   if (capability === "speak") { await cancellable(env.speak(String(args.text ?? "").slice(0, 2000), env.signal), env.signal); return { value: { done: "spoken" } }; }
@@ -181,7 +209,7 @@ export async function answerInvoke(env, lent, frame) {
   if (!lent.offers.includes(frame.capability) || !lent.enabled.has(frame.capability)) return refuse("That is switched off on this phone.");
   if (!Number.isFinite(frame.deadline) || frame.deadline < env.now()) return refuse("The request came too late.");
   try {
-    const result = await perform(env, frame.capability, frame.args ?? {});
+    const result = await perform({ ...env, invokeId: frame.id }, frame.capability, frame.args ?? {});
     if (env.signal?.aborted || frame.deadline < env.now() || !lent.enabled.has(frame.capability)) return refuse("Lending stopped or the request expired.");
     if (!result.media) return { result: { type: "result", id: frame.id, ok: true, value: result.value } };
     const bytes = new Uint8Array(result.media.data);

@@ -7,6 +7,7 @@ import { deviceTools } from "./capabilities.js";
 import { DeviceHub, type HubOptions } from "./hub.js";
 import { DeviceJoin, type JoinDeps } from "./join.js"; // phase2/shell
 import { registerDeviceTools, type ComputerRule } from "./tools.js";
+import { resetCompanionSwitches } from "./companion-grants.js";
 import { hostname } from "node:os";
 import { ComputerFinder, findNowhere, type FindParts } from "./find.js"; // find-computers
 import { NodePresence } from "./presence.js";
@@ -49,6 +50,7 @@ export class Devices {
   readonly joining: DeviceJoin | null;
   constructor(private readonly deps: DevicesDeps) {
     this.book = new DeviceBook(deps.store, deps.owner);
+    resetCompanionSwitches(deps.store, this.book);
     this.hub = new DeviceHub(this.book, deps.hub);
     const network = deps.find;
     // find-computers: the Tailscale door follows looking and waiting to be found, and is shut otherwise.
@@ -79,13 +81,14 @@ export class Devices {
   }
   /** P17-D §9: the computers each Trunk may use, set by createBranch once the Trunks exist. */
   computerRule: ComputerRule | null = null;
+  ownerChatRun: ((runId: string) => boolean) | null = null;
 
   /** The tools are in the catalog exactly while the feature is not off. */
   private sync(): void {
     for (const name of deviceTools) this.deps.registry.unregister(name);
     if (this.book.savedMode() !== "off") // mac7/lockdown-fix: Lockdown is refused at use, not by unregistering
       registerDeviceTools(this.deps.registry, { store: this.deps.store, owner: this.deps.owner, book: this.book, hub: this.hub, files: this.deps.files,
-        rule: () => this.computerRule });
+        rule: () => this.computerRule, ownerChatRun: (id) => this.ownerChatRun?.(id) === true });
   }
 
   setMode(input: unknown): DeviceMode {
@@ -97,6 +100,7 @@ export class Devices {
 
   /** Resolves once the Tailscale door is shut too, so nothing is left listening after a close. */
   close(): Promise<void> {
+    resetCompanionSwitches(this.deps.store, this.book);
     this.stopListening(); this.hub.close(); this.joining?.close(); this.finder.close();
     return this.presence?.close() ?? Promise.resolve();
   }

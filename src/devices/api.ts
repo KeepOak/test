@@ -9,6 +9,7 @@ import { isComputer, pickDevice, pickedDevice, trunkComputerRefusal } from "./to
 import { keyCheck } from "./protocol.js";
 import { hereOnly } from "../remote/window-key.js";
 import { errorText, validationText } from "../request-errors.js";
+import { companionGrantApi } from "./companion-grants.js";
 
 /**
  * mac7/nodes: the web side of Devices.
@@ -227,6 +228,11 @@ async function findRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> 
 /** The owner's routes. Answers undefined for a path it does not know. */
 export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<unknown> {
   const { devices, method } = deps;
+  if (path === "/api/devices/companion-grants") {
+    if (deps.viaDoor !== false) throw new DevicesHttpError(403, hereOnly);
+    deps.store.profiles.requireOwner("Phone companion grants");
+    return companionGrantApi(deps.store, devices.book, method, method === "GET" ? undefined : await deps.readBody());
+  }
   if (path === "/api/devices" && method === "GET") return overview(deps);
   const picked = pickedPath.exec(path);
   if (picked && method === "GET") return pickedFor(deps, picked[1]!);

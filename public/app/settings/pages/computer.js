@@ -61,11 +61,33 @@ async function loadAll() {
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   Object.assign(D, { coding: c, notes: n?.settings ?? null, prs: p, devices: d, desktop, wall, reach, appAsk });
   await loadSites();
+  D.phoneViews = await api("phone/view-grants").catch(() => null);
+  D.companion = await api("devices/companion-grants").catch(() => null);
   render();
   await loadComputers17();
 }
 
 export function init() {
+  markLive(["phone-view-add", "phone-view-revoke"]);
+  on("phone-view-add", async () => {
+    try { await api("phone/view-grants", { deviceId: document.getElementById("pv-device").value, profileId: D.phoneViews.profileId, sessionId: document.getElementById("pv-trunk").value, kind: document.getElementById("pv-kind").value, minutes: 5 }); } catch (error) { toast(error.message); }
+    await loadAll();
+  });
+  on("phone-view-revoke", async (el) => {
+    try { await api("phone/view-grants", { id: el.dataset.v }, "DELETE"); } catch (error) { toast(error.message); }
+    await loadAll();
+  });
+  markLive(["phone-companion-add", "phone-companion-revoke"]);
+  on("phone-companion-add", async () => {
+    try { await api("devices/companion-grants", { deviceId: document.getElementById("pc-device").value, profileId: D.companion.profileId,
+      action: document.getElementById("pc-action").value, chat: document.getElementById("pc-chat").checked, minutes: 5 }); }
+    catch (error) { toast(error.message); }
+    await loadAll();
+  });
+  on("phone-companion-revoke", async el => {
+    try { await api("devices/companion-grants", { id: el.dataset.v }, "DELETE"); } catch (error) { toast(error.message); }
+    await loadAll();
+  });
   markLive(["sw:f15-page-notes-and-send-to-branch-", "sw:f15-try-ideas-on-a-branch", "sw:f15-check-and-format-files-after-editing",
     "sw:f15-draft-a-pull-request-from-a-task", "sw:f15-remember-the-shell", "sw:f15-read-a-file-before-editing-it",
     "sw:f15-keep-large-tool-outputs", "sw:f15-read-jupyter-notebooks", "sw:f15-review-checks-and-a-checklist-per-task",
@@ -219,13 +241,29 @@ const computerMore = () => sec15(t("window.settings.computer.on-a-computer-more"
   + sw("Review checks and a checklist per task", "Checks you write run before a task says it’s done; the checklist shows in the task.")
   + code15(t("window.settings.computer.write-agents-md-for-a-project"), t("window.settings.computer.branch-reads-the-project-and-writes"), "/init"));
 
+function phoneViews() {
+  const views = D.phoneViews;
+  if (!views) return "";
+  const phones = views.phones.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  const trunks = (E.trunks ?? []).filter(t => t.chatSessionId).map(t => `<option value="${esc(t.chatSessionId)}">${esc(t.name)}</option>`).join("");
+  const existing = views.grants.map(g => `<p>${esc(g.kind)} · expires ${esc(new Date(g.expiresAt).toLocaleTimeString())} <button type="button" data-act="phone-view-revoke" data-v="${esc(g.id)}">Revoke</button></p>`).join("");
+  return `<section class="sec"><h2>Phone view · read only</h2><p>Allow a paired phone to view a selected Trunk for five minutes. No mouse, keyboard or browser control is granted. Restarting Branch clears grants.</p><p>Private computer view shows only the selected Trunk running isolated desktop and ends when its revision changes. Shared computer view includes other apps. Separate grants; neither permits control.</p><label>Phone <select id="pv-device">${phones}</select></label><label>Trunk <select id="pv-trunk">${trunks}</select></label><label>View <select id="pv-kind"><option value="browser">Trunk’s working browser</option><option value="private-desktop">Selected Trunk private computer (already running)</option><option value="computer">Shared computer screen</option></select></label><button type="button" data-act="phone-view-add" ${phones && trunks ? "" : "disabled"}>Allow selected view for five minutes</button>${existing}</section>`;
+}
+function phoneCompanion() {
+  if (!D.companion) return "";
+  const phones = (D.devices?.devices ?? []).filter(d => ["ios", "android"].includes(d.platform));
+  const choices = phones.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  const actions = [["camera", "Camera photo"], ["location", "One location fix"], ["notify", "Show notification"], ["open-url", "Open HTTPS page"], ["notification-read", "Android: read selected app notifications"], ["notification-action", "Android: act on one selected notification"]];
+  const grants = D.companion.grants.map(g => `<p>${esc(phones.find(p => p.id === g.deviceId)?.name ?? "Unpaired phone")} · ${esc(g.action)} · ${g.chat ? "verified owner DM and window" : "window only"} · until ${esc(new Date(g.expiresAt).toLocaleTimeString())} <button type="button" data-act="phone-companion-revoke" data-v="${esc(g.id)}">Revoke</button></p>`).join("");
+  return `<section class="sec"><h2>Phone companion actions</h2><p>Separate from screen viewing. Grant one action to one phone in the owner profile for five minutes. Expiry or revoke switches that action off and cancels outstanding work. The phone must offer it and remain open; its Never allow choices and OS permission still apply.</p><p>Devices are ${esc(D.devices?.mode ?? "off")}. Camera/location results go into the requesting task. Android notification reading requires phone opt-in and Android notification access. Reading is restricted to one named app, with metadata by default; content needs an exact confirmed request. Open/dismiss/reply also need the separate notification-action grant and a fresh action ID. Every notification request requires a once-only owner confirmation, including reply text; no automatic action choice. iOS other-app notifications are unsupported.</p><label>Phone <select id="pc-device">${choices}</select></label><label>Action <select id="pc-action">${actions.map(([id, title]) => `<option value="${id}">${title}</option>`).join("")}</select></label><label><input type="checkbox" id="pc-chat">Also allow requests from my verified, named owner direct chat accounts (whoever controls that account can request this action)</label><button type="button" data-act="phone-companion-add" ${choices ? "" : "disabled"}>Grant selected action for five minutes</button>${grants}</section>`;
+}
 export function draw() {
   const lev = level();
   let html = `<h1>${esc(t("settings.page.computer"))}</h1><p class="lede">${t("window.settings.computer.the-computers-your-trunks-may-use")}</p>`;
   html += computers() + whichTrunk() + onAComputer() + BROWSER();
   if (lev < 2) html += `<p class="hint">${t("window.settings.computer.switch-to-technical-bottom-left-to")}</p>`;
   else html += `<div class="sec"><h2>${t("settingsGrown.level.technical")}</h2><dl class="kv"></dl></div>`; // the engine gives no sandbox, profile or screen facts
-  html += phones();
+  html += phones() + phoneViews() + phoneCompanion();
   if (lev >= 1) html += browserMore() + code();
   if (lev >= 2) html += codeTechnical();
   if (lev >= 1) html += computerMore();
