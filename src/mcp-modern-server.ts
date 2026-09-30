@@ -2,12 +2,13 @@ import { createMcpHandler, Server, ProtocolError, type McpHttpHandler } from '@m
 import { CallToolResultSchema, ListToolsResultSchema, ListResourcesResultSchema,
   ReadResourceResultSchema, ListPromptsResultSchema, GetPromptResultSchema } from '@modelcontextprotocol/core';
 import type { McpServer } from './mcp-server.js';
+import { observeMcpRun } from './mcp-run-observer.js';
 import { protocolKey, statelessVersion, StatelessError } from './mcp-stateless.js';
 
 /** Official SDK owns negotiation, request envelopes, MRTR and subscription transport. */
 export function modernServer(branch: McpServer, principal: string, stdio = false): Server {
   const server = new Server({ name: 'branch', version: '1.0.0' }, {
-    capabilities: { tools: { listChanged: true }, resources: { listChanged: true }, prompts: {} },
+    capabilities: { tools: { listChanged: true }, resources: { listChanged: true }, prompts: {}, logging: {} },
   });
   if (stdio) {
     const stop = branch.watchModern((notice) => {
@@ -23,15 +24,28 @@ export function modernServer(branch: McpServer, principal: string, stdio = false
     return ListToolsResultSchema.parse({ tools: branch.listTools(), ttlMs: 0, cacheScope: 'private' });
   });
   server.setRequestHandler('tools/call', async (request, ctx) => {
+    branch.requireModern();
+    const stamp = branch.modernAccessStamp(), changed = new AbortController();
+    const allowed = () => {
+      try { branch.requireModern(); return branch.modernAccessStamp() === stamp; } catch { return false; }
+    };
+    const timer = setInterval(() => { if (!allowed()) changed.abort(new Error('MCP access changed')); }, 250);
+    timer.unref();
+    const signal = AbortSignal.any([ctx.mcpReq.signal, changed.signal, AbortSignal.timeout(120000)]);
+    const observer = observeMcpRun(branch.store, {
+      signal, _meta: ctx.mcpReq._meta,
+      notify: (notice) => ctx.mcpReq.notify(notice),
+      log: (level, data, logger) => ctx.mcpReq.log(level, data, logger),
+    }, allowed);
     try {
-      const result = await branch.callModernTool(request.params, principal, ctx.mcpReq.signal,
-        ctx.mcpReq.requestState());
+      const result = await branch.callModernTool(request.params, principal, signal,
+        ctx.mcpReq.requestState(), observer);
       if ('requestState' in result) return result;
       return CallToolResultSchema.parse(result);
     } catch (error) {
       if (error instanceof StatelessError) throw new ProtocolError(error.code, error.message, error.data);
       throw error;
-    }
+    } finally { clearInterval(timer); changed.abort(new Error('MCP request ended')); }
   });
   const read = async (method: string, params: Record<string, unknown> = {}) => {
     const response = await branch.handleStateless({ jsonrpc: '2.0', id: 'sdk-read', method,
