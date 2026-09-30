@@ -45,10 +45,11 @@ function canvasInput(canvas, send, enabled) {
 export function desktopCanvas(canvas, send, allowed) {
   const context = canvas.getContext('2d', {alpha: false});
   if (!context) throw new Error('Canvas rendering is unavailable.');
-  let ready = false, control = false;
+  let ready = false, control = false, closed = false;
   const input = canvasInput(canvas, send, () => ready && control && allowed());
   return {
     ready(width, height, mayControl) {
+      if (closed) throw new Error('This private canvas was disconnected.');
       if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || width > 1280 || height < 1 || height > 800 || typeof mayControl !== 'boolean') throw new Error('Unsupported private desktop size.');
       canvas.width = width; canvas.height = height; ready = true; control = mayControl;
     },
@@ -61,6 +62,6 @@ export function desktopCanvas(canvas, send, allowed) {
       context.putImageData(image, x, y);
     },
     release: input.release,
-    close() { input.close(); ready = false; control = false; context.clearRect(0, 0, canvas.width, canvas.height); canvas.width = canvas.height = 1; },
+    close() { if (closed) return; closed = true; input.close(); ready = false; control = false; context.clearRect(0, 0, canvas.width, canvas.height); canvas.width = canvas.height = 1; },
   };
 }

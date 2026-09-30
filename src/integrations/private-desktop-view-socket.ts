@@ -27,12 +27,13 @@ export async function servePrivateDesktopView(views: PrivateDesktopViews, deskto
       for (let decoded = readFrame(pending); decoded && open; decoded = readFrame(pending)) {
         if (!decoded.fin || (pending[0]! & 0x70) !== 0 || (pending[1]! & 0x80) === 0) return close();
         pending = pending.subarray(decoded.consumed);
+        if (Date.now() - since >= 1000) { since = Date.now(); heard = 0; }
+        if (++heard > 120) return close();
         if (decoded.opcode === 8) return close();
         if (decoded.opcode === 9 && decoded.payload.length <= 125) { send(Buffer.concat([Buffer.from([0x8a, decoded.payload.length]), decoded.payload])); continue; }
         if (decoded.opcode === 10 && decoded.payload.length <= 125) continue;
         if (decoded.opcode !== 2 || !grant.control) return close();
-        if (Date.now() - since >= 1000) { since = Date.now(); heard = 0; }
-        if (++heard > 120 || !inputAllowed(decoded.payload) || !valid()) return close();
+        if (!inputAllowed(decoded.payload) || !valid()) return close();
         stream?.input(decoded.payload); onInput();
       }
     } catch { close(); }

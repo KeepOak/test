@@ -29,8 +29,10 @@ function disconnect() {
   dispose(previous);
 }
 function dispose(previous) {
-  previous.canvas?.close(); previous.socket?.close(); previous.abort.abort();
-  if (previous.grant && previous.token === token.get() && previous.profile === activeId() && E.profiles?.isOwner && !locked())
+  if (!previous.disposed) { previous.disposed = true; previous.canvas?.close(); previous.socket?.close(); previous.abort.abort(); }
+  if (!previous.grant || previous.revoked) return;
+  previous.revoked = true;
+  if (previous.token === token.get() && previous.profile === activeId() && E.profiles?.isOwner && !locked())
     void api('private-desktops/view-grants', {id: previous.grant}, 'DELETE').catch(() => undefined);
 }
 async function connectView(control = false) {
