@@ -10554,5 +10554,14 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "window.chat-delivery.title": "Entrega de mensajes",
+  "window.chat-delivery.hint": "Entregado significa que la aplicación de chat aceptó el mensaje, no que alguien lo haya leído. Algunas partes pueden estar entregadas mientras otras siguen en cola o han fallado. Solo registros recientes; actualiza para ver el estado actual.",
+  "window.chat-delivery.refresh": "Actualizar estado",
+  "window.chat-delivery.delivered": "Entregado",
+  "window.chat-delivery.queued": "En cola",
+  "window.chat-delivery.failed": "Fallido",
+  "window.chat-delivery.parts": "{delivered} entregadas · {queued} en cola · {failed} partes fallidas",
+  "window.chat-delivery.empty": "No hay entregas recientes.",
+  "window.chat-delivery.unavailable": "El estado de entrega no está disponible."
 }
