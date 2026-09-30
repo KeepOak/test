@@ -149,7 +149,7 @@ export function openPop(anchor, html, opt = {}) {
   const root = app();
   popEl = document.createElement("div");
   popEl.className = "pop";
-  popEl.setAttribute("role", "menu");
+  popEl.setAttribute("role", opt.role ?? "menu");
   if (opt.label) popEl.setAttribute("aria-label", opt.label); /* a menu that is someone's says whose, to a screen reader */
   popEl.innerHTML = html;
   applyCss(popEl);

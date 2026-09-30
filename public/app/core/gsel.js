@@ -11,6 +11,7 @@ import { ic, openPop, closePop } from "./ui.js";
 import { t } from "../../i18n.js";
 
 const LONG = 10; // more choices than this get the narrowing box
+const LIST_ID = "gsel-options"; // the window has one popover at a time
 
 /**
  * A dropdown. `options` is [[value, words, cannotTake?], ...]; `attrs` is any other attribute text (data-k, data-j, data-flow...).
@@ -19,7 +20,7 @@ const LONG = 10; // more choices than this get the narrowing box
 export function gsel({ id = "", sw = "", label = "", options, value = "", attrs = "", cls = "" }) {
   const list = options.map(([v, words, off]) => (off ? [String(v ?? ""), String(words ?? ""), 1] : [String(v ?? ""), String(words ?? "")]));
   const now = list.find(([v]) => v === String(value ?? "")) ?? list[0] ?? ["", ""];
-  return `<button type="button" class="inp gsel ${esc(cls)}" data-act="gsel"${id ? ` id="${esc(id)}"` : ""}${sw ? ` data-sw="${esc(sw)}"` : ""} value="${esc(now[0])}" data-opts="${esc(JSON.stringify(list))}" aria-haspopup="menu" aria-expanded="false"${label ? ` aria-label="${esc(label)}"` : ""} ${attrs}><span class="gsel-t">${esc(now[1])}</span>${ic("down", "s")}</button>`;
+  return `<button type="button" class="inp gsel ${esc(cls)}" role="combobox" data-act="gsel"${id ? ` id="${esc(id)}"` : ""}${sw ? ` data-sw="${esc(sw)}"` : ""} value="${esc(now[0])}" data-opts="${esc(JSON.stringify(list))}" aria-haspopup="listbox" aria-controls="${LIST_ID}" aria-expanded="false"${label ? ` aria-label="${esc(label)}"` : ""} ${attrs}><span class="gsel-t">${esc(now[1])}</span>${ic("down", "s")}</button>`;
 }
 
 /** Sets a dropdown's choice from code, as `select.value = v` did (no "change" is sent). */
@@ -36,19 +37,18 @@ let open = null; // the dropdown whose list is showing
 
 function show(el) {
   const list = choices(el), current = el.value;
-  const items = list.map(([v, words, off], i) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${v === current}" data-act="gsel-pick" data-i="${i}"${off ? ' aria-disabled="true"' : ""}><span class="tick">${ic("check", "s")}</span><span class="mi-t">${esc(words)}</span></button>`).join("");
-  const filter = list.length > LONG ? `<div class="gsel-q"><input class="inp" type="search" data-sw="gsel-q" aria-label="${esc(t("window.core.gsel.narrow"))}" placeholder="${esc(t("window.core.gsel.narrow"))}" autocomplete="off" spellcheck="false"></div>` : "";
+  /* Select semantics follow Hermes Desktop's searchable-select (Nous Research, MIT), adapted to our popover. */
+  const items = list.map(([v, words, off], i) => `<button class="mi" type="button" role="option" aria-selected="${v === current}" tabindex="-1" data-act="gsel-pick" data-i="${i}"${off ? ' aria-disabled="true"' : ""}><span class="tick">${ic("check", "s")}</span><span class="mi-t">${esc(words)}</span></button>`).join("");
+  const filter = list.length > LONG ? `<div class="gsel-q"><input class="inp" type="search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="${LIST_ID}" data-sw="gsel-q" aria-label="${esc(t("window.core.gsel.narrow"))}" placeholder="${esc(t("window.core.gsel.narrow"))}" autocomplete="off" spellcheck="false"></div>` : "";
   const name = el.getAttribute("aria-label") || el.textContent.trim();
-  // With a narrowing box the popover is a small dialog holding the box and the menu (a menu holds only its items).
-  openPop(el, filter ? `${filter}<div role="menu" aria-label="${esc(name)}">${items}</div>` : items, { label: name });
+  openPop(el, `${filter}<div id="${LIST_ID}" role="listbox" aria-label="${esc(name)}">${items}</div>`, { role: "presentation" });
   const pop = document.querySelector("#app > .pop");
   if (!pop || el.getAttribute("aria-expanded") !== "true") { open = null; return; } // pressed again: it closed
   open = el;
   pop.classList.add("gsel-pop");
-  if (filter) pop.setAttribute("role", "dialog");
   pop.style.minWidth = `${Math.max(el.offsetWidth, 180)}px`;
   const chosen = pop.querySelector(`[data-act="gsel-pick"][data-i="${list.findIndex(([v]) => v === current)}"]`);
-  if (!filter) chosen?.focus({ preventScroll: true });
+  if (!filter && chosen?.getAttribute("aria-disabled") !== "true") chosen?.focus({ preventScroll: true });
   chosen?.scrollIntoView({ block: "nearest" });
 }
 
@@ -77,9 +77,15 @@ document.addEventListener("input", (e) => {
   for (const item of e.target.closest(".pop").querySelectorAll('[data-act="gsel-pick"]')) item.hidden = !!q && !item.textContent.toLowerCase().includes(q);
 });
 document.addEventListener("keydown", (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.target?.matches?.(".gsel") && ["ArrowDown", "ArrowUp"].includes(e.key)) {
+    e.preventDefault();
+    show(e.target);
+    return;
+  }
   const pop = e.target?.closest?.(".gsel-pop");
   if (!pop) return;
-  const items = [...pop.querySelectorAll('[data-act="gsel-pick"]')].filter((item) => !item.hidden);
+  const items = [...pop.querySelectorAll('[data-act="gsel-pick"]')].filter((item) => !item.hidden && item.getAttribute("aria-disabled") !== "true");
   const at = items.indexOf(e.target);
   const to = { ArrowDown: at + 1, ArrowUp: at < 0 ? items.length - 1 : at - 1, Home: 0, End: items.length - 1 }[e.key];
   if (to !== undefined && !(e.target.tagName === "INPUT" && (e.key === "Home" || e.key === "End"))) {
