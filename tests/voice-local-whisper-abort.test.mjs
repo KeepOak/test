@@ -1,85 +1,83 @@
 /**
- * Voice wake-word recognition must cancel in-flight faster-whisper when stopped.
- * A transcription request that never completes should be aborted immediately via AbortSignal,
- * not waiting out the 120-second timeout. After stop(), no task should launch.
+ * Stopping the wake word (or any caller) aborts a faster-whisper request at once, whether it is still waiting its turn,
+ * waiting for the worker to start, or in flight, and no request is written after its abort. A stand-in worker only.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { LocalWhisper } from "../dist/voice-whisper.js";
 
-test("whisper transcribe must be cancellable via AbortSignal", async () => {
-  const whisper = new LocalWhisper(
-    { env: {}, platform: "darwin", home: "/home", exists: () => false, read: () => "" },
-  );
+function fakeWorker() {
+  const spawned = [];
+  const start = () => {
+    const child = new EventEmitter();
+    child.written = []; child.killed = false;
+    child.stdin = Object.assign(new EventEmitter(), { write: (line) => child.written.push(JSON.parse(line)), end() {} });
+    child.stdout = Object.assign(new EventEmitter(), { setEncoding() { return this; } });
+    child.stderr = Object.assign(new EventEmitter(), { setEncoding() { return this; } });
+    child.kill = () => { child.killed = true; };
+    child.say = (value) => child.stdout.emit("data", `${JSON.stringify(value)}\n`);
+    spawned.push(child);
+    return child;
+  };
+  return { start, spawned };
+}
+const found = { available: true, python: "python3", model: "base", how: "" };
+const sound = new Uint8Array([1, 2, 3]);
+const settle = () => new Promise((done) => setImmediate(done));
 
-  // Create an abort controller that we can trigger
-  const controller = new AbortController();
-
-  // Set up a slow-responding fake transcription that would normally timeout after 120s
-  let transcribeStarted = false;
-  let transcribeEnded = false;
-  const startTime = Date.now();
-
-  // This promise will never resolve (simulates a hung worker)
-  const transcribePromise = (async () => {
-    transcribeStarted = true;
-    // Create a promise that would take forever but can be interrupted via AbortSignal
-    return new Promise((resolve) => {
-      const listener = () => {
-        transcribeEnded = true;
-        resolve();
-      };
-      controller.signal.addEventListener("abort", listener);
-    });
-  })().catch(() => undefined);
-
-  // After a short delay, abort the signal (simulating stop() being called)
-  setTimeout(() => controller.abort(), 100);
-
-  // Wait for the transcription to finish
-  await transcribePromise;
-  const elapsed = Date.now() - startTime;
-
-  // Verify that:
-  // 1. The transcription started
-  assert.ok(transcribeStarted, "transcription should have started");
-  // 2. The transcription ended (was aborted)
-  assert.ok(transcribeEnded, "transcription should have ended via abort");
-  // 3. It finished quickly (well under the 120-second timeout)
-  assert.ok(elapsed < 2000, `transcription should abort quickly (was ${elapsed}ms, max 2000ms)`);
+test("an abort while the worker is starting ends the request at once and writes nothing", async () => {
+  const worker = fakeWorker();
+  const whisper = new LocalWhisper({}, worker.start);
+  const stop = new AbortController();
+  const asked = whisper.transcribe(found, sound, {}, stop.signal);
+  await settle();
+  assert.equal(worker.spawned.length, 1, "the worker is starting");
+  const started = Date.now();
+  stop.abort();
+  await assert.rejects(asked, /cancelled/);
+  assert.ok(Date.now() - started < 1000, "it did not wait for the startup limit");
+  worker.spawned[0].say({ ready: true, vad: "none" });
+  await settle();
+  assert.deepEqual(worker.spawned[0].written, [], "no request reached the worker after its abort");
+  whisper.stop();
 });
 
-test("whisper.transcribe must respect AbortSignal for immediate cancellation", async () => {
-  const whisper = new LocalWhisper(
-    { env: {}, platform: "darwin", home: "/home", exists: () => false, read: () => "" },
-  );
+test("an abort while waiting its turn behind another request writes nothing", async () => {
+  const worker = fakeWorker();
+  const whisper = new LocalWhisper({}, worker.start);
+  const first = whisper.transcribe(found, sound, {});
+  await settle();
+  worker.spawned[0].say({ ready: true, vad: "none" });
+  await settle();
+  const stop = new AbortController();
+  const queued = whisper.transcribe(found, sound, {}, stop.signal);
+  stop.abort();
+  worker.spawned[0].say({ id: worker.spawned[0].written[0].id, text: "first" });
+  assert.equal((await first).text, "first");
+  await assert.rejects(queued, /cancelled/);
+  assert.equal(worker.spawned[0].written.length, 1, "only the first request was written");
+  whisper.stop();
+});
 
-  const controller = new AbortController();
-  const startTime = Date.now();
-
-  // Abort the signal immediately (simulating stop() being called before/during transcription)
-  controller.abort();
-
-  // Attempt to transcribe with an already-aborted signal
-  let rejected = false;
-  try {
-    // This should reject immediately, not wait
-    await whisper.transcribe(
-      { available: true, python: "/usr/bin/python", model: "/model", modelName: "base.en", how: "test" },
-      new Uint8Array([1, 2, 3]),
-      { partial: false },
-      controller.signal,
-    );
-  } catch (error) {
-    rejected = true;
-    assert.match(
-      String(error),
-      /stopped|abort|cancel/i,
-      `error should mention abort, cancel or stopped, got: ${error}`,
-    );
-  }
-
-  const elapsed = Date.now() - startTime;
-  assert.ok(rejected, "transcribe should have rejected with an already-aborted signal");
-  assert.ok(elapsed < 1000, `transcribe should reject immediately (was ${elapsed}ms)`);
+test("aborting a request that has already finished never ends the worker serving the next one", async () => {
+  const worker = fakeWorker();
+  const whisper = new LocalWhisper({}, worker.start);
+  const stopA = new AbortController();
+  const a = whisper.transcribe(found, sound, {}, stopA.signal);
+  await settle();
+  const child = worker.spawned[0];
+  child.say({ ready: true, vad: "none" });
+  await settle();
+  child.say({ id: child.written[0].id, text: "A" });
+  assert.equal((await a).text, "A");
+  const b = whisper.transcribe(found, sound, {});
+  await settle();
+  stopA.abort(); // late, for a request that is done
+  await settle();
+  assert.equal(child.killed, false, "the worker serving B is left running");
+  child.say({ id: child.written[1].id, text: "B" });
+  assert.equal((await b).text, "B");
+  assert.equal(worker.spawned.length, 1, "the same worker served both");
+  whisper.stop();
 });
