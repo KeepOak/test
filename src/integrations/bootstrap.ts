@@ -5,7 +5,7 @@ import { channelPosition } from '../never-break/channel-position.js'; // mac3/ne
 import { channelMark } from '../channels/catch-up.js'; // mac6/bucket-16
 import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
-import { McpConfigSchema, withLockerSecrets, type SecretLookup } from './mcp-config.js';
+import { McpConfigSchema, mcpEndpoint, withLockerSecrets, type SecretLookup } from './mcp-config.js';
 import { connectMcp, openMcp, registerCachedMcp, type LiveMcp, type McpToolCache } from './mcp.js';
 import { BranchBrowser, BrowserConfigSchema, defaultBrowserConfig, registerBrowser, type WorkspacePaths } from './browser.js';
 // mac7/vault-autofill (R17-068): filling one of the owner's saved sign-ins into the page they are on.
@@ -433,13 +433,17 @@ export async function startMcp(
   const guard = policy ? { guard: (base: typeof fetch) => policy.guard(base) } : undefined;
   // Credentials the environment does not have come from the locker, looked up again for every start.
   const given = env, transportConfig = McpConfigSchema.parse(server);
-  const credentials = () => withLockerSecrets(transportConfig, given, host?.secret);
-  env = await credentials();
+  const credentials = async () => {
+    if (transportConfig.transport === 'http') await policy?.assertAllowed(mcpEndpoint(transportConfig.url), 'MCP server connection');
+    if (transportConfig.transport === 'http') mcpEndpoint(transportConfig.url);
+    return withLockerSecrets(transportConfig, given, host?.secret);
+  };
   // mac3/security-check: a server fetched from a package registry is looked up in the malware list
   // before it is added, and again before it is opened later (src/security-audit/malware-check.ts).
   // With no checker this adds nothing.
   const vet = () => vetLaunch(server, host);
   await vet();
+  env = await credentials();
   // A crashed program is started again on its next call, checked again first the way this first start was.
   const reopen = async () => {
     await host?.beforeRestart?.();

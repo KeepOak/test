@@ -17,6 +17,9 @@ const EntrySchema = z.object({
   needs: words(160),
   address: z.string().url().startsWith("https://").optional(),
   command: z.array(z.string().min(1).max(200)).min(1).max(10).optional(),
+  /** Structured name/required/description inputs adapted from Cline marketplace install.env. */
+  env: z.array(z.object({ name: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
+    required: z.boolean().default(false), description: z.string().max(300).optional() }).strict()).max(20).optional(),
 }).strict();
 export const McpCatalogueSchema = z.object({
   format: z.literal(1),
