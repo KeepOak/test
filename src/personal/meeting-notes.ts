@@ -13,7 +13,7 @@ import { requirePersonal } from "./settings.js";
 const Prepare = z.object({ joinUrl: z.string().url().max(2000), account: PersonalAccountId, approveTranscriptAccess: z.literal(true) }).strict();
 const Review = z.object({ draft: z.string().uuid(), notes: z.string().trim().min(1).max(6000), account: PersonalAccountId,
   documentId: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/), tabId: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/) }).strict();
-type Draft = { title: string; account: string; identity: string; transcriptId: string; digest: string; at: number };
+type Draft = { title: string; account: string; identity: string; transcriptId: string; digest: string; at: number; guest?: boolean };
 type Export = { docs: DocsWrite; account: SignIn; identity: string; draft: string; at: number;
   input: { documentId: string; tabId: string; revisionId: string; text: string } };
 
@@ -29,11 +29,21 @@ export class MeetingNotes {
     if (currentPerson() || startedWithShortLivedKey() || lockdownActive(this.store, this.owner)) throw new Error("Use meeting notes in the owner's app window with Lockdown off.");
   }
   private draft(id: string): Draft {
-    requirePersonal(this.store, this.owner, "microsoft");
     const held = this.drafts.get(id);
     if (!held || held.at + 30 * 60_000 <= Date.now()) throw new Error("This transcript draft expired. Prepare it again.");
+    if (held.guest) return held;
+    requirePersonal(this.store, this.owner, "microsoft");
     if (this.microsoftSignIn.forAccount(held.account).mailPreviewIdentity() !== held.identity) throw new Error("The source account changed. Prepare again.");
     return held;
+  }
+  acceptGuest(source: { id: string; title: string; text: string; truncated: boolean }) {
+    this.guard();
+    for (const [id, item] of this.drafts) if (item.at + 1800000 < Date.now()) this.drafts.delete(id);
+    if (this.drafts.size >= 8) throw new Error("Too many note drafts.");
+    const draft = randomUUID(), digest = createHash("sha256").update(source.text).digest("hex");
+    this.drafts.set(draft, { title: source.title, account: "Recall", identity: source.id, transcriptId: source.id, digest, at: Date.now(), guest: true });
+    return { draft, title: source.title, source: { account: "Recall.ai", transcriptId: source.id }, text: source.text, truncated: source.truncated,
+      note: "Verified provider live transcript excerpt, not a generated summary. Edit privately before sharing." };
   }
   async prepare(input: unknown, requestGuard: () => void) {
     const guard = () => { this.guard(); requestGuard(); };
@@ -71,7 +81,7 @@ export class MeetingNotes {
     if (account.mailPreviewIdentity() !== identity || !document.tabs.some(tab => tab.id === v.tabId)) throw new Error("Account or tab changed. Review again.");
     for (const [id, item] of this.exports) if (item.at + 10 * 60_000 <= Date.now()) this.exports.delete(id);
     if (this.exports.size >= 8) throw new Error("Eight exports are under review. Wait for one to expire.");
-    const text = `${held.title}\n\n${v.notes}\n\nSource: Teams transcript ${held.transcriptId.slice(0, 200)}\nNormalized source excerpt SHA-256: ${held.digest}`;
+    const text = `${held.title}\n\n${v.notes}\n\nSource: ${held.guest ? "Recall guest meeting" : "Teams transcript"} ${held.transcriptId.slice(0, 200)}\nNormalized source excerpt SHA-256: ${held.digest}`;
     const ticket = randomUUID(), target = { documentId: v.documentId, tabId: v.tabId, revisionId: document.revisionId, text };
     this.exports.set(ticket, { docs, account, identity, draft: v.draft, at: Date.now(), input: target });
     return { ticket, title: document.title, account: v.account, target,
