@@ -4833,7 +4833,7 @@
   "seasons.branch-arrived": "La modification approuvée est installée — terminer ma tâche",
   "seasons.branch-review": "Demander une modification de Branch à examiner",
   "seasons.budding-order": "Outils existants → connecteur avec votre accord → outil isolé testé → modification de Branch à examiner. Puis la tâche initiale se termine.",
-  "seasons.candidate-proof": "Score {score}% · {mentions} mentions · {conversations} conversations",
+  "seasons.candidate-proof": "Note {score} % · {mentions} mentions · {conversations} conversations",
   "seasons.candidates": "Propositions d’apprentissage",
   "seasons.changes": "Modifications annulables",
   "seasons.connector-approve": "Approuver ce connecteur",
