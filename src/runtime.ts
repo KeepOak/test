@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { assertContinuitySession } from "./reach/continuity-store.js";
+import type { TasteLearning } from "./taste/learning.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
@@ -67,6 +69,7 @@ import type { WebhookNotifier } from "./webhooks.js";
 import type { HookDecision } from "./hooks.js";
 import { environmentFacts, environmentLine } from "./environment.js"; // where Branch runs, for the model
 import { assistantIdentity, identityInstructions } from "./identity.js";
+import { adaptiveInstructions, adaptiveTools, capabilityActionRequested, capabilityDiscoveryFailure, capabilityDiscoveryNudge, uncheckedCapabilityClaim } from "./adaptive-capabilities.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
@@ -74,9 +77,12 @@ import { supportsImages, unofferedMark, unnamedModels, wireName } from "./provid
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
-import { keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { isRetiredConnection, keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { chatgptPresetPrefix } from "./chatgpt-presets.js";
+import { claudeCodePool } from "./providers/claude-models.js";
 import { ownerTidyRemainder } from "./owner-folders.js";
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
+import { boundSummaryInput, ownerWordsMaxTokens, ownerWordsSection, transcriptLine } from "./compaction-input.js"; // P0 (self-build)
 import { contractHold, sourceSendHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
@@ -128,6 +134,7 @@ import { Tracer } from "./tracing.js";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import {
   outOfCredit,
+  planLimitReached,
   parseRetryPolicy,
   planRetry,
   waitForRetry,
@@ -147,7 +154,7 @@ import {
 import type { RunToolEmbedder, ToolEmbedder } from "./tool-index.js";
 import { mcpAppIn } from "./mcp-apps.js";
 import { NoteInputSchema } from "./tool-usage.js";
-import { estimateCost, formatCost, pricingSettings } from "./pricing.js";
+import { estimateCost, formatCost, pricingSettings, tokenCountsOf } from "./pricing.js";
 // --- R17-S-B: the owner's knobs, read fresh at each marked hook (src/knobs/apply.ts) ---
 import * as knobs from "./knobs/apply.js";
 import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
@@ -564,6 +571,10 @@ interface ModelRoute {
   reasoning: ReasoningEffort | null;
   candidates: ModelPreset[];
 }
+/** The plan a sign-in draws on: ChatGPT's models and Codex share the ChatGPT plan, Claude's models the Claude one. */
+const planOf = (preset: ModelPreset): string =>
+  preset.id.startsWith(chatgptPresetPrefix) || preset.id === "cli-codex" ? "chatgpt"
+    : preset.id.startsWith(claudeCodePool) ? "claude" : preset.id;
 export interface RunOptions {
   prompt: string;
   sessionId?: string;
@@ -687,6 +698,7 @@ const helperStartMs = 30_000;
 const helperNotStarted = "The background specialist did not start";
 export class Runtime {
   private readonly controllers = new Map<string, AbortController>();
+  taste: TasteLearning | null = null;
   /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
   private readonly pausing = new Map<string, AbortController>();
   /**
@@ -1138,13 +1150,15 @@ export class Runtime {
     const context = { ...parent, signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), stop.signal]), permissions: new Set(permissions), depth: parent.depth + 1,
       ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
+      connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
       context.signal.throwIfAborted();
       parent.signal.throwIfAborted(); // helper-lifecycle: a lead stopped while its helper's connection was chosen starts none
       return await this.startHelper(prompt, parent, context, instructions, connection, options, { home, release, stop });
     } catch (error) {
       release();
+      connection?.release?.(); // MODEL-050: its account lease (released once, however often it is called)
       throw error;
     }
   }
@@ -1170,7 +1184,7 @@ export class Runtime {
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       this.store.event(parent.runId, "delegation.background_finished", { ...result });
       try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
-    }, () => undefined);
+    }, () => { connection.release?.(); }); // MODEL-050: a helper that failed before it settled gives its account back too
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(helperNotStarted)), helperStartMs); });
     try {
@@ -1436,11 +1450,14 @@ export class Runtime {
       depth: parent.depth + 1,
       ...(options.agent ? { agent: options.agent } : {}),
     };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, options);
+      connection = await this.helperConnection(parent, options);
       context.signal.throwIfAborted();
-      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+      const chosen = connection;
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: chosen.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, chosen));
     } finally {
+      connection?.release?.(); // MODEL-050: the helper's account lease, also when it never started
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
@@ -1661,6 +1678,8 @@ ${run.output.slice(0, 6000)}`;
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
+    assertContinuitySession(this.store, this.owner,
+      options.sessionId ?? this.store.run(options.resumeFrom ?? options.continuing?.runId ?? "")?.sessionId, parent?.runId, options.continuing?.runId);
     // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
     if (options.resumeFrom && this.startedAsDryRun(options.resumeFrom)) options = { ...options, dryRun: true };
     if (!parent && !options.resumeFrom && !options.continuing && options.dryRun && !practiceRunsEnabled(this.store, this.owner))
@@ -1851,6 +1870,7 @@ ${run.output.slice(0, 6000)}`;
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
@@ -1858,6 +1878,7 @@ ${run.output.slice(0, 6000)}`;
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        pinnedHelper = connection;
         context.signal.throwIfAborted();
         keepHelperRoute(this.store, run.owner, run.sessionId, connection);
         this.helperModels.set(run.id, connection.preset);
@@ -1917,6 +1938,7 @@ ${run.output.slice(0, 6000)}`;
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
+    pinnedHelper?.release?.(); helper?.release?.(); // MODEL-050: the helper's account is free for the next one
     if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
@@ -2016,10 +2038,7 @@ ${run.output.slice(0, 6000)}`;
   private spentOnRun(runId: string, model: string): string {
     const usage = this.store.usage(runId);
     const { overrides } = pricingSettings(this.store, this.owner);
-    const estimate = estimateCost(model, {
-      input: usage.reportedInput || usage.estimatedInput || 0,
-      output: usage.reportedOutput || usage.estimatedOutput || 0,
-    }, overrides);
+    const estimate = estimateCost(model, tokenCountsOf(usage), overrides); // cache parts at their own rates
     return estimate.amount === null ? "" : ` So far this task has used about ${formatCost(estimate)}.`;
   }
   /**
@@ -2500,6 +2519,7 @@ ${run.output.slice(0, 6000)}`;
     let droppedNudged = false; // Q066: an empty reply that spent tokens, most likely a call the model service dropped
     let unofferedRounds = 0; // Q066: rounds in a row whose every call named a tool that was not offered
     let announcedNudged = false; // Q067: a reply that said what it would do next and then stopped
+    let capabilityNudged = false;
     let tidyNudges = 0;
     let textCallNudged = false; // qa-fixes-4: a reply that was a tool call written out as text
     let knownTools = this.registry.version;
@@ -2507,9 +2527,12 @@ ${run.output.slice(0, 6000)}`;
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
     // fall back to, so filtered words never reach the page before the whole answer is filtered. ──
     const namesOf = (preset: ModelPreset | undefined): string[] => preset ? [preset.name, preset.id, preset.model, preset.provider.name] : [];
-    // mac7/speed: the owner's figure, or the launch one (12; 40 for work on the project's files). A planned task gets more on top.
-    const ceiling = knobs.maxModelRounds(this.store, this.owner, this.reliability, coding);
-    for (let round = 0; round < conductor.maxRounds(ceiling); round++) {
+    // mac7/speed: the owner's figure, or on auto no limit while a sign-in or a model here answers and the launch one (12; 40
+    // for work on the project's files) while a key billed per token does. Asked each round: a route may fall back. A
+    // planned task gets more on top.
+    const ceiling = (): number => knobs.maxModelRounds(this.store, this.owner, this.reliability, coding,
+      this.billedPerToken(this.helperModels.get(run.id) ?? route.candidates[route.index]));
+    for (let round = 0; round < conductor.maxRounds(ceiling()); round++) {
       // With no step left for the next question to the model, the task ends with the step limit's sentences, unasked.
       if (context.budget.steps >= context.budget.limits.maxSteps) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
       this.checkPaused(run.id); // long-work: the owner's Pause takes effect between steps
@@ -2633,6 +2656,14 @@ ${run.output.slice(0, 6000)}`;
       this.store.message(run.sessionId, assistant);
       if (!runnable.length) {
         unofferedRounds = 0; // an answer ends a streak of calls to tools that were not offered
+        if (!usedTools && offered.has(toolSearchName) && conductor.lastStep() && !context.dryRun && !context.isolated && !this.learningOf(run.id)
+          && capabilityActionRequested(run.prompt) && uncheckedCapabilityClaim(withoutThinking(spoken))) {
+          this.store.event(run.id, "model.capability_unchecked", { round: round + 1, nudged: capabilityNudged });
+          if (capabilityNudged) throw new CheckError(capabilityDiscoveryFailure);
+          capabilityNudged = true;
+          this.add(run, messages, ids, { role: "user", from: "branch", content: capabilityDiscoveryNudge });
+          continue;
+        }
         const remainder = conductor.lastStep() && !context.dryRun ? ownerTidyRemainder(this.store, run.id, run.prompt) : null;
         if (remainder) {
           this.store.event(run.id, "model.folder_unfinished", { round: round + 1, nudges: tidyNudges });
@@ -2690,7 +2721,7 @@ ${run.output.slice(0, 6000)}`;
       this.orchestration.milestone(run, round + 1);
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
-    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling));
+    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /**
    * mac7/speed: one tool call, from the journal entry to the result. This is exactly the path a
@@ -3065,6 +3096,9 @@ ${run.output.slice(0, 6000)}`;
     // Read under whoever is using the app: with a household profile switched on, their task is
     // given their own remembered facts and never the owner's.
     const snapshot = this.store.review.sessionSnapshot(memoryScope(this.store, context), run.sessionId, memoryAgent(context));
+    const taste = this.taste?.context({ memoryOwner: memoryScope(this.store, context), agent: memoryAgent(context) ?? null,
+      project: run.project ?? null, temporary: this.store.sessionTemporary(run.sessionId) });
+    if (taste) messages.push(taste);
     if (snapshot.count) messages.push({ role: "system", content: `What you remember about the person (snapshot taken when this conversation started; use memory.search for anything newer):\n${snapshot.text}` });
     const aboutYou = knobs.aboutYouMessage(this.store, memoryScope(this.store, context)); // R17-S13
     if (aboutYou) messages.push(aboutYou);
@@ -3074,7 +3108,10 @@ ${run.output.slice(0, 6000)}`;
     if (working.summary) messages.push(summaryMessage(working.summary));
     // Where Branch is running, where the message came from and the local time: last of the system text, after
     // everything that stays the same between turns, so a service's prompt cache keeps the rest (src/environment.ts).
-    messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id))) });
+    const available = this.offered(run, context).map(tool => tool.name);
+    const hidden = switchedToolTiers(this.store, context.owner, available).hidden;
+    messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id)))
+      + adaptiveInstructions(run.prompt, available.filter(name => !hidden.includes(name))) });
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
     this.groundInOwnerFacts(run, context, messages, ids); // QA R1 follow-up (recall)
@@ -3278,6 +3315,8 @@ ${run.output.slice(0, 6000)}`;
     const learned = this.store.toolUsage, notes = learned.noteMap(context.owner);
     // mac2/desktop-ui: the owner's three-way switches — "on" loads a feature's tools, "off" hides them.
     const switched = switchedToolTiers(this.store, context.owner, tools.map((tool) => tool.name));
+    const adaptive = context.isolated || this.learningOf(run.id) ? []
+      : tools.map(tool => tool.name).filter(name => !switched.hidden.includes(name));
     const catalog = new ToolLoader(tools, {
       expanded: [...alwaysOpenGroups, ...guessed, ...opened], signals,
       // mac2/fly-core-2: with the learning core "on", its top tools join this pre-load (src/fly-core/apply.ts).
@@ -3285,6 +3324,7 @@ ${run.output.slice(0, 6000)}`;
       // mac7/speed: with "fewer rounds" on, a coding task starts with the tools it always needs, so
       // it never spends a whole round trip searching for files.edit before it can begin.
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
+        ...adaptiveTools(run.prompt, adaptive),
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
@@ -3463,6 +3503,10 @@ ${run.output.slice(0, 6000)}`;
    * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
    * billed per token, and a model on this computer, keep the launch figure.
    */
+  /** True for a connection billed per token (an API key): not a sign-in and not a model on this computer. */
+  private billedPerToken(preset: ModelPreset | undefined): boolean {
+    return !!preset && !presetRunsLocally(preset) && !isSignInConnection(preset);
+  }
   /** selfdev: where a reply's token ceiling starts and how far it may grow, by the kind of connection. */
   private replyCeiling(preset: ModelPreset): { base: number; max: number } {
     return !presetRunsLocally(preset) && isSignInConnection(preset) ? { base: signInReplyCeiling, max: signInMaxReplyCeiling }
@@ -3562,11 +3606,12 @@ ${run.output.slice(0, 6000)}`;
     if (from < 1 || to - from < 2) return;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!);
     const room = Math.max(2000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4);
-    const transcript = messages.slice(from, to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n");
+    const transcript = messages.slice(from, to).map(transcriptLine).join("\n");
     this.store.event(run.id, "context.folding_task", { messages: to - from });
     const summariser: Message[] = [
       { role: "system", content: taskFoldInstructions },
-      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${transcript.slice(-room)}` },
+      // P0 (self-build): the start and the end of the work, as a conversation's fold reads it (src/compaction-input.ts).
+      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${boundSummaryInput(transcript, room)}` },
     ];
     const summary = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim().slice(0, 6000);
     if (!summary) return;
@@ -3602,13 +3647,8 @@ ${run.output.slice(0, 6000)}`;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!); // R17-S11
     // dogfood D22: the summariser's own question fits the room of the model that answers it.
     const room = Math.max(2000, Math.min(60000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4));
-    const transcript = messages.slice(split.from, split.to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n").slice(0, room);
     const previous = messages.slice(1, split.from).filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    const summariser: Message[] = [
-      { role: "system", content: compactionInstructions },
-      { role: "user", content: (previous ? previous + "\n\n" : "") + transcript },
-    ];
-    const answer = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+    const answer = await this.summariseRange(run, context, preset, previous, messages.slice(split.from, split.to).map(transcriptLine), room);
     const reply = answer.slice(0, 6000);
     // long-work: what earlier folds kept is merged in, never left to the model to remember, and the record's own
     // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them. The whole
@@ -3619,15 +3659,54 @@ ${run.output.slice(0, 6000)}`;
     const summary = [summaryText(structured), parsed ? "" : reply].filter(Boolean).join("\n\n").slice(0, 8000);
     const throughId = ids[split.to - 1]!;
     this.store.saveSessionSummary(context.owner, run.sessionId, structured, summary);
-    this.store.saveCompaction(run.sessionId, throughId, summary);
+    // P0 (self-build): the owner's own words stay word for word beside the summary, up to a share of the room.
+    const words = ownerWordsSection(this.ownerWordsThrough(run.sessionId, throughId),
+      Math.min(ownerWordsMaxTokens, Math.floor(budget.threshold / 10)) * 4);
+    const working = words ? `${summary}\n\n${words}` : summary;
+    this.store.saveCompaction(run.sessionId, throughId, working);
     const kept = this.keepAfterCompaction(run.sessionId, messages, ids, split);
-    messages.splice(1, messages.length - 1, summaryMessage(summary), ...kept.messages);
+    messages.splice(1, messages.length - 1, summaryMessage(working), ...kept.messages);
     ids.splice(1, ids.length - 1, null, ...kept.ids);
     this.store.event(run.id, "context.compacted", {
       droppedMessages: split.to - split.from - kept.pinned, keptMessages: kept.messages.length, summaryChars: summary.length,
-      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold,
+      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold, ownerWordsChars: words?.length ?? 0,
       estimatedBefore: before, estimatedAfter: estimateTokens(messages.map(textOnly)), throughMessageId: throughId,
     });
+  }
+  /**
+   * P0 (self-build): the summariser's answer for a folded range, its input held to `room` with the start and the end
+   * kept (src/compaction-input.ts). A summariser that is itself refused as too long is asked again without the oldest
+   * part, as Codex does (openai/codex, codex-rs/core/src/compact.rs, Apache-2.0), until one part is left.
+   */
+  private async summariseRange(run: Run, context: ToolContext, preset: ModelPreset, previous: string, lines: string[], room: number): Promise<string> {
+    const prefix = previous ? previous + "\n\n" : "";
+    for (let first = 0; ; first++) {
+      const summariser: Message[] = [
+        { role: "system", content: compactionInstructions },
+        { role: "user", content: prefix + boundSummaryInput(lines.slice(first).join("\n"), Math.max(2000, room - prefix.length)) },
+      ];
+      try {
+        return (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+      } catch (error) {
+        const overflow = overflowOf(error).overflow || (error instanceof BudgetError && error.message === tooLong);
+        if (!overflow || first >= lines.length - 1) throw error;
+        this.store.event(run.id, "context.compaction_trimmed", { dropped: first + 1 });
+      }
+    }
+  }
+  /** P0 (self-build): the owner's own messages up to a fold, newest first; Branch's own notes, pinned and left-out ones are not. */
+  private ownerWordsThrough(sessionId: string, throughId: number): string[] {
+    const pinned = this.store.pinnedMessageIds(sessionId);
+    const rows = this.store.sqlite.prepare(`SELECT id, body FROM messages WHERE session_id=? AND id<=?
+      AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id DESC LIMIT 200`)
+      .all(sessionId, throughId, sessionId);
+    const words: string[] = [];
+    for (const row of rows) {
+      if (pinned.has(Number(row.id))) continue;
+      const message = JSON.parse(String(row.body)) as Message;
+      if (message.role === "user" && !message.from && message.content.trim()) words.push(message.content);
+    }
+    return words;
   }
   /** long-work: what the record itself says a summary must keep — the files this conversation's tools touched, its open to-dos. */
   private recordedForSummary(sessionId: string): Partial<SessionSummary> {
@@ -3800,12 +3879,14 @@ ${run.output.slice(0, 6000)}`;
    * Moves to the next configured preset after an eligible failure; records the cooldown and switch. An account out of
    * credit or at its plan limit (outOfCredit) is not a passing failure: it moves only to the first model on this computer
    * in the owner's fallback order (Settings › Accounts › Fall back to this computer), never to another paid connection.
+   * A sign-in whose plan ran out may also move to another sign-in on a different plan (afterPlanLimit).
    */
   private fallBack(run: Run, context: ToolContext, route: ModelRoute, error: unknown): boolean {
     const failed = route.candidates[route.index]!;
     const cooldownUntil = this.models.markFailure(context.owner, failed.id, error);
     const to = cooldownUntil ? route.index + 1
-      : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
+      : planLimitReached(error) && isSignInConnection(failed) ? this.afterPlanLimit(run, context, route, failed)
+        : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
     const next = to > route.index ? route.candidates[to] : undefined;
     if (!next) return false;
     route.index = to;
@@ -3814,6 +3895,25 @@ ${run.output.slice(0, 6000)}`;
       reason: errorText(error), cooldownUntil,
     });
     return true;
+  }
+  /**
+   * A sign-in whose plan ran out (the owner's ChatGPT plan at 0% left, 2026-09-29): the work goes on with a model on this
+   * computer or a sign-in on a different plan (the Claude subscription), which cost nothing more per token, rather than
+   * stopping. The route's own order comes first, then the owner's other sign-ins; a key billed per token is never
+   * chosen, nor a model on the same spent plan (ChatGPT's other models, Codex). A Trunk keeps its sign-in rule.
+   * The index to move to, or -1.
+   */
+  private afterPlanLimit(run: Run, context: ToolContext, route: ModelRoute, failed: ModelPreset): number {
+    const spent = planOf(failed), signIns = !context.trunkKeys || this.trunkSignIns(run.id);
+    const otherPlan = (preset: ModelPreset): boolean => signIns && isSignInConnection(preset) && planOf(preset) !== spent;
+    const inRoute = route.candidates.findIndex((candidate, at) => at > route.index && (presetRunsLocally(candidate) || otherPlan(candidate)));
+    if (inRoute >= 0) return inRoute;
+    const tried = new Set(route.candidates.map((candidate) => candidate.id));
+    const other = [...this.models.presets.values()].find((preset) => !tried.has(preset.id) && !presetRunsLocally(preset) && otherPlan(preset)
+      && !this.models.coolingDown(preset.id) && !isRetiredConnection(preset));
+    if (!other) return -1;
+    route.candidates.push(other);
+    return route.candidates.length - 1;
   }
   /** The connection here that answers instead of `wanted` for a task that must stay on this computer. */
   private keptHere(run: Run, wanted: ModelPreset): ModelPreset {
@@ -3846,6 +3946,14 @@ ${run.output.slice(0, 6000)}`;
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
+    // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
+    // request also stops at this month's budget, so a task on no limit cannot run past it (src/knobs/apply.ts taskBudget).
+    const billed = this.billedPerToken(preset);
+    context.budget.answeredBy(billed);
+    if (billed) {
+      const monthly = this.monthlyBudgetRefusal();
+      if (monthly) throw new BudgetError(monthly);
+    }
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
@@ -5144,7 +5252,9 @@ ${run.output.slice(0, 6000)}`;
     await this.pace(context, "tool", this.policy().limits.toolCallsPerMinute);
     const gated = await this.gate(call, seen, context, shown);
     if (gated.refusal) return gated.refusal;
-    const limitMs = knobs.toolLimits(this.store, this.owner, this.reliability).toolTimeoutMs, timeout = AbortSignal.timeout(limitMs); // R17-S10
+    // R17-S10; selfdev (SELF-022): a look-only waiting tool may wait longer than the owner's limit (ToolDefinition.waitsUpToMs).
+    const limitMs = Math.max(knobs.toolLimits(this.store, this.owner, this.reliability).toolTimeoutMs, this.registry.registered(call.name)?.waitsUpToMs ?? 0);
+    const timeout = AbortSignal.timeout(limitMs);
     // How tightly a program this call starts is held travels with the call, so a tool that starts
     // one can honour the owner's rule without knowing anything about the policy.
     // wave mac3 (os-sandbox, integration review): the wall comes only from wallContextFor below, never
@@ -5153,7 +5263,8 @@ ${run.output.slice(0, 6000)}`;
     // Q250: a model's own call is always held to read-before-edit, whatever context it was started from.
     const scoped: ToolContext = { ...unwalled, askable: true, readFirstExempt: false, signal: AbortSignal.any([context.signal, timeout]),
       // selfdev: the owner's selected Full Access reaches a held command too: the network, never wider writes.
-      ...(call.name === "shell.execute" && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
+      // SELF-304: and a held program left running (process.start), walled the same way.
+      ...((call.name === "shell.execute" || call.name === "process.start") && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
       ...(gated.sandbox ? { sandbox: gated.sandbox } : {}),
       ...(gated.backend ? { sandboxBackend: gated.backend } : {}),
       ...(gated.paths?.length ? { sandboxPaths: gated.paths } : {}),

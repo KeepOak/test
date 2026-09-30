@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -303,8 +303,25 @@ function rotate(base: string): void {
   const oldest = rotated(base, fileCount - 1);
   if (existsSync(oldest)) step(() => unlinkSync(oldest));
   for (let index = fileCount - 2; index >= 1; index--)
-    if (existsSync(rotated(base, index))) step(() => renameSync(rotated(base, index), rotated(base, index + 1)));
-  step(() => renameSync(base, rotated(base, 1)));
+    if (existsSync(rotated(base, index))) step(() => moveAside(rotated(base, index), rotated(base, index + 1)));
+  step(() => moveAside(base, rotated(base, 1)));
+}
+/**
+ * Moves a file to a name nothing has yet. A plain rename replaces what is there, and with two writers rotating at once
+ * that was a copy the other had just moved aside, full of lines, lost (the engine lost two lines in three on Linux).
+ * A hard link is never made over another file, so a move the other writer already made is skipped instead. A drive
+ * without hard links falls back to the plain move, only when nothing is at the new name.
+ */
+function moveAside(from: string, to: string): void {
+  try { linkSync(from, to); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" || code === "ENOENT" || existsSync(to)) throw error;
+    renameSync(from, to);
+    return;
+  }
+  // Both names hold the same lines until the old one goes; if it cannot go, the new one is taken back, never both kept.
+  try { unlinkSync(from); } catch (error) { try { unlinkSync(to); } catch { /* left as it is */ } throw error; }
 }
 function readLines(file: string): LogLine[] {
   try {

@@ -40,7 +40,8 @@ case "$1" in
   remote) for last; do :; done
     [ "$2" = get-url ] && [ "$last" = origin ] && { cat '${shared}/origin'; exit 0; }
     [ "$2" = get-url ] && [ "$last" = upstream ] && { [ -f '${shared}/upstream' ] && cat '${shared}/upstream' && exit 0; exit 2; }
-    [ "$2" = add ] && [ "$3" = upstream ] && { echo "$4" > '${shared}/upstream'; exit 0; }; exit 1;;
+    [ "$2" = add ] && [ "$3" = upstream ] && { echo "$4" > '${shared}/upstream'; exit 0; }
+    [ "$2" = set-url ] && [ "$3" = origin ] && { echo "$4" > '${shared}/origin'; exit 0; }; exit 1;;
   fetch) exit 0;;
   rev-parse) echo ${sha}; exit 0;;
   worktree) [ "$2" = add ] && mkdir -p "$5" && exit 0; exit 1;;
@@ -94,7 +95,8 @@ test("the first contract is made only after the owner's own yes, and that yes is
   assert.equal(first?.revision, 1);
   assert.equal(first.sourceSha, sha);
   assert.deepEqual(first.allowedPaths, ["**"]);
-  assert.deepEqual(first.sendRepositories, ["stabrea/branch-agent"], "where a pull request may go is read from origin once, and written with the contract");
+  assert.deepEqual(first.sendRepositories, ["keepoak/branch-agent"], "where a pull request may go is read from origin once (stabrea is read as KeepOak), and written with the contract");
+  assert.match(await gitLog(), /remote set-url origin https:\/\/github\.com\/KeepOak\/Branch-Agent\.git/, "a checkout cloned before the move is pointed at KeepOak");
   assert.match(await gitLog(), /remote get-url --push --all origin/, "the repository origin pushes to, every address of it");
   assert.ok(existsSync(join(workspace, worktree)), "the worktree is made after the contract");
   assert.match(await gitLog(), new RegExp(`worktree add -b branch/self-remove-button .branch-worktrees/self-remove-button ${sha}`));
@@ -125,5 +127,5 @@ test("a fork's contract names its own origin and the upstream it was made from, 
   const done = await ask(paused.sessionId);
   assert.equal(done.status, "completed", done.output);
   const [first] = new ContractBook(app.store.sqlite).history(app.runtime.owner, worktree);
-  assert.deepEqual(first.sendRepositories, ["alice/branch-agent", "stabrea/branch-agent"]);
+  assert.deepEqual(first.sendRepositories, ["alice/branch-agent", "keepoak/branch-agent"]);
 });

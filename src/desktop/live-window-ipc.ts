@@ -111,12 +111,12 @@ class LiveWindow {
     }, this.options.retryMs ?? 1000);
     return true;
   }
-  private waitPaint(commit: string | null): Promise<void> {
+  private waitPaint(commit: string | null, ms = this.options.restoreMs ?? 15_000): Promise<void> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.paint = null;
         reject(new WindowUpdateDeferred("The updated page did not restore and draw in time."));
-      }, this.options.restoreMs ?? 15_000);
+      }, ms);
       this.paint = { commit, resolve, reject, timer };
     });
   }
@@ -149,6 +149,14 @@ class LiveWindow {
     } catch (error) { if (!this.hasReloaded) this.closeCover(); this.finish(error as Error); throw error; }
     finally { this.reloading = false; }
   }
+  /**
+   * A shell update (shell-switch.ts): the new version's first page restores what the old one kept, and says so with
+   * `token` as a live reload's page does. Armed before the page loads; answers whether it did within the wait.
+   */
+  expectRestore(token: string): Promise<boolean> {
+    // The whole first load is in this wait (the engine joined, the page fetched), not only a reload's redraw.
+    return this.waitPaint(token, Math.max(60_000, this.options.restoreMs ?? 0)).then(() => true, () => false);
+  }
   /** Called only after the previous checked files have been restored by main. */
   async recover(): Promise<void> {
     if (!this.hasReloaded) return;
@@ -174,7 +182,7 @@ class LiveWindow {
   }
 }
 
-export function registerLiveWindowIpc(options: LiveWindowOptions): { tell: (update: WindowUpdate) => Promise<void>; recover: () => Promise<void> } {
+export function registerLiveWindowIpc(options: LiveWindowOptions): { tell: (update: WindowUpdate) => Promise<void>; recover: () => Promise<void>; expectRestore: (token: string) => Promise<boolean> } {
   const live = new LiveWindow(options);
-  return { tell: (update) => live.tell(update), recover: () => live.recover() };
+  return { tell: (update) => live.tell(update), recover: () => live.recover(), expectRestore: (token) => live.expectRestore(token) };
 }
