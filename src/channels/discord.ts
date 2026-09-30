@@ -55,6 +55,42 @@ const interactionSchema = z.object({ id: z.string().min(1).max(64), token: z.str
 }).passthrough();
 
 export class DiscordAdapter implements ChannelAdapter {
+  private threadStop = new AbortController();
+  private readonly threadWork = new Map<string, Promise<InboundMessage>>();
+  private readonly threadSources = new Map<string, string>();
+  private readonly threadedMessages = new Set<string>();
+  private lastThreadAt = 0;
+  /** Called only after the router has checked group activation, pairing, sender and rate policy. */
+  async prepareGroup(message: InboundMessage): Promise<InboundMessage> {
+    if (message.chatKind !== "group" || message.caughtUp || message.edited || this.threadSources.has(message.chatId)) return message;
+    if (!/^\d{17,20}$/.test(message.chatId) || !/^\d{17,20}$/.test(message.messageId)) throw new Error("Discord thread source identity is invalid.");
+    const key = `${message.chatId}:${message.messageId}`;
+    const current = this.threadWork.get(key);
+    if (current || this.threadedMessages.has(key)) throw new Error("This Discord message already has a pending or completed thread dispatch.");
+    if (this.threadWork.size >= 2 || Date.now() - this.lastThreadAt < 2000) throw new Error("Discord thread creation is rate limited; try again.");
+    this.lastThreadAt = Date.now();
+    const work = this.createBoundThread(message);
+    this.threadWork.set(key, work);
+    try {
+      const bound = await work;
+      if (this.threadedMessages.size >= 1000) this.threadedMessages.delete(this.threadedMessages.values().next().value!);
+      this.threadedMessages.add(key);
+      return bound;
+    } finally { this.threadWork.delete(key); }
+  }
+  private async createBoundThread(message: InboundMessage): Promise<InboundMessage> {
+    const response = await this.fetch(`${this.base}/channels/${message.chatId}/messages/${message.messageId}/threads`, {
+      method: "POST", headers: { ...this.headers(), "content-type": "application/json" },
+      body: JSON.stringify({ name: "Branch conversation", auto_archive_duration: 1440 }),
+      signal: AbortSignal.any([this.threadStop.signal, AbortSignal.timeout(20_000)]) });
+    this.noteLimits(response);
+    if (!response.ok) throw new Error(`Discord refused thread creation (${response.status}); no response was sent to another channel.`);
+    const thread = z.object({ id: z.string().regex(/^\d{17,20}$/), parent_id: z.string() }).passthrough().parse(await response.json());
+    if (thread.parent_id !== message.chatId || this.threadStop.signal.aborted) throw new Error("Discord thread source changed or stopped.");
+    if (this.threadSources.size >= 1000) this.threadSources.delete(this.threadSources.keys().next().value!);
+    this.threadSources.set(thread.id, message.chatId);
+    return { ...message, chatId: thread.id, addressed: true };
+  }
   readonly kind = "discord";
   /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
   readonly replyQuotes = true;
@@ -100,11 +136,13 @@ export class DiscordAdapter implements ChannelAdapter {
     await this.start(onMessage);
   }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    if (this.threadStop.signal.aborted) this.threadStop = new AbortController();
     this.loop = this.run(onMessage);
     // Give the first connection a moment so a wrong token is reported while the owner is watching.
     await Promise.race([this.loop, new Promise((resolve) => setTimeout(resolve, 50))]);
   }
   async stop(): Promise<void> {
+    this.threadStop.abort(new Error("Discord stopped"));
     this.stopping = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.keepalive) clearInterval(this.keepalive);
@@ -270,7 +308,7 @@ export class DiscordAdapter implements ChannelAdapter {
       channel: this.id, chatId: message.channel_id, chatKind: direct ? "direct" : "group",
       ...(message.guild_id ? { chatTitle: `channel ${message.channel_id}` } : {}),
       senderId: message.author.id, senderName: message.author.username ?? message.author.id,
-      text: text || message.content, addressed: direct || mentioned || repliedTo, messageId: message.id,
+      text: text || message.content, addressed: direct || mentioned || repliedTo || this.threadSources.has(message.channel_id), messageId: message.id,
       ...(files.length ? { attachments: files.map((file, index) => {
         const mediaType = file.content_type?.split(";")[0] ?? "application/octet-stream";
         return { name: file.filename ?? `attachment-${index + 1}`, sourceId: `${message.id}:${index}`, mediaType, kind: attachmentKind(mediaType),
