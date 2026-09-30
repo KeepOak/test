@@ -276,7 +276,7 @@ import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
 import { commandHost } from "./commands/host.js"; // CHAT-185
-import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
+import { connectGuidedTelegram, controlGuidedTelegram, saveGuidedTelegram, telegramSetupView } from "./never-break/telegram-setup.js";
 import { liveChannels } from "./channel-setup/live.js"; // CHAT-147: every chat app set up in the window connects there and then
 import { buildChannelEntry, type ChannelHost } from "./integrations/bootstrap.js";
 import { fileURLToPath } from "node:url";
@@ -1748,7 +1748,17 @@ ${result.output || "(it said nothing)"}`;
       /** The Telegram setup card: its state, saving it, and connecting the bot it set up. */
       telegram: {
         view: () => telegramSetupView(store, runtime.owner, channels),
-        save: (input: unknown) => saveTelegramSetup(store, runtime.owner, input),
+        save: (input: unknown) => saveGuidedTelegram({ store, owner: runtime.owner, router: channels,
+          fetch: web.policy.guard(globalThis.fetch), requireAccess: () => {
+            store.profiles.requireOwner("Saving your Telegram connection");
+            if (sessionLock.locked() || lockedDown(store, runtime.owner)) throw new Error("Unlock Branch and turn off Lockdown first.");
+          } }, input),
+        control: (input: unknown) => controlGuidedTelegram({ store, owner: runtime.owner, router: channels,
+          fetch: web.policy.guard(globalThis.fetch), apiBase: options.telegramApiBase,
+          requireAccess: () => {
+            store.profiles.requireOwner("Switching your Telegram connection");
+            if (sessionLock.locked() || lockedDown(store, runtime.owner)) throw new Error("Unlock Branch and turn off Lockdown first.");
+          } }, input),
         connect: (connectOptions: { background?: boolean } = {}) => connectGuidedTelegram({ store, owner: runtime.owner, router: channels,
           fetch: web.policy.guard(globalThis.fetch), apiBase: options.telegramApiBase, background: connectOptions.background }),
         apiBase: options.telegramApiBase,

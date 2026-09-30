@@ -8035,6 +8035,7 @@
   "window.p17d.tab-checks": "Les vérifications",
   "window.p17d.tab-fail": "Ce qui n’a pas réussi",
   "window.p17d.tab-must": "Ce qu’il doit faire",
+  "window.p17d.telegram-card-only": "Cette connexion Telegram est gérée en dehors de la carte de configuration, ou elle a changé. Ouvrez plutôt sa configuration.",
   "window.p17d.ten-minutes": "10 minutes",
   "window.p17d.three-minutes": "3 minutes",
   "window.p17d.three-seconds": "3 secondes",
