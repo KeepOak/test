@@ -202,7 +202,7 @@ const browserMore = () => sec15(t("window.settings.computer.the-browser-more"),
 const code = () => sec15(t("window.settings.computer.code"),
   sw("Try ideas on a branch", "A plan can be tried, compared and merged; a forked conversation gets its own copy.")
   + fact15("Code map", "f15-code-map")
-  + sw("Check and format files after editing", "")
+  + sw("Check and format files after editing", "After a task changes a file, your own formatter tidies it and your language server's mistakes go back to the task to fix.")
   + sw("AI! and AI? comments start tasks", "Write “AI! add tests” in a file and a Trunk picks it up.")
   + sw("Draft a pull request from a task", "Never merged by Branch.")
   + sw("Remember the shell", "PATH, aliases and functions, so commands behave as in your terminal."));
