@@ -90,6 +90,11 @@ export async function buildLive(run: Run, plan: LivePlan): Promise<LiveOutcome> 
   }
   const engine = classify({ changed: sinceEngine, read, manifest });
   const window = classify({ changed: sinceWindow, read, manifest });
+  // A main-process file can reach the engine's or the window's list without reaching the shell's (the running engine or
+  // window is from a different change than the packaged app). It still needs main to load it, and a live update's list
+  // only carries window, engine and gateway parts, so the whole update goes the packaged way instead of being refused.
+  const mainFile = [...engine.files, ...window.files].find((file) => file.part === "shell");
+  if (mainFile) return { tier: "shell", version, reason: `${mainFile.path} is loaded by the app's main process` };
   const parts = new Set<Part>([...engine.parts].filter((part) => part !== "window"));
   if (window.parts.has("window")) parts.add("window");
   const tier: Exclude<Part, "shell"> | null = parts.has("gateway") ? "gateway" : parts.has("engine") ? "engine" : parts.has("window") ? "window" : null;
