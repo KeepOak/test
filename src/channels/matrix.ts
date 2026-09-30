@@ -186,9 +186,9 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!original || original !== event.sender) return null; // only its own sender's edit of a message this adapter read
     const chatId = this.eventChats.get(`${roomId}:${relates.data.event_id}`);
     if (!chatId) return null;
-    const root = chatId ? this.threads.get(chatId) : undefined;
-    const content = root ? { ...fresh.data, "m.relates_to": { rel_type: "m.thread", event_id: root } } : fresh.data;
-    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content });
+    const root = this.threads.get(chatId);
+    const renewed = root ? { ...fresh.data, "m.relates_to": { rel_type: "m.thread", event_id: root } } : fresh.data;
+    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content: renewed });
     return inbound ? { ...inbound, edited: true } : null;
   }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
