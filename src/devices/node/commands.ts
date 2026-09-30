@@ -195,6 +195,9 @@ export const windowsNoticeScript = [
   "$f=New-Object System.Windows.Forms.Form",
   `$f.Text='${noticeTitle}'`,
   "$f.TopMost=$true",
+  // Without a taskbar button the form is owned by WinForms' own hidden window, so Windows does not turn its first
+  // showing into the "hidden" the notice's program was started with (windowsHide), as the screen banners already do.
+  "$f.ShowInTaskbar=$false",
   "$f.ControlBox=$false",
   "$f.FormBorderStyle='FixedToolWindow'",
   "$f.StartPosition='Manual'",
