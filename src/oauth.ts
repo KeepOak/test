@@ -51,8 +51,9 @@ export class OAuthConnections {
     private readonly fetchImpl: typeof fetch = globalThis.fetch, private readonly windowMs = 300_000) {}
 
   /** Starts a sign-in: the address to open, and a promise that settles when the service answers. */
-  async start(input: unknown): Promise<OAuthStart> {
+  async start(input: unknown, options?: { loopbackPort: number }): Promise<OAuthStart> {
     const provider = OAuthProviderSchema.parse(input);
+    const requestedPort = options ? z.number().int().min(1024).max(65535).parse(options.loopbackPort) : 0;
     // The sign-in page is opened in the person's own browser, so it has to be an ordinary web
     // address and nothing else; the address the key comes from is checked again by the policy.
     webAddress(provider.authorizeUrl, "sign-in page");
@@ -60,7 +61,7 @@ export class OAuthConnections {
     await this.cancel(provider.id);
     const verifier = base64url(randomBytes(32)), state = base64url(randomBytes(24));
     const server = createServer();
-    const port = await listenOnLoopback(server);
+    const port = await listenOnLoopback(server, requestedPort);
     const redirectUri = `http://127.0.0.1:${port}/oauth/callback`;
     let settle!: (tokens: OAuthTokens) => void, fail!: (error: Error) => void;
     const done = new Promise<OAuthTokens>((resolve, reject) => { settle = resolve; fail = reject; });
@@ -187,10 +188,10 @@ function reply(response: import("node:http").ServerResponse, status: number, mes
   const page = `<!doctype html><meta charset="utf-8"><title>Branch Agent</title><body style="font:16px system-ui;padding:3rem">${message}</body>`;
   response.writeHead(status, { "content-type": "text/html; charset=utf-8" }).end(page);
 }
-function listenOnLoopback(server: Server): Promise<number> {
+function listenOnLoopback(server: Server, port = 0): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
+    server.listen(port, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
   });
 }
 /** The shape the locker keeps, which is not the shape the service answers with. */
