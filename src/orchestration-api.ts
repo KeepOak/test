@@ -41,7 +41,7 @@ export async function orchestrationApi(
   // be left running, copy a plugin in, keep a drafted skill, or answer a job handed over earlier.
   app.store.profiles.requireOwner("Flows, programs left running and the switches behind them");
   if (path.startsWith("/api/flows")) {
-    const answered = await flowsApi(app.flows, request, path, () => readBody(request));
+    const answered = await flowsApi(app.flows, request, path, () => readBody(request, path.startsWith("/api/flows/macros") ? 64_000 : undefined));
     return answered ?? notFound();
   }
   // Wave 8: the to-do list, and "Save as report" in its three forms.

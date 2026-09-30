@@ -8,6 +8,7 @@ import type { Store } from "./store.js";
 import type { RunSource } from "./policy.js";
 import { compileGraph, type CompiledGraph, type GraphEdge, type GraphNode } from "./flow-graph.js";
 import { hasFlowSteps, recordFlowStep } from "./flows-boards/time-travel.js"; // r17-h: going back to an earlier step
+import { macroArgument } from "./tool-macro.js";
 
 /**
  * Running a flow that is a real graph: one state object carried from box to box, each box handing
@@ -19,7 +20,7 @@ import { hasFlowSteps, recordFlowStep } from "./flows-boards/time-travel.js"; //
  * Every start, finish and failure is also written as an event against the flow's own task, which
  * is what the run socket already streams, so a page watching the flow sees it happen.
  */
-export type GraphRunStatus = "running" | "completed" | "failed" | "waiting_approval" | "interrupted";
+export type GraphRunStatus = "running" | "completed" | "failed" | "waiting_approval" | "interrupted" | "cancelled";
 export interface GraphNodeState { seq: number; nodeId: string; name: string; status: string; output: string; updatedAt: string }
 export interface GraphRunView {
   runId: string; flowId: string; status: GraphRunStatus; nextNode: string | null;
@@ -45,9 +46,11 @@ export function fillIn(text: string, state: Record<string, unknown>): string {
   return text.replace(/\{([a-z][A-Za-z0-9_]{0,39})\}/g, (whole, name: string) =>
     (name in state ? (typeof state[name] === "string" ? state[name] : jsonOf(state[name])) : whole));
 }
-const filledArgs = (args: Record<string, unknown>, state: Record<string, unknown>): Record<string, unknown> =>
-  Object.fromEntries(Object.entries(args).map(([key, value]) =>
-    [key, typeof value === "string" ? fillIn(value, state) : value]));
+const filledArgs = (args: Record<string, unknown>, state: Record<string, unknown>, typed = false): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(args).map(([key, value]) => {
+    const macro = typed ? macroArgument(value, state) : { matched: false, value };
+    return [key, macro.matched ? macro.value : typeof value === "string" ? fillIn(value, state) : value];
+  }));
 
 /** What one box handed back: its patch of the state, its words, and which way out it chose. */
 interface NodeResult {
@@ -60,7 +63,7 @@ interface NodeResult {
  * How one run of a graph works. mac7/lockdown-fix: `within` is set when a task carried the run on —
  * that task's permissions, which every box then keeps to.
  */
-type GraphWorkOptions = { source?: RunSource; chain?: readonly string[]; within?: readonly string[] };
+type GraphWorkOptions = { source?: RunSource; chain?: readonly string[]; within?: readonly string[]; signal?: AbortSignal };
 
 const limitKey = (runId: string): string => `flow-run-limit:${runId}`;
 /** mac7/outside-resume: who set a run going, when that was from outside (a schedule, a chat, another program). */
@@ -69,6 +72,7 @@ const sourceKey = (runId: string): string => `flow-run-source:${runId}`;
 const trunkKey = (runId: string): string => `flow-run-trunk:${runId}`;
 
 export class FlowGraphRunner {
+  private readonly controllers = new Map<string, AbortController>();
   constructor(
     private readonly store: Store,
     private readonly owner: string,
@@ -101,12 +105,33 @@ export class FlowGraphRunner {
 
   /** Works through the boxes from wherever the checkpoint says, as the Trunk whose run it is (Q114), if any. */
   async work(runId: string, compiled: CompiledGraph, options: GraphWorkOptions = {}): Promise<GraphRunView> {
-    const trunk = this.heldTrunk(runId);
-    if (!trunk) return this.boxes(runId, compiled, options);
-    // NAS d2cd104: a run started from a mark that outlived its Trunk ends saying why, not left looking as if it works.
-    const refused = this.runtime.trunkWorkRefusal(trunk);
-    if (refused && !this.runtime.trunkKeysFor(trunk)) this.endGone(runId, refused);
-    return this.runtime.asTrunkWork(trunk, () => this.boxes(runId, compiled, options));
+    if (this.controllers.has(runId)) throw new Error("That flow run is already working");
+    if (this.view(runId).status === "cancelled") throw new Error("That flow run was cancelled");
+    const controller = new AbortController();
+    this.controllers.set(runId, controller);
+    const inherited = options.signal;
+    const cancel = () => { this.cancel(runId); };
+    inherited?.addEventListener("abort", cancel, { once: true });
+    options = { ...options, signal: controller.signal };
+    try {
+      if (inherited?.aborted) return this.cancel(runId);
+      const trunk = this.heldTrunk(runId);
+      if (!trunk) return await this.boxes(runId, compiled, options);
+      // A run started from a mark that outlived its Trunk ends saying why.
+      const refused = this.runtime.trunkWorkRefusal(trunk);
+      if (refused && !this.runtime.trunkKeysFor(trunk)) this.endGone(runId, refused);
+      return await this.runtime.asTrunkWork(trunk, () => this.boxes(runId, compiled, options));
+    } finally { inherited?.removeEventListener("abort", cancel); this.controllers.delete(runId); }
+  }
+  /** Cooperative cancellation cannot undo effects already performed by a tool. */
+  cancel(runId: string): GraphRunView {
+    const run = this.view(runId);
+    if (run.status === "cancelled" || run.status === "completed") return run;
+    this.save(runId, { status: "cancelled", next_node: null, question: null, approval: null, error: "Cancelled by you." });
+    this.controllers.get(runId)?.abort();
+    this.store.finish(runId, "cancelled", "Cancelled by you.");
+    this.store.event(runId, "flow.cancelled", {});
+    return this.view(runId);
   }
   /** Q122: a run whose Trunk is gone can never carry on, so it and its task end as failed, with the reason. */
   private endGone(runId: string, reason: string): void {
@@ -154,6 +179,7 @@ export class FlowGraphRunner {
     let saved = this.checkpoint(runId);
     let at = saved.nextNode, state = saved.state, loops = saved.loops, seq = this.lastSeq(runId);
     while (at) {
+      if (options.signal?.aborted) return this.view(runId);
       const node = compiled.nodes.get(at);
       if (!node) return this.stop(runId, "failed", `The flow points at a box "${at}" that is not there.`);
       // Q121 (NAS 7af12b6): a Trunk removed while its run works stops it before the next box.
@@ -163,17 +189,20 @@ export class FlowGraphRunner {
       this.writeNode(runId, ++seq, node, "running", "");
       this.store.event(runId, "flow.node.started", { node: node.id, name: node.name, kind: node.kind, seq });
       const result = await this.attempt(runId, seq, node, state, compiled, options);
+      if (options.signal?.aborted) return this.view(runId);
       if ("stopped" in result) return result.stopped;
       state = { ...state, ...result.patch };
       this.writeNode(runId, seq, node, "done", result.output);
       this.store.event(runId, "flow.node.finished", { node: node.id, name: node.name, seq, output: result.output.slice(0, 500),
         ...(result.childRunId ? { childRunId: result.childRunId } : {}) /* bucket 13: run monitor */ });
+      if (options.signal?.aborted) return this.view(runId);
       const step = this.chooseNext(node, result, compiled, loops, limit);
       if ("refusal" in step) return this.stop(runId, "failed", step.refusal);
       at = step.to; loops = step.loops;
       this.save(runId, { next_node: at, state: JSON.stringify(state), loops: JSON.stringify(loops) });
       recordFlowStep(this.store, { runId, owner: this.owner, seq, nodeId: node.id, name: node.name, nextNode: at }, state, loops); // r17-h
     }
+    if (options.signal?.aborted) return this.view(runId);
     this.save(runId, { status: "completed", state: JSON.stringify(state) });
     // mac7/lockdown-fix (integration review): a finished run cannot be carried on, so its limit goes,
     // unless its steps were kept: going back to one makes a copy that must keep the same limit.
@@ -191,6 +220,7 @@ export class FlowGraphRunner {
       compiled.patchSchema.get(node.id)?.parse(result.patch);
       return result;
     } catch (error) {
+      if (options.signal?.aborted) return { stopped: this.view(runId) };
       if (error instanceof ApprovalRequiredError) {
         this.writeNode(runId, seq, node, "waiting", error.message);
         this.store.event(runId, "flow.node.waiting", { node: node.id, name: node.name, seq });
@@ -248,12 +278,12 @@ export class FlowGraphRunner {
       // Q119: a Trunk's box is shaped as that Trunk's turn: its tools now, and none of the owner's documents.
       const trunkId = this.runtime.trunkAtWork();
       const run = await this.runtime.run({ prompt: fillIn(node.prompt!, state),
-        signal: AbortSignal.timeout(node.timeoutMs), source: options.source === "channel" ? "channel" : "schedule", onTextDelta: () => undefined, ...this.limited(options),
+        signal: AbortSignal.any([AbortSignal.timeout(node.timeoutMs), ...(options.signal ? [options.signal] : [])]), source: options.source === "channel" ? "channel" : "schedule", onTextDelta: () => undefined, ...this.limited(options),
         ...(trunkId ? { trunkId } : {}) });
       if (run.status !== "completed") throw new Error(`the assistant stopped (${run.status})`);
       return { patch: this.asPatch(node, run.output), output: run.output.slice(0, 2000), childRunId: run.id /* bucket 13: run monitor */ };
     }
-    const result = await this.useTool(node, filledArgs(node.args ?? {}, state), options.source ?? "owner", options.within);
+    const result = await this.useTool(node, filledArgs(node.args ?? {}, state, node.argumentMode === "typed-macro"), options.source ?? "owner", options.within, options.signal);
     return { patch: this.asPatch(node, result), output: jsonOf(result).slice(0, 2000) };
   }
 
@@ -266,8 +296,8 @@ export class FlowGraphRunner {
     const list = Array.isArray(state[node.overField!]) ? (state[node.overField!] as unknown[]) : [];
     if (!node.tool) throw new Error("a map box needs a tool to use on each item");
     const done = await Promise.all(list.map(async (item) => {
-      const args = filledArgs(node.args ?? {}, { ...state, item });
-      return jsonOf(await this.useTool(node, { ...args, item }, options.source ?? "owner", options.within));
+      const args = filledArgs(node.args ?? {}, { ...state, item }, node.argumentMode === "typed-macro");
+      return jsonOf(await this.useTool(node, { ...args, item }, options.source ?? "owner", options.within, options.signal));
     }));
     return { patch: { [node.intoField!]: done }, output: `Worked through ${done.length} item(s).` };
   }
@@ -283,7 +313,7 @@ export class FlowGraphRunner {
     const inner = Object.fromEntries(Object.keys(node.input).map((name) => [name, state[name]]));
     const started = this.begin(this.definitionOf(node.flowId!), inner, { ...(options.source === undefined ? {} : { source: options.source }), depth: chain.length + 1 });
     const finished = await this.work(started.runId, started.compiled, { ...(options.source === undefined ? {} : { source: options.source }), chain: [...chain, node.flowId!],
-      ...(options.within ? { within: options.within } : {}) });
+      ...(options.within ? { within: options.within } : {}), ...(options.signal ? { signal: options.signal } : {}) });
     if (finished.status !== "completed") throw new Error(finished.error ?? `the flow inside it stopped (${finished.status})`);
     const patch = Object.fromEntries(Object.keys(node.output)
       .filter((name) => finished.state[name] !== undefined).map((name) => [name, finished.state[name]]));
@@ -291,15 +321,17 @@ export class FlowGraphRunner {
   }
 
   /** A tool used by a box, held to exactly the approval settings a step of a saved workflow is. */
-  private async useTool(node: GraphNode, args: Record<string, unknown>, source: RunSource, within?: readonly string[]): Promise<unknown> {
-    const context = this.runtime.context({ signal: AbortSignal.timeout(node.timeoutMs), source, approvalKey: `flow:${node.id}`, ...this.limited({ within }) });
+  private async useTool(node: GraphNode, args: Record<string, unknown>, source: RunSource, within?: readonly string[], signal?: AbortSignal): Promise<unknown> {
+    const stop = AbortSignal.any([AbortSignal.timeout(node.timeoutMs), ...(signal ? [signal] : [])]);
+    stop.throwIfAborted();
+    const context = this.runtime.context({ signal: stop, source, approvalKey: `flow:${node.id}`, ...this.limited({ within }) });
     const fingerprint = argumentFingerprint(node.tool!, JSON.stringify(args));
     const outside = outsideTask(this.runtime, node.tool!, context); // mac7/lockdown-fix: before any question
     if (outside) throw Object.assign(new PolicyRefusedError(node.tool!, node.name), { message: outside });
     const check = this.runtime.checkPolicy(node.tool!, args, context, fingerprint);
     if (check.decision === "deny") throw new PolicyRefusedError(node.tool!, check.label);
     if (check.decision === "ask") throw new ApprovalRequiredError(node.tool!, check.target, check.label, check.remember, fingerprint);
-    return this.runtime.executeTool(node.tool!, args, { mode: "policy", source, approvalKey: `flow:${node.id}`, ...(within ? { within } : {}) }); // mac5/manual-actions
+    return this.runtime.executeTool(node.tool!, args, { mode: "policy", source, approvalKey: `flow:${node.id}`, signal: stop, ...(within ? { within } : {}) }); // mac5/manual-actions
   }
   /**
    * mac7/lockdown-fix: drops a run's kept limit. A failed or waiting run keeps it, because it can still
@@ -402,7 +434,7 @@ export class FlowGraphRunner {
    */
   resumable(flowId: string): GraphRunView | null {
     const row = this.store.sqlite.prepare(
-      `SELECT run_id FROM flow_graph_runs WHERE owner=? AND flow_id=? AND status<>'completed'
+      `SELECT run_id FROM flow_graph_runs WHERE owner=? AND flow_id=? AND status NOT IN ('completed','cancelled')
        AND next_node IS NOT NULL ORDER BY updated_at DESC LIMIT 1`).get(this.owner, flowId);
     return row ? this.view(String(row.run_id)) : null;
   }
@@ -454,7 +486,8 @@ export class FlowGraphRunner {
   async resume(runId: string, flow: unknown,
     options: { source?: RunSource; approve?: boolean; interrupted?: "again" | "past"; within?: readonly string[] } = {}): Promise<GraphRunView> {
     const current = this.view(runId);
-    if (current.status === "completed") throw new Error("That flow has already finished");
+    if (this.controllers.has(runId)) throw new Error("That flow run is already working");
+    if (current.status === "completed" || current.status === "cancelled") throw new Error("That flow has already finished");
     // Q122: asked before anything is approved or marked running. A run whose Trunk is gone can never carry on,
     // so it ends, saying why; one that another Trunk is asking about is left exactly as it stopped.
     const refused = this.whyNot(runId);
