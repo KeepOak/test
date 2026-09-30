@@ -440,10 +440,10 @@ export function isTheWord(text: string, word: string): boolean {
  * fake and no microphone is ever opened; nothing here writes a file, and the sound is handed to the
  * program on its standard input rather than being put anywhere on disk.
  */
-export async function askSpotter(runner: WakeRunner, spotter: WakeSpotter, word: string, sound: Uint8Array, whisper?: LocalWhisper): Promise<WakeHeard> {
+export async function askSpotter(runner: WakeRunner, spotter: WakeSpotter, word: string, sound: Uint8Array, whisper?: LocalWhisper, signal?: AbortSignal): Promise<WakeHeard> {
   if (spotter.whisper) {
     try {
-      const heard = await whisper?.transcribe(spotter.whisper, sound, { partial: true });
+      const heard = await whisper?.transcribe(spotter.whisper, sound, { partial: true }, signal);
       const text = heard?.text.slice(0, 200) ?? "";
       return { heard: isTheWord(text, word), text, ok: heard !== null && heard !== undefined };
     } catch { return { heard: false, text: "", ok: false }; }
@@ -511,7 +511,7 @@ export interface WakeListenerDeps {
  * turn with the same permissions and the same questions as a typed one.
  */
 export async function listenForWake(
-  deps: WakeListenerDeps, sound: AsyncIterable<WakeChunk>,
+  deps: WakeListenerDeps, sound: AsyncIterable<WakeChunk>, signal?: AbortSignal,
 ): Promise<{ heard: boolean; text: string; refusal: string | null; windowsTried: number; windowsTooLong: number }> {
   const platform = deps.platform ?? process.platform;
   const present = deps.present ?? onThisComputer;
@@ -535,7 +535,7 @@ export async function listenForWake(
     if (chunk.seconds > wake.windowSeconds) { windowsTooLong += 1; await pause(0); continue; }
     held = chunk.sound;
     windowsTried += 1;
-    const answer = await askSpotter(deps.runner, spotter, wake.word, held, deps.whisper);
+    const answer = await askSpotter(deps.runner, spotter, wake.word, held, deps.whisper, signal);
     held = null; // thrown away before the next window, heard or not
     if (answer.heard) return { heard: true, text: answer.text, refusal: null, windowsTried, windowsTooLong };
     // Integration review: the turn is always handed back to the app, and a spotter that failed
@@ -640,7 +640,7 @@ async function keepListening(deps: WakeWordDeps, controller: AbortController, do
     const { spotter } = wakeParts(deps.store, deps.owner, deps.platform, deps.present);
     if (spotter.kind === "streaming-keyword") { await keepStreaming(deps, controller, spotter); return; }
     while (!controller.signal.aborted) {
-      const answer = await listenForWake(deps, windowsOfSound(deps, controller.signal));
+      const answer = await listenForWake(deps, windowsOfSound(deps, controller.signal), controller.signal);
       if (controller.signal.aborted || answer.refusal || !answer.heard) return;
       await deps.onHeard(answer.text);
       // Integration review: the one path that had no wait in it at all. Hearing the word returns
