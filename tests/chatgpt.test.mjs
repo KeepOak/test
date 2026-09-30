@@ -96,10 +96,10 @@ test("device sign-in stores tokens, registers ChatGPT presets and completes a to
   assert.equal(stored.sealed, true, "without the device's key storage it is sealed, not encoded");
   assert.ok(!Buffer.from(stored.value, "base64").toString("utf8").includes("refresh_1"), "tokens cannot be read back from the file alone");
   const ids = [...app.runtime.models.presets.keys()].filter((id) => id.startsWith("chatgpt-"));
-  assert.deepEqual(ids, ["chatgpt-gpt-6-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5", "chatgpt-gpt-6-astra"]);
+  assert.deepEqual(ids, ["chatgpt-gpt-6-sol", "chatgpt-gpt-6.1-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5", "chatgpt-gpt-6-astra"]);
   const settings = app.runtime.models.settings("local");
   assert.equal(settings.activePreset, "chatgpt-gpt-6-sol", "ChatGPT replaces the demonstration as default, with GPT-6 Sol");
-  assert.deepEqual(settings.fallbackOrder, ["chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5"]);
+  assert.deepEqual(settings.fallbackOrder, ["chatgpt-gpt-6.1-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5"]);
   assert.ok(app.runtime.models.presets.has("chatgpt-gpt-6-astra"), "Astra is available for an explicit choice");
   assert.ok(!settings.fallbackOrder.includes("chatgpt-gpt-6-astra"), "Astra is never an automatic fallback");
   useFakeBackend(app, auth, base);
@@ -186,7 +186,7 @@ test("HTTP API exposes sign-in status, starts the device flow and signs out", as
   assert.equal(status.signedIn, true);
   assert.equal(status.email, "person@example.com");
   assert.ok(!JSON.stringify(status).includes("refresh_1"));
-  assert.equal((await call("state")).data.models.presets.length, 8, "the demonstration and the seven ChatGPT models");
+  assert.equal((await call("state")).data.models.presets.length, 9, "the demonstration and the eight ChatGPT models");
   const out = await call("chatgpt/logout", {});
   assert.equal(out.data.signedIn, false);
   assert.equal((await call("state")).data.models.presets.length, 1);

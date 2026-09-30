@@ -7,7 +7,7 @@ export const conversationBootstrap = { version: 1, kind: "conversation-opened" }
 export function countedUsageTask(db: Pick<DatabaseSync, "prepare">, task: "tasks" | "t" = "tasks"): string {
   const events = `SELECT 1 FROM events e WHERE e.run_id=${task}.id`;
   const columns = new Set(db.prepare("PRAGMA table_info(usage)").all().map((row) => String(row.name)));
-  const used = ["estimated_input", "estimated_output", "reported_input", "reported_output", "reports", "attempts", "unreported_calls", "incomplete_calls"]
+  const used = ["estimated_input", "estimated_output", "reported_input", "reported_output", "reported_cached_input", "reported_cache_write", "reported_cache_write_hour", "reports", "attempts", "unreported_calls", "incomplete_calls"]
     .filter((column) => columns.has(column)).map((column) => `u.${column}<>0`).join(" OR ") || "1";
   const legacy = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='governance'").get()
     ? `EXISTS (SELECT 1 FROM governance g WHERE g.owner=${task}.owner
